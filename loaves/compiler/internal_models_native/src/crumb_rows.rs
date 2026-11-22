@@ -9,6 +9,17 @@ const OPERATION_BYTES: i64 = 67_108_864;
 const OPERATION_ELEMENTS: i64 = 4_194_304;
 const OPERATION_DEPTH: i64 = 128;
 
+#[cfg(test)]
+thread_local! {
+    static OWNED_INPUT_COPIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Take this test thread's count and byte total for copies into owned row input backing.
+#[cfg(test)]
+pub(crate) fn take_owned_input_copies() -> (usize, usize) {
+    OWNED_INPUT_COPIES.with(|latest| latest.replace((0, 0)))
+}
+
 /// One required Crumb model field with its stable identity and canonical projection policy. `canonical` defaults to
 /// true.
 #[derive(Clone, PartialEq, Eq)]
@@ -152,6 +163,11 @@ pub fn admit_rows(
     if encoded.len() as i64 > maximum {
         return Err("encoded Crumb rows exceed their byte boundary".into());
     }
+    #[cfg(test)]
+    OWNED_INPUT_COPIES.with(|latest| {
+        let (copies, bytes) = latest.get();
+        latest.set((copies + 1, bytes + encoded.len()));
+    });
     let owner = mapped_bytes(&encoded.to_vec())?;
     let view = complete_view(&owner).ok_or("Crumb row envelope has no complete view")?;
     admit_rows_view(&view, descriptions, maximum, budget)

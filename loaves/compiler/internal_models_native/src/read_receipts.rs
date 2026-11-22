@@ -171,3 +171,97 @@ fn read_witness(value: &Value, scope: &ReadScope) -> Result<ReadWitness, String>
         _ => Err("unknown or malformed compiler read witness".into()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_read_receipt, encode_read_receipt};
+    use crate::crumb_rows::take_owned_input_copies;
+    use crate::record_scope::{
+        AbsentFact, DEFAULT_READ_BYTES, DeletedFact, MemberSelection, PreparationEvidence, READ_SCHEMA, ReadReceipt,
+        ReadScope, ReadWitness, RecordKey, RecordRequest, RecordSelection, RevisionEvidence,
+    };
+
+    /// A completed receipt containing every witness kind, with a bounded membership continuation.
+    fn complete_receipt() -> ReadReceipt {
+        let scope = ReadScope {
+            snapshot: "snapshot".into(),
+            profile: "checker".into(),
+        };
+        let key = RecordKey {
+            family: "namespace".into(),
+            identity: "src/module.incn".into(),
+            identity_profile: "namespace-key".into(),
+            origin: "package".into(),
+            facet: "checked".into(),
+            context: "interface".into(),
+        };
+        let request = RecordRequest {
+            key: key.clone(),
+            selection: RecordSelection::Field("value".into()),
+            byte_limit: DEFAULT_READ_BYTES,
+        };
+        let members = RecordRequest {
+            key: key.clone(),
+            selection: RecordSelection::Members(MemberSelection {
+                selector: "children".into(),
+                order: "canonical".into(),
+                lower: "left".into(),
+                upper: "right".into(),
+                continuation: "".into(),
+            }),
+            byte_limit: DEFAULT_READ_BYTES,
+        };
+        let witnesses = vec![
+            ReadWitness::Found(
+                RevisionEvidence {
+                    scope: scope.clone(),
+                    request: request.clone(),
+                    revision: "frame".into(),
+                    semantic_digest: "meaning".into(),
+                },
+                "selection".into(),
+            ),
+            ReadWitness::Deleted(DeletedFact {
+                scope: scope.clone(),
+                request: request.clone(),
+                revision: "tombstone".into(),
+            }),
+            ReadWitness::Absent(AbsentFact {
+                scope: scope.clone(),
+                request,
+                exclusion_digest: "exclusion".into(),
+            }),
+            ReadWitness::Members(scope.clone(), members, "membership".into(), "next".into()),
+        ];
+        ReadReceipt {
+            schema: READ_SCHEMA.into(),
+            scope,
+            preparation: PreparationEvidence {
+                output: key,
+                rank_certificate: "rank".into(),
+                selector_witnesses: "checked-selectors".into(),
+            },
+            witnesses,
+            operations: 4,
+            response_bytes: 120,
+        }
+    }
+
+    /// Store-backed receipt decoding should preserve every typed witness without creating owned input backing.
+    #[test]
+    fn mapped_receipt_preserves_all_witnesses_without_copying_input() -> Result<(), String> {
+        let expected = complete_receipt();
+        let encoded = encode_read_receipt(&expected)?;
+        take_owned_input_copies();
+        assert_eq!(decode_read_receipt(&encoded)?, expected);
+        assert_eq!(take_owned_input_copies(), (1, encoded.len()));
+
+        assert_eq!(decode_read_receipt(&encoded)?, expected);
+        assert_eq!(
+            take_owned_input_copies(),
+            (0, 0),
+            "mapped receipt copied its encoded row into owned input backing"
+        );
+        Ok(())
+    }
+}
