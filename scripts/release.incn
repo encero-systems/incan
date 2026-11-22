@@ -182,28 +182,32 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     candidate = match produce_candidate(run):
         Ok(built) => built
         Err(message) => refuse_candidate_after_cancellation(reference, message)?
-    # 4. The Oven test library built ahead is joined before the source targets it reads are reclaimed.
-    match finish_oven_test_library(run, candidate):
-        Ok(_) => pass
-        Err(message) => _ = refuse_candidate_after_cancellation(reference, message)?
-
-    if not run.options.prove_fixed_point and not signed:
-        reclaim(run, "build-lane", [run.paths.lane])?
 
     # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
     phase(run, "reference-verification")?
-    reference_log = finish_reference_census(run, reference)?
+    reference_log = match finish_reference_census(run, reference):
+        Ok(log) => log
+        Err(message) => return Err(refused_after(candidate.library, message))
+
+    # 6. The fresh installation owns the census and the one memory measurement; a packing invocation leaves it out. It
+    #    is installed while the Oven test library may still build; that build is joined before the build lane and the
+    #    source targets it reads are reclaimed.
+    mut installation: Option[PreparedInstallation] = None
+    if not run.options.stamp_signer:
+        match prepare_installation(run, candidate):
+            Ok(prepared) => installation = Some(prepared)
+            Err(message) => return Err(refused_after(candidate.library, message))
+    finish_oven_test_library(run, candidate)?
+    if not run.options.prove_fixed_point and not signed:
+        reclaim(run, "build-lane", [run.paths.lane])?
     reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
     if not run.options.prove_fixed_point and not signed:
         reclaim(run, "source-targets", generated_source_targets(run))?
-
-    # 6. The fresh installation owns the census and the one memory measurement; a packing invocation leaves it out.
     mut counts: Option[Counts] = None
-    if not run.options.stamp_signer:
-        phase(run, "installed-verification")?
-        installed, installed_inputs = installed_verification(run, candidate)?
+    if let Some(prepared) = installation:
+        installed = installed_verification(run, prepared)?
         candidate_report = candidate_census(run, installed)?
-        store_installed_census(run, installed_inputs, installed)?
+        store_installed_census(run, prepared.inputs, installed)?
         compare_reference(run, reference_log, candidate_report)?
         counts = Some(candidate_report.counts)
 
@@ -843,11 +847,21 @@ def release_baseline(run: ReleaseRun) -> Result[Path, str]:
     return Err(f"release PASS baseline is absent: {qualified.0}")
 
 
-def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[tuple[Path, CensusInputs], str]:
+pub model PreparedInstallation:
+    """The packed candidate installed in a second home, the checkout that verifies it, and its census inputs."""
+
+    pub verification: Path
+    pub home: Path
+    pub environment: Dict[str, str]
+    pub inputs: CensusInputs
+
+
+def prepare_installation(run: ReleaseRun, candidate: Candidate) -> Result[PreparedInstallation, str]:
     """
-    Install the packed candidate into a second home and run the Incan installed-verification program; return its
-    census and the inputs that decided it, read before the installation is reclaimed.
+    Install the packed candidate into a second home beside a fresh checkout, and read the inputs that decide its
+    census before verification reclaims the installation.
     """
+    phase(run, "installed-verification")?
     verification = run.paths.output.joinpath("verification-source")
     require_release_step(
         run,
@@ -906,6 +920,14 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[tupl
     # The installed Loaf and Rust-facet tests reuse the release units from the bakery the builds above compiled into.
     environment["INCAN_BUILDER_BAKERY"] = builder_bakery(get_or("INCAN_BAKERY", ""), run.paths.home)
     environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
+    return Ok(PreparedInstallation(verification=verification, home=home, environment=environment, inputs=inputs))
+
+
+def installed_verification(run: ReleaseRun, installation: PreparedInstallation) -> Result[Path, str]:
+    """Run the Incan installed-verification program in the prepared installation and return its census."""
+    verification = installation.verification
+    home = installation.home
+    environment = installation.environment
     require_linked_release_step(
         run,
         release_step(
@@ -941,7 +963,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[tupl
         "installed-verification-scratch",
         [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch")],
     )?
-    return Ok((log, inputs))
+    return Ok(log)
 
 
 def compare_reference(run: ReleaseRun, reference: Path, candidate: Borrowed[BaselineReport]) -> Result[None, str]:
