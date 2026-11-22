@@ -803,4 +803,51 @@ mod tests {
         );
         Ok(())
     }
+
+    /// One Rust record type of the unit's own crate, as an extraction describes it.
+    fn carrier() -> incan_lang::interop::RustItemMetadata {
+        incan_lang::interop::RustItemMetadata {
+            canonical_path: "first::Carrier".into(),
+            definition_path: None,
+            visibility: incan_lang::interop::RustVisibility::Public,
+            kind: incan_lang::interop::RustItemKind::Type(incan_lang::interop::RustTypeInfo::default()),
+        }
+    }
+
+    /// A unit's extraction that Oven baked into its index is read as the stored cache itself, its items decoded when a
+    /// checker reads them: the session receives that cache, not items decoded and encoded into another one.
+    #[test]
+    fn an_indexed_extraction_is_read_as_its_stored_cache() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let shipped = installed(root.path())?;
+        let unit = unit(root.path(), "first", &shipped)?;
+        let paths = BTreeSet::from(["first::Carrier".to_owned()]);
+        let extractions = std::cell::Cell::new(0);
+        let extract = |_: &BTreeSet<String>| -> Result<RustFacts, String> {
+            extractions.set(extractions.get() + 1);
+            Ok(RustFacts::from([("first::Carrier".to_owned(), carrier())]))
+        };
+        let fresh = cached_path_facts(&unit, &paths, extract)?;
+        assert!(fresh.contains("first::Carrier"));
+
+        // Oven bakes the staged extraction and indexes it under its request identity before the next run.
+        let directory = unit.rust_facts.clone().ok_or("the unit has no facts directory")?;
+        let staged = fs::read_dir(directory.join("staging"))?
+            .map(|entry| Ok(entry?.path()))
+            .collect::<Result<Vec<_>, std::io::Error>>()?
+            .into_iter()
+            .find(|path| path.extension().is_some_and(|extension| extension == "rustabi"))
+            .ok_or("no extraction was staged")?;
+        let identity = staged
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or("the staged extraction has no identity")?;
+        fs::write(directory.join("index"), format!("{identity}\t{}\n", staged.display()))?;
+
+        let reused = cached_path_facts(&unit, &paths, extract)?;
+        assert_eq!(extractions.get(), 1, "the indexed extraction was extracted again");
+        assert_eq!(reused.len(), 1);
+        assert_eq!(reused.get("first::Carrier")?, Some(carrier()));
+        Ok(())
+    }
 }
