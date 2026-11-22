@@ -129,6 +129,8 @@ struct RuntimeDependencyContext {
     checked_local: BTreeSet<CanonicalSymbolId>,
     /// Exact selected versions from the authenticated executable-resolution closure.
     package_versions: BTreeMap<String, String>,
+    /// Authenticated provider layouts shared by the checked request's dependency passes.
+    layout_admissions: incan_frontend::executable_resolution::LinkedLayoutAdmissions,
     package: String,
     /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
     layout_modules: Vec<BodyIrModule>,

@@ -21,7 +21,7 @@ mod publication;
 mod surface_build;
 mod surface_reading;
 
-pub use linked_layout_codec::LINKED_LAYOUT_WITNESS_BYTES;
+pub use linked_layout_codec::{LINKED_LAYOUT_DIGEST_BYTES, LINKED_LAYOUT_WITNESS_BYTES};
 pub use module_codec::*;
 pub use namespace_codec::{decode_namespace_module, encode_namespace_module};
 pub use surface_build::*;
@@ -444,6 +444,14 @@ pub struct SurfaceIndex {
     pub declarations: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
     /// Reachable implementation dependencies; these identities are never public resolution roots.
     pub implementation: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+}
+
+/// A decoded layout witness and the exact immutable frame bytes from which it was admitted.
+/// Only the surface decoder can pair the two. The resolver owns this frame until the checked request settles.
+#[derive(Debug)]
+pub struct AdmittedLayoutFrame {
+    bytes: Vec<u8>,
+    witness: crate::body_ir::LinkedLayoutWitness,
 }
 
 /// One declaration that survived projection, with the canonical identities its execution needs.

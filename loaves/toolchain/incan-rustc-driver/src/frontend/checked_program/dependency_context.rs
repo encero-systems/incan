@@ -38,7 +38,12 @@ pub(super) fn complete_dependency_context_in_place(
                 program.dependencies.origins.insert(identity, origin);
             }
         }
-        let resolved = load_loaf_modules(loaves, &requested, checked_local)?;
+        let resolved = load_loaf_modules(
+            loaves,
+            &requested,
+            checked_local,
+            &program.dependencies.layout_admissions,
+        )?;
         install_dependency_modules(program, resolved);
     }
     program.dependencies.requested = requested;
@@ -174,6 +179,7 @@ pub(super) fn prepare_runtime_requirements(
             &program.dependencies.checked_local,
             &next,
             requirements,
+            &program.dependencies.layout_admissions,
         )?);
     }
     Ok(PreparedRuntimeRequirements {
@@ -191,8 +197,9 @@ fn load_runtime_modules(
     checked_local: &BTreeSet<CanonicalSymbolId>,
     next: &BTreeSet<CanonicalSymbolId>,
     requirements: &[RuntimeRequirement],
+    layout_admissions: &incan_frontend::executable_resolution::LinkedLayoutAdmissions,
 ) -> Result<incan_frontend::executable_resolution::ResolvedExecutableModules, String> {
-    load_loaf_modules(loaves, next, checked_local).map_err(|error| {
+    load_loaf_modules(loaves, next, checked_local, layout_admissions).map_err(|error| {
         let sites = requirements
             .iter()
             .map(|requirement| {
@@ -329,7 +336,12 @@ pub(super) fn prepare_runtime_layouts(
         &program.dependencies.loaves,
         &requested,
         &program.dependencies.checked_local,
+        &program.dependencies.layout_admissions,
     )?;
+    program
+        .dependencies
+        .layout_admissions
+        .extend(resolved.layout_admissions);
     program.dependencies.package_versions.extend(resolved.package_versions);
     for mut module in resolved.modules {
         let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
@@ -344,6 +356,7 @@ pub(super) fn prepare_runtime_layouts(
         &program.dependencies.loaves,
         &program.dependencies.requested,
         &program.dependencies.checked_local,
+        &program.dependencies.layout_admissions,
     )?;
     install_dependency_modules(program, resolved);
     prepare_dependency_context(program)
@@ -357,6 +370,10 @@ fn install_dependency_modules(
     program: &mut CheckedProgram,
     resolved: incan_frontend::executable_resolution::ResolvedExecutableModules,
 ) {
+    program
+        .dependencies
+        .layout_admissions
+        .extend(resolved.layout_admissions);
     program.dependencies.package_versions.extend(resolved.package_versions);
     let mut previous = std::mem::take(&mut program.modules);
     let mut authored = previous.split_off(program.own);

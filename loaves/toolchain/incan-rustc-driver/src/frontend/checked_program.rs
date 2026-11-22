@@ -507,11 +507,12 @@ fn checked_attempt(
     let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
     let checked_local = checked_local_identities(manifest.as_ref());
     let (runtime_callable_bindings, runtime_binding_scopes) = runtime_declarations(&session, manifest.as_ref())?;
-    let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local, &Default::default())?;
     drop(body_ir_inputs_invocation);
 
     // ---- Declarations the program reaches in its Loaves ----
     let mut package_versions = resolved.package_versions;
+    let mut layout_admissions = resolved.layout_admissions;
     package_versions.insert(unit.package.clone(), unit.version.clone());
     let mut reached_loaves = resolved.entries;
     let mut bodies = resolved.modules;
@@ -544,7 +545,8 @@ fn checked_attempt(
         .all(|identity| requested.contains(identity))
     {
         requested.extend(retained_requirements);
-        let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+        let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local, &layout_admissions)?;
+        layout_admissions.extend(resolved.layout_admissions);
         package_versions.extend(resolved.package_versions);
         reached_loaves = resolved.entries;
         let mut authored = bodies.split_off(loaf_modules);
@@ -679,6 +681,7 @@ fn checked_attempt(
                     .collect(),
                 checked_local: checked_local.clone(),
                 package_versions,
+                layout_admissions,
                 package: package_identity.to_owned(),
                 layout_modules: Vec::new(),
                 sources: sources[loaf_modules..].to_vec(),
