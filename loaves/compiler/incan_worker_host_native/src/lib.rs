@@ -62,6 +62,8 @@ mod escape_tests;
 #[cfg(test)]
 mod host_tests;
 #[cfg(test)]
+mod namespace_frame_tests;
+#[cfg(test)]
 mod number_tests;
 #[cfg(test)]
 mod record_variant_tests;
