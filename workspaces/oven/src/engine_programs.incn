@@ -23,13 +23,14 @@ from compiler_body_values import (
     SelectedBodyRecord,
     body_owners_reading,
     encode_body_inventory,
-    invalid_namespace_modules,
+    reached_body_owners,
+    reached_namespaces,
     select_body_inventory_except,
     select_namespace_inventory_except,
 )
 from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
-from compiler_graph_records import EditCutoff, edit_cutoff, retire_compiler_versions, supersede_outputs
+from compiler_graph_records import EditCutoff, EditReaders, retire_compiler_versions, select_edit_readers, supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import load_epoch
 pub from engine_program_records import NativeUnit
@@ -138,12 +139,10 @@ pub model CheckOutcome:
 
 
 pub model BodyReading:
-    """A request view's graph, the request's source projections, and the owners whose bodies those changed."""
+    """A request view's graph and the source projections this request staged against it."""
 
     pub graph: Snapshot
     pub projected: PreparedSourceInputs
-    # Owners whose earlier evaluations read a source projection this request changed; they are checked afresh.
-    pub invalid: list[str]
 
 
 pub model BodySelection:
@@ -152,6 +151,7 @@ pub model BodySelection:
     pub graph: Snapshot
     pub projected: PreparedSourceInputs
     pub invalid: list[str]
+    pub reached: EditReaders
 
 
 model ProgramHome:
@@ -203,8 +203,11 @@ pub def check_program(
         return Ok(CheckOutcome(code=whole_check.code, console=console))
     # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
     reading = body_reading(store, view, ready, epoch.inputs, record_writer)?
+    invalidating = begin_work()
+    invalid = body_owners_reading(reading.graph, reading.projected.keys, CHECKER_PROFILE)?
+    record_work(Operation.EngineSelect, "invalid-owners", invalidating)
     directory = check_page_directory(store, view, ready)
-    pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
+    pages = keep_check_pages(reading.graph, source_origin(ready), invalid, ready, directory)?
     checked = check_prepared(ready, toolchain, format, Some(pages.directory), is_editor_view(view))?
     return Ok(
         CheckOutcome(
@@ -231,9 +234,8 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
 
 def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput], record_writer: str) -> Result[BodyReading, str]:
     """
-    Read the graph a request selects checked bodies from: an editor view reads its own records, any other view the
-    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid, and so
-    is every owner whose records another writer than `record_writer` (a compiler and an Oven) wrote.
+    Read the graph a request selects checked bodies from and stage the source changes against it. An editor view
+    reads its own records. Other views use the shared graph. The writer generation is one input to the projections.
     """
     mut graph_view = str(HOME_VIEW)
     if is_editor_view(view):
@@ -244,10 +246,7 @@ def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[Ca
     projecting = begin_work()
     projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer)?
     record_work(Operation.EngineSelect, "captured-sources", projecting)
-    invalidating = begin_work()
-    invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
-    record_work(Operation.EngineSelect, "invalid-owners", invalidating)
-    return Ok(BodyReading(graph=graph, projected=projected, invalid=invalid))
+    return Ok(BodyReading(graph=graph, projected=projected))
 
 
 def select_bodies(
@@ -264,13 +263,18 @@ def select_bodies(
     """
     reading = body_reading(store, view, ready, inputs, record_writer)?
     origin = source_origin(ready)
-    mut invalid = reading.invalid
+    selecting = begin_work()
+    reached = select_edit_readers(reading.graph, reading.projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE], not listing_refusals)?
+    mut invalid: list[str] = []
     if listing_refusals:
         invalid = [
             record.identity
             for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
         ]
-    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid))
+    else:
+        invalid = reached_body_owners(reached.direct, CHECKER_PROFILE)
+    record_work(Operation.EngineSelect, "edit-readers", selecting)
+    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, reached=reached))
 
 
 pub def obtain(
@@ -352,22 +356,19 @@ pub def obtain(
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
     request_view = program_view(handle)?
     editor = is_editor_view(request_view)
-    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
+    mut selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
     graph = selection.graph
     projected = selection.projected
     invalid = selection.invalid
     origin = source_origin(ready)
     # Each selection stage before the unit request is one span, so an edit's fixed selection cost is measured.
     mut selecting = begin_work()
-    invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
+    invalid_namespaces = reached_namespaces(selection.reached.direct, CHECKER_PROFILE)
     # Only an evaluation that reads a record this edit changed, or reads such an evaluation, can be stale; every other
     # selected evaluation is valid by the graph it is selected from. Listing refusals validates every owner.
-    mut cutoff = EditCutoff()
-    if not listing_refusals:
-        cutoff = edit_cutoff(graph, projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE])?
-        cutoff.carried = projected.carried
-    record_work(Operation.EngineSelect, "edit-cutoff", selecting)
-    selecting = begin_work()
+    if selection.reached.cutoff.active:
+        selection.reached.cutoff.carried = projected.carried
+    let cutoff: Borrowed[EditCutoff] = selection.reached.cutoff
     namespaces = select_namespace_inventory_except(
         graph, CHECKER_PROFILE, origin, invalid_namespaces, toolchain.namespace_references and toolchain.closure_anchors,
         cutoff,
@@ -375,7 +376,7 @@ pub def obtain(
     record_work(Operation.EngineSelect, "namespace-inventory", selecting)
     selecting = begin_work()
     # A checked owner travels once when its exact plan slot and its whole checked namespace are both admitted.
-    plan_reads = plan_reads_changed(graph, projected.keys)?
+    plan_reads = plan_reads_changed(selection.reached.direct)
     invalid_plans = sorted([owner for owner in plan_reads.keys()])
     positioned = set([key.identity for key in projected.keys if key.family == "source-positioned" and key.origin == origin])
     plan_modules = select_plan_modules(

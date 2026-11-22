@@ -192,18 +192,61 @@ pub model EditCutoff:
 
 pub def edit_cutoff(selected: Snapshot, changed: list[RecordKey], profiles: list[str]) -> Result[EditCutoff, str]:
     """Name every evaluation of `profiles` that reads one of the `changed` records, directly or through other readers."""
+    return Ok(select_edit_readers(selected, changed, profiles, true)?.cutoff)
+
+
+pub model DirectReader:
+    """A selected output and the producer profile under which it read the input."""
+
+    pub profile: str
+    pub output: RecordKey
+
+
+pub model InputReaders:
+    """The exact input and current outputs whose prior evaluations read it."""
+
+    pub input: RecordKey
+    pub readers: list[DirectReader] = []
+
+
+pub model EditReaders:
+    """The direct readers of changed inputs and the transitive cutoff derived from the same snapshot."""
+
+    pub direct: list[InputReaders]
+    pub cutoff: EditCutoff
+
+
+pub def select_edit_readers(
+    selected: Snapshot, changed: list[RecordKey], profiles: list[str], follow_readers: bool,
+) -> Result[EditReaders, str]:
+    """
+    Load the direct readers once for all profiles and retain the exact input causes for downstream selection.
+    When requested, follow those same readers to build the cutoff. Only this walk owns the decoded index rows.
+    """
+    mut ranges = ReaderRanges()
+    direct = ranges.select(selected, changed, profiles)?
+    if not follow_readers:
+        return Ok(EditReaders(direct=direct, cutoff=EditCutoff()))
     mut cutoff = EditCutoff(active=true)
-    mut frontier = changed
+    mut frontier = stale_reader_outputs(direct, cutoff)?
     while len(frontier) > 0:
-        mut readers: list[RecordKey] = []
-        for profile in profiles:
-            for reader in readers_of(selected, frontier, profile)?:
-                encoded = encode_record_key(reader)?
-                if encoded not in cutoff.stale:
-                    cutoff.stale.add(encoded)
-                    readers.append(reader)
-        frontier = readers
-    return Ok(cutoff)
+        readers = ranges.select(selected, frontier, profiles)?
+        frontier = stale_reader_outputs(readers, cutoff)?
+    return Ok(EditReaders(direct=direct, cutoff=cutoff))
+
+
+def stale_reader_outputs(
+    inputs: Borrowed[list[InputReaders]], mut cutoff: EditCutoff,
+) -> Result[list[RecordKey], str]:
+    """Mark every reached output stale and visit a shared or cyclic reader's own range at most once."""
+    mut frontier: list[RecordKey] = []
+    for input in inputs:
+        for reader in input.readers:
+            output = encode_record_key(reader.output)?
+            if output not in cutoff.stale:
+                cutoff.stale.add(output)
+                frontier.append(reader.output)
+    return Ok(frontier)
 
 
 pub def reusable_evaluation(
@@ -533,22 +576,77 @@ def family_range(family: str, profile: str) -> Result[str, str]:
 
 
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
-    """
-    Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check,
-    reading only the range of edges into each changed record's slot and keeping those whose target is the record.
-    """
+    """Return the ordered, deduplicated reader outputs of the selected profile."""
+    mut ranges = ReaderRanges()
     mut readers: Dict[str, RecordKey] = {}
-    for target in changed:
-        exact = encode_record_key(target)?
-        prefix = "incan.engine.edge-in/3\t" + record_slot(exact)? + "\t"
-        for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
-            note_graph_demand("reverse-edge", selected, indexed)
-            edge = read_incoming(required_value(selected, indexed)?)?
-            if edge.profile != profile or edge.target != exact:
-                continue
-            if let Some(reader) = current_reader(selected, profile, edge.reader)?:
-                readers[reader] = decode_record_key(reader)?
+    for input in ranges.select(selected, changed, [profile])?:
+        for reader in input.readers:
+            readers[encode_record_key(reader.output)?] = reader.output
     return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
+model ReaderRanges:
+    """
+    Authenticated reverse ranges and output slots for one walk of one pinned view. A slot's edge frames are decoded
+    once, even when the walk reaches different exact contexts in that slot. Nothing is retained across selections.
+    """
+
+    visited: set[str] = set()
+    incoming: Dict[str, Dict[str, list[IncomingEdge]]] = {}
+    outputs: Dict[str, Option[RecordKey]] = {}
+
+    def select(
+        mut self, selected: Snapshot, inputs: list[RecordKey], profiles: list[str],
+    ) -> Result[list[InputReaders], str]:
+        """Resolve each exact input against the cached range for its slot, in the caller's input order."""
+        mut result: list[InputReaders] = []
+        if len(profiles) == 0:
+            return Ok(result)
+        for target in inputs:
+            exact = encode_record_key(target)?
+            if exact in self.visited:
+                continue
+            self.visited.add(exact)
+            prefix = "incan.engine.edge-in/3\t" + record_slot(exact)? + "\t"
+            if prefix not in self.incoming:
+                self.incoming[prefix] = read_incoming_range(selected, prefix)?
+            if exact not in self.incoming[prefix]:
+                continue
+            readers = select_input_readers(selected, self.incoming[prefix][exact], self.outputs, profiles)?
+            if len(readers) > 0:
+                result.append(InputReaders(input=target, readers=readers))
+        return Ok(result)
+
+
+def read_incoming_range(selected: Snapshot, prefix: str) -> Result[Dict[str, list[IncomingEdge]], str]:
+    """Read every incoming frame in one selected slot, refusing damaged graph evidence."""
+    mut edges: Dict[str, list[IncomingEdge]] = {}
+    for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
+        note_graph_demand("reverse-edge", selected, indexed)
+        edge = read_incoming(required_value(selected, indexed)?)?
+        if edge.target not in edges:
+            edges[edge.target] = []
+        edges[edge.target].append(edge)
+    return Ok(edges)
+
+
+def select_input_readers(
+    selected: Snapshot, edges: Borrowed[list[IncomingEdge]], mut outputs: Dict[str, Option[RecordKey]],
+    profiles: list[str],
+) -> Result[list[DirectReader], str]:
+    """Resolve prior witnesses of an exact input through each selected profile's current output index."""
+    mut readers: list[DirectReader] = []
+    for edge in edges:
+        if edge.profile not in profiles:
+            continue
+        key = edge.profile + "\t" + edge.reader
+        if key not in outputs:
+            outputs[key] = match current_reader(selected, edge.profile, edge.reader)?:
+                Some(output) => Some(decode_record_key(output)?)
+                None => None
+        if let Some(output) = outputs[key]:
+            readers.append(DirectReader(profile=edge.profile, output=output))
+    return Ok(readers)
 
 
 def index_components(selected: Snapshot, prefix: str) -> Result[list[str], str]:
