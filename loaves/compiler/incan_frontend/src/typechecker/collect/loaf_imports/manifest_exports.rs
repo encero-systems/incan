@@ -368,15 +368,9 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         target_path: &[String],
     ) -> Option<SymbolKind> {
-        let [namespace, crate_name, rest @ ..] = target_path else {
-            return None;
-        };
-        if namespace != "rust" || rest.is_empty() {
-            return None;
-        }
+        let (crate_name, path) = Self::rust_reexport_target(target_path)?;
         #[cfg(test)]
         RUST_REEXPORT_BUILDS.with(|builds| builds.set(builds.get() + 1));
-        let path = target_path[1..].join("::");
         let metadata = manifest
             .rust_abi
             .as_ref()
@@ -388,6 +382,47 @@ impl TypeChecker {
             path,
             binding: RustImportBindingKind::FromImport,
         }))
+    }
+
+    /// The crate and the `::` path of the Rust item a `rust::` target path names.
+    fn rust_reexport_target(target_path: &[String]) -> Option<(&String, String)> {
+        let [namespace, crate_name, rest @ ..] = target_path else {
+            return None;
+        };
+        if namespace != "rust" || rest.is_empty() {
+            return None;
+        }
+        Some((crate_name, target_path[1..].join("::")))
+    }
+
+    /// Whether [`Self::symbol_kind_from_manifest_alias`] resolves `alias` to something other than a nominal type
+    /// before it reads anything: a projected callable, or, behind a type projection that answers nothing, a `rust::`
+    /// item the package ships metadata for. Classifying such an alias then builds neither.
+    pub(in crate::typechecker::collect) fn alias_names_no_nominal_type(
+        manifest: &LibraryManifest,
+        alias: &AliasExport,
+    ) -> bool {
+        if alias.projected_function.is_some() {
+            return true;
+        }
+        if !Self::type_projection_is_inert(alias.projected_type.as_ref()) {
+            return false;
+        }
+        let target_path =
+            Self::manifest_identity_target_path(manifest, &alias.name).unwrap_or(alias.target_path.as_slice());
+        Self::rust_reexport_target(target_path)
+            .is_some_and(|(_, path)| manifest.rust_abi.as_ref().and_then(|abi| abi.get(&path)).is_some())
+    }
+
+    /// Whether [`Self::symbol_kind_from_type_projection`] answers `None` for `projected` without reading anything.
+    fn type_projection_is_inert(projected: Option<&crate::library_manifest::TypeRef>) -> bool {
+        use crate::library_manifest::TypeRef;
+        match projected {
+            None => true,
+            Some(ty) if ty.has_native_union() => false,
+            Some(TypeRef::Trait { .. } | TypeRef::Named { origin: Some(_), .. }) => false,
+            Some(_) => true,
+        }
     }
 
     /// Return the canonical target path published by the manifest identity graph for one public name.
