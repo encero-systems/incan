@@ -1,18 +1,23 @@
 """
-After a toolchain update the engine the old compiler started cannot serve the new one: a caller of another compiler
-generation has it retire and starts the engine of its own generation, instead of failing.
+Engines of different generations coexist over one store: during a release the seed's and the candidate's toolchains
+alternate over one home, and each keeps its own engine, which neither refuses nor drains the other.
 """
 
 from std.environ import get_or
+from std.fs import Path
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
 from engine_messages import Message, Stop
+from engine_state import Identity
 from engine_wire import zero_id
 from scratch import scratch_directory
 
 
-pub def test_a_caller_of_another_compiler_generation_retires_the_engine_and_starts_its_own() -> Result[None, str]:
-    """An engine started for compiler generation A gives way to a caller of generation B, which then reaches B's engine."""
+pub def test_engines_of_two_compiler_generations_coexist_over_one_store() -> Result[None, str]:
+    """
+    A caller of compiler generation B reaches an engine of its own while generation A's engine keeps serving A, and
+    A's caller still reaches that same engine afterwards.
+    """
     scratch = scratch_directory()?
     store = scratch.path().joinpath("store")
     store.mkdir(true, true).map_err((error) => error.message())?
@@ -20,15 +25,25 @@ pub def test_a_caller_of_another_compiler_generation_retires_the_engine_and_star
     mut first = service_identity(store)?
     first.service_generation = service_generation(binary)?
     first.compiler_generation = "compiler-generation-a"
-    mut old = connect_with(store, first, binary).map_err((refusal) => refusal.detail)?
-    _ = old.transport.close()
     mut second = first
     second.compiler_generation = "compiler-generation-b"
-    mut channel = connect_with(store, second, binary).map_err((refusal) => refusal.detail)?
+    a = connect_with(store, first, binary).map_err((refusal) => f"generation A: {refusal.detail}")?
+    _ = a.transport.close()
+    b = connect_with(store, second, binary).map_err((refusal) => f"generation B beside A: {refusal.detail}")?
+    _ = b.transport.close()
+    again = connect_with(store, first, binary).map_err((refusal) => f"generation A beside B: {refusal.detail}")?
+    _ = again.transport.close()
+    stop(store, first, binary)?
+    return stop(store, second, binary)
+
+
+def stop(store: Path, identity: Identity, binary: str) -> Result[None, str]:
+    """Stop the engine of one generation."""
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
     channel.send(zero_id(), Message.Stop(Stop(reason="generation test completed"))).map_err((refusal) => refusal.detail)?
     stopped = channel.receive().map_err((refusal) => refusal.detail)?
     match stopped.message:
         Message.Event(value) => assert value.status == "Stopping", f"the engine answered {value.status}"
-        _ => return Err("the new generation's engine did not stop")
+        _ => return Err("the engine did not stop")
     _ = channel.transport.close()
     return Ok(None)

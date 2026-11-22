@@ -80,11 +80,8 @@ pub class PreparedBodyRecordSource with RecordSource:
         mut bounded: list[RecordRequest] = []
         mut positions: Dict[str, list[int]] = {}
         mut with_generation = requests
-        # Every output beside the checked declaration, local and final records reads the generation. Those three are
-        # the closed checking bases the ranked producer re-evaluates from their own inputs; their owner's Body IR
-        # frame reads the generation, so a change of compiler still withdraws the whole owner.
         if let Some(generation) = self.compiler:
-            if output.family not in ["declaration", "local", "final"]:
+            if reads_compiler_generation(output.family):
                 with_generation.append(prepared_product_request(generation))
         for request in with_generation:
             encoded_key = encode_record_key(request.key)?
@@ -177,6 +174,18 @@ class AdmittedPlanDigests with RecordSource:
 def plan_product(key: RecordKey) -> bool:
     """The plan products whose complete digest can witness an already admitted value."""
     return key.family == "plan-function" or key.family == "plan-module"
+
+
+def reads_compiler_generation(family: str) -> bool:
+    """
+    Every output beside the checked declaration, local and final records and the plan module reads the unit's
+    compiler generation. The first three are the closed checking bases the ranked producer re-evaluates from their
+    own inputs; their owner's Body IR frame reads the generation, so a change of compiler still withdraws the whole
+    owner. A plan module reads exactly its functions' plans, which read the generation themselves.
+    """
+    if family == "declaration" or family == "local" or family == "final":
+        return false
+    return family != "plan-module"
 
 
 pub def prepared_product_request(key: RecordKey) -> RecordRequest:

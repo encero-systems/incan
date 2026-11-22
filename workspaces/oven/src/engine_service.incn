@@ -23,7 +23,7 @@ from engine_messages import (
     CompletionStatus,
     EffectDisposition,
 )
-from engine_state import COMPILER_GENERATION_MISMATCH, Identity, ServiceState
+from engine_state import Identity, ServiceState
 from engine_epochs import prepare_submit
 from engine_actions import Pending, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
@@ -78,19 +78,19 @@ pub def serve(arguments: list[str]) -> Result[None, Refusal]:
 
 
 pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None, Refusal]:
-    """Hold the store scheduling lock through startup, all client work and final socket withdrawal."""
+    """Hold this generation's scheduling lock through startup, all client work and final socket withdrawal."""
     selected = endpoint(root, identity)?
     held = Path(selected.lock).try_lock_exclusive().map_err((error) => transport(error.message()))?
     if held is None:
-        return Err(transport("another engine owns this store"))
+        return Err(transport("another engine of this generation owns this store"))
     withdraw_stale(selected.socket)?
     mut listener = listen(selected.socket, false).map_err(transport)?
     # A caller whose runtime directory names another socket path finds this one through the store; without the
     # record only callers sharing this environment can.
-    _ = record_endpoint(root, selected.socket)
+    _ = record_endpoint(selected.record, selected.socket)
     mut state = ServiceState(identity=identity, store=root, last_active=0)
     outcome = event_loop(listener, state, idle)
-    withdraw_endpoint(root, selected.socket)
+    withdraw_endpoint(selected.record, selected.socket)
     discard_file(Path(selected.socket))
     return outcome
 
@@ -133,12 +133,8 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
         sleep(Duration.from_millis(2))
 
 
-def greet_ready(greetings: list[Greeting], mut clients: list[Client], mut state: ServiceState, now: int) -> list[Greeting]:
-    """
-    Admit every ready Hello while silent peers wait independently until their bounded handshake expires. A Hello of
-    another compiler generation means the toolchain was updated: this engine drains its admitted work and retires,
-    so the caller can start the engine of its own generation.
-    """
+def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: ServiceState, now: int) -> list[Greeting]:
+    """Admit every ready Hello while silent peers wait independently until their bounded handshake expires."""
     mut waiting: list[Greeting] = []
     for index in range(len(greetings)):
         mut greeting = greetings[index]
@@ -149,9 +145,7 @@ def greet_ready(greetings: list[Greeting], mut clients: list[Client], mut state:
             Ok(true) =>
                 match greet(greeting.channel, state):
                     Ok(client) => clients.append(client)
-                    Err(reason) =>
-                        if reason.detail == COMPILER_GENERATION_MISMATCH:
-                            state.draining = true
+                    Err(_) => pass
             Ok(false) => waiting.append(greeting)
             Err(_) => _ = greeting.channel.transport.close()
     return waiting
