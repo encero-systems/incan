@@ -190,7 +190,7 @@ pub fn compile(
                 && overflow_checks
                 && reader.has_record_inputs() =>
         {
-            native_incremental(&mut args, crate_name, identity, report)?
+            native_incremental(&mut args, crate_name, identity, report, &all)?
         }
         _ => None,
     };
@@ -238,12 +238,14 @@ pub fn compile(
 
 /// Give a program whose every function has a record input rustc's incremental session in its private unit directory,
 /// under a crate identity and output path that do not change between its builds. The returned private output, when
-/// one could be held, receives rustc's output until the executable is published.
+/// one could be held, receives rustc's output until the executable is published. The session is named by the crates
+/// the program links (`linked`) as well, see [`incremental_session`].
 fn native_incremental(
     args: &mut Vec<String>,
     crate_name: &str,
     identity: &DriverIdentity,
     report: &Path,
+    linked: &[(String, PathBuf)],
 ) -> Result<Option<PrivateOutput>, DriverError> {
     args.retain(|argument| !argument.starts_with("-Cmetadata=incan-unit-"));
     let parent = report
@@ -252,9 +254,8 @@ fn native_incremental(
     let compiler = incan_semantics_core::semantic_digest::semantic_digest(&identity.toolchain)
         .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
     let compiler = compiler.trim_start_matches("sha256:");
-    let incremental = parent.join(format!(".{crate_name}.{compiler}.rustc-incremental"));
-    std::fs::create_dir_all(&incremental)
-        .map_err(|error| DriverError::Invocation(format!("cannot create private incremental directory: {error}")))?;
+    let private = PrivateOutput::acquire(parent, crate_name, compiler)?;
+    let incremental = incremental_session(parent, crate_name, compiler, linked, private.is_some())?;
     let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
         crate_name.to_owned(),
         identity.toolchain.clone(),
@@ -265,11 +266,72 @@ fn native_incremental(
     args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
     args.push("-C".into());
     args.push(format!("incremental={}", incremental.display()));
-    let private = PrivateOutput::acquire(parent, crate_name, compiler)?;
     if let Some(held) = &private {
         held.redirect(args);
     }
     Ok(private)
+}
+
+/// The incremental session directory of a program: named by its crate, its compiler and the crates it links, each by
+/// its name, physical path and file generation.
+///
+/// rustc cannot load a session that names a crate whose identity changed since: a Rust facet built under another
+/// `-C metadata` (as when `INCAN_RUST_INCREMENTAL` changes) or an edited Incan library has another `StableCrateId`, and
+/// marking the earlier session's nodes green stops rustc ("uninterned StableCrateId"). A changed linked crate
+/// therefore starts a new session. A compilation that holds the program's private output removes the sessions named
+/// for other crates, except one a compilation is still working in.
+fn incremental_session(
+    parent: &Path,
+    crate_name: &str,
+    compiler: &str,
+    linked: &[(String, PathBuf)],
+    held: bool,
+) -> Result<PathBuf, DriverError> {
+    let mut crates = linked
+        .iter()
+        .map(|(name, path)| {
+            let physical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            let generation = crate::native_search::file_identity(&physical).unwrap_or_default();
+            format!("{name}\t{}\t{generation}", physical.display())
+        })
+        .collect::<Vec<_>>();
+    crates.sort();
+    let digest = incan_semantics_core::semantic_digest::semantic_digest(&crates)
+        .map_err(|error| DriverError::Invocation(format!("cannot fingerprint linked crates: {error}")))?;
+    let prefix = format!(".{crate_name}.{compiler}.");
+    let name = format!(
+        "{prefix}{}.rustc-incremental",
+        &digest.trim_start_matches("sha256:")[..16]
+    );
+    if held {
+        for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
+            let other = entry.file_name().to_string_lossy().into_owned();
+            let earlier = other != name && other.starts_with(&prefix) && other.ends_with(".rustc-incremental");
+            if earlier && !working(&entry.path()) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let session = parent.join(name);
+    std::fs::create_dir_all(&session)
+        .map_err(|error| DriverError::Invocation(format!("cannot create private incremental directory: {error}")))?;
+    Ok(session)
+}
+
+/// Whether a compilation is working in an incremental session directory: rustc keeps each crate's sessions in a
+/// directory of their own and names the one it works in `s-...-working` until it finishes.
+fn working(session: &Path) -> bool {
+    std::fs::read_dir(session)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|crate_sessions| {
+            std::fs::read_dir(crate_sessions.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().ends_with("-working"))
+        })
 }
 
 /// The private output of a program compiled with native incremental reuse, named by its crate and compiler alone.
@@ -506,7 +568,7 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{PrivateOutput, UnitKind, debuginfo, optimization_level};
+    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, optimization_level};
     use std::path::Path;
 
     /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
@@ -553,6 +615,27 @@ mod tests {
         assert_eq!(std::fs::read(&requested)?, b"executable");
         assert!(!executable.exists());
         assert!(!object.exists());
+        Ok(())
+    }
+
+    /// A program's incremental session is named by the crates it links as well as by its crate and compiler: the same
+    /// linked crates name the same session; a linked crate that changed, such as a Rust facet built under another
+    /// `-C metadata`, names a new one, since rustc stops on a session naming a crate whose identity changed; and the
+    /// session named for the earlier crates is removed.
+    #[test]
+    fn a_program_s_incremental_session_is_named_by_the_crates_it_links() -> Result<(), Box<dyn std::error::Error>> {
+        let (units, crates) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let library = crates.path().join("libfacet.rlib");
+        std::fs::write(&library, b"facet built under one metadata")?;
+        let linked = vec![("facet".to_owned(), library.clone())];
+        let first = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        assert!(first.is_dir());
+        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked, true)?, first);
+        std::fs::write(&library, b"facet built under another metadata")?;
+        let second = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        assert_ne!(second, first, "a changed linked crate kept the earlier session");
+        assert!(second.is_dir());
+        assert!(!first.exists(), "the session named for the earlier crates was kept");
         Ok(())
     }
 
