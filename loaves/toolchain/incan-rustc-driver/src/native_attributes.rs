@@ -222,3 +222,43 @@ fn literal(kind: LitKind, text: &str, span: Span) -> AttrTokenTree {
         Spacing::Alone,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::doc_attribute;
+    use rustc_ast::token::{Delimiter, LitKind, TokenKind};
+    use rustc_ast::tokenstream::TokenTree;
+
+    /// An attribute macro reads every attribute of the item it decorates through the attribute's tokens, so the doc
+    /// attribute carrying a definition's tracked input has the tokens of `#[doc = "..."]` as well as its value.
+    #[test]
+    fn a_doc_attribute_carries_the_tokens_an_attribute_macro_reads() {
+        rustc_span::create_default_session_globals_then(|| {
+            let generator = rustc_ast::attr::AttrIdGenerator::new();
+            let text = "incan-native-input:0a1b \"quoted\"";
+            let attribute = doc_attribute(&generator, text, rustc_span::DUMMY_SP);
+            assert_eq!(
+                attribute.value_str().map(|value| value.to_string()),
+                Some(text.to_owned())
+            );
+            let trees = attribute.token_trees();
+            assert_eq!(trees.len(), 2, "{trees:?}");
+            assert!(matches!(&trees[0], TokenTree::Token(token, _) if token.kind == TokenKind::Pound));
+            let TokenTree::Delimited(_, _, Delimiter::Bracket, inside) = &trees[1] else {
+                panic!("the attribute's body is not bracketed: {trees:?}");
+            };
+            let inside: Vec<&TokenTree> = inside.iter().collect();
+            assert_eq!(inside.len(), 3, "{inside:?}");
+            assert!(matches!(inside[0], TokenTree::Token(token, _) if token.is_ident_named(rustc_span::sym::doc)));
+            assert!(matches!(inside[1], TokenTree::Token(token, _) if token.kind == TokenKind::Eq));
+            let TokenTree::Token(token, _) = inside[2] else {
+                panic!("the attribute's value is not one literal: {inside:?}");
+            };
+            let TokenKind::Literal(literal) = token.kind else {
+                panic!("the attribute's value is not a literal: {token:?}");
+            };
+            assert_eq!(literal.kind, LitKind::Str);
+            assert_eq!(literal.symbol.as_str(), "incan-native-input:0a1b \\\"quoted\\\"");
+        });
+    }
+}
