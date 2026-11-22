@@ -226,7 +226,9 @@ pub fn compile(
         reader,
     };
     let capture = crate::native_timing::Capture::begin();
+    crate::native_crates::release_extern_crates();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
+    crate::native_crates::release_extern_crates();
     capture.finish(callbacks.codegen_started.map(|started| started.elapsed()));
     callbacks.timing.mark("rustc_codegen_link_teardown");
     *PLAN.lock().map_err(|_| DriverError::State)? = None;
