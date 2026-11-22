@@ -369,7 +369,7 @@ def execute_in(
         # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
         if let Some(found) = bound:
             fork_project_view(store, found, view)?
-    elif not proofs and command != "check" and output == "":
+    elif not proofs and command != "check" and output == "" and unit_options == "":
         if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
