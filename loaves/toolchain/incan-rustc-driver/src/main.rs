@@ -3,6 +3,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 extern crate rustc_abi;
 extern crate rustc_ast;
+extern crate rustc_codegen_ssa;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_feature;
@@ -11,6 +12,7 @@ extern crate rustc_index;
 extern crate rustc_infer;
 extern crate rustc_interface;
 extern crate rustc_middle;
+extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_trait_selection;

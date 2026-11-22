@@ -54,7 +54,9 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
         registry_aliases=[],
     )
     request = RustBuild(project="root", rustc="rustc", registry=RegistryUnits(units=[], search=[]))
-    assert rust_library_compiler_identity("rlib", "compiler", "sdk one")? == rust_library_compiler_identity(
+    archive_compiler = rust_library_compiler_identity("rlib", "compiler", "sdk one")?
+    assert archive_compiler != "compiler"
+    assert archive_compiler == rust_library_compiler_identity(
         "rlib",
         "compiler",
         "sdk two",
