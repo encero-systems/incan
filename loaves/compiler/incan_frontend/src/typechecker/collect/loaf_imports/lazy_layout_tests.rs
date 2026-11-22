@@ -375,3 +375,44 @@ fn a_loafs_canonical_type_remapping_is_the_one_its_install_record_lists() -> Tes
     );
     Ok(())
 }
+
+/// Installing a compiled Loaf registers the declarations its install record lists: given a record that omits the
+/// Loaf's trait, the trait keeps its root name's entry but is not registered under its declaration key.
+#[test]
+fn a_loaf_registers_the_declarations_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    let module_path = record
+        .modules
+        .iter()
+        .find(|module| module.declarations.iter().any(|declared| declared.name == "Shape"))
+        .map(|module| module.module_path.clone())
+        .ok_or("the record lists no Shape")?;
+    for module in &mut record.modules {
+        module.declarations.retain(|declared| declared.name != "Shape");
+    }
+    let key = TypeChecker::declaration_type_key("shapes", &module_path, "Shape");
+    let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
+    whole.cache_transitive_pub_export_semantics("shapes", &manifest);
+    assert!(
+        whole.transitive_pub_traits.contains_key(&key),
+        "the whole record registers {key}"
+    );
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes", &manifest);
+    assert!(
+        consumer.transitive_pub_traits.contains_key("Shape"),
+        "the root trait keeps its root name"
+    );
+    assert!(
+        !consumer.transitive_pub_traits.contains_key(&key),
+        "a declaration the record omits is registered under {key}"
+    );
+    Ok(())
+}
