@@ -1045,10 +1045,15 @@ def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
 
 
 def build_environment(run: ReleaseRun, home: Path, oven: Path) -> Dict[str, str]:
-    """Return the release-owned environment supplied independently to one child process."""
-    return {"INCAN_HOME": home.0, "INCAN_STDLIB": run.paths.source.joinpath("loaves/stdlib").0, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": run.paths.lane.0, "SELFBUILD_HOME": home.0, "SELFBUILD_OVEN": oven.0, "SELFBUILD_STDLIB": run.paths.source.joinpath(
+    """
+    Return the release-owned environment supplied independently to one child process, which names `oven` as the engine
+    its scheduled units run on, as every native production step does (see `common_environment`).
+    """
+    mut environment = {"INCAN_HOME": home.0, "INCAN_STDLIB": run.paths.source.joinpath("loaves/stdlib").0, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": run.paths.lane.0, "SELFBUILD_HOME": home.0, "SELFBUILD_OVEN": oven.0, "SELFBUILD_STDLIB": run.paths.source.joinpath(
         "loaves/stdlib",
     ).0}
+    environment["OVEN_ENGINE_BINARY"] = oven.0
+    return environment
 
 
 def withdraw_seed_providers(run: ReleaseRun) -> Result[None, str]:
