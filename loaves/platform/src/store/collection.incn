@@ -85,7 +85,7 @@ pub def collect_records(
         latest.pin = None
         latest = compacted
     mut marked = Marked()
-    for entry in latest.views:
+    for entry in latest.views.as_ref():
         mark_snapshot(marked, read_manifest(root, latest.generation, latest.digest, entry.view)?, references)?
     # 2. New pins can register during traversal; readers themselves never take publication's lock.
     for _attempt in range(8):
@@ -116,7 +116,7 @@ def compacted_packs(root: Path, latest: Snapshot) -> Result[Snapshot, StoreError
     before the switch, the store's one visibility boundary: a process stopped before `CURRENT` names the compacted
     generation leaves the previous one, whose packs are all still present. The caller holds publication's lock.
     """
-    usage = pack_usage(root, [entry.root for entry in latest.views]).map_err(index_failure)?
+    usage = pack_usage(root, [entry.root for entry in latest.views.as_ref()]).map_err(index_failure)?
     mut moving: set[str] = set()
     for pack in usage.keys():
         path = pack_path(root, pack)
@@ -132,7 +132,7 @@ def compacted_packs(root: Path, latest: Snapshot) -> Result[Snapshot, StoreError
     publication_boundary("staging-created")
     writer = PageWriter()
     mut built: list[ViewRoot] = []
-    for entry in latest.views:
+    for entry in latest.views.as_ref():
         built.append(ViewRoot(view=entry.view, root=repacked(root, entry.root, writer, moving).map_err(index_failure)?))
     publication_boundary("pages-staged")
     pack = install_pack(root, writer, staged.joinpath("pages")).map_err(index_failure)?
@@ -189,7 +189,7 @@ def live_snapshots(root: Path, mut marked: Marked) -> Result[list[Snapshot], Sto
                     return Err(failure("integrity", path.value, "malformed lease manifest digest"))
                 manifest = read_manifest(root, generation, fields[1], HOME_VIEW)?
                 mut found = false
-                for entry in manifest.views:
+                for entry in manifest.views.as_ref():
                     selected = read_manifest(root, generation, fields[1], entry.view)?
                     if lease_token(selected) == token:
                         pending.append(selected)
