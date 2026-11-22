@@ -180,6 +180,7 @@ pub def check_program(
     view: str = "",
     unit_options: str = "",
     record_writer: str = "",
+    scheduled_origin: str = "",
 ) -> Result[CheckOutcome, str]:
     """
     Describe and check one captured build reach without requesting code generation or a native selection. The check
@@ -192,6 +193,7 @@ pub def check_program(
     mut toolchain = home.toolchain
     toolchain.console = console
     asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    verify_scheduled_origin(asked, scheduled_origin)?
     ready = prepared_for(view, asked, toolchain)?
     # A unit without per-declaration records is checked whole, keyed by its full inputs as every check is.
     whole = whole_unit_reason(ready, unit_options)?
@@ -281,6 +283,7 @@ pub def obtain(
     selected_home: Option[SelectedHome] = None,
     unit_options: str = "",
     record_writer: str = "",
+    scheduled_origin: str = "",
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -326,6 +329,7 @@ pub def obtain(
 
     toolchain.console = console
     asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    verify_scheduled_origin(asked, scheduled_origin)?
     ready = prepared_for(program_view(handle)?, asked, toolchain)?
     whole = whole_unit_reason(ready, unit_options)?
     if whole != "":
@@ -529,6 +533,13 @@ pub def obtain(
             sealed=sealed,
         ),
     )
+
+
+def verify_scheduled_origin(unit: Borrowed[UnitDescription], scheduled: str) -> Result[None, str]:
+    """Refuse before graph production if a manifest edit changed the authority the coordinator reserved."""
+    if scheduled != "" and scheduled != source_origin(unit):
+        return Err("the unit's package name changed before settlement; submit a new request")
+    return Ok(None)
 
 
 def requested_unit(

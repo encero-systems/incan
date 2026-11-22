@@ -40,6 +40,8 @@ pub model Pending:
     pub unit_options: str = ""
     # The generation of the records this request reads and writes: its engine's compiler and Oven.
     pub records: str = ""
+    # This request's exclusive source-record authority, as classified before capture.
+    pub origin: str = ""
 
 
 pub model ExecutionLease:
@@ -110,6 +112,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(pending.capture.selected),
         pending.unit_options,
         pending.records,
+        pending.origin,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()
@@ -259,6 +262,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         pending.view,
         pending.unit_options,
         pending.records,
+        pending.origin,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()

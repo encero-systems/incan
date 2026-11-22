@@ -22,11 +22,11 @@ from engine_proofs import report
 from overlay_request import OverlayRequest, parse_served
 from overlay_hover import overlay_hover
 from engine_state import Identity
+pub from engine_state import service_generation
 from engine_wire import Refusal
 from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
-from retained_readings import installed_digest
 from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, get, put, view_snapshot
 from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_directory
@@ -548,11 +548,6 @@ def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
             uid=owner_uid(store).map_err(detail)?,
         ),
     )
-
-
-pub def service_generation(binary: str) -> Result[str, str]:
-    """Name the engine service implementation by exact bytes, independent of its installed path."""
-    return fingerprint(["incan.engine.service/2", installed_digest(Path(binary))?])
 
 
 def physical_store_identity(store: Path) -> Result[str, str]:
