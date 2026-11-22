@@ -21,6 +21,8 @@ pub struct CheckedNamespaceInterface {
     module_name: String,
     module_path: Vec<String>,
     api: crate::api_metadata::CheckedApiMetadata,
+    /// Canonical identity of each API declaration, by its key from [`declaration_identity_keys`]: its name, or for a
+    /// member of an overload set its name and its position among the set, so every overload keeps its own identity.
     identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Member identities by declaration name. API metadata carries a member's identity only for a package origin, so
     /// an editable module's variants, fields, properties and methods keep theirs here (#3154).
@@ -109,19 +111,24 @@ impl CheckedNamespaceInterface {
         }
         let mut identities = std::collections::BTreeMap::new();
         let mut members = std::collections::BTreeMap::new();
-        for declaration in &api.declarations {
-            let Some(name) = namespace_declaration_name(declaration) else {
-                return Ok(None);
-            };
+        if api
+            .declarations
+            .iter()
+            .any(|declaration| namespace_declaration_name(declaration).is_none())
+        {
+            return Ok(None);
+        }
+        for (declaration, key) in api
+            .declarations
+            .iter()
+            .zip(declaration_identity_keys(&api.declarations))
+        {
+            let name = declaration.name();
             let Some(symbol_id) = checker.symbols.lookup(name) else {
                 return Err(format!("checked namespace declaration `{name}` has no symbol"));
             };
-            let Some(identity) = checker.symbols.identity_of(symbol_id) else {
-                return Err(format!(
-                    "checked namespace declaration `{name}` has no canonical identity"
-                ));
-            };
-            if identities.insert(name.to_owned(), identity.clone()).is_some() {
+            let identity = declared_identity(checker, symbol_id, declaration)?;
+            if identities.insert(key, identity).is_some() {
                 return Ok(None);
             }
             if let Some(symbol) = checker.symbols.get(symbol_id) {
@@ -371,12 +378,32 @@ impl CheckedNamespaceInterface {
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
-        for declaration in &self.api.declarations {
+        let keys = declaration_identity_keys(&self.api.declarations);
+        let mut overload_sets = self.overload_sets(&mut converter, &foreign_aliases, &keys)?;
+        for (declaration, key) in self.api.declarations.iter().zip(&keys) {
             let name = namespace_declaration_name(declaration)
                 .ok_or("checked namespace interface contains an unsupported declaration")?;
+            // An overload set is installed once, where its first member is declared, as the checker declared it.
+            if key != name {
+                if let Some(overloads) = overload_sets.remove(name) {
+                    let span = overloads.first().map(|overload| overload.span).unwrap_or_default();
+                    let kind = SymbolKind::FunctionOverloads(overloads);
+                    symbols.insert(name.to_owned(), kind.clone());
+                    symbol_rows.push((
+                        Symbol {
+                            name: name.to_owned(),
+                            kind,
+                            span,
+                            scope: 0,
+                        },
+                        None,
+                    ));
+                }
+                continue;
+            }
             let identity = self
                 .identities
-                .get(name)
+                .get(key)
                 .ok_or_else(|| format!("checked namespace declaration `{name}` has no identity"))?
                 .clone();
             let Some(mut kind) = converter.symbol_kind_from_api_declaration(None, declaration) else {
@@ -412,16 +439,24 @@ impl CheckedNamespaceInterface {
                 Some(identity),
             ));
         }
+        // Every member of an overload set exports the one spelling, which its first member exports.
+        let first_overload = format!("{OVERLOAD_KEY_SEPARATOR}0");
         let exports = self
             .api
             .declarations
             .iter()
-            .flat_map(namespace_exports)
+            .zip(&keys)
+            .filter(|(declaration, key)| key.as_str() == declaration.name() || key.ends_with(&first_overload))
+            .flat_map(|(declaration, _)| namespace_exports(declaration))
             .collect::<Vec<_>>();
+        // An overload set has no single declaration identity; each member keeps its own inside the set.
         let identities = self
-            .identities
+            .api
+            .declarations
             .iter()
-            .map(|(name, identity)| (name.clone(), identity.clone()))
+            .zip(&keys)
+            .filter(|(declaration, key)| declaration.name() == key.as_str())
+            .filter_map(|(_, key)| self.identities.get(key).map(|identity| (key.clone(), identity.clone())))
             .collect::<HashMap<_, _>>();
         let nominal_scope = &self.nominal_scope;
         let mut retained_scope = false;
@@ -480,6 +515,42 @@ impl CheckedNamespaceInterface {
         Ok(Arc::new(interface))
     }
 
+    /// Rebuild each overload set the checker declared, by name: every member with its own identity, its declared
+    /// span and the emitted name its checked signature gives it, in declaration order.
+    fn overload_sets(
+        &self,
+        converter: &mut TypeChecker,
+        foreign_aliases: &HashMap<String, String>,
+        keys: &[String],
+    ) -> Result<HashMap<String, Vec<FunctionOverloadInfo>>, String> {
+        let mut sets = HashMap::<String, Vec<FunctionOverloadInfo>>::new();
+        for (declaration, key) in self.api.declarations.iter().zip(keys) {
+            let name = declaration.name();
+            if key == name {
+                continue;
+            }
+            let identity = self
+                .identities
+                .get(key)
+                .ok_or_else(|| format!("checked namespace overload `{name}` has no identity"))?
+                .clone();
+            let Some(mut kind) = converter.symbol_kind_from_api_declaration(None, declaration) else {
+                return Err(format!("checked namespace overload `{name}` has no semantic symbol"));
+            };
+            converter.remap_checked_namespace_aliases(&mut kind, &self.nominal_scope, foreign_aliases);
+            let SymbolKind::Function(mut info) = kind else {
+                return Err(format!("checked namespace overload `{name}` is not a function"));
+            };
+            info.emitted_name = Some(crate::symbols::overloaded_function_emitted_name(name, &info));
+            sets.entry(name.to_owned()).or_default().push(FunctionOverloadInfo {
+                info,
+                span: namespace_declaration_span(declaration),
+                identity: Some(identity),
+            });
+        }
+        Ok(sets)
+    }
+
     /// Key the exported ownership facts by the same checked declaration selected at the editable call site.
     fn projected_input_contracts(
         &self,
@@ -503,13 +574,18 @@ impl CheckedNamespaceInterface {
             }
             Ok(())
         };
-        for declaration in &self.api.declarations {
+        for (declaration, key) in self
+            .api
+            .declarations
+            .iter()
+            .zip(declaration_identity_keys(&self.api.declarations))
+        {
             let methods = match declaration {
                 ApiDeclaration::Function(function) => {
                     if let Some(contract) = &function.ownership {
                         add(
                             &function.name,
-                            self.identities.get(&function.name),
+                            self.identities.get(&key),
                             SemanticSourceTargetKind::Function,
                             contract,
                         )?;
@@ -580,11 +656,16 @@ impl CheckedNamespaceInterface {
         if self.members.keys().any(|name| !self.identities.contains_key(name)) {
             return Err("checked namespace interface has members of an undeclared name".into());
         }
-        for declaration in &self.api.declarations {
+        for (declaration, key) in self
+            .api
+            .declarations
+            .iter()
+            .zip(declaration_identity_keys(&self.api.declarations))
+        {
             let Some(name) = namespace_declaration_name(declaration) else {
                 return Err("checked namespace interface contains an unsupported declaration".into());
             };
-            let Some(identity) = self.identities.get(name) else {
+            let Some(identity) = self.identities.get(&key) else {
                 return Err("checked namespace interface is missing a declaration identity".into());
             };
             if let crate::api_metadata::ApiDeclaration::Alias(alias) = declaration
@@ -796,6 +877,66 @@ fn namespace_declaration_name(declaration: &crate::api_metadata::ApiDeclaration)
         crate::api_metadata::ApiDeclaration::Alias(item) => Some(&item.name),
         crate::api_metadata::ApiDeclaration::Partial(item) => Some(&item.name),
     }
+}
+
+/// Separates an overload's name from its position among its set in an identity key; no declaration name contains it.
+const OVERLOAD_KEY_SEPARATOR: char = '#';
+
+/// The identity key of each API declaration, in declaration order: its name, or for each function of a spelling two
+/// or more functions declare, the name and the function's position among them.
+fn declaration_identity_keys(declarations: &[crate::api_metadata::ApiDeclaration]) -> Vec<String> {
+    use crate::api_metadata::ApiDeclaration;
+    let mut functions = HashMap::<&str, usize>::new();
+    for declaration in declarations {
+        if let ApiDeclaration::Function(function) = declaration {
+            *functions.entry(function.name.as_str()).or_default() += 1;
+        }
+    }
+    let mut positions = HashMap::<&str, usize>::new();
+    declarations
+        .iter()
+        .map(|declaration| match declaration {
+            ApiDeclaration::Function(function)
+                if functions.get(function.name.as_str()).is_some_and(|count| *count > 1) =>
+            {
+                let position = positions.entry(function.name.as_str()).or_default();
+                let key = format!("{}{OVERLOAD_KEY_SEPARATOR}{position}", function.name);
+                *position += 1;
+                key
+            }
+            _ => declaration.name().to_owned(),
+        })
+        .collect()
+}
+
+/// The canonical identity the checker declared for one API declaration: the symbol's own, or for a member of an
+/// overload set, the identity of the overload declared at the declaration's span. A member without one is refused.
+fn declared_identity(
+    checker: &TypeChecker,
+    symbol_id: crate::symbols::SymbolId,
+    declaration: &crate::api_metadata::ApiDeclaration,
+) -> Result<CanonicalSymbolId, String> {
+    let name = declaration.name();
+    if let Some(Symbol {
+        kind: SymbolKind::FunctionOverloads(overloads),
+        ..
+    }) = checker.symbols.get(symbol_id)
+    {
+        let span = namespace_declaration_span(declaration);
+        let overload = overloads
+            .iter()
+            .find(|overload| overload.span == span)
+            .ok_or_else(|| format!("checked namespace overload `{name}` has no checked member at its declaration"))?;
+        return overload
+            .identity
+            .clone()
+            .ok_or_else(|| format!("checked namespace overload `{name}` has no canonical identity"));
+    }
+    checker
+        .symbols
+        .identity_of(symbol_id)
+        .cloned()
+        .ok_or_else(|| format!("checked namespace declaration `{name}` has no canonical identity"))
 }
 
 /// Return the checked source anchor shared by every currently supported namespace declaration.
