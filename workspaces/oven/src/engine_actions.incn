@@ -255,6 +255,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         Some(pending.capture.selected),
         pending.view,
         pending.unit_options,
+        pending.producer,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()
