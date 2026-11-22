@@ -9,6 +9,7 @@
 #![allow(clippy::type_complexity)]
 
 #[test]
+/// Reject runtime exports whose Rust signatures differ from the native plan call sites.
 fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(i64) -> i64 = crate::absolute_int;
     let _: fn(i64, i64) -> i64 = crate::add_newtype_sum;
@@ -19,6 +20,7 @@ fn every_runtime_function_takes_its_call_site_types() {
     // Call site: assertions.incn: [pointer_type, PlanType.String, PlanType.String].
     let _: fn(fn(), String, String) = crate::assert_raises_deferred;
     let _: fn(i64) -> bool = crate::begin_module_initialization;
+    let _: fn(u64, i64) -> bool = crate::begin_unit_module_initialization;
     let _: fn(bool, bool) -> bool = crate::boolean_and;
     let _: fn(bool, bool) -> bool = crate::boolean_or;
     // Call site: callable_calls.incn: [PlanType.String, PlanType.USize].
@@ -41,6 +43,7 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: for<'a, 'b> fn(&'a std::string::String, &'b std::string::String) -> (bool, bool) =
         crate::decode_replacement_policy;
     let _: fn(i64) = crate::end_module_initialization;
+    let _: fn(u64, i64) = crate::end_unit_module_initialization;
     let _: for<'a, 'b> fn(&'a std::string::String, &'b std::string::String) -> bool = crate::ends_text;
     let _: for<'a> fn(&'a std::vec::Vec<u8>) -> std::vec::Vec<(i64, i64)> = crate::enumerate_bytes;
     let _: for<'a> fn(&'a std::string::String) -> std::vec::Vec<(i64, std::string::String)> = crate::enumerate_text;
@@ -217,6 +220,14 @@ fn every_runtime_function_takes_its_call_site_types() {
     // Call site: static cell rule: [PlanType.Int, ty].
     let _: fn(i64, std::collections::HashMap<String, i64>) -> std::collections::HashMap<String, i64> =
         crate::read_static_text_int_dict;
+    let _: fn(u64, i64, bool) -> bool = crate::read_static_bool_in_unit;
+    let _: fn(u64, i64, f64) -> f64 = crate::read_static_float_in_unit;
+    let _: fn(u64, i64, i64) -> i64 = crate::read_static_int_in_unit;
+    let _: fn(u64, i64, std::collections::HashSet<i64>) -> std::collections::HashSet<i64> =
+        crate::read_static_int_set_in_unit;
+    let _: fn(u64, i64, String) -> String = crate::read_static_text_in_unit;
+    let _: fn(u64, i64, std::collections::HashMap<String, i64>) -> std::collections::HashMap<String, i64> =
+        crate::read_static_text_int_dict_in_unit;
     let _: fn(incan_std_primitives::iter::Generator<i64>, i64, fn(i64, i64) -> i64) -> i64 =
         crate::reduce_int_generator;
     let _: fn(std::string::String, usize, std::string::String) = crate::register_callable_name;
@@ -287,4 +298,10 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(i64, std::string::String) = crate::write_static_text;
     // Call site: static cell rule: [PlanType.Int, ty].
     let _: fn(i64, std::collections::HashMap<String, i64>) = crate::write_static_text_int_dict;
+    let _: fn(u64, i64, bool) = crate::write_static_bool_in_unit;
+    let _: fn(u64, i64, f64) = crate::write_static_float_in_unit;
+    let _: fn(u64, i64, i64) = crate::write_static_int_in_unit;
+    let _: fn(u64, i64, std::collections::HashSet<i64>) = crate::write_static_int_set_in_unit;
+    let _: fn(u64, i64, String) = crate::write_static_text_in_unit;
+    let _: fn(u64, i64, std::collections::HashMap<String, i64>) = crate::write_static_text_int_dict_in_unit;
 }
