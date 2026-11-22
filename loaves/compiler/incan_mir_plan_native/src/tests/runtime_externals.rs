@@ -127,8 +127,7 @@ fn product_keeps_a_loaf_rust_facet_external() -> Result<(), String> {
     Ok(())
 }
 
-/// A product naming a Rust-facet function restores only in a unit that links the function's crate; one naming
-/// another crate is refused rather than reaching rustc as an unresolved path.
+/// Requires linked crates unless the caller can still resolve the call's exact recorded runtime demand.
 #[test]
 fn a_restored_product_names_only_crates_its_unit_links() -> Result<(), String> {
     let (caller, runtime) = facet_caller();
@@ -150,6 +149,31 @@ fn a_restored_product_names_only_crates_its_unit_links() -> Result<(), String> {
             "a product naming {name} restored in a unit that does not link it"
         );
     }
+    let mut pending = linked;
+    pending.remove("incan_stdlib_primitives");
+    let path = "incan_stdlib_primitives::encode_utf8";
+    assert!(
+        placed
+            .restore_with_runtime_demands(&references, &pending, &|candidate| candidate == path)
+            .is_err(),
+        "a pending scope admitted a call absent from the product's runtime demands",
+    );
+    let mut runtime = runtime;
+    runtime.push(ExternalFunction {
+        path: path.to_owned(),
+        type_arguments: Vec::new(),
+        parameters: vec![PlanType::StringRef],
+        return_type: PlanType::Unit,
+        span: caller.span.clone(),
+    });
+    let product = encode_product(&caller, &runtime, &[], &[])?;
+    let placed = place_product_record(&product, &WirePositions::preserve())?;
+    let (restored, demands, _) =
+        placed.restore_with_runtime_demands(&references, &pending, &|candidate| candidate == path)?;
+    assert!(
+        restored == caller && demands == runtime,
+        "a pending call lost its exact demand"
+    );
     Ok(())
 }
 
@@ -221,6 +245,21 @@ fn product_keeps_a_rust_constant() -> Result<(), String> {
     assert!(
         placed.restore(&[], &BTreeSet::new()).is_err(),
         "a product reading a Loaf's constant restored in a unit that does not link its crate"
+    );
+    let runtime = [ExternalFunction {
+        path: "internal_models_native::CHECKER_PROFILE".to_owned(),
+        type_arguments: Vec::new(),
+        parameters: Vec::new(),
+        return_type: PlanType::StaticText,
+        span: span.clone(),
+    }];
+    let runtime_product = encode_product(&reader, &runtime, &[], &[])?;
+    let runtime_product = place_product_record(&runtime_product, &WirePositions::preserve())?;
+    assert!(
+        runtime_product
+            .restore_with_runtime_demands(&[], &BTreeSet::new(), &|_| true)
+            .is_err(),
+        "an unresolved call demand admitted a linked constant",
     );
     let linked: BTreeSet<String> = ["internal_models_native".to_owned()].into_iter().collect();
     let (linked_reader, _, _) = placed.restore(&[], &linked)?;

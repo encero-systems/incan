@@ -94,9 +94,15 @@ fn moved_body_lines_keep_the_plan_product() -> Result<(), String> {
     );
     assert!(unchanged == inputs);
     let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let Some((function, _, _, _, _)) =
-        retained_scalar(&text, &inputs, &unit, &BTreeSet::new(), Some(&owner), &after_nodes)
-    else {
+    let Some((function, _, _, _, _)) = retained_scalar(
+        &text,
+        &inputs,
+        &unit,
+        &BTreeSet::new(),
+        None,
+        Some(&owner),
+        &after_nodes,
+    ) else {
         return Err("a comment that moved lines inside the body made the product a miss".into());
     };
     assert!(
