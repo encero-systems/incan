@@ -1,0 +1,98 @@
+"""Count source and payload operations across changed and unchanged program requests."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from files import make_directory, read, write
+from lowering_record_fixtures import stop_example_engine
+from scratch import scratch_directory
+
+
+pub def test_an_edit_reads_and_hashes_its_source_once() -> Result[None, str]:
+    """
+    Count a normal one-file edit and the unchanged launch that follows it.
+
+    1. Warm the records engine with a single source.
+    2. Edit its only string, run it, and compare the trace with the first run.
+    3. Launch unchanged and require no new executable or loader-payload hashes.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().resolve().map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    project = root.joinpath("project")
+    trace = root.joinpath("trace")
+    store = root.joinpath("bakery")
+    make_directory(project)?
+    make_directory(trace)?
+    source = project.joinpath("hello.incn")
+    # 1. The first run installs the unit and its launch payloads.
+    write(source, "def main() -> None:\n    println(\"one\")\n")?
+    first = run_source(binary, project, store, trace)?
+    before = observation_counts(trace, source)?
+    # 2. Change one input and compare only the operations of this edit.
+    write(source, "def main() -> None:\n    println(\"two\")\n")?
+    changed = run_source(binary, project, store, trace)?
+    edited = observation_counts(trace, source)?
+    # 3. The selected view and immutable artifacts are current for this launch.
+    repeated = run_source(binary, project, store, trace)?
+    unchanged = observation_counts(trace, source)?
+    stop_example_engine(binary, store)?
+    assert first == b"one\n" and changed == b"two\n" and repeated == changed
+    reads = edited.reads - before.reads
+    hashes = edited.hashes - before.hashes
+    assert reads == 1 and hashes == 1, f"one edited source was read {reads} times and hashed {hashes} times"
+    assert unchanged.all_hashes == edited.all_hashes, "an unchanged run hashed an executable or loader payload"
+    return Ok(None)
+
+
+def run_source(binary: str, project: Path, store: Path, trace: Path) -> Result[bytes, str]:
+    """Run the fixture through the normal records entry point and trace file operations."""
+    mut command = Command.new(binary)
+    command.arg("run").arg("hello.incn").current_dir(project.0)
+    command.env("INCAN_ENGINE", "records").env("OVEN_ENGINE_BINARY", binary)
+    command.env("INCAN_BAKERY", store.0).env("INCAN_ENGINE_TRACE", trace.0)
+    command.env_remove("OVEN_TRACE").env_remove("INCAN_NATIVE_TIMING")
+    outcome = command.output().map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(str(from_utf8(outcome.stderr).map_err((error) => str(error))?))
+    return Ok(outcome.stdout)
+
+
+model Counts:
+    """Traced reads and hashes of the edited file, and hashes of all paths."""
+    reads: int = 0
+    hashes: int = 0
+    all_hashes: int = 0
+
+
+def observation_counts(trace: Path, source: Path) -> Result[Counts, str]:
+    """Sum the process traces flushed before the command returned."""
+    mut found = Counts()
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().endswith(".jsonl"):
+            continue
+        for line in read(file)?.split("\n"):
+            if line == "":
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            if trace_text(event, "kind")? != "span":
+                continue
+            operation = trace_text(event, "operation")?
+            if operation in ["file_read", "file_hash"]:
+                amount = event.require("calls").map_err((error) => error.message())?
+                calls = amount.expect_int().map_err((error) => error.message())?
+                selected = trace_text(event, "key")? == source.0
+                if operation == "file_read" and selected:
+                    found.reads += calls
+                if operation == "file_hash":
+                    found.all_hashes += calls
+                    if selected:
+                        found.hashes += calls
+    return Ok(found)
+
+
+def trace_text(row: JsonValue, key: str) -> Result[str, str]:
+    """Read a required trace field as text without coercing bad evidence."""
+    return row.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
