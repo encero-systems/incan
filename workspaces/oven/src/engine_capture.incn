@@ -58,6 +58,7 @@ pub enum InputRole(str):
 
     Root = "root"
     Member = "member"
+    ProjectMember = "project-member"
     Resolved = "resolved"
     Manifest = "manifest"
     Lock = "lock"
@@ -143,7 +144,7 @@ pub model CapturedInput:
 
 @derive(Eq)
 pub model CapturedListing:
-    """One directory of a package's membership, retaining both source facets and the subdirectories it held."""
+    """One directory's source names and candidate subdirectories, which may become separate projects independently."""
 
     pub path: str
     pub metadata: FileMetadata
@@ -176,6 +177,7 @@ model SourceMembership:
 
     root: str
     extension: str
+    role: InputRole = InputRole.Member
 
 
 @derive(Eq)
@@ -219,31 +221,11 @@ pub model BuildEpoch:
                 return Some(item)
         return None
 
-    pub def source_files(self, root: str) -> list[str]:
-        """
-        The Incan files in the captured tree of `root`.
-
-        1. Index the listings by directory.
-        2. Follow the tree from `root` so a nested project captured as a dependency does not become a member.
-        """
-        # 1. Index rows without copying their lists of children.
-        positions = {self.listings[index].path: index for index in range(len(self.listings))}
-        # 2. Only children admitted by the containing directory belong to this tree.
-        mut pending = [root]
-        mut files: list[str] = []
-        mut next = 0
-        while next < len(pending):
-            directory = pending[next]
-            next += 1
-            if directory not in positions:
-                continue
-            index = positions[directory]
-            for name in self.listings[index].files:
-                if name.endswith(".incn"):
-                    files.append(Path(directory).joinpath(name).0)
-            for name in self.listings[index].directories:
-                pending.append(Path(directory).joinpath(name).0)
-        return files
+    pub def project_sources(self, root: str) -> list[str]:
+        """The current project's admitted Incan membership, including the selected entry if it is under `root`."""
+        return [item.path for item in self.inputs if item.role == InputRole.ProjectMember or (
+            item.role == InputRole.Root and item.path.startswith(root + "/")
+        )]
 
 
 pub model ClassCounters:
@@ -411,7 +393,7 @@ pub def capture_with(
         membership.extend(members)
     # 3. A package's membership is listed with the compiler's collection rules; a graph's paths were checked by name.
     for source in membership:
-        state.members(source.root, source.extension)?
+        state.members(source)?
     # 4. Recorded lookups are checked at their exact paths, and nowhere else.
     state.lookups(request.witnesses)?
     # 5. The previous epoch is returned unchanged when nothing differs.
@@ -432,6 +414,8 @@ model Capture:
     found: Dict[str, CapturedInput] = {}
     missing: Dict[str, InputPath] = {}
     listed: Dict[str, CapturedListing] = {}
+    # A directory's nested-project decision is retained only for this observation, across both source facets.
+    member_directories: Dict[str, bool] = {}
     unstable: list[str] = []
     declared: Dict[str, Declarations] = {}
     # The previous epoch, indexed once so that no step copies it.
@@ -490,8 +474,8 @@ model Capture:
                         self.graph_members(graph)?
                         if project_library:
                             if let Some(root) = project:
-                                return self.source_memberships(root)
-                    None => return self.unit_membership(Path(path), project)
+                                return self.source_memberships(root, true)
+                    None => return self.unit_membership(Path(path), project, project_library)
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
@@ -511,10 +495,12 @@ model Capture:
             _ = self.editable(path, InputRole.Member)?
         return Ok(None)
 
-    def unit_membership(mut self, source: Path, project: Option[str]) -> Result[list[SourceMembership], str]:
+    def unit_membership(
+        mut self, source: Path, project: Option[str], project_library: bool,
+    ) -> Result[list[SourceMembership], str]:
         """Capture the whole-unit producer's authored inventory, including an entry outside its source root."""
         if let Some(root) = project:
-            mut selected = self.source_memberships(root)?
+            mut selected = self.source_memberships(root, project_library)?
             for membership in selected:
                 if membership.extension == ".incn" and source.0.startswith(membership.root + "/"):
                     return Ok(selected)
@@ -556,7 +542,7 @@ model Capture:
         for dependency in self.declared[path].dependencies:
             if self.manifest(Path(dependency).joinpath("loaf.toml").0)?:
                 for source in self.source_memberships(dependency)?:
-                    self.members(source.root, source.extension)?
+                    self.members(source)?
         return Ok(true)
 
     def source_root(mut self, project: str) -> Result[str, str]:
@@ -574,11 +560,14 @@ model Capture:
             None => pass
         return Ok(project)
 
-    def source_memberships(mut self, project: str) -> Result[list[SourceMembership], str]:
+    def source_memberships(mut self, project: str, project_library: bool = false) -> Result[list[SourceMembership], str]:
         """Resolve the Incan source root and any explicit or conventional Rust source tree for one project."""
         root = Path(project)
         manifest = root.joinpath("loaf.toml").0
-        mut sources = [SourceMembership(root=self.source_root(project)?, extension=".incn")]
+        mut incan_role = InputRole.Member
+        if project_library:
+            incan_role = InputRole.ProjectMember
+        mut sources = [SourceMembership(root=self.source_root(project)?, extension=".incn", role=incan_role)]
         if manifest in self.declared and self.declared[manifest].rust_source_root != "":
             sources.append(
                 SourceMembership(root=root.joinpath(self.declared[manifest].rust_source_root).0, extension=".rs"),
@@ -587,13 +576,13 @@ model Capture:
             sources.append(SourceMembership(root=root.joinpath("src").0, extension=".rs"))
         return Ok(sources)
 
-    def members(mut self, top: str, extension: str = ".incn") -> Result[None, str]:
+    def members(mut self, source: SourceMembership) -> Result[None, str]:
         """
-        Capture a source facet's membership under `top`, with each directory listed only when it changed.
+        Capture a source facet's membership under its root, listing each admitted directory only when it changed.
 
         Hidden directories, `target` and `node_modules` are not entered, as the compiler collects a package.
         """
-        mut pending = [top]
+        mut pending = [source.root]
         mut index = 0
         while index < len(pending):
             directory = pending[index]
@@ -601,15 +590,26 @@ model Capture:
             if self.is_frozen(directory):
                 self.counters.frozen.inputs += 1
                 continue
+            if directory != source.root and not self.member_directory(directory):
+                continue
             match self.listing(directory)?:
                 None => pass
                 Some(entry) =>
                     for name in entry.files:
-                        if name.endswith(extension):
-                            _ = self.editable(Path(directory).joinpath(name).0, InputRole.Member)?
+                        if name.endswith(source.extension):
+                            _ = self.editable(Path(directory).joinpath(name).0, source.role)?
                     for name in entry.directories:
                         pending.append(Path(directory).joinpath(name).0)
         return Ok(None)
+
+    def member_directory(mut self, directory: str) -> bool:
+        """Observe a child's manifest boundary even when the parent's cached directory names still hold."""
+        if directory in self.member_directories:
+            return self.member_directories[directory]
+        self.counters.in_reach.stats += 1
+        entered = not Path(directory).joinpath("loaf.toml").is_file()
+        self.member_directories[directory] = entered
+        return entered
 
     def listing(mut self, directory: str) -> Result[Option[CapturedListing], str]:
         """Reuse the directory for both source facets. A settled listing also survives unchanged metadata."""
@@ -626,7 +626,7 @@ model Capture:
                     if recorded.settled and recorded.metadata == observed:
                         self.listed[directory] = recorded
                         return Ok(Some(recorded))
-                entry = children(Path(directory), "")?
+                entry = children(Path(directory), "", include_nested=true)?
                 self.counters.in_reach.listings += 1
                 self.counters.in_reach.stats += entry.checked
                 listing = CapturedListing(
@@ -664,8 +664,10 @@ model Capture:
         3. A settled record with the same metadata keeps its digest, and the file is not read.
         4. Otherwise the file is read until a read is stable, then hashed.
         """
-        # 1. One path is one input, whichever role reached it first.
+        # 1. A graph lookup and provider membership share one read. The member role retains that boundary.
         if path in self.found:
+            if role == InputRole.ProjectMember and self.found[path].role != InputRole.Root:
+                self.found[path].role = role
             return Ok(Admission.Checked)
         if path in self.missing:
             return Ok(Admission.Missing)
@@ -992,6 +994,7 @@ pub def role_of(text: str) -> Result[InputRole, str]:
     roles = [
         InputRole.Root,
         InputRole.Member,
+        InputRole.ProjectMember,
         InputRole.Resolved,
         InputRole.Manifest,
         InputRole.Lock,

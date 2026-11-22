@@ -88,10 +88,10 @@ pub def prepare_submit(
         return Err("unit records require one Incan program file and a project view")
     selected = selected_home()?
     admitted = selected.admitted
-    # Check and executable requests preserve their own reach. A directory listing now serves both source facets.
+    # Check and executable requests keep separate reach. The capture retains candidate names and exact membership.
     project_library = submit.command != "check"
     inputs = [
-        "settled-source-observation/2", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
+        "settled-source-observation/3", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
     ]
     head = f"incan.engine.capture-head\t{fingerprint(inputs)?}"
     before = snapshot(store, submit.view).map_err((error) => error.message())?
