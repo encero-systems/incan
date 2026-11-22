@@ -1,0 +1,151 @@
+"""Verify the reusable census: its key, its finished-only atomic store and the origin a reuse names."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_support import git
+from reference_cache import CensusInputs, CensusOrigin, census_inputs, reference_cache_root, store_census, stored_census
+from release_support import FAMILIES
+
+const SHA: str = "0123456789abcdef0123456789abcdef01234567"
+const COMPLETE_LOG: str = """PASS behavior/a/a
+PASS check/a/a
+PASS library/a/a
+PASS interop/a/a
+PASS testing/a/a
+PASS project/a/a
+PASS format/a/a
+FAIL graph/a/a
+total: 7 passed, 1 failed, 0 pending
+"""
+
+
+def inputs() -> CensusInputs:
+    """One census's inputs, each field distinct."""
+    return CensusInputs(
+        oven="oven",
+        lsp="lsp",
+        manifest="manifest",
+        fixtures="fixtures",
+        runner="runner",
+        runner_manifest="runner-manifest",
+        stdlib="stdlib",
+        timeout_seconds=600,
+        families=[family for family in FAMILIES],
+    )
+
+
+def test_the_key_is_every_input_that_decides_an_outcome() -> Result[None, str]:
+    """The toolchain's three digests, the four committed trees, the timeout and the family set each change the key."""
+    original = inputs().identity()
+    assert inputs().identity() == original
+    mut changed: list[str] = []
+    for field in ["oven", "lsp", "manifest", "fixtures", "runner", "runner_manifest", "stdlib"]:
+        mut varied = inputs()
+        match field:
+            "oven" => varied.oven = "other"
+            "lsp" => varied.lsp = "other"
+            "manifest" => varied.manifest = "other"
+            "fixtures" => varied.fixtures = "other"
+            "runner" => varied.runner = "other"
+            "runner_manifest" => varied.runner_manifest = "other"
+            _ => varied.stdlib = "other"
+        changed.append(varied.identity())
+    mut timeout = inputs()
+    timeout.timeout_seconds = 120
+    changed.append(timeout.identity())
+    mut families = inputs()
+    families.families = ["behavior"]
+    changed.append(families.identity())
+    for identity in changed:
+        assert identity != original
+    assert len(set(changed)) == len(changed)
+    return Ok(None)
+
+
+def test_the_key_ignores_contract_files_that_decide_no_outcome() -> Result[None, str]:
+    """The Oven test inventory and the PASS baseline live beside the fixtures but change no census outcome."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    toolchain = root.joinpath("toolchain")
+    toolchain.mkdir(true, true).map_err((error) => error.message())?
+    for name in ["incan", "incan-lsp", "toolchain.json"]:
+        toolchain.joinpath(name).write_text(name, "utf-8", "strict", None).map_err((error) => error.message())?
+    source = root.joinpath("source")
+    for relative in [
+        "workspaces/contracts/fixtures/behavior/a/a.incn",
+        "workspaces/contracts/src/main.incn",
+        "workspaces/contracts/loaf.toml",
+        "workspaces/contracts/oven-tests.txt",
+        "workspaces/contracts/pass-baseline.txt",
+        "loaves/stdlib/primitives/loaf.toml",
+    ]:
+        write(source, relative, "one\n")?
+    commit(source)?
+    oven, lsp, manifest = toolchain.joinpath("incan"), toolchain.joinpath("incan-lsp"), toolchain.joinpath("toolchain.json")
+    first = census_inputs(oven, lsp, manifest, source, 600)?.identity()
+    write(source, "workspaces/contracts/oven-tests.txt", "two\n")?
+    write(source, "workspaces/contracts/pass-baseline.txt", "two\n")?
+    commit(source)?
+    assert census_inputs(oven, lsp, manifest, source, 600)?.identity() == first
+    write(source, "workspaces/contracts/fixtures/behavior/a/a.incn", "two\n")?
+    commit(source)?
+    assert census_inputs(oven, lsp, manifest, source, 600)?.identity() != first
+    return Ok(None)
+
+
+def test_only_a_finished_census_is_stored_once_and_read_back_with_its_origin() -> Result[None, str]:
+    """A partial census is refused; the first finished one is kept, whole, and names the release that measured it."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = reference_cache_root(temporary.path())
+    assert root.0 == temporary.path().joinpath("cache/release-reference").0
+    origin = CensusOrigin(release="release-C13", source_sha=SHA, census="installed")
+    partial = temporary.path().joinpath("partial.log")
+    partial.write_text(COMPLETE_LOG.replace("total: 7 passed, 1 failed, 0 pending\n", ""), "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    match store_census(root, inputs(), partial, origin):
+        Ok(_) => return Err("a census without its final total was stored")
+        Err(_) => pass
+    assert stored_census(root, inputs())? is None
+    finished = temporary.path().joinpath("finished.log")
+    finished.write_text(COMPLETE_LOG, "utf-8", "strict", None).map_err((error) => error.message())?
+    assert store_census(root, inputs(), finished, origin)?
+    later = CensusOrigin(release="release-C14", source_sha=SHA, census="reference")
+    assert not store_census(root, inputs(), finished, later)?
+    match stored_census(root, inputs())?:
+        None => return Err("the stored census was not found")
+        Some((log, found)) =>
+            assert log.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+            assert found.release == "release-C13"
+            assert found.source_sha == SHA
+            assert found.census == "installed"
+    mut other = inputs()
+    other.stdlib = "other"
+    assert stored_census(root, other)? is None
+    return Ok(None)
+
+
+def test_a_reused_census_names_the_release_it_came_from() -> Result[None, str]:
+    """The timing row of a reuse carries the measuring release and its source commit."""
+    origin = CensusOrigin(release="release-C13", source_sha=SHA, census="installed")
+    assert origin.hit_row() == f"reference-cache-hit/release-C13/{SHA}"
+    document = origin.json()
+    assert document.require("release").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "release-C13"
+    assert document.require("census").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "installed"
+    return Ok(None)
+
+
+def write(root: Path, relative: str, text: str) -> Result[None, str]:
+    """Write one file below `root`, creating its directories."""
+    path = root.joinpath(relative)
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def commit(root: Path) -> Result[None, str]:
+    """Commit every file below `root` in a repository created on first use."""
+    if not root.joinpath(".git").is_dir():
+        _ = git(root, ["init", "-q"])?
+    _ = git(root, ["add", "-A"])?
+    _ = git(root, ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "state"])?
+    return Ok(None)
