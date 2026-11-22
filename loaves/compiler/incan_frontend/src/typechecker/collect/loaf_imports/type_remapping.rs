@@ -557,7 +557,8 @@ impl TypeChecker {
                 }
             }
         };
-        let scope = self.declaring_module_scope(owner_route, manifest, declaration, scopes);
+        let graph = &manifest.contract_metadata.identity_graph;
+        let scope = self.declaring_module_scope(owner_route, manifest, graph, declaration, scopes);
         if let Some(position) = deferred {
             return Some(self.deferred_layout(LayoutRecipe {
                 manifest: Arc::clone(manifest),
