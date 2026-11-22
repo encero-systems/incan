@@ -8,6 +8,7 @@ from pub::internal_models.source_value_records import SOURCE_PROFILE
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import (
+    Lookup,
     Snapshot,
     Transaction,
     begin,
@@ -16,6 +17,7 @@ from pub::incan_platform.store import (
     first_stored_key,
     keys_with_prefix,
     locate_value,
+    lookup,
     revisions_with_prefix,
     stage_delete,
     stage_put,
@@ -282,11 +284,12 @@ pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str
     evaluation = read_evaluation(encoded)?
     if evaluation.profile != profile or evaluation.output != value_key:
         return Err("selected compiler evaluation has mismatched authority")
-    receipt_root = evaluation.receipt_root
-    # The receipt is stored under its content root, and the store has just checked its frame against the index: the
-    # root was bound to these bytes when the evaluation was published, so they are not hashed again.
-    receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
-    receipt = decode_read_receipt(receipt_bytes)?
+    receipt_key = "incan.engine.receipt\t" + evaluation.receipt_root
+    # Publication binds this content root. The store checks the selected frame in place and the decoder borrows its
+    # value directly, preserving the receipt checks without first copying the value out of the store.
+    receipt = match lookup(selected, receipt_key).map_err((error) => error.message())?:
+        Lookup.Found(mapped) => decode_read_receipt(mapped.0.as_bytes())?
+        Lookup.Deleted | Lookup.Absent => return Err("selected compiler evaluation is incomplete")
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
     return Ok(Some((evaluation, receipt)))
