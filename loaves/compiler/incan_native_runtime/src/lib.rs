@@ -106,15 +106,13 @@ pub use pattern_assertions::{
 pub use race::race_pair;
 pub use raises_assertions::assert_raises_deferred;
 pub use static_collections::{
-    read_static_int_set, read_static_int_set_in_unit, read_static_text_int_dict, read_static_text_int_dict_in_unit,
-    write_static_int_set, write_static_int_set_in_unit, write_static_text_int_dict, write_static_text_int_dict_in_unit,
+    read_static_int_set_in_unit, read_static_text_int_dict_in_unit, write_static_int_set_in_unit,
+    write_static_text_int_dict_in_unit,
 };
 pub use statics::{
-    begin_module_initialization, begin_unit_module_initialization, end_module_initialization,
-    end_unit_module_initialization, read_static_bool, read_static_bool_in_unit, read_static_float,
-    read_static_float_in_unit, read_static_int, read_static_int_in_unit, read_static_text, read_static_text_in_unit,
-    write_static_bool, write_static_bool_in_unit, write_static_float, write_static_float_in_unit, write_static_int,
-    write_static_int_in_unit, write_static_text, write_static_text_in_unit,
+    begin_unit_module_initialization, end_unit_module_initialization, read_static_bool_in_unit,
+    read_static_float_in_unit, read_static_int_in_unit, read_static_text_in_unit, write_static_bool_in_unit,
+    write_static_float_in_unit, write_static_int_in_unit, write_static_text_in_unit,
 };
 pub use strings::{
     concat_text, contains_text, ends_text, equal_text, greater_equal_text, greater_text, join_text, length_text,
