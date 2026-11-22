@@ -166,6 +166,7 @@ struct CheckedProgram {
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,
     files: Vec<String>,
+    captured_source_paths: BTreeSet<String>,
     entry: usize,
     /// The first of the program's own modules; the Loaf declarations it reaches come before it.
     own: usize,
@@ -884,6 +885,7 @@ fn compile_unit(
     timing.mark("native_inputs_prepared");
     checked_program::return_retained_namespaces(&mut program, &dependencies.graph_body_records);
     dependencies.graph_body_records.settle_namespace_retention();
+    let captured_texts = checked_program::take_captured_texts(&mut program);
     drop(program);
     drop(dependencies.graph_body_records);
     drop(dependencies.namespace_pages);
@@ -917,6 +919,7 @@ fn compile_unit(
         publication,
         checked_sources: Vec::new(),
         captured_sources,
+        captured_texts,
     };
     // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
     if hands_off.is_some_and(|hands_off| hands_off()) {

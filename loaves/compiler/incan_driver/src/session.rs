@@ -120,6 +120,8 @@ pub struct CompilationSession {
     desugar_diagnostics: Arc<Mutex<BTreeMap<PathBuf, Vec<diagnostics::CompileError>>>>,
     /// The unit as Oven describes it.
     unit: UnitDescription,
+    /// Logical paths whose current module texts came from this session's private capture.
+    captured_source_paths: Arc<Mutex<BTreeSet<String>>>,
     /// Native-only accepted scalar body products; checking and graph sessions leave this inventory empty.
     callable_body_reuse: Arc<dyn CallableBodySource>,
     /// Graph-selected checker values remain a separate identity-keyed transport and never enter scalar callable-body
@@ -223,6 +225,7 @@ impl CompilationSession {
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
             unit: unit.clone(),
+            captured_source_paths: Arc::default(),
             callable_body_reuse: Arc::new(BTreeMap::new()),
             graph_body_records: incan_frontend::checker_records::GraphBodyRecords::default(),
         })
@@ -231,6 +234,30 @@ impl CompilationSession {
     /// The unit as Oven describes it.
     pub fn unit(&self) -> &UnitDescription {
         &self.unit
+    }
+
+    /// Record which reader supplied the current module text. A later generated-source overlay supersedes a
+    /// captured reading of the same path.
+    pub(crate) fn record_source_origin(&self, path: &str, captured: bool) -> CliResult<()> {
+        let mut paths = self
+            .captured_source_paths
+            .lock()
+            .map_err(|_| CliError::failure("captured source paths are poisoned"))?;
+        if captured {
+            paths.insert(path.to_owned());
+        } else {
+            paths.remove(path);
+        }
+        Ok(())
+    }
+
+    /// Move the capture provenance to the checked program so native compilation can select those exact texts.
+    pub fn take_captured_source_paths(&self) -> CliResult<BTreeSet<String>> {
+        let mut paths = self
+            .captured_source_paths
+            .lock()
+            .map_err(|_| CliError::failure("captured source paths are poisoned"))?;
+        Ok(std::mem::take(&mut *paths))
     }
 
     /// Install products selected against this session's exact parsed inputs. General analysis and inspection do not

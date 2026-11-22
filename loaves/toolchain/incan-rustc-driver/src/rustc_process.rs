@@ -9,6 +9,7 @@
 //! Either way native compilation, the test report and Loaf publication happen in one place. Source checking and
 //! lowering certify their own reproducible refusals before this native boundary; failures here remain retryable.
 
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -49,12 +50,15 @@ pub(crate) struct RustcHandoff {
     pub(crate) checked_sources: Vec<(PathBuf, String)>,
     /// The request's captured authored bytes stay live until this native handoff completes.
     pub(crate) captured_sources: Option<PathBuf>,
+    /// Checked capture texts moved into an in-process native session. A fresh process uses the leased directory.
+    #[serde(skip)]
+    pub(crate) captured_texts: BTreeMap<String, String>,
 }
 
 impl RustcHandoff {
     /// Run rustc, then write the test report and publish the Loaf; native-boundary failures remain retryable.
     pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
-        let _captured = crate::spans::captured_source_scope(self.captured_sources)?;
+        let _captured = crate::spans::captured_source_scope(self.captured_sources, self.captured_texts)?;
         crate::adapter::compile(
             self.plan,
             &self.crate_name,
@@ -83,6 +87,7 @@ impl RustcHandoff {
     /// Write the handoff beside its output, encoded straight into the file without a whole-plan buffer, and return
     /// its path for the caller that runs it.
     pub(crate) fn hand_off(mut self, timing: &mut Timing) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        self.captured_texts.clear();
         self.checked_sources = crate::spans::checked_texts()?;
         let path = self.output.with_extension("rustc-handoff");
         let written = write(&self, &path);
