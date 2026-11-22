@@ -8,26 +8,38 @@ from native_build import (
     ShippedToolOverlap,
     common_environment,
     shipped_tool_overlap,
+    shipped_tool_waves,
     tool_build_plan,
 )
 
 const GIB: int = 1073741824
 
 
-def test_oven_starts_first_and_never_waits_for_the_debug_providers_it_does_not_read() -> Result[None, str]:
-    """
-    Oven is the longest shipped build: with two children it runs beside the debug waves and the language server, which
-    take turns in the other; with three every one runs beside the others; with one, or without memory for a second
-    project child beside a standard one, they run in turn.
-    """
+def test_oven_and_the_language_server_share_two_children_when_they_fit() -> Result[None, str]:
+    """With one child, or without memory for a second project child, the shipped tools take turns."""
     assert shipped_tool_overlap(1, 64 * GIB) == ShippedToolOverlap.Serial
-    assert shipped_tool_overlap(2, 64 * GIB) == ShippedToolOverlap.OvenBeside
-    assert shipped_tool_overlap(3, 64 * GIB) == ShippedToolOverlap.AllBeside
-    assert shipped_tool_overlap(8, 64 * GIB) == ShippedToolOverlap.AllBeside
+    assert shipped_tool_overlap(2, 64 * GIB) == ShippedToolOverlap.Beside
+    assert shipped_tool_overlap(8, 64 * GIB) == ShippedToolOverlap.Beside
     one_beside = PROJECT_RESERVATION_BYTES + STANDARD_RESERVATION_BYTES
-    assert shipped_tool_overlap(3, one_beside) == ShippedToolOverlap.OvenBeside
-    assert shipped_tool_overlap(3, one_beside + PROJECT_RESERVATION_BYTES) == ShippedToolOverlap.AllBeside
+    assert shipped_tool_overlap(3, one_beside) == ShippedToolOverlap.Beside
     assert shipped_tool_overlap(4, one_beside - 1) == ShippedToolOverlap.Serial
+    return Ok(None)
+
+
+def test_no_shipped_tool_starts_while_the_debug_providers_are_still_being_published() -> Result[None, str]:
+    """
+    Every tool build reads the build home's standard Loaves, which a debug wave rewrites while it publishes them, so the
+    debug waves are published, and the step that reads them is started, before Oven or the language server starts.
+    C30 refused when Oven was built beside them. Oven and the language server then share two children, or take turns.
+    """
+    for overlap in [ShippedToolOverlap.Serial, ShippedToolOverlap.Beside]:
+        waves = shipped_tool_waves(overlap)
+        assert waves[0] == ["debug-providers"]
+        assert len([wave for wave in waves if "debug-providers" in wave]) == 1
+        assert len([wave for wave in waves if "oven" in wave]) == 1
+        assert len([wave for wave in waves if "lsp" in wave]) == 1
+    assert shipped_tool_waves(ShippedToolOverlap.Serial) == [["debug-providers"], ["oven"], ["lsp"]]
+    assert shipped_tool_waves(ShippedToolOverlap.Beside) == [["debug-providers"], ["oven", "lsp"]]
     return Ok(None)
 
 
