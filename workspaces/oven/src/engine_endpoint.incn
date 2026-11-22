@@ -23,25 +23,34 @@ pub const HANDSHAKE_SECONDS: u64 = 5
 
 
 pub model ServiceEndpoint:
-    """Disposable endpoint plus store-level scheduling and startup locks."""
+    """Disposable endpoint plus its generation's scheduling and startup locks and the record of its socket."""
 
     pub socket: str
     pub lock: str
     pub startup_lock: str
+    pub record: str
 
 
 pub def endpoint(root: Path, identity: Identity) -> Result[ServiceEndpoint, Refusal]:
-    """Keep discovery short and private; the full identity is checked by the handshake."""
+    """
+    Keep discovery short and private; the full identity is checked by the handshake. Every name is keyed by the
+    service and compiler generations, so engines of different generations over one store coexist, each with its own
+    socket, locks and record: a release alternates its seed's and its candidate's toolchains over one home.
+    """
     directory = root.joinpath("engine")
     prepare_directory(directory.0).map_err(transport)?
-    name = fingerprint([identity.store_id, identity.profile, identity.service_generation]).map_err(transport)?
-    path = f"{socket_prefix(directory.0).map_err(transport)?}e-{name[:20]}.sock"
+    name = fingerprint(
+        [identity.store_id, identity.profile, identity.service_generation, identity.compiler_generation],
+    ).map_err(transport)?
+    short = name[:20]
+    path = f"{socket_prefix(directory.0).map_err(transport)?}e-{short}.sock"
     bindable(path).map_err(transport)?
     return Ok(
         ServiceEndpoint(
             socket=path,
-            lock=directory.joinpath("service.lock").0,
-            startup_lock=directory.joinpath("startup.lock").0,
+            lock=directory.joinpath(f"service-{short}.lock").0,
+            startup_lock=directory.joinpath(f"startup-{short}.lock").0,
+            record=directory.joinpath(f"endpoint-{short}").0,
         ),
     )
 
@@ -87,13 +96,13 @@ def connect_once(root: Path, identity: Identity, executable: str, idle: int) -> 
     if not service_available(selected.lock)?:
         # A service started under another runtime directory listens elsewhere; the store records where. The handshake
         # still requires this caller's full identity there.
-        if let Some(recorded) = recorded_endpoint(root):
+        if let Some(recorded) = recorded_endpoint(selected.record):
             if recorded != selected.socket:
                 match dial(recorded):
                     Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
                     Err(_) => pass
         return Err(
-            Refusal(kind=RefusalKind.Identity, detail="another engine generation owns this store; drain it first"),
+            Refusal(kind=RefusalKind.Identity, detail="this generation's engine holds its lock but answers no socket; drain it first"),
         )
     arguments = [
         "--internal-engine",
@@ -190,26 +199,26 @@ def service_available(path: str) -> Result[bool, Refusal]:
     return Ok(available is not None)
 
 
-pub def record_endpoint(root: Path, socket: str) -> Result[None, Refusal]:
+pub def record_endpoint(record: str, socket: str) -> Result[None, Refusal]:
     """
-    Record where the store's service listens, for callers whose runtime directory names another socket path. The
-    socket path depends on the caller's environment; this record depends only on the store.
+    Record where this generation's service listens, for callers whose runtime directory names another socket path.
+    The socket path depends on the caller's environment; this record depends only on the store and the generation.
     """
-    return publish(root.joinpath("engine/endpoint"), socket + "\n").map_err(transport)
+    return publish(Path(record), socket + "\n").map_err(transport)
 
 
-pub def withdraw_endpoint(root: Path, socket: str) -> None:
+pub def withdraw_endpoint(record: str, socket: str) -> None:
     """Withdraw the record when it still names this service's socket."""
-    match recorded_endpoint(root):
+    match recorded_endpoint(record):
         Some(recorded) =>
             if recorded == socket:
-                discard_file(root.joinpath("engine/endpoint"))
+                discard_file(Path(record))
         None => pass
 
 
-def recorded_endpoint(root: Path) -> Option[str]:
-    """The socket the store's service recorded, or `None` without a readable record."""
-    match root.joinpath("engine/endpoint").read_text("utf-8", "strict"):
+pub def recorded_endpoint(record: str) -> Option[str]:
+    """The socket this generation's service recorded, or `None` without a readable record."""
+    match Path(record).read_text("utf-8", "strict"):
         Ok(text) =>
             recorded = text.strip()
             if recorded.startswith("/"):
