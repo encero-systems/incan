@@ -50,8 +50,8 @@ impl ScopeReader {
         let owner = thread::Builder::new()
             .name("incan-executable-scopes".to_owned())
             .spawn(move || {
-                let _parent = parent.enter();
-                let snapshot = open_snapshot(&request, bakery.as_deref());
+                let snapshot = parent.in_scope(|| open_snapshot(&request, bakery.as_deref()));
+                drop(parent);
                 for address in queries {
                     let result = snapshot.as_ref().map_err(Clone::clone).and_then(|selected| {
                         let view =
