@@ -132,6 +132,58 @@ impl TypeChecker {
             .contract_metadata
             .identity_graph
             .identities_for_public_source_path(&public_path, &source_path);
+        // An external alias over an overload set carries no callable projection: it is one alias over several
+        // signatures. Its overloads are the graph's identities at this public path, so read each from its declaring
+        // Loaf's own declaration, the one the identity's span names, as a re-export at a Loaf's root reads them.
+        if kinds.is_empty()
+            && overload_identities.len() > 1
+            && declarations
+                .iter()
+                .all(|declaration| matches!(declaration, ApiDeclaration::Alias(_)))
+        {
+            let mut declared = Vec::with_capacity(overload_identities.len());
+            for identity in overload_identities.iter().flatten() {
+                let SymbolOrigin::Package { module_path, .. } = &identity.origin else {
+                    break;
+                };
+                let Some(provider) = self.loaves.declaring_loaf(identity).map(|entry| entry.key.clone()) else {
+                    break;
+                };
+                let Some(provider_manifest) = self.loaf_manifest_or_refuse(&provider, Span::default()) else {
+                    break;
+                };
+                let provider_api = provider_manifest.contract_metadata.api.as_ref();
+                let declaration = provider_api.and_then(|api| {
+                    api.modules
+                        .iter()
+                        .filter(|module| &module.module_path == module_path)
+                        .flat_map(|module| module.declarations.iter())
+                        .find(|declaration| {
+                            matches!(declaration, ApiDeclaration::Function(function)
+                                if function.name == identity.declaration_name
+                                    && function.anchor.span.start as u64 == identity.declaration_span.start as u64
+                                    && function.anchor.span.end as u64 == identity.declaration_span.end as u64)
+                        })
+                });
+                let Some(mut overload) = declaration
+                    .and_then(|declaration| self.symbol_kind_from_api_declaration(provider_api, declaration))
+                else {
+                    break;
+                };
+                let provider_remapping = self.public_library_canonical_type_remapping(&provider, &provider_manifest);
+                self.remap_symbol_kind_through_declaring_module(
+                    &provider,
+                    &provider_manifest,
+                    Some(identity),
+                    &mut overload,
+                );
+                self.remap_symbol_kind_with_import_aliases(&mut overload, &provider_remapping);
+                declared.push(overload);
+            }
+            if declared.len() == overload_identities.len() {
+                kinds = declared;
+            }
+        }
         let mut kind = match kinds.as_mut_slice() {
             [kind] => kind.clone(),
             kinds if !kinds.is_empty() && kinds.iter().all(|kind| matches!(kind, SymbolKind::Function(_))) => {
