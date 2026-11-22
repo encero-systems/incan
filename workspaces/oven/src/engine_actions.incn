@@ -38,6 +38,8 @@ pub model Pending:
     pub directory: str = ""
     # The canonical unit options the client parsed; empty for an ordinary unit.
     pub unit_options: str = ""
+    # The generation of the records this request reads and writes: its engine's compiler and Oven.
+    pub records: str = ""
 
 
 pub model ExecutionLease:
@@ -107,6 +109,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         pending.producer,
         Some(pending.capture.selected),
         pending.unit_options,
+        pending.records,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()
@@ -255,7 +258,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         Some(pending.capture.selected),
         pending.view,
         pending.unit_options,
-        pending.producer,
+        pending.records,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()
