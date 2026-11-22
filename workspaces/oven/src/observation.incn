@@ -180,8 +180,9 @@ pub model Ledger:
         """
         The files under `root` that this ledger keeps (Incan sources unless its extension says otherwise), sorted.
 
-        Only directories whose metadata changed are listed again. The compiler's own collection rules apply: hidden
-        directories, `target` and `node_modules` are not entered.
+        Only directories whose metadata changed are listed again. The compiler's own collection rules exclude
+        hidden directories, build output, vendored packages and nested projects. A child can gain or lose its own
+        manifest while its parent's directory listing stays unchanged, so check the boundary as it is reached.
         """
         mut found: list[str] = []
         mut pending = [root]
@@ -189,6 +190,8 @@ pub model Ledger:
         while index < len(pending):
             directory = pending[index]
             index += 1
+            if index > 1 and not entered(directory):
+                continue
             entry = self.listing(directory)?
             for name in entry.files:
                 found.append(directory.joinpath(name).0)
@@ -199,18 +202,18 @@ pub model Ledger:
 
     def listing(mut self, directory: Path) -> Result[DirectoryEntry, str]:
         """
-        A directory's retained children, listed again only when its metadata changed.
+        A directory's retained file and directory names, listed again only when its metadata changed.
 
         1. An unchanged directory keeps the listing it was retained with.
-        2. A changed one is listed: the files this ledger keeps and the subdirectories worth entering.
+        2. A changed one is listed for file and candidate directory names. Boundary checks happen while walking.
         3. The new listing is retained.
         """
         # 1. A directory whose metadata is as recorded is not listed again.
         observed = observe(directory)?
         if directory.0 in self.directories and self.directories[directory.0].stamp == observed.stamp:
             return Ok(self.directories[directory.0])
-        # 2. A changed directory yields the files this ledger keeps and the subdirectories worth entering.
-        found = children(directory, self.extension)?
+        # 2. Names are stable under this directory's metadata, independently of each child's manifest.
+        found = children(directory, self.extension, include_nested=true)?
         # 3. The new listing is kept under the metadata it was taken at, and counts as work the pass could not avoid.
         entry = DirectoryEntry(stamp=retained(observed, self.settle), files=found.files, directories=found.directories)
         trace(f"listing {directory.0}")
@@ -334,7 +337,7 @@ pub def children(directory: Path, extension: str, include_nested: bool = false) 
 
 def ledger_description() -> Description:
     """One local observation cache. Files bind both content digests, and directories retain their immediate children."""
-    return model_description(OBSERVATION_LEDGER, "incan.oven.observations/2", [
+    return model_description(OBSERVATION_LEDGER, "incan.oven.observations/3", [
         ModelField(identity=b"dirs__", name="directories", storage="list<tuple<string,string,list<string>,list<string>>>"),
         ModelField(identity=b"extend", name="extension", storage="string"),
         ModelField(identity=b"files_", name="files", storage="list<tuple<string,string,binary,binary>>"),
