@@ -1,0 +1,18 @@
+# behavior: a project's program built and run, and its second program, compile its modules once, in its shared library
+# environment:
+#   INCAN_BAKERY=target/case-bakery
+# cli-commands:
+#   oven build src/main.incn
+#   oven run src/main.incn
+#   oven build src/second.incn
+# expect-exit: 0
+# expect-trace-contains:
+#   unit programs_share_one_compiled_project_library_project_library library:
+# expect-trace-at-most-once:
+#   unit programs_share_one_compiled_project_library_project_library library: compiled
+from shapes import Square, area
+
+
+def main() -> None:
+    """Print the area of a square of side 3."""
+    println(str(area(Square(side=3))))
