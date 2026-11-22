@@ -51,8 +51,9 @@ pub def test_an_unchanged_whole_unit_rerun_does_no_work() -> Result[None, str]:
         project.joinpath("loaf.toml"),
         "[project]\nname = \"entries\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
     )?
-    write(source.joinpath("main.incn"), "def main() -> None:\n    println(\"first\")\n")?
-    write(source.joinpath("second.incn"), "def main() -> None:\n    println(\"second\")\n")?
+    # A program entry is one of the program's modules, so the first entry imports it.
+    write(source.joinpath("main.incn"), "from second import main as second_main\n\n\ndef main() -> None:\n    println(\"first\")\n")?
+    write(source.joinpath("second.incn"), "pub def main() -> None:\n    println(\"second\")\n")?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = scratch.path().joinpath("store")
     cold = whole_unit_build(binary, project, store)?
