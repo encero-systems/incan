@@ -8,7 +8,7 @@
 
 //! Here `<name>` is the shared artifact stem: unchanged for bare packages and reversibly encoded for scoped ones.
 
-use incan_loaf_names::artifact_stem;
+use incan_loaf_names::{artifact_stem, native_crate_name};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -392,6 +392,8 @@ pub enum LoafIndexError {
 #[derive(Debug, Clone, Default)]
 pub struct LoafIndex {
     entries: BTreeMap<String, IndexedLoaf>,
+    /// Indexed providers whose own native archive the unit selected.
+    native_links: BTreeSet<String>,
     /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled
     /// unit's.
     rust_abi_caches: Vec<Arc<RustAbiCache>>,
@@ -450,6 +452,7 @@ impl LoafIndex {
         }
         Ok(Self {
             entries: indexed,
+            native_links: BTreeSet::new(),
             rust_abi_caches: Vec::new(),
             declared_rust_crates: BTreeSet::new(),
             rust_fact_caches: Vec::new(),
@@ -459,6 +462,26 @@ impl LoafIndex {
             resolved_rust_items: Arc::default(),
             rust_abi_failure: Arc::default(),
         })
+    }
+
+    /// Record which indexed providers the unit links from their exact native artifact paths. A source interface
+    /// can have the same manifest name and shape as a compiled Loaf, so only the unit's native inputs settle this.
+    pub fn bind_native_loaves<'a>(&mut self, externs: impl IntoIterator<Item = (&'a str, &'a Path)>) {
+        let externs: BTreeMap<_, _> = externs.into_iter().collect();
+        self.native_links = self
+            .entries
+            .iter()
+            .filter_map(|(key, indexed)| {
+                let alias = native_crate_name(&indexed.name);
+                let artifact = externs.get(alias.as_str())?;
+                (*artifact == indexed.dir.join(format!("lib{alias}.rlib")).as_path()).then(|| key.clone())
+            })
+            .collect();
+    }
+
+    /// Whether this exact inventory entry supplies a native archive to the current unit.
+    pub(crate) fn links_native_loaf(&self, key: &str) -> bool {
+        self.native_links.contains(key)
     }
 
     /// Admit every location's inventory while deferring full manifests to canonical demand. Each inventory records

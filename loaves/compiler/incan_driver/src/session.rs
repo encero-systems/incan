@@ -190,7 +190,12 @@ impl CompilationSession {
             }
             deferred.push((key.clone(), loaf.name.clone(), loaf.dir.clone(), loaf.standard));
         }
-        let loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
+        let mut loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
+        loaves.bind_native_loaves(
+            unit.externs
+                .iter()
+                .map(|binding| (binding.name.as_str(), binding.path.as_path())),
+        );
         let loaves = Arc::new(loaves);
         // Prelude names are resolved through the declared owner's named namespace and declaration records.
         // Source-selected conversion and entry contracts perform their own authenticated demands.
