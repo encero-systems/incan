@@ -1,0 +1,6 @@
+pub def calculate(value: int) -> int:
+    return value * 2
+
+
+pub def increment(value: int) -> int:
+    return value + 1
