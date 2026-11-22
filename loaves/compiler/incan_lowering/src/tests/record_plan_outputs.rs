@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    AdmittedFunction, AdmittedPlacement, EventPosition, Function, INTERFACE_REPORT, Local, LoweringRefusal,
-    ModelDeclaration, NominalKind, Parameter, Plan, PlanType, ProductNominal, SourceSpan, TerminatorKind, block,
-    decode_lowering_event, decode_lowering_refusal, decode_native_interface, decode_plan_function_record,
-    decode_record_plan, encode_lowering_refusal, product_nominals, read_module_admission, source_span,
+    AdmittedFunction, AdmittedPlacement, EventPosition, ExternalFunction, Function, INTERFACE_REPORT, Local,
+    LoweringRefusal, ModelDeclaration, NominalKind, Parameter, Plan, PlanType, ProductNominal, SourceSpan,
+    TerminatorKind, block, decode_lowering_event, decode_lowering_refusal, decode_native_interface,
+    decode_plan_function_record, decode_record_plan, encode_lowering_refusal, product_nominals, read_module_admission,
+    source_span,
 };
 
 use crate::plan_modules::report_admitted;
@@ -282,6 +283,61 @@ fn keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -> Result<(
             .iter()
             .any(|refusal| refusal.function == adapter.name && refusal.refusal.contains("generated function")),
         "an omitted interface did not name its unwitnessed generated function"
+    );
+    Ok(())
+}
+
+/// A unit whose main returns a value, as a `Result` main does, still compiles: it publishes no interface, and says why.
+///
+/// An async main never gets this far: its product refuses coroutine state, so its unit publishes no interface anyway.
+#[test]
+fn keyed_plan_with_a_returning_main_refuses_the_interface() -> Result<(), String> {
+    let request = Request::new("returning-main")?;
+    let mut main = unit_function("main", 1);
+    main.return_type = PlanType::Int;
+    let unit = plan(vec![main.clone()], &[]);
+    retain_product(&request, &main, false)?;
+    publish_plan_records(&unit, &request.products, &request.report)?;
+    assert!(
+        !request.report(INTERFACE_REPORT).is_file(),
+        "a main the entry record cannot bind published an interface"
+    );
+    assert!(
+        request
+            .refusals()?
+            .iter()
+            .any(|refusal| refusal.function == "main" && refusal.refusal.contains("synchronous unit main")),
+        "an omitted interface did not say why the entry was refused"
+    );
+    Ok(())
+}
+
+/// A unit that calls a function of a crate it links, as a Loaf's own Rust facet, still compiles: its runtime inventory
+/// cannot travel in an interface another unit might restore, so it publishes none, and says why.
+#[test]
+fn keyed_plan_calling_a_linked_crate_refuses_the_interface() -> Result<(), String> {
+    let request = Request::new("linked-crate")?;
+    let main = unit_function("main", 1);
+    let mut unit = plan(vec![main.clone()], &[]);
+    unit.externals = vec![ExternalFunction {
+        path: "rustself_native::native_len".into(),
+        type_arguments: Vec::new(),
+        parameters: vec![PlanType::Int],
+        return_type: PlanType::Int,
+        span: keyed_span(),
+    }];
+    retain_product(&request, &main, false)?;
+    publish_plan_records(&unit, &request.products, &request.report)?;
+    assert!(
+        !request.report(INTERFACE_REPORT).is_file(),
+        "a unit inventory naming a linked crate published an interface"
+    );
+    assert!(
+        request
+            .refusals()?
+            .iter()
+            .any(|refusal| refusal.refusal.contains("Incan binding identity")),
+        "an omitted interface did not say why its runtime inventory was refused"
     );
     Ok(())
 }

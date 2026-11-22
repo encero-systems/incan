@@ -20,6 +20,9 @@ use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::positioned_product;
 use crate::scalar_store::{event_positions, event_references, finalized_plan_product, report_scalar_refusal};
 
+/// The identity a refusal of the whole-unit native interface is reported under.
+const INTERFACE_IDENTITY: &str = "native-interface";
+
 /// Publish loss-checked plan output and a reusable ordinary-entry binding before native compilation.
 pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result<(), String> {
     let report_path = Path::new(report);
@@ -50,10 +53,22 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
     if keyed.len() != plan.functions.len() {
         return Err("native-interface has an unwitnessed plan-function member".into());
     }
+    // The interface is an optional product beside the unit's ordinary compile, like each declaration's product: an
+    // entry its record cannot bind, or a plan its codec refuses, publishes no interface and records why, and the unit
+    // compiles exactly as it would have.
+    let main = match ordinary_entry(plan) {
+        Ok(main) => main,
+        Err(refusal) => return report_scalar_refusal(Some(report), INTERFACE_IDENTITY, "main", &refusal),
+    };
     let interface_attempt = enter_producer("compiler", "native-interface", report, "encode");
-    let encoded = encode_record_plan_products(plan, keyed, references)?;
+    let encoded = match encode_record_plan_products(plan, keyed, references) {
+        Ok(encoded) => encoded,
+        Err(refusal) => {
+            finish_producer(interface_attempt, "refused");
+            return report_scalar_refusal(Some(report), INTERFACE_IDENTITY, INTERFACE_IDENTITY, &refusal);
+        }
+    };
     finish_producer(interface_attempt, "produced");
-    let main = ordinary_entry(plan)?;
     let matches: Vec<&LoweringEvent> = events.iter().filter(|event| event.function == main).collect();
     let [selected] = matches.as_slice() else {
         return Err("plan-function(entry) has no unique witnessed main function".into());
