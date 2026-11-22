@@ -387,6 +387,63 @@ fn a_dictionary_static_get_reads_under_the_guard() -> Result<(), String> {
     Ok(())
 }
 
+/// `VERIFIED["k"] = "v"` and `VERIFIED.insert("k", "v")` insert one entry under the exclusive guard: the dictionary is
+/// neither loaded nor stored, and the accessor receives it exclusively.
+#[test]
+fn a_dictionary_static_write_inserts_under_the_guard() -> Result<(), String> {
+    let module = module();
+    let exclusive = PlanType::DictMutRef(ListLeaf::Str, ListLeaf::Str);
+    let dictionary = PlanType::Dict(ListLeaf::Str, ListLeaf::Str);
+    let mut entry = CheckedPlace::from_global(global(&module, 1));
+    entry
+        .projection
+        .push(PlaceElem::Index(Box::new(CheckedOperand::Constant(
+            CheckedConstant::Str("k".into()),
+        ))));
+    let value = CheckedRvalue::Use(CheckedOperand::Constant(CheckedConstant::Str("v".into())));
+
+    let mut written = frame(&module, PlanType::Unit);
+    write_static(&module, &mut written, &entry, &global(&module, 1), &value, &span())?;
+    let mut inserted = frame(&module, PlanType::Unit);
+    let receiver = read(CheckedPlace::from_global(global(&module, 1)), OwnershipFact::MutBorrow);
+    let destination = Some(CheckedPlace::from_local(LocalId(0)));
+    dictionary_method(
+        &mut inserted,
+        DictMethodId::Insert,
+        &[receiver, constant("k"), constant("v")],
+        &destination,
+        &span(),
+    )?;
+    for builder in [&written, &inserted] {
+        let calls = callees(&builder.blocks);
+        assert!(
+            !calls
+                .iter()
+                .any(|kind| matches!(kind, CalleeKind::StaticLoad(1) | CalleeKind::StaticStore(1))),
+            "the write loaded or stored the whole dictionary: {calls:?}"
+        );
+        let methods: Vec<&String> = calls
+            .iter()
+            .filter_map(|kind| match kind {
+                CalleeKind::StaticMethod(1, name) => Some(name),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(methods.len(), 1, "one guarded insertion: {calls:?}");
+        let accessor = builder
+            .synthesized
+            .iter()
+            .find(|function| function.name == *methods[0])
+            .ok_or("the guarded insertion was not synthesized")?;
+        assert_eq!(accessor.parameters[0].ty, exclusive);
+        assert!(
+            builder.locals.iter().all(|local| local.ty != dictionary),
+            "the frame copied the dictionary"
+        );
+    }
+    Ok(())
+}
+
 /// A field read followed by a write of the same field keeps the value it read: the read's own local is filled under
 /// the guard before the write, and nothing writes that local afterwards.
 #[test]
