@@ -660,12 +660,15 @@ pub def test_a_method_body_gets_a_plan_product() -> Result[None, str]:
     """
     A module with a method gets a plan product for each of its bodies: the method's as well as the free function's.
     The unit then has a complete native interface, and an edit of the method keeps a product for every body.
+    Evaluating a method body again does not recompute the model's layout witness.
     """
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     source = root.joinpath("main.incn")
     store = root.joinpath("store")
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
     shapes = "pub model Counter:\n    pub count: int\n\n    pub def scaled(self) -> int:\n        return self.count * "
     bump = "\n\n\npub def bump(value: int) -> int:\n    return value + 1\n"
     write(root.joinpath("shapes.incn"), shapes + "2" + bump)?
@@ -674,17 +677,52 @@ pub def test_a_method_body_gets_a_plan_product() -> Result[None, str]:
         "from shapes import Counter, bump\n\n\ndef main() -> None:\n    println(Counter(count=2).scaled() + bump(1))\n",
     )?
     # Three bodies: `main`, `bump` and the method `Counter.scaled`.
-    cold = lowering_example_run(binary, source, store, "6")?
+    cold = lowering_example_run(binary, source, store, "6", Some(trace))?
+    first_witnesses = project_layout_witnesses(trace, "shapes.incn")?
     cold_diagnostic = cold.to_json().map_err((error) => error.message())?
     assert proof_count(cold, "lowering_demand_evaluations")? == 3, cold_diagnostic
     assert proof_count(cold, "native_interface_evaluations")? == 1, cold_diagnostic
     write(root.joinpath("shapes.incn"), shapes + "5" + bump)?
-    warm = lowering_example_run(binary, source, store, "12")?
+    warm = lowering_example_run(binary, source, store, "12", Some(trace))?
+    edited_witnesses = project_layout_witnesses(trace, "shapes.incn")?
     warm_diagnostic = warm.to_json().map_err((error) => error.message())?
     evaluated = proof_count(warm, "lowering_demand_evaluations")?
     assert evaluated >= 1 and evaluated + proof_count(warm, "lowering_demand_reuses")? == 3, warm_diagnostic
     assert proof_count(warm, "native_interface_evaluations")? == 1, warm_diagnostic
-    return stop_example_engine(binary, store)
+    main = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    write(source, main.replace("count=", "value="))?
+    write(root.joinpath("shapes.incn"), shapes.replace("count", "value") + "5" + bump)?
+    _ = lowering_example_run(binary, source, store, "12", Some(trace))?
+    layout_edit_witnesses = project_layout_witnesses(trace, "shapes.incn")?
+    warm_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    assert first_witnesses == 1, f"initial layout witness computations {first_witnesses}, expected one"
+    assert edited_witnesses == first_witnesses, "a method body edit recomputed its unchanged model layout witness"
+    assert layout_edit_witnesses == edited_witnesses + 1, "a changed layout needs one new witness"
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("fresh")
+    _ = lowering_example_run(binary, source, cold_store, "12")?
+    fresh_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, cold_store)?
+    assert warm_plan == fresh_plan, "recorded layouts changed the native plan bytes"
+    return Ok(None)
+
+
+def project_layout_witnesses(trace: Path, module: str) -> Result[int, str]:
+    """Count witness calculations by the compiler's project namespace producer."""
+    mut count = 0
+    for path in trace.iterdir().map_err((error) => error.message())?:
+        if not path.name().startswith("engine-compiler-"):
+            continue
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if '"operation":"namespace_layout_witness"' not in line:
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            key = event.require("key").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if key == module:
+                count += 1
+    return Ok(count)
 
 
 pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
