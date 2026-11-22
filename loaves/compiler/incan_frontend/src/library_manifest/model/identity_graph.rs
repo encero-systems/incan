@@ -127,6 +127,40 @@ impl LibraryIdentityGraph {
         self.exports.is_empty()
     }
 
+    /// Whether the graph publishes this canonical declaration through any of its public paths.
+    pub(crate) fn publishes(&self, canonical: &CanonicalSymbolId) -> bool {
+        self.exports.iter().any(|export| {
+            export
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| identity.represents(canonical))
+        })
+    }
+
+    /// The shortest public path of a nominal type, breaking ties by the path's spelling.
+    pub(crate) fn public_nominal(&self, canonical: &CanonicalSymbolId) -> Option<&ExportIdentity> {
+        self.exports
+            .iter()
+            .filter(|export| {
+                matches!(
+                    export.kind,
+                    ExportIdentityKind::Model
+                        | ExportIdentityKind::Class
+                        | ExportIdentityKind::Enum
+                        | ExportIdentityKind::Newtype
+                ) && export
+                    .canonical
+                    .as_ref()
+                    .is_some_and(|identity| identity.represents(canonical))
+            })
+            .min_by(|left, right| {
+                left.public_path
+                    .len()
+                    .cmp(&right.public_path.len())
+                    .then(left.public_path.cmp(&right.public_path))
+            })
+    }
+
     /// Return the first identity entry for a public export name, which represents the shared projection for overload
     /// sets.
     pub fn entry_for_public_name(&self, name: &str) -> Option<&ExportIdentity> {
