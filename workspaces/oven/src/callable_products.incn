@@ -77,22 +77,19 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     return Ok(selected)
 
 
-def reusable_vocabulary(unit: UnitDescription) -> Result[bool, str]:
-    """Require inert source and providers; dynamic desugaring needs an environment observation contract first."""
-    if (
-        unit.vocab is not None
-        or unit.vocabulary
-        or unit.vocab_desugarer
-        or len(unit.c_headers) != 0
-        or len(unit.cloves) != 0
-    ):
-        return Ok(false)
+pub def desugared_by_a_dependency(unit: UnitDescription) -> Result[bool, str]:
+    """
+    Whether a Loaf the unit links, other than a standard package, publishes vocabulary: its desugaring writes
+    declarations into the unit's modules that no source line owns, so no declaration record can name them.
+    """
     for loaf in unit.loaves:
+        if loaf.standard:
+            continue
         manifest = read_json(Path(loaf.dir).joinpath(f"{loaf.name}.incnlib"))?
         if let Some(vocab) = manifest.get("vocab"):
             if not vocab.is_null():
-                return Ok(false)
-    return Ok(true)
+                return Ok(true)
+    return Ok(false)
 
 
 def semantic_description(

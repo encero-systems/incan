@@ -285,6 +285,7 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
                     command=submit.command,
                     format=submit.options,
                     directory=submit.directory,
+                    unit_options=submit.unit_options,
                     handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
                         transport,
                     )?,
@@ -302,6 +303,10 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
             continue
         match finish_request(state.store, pending):
             Err(reason) =>
+                # A refused request's own compiler diagnostics come before the refusal that summarizes them.
+                console = state.store.joinpath("engine/console").joinpath(hexlify(pending.request)).0
+                if Path(f"{console}.out").is_file() or Path(f"{console}.err").is_file():
+                    send(client.channel, pending.request, Message.Event(Event(status="Console", trace_handle=console)))?
                 send_request_refusal(client.channel, state.store, pending.request, transport(reason), "unit-record")?
             Ok(ready) =>
                 if ready.console != "":
