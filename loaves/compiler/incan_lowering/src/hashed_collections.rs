@@ -28,7 +28,10 @@ use crate::options::carrier_layout;
 use crate::options::replace_owned_destination;
 use crate::sequence_builtins::argument_type;
 use crate::statements::is_nominal_type;
-use crate::static_guards::{GuardedCollection, GuardedOperation, guarded_collection, guarded_collection_call};
+use crate::static_guards::{
+    GuardedCollection, GuardedOperation, guarded_collection, guarded_collection_call, guarded_dictionary_receiver,
+    guarded_insert,
+};
 use crate::static_storage::persist_static_value;
 
 /// Materialize a checked collection read while preserving caller-owned bindings.
@@ -496,6 +499,20 @@ fn collection_insert_method(
         operands.push(element_plan_operand(builder, argument, ty, span)?);
     }
     let output = call_destination(builder, destination, PlanType::Unit, span)?;
+    // A dictionary static's own cell takes the entry under its exclusive guard, so nothing else is copied.
+    if let Some((slot, ty)) = guarded_dictionary_receiver(builder, arguments)? {
+        let mut entry = operands.into_iter();
+        let (Some(key), Some(value), None) = (entry.next(), entry.next(), entry.next()) else {
+            return Err(format!("unsupported Body IR collection method arity {member}"));
+        };
+        guarded_insert(builder, slot, &ty, key, value, span)?;
+        builder.emit(plan_assign(
+            output,
+            RvalueKind::Use(literal(Constant::Unit, span)),
+            span,
+        ));
+        return Ok(());
+    }
     match static_collection_receiver(builder, arguments, true, span)? {
         Some((global, receiver)) => {
             insert_collection(builder, &receiver, operands, span)?;

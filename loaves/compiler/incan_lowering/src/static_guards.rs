@@ -1,5 +1,6 @@
 //! Reads that run under a guarded static's storage lock (RFC 052) and let only their own result leave it: one field
-//! copied out of a model static, or one read-only collection operation on a static's dictionary or set.
+//! copied out of a model static, or one read-only collection operation on a static's dictionary or set; and one
+//! entry inserted into a dictionary static under its exclusive guard.
 //!
 //! A read never loads a snapshot of the whole stored value. Its operands are evaluated before the accessor takes the
 //! shared guard, as every guarded accessor's are, and its result is an owned local of the reading frame, so a later
@@ -10,7 +11,7 @@ use incan_mir_plan_native::{
     Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind, assign as plan_assign, block as plan_block,
     place as plan_place,
 };
-use incan_semantics_core::body_ir::{ArgumentElement, Operand as SourceOperand, OwnershipFact, PlaceElem};
+use incan_semantics_core::body_ir::{ArgumentElement, GlobalPlace, Operand as SourceOperand, OwnershipFact, PlaceElem};
 
 use crate::collections::{
     collection_arguments, collection_name, collection_reference, declare_collection_runtime, is_owned_collection,
@@ -18,7 +19,7 @@ use crate::collections::{
 };
 use crate::computed_statics::{has_native_static_cell, initialize_module_statics, is_computed_static, static_owner};
 use crate::decls::static_slot;
-use crate::frame::{Builder, read_place, terminate_call};
+use crate::frame::{Builder, read_place, temporary, terminate_call};
 use crate::lists::list_element;
 use crate::models::field_path;
 use crate::static_storage::{snapshot_owns, static_carrier};
@@ -340,6 +341,117 @@ fn collection_accessor(
         locals,
         vec![
             plan_block(statements, call(callee, arguments, span), span),
+            plan_block(Vec::new(), TerminatorKind::Return, span),
+        ],
+        span.clone(),
+    )
+}
+
+/// The slot and dictionary type of a dictionary static whose native cell takes a keyed write under its exclusive
+/// guard; None for any other static, which keeps its snapshot write.
+pub fn guarded_dictionary_static(builder: &Builder, global: &GlobalPlace) -> Result<Option<(usize, PlanType)>, String> {
+    let slot = static_slot(&builder.program.statics, global)?;
+    if !has_native_static_cell(&builder.program.statics[slot]) {
+        return Ok(None);
+    }
+    let ty = static_carrier(builder, global)?;
+    Ok(matches!(ty, PlanType::Dict(..)).then_some((slot, ty)))
+}
+
+/// The dictionary static an insertion's exclusive receiver names, when its native cell takes the entry under its
+/// guard; None for any other receiver, which keeps its ordinary route and refusals.
+pub fn guarded_dictionary_receiver(
+    builder: &Builder,
+    arguments: &[ArgumentElement],
+) -> Result<Option<(usize, PlanType)>, String> {
+    let Some(SourceOperand::Place(read)) = arguments.first().and_then(ArgumentElement::as_one) else {
+        return Ok(None);
+    };
+    let Some(global) = read.place.global() else {
+        return Ok(None);
+    };
+    if !read.place.projection.is_empty() || read.fact != OwnershipFact::MutBorrow {
+        return Ok(None);
+    }
+    guarded_dictionary_static(builder, global)
+}
+
+/// Insert one evaluated entry into a dictionary static under its exclusive guard. The dictionary is neither loaded nor
+/// stored: the accessor borrows it in place and the runtime inserts the key and value.
+pub fn guarded_insert(
+    builder: &mut Builder,
+    slot: usize,
+    ty: &PlanType,
+    key: Operand,
+    value: Operand,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let types = collection_arguments(ty);
+    if types.len() != 2 {
+        return Err("unsupported Body IR guarded dictionary insert arity".into());
+    }
+    let mut admitted = Vec::with_capacity(2);
+    for (operand, parameter) in [key, value].into_iter().zip(&types) {
+        match owned_runtime_operand(builder, operand, parameter, span)? {
+            Some(operand) => admitted.push(operand),
+            None => return Err("unsupported Body IR collection element coercion".into()),
+        }
+    }
+    let reference = collection_reference(ty, true);
+    let mut declared = vec![reference.clone()];
+    declared.extend(types.iter().cloned());
+    let callee = declare_collection_runtime(builder, ty, "insert", declared, PlanType::Unit, span)?;
+    let name = format!(
+        "{}__incan_static_insert_{slot}_{}",
+        builder.name,
+        builder.synthesized.len()
+    );
+    builder
+        .synthesized
+        .push(insert_accessor(name.clone(), reference, callee, &types, span));
+    let declaration = &builder.program.statics[slot];
+    if is_computed_static(declaration) {
+        let owner_module = static_owner(declaration);
+        initialize_module_statics(builder, &owner_module, span);
+    }
+    let output = temporary(builder, PlanType::Unit, span);
+    terminate_call(
+        builder,
+        CalleeKind::StaticMethod(slot as i64, name),
+        admitted,
+        output,
+        span,
+    );
+    Ok(())
+}
+
+/// The accessor of one guarded insertion: it receives the dictionary exclusively and inserts the forwarded entry.
+fn insert_accessor(
+    name: String,
+    reference: PlanType,
+    callee: CalleeKind,
+    types: &[PlanType],
+    span: &SourceSpan,
+) -> Function {
+    let mut parameters = vec![parameter("__incan_receiver", &reference, span)];
+    let mut locals = vec![local(&PlanType::Unit, span), local(&reference, span)];
+    let mut arguments = vec![read_place(plan_place(1, span), true, span)];
+    for (index, input) in types.iter().enumerate() {
+        parameters.push(parameter(&format!("__incan_argument_{index}"), input, span));
+        locals.push(local(input, span));
+        arguments.push(read_place(
+            plan_place(index as i64 + 2, span),
+            snapshot_owns(input),
+            span,
+        ));
+    }
+    Function::new(
+        name,
+        parameters,
+        PlanType::Unit,
+        locals,
+        vec![
+            plan_block(Vec::new(), call(callee, arguments, span), span),
             plan_block(Vec::new(), TerminatorKind::Return, span),
         ],
         span.clone(),
