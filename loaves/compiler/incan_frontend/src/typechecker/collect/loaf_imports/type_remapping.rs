@@ -285,7 +285,7 @@ impl TypeChecker {
         library: &str,
         manifest: &LibraryManifest,
     ) -> (HashMap<String, String>, HashSet<String>, HashSet<String>) {
-        let seeds = self.loaf_type_origins(library, manifest);
+        let seeds = self.recorded_type_origins(library, manifest);
         let (remapping, loaves) = self.resolve_public_type_origins(library, seeds);
         let (preserving_identity_keys, preserving_type_keys) =
             self.reconstruct_artifact_layouts(library, &remapping, &loaves);
@@ -301,9 +301,9 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn resolve_public_type_origins(
         &mut self,
         library: &str,
-        seeds: Arc<BTreeMap<String, NominalTypeOriginExport>>,
+        seeds: Vec<NominalTypeOriginExport>,
     ) -> (HashMap<String, String>, BTreeMap<String, LoafEntry>) {
-        let mut pending = std::collections::VecDeque::from_iter(seeds.values().cloned());
+        let mut pending = std::collections::VecDeque::from_iter(seeds);
         let mut seen = HashSet::new();
         let mut loaves = BTreeMap::new();
         let mut remapping = HashMap::new();
@@ -340,15 +340,16 @@ impl TypeChecker {
             remapping.insert(key, qualified);
 
             if let std::collections::btree_map::Entry::Vacant(vacant) = loaves.entry(entry.key.clone()) {
-                pending.extend(
-                    self.loaf_type_origins(&entry.key, &entry.artifact.manifest)
-                        .values()
-                        .cloned(),
-                );
+                pending.extend(self.recorded_type_origins(&entry.key, &entry.artifact.manifest));
                 vacant.insert(entry);
             }
         }
         (remapping, loaves)
+    }
+
+    /// The nominal type origins the install record of the Loaf indexed as `key` lists, in binding-key order.
+    fn recorded_type_origins(&self, key: &str, manifest: &LibraryManifest) -> Vec<NominalTypeOriginExport> {
+        self.prepared_install_record(key, manifest).type_origins.clone()
     }
 
     /// The nominal type origins the manifest of the Loaf indexed as `key` references, keyed by binding key: a fact of
