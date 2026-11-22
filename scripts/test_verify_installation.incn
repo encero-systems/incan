@@ -96,18 +96,19 @@ def test_every_installed_gate_starts_at_once_and_bounds_its_own_children() -> Re
     return Ok(None)
 
 
-def test_the_census_runs_twice_the_release_jobs_and_reserves_its_measured_share() -> Result[None, str]:
+def test_the_census_runs_twice_the_jobs_and_one_for_graph_and_reserves_its_measured_share() -> Result[None, str]:
     """
-    The census outlasts every other gate, so it runs twice the release's jobs; each of its workers reserves 2 GiB, more
-    than twice the 0.87 GB a worker took at the measured 1.73 GB peak of a whole census at two jobs.
+    The census runs its families in turn at twice the release's jobs, and its graph family beside them at one more;
+    each of its workers reserves 2 GiB, more than twice the 0.87 GB a worker took at the measured 1.73 GB peak of a
+    whole census at two jobs.
     """
     gib = 1073741824
-    assert census_jobs(1) == 2
-    assert census_jobs(2) == 4
+    assert census_jobs(1) == 3
+    assert census_jobs(2) == 5
     assert CENSUS_WORKER_RESERVATION_BYTES == 2 * gib
     reservations = [plan.reservation for plan in verification_phase_plans(2)]
     assert verification_phase_names(2)[4] == "census"
-    assert reservations[4] == 4 * CENSUS_WORKER_RESERVATION_BYTES
+    assert reservations[4] == 5 * CENSUS_WORKER_RESERVATION_BYTES
     return Ok(None)
 
 
