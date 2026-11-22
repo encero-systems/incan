@@ -374,6 +374,8 @@ impl TypeChecker {
         if namespace != "rust" || rest.is_empty() {
             return None;
         }
+        #[cfg(test)]
+        RUST_REEXPORT_BUILDS.with(|builds| builds.set(builds.get() + 1));
         let path = target_path[1..].join("::");
         let metadata = manifest
             .rust_abi
@@ -799,4 +801,16 @@ impl TypeChecker {
             info.field_provider_libraries.insert(name.clone(), library.to_string());
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many Rust items `rust_reexport_symbol_kind` built on this thread.
+    static RUST_REEXPORT_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many Rust items a `rust::` re-export resolution built on this thread so far.
+#[cfg(test)]
+pub(super) fn rust_reexport_builds() -> usize {
+    RUST_REEXPORT_BUILDS.with(std::cell::Cell::get)
 }
