@@ -63,6 +63,53 @@ pub def test_an_edit_after_a_dependency_declaration_leaves_its_reader_checked() 
     return stop_example_engine(binary, store)
 
 
+pub def test_an_edit_inside_a_dependency_class_reaches_a_program_holding_it_as_a_field_default() -> Result[None, str]:
+    """
+    A program whose class holds a path dependency's class as a field default runs the edited method body after a
+    longer string in that body moves the dependency class's span.
+    """
+    scratch = scratch_directory()?
+    app = class_dependency_fixture(scratch.path())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = scratch.path().joinpath("store")
+    cold = records_run(binary, app, store)?
+    assert cold.output == "sent\nsent\nno credit is left\n", cold.output
+    edit_library(scratch.path(), "\"no credit is left\"", "\"no data credit is left\"")?
+    edited = records_run(binary, app, store)?
+    assert edited.output == "sent\nsent\nno data credit is left\n", edited.output
+    return stop_example_engine(binary, store)
+
+
+def class_dependency_fixture(root: Path) -> Result[Path, str]:
+    """Write the program `app` whose `Channel` holds the path-dependency Loaf `pathlib`'s `Credits` as a field default."""
+    library = root.joinpath("lib")
+    library.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(library.joinpath("loaf.toml"), "[project]\nname = \"pathlib\"\nversion = \"0.1.0\"\n")?
+    write(
+        library.joinpath("src/lib.incn"),
+        "pub class Credits:\n    \"\"\"Outstanding sequences.\"\"\"\n\n    pub limit: int\n    outstanding: list[str] = []\n\n"
+        + "    pub def spend(mut self, sequence: int) -> Result[None, str]:\n        \"\"\"Spend one.\"\"\"\n"
+        + "        if len(self.outstanding) >= self.limit:\n            return Err(\"no credit is left\")\n"
+        + "        self.outstanding.append(str(sequence))\n        return Ok(None)\n",
+    )?
+    app = root.joinpath("app")
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"pathapp\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n"
+        + "[dependencies]\npathlib = { path = \"../lib\" }\n",
+    )?
+    write(
+        app.joinpath("src/main.incn"),
+        "from pub::pathlib import Credits\n\n\npub class Channel:\n    \"\"\"One end.\"\"\"\n\n    pub sent: int = 0\n"
+        + "    pub pending: Credits = Credits(limit=2)\n\n    pub def send(mut self) -> Result[None, str]:\n"
+        + "        \"\"\"Send one.\"\"\"\n        self.pending.spend(self.sent)?\n        self.sent += 1\n        return Ok(None)\n\n\n"
+        + "def main() -> None:\n    mut channel = Channel()\n    for _ in range(3):\n        match channel.send():\n"
+        + "            Ok(_) => println(\"sent\")\n            Err(reason) => println(reason)\n",
+    )?
+    return Ok(app)
+
+
 def path_dependency_fixture(root: Path, names: str, printed: str) -> Result[Path, str]:
     """Write the program `app` that prints from the path-dependency Loaf `pathlib` next to it."""
     library = root.joinpath("lib")
