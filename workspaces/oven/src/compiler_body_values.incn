@@ -17,12 +17,14 @@ from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
 from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
     EditCutoff,
+    InputReaders,
     NamespaceRecordSelection,
     OutputSlots,
     PublishedEvaluation,
     ReusableRecord,
     publish_evaluation,
     readers_of,
+    select_edit_readers,
     reusable_checker_records,
     reusable_evaluation,
     reusable_family_records,
@@ -182,11 +184,18 @@ pub model CoveredBodyOwners:
 
 pub def invalid_namespace_modules(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
     """Select namespace records reached by this request's changed source projections or imported signatures."""
+    selected_readers = select_edit_readers(selected, changed, [profile], false)?
+    return Ok(reached_namespaces(selected_readers.direct, profile))
+
+
+pub def reached_namespaces(inputs: Borrowed[list[InputReaders]], profile: str) -> list[str]:
+    """Name the directly affected namespaces from the shared selection."""
     mut modules: set[str] = set()
-    for reader in readers_of(selected, changed, profile)?:
-        if reader.family == "namespace":
-            modules.add(reader.identity)
-    return Ok(sorted([module for module in modules]))
+    for input in inputs:
+        for reader in input.readers:
+            if reader.profile == profile and reader.output.family == "namespace":
+                modules.add(reader.output.identity)
+    return sorted([module for module in modules])
 
 
 pub def select_body_values(
@@ -311,15 +320,24 @@ pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profil
 
 pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
     """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
-    mut owners: set[str] = set()
+    semantic = [key for key in changed if key.family != "owner-placement"]
+    readers = select_edit_readers(selected, semantic, [profile], false)?
+    return Ok(reached_body_owners(readers.direct, profile))
+
+
+pub def reached_body_owners(inputs: Borrowed[list[InputReaders]], profile: str) -> list[str]:
+    """Name affected checked bodies, keeping the placement exception on the exact changed input."""
     # A position edit can restamp a selected executable frame against today's syntax.
     # Only changed semantic inputs withdraw an owner's checked pair from the compiler. A path dependency's changed
     # declaration span is one: a checked body names that declaration by it, and no restamp of its own frame moves it.
-    semantic = [key for key in changed if key.family != "owner-placement"]
-    for reader in readers_of(selected, semantic, profile)?:
-        if reader.family in ["local", "final", "body-ir"]:
-            owners.add(reader.identity)
-    return Ok(sorted([owner for owner in owners]))
+    mut owners: set[str] = set()
+    for input in inputs:
+        if input.input.family == "owner-placement":
+            continue
+        for reader in input.readers:
+            if reader.profile == profile and reader.output.family in ["local", "final", "body-ir"]:
+                owners.add(reader.output.identity)
+    return sorted([owner for owner in owners])
 
 
 pub def publish_body_values(
