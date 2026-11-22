@@ -1,5 +1,6 @@
 """Pack the installed toolchain's named closure, rewriting paths at the archive boundary."""
 
+from pub::incan_platform.store import sync_durable
 from pub::incan_platform.trace import Operation
 from archive_decompression import plain_archive
 from rust::std::fs import create_dir, remove_dir_all, rename
@@ -11,6 +12,7 @@ from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
 from files import json_text, make_directory, read, read_json, remove, write
+from store_path_conversion import store_path
 from home import TOOLCHAIN, home, standard_packages
 from json_fields import array_value, required_items, required_text, string_value
 from toolchain import (
@@ -310,13 +312,13 @@ def portable_description(driver: str, abi: list[str], externs: list[JsonValue], 
     return JsonValue.object(fields)
 
 
-def archive(stage: Path, output: Path) -> Result[None, str]:
+pub def archive(stage: Path, output: Path) -> Result[None, str]:
     """
     Archive a stage with the compression `output`'s name asks for, replacing `output` only with a complete archive.
 
     1. Resolve where the archive goes.
-    2. Write it under a pending name, with the compression its extension names.
-    3. Rename it into place.
+    2. Write it under a pending name, with the compression its extension names; a failure removes the pending file.
+    3. Flush the complete archive to stable storage once, then rename it into place.
     """
     # 1. The archive's directory exists, and its path is absolute for the message that reports it.
     make_directory(output.parent())?
@@ -329,8 +331,15 @@ def archive(stage: Path, output: Path) -> Result[None, str]:
     # 2. Nothing is written at `output` until the archive is complete, and its name chooses the compression.
     pending = absolute.parent().joinpath(f".{absolute.name()}.pending-{id()}")
     arguments = tar_arguments(output, pending, stage)?
-    run_command("tar", arguments + ["."])?
-    # 3. The complete archive replaces any earlier one in a single step.
+    match run_command("tar", arguments + ["."]):
+        Ok(_) => pass
+        Err(message) =>
+            if pending.exists():
+                remove(pending)?
+            return Err(message)
+    # 3. The archive is the pack's one durable output: one flush, then the complete archive replaces any earlier one in
+    # a single step.
+    sync_durable(store_path(pending)).map_err((error) => f"cannot flush toolchain archive {pending.0}: {error.message()}")?
     rename(pending.0, f"{absolute.0}").map_err(
         (error) => f"cannot publish toolchain archive {pending.0} at {absolute.0}: {error}",
     )?
