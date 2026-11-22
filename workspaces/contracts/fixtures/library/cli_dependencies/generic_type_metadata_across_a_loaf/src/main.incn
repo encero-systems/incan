@@ -1,0 +1,24 @@
+# behavior: a generic function of a path-dependency Loaf reads the generated class name and field table of the type it is instantiated with
+# expect-stdout:
+#   Row
+#   Row:2
+#   Point:3
+
+from pub::caselib.schema import class_name, described
+
+
+model Row:
+    name: str
+    count: int
+
+
+model Point:
+    x: int
+    y: int
+    z: int
+
+
+def main() -> None:
+    println(class_name[Row]())
+    println(described[Row]())
+    println(described[Point]())
