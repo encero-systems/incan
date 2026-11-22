@@ -1,0 +1,6 @@
+def requires_clone[T with Clone]() -> str:
+    return "clone"
+
+
+pub def reflected_schema_marker[T]() -> str:
+    return f"{T.__class_name__()}:{len(T.__fields__())}:{requires_clone[T]()}"
