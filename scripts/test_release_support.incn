@@ -50,6 +50,7 @@ from release_support import (
     require_candidate_census,
     same_bytes,
     seed_toolchain_directory,
+    unselected_native_generations,
     signal_release_termination,
     start_background_step,
     tree_bytes,
@@ -1011,4 +1012,27 @@ def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() ->
             assert is_sha256(value), f"{REGISTRY_CHECKSUMS} pins {loaf} {version} to `{value}`"
             count += 1
     assert count > 0, f"{REGISTRY_CHECKSUMS} pins nothing"
+    return Ok(None)
+
+
+def test_the_build_home_keeps_only_the_native_generations_its_published_support_selects() -> Result[None, str]:
+    """
+    The build home starts as a copy of its seed, whose native generations the candidate's published support no longer
+    selects; those are the ones withdrawn, so the build home carries what the archive will carry. A generation the
+    published externs or search directories name, whether in the toolchain or elsewhere, stays.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    native = toolchain.joinpath("native")
+    for name in ["seed-runtime", "selected-runtime", "incan_stdlib_web-1", "searched"]:
+        native.joinpath(name).mkdir(true, true).map_err((error) => error.message())?
+    native.joinpath(".lock").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    selected = [
+        native.joinpath("selected-runtime").joinpath("libincan_native_runtime-1.rlib").0,
+        temporary.path().joinpath("bakery/libraries/unit/libincan_lang-1.rlib").0,
+        native.joinpath("searched").0,
+    ]
+    unselected = unselected_native_generations(toolchain, selected)?
+    assert [path.name() for path in unselected] == ["incan_stdlib_web-1", "seed-runtime"]
+    assert len(unselected_native_generations(temporary.path().joinpath("absent"), selected)?) == 0
     return Ok(None)
