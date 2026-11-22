@@ -18,10 +18,12 @@ from engine_protocol_fixtures import json_text_is
 from lowering_record_fixtures import (
     attempt_trace,
     command_proof,
+    lowering_attempts,
     lowering_example_run,
     proof_count,
     report_fixture_build,
     stop_example_engine,
+    verify_generic_runtime_batches,
 )
 from scratch import scratch_directory
 from rust_target import decoded
@@ -814,7 +816,7 @@ pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]
     planned = proof_count(cold, "plan_function_evaluations")?
     assert proof_count(edited, "plan_function_reuses")? == planned - 1, diagnostic
     assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
-    return Ok(None)
+    return verify_generic_runtime_batches()
 
 
 def unrelated_edit_reports(
@@ -863,20 +865,6 @@ def unrelated_edit_reports(
         attempts = compare_runtime_demand_edit(binary, source, warm_store, added, "4\nb\n4\n44", "added")?
         assert attempts == 2, f"new runtime demand lowering attempts: {attempts}"
     return Ok((edited, cold))
-
-
-def lowering_attempts(trace: Option[Path]) -> Result[int, str]:
-    """Count entry to the driver lowering attempt in the selected fixture's cumulative trace."""
-    mut attempts = 0
-    if let Some(directory) = trace:
-        for path in directory.iterdir().map_err((error) => error.message())?:
-            if not path.name().startswith("engine-compiler-"):
-                continue
-            text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
-            for line in text.split("\n"):
-                if "\"kind\":\"begin\"" in line and "\"function\":\"incan_rustc_driver::lower_program\"" in line:
-                    attempts += 1
-    return Ok(attempts)
 
 
 def compare_runtime_demand_edit(

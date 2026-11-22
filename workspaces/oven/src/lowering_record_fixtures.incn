@@ -3,12 +3,15 @@ the example engine."""
 
 from rust::std::process import Command
 from rust::std::str import from_utf8
+from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import zero_id
+from files import write
+from scratch import scratch_directory
 
 
 pub def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
@@ -88,3 +91,60 @@ pub def attempt_trace(root: Path, name: str) -> Result[Path, str]:
     path = root.joinpath(name)
     path.mkdir(true, true).map_err((error) => error.message())?
     return Ok(path)
+
+
+pub def lowering_attempts(trace: Option[Path]) -> Result[int, str]:
+    """Count entry to the driver lowering attempt in the selected fixture's cumulative trace."""
+    mut attempts = 0
+    if let Some(directory) = trace:
+        for path in directory.iterdir().map_err((error) => error.message())?:
+            if not path.name().startswith("engine-compiler-"):
+                continue
+            text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+            for line in text.split("\n"):
+                if "\"kind\":\"begin\"" in line and "\"function\":\"incan_rustc_driver::lower_program\"" in line:
+                    attempts += 1
+    return Ok(attempts)
+
+
+pub def verify_generic_runtime_batches() -> Result[None, str]:
+    """Replay two ordered runtime batches across an unrelated edit and compare the independent native result."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("probe.incn")
+    plan = root.joinpath("native.plan")
+    target = root.joinpath("target")
+    executable = target.joinpath("incan/release/bin/probe")
+    warm_store = root.joinpath("warm-store")
+    warm_trace = Some(attempt_trace(root, "warm-trace")?)
+    seed = generic_runtime_source()
+    write(source, seed)?
+    _ = lowering_example_run(binary, source, warm_store, "4\n7\n1\n7\na\n42", trace=warm_trace)?
+    seed_attempts = lowering_attempts(warm_trace)?
+    write(source, seed.replace("value + 1", "value + 2"))?
+    output = "4\n7\n1\n7\na\n43"
+    _ = lowering_example_run(binary, source, warm_store, output, trace=warm_trace)?
+    steady_attempts = lowering_attempts(warm_trace)? - seed_attempts
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    warm_executable = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    target.remove_tree().map_err((error) => error.message())?
+    fresh_store = root.joinpath("fresh-store")
+    fresh_trace = Some(attempt_trace(root, "fresh-trace")?)
+    _ = lowering_example_run(binary, source, fresh_store, output, trace=fresh_trace)?
+    stop_example_engine(binary, fresh_store)?
+    assert warm_plan == plan.read_bytes().map_err((error) => error.message())?, "two-batch plans differ"
+    assert warm_executable == executable.read_bytes().map_err((error) => error.message())?, "two-batch executables differ"
+    fresh_attempts = lowering_attempts(fresh_trace)?
+    assert seed_attempts == 3 and fresh_attempts == 3, f"two-batch ordinary lowering spans: {seed_attempts}, {fresh_attempts}"
+    assert steady_attempts == 1, f"two-batch steady lowering spans: {steady_attempts}"
+    return Ok(None)
+
+
+def generic_runtime_source() -> str:
+    """The ordinary UTF-8 call loads its provider before generic lowering demands the exact linked spelling."""
+    unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
+    generic = "def pick[T](items: list[T]) -> T:\n    println(len(\"generic\".encode(\"utf-8\")))\n    return items[0]\n\n\n"
+    entry = "def main() -> None:\n    println(len(\"text\".encode(\"utf-8\")))\n"
+    return unrelated + generic + entry + "    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\"]))\n    println(unrelated(41))\n"
