@@ -599,6 +599,9 @@ impl TypeChecker {
         let export = Self::find_manifest_export(manifest, public_name)?;
         let kind = match export {
             ManifestExportRef::Alias(alias) => {
+                if Self::alias_names_no_nominal_type(manifest, alias) {
+                    return None;
+                }
                 self.symbol_kind_from_manifest_alias(manifest, alias, &mut HashSet::new())?
             }
             ManifestExportRef::Model(export) => {
