@@ -287,6 +287,9 @@ pub enum ExecutableDeclaration {
         /// Producer-selected native callees required by the retained default frames; never empty.
         callables: Vec<crate::body_ir::LoafCallable>,
     },
+    /// A normal enum layout with its checker-proven concrete trait dispatch slots, so a consumer dispatches an
+    /// adoption's methods, such as the comparison dunders of `with Ord`, to the enum's own implementations.
+    EnumWithTraits(EnumDeclaration, Vec<crate::body_ir::TraitImplementation>),
 }
 
 impl ExecutableDeclaration {
@@ -349,7 +352,7 @@ impl ExecutableDeclaration {
             Self::Nominal(value) => Some(&value.canonical),
             Self::FieldlessEnum(value) => Some(&value.canonical),
             Self::ValueEnum(value) | Self::ValueEnumWithLayout(value, _) => Some(&value.canonical),
-            Self::Enum(value) => Some(&value.canonical),
+            Self::Enum(value) | Self::EnumWithTraits(value, _) => Some(&value.canonical),
             Self::Trait(value) => Some(value),
             Self::NominalWithTraits(value, _) => Some(&value.canonical),
             Self::NominalWithCallables { nominal, callables, .. } => {
