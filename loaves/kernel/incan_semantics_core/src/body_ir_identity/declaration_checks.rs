@@ -82,15 +82,22 @@ impl BodyIrModule {
         if replacements.next().is_some() {
             return false;
         }
-        let StaticInitializer::Computed(initializer) = &replacement.initial else {
-            return false;
+        let initializer_matches = match &replacement.initial {
+            StaticInitializer::Computed(initializer) => {
+                initializer.canonical == original.canonical
+                    && initializer.decl_id == original.decl_id
+                    && static_initializer_matches_parts(&replacement.ty, &replacement.initial)
+            }
+            StaticInitializer::Linked(accessors) => {
+                accessors.valid_for(&replacement.canonical) && accessors.initialize_module.is_some()
+            }
+            _ => false,
         };
         original.canonical.as_ref() == Some(&replacement.canonical)
             && matches!(replacement.canonical.kind, SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method)
             && original.type_parameters.is_empty()
             && self.body_has_canonical_direct_call_id(original)
-            && initializer.canonical == original.canonical
-            && initializer.decl_id == original.decl_id
+            && initializer_matches
             && modules.iter().flat_map(Self::callable_declaration_frames).any(|body| {
                 body.canonical == original.canonical
                     && matches!(&replacement.ty, IncanType::Function { params, return_type }
@@ -98,7 +105,6 @@ impl BodyIrModule {
                             && params.iter().zip(&body.params).all(|(left, right)| decorated_parameter_matches(body, left, right))
                             && **return_type == body.return_type)
             })
-            && static_initializer_matches_parts(&replacement.ty, &replacement.initial)
     }
 
     /// Validate a per-instantiation initializer against its original and wrapper, without granting module storage.

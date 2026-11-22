@@ -97,11 +97,32 @@ pub(crate) fn resolve_facades(
 
 /// Publish canonical ABI items, nongeneric public Loaf facades and checked Rust item reexports. Facade aliases point
 /// to those same items; they introduce neither layouts nor callable implementations. An executable has no manifest.
-pub(crate) fn items(plan: &Plan, facades: &[LibraryFacade], span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+pub(crate) fn items(
+    plan: &Plan,
+    facades: &[LibraryFacade],
+    generator: &ast::attr::AttrIdGenerator,
+    span: Span,
+) -> Result<Vec<Box<ast::Item>>, PlanError> {
     let mut items = plan
         .exports
         .iter()
-        .map(|export| public_use(&export.name, &export.path, span))
+        .map(|export| {
+            let mut item = public_use(&export.name, &export.path, span);
+            if export
+                .name
+                .starts_with(incan_semantics_core::body_ir::LINKED_STATIC_ACCESSOR_PREFIX)
+            {
+                item.attrs.push(ast::attr::mk_attr_nested_word(
+                    generator,
+                    ast::AttrStyle::Outer,
+                    ast::Safety::Default,
+                    rustc_span::sym::doc,
+                    rustc_span::Symbol::intern("hidden"),
+                    span,
+                ));
+            }
+            item
+        })
         .collect::<Vec<_>>();
     for facade in facades {
         items.push(public_use(&facade.name, &facade.path, span));

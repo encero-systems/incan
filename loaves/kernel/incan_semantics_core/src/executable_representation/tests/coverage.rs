@@ -51,6 +51,98 @@ fn linked_static_paths_follow_the_declaration_name() -> Result<(), Box<dyn std::
         })
     ));
     assert_eq!(postcard::to_allocvec(&seed)?, old);
+
+    let mut replacement = StaticDeclaration {
+        canonical: identity("decorate", 1),
+        ty: IncanType::Primitive(IncanPrimitiveType::Int),
+        initial: StaticInitializer::Computed(Box::new(body("decorate", 1))),
+    };
+    let first = LinkedStaticAccessors::for_declaration(&replacement).ok_or("missing replacement binding")?;
+    replacement.canonical = identity("decorate", 2);
+    let second = LinkedStaticAccessors::for_declaration(&replacement).ok_or("missing overload binding")?;
+    assert_ne!(first.load, second.load);
+    assert_eq!(first.initialize_module, second.initialize_module);
+    Ok(())
+}
+
+/// A native surface selects storage reached by a published generic and keeps it private to the closure.
+#[test]
+fn only_reached_statics_expose_native_accessors() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::body_ir::{
+        Constant, GlobalPlace, GlobalWritePolicy, Operand, OwnershipFact, Place, StaticDeclaration, StaticInitializer,
+    };
+
+    let mut counter = identity("counter", 2);
+    counter.kind = SemanticSourceTargetKind::Static;
+    let mut unused = identity("unused", 3);
+    unused.kind = SemanticSourceTargetKind::Static;
+    let carrier = IncanType::Primitive(IncanPrimitiveType::Int);
+    let read = Operand::place(
+        Place::from_global(GlobalPlace {
+            identity: counter.clone(),
+            ty: carrier.clone(),
+            write_policy: GlobalWritePolicy::Rebindable,
+        }),
+        OwnershipFact::Copy,
+        false,
+    );
+    let entry = identity("read", 1);
+    let mut reader = body("read", 1);
+    reader.return_type = carrier.clone();
+    reader.block.stmts.push(Statement {
+        span: reader.span,
+        kind: StatementKind::Return { value: Some(read) },
+    });
+    let mut source = module(vec![reader]);
+    let owner = crate::canonical_module_identity(&counter).ok_or("static has no module identity")?;
+    source.module_id = CompilerNodeId::module(&owner);
+    source
+        .static_declarations
+        .extend(
+            [counter.clone(), unused.clone()]
+                .into_iter()
+                .map(|canonical| StaticDeclaration {
+                    canonical,
+                    ty: carrier.clone(),
+                    initial: StaticInitializer::Literal(Constant::Int(100)),
+                }),
+        );
+    let public = BTreeSet::from([entry.clone()]);
+    let legacy = publish(&source, &public)?;
+    let prepared = super::super::prepare_surface(
+        std::slice::from_ref(&source),
+        "probe",
+        "1.2.3",
+        &public,
+        &BTreeSet::new(),
+        true,
+    )?;
+    let old_reader = SurfaceReader::open(&legacy)?;
+    let new_reader = SurfaceReader::open(&prepared.bytes)?;
+    assert_eq!(
+        postcard::to_allocvec(&old_reader.fragment(&entry)?)?,
+        postcard::to_allocvec(&new_reader.fragment(&entry)?)?
+    );
+    let links = prepared
+        .linked_statics
+        .get(&counter)
+        .ok_or("required static has no selected native binding")?;
+    assert_eq!(prepared.linked_statics.len(), 1);
+    assert!(!new_reader.index().declarations.contains_key(&counter));
+    assert!(!new_reader.index().implementation.contains_key(&unused));
+    let DeclarationCoverage::Covered { offset, length, .. } = new_reader.index().execution_coverage(&counter)? else {
+        return Err("required private static is not covered".into());
+    };
+    let start = usize::try_from(*offset)?;
+    let len = usize::try_from(*length)?;
+    let bytes = new_reader
+        .payload
+        .get(start..start + len)
+        .ok_or("static fragment is outside the payload")?;
+    let ExecutableDeclaration::Static(storage) = new_reader.index().decode_declaration(&counter, bytes)? else {
+        return Err("the fragment does not contain a static".into());
+    };
+    assert_eq!(storage.initial, StaticInitializer::Linked(Box::new(links.clone())));
     Ok(())
 }
 

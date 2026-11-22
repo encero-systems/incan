@@ -17,7 +17,9 @@ use crate::collections::{
     collection_arguments, collection_name, collection_reference, declare_collection_runtime, is_owned_collection,
     owned_runtime_operand, refuse_undisplayed_key,
 };
-use crate::computed_statics::{has_native_static_cell, initialize_module_statics, is_computed_static, static_owner};
+use crate::computed_statics::{
+    guarded_static_call, has_native_static_cell, initialize_module_statics, is_computed_static, static_owner,
+};
 use crate::decls::static_slot;
 use crate::frame::{Builder, read_place, temporary, terminate_call};
 use crate::lists::list_element;
@@ -282,13 +284,8 @@ pub fn guarded_collection_call(
         initialize_module_statics(builder, &owner_module, span);
     }
     let local = destination.local;
-    terminate_call(
-        builder,
-        CalleeKind::StaticMethod(receiver.slot as i64, name),
-        admitted,
-        destination,
-        span,
-    );
+    let callee = guarded_static_call(builder, receiver.slot, name, false)?;
+    terminate_call(builder, callee, admitted, destination, span);
     if result == PlanType::String || is_owned_collection(&result) {
         builder.owned.push(local);
     }
@@ -415,13 +412,8 @@ pub fn guarded_insert(
         initialize_module_statics(builder, &owner_module, span);
     }
     let output = temporary(builder, PlanType::Unit, span);
-    terminate_call(
-        builder,
-        CalleeKind::StaticMethod(slot as i64, name),
-        admitted,
-        output,
-        span,
-    );
+    let callee = guarded_static_call(builder, slot, name, true)?;
+    terminate_call(builder, callee, admitted, output, span);
     Ok(())
 }
 

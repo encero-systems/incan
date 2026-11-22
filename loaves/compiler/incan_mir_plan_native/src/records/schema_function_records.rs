@@ -250,6 +250,14 @@ pub(crate) static SHAPE_FUNCTION_RECORDS_STORED_TARGET: Shape = Shape {
                 field(b"k\x86\xb2s\xff4", "1", "string"),
             ],
         ),
+        variant(
+            b"\x9d\x1d\x51\xf8\x49\xbc",
+            "LinkedStaticMethod",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "string"),
+                field(b"k\x86\xb2s\xff4", "1", "string"),
+            ],
+        ),
     ]),
 };
 

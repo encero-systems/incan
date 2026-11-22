@@ -159,31 +159,34 @@ pub struct LinkedStaticGuardAccessors {
 pub const LINKED_STATIC_ACCESSOR_PREFIX: &str = "__incan_linked_static_";
 
 impl LinkedStaticAccessors {
-    /// Choose native names in the declaring Loaf using its unique module and declaration name. Byte offsets and
-    /// the position of storage in a particular unit cannot affect the exported ABI.
+    /// Choose native names in the declaring Loaf. Ordinary statics use their module and name. Decorated replacements
+    /// retain the full callable identity to distinguish overloads. Neither depends on the native slot.
     pub fn for_declaration(declaration: &StaticDeclaration) -> Option<Self> {
         let identity = &declaration.canonical;
-        if !matches!(identity.origin, crate::SymbolOrigin::Package { .. })
-            || identity.namespace != crate::SymbolNamespace::OrdinaryLexical
-            || identity.scope_discriminant.is_some()
-            || !matches!(
-                identity.kind,
-                crate::SemanticSourceTargetKind::Static | crate::SemanticSourceTargetKind::Const
-            )
-            || matches!(declaration.initial, StaticInitializer::Linked(_))
-        {
+        if !linked_storage_owner(identity) || matches!(declaration.initial, StaticInitializer::Linked(_)) {
             return None;
         }
         let writable = identity.kind == crate::SemanticSourceTargetKind::Static;
+        let replacement = matches!(
+            identity.kind,
+            crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::Method
+        );
+        let computed = matches!(declaration.initial, StaticInitializer::Computed(_));
+        if replacement && !computed {
+            return None;
+        }
         let mut stable = identity.clone();
-        stable.declaration_span = crate::HirSourceSpan::new(0, 0);
+        if !replacement {
+            stable.declaration_span = crate::HirSourceSpan::new(0, 0);
+        }
         let name = crate::encode_incan_symbol_identity(&stable);
         let path = |operation: &str| format!("{LINKED_STATIC_ACCESSOR_PREFIX}{operation}_{name}");
 
-        let computed = matches!(declaration.initial, StaticInitializer::Computed(_));
         let initialize_module = computed.then(|| {
             stable.declaration_name.clear();
             stable.kind = crate::SemanticSourceTargetKind::Static;
+            stable.namespace = crate::SymbolNamespace::OrdinaryLexical;
+            stable.declaration_span = crate::HirSourceSpan::new(0, 0);
             let module = crate::encode_incan_symbol_identity(&stable);
             format!("{LINKED_STATIC_ACCESSOR_PREFIX}initialize_{module}")
         });
@@ -208,14 +211,13 @@ impl LinkedStaticAccessors {
     /// Check that every claimed operation is a hidden native identifier in the declaring crate. A read-only static
     /// cannot carry a write operation, and module initialization must have a native guard to force.
     pub(crate) fn valid_for(&self, identity: &CanonicalSymbolId) -> bool {
-        let writable = match identity.kind {
-            crate::SemanticSourceTargetKind::Static => true,
-            crate::SemanticSourceTargetKind::Const => false,
-            _ => return false,
-        };
-        matches!(identity.origin, crate::SymbolOrigin::Package { .. })
-            && identity.namespace == crate::SymbolNamespace::OrdinaryLexical
-            && identity.scope_discriminant.is_none()
+        let writable = identity.kind == crate::SemanticSourceTargetKind::Static;
+        let replacement = matches!(
+            identity.kind,
+            crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::Method
+        );
+        linked_storage_owner(identity)
+            && (!replacement || self.initialize_module.is_some())
             && self.store.is_some() == writable
             && self
                 .initialize_module
@@ -236,6 +238,18 @@ impl LinkedStaticAccessors {
                         .is_none_or(|path| linked_static_identifier(path, "with_mut_"))
             })
     }
+}
+
+/// Ordinary package storage and a decorated callable's replacement can have producer-owned native cells.
+fn linked_storage_owner(identity: &CanonicalSymbolId) -> bool {
+    use crate::{SemanticSourceTargetKind as Kind, SymbolNamespace as Namespace};
+    matches!(identity.origin, crate::SymbolOrigin::Package { .. })
+        && identity.scope_discriminant.is_none()
+        && matches!(
+            (&identity.namespace, &identity.kind),
+            (Namespace::OrdinaryLexical, Kind::Static | Kind::Const | Kind::Function)
+                | (Namespace::Member, Kind::Method)
+        )
 }
 
 /// Validate an operation path as one crate-relative identifier in the compiler-owned namespace.
