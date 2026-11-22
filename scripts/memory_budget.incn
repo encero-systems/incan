@@ -184,21 +184,58 @@ pub def measure(options: Options) -> Result[str, str]:
     return Ok(report)
 
 
+pub model ObservationRequest:
+    """The Oven build one release step samples, and the environment the release names for that build alone."""
+
+    pub oven: Path
+    pub project: Path
+    pub directory: Path
+    pub log: Path
+    pub prefix: Path
+    pub environment: Dict[str, str]
+
+
+pub def observation_request(arguments: list[str]) -> Result[ObservationRequest, str]:
+    """
+    Read `OVEN PROJECT DIRECTORY LOG PREFIX [NAME=VALUE...]`. The observer runs in the release runner's environment; each
+    `NAME=VALUE` after the operands is set for the observed build only, over what the observer inherited.
+    """
+    if len(arguments) < 5:
+        return Err("internal Oven observation needs OVEN PROJECT DIRECTORY LOG PREFIX [NAME=VALUE...]")
+    mut environment: Dict[str, str] = {}
+    for assignment in arguments[5:]:
+        parts = assignment.split("=")
+        if len(parts) < 2 or parts[0] == "":
+            return Err(f"internal Oven observation needs NAME=VALUE, not `{assignment}`")
+        environment[parts[0]] = "=".join(parts[1:])
+    return Ok(
+        ObservationRequest(
+            oven=Path(arguments[0]).absolute().map_err((error) => error.message())?,
+            project=Path(arguments[1]).absolute().map_err((error) => error.message())?,
+            directory=Path(arguments[2]).absolute().map_err((error) => error.message())?,
+            log=Path(arguments[3]).absolute().map_err((error) => error.message())?,
+            prefix=Path(arguments[4]).absolute().map_err((error) => error.message())?,
+            environment=environment,
+        ),
+    )
+
+
 def observe_oven(arguments: list[str]) -> Result[str, str]:
     """Build the candidate Oven once while sampling that existing release step for later informational reuse."""
-    if len(arguments) != 5:
-        return Err("internal Oven observation needs OVEN PROJECT DIRECTORY LOG PREFIX")
-    oven = Path(arguments[0]).absolute().map_err((error) => error.message())?
-    project = Path(arguments[1]).absolute().map_err((error) => error.message())?
-    directory = Path(arguments[2]).absolute().map_err((error) => error.message())?
-    log_path = Path(arguments[3]).absolute().map_err((error) => error.message())?
-    prefix = Path(arguments[4]).absolute().map_err((error) => error.message())?
+    request = observation_request(arguments)?
+    oven = request.oven
+    project = request.project
+    directory = request.directory
+    log_path = request.log
+    prefix = request.prefix
     log_path.parent().mkdir(true, true).map_err((error) => error.message())?
     prefix.parent().mkdir(true, true).map_err((error) => error.message())?
     log = File.create(log_path.0).map_err((error) => f"{log_path.0}: {error}")?
     errors = log.try_clone().map_err((error) => str(error))?
     mut command = Command.new(oven.0)
     command.args(["build", project.0, "--profile", "release"])
+    for name in sorted([name for name in request.environment.keys()]):
+        command.env(name, request.environment[name])
     command.current_dir(directory.0)
     command.stdin(Stdio.null()).stdout(log).stderr(errors)
     started = Instant.now()

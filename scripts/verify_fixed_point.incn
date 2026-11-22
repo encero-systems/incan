@@ -114,6 +114,7 @@ def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, ge
         jobs=context.jobs,
         memory=context.memory,
         timeout_seconds=context.timeout_seconds,
+        runner=context.runner,
     )
     readmit_build_home(successor, helper, f"{generation}-driver-readmit")?
     build_standard_packages(successor, helper, f"{generation}-", standard_profiles(StandardGeneration.Candidate))?
