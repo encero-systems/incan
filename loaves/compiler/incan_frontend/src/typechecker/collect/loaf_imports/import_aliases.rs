@@ -1,5 +1,9 @@
 //! Symbol kind and resolved type remapping through import aliases.
 
+use std::borrow::Cow;
+
+use incan_lang::interop::metadata::split_top_level_rust_args;
+
 use super::*;
 
 /// Read the canonical replacement for a carrier actually referenced by the remapped declaration.
@@ -295,6 +299,11 @@ impl TypeChecker {
                 Self::remap_resolved_type_with_import_aliases(key, imported_type_aliases);
                 Self::remap_resolved_type_with_import_aliases(value, imported_type_aliases);
             }
+            ResolvedType::RustPath(path) => {
+                if let Some(remapped) = remap_rust_type_arguments(path, imported_type_aliases) {
+                    *path = remapped;
+                }
+            }
             ResolvedType::Never
             | ResolvedType::Int
             | ResolvedType::Float
@@ -308,9 +317,28 @@ impl TypeChecker {
             | ResolvedType::Trait(_)
             | ResolvedType::TypeVar(_)
             | ResolvedType::SelfType
-            | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer
             | ResolvedType::Unknown => {}
         }
     }
+}
+
+/// Bind source aliases inside a native application in the scope that supplied its checked signature or layout.
+/// The native item path and arguments that name no source binding keep their spelling.
+fn remap_rust_type_arguments(path: &str, aliases: &impl ImportAliases) -> Option<String> {
+    let (owner, arguments) = path.split_once('<')?;
+    let arguments = arguments.strip_suffix('>')?;
+    let remapped: Vec<Cow<'_, str>> = split_top_level_rust_args(arguments)
+        .into_iter()
+        .map(|argument| {
+            aliases
+                .replacement(argument)
+                .or_else(|| remap_rust_type_arguments(argument, aliases))
+                .map_or(Cow::Borrowed(argument), Cow::Owned)
+        })
+        .collect();
+    if remapped.iter().all(|argument| matches!(argument, Cow::Borrowed(_))) {
+        return None;
+    }
+    Some(format!("{owner}<{}>", remapped.join(", ")))
 }
