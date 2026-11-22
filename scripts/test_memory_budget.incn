@@ -9,6 +9,7 @@ from memory_budget import (
     commands,
     measurements_report,
     measurements_tsv,
+    observation_request,
     parse_options,
     process_tree,
 )
@@ -109,6 +110,35 @@ def test_oven_is_reported_against_the_lowering_budget() -> Result[None, str]:
     report = measurements_report([within, over], budget)
     assert "oven\t1\t6144\tincan-rustc-driver\t6144\t300\tunder" in report
     assert "oven\t2\t6144\tincan-rustc-driver\t6144\t300\tover" in report
+    return Ok(None)
+
+
+def test_the_oven_observation_hands_the_observed_build_exactly_its_named_environment() -> Result[None, str]:
+    """
+    The observer runs in the release runner's environment; the build it samples runs in the one the release names after
+    the five operands, each `NAME=VALUE` once and a value keeping any later `=`, over what the observer inherited.
+    """
+    request = observation_request(
+        [
+            "/lane/conductor",
+            "/repo/workspaces/oven",
+            "/repo",
+            "/evidence/oven-build.log",
+            "/evidence/memory-oven",
+            "INCAN_HOME=/home",
+            "OVEN_ENGINE_BINARY=/lane/conductor",
+            "RUSTFLAGS=-C opt-level=3",
+        ],
+    )?
+    assert request.oven.0 == "/lane/conductor"
+    assert len(request.environment) == 3
+    assert request.environment["INCAN_HOME"] == "/home"
+    assert request.environment["OVEN_ENGINE_BINARY"] == "/lane/conductor"
+    assert request.environment["RUSTFLAGS"] == "-C opt-level=3"
+    assert len(observation_request(["oven", "project", "directory", "log", "prefix"])?.environment) == 0
+    assert observation_request(["oven", "project", "directory", "log"]).is_err()
+    assert observation_request(["oven", "project", "directory", "log", "prefix", "=value"]).is_err()
+    assert observation_request(["oven", "project", "directory", "log", "prefix", "NAME"]).is_err()
     return Ok(None)
 
 
