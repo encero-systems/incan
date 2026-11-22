@@ -393,6 +393,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             closure_anchors=optional_flag(document, "closure_anchors")?,
             search_index_crumb=optional_flag(document, "search_index_crumb")?,
             checked_body_counts_crumb=optional_flag(document, "checked_body_counts_crumb")?,
+            captured_source_inputs=optional_flag(document, "captured_source_inputs")?,
             worker_protocol_crumb=optional_flag(document, "worker_protocol_crumb")?,
             unit_descriptor_crumb=optional_flag(document, "unit_descriptor_crumb")?,
             compiler_record_export_crumb=optional_flag(document, "compiler_record_export_crumb")?,
