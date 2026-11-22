@@ -7,7 +7,8 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.fs import Path
-from files import write, json_text
+from files import discard_file, write, json_text
+from lowering_record_fixtures import stop_example_engine
 from bakery_roots import Collected, collect
 from engine_programs import (
     read_program,
@@ -48,7 +49,8 @@ from engine_messages import (
 )
 from engine_state import Identity, ServiceState
 from scratch import scratch_directory
-from engine_wire import Refusal, RefusalKind, zero_id, joined, scalar
+from engine_wire import RefusalKind, zero_id, joined, scalar
+from engine_protocol_fixtures import await_exit, detail, json_text_is, stop_engine
 from trace_adapter import count_work, finish_counting
 
 
@@ -114,6 +116,39 @@ pub def test_a_caller_waits_for_a_busy_engine_to_answer_hello() -> Result[None, 
         Ok(outcome) => outcome?
         Err(_) => return Err("the busy engine thread panicked")
     assert waited >= int(HANDSHAKE_SECONDS), f"the caller was greeted after {waited} s, inside the handshake bound"
+    return Ok(None)
+
+
+pub def test_a_caller_reconnects_when_the_engine_exits_as_it_connects() -> Result[None, str]:
+    """
+    An engine that exits idle just as a caller connects closes that connection before Welcome. The caller has sent no
+    request, so it connects again and starts a fresh engine instead of failing.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    selected = endpoint(store, identity).map_err(detail)?
+    listener = listen(selected.socket, true)?
+    exiting = spawn(() => close_as_an_exiting_engine(listener, selected.socket))
+    connected = connect_with(store, identity, binary)
+    joined = exiting.join()
+    mut channel = connected.map_err(detail)?
+    _ = channel.transport.close()
+    match joined:
+        Ok(outcome) => outcome?
+        Err(_) => return Err("the exiting engine thread panicked")
+    return stop_example_engine(binary, store)
+
+
+def close_as_an_exiting_engine(listener: Listener, socket: str) -> Result[None, str]:
+    """Accept one caller, then withdraw the socket and close the connection, as an engine exiting idle does."""
+    mut accepting = listener
+    mut caller = accepting.accept()?
+    discard_file(Path(socket))
+    _ = caller.close()
     return Ok(None)
 
 
@@ -188,11 +223,6 @@ def exercise_records_check(binary: str, source: Path, store: Path, project: Path
     assert refused.status.code() == Some(1i32) and "INCAN-T0001" in str(report) and refused.stderr == b""
     assert not project.joinpath("target/incan/debug/bin").exists(), "refused records check generated code"
     return Ok(None)
-
-
-def detail(refusal: Refusal) -> str:
-    """Expose typed test failures through the Oven harness's textual error boundary."""
-    return refusal.detail
 
 
 pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() -> Result[None, str]:
@@ -708,16 +738,6 @@ def invocation_processes(directory: Path, function: str) -> Result[int, str]:
     return Ok(count)
 
 
-def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
-    """Whether one optional JSON field is text equal to `expected`, without comparing carrier values."""
-    match document.get(key):
-        None => return false
-        Some(value) =>
-            match value.as_str():
-                None => return false
-                Some(found) => return found == expected
-
-
 model InstallationReadCounts:
     """Installation selections and completed engine requests grouped by their emitting process."""
 
@@ -985,22 +1005,6 @@ def run_to_barrier(binary: str, source: Path, store: Path, barrier: Barrier) -> 
     child.kill().map_err((error) => str(error))?
     child.wait().map_err((error) => str(error))?
     return Err("program did not reach its execution barrier")
-
-
-def stop_engine(store: Path, binary: str) -> Result[None, str]:
-    """Stop the records engine serving `store`, and require its acknowledgment."""
-    mut identity = service_identity(store)?
-    identity.service_generation = service_generation(binary)?
-    mut channel = connect_with(store, identity, binary).map_err(detail)?
-    channel.send(zero_id(), Message.Stop(Stop(reason="execution collection proof completed"))).map_err(detail)?
-    stopped = channel.receive().map_err(detail)?
-    match stopped.message:
-        Message.Event(value) =>
-            assert value.status == "Stopping"
-        _ => return Err("execution collection proof did not stop its engine")
-    # Stop is acknowledged; peer withdrawal may race the local shutdown.
-    _ = channel.transport.close()
-    return Ok(None)
 
 
 def collect_superseded(store: Path) -> Result[Collected, str]:
@@ -1282,15 +1286,3 @@ def await_connection(root: Path, identity: Identity) -> Result[Connection, str]:
             Ok(transport) => return Ok(transport)
             Err(_) => sleep(Duration.from_millis(2))
     return Err("test engine did not start")
-
-
-def await_exit(mut child: Process, expected_success: bool) -> Result[None, str]:
-    """Reap this test's child, killing only that child if the lifecycle deadline fails."""
-    for _poll in range(2500):
-        match child.poll()?:
-            Some(status) =>
-                assert status == expected_success
-                return Ok(None)
-            None => sleep(Duration.from_millis(2))
-    child.terminate()?
-    return Err("test engine did not exit")

@@ -58,7 +58,26 @@ pub def connect(root: Path, identity: Identity, idle: int = 600) -> Result[Chann
 
 
 pub def connect_with(root: Path, identity: Identity, executable: str, idle: int = 600) -> Result[Channel, Refusal]:
-    """Connect using an explicit Oven executable, allowing process-level tests of the installed service entry."""
+    """
+    Connect using an explicit Oven executable, allowing process-level tests of the installed service entry. An engine
+    that exits idle just as this caller connects closes the connection before Welcome. The caller has sent no request,
+    so once that engine no longer holds its lifetime lock it connects once more, which starts a fresh engine.
+    """
+    match connect_once(root, identity, executable, idle):
+        Ok(channel) => return Ok(channel)
+        Err(refusal) =>
+            mut closed = false
+            match refusal.kind:
+                RefusalKind.Transport => closed = true
+                RefusalKind.ShortRead => closed = true
+                _ => pass
+            if closed and service_available(endpoint(root, identity)?.lock)?:
+                return connect_once(root, identity, executable, idle)
+            return Err(refusal)
+
+
+def connect_once(root: Path, identity: Identity, executable: str, idle: int) -> Result[Channel, Refusal]:
+    """Serialize startup, reach or launch the store's engine and require its Welcome."""
     selected = endpoint(root, identity)?
     held = Path(selected.startup_lock).lock_exclusive().map_err((error) => transport(error.message()))?
     match dial(selected.socket):
