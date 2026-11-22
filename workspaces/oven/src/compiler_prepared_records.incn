@@ -80,8 +80,12 @@ pub class PreparedBodyRecordSource with RecordSource:
         mut bounded: list[RecordRequest] = []
         mut positions: Dict[str, list[int]] = {}
         mut with_generation = requests
+        # Every output beside the checked declaration, local and final records reads the generation. Those three are
+        # the closed checking bases the ranked producer re-evaluates from their own inputs; their owner's Body IR
+        # frame reads the generation, so a change of compiler still withdraws the whole owner.
         if let Some(generation) = self.compiler:
-            with_generation.append(prepared_product_request(generation))
+            if output.family not in ["declaration", "local", "final"]:
+                with_generation.append(prepared_product_request(generation))
         for request in with_generation:
             encoded_key = encode_record_key(request.key)?
             mut item = request
