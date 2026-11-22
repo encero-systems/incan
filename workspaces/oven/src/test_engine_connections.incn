@@ -1,0 +1,102 @@
+"""How a caller connects to a records engine: it waits for a busy engine's Welcome while the engine holds its lifetime
+lock, and connects again when the engine exits idle as it connects."""
+
+from core_process import executable
+from rust::std::thread import sleep, spawn
+from rust::std::time import Duration, Instant
+from std.environ import get_or
+from std.fs import Path
+from files import discard_file
+from lowering_record_fixtures import stop_example_engine
+from engine_client import service_generation, service_identity
+from pub::incan_platform.ipc import Listener, listen
+from engine_endpoint import HANDSHAKE_SECONDS, endpoint, handshake, owner_uid, connect_with
+from engine_service import greet
+from engine_channel import Channel
+from engine_messages import Hello
+from engine_state import Identity, ServiceState
+from scratch import scratch_directory
+from engine_wire import joined
+from engine_protocol_fixtures import detail
+
+
+pub def test_a_caller_waits_for_a_busy_engine_to_answer_hello() -> Result[None, str]:
+    """
+    An engine answers Hello between requests, so a caller that connects while another caller's build runs is greeted
+    only after that build: it waits past the handshake bound for its Welcome while the engine holds its lifetime lock.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    identity = Identity(
+        store_id="busy-store",
+        profile="profile",
+        service_generation="service",
+        compiler_generation="compiler",
+        uid=owner_uid(store).map_err(detail)?,
+    )
+    selected = endpoint(store, identity).map_err(detail)?
+    # The engine holds its lifetime lock for as long as it lives; this test holds it for the busy engine.
+    _lifetime = match Path(selected.lock).try_lock_exclusive().map_err((error) => error.message())?:
+        Some(lock) => lock
+        None => return Err("the test could not hold the engine's lifetime lock")
+    listener = listen(selected.socket, true)?
+    engine = spawn(() => greet_after_a_build(listener, identity, store))
+    started = Instant.now()
+    connected = connect_with(store, identity, executable()?)
+    waited = int(started.elapsed().as_secs())
+    joined = engine.join()
+    mut channel = connected.map_err(detail)?
+    _ = channel.transport.close()
+    match joined:
+        Ok(outcome) => outcome?
+        Err(_) => return Err("the busy engine thread panicked")
+    assert waited >= int(HANDSHAKE_SECONDS), f"the caller was greeted after {waited} s, inside the handshake bound"
+    return Ok(None)
+
+
+pub def test_a_caller_reconnects_when_the_engine_exits_as_it_connects() -> Result[None, str]:
+    """
+    An engine that exits idle just as a caller connects closes that connection before Welcome. The caller has sent no
+    request, so it connects again and starts a fresh engine instead of failing.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    selected = endpoint(store, identity).map_err(detail)?
+    listener = listen(selected.socket, true)?
+    exiting = spawn(() => close_as_an_exiting_engine(listener, selected.socket))
+    connected = connect_with(store, identity, binary)
+    joined = exiting.join()
+    mut channel = connected.map_err(detail)?
+    _ = channel.transport.close()
+    match joined:
+        Ok(outcome) => outcome?
+        Err(_) => return Err("the exiting engine thread panicked")
+    return stop_example_engine(binary, store)
+
+
+def close_as_an_exiting_engine(listener: Listener, socket: str) -> Result[None, str]:
+    """Accept one caller, then withdraw the socket and close the connection, as an engine exiting idle does."""
+    mut accepting = listener
+    mut caller = accepting.accept()?
+    discard_file(Path(socket))
+    _ = caller.close()
+    return Ok(None)
+
+
+def greet_after_a_build(listener: Listener, identity: Identity, store: Path) -> Result[None, str]:
+    """Accept one caller, stay busy past the handshake bound as a running build does, then greet it."""
+    mut accepting = listener
+    caller = accepting.accept()?
+    sleep(Duration.from_secs(HANDSHAKE_SECONDS))
+    sleep(Duration.from_millis(500))
+    state = ServiceState(identity=identity, store=store, last_active=0)
+    mut client = greet(Channel(transport=caller), state).map_err(detail)?
+    # An engine keeps a greeted caller open; this one reads until the caller closes its end.
+    while client.channel.receive().is_ok():
+        pass
+    return Ok(None)
