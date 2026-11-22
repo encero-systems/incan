@@ -32,7 +32,7 @@ from compiler_body_values import (
 )
 from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
-from compiler_refusals import replay_checked_warnings
+from compiler_refusals import PreparedWarnings, replay_checked_warnings
 from compiler_graph_records import EditCutoff, EditReaders, retire_compiler_versions, select_edit_readers, supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import load_epoch
@@ -128,6 +128,7 @@ pub model ProgramOutcome:
     # Source and checked-body records for an editor overlay or a library-linked executable in its own graph view.
     pub view_transaction: Option[Transaction] = None
     pub claim: Option[Rc[LockGuard]] = None
+    pub prepared_warnings: Option[PreparedWarnings] = None
     # The executable this request baked, whose view waits for the request's commit: see `view_sealed`.
     pub sealed: Option[SealedProgram] = None
     # Why the records producer gave this unit no per-declaration records, when the engine compiled it whole.
@@ -579,6 +580,7 @@ pub def obtain(
             transaction=indexed,
             view_transaction=view_records,
             claim=produced.claim,
+            prepared_warnings=produced.prepared_warnings,
             sealed=sealed,
         ),
     )
@@ -712,6 +714,7 @@ def whole_unit_program(
             epoch_reads=epoch_reads,
             transaction=indexed,
             claim=produced.claim,
+            prepared_warnings=produced.prepared_warnings,
             sealed=sealed,
             checker_reuse=summary,
             whole_unit=whole,
