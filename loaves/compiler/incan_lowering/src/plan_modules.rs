@@ -419,7 +419,10 @@ mod tests {
         source_span,
     };
 
-    use super::{FRAME_COMPANION, admitted_frames, admitted_page, read_admitted, report_admitted, staged_page};
+    use super::{
+        FRAME_COMPANION, admitted_frames, admitted_page, admitted_plan_page, read_admitted, report_admitted,
+        staged_page, staged_page_reads,
+    };
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
     use crate::scalar_store::AdmittedPayload;
@@ -737,6 +740,62 @@ mod tests {
                 .events
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A worker reads, checks and decodes a staged page once per content Oven names it by, and keeps it with its
+    /// events: a request over the same pages reads none of them again, and one changed page is the one page read and
+    /// hashed.
+    #[test]
+    fn a_worker_reads_and_hashes_one_page_for_one_changed_page() -> Result<(), String> {
+        let root = directory("resident-full-pages");
+        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        let page = |module: &str, event: u8| PlanModuleValue {
+            module: module.into(),
+            functions: vec![PlanModuleFunction {
+                identity: format!("pub::{module}::a"),
+                symbol: format!("pub::{module}::a"),
+                function: "a".into(),
+                key: "cd".repeat(32),
+                event: vec![event],
+            }],
+        };
+        let offer = |name: &str, encoded: &[u8]| -> Result<PathBuf, String> {
+            let segment = root.join(format!("{name}-{}.seg", hex::encode(&Sha256::digest(encoded)[..4])));
+            let mut stored = b"key prefix".to_vec();
+            let offset = stored.len();
+            stored.extend_from_slice(encoded);
+            write(&segment, &stored)?;
+            let path = root.join(format!("{}.incnmodule.positioned", hex::encode(name)));
+            let frame = format!("{}\n{offset}\n{}\n", segment.display(), encoded.len());
+            write(
+                &PathBuf::from(format!("{}{FRAME_COMPANION}", path.display())),
+                frame.as_bytes(),
+            )?;
+            write(
+                &PathBuf::from(format!("{}.digest", path.display())),
+                hex::encode(Sha256::digest(encoded)).as_bytes(),
+            )?;
+            Ok(path)
+        };
+        let first = offer("resident_kappa", &encode_plan_module(&page("resident_kappa", 1))?)?;
+        let second = offer("resident_lambda", &encode_plan_module(&page("resident_lambda", 2))?)?;
+        let reads = || staged_page_reads(&first) + staged_page_reads(&second);
+        for path in [&first, &second] {
+            admitted_plan_page(path)?;
+        }
+        assert_eq!(reads(), 2);
+        for path in [&first, &second] {
+            assert_eq!(admitted_plan_page(path)?.functions.len(), 1);
+        }
+        assert_eq!(reads(), 2, "a page the worker holds was read again");
+        // One page changes: the next request reads and hashes that page alone.
+        let changed = offer("resident_lambda", &encode_plan_module(&page("resident_lambda", 3))?)?;
+        assert_eq!(changed, second);
+        assert_eq!(admitted_plan_page(&first)?.functions[0].event, vec![1]);
+        assert_eq!(admitted_plan_page(&second)?.functions[0].event, vec![3]);
+        assert_eq!(reads(), 3, "one changed page was not the one page read");
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
