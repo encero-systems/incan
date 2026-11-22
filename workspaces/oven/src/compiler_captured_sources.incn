@@ -240,7 +240,7 @@ def logical_module(relative: str) -> str:
     return "/".join(parts)
 
 
-pub def source_origin(unit: UnitDescription) -> str:
+pub def source_origin(unit: Borrowed[UnitDescription]) -> str:
     """Use the package authority, or isolate one manifest-free entry by its exact source path."""
     if unit.package != "":
         return unit.package
