@@ -40,6 +40,10 @@ use crate::tuples::{is_tuple_type, tuple_fields, tuple_has_owners};
 use crate::type_parameters::substitute;
 use crate::unions::lower_union_declaration;
 
+#[cfg(test)]
+#[path = "tests/carrier_signatures.rs"]
+mod carrier_signatures;
+
 /// Retain concrete carriers after any layouts whose indices an earlier lowering already published.
 pub fn intrinsic_declarations(
     constructors: &ConstructorIndex,
