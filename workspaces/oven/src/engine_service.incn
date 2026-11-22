@@ -6,6 +6,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
+from pub::incan_platform.children import reap_retained_children
 from pub::incan_platform.ipc import Listener, listen, session_id, stale
 from decimal_text import digits_only
 from engine_channel import Channel, Envelope, SendOutcome
@@ -125,6 +126,8 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
                 clients[index] = client
             clients = [client for client in clients if not client.closed]
         state.clients = len(clients) + len(greetings)
+        # A compiler worker this engine started retires on its own; reap it once it has exited (D.9).
+        _ = reap_retained_children().map_err(transport)?
         if state.stopping or state.exits(now, idle * 1000):
             return Ok(None)
         sleep(Duration.from_millis(2))

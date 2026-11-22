@@ -3,8 +3,9 @@
 //!
 //! RFC 005 refuses unsafe Rust calls from Incan. This facet contains only the OS calls needed to expose host-aligned
 //! nanoseconds and process resource readings, the storage barrier a store publication orders its graph with, and the
-//! call that returns freed heap pages to the system; observation, process-tree policy, publication, release policy and
-//! encoding stay in Incan. Neither supported clock advances during suspend or follows wall-clock adjustments. Values
+//! call that returns freed heap pages to the system, beside the safe registry that reaps the children a long-lived
+//! process starts and does not wait on; observation, process-tree policy, publication, release policy and encoding stay
+//! in Incan. Neither supported clock advances during suspend or follows wall-clock adjustments. Values
 //! compare across processes on the same host boot.
 
 #[cfg(target_os = "macos")]
@@ -291,4 +292,68 @@ pub fn barrier_sync(path: &str) -> io::Result<()> {
 #[cfg(not(target_os = "macos"))]
 pub fn barrier_sync(path: &str) -> io::Result<()> {
     std::fs::File::open(path)?.sync_all()
+}
+
+/// Children this process started and does not wait on, each kept until [`reap_retained_children`] finds it exited, so
+/// a long-lived process, as the records engine with its retired compiler workers, holds no zombie.
+static RETAINED_CHILDREN: std::sync::Mutex<Vec<std::process::Child>> = std::sync::Mutex::new(Vec::new());
+
+/// Keep a started child this process will not wait on, to be reaped once it exits.
+pub fn retain_child(child: std::process::Child) -> io::Result<()> {
+    RETAINED_CHILDREN
+        .lock()
+        .map_err(|_| io::Error::other("the retained children are poisoned"))?
+        .push(child);
+    Ok(())
+}
+
+/// Reap every retained child that has exited and return how many; a running child stays retained.
+pub fn reap_retained_children() -> io::Result<usize> {
+    let mut children = RETAINED_CHILDREN
+        .lock()
+        .map_err(|_| io::Error::other("the retained children are poisoned"))?;
+    let before = children.len();
+    let mut failure = None;
+    children.retain_mut(|child| match child.try_wait() {
+        Ok(Some(_)) => false,
+        Ok(None) => true,
+        Err(error) => {
+            failure.get_or_insert(error);
+            true
+        }
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(before - children.len()),
+    }
+}
+
+/// How many started children this process still retains.
+pub fn retained_children() -> io::Result<usize> {
+    Ok(RETAINED_CHILDREN
+        .lock()
+        .map_err(|_| io::Error::other("the retained children are poisoned"))?
+        .len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reap_retained_children, retain_child, retained_children};
+
+    /// A child this process retains instead of waiting on is reaped once it exits, so no zombie outlives it.
+    #[test]
+    fn a_retained_child_is_reaped_once_it_exits() -> Result<(), Box<dyn std::error::Error>> {
+        let before = retained_children()?;
+        retain_child(std::process::Command::new("/bin/sh").args(["-c", "exit 0"]).spawn()?)?;
+        retain_child(std::process::Command::new("/bin/sleep").arg("0.2").spawn()?)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut reaped = 0;
+        while reaped < 2 && std::time::Instant::now() < deadline {
+            reaped += reap_retained_children()?;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(reaped, 2, "an exited retained child was not reaped");
+        assert_eq!(retained_children()?, before);
+        Ok(())
+    }
 }
