@@ -257,7 +257,7 @@ impl TypeChecker {
         library: &str,
         manifest: &LibraryManifest,
     ) -> (HashMap<String, String>, HashSet<String>, HashSet<String>) {
-        let seeds = collect_nominal_type_origins(manifest);
+        let seeds = self.loaf_type_origins(library, manifest);
         let (remapping, loaves) = self.resolve_public_type_origins(library, seeds);
         let (preserving_identity_keys, preserving_type_keys) =
             self.reconstruct_artifact_layouts(library, &remapping, &loaves);
@@ -273,9 +273,9 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn resolve_public_type_origins(
         &mut self,
         library: &str,
-        seeds: BTreeMap<String, NominalTypeOriginExport>,
+        seeds: Arc<BTreeMap<String, NominalTypeOriginExport>>,
     ) -> (HashMap<String, String>, BTreeMap<String, LoafEntry>) {
-        let mut pending = std::collections::VecDeque::from_iter(seeds.into_values());
+        let mut pending = std::collections::VecDeque::from_iter(seeds.values().cloned());
         let mut seen = HashSet::new();
         let mut loaves = BTreeMap::new();
         let mut remapping = HashMap::new();
@@ -312,11 +312,26 @@ impl TypeChecker {
             remapping.insert(key, qualified);
 
             if let std::collections::btree_map::Entry::Vacant(vacant) = loaves.entry(entry.key.clone()) {
-                pending.extend(collect_nominal_type_origins(&entry.artifact.manifest).into_values());
+                pending.extend(
+                    self.loaf_type_origins(&entry.key, &entry.artifact.manifest)
+                        .values()
+                        .cloned(),
+                );
                 vacant.insert(entry);
             }
         }
         (remapping, loaves)
+    }
+
+    /// The nominal type origins the manifest of the Loaf indexed as `key` references, keyed by binding key.
+    pub(in crate::typechecker::collect) fn loaf_type_origins(
+        &self,
+        key: &str,
+        manifest: &LibraryManifest,
+    ) -> Arc<BTreeMap<String, NominalTypeOriginExport>> {
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache.count_origin_collection(key);
+        Arc::new(collect_nominal_type_origins(manifest))
     }
 
     /// Rebuild each discovered Loaf's nominal layouts against the completed remapping.
