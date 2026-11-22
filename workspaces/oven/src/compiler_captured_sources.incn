@@ -9,7 +9,7 @@ from compiler_source_projection import (
     captured_source_key,
     compiler_generation_record,
     positioned_source_key,
-    project_source,
+    project_source_file,
     scope_member,
     scope_members,
     signature_record,
@@ -89,8 +89,7 @@ pub def prepare_captured_source_inputs(
                         carried.add(identity[1])
                     continue
                 stage_put(prepared, encode_record_key(capture.key)?, capture.encoded()?)
-                source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
-                projection = project_source(identity[0], identity[1], source, declared, active)?
+                projection = project_source_file(identity[0], identity[1], Path(input.path), declared, active)?
                 doc_key = projection.documentation_key()
                 doc_slot = encode_record_key(doc_key)?
                 documentation = projection.encoded_documentation()?
