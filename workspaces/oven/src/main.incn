@@ -60,7 +60,7 @@ from graph_inspection import inspect_codegraph, options as graph_options
 from interop_plan import inspect_interop_plan, plan_options
 from interop_stage import stage_interop, stage_options
 from binding_inspection import binding_options, inspect_bindings
-from graph_incan import inspect_prepared, publish_prepared_graph
+from graph_incan import published_library_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
@@ -556,21 +556,18 @@ def records_command(command: str, arguments: list[str]) -> None:
                 prepared_lock(command, options)
             else:
                 warn_tolerated_entries(command, Path(options.path))
-            finish(
+            built = execute_records(
                 command,
-                execute_records(
-                    command,
-                    source,
-                    options.profile,
-                    passed,
-                    options.argv0,
-                    format,
-                    options.engine_report,
-                    unit_options,
-                    options.output,
-                ),
+                source,
+                options.profile,
+                passed,
+                options.argv0,
                 format,
+                options.engine_report,
+                unit_options,
+                options.output,
             )
+            finish(command, records_library_graph(command, options, source, built), format)
 
 
 def records_validated(command: str, options: Options) -> Options:
@@ -1219,11 +1216,23 @@ def built(options: Options, source: Path) -> Result[i32, str]:
         status = compile_library_unit(ready, toolchain, output)?
         if status != 0 or not options.codegraph:
             return Ok(status)
-        graph = inspect_prepared(ready, toolchain)?
-        if not publish_prepared_graph(ready, toolchain, directory, graph)?:
-            return Err(f"{ready.package}: native publication changed while exporting its graph; retry the build")
-        return Ok(0)
+        return published_library_graph(ready, toolchain, directory)
     return delivered(options, compile_unit(unit, toolchain_for(unit)?, output)?, output)
+
+
+def records_library_graph(command: str, options: Options, source: Path, built: Result[i32, str]) -> Result[i32, str]:
+    """
+    A records library build asked for its graph: the engine built the library, and the graph is exported and published
+    here by the first engine's own route, as `inspect codegraph` exports a graph in this process.
+    """
+    code = built?
+    if command != "build" or not options.codegraph or code != 0:
+        return Ok(code)
+    mut unit = with_c_abi_target(describe(source, options.profile, options.request, options.manifests)?, options.interop_target)?
+    unit.kind = "library"
+    toolchain = toolchain_for(unit)?
+    ready = prepare_native(unit, toolchain)?
+    return published_library_graph(ready, toolchain, dependency_artifact_dir(unit.project_root, unit.package, unit.profile))
 
 
 def delivered(options: Options, code: i32, binary: Path) -> Result[i32, str]:
