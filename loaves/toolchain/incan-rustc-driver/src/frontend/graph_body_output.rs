@@ -1098,7 +1098,7 @@ mod tests {
     #[test]
     fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
         let source = concat!(
-            "trait Named:\n    def label(self) -> str:\n        ...\n\n",
+            "trait Named:\n    def label(self) -> str:\n        \"\"\"Return the value label.\"\"\"\n        ...\n\n",
             "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
             "pub def route(method: str, path: str) -> str:\n    return method + path\n\n",
             "pub get = partial route(method=\"GET\")\n\n",
