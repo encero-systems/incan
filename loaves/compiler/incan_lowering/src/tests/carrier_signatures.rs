@@ -4,6 +4,7 @@ use incan_semantics_core::body_ir::{ArgumentBinding, CallableParam, CallablePara
 use incan_semantics_core::{
     CanonicalSymbolId, HirSourceSpan, IncanCallableParamKind, IncanInputAccess, IncanPrimitiveType,
 };
+use sha2::{Digest, Sha256};
 
 use super::{BodyIrModule, CarrierPass, ConstructorIndex, IncanType, NamedCallableTarget, generic};
 use crate::tests::bodies::empty_body;
@@ -104,6 +105,12 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
     assert!(
         retained.iter().copied().eq(ordered.iter().map(String::as_str)),
         "{retained:?}"
+    );
+    let layout_bytes = serde_json::to_vec(&layouts).map_err(|error| error.to_string())?;
+    println!(
+        "ordered layout bytes={}, sha256={}",
+        layout_bytes.len(),
+        hex::encode(Sha256::digest(&layout_bytes))
     );
 
     let Some(linked) = module.loaf_callables.last_mut() else {
