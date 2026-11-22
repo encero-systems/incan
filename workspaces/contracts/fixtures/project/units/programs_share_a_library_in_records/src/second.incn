@@ -1,0 +1,8 @@
+"""Another program in the project."""
+
+from values import answer
+
+
+def main() -> None:
+    """Print the answer from the same provider."""
+    println(answer())

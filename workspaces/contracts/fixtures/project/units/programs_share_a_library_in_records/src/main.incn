@@ -1,0 +1,18 @@
+# behavior: a records build and a run of another program compile one shared project library
+# environment:
+#   INCAN_ENGINE=records
+#   INCAN_BAKERY=target/case-bakery
+# cli-commands:
+#   oven build src/main.incn
+#   oven run src/second.incn
+# expect-exit: 0
+# expect-trace-contains:
+#   unit programs_share_a_library_in_records_project_library library:
+# expect-trace-at-most-once:
+#   unit programs_share_a_library_in_records_project_library library: compiled
+from values import answer
+
+
+def main() -> None:
+    """Print the shared answer."""
+    println(answer())
