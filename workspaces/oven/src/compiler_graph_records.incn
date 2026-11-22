@@ -134,12 +134,12 @@ pub def prepare_evaluation(
     if rank.namespace < 0 or rank.dependency < 0:
         return Err("a completed evaluation requires a nonnegative certified rank")
     value_key = encode_record_key(receipt.preparation.output)?
-    value_digest = digest(value)
+    value_digest = content_digest(value)
     if expected_value_digest != "" and value_digest != expected_value_digest:
         return Err("retained compiler value differs from its selected witness")
     edges = normalized_edges(receipt.witnesses)?
     receipt_bytes = encode_read_receipt(receipt)?
-    receipt_root = digest(receipt_bytes)
+    receipt_root = content_digest(receipt_bytes)
     receipt_key = "incan.engine.receipt\t" + receipt_root
     evaluation_key = evaluation_record_key(receipt.scope.profile, value_key)
     evaluation = encode_evaluation(receipt.scope.profile, value_key, claim_key, value_digest, receipt_root, rank)?
@@ -238,9 +238,9 @@ pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str
     if evaluation.profile != profile or evaluation.output != value_key:
         return Err("selected compiler evaluation has mismatched authority")
     receipt_root = evaluation.receipt_root
+    # The receipt is stored under its content root, and the store has just checked its frame against the index: the
+    # root was bound to these bytes when the evaluation was published, so they are not hashed again.
     receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
-    if digest(receipt_bytes) != receipt_root:
-        return Err("selected compiler receipt differs from its content root")
     receipt = decode_read_receipt(receipt_bytes)?
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
@@ -273,9 +273,9 @@ def select_evaluation(
             Some(_) => pass
             None => return Err("selected compiler evaluation is incomplete")
     else:
+        # The store has just checked the value's frame against the index; the evaluation's value digest was bound to
+        # this frame when both were published in one transaction, so the value is hashed once, there.
         value = required_value(selected, value_key)?
-        if digest(value) != value_digest:
-            return Err("selected compiler value differs from its evaluation digest")
     if cutoff.revalidates(value_key) and not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
     # A checked row is already authenticated by this snapshot and the evaluation digest. Its complete
@@ -453,6 +453,64 @@ pub def family_outputs(
                 return Err("compiler output index entry names a record of another slot")
             listed.append(output)
     return Ok(listed)
+
+
+pub model OutputSlot:
+    """One selected slot of a family's output index: the entry's key and the revision of the entry."""
+
+    pub indexed: str
+    pub revision: str
+
+
+pub def family_slots(selected: Snapshot, family: str, profile: str, slots: OutputSlots) -> Result[list[OutputSlot], str]:
+    """
+    The output-index entries of one family's slots of an origin, with their revisions, read from index pages alone: no
+    pointer, evaluation or value is read. They are the slots `family_outputs` reads the pointers of.
+    """
+    if "\t" in slots.origin or "\t" in slots.identity_profile or slots.identity_profile == "":
+        return Err("invalid compiler output range")
+    prefix = family_range(family, profile)? + slots.identity_profile + "\t" + slots.origin + "\t"
+    excluded = set(slots.excluded)
+    mut listed: list[OutputSlot] = []
+    for entry in entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => f"{error.object}: {error.detail}")?:
+        if let Some(location) = entry.location:
+            if location.tombstone:
+                continue
+            fields = entry.key.split("\t")
+            if len(fields) != 7 or fields[4] != slots.origin or fields[5] in excluded:
+                continue
+            if let Some(names) = slots.included:
+                if fields[5] not in names:
+                    continue
+            listed.append(OutputSlot(indexed=entry.key, revision=hexlify(location.digest)))
+    return Ok(listed)
+
+
+pub def slot_output(selected: Snapshot, profile: str, slot: OutputSlot) -> Result[str, str]:
+    """The record key one slot's output-index entry names."""
+    note_graph_demand("output-slot", selected, slot.indexed)
+    output = read_pointer(required_value(selected, slot.indexed)?)?
+    if output_index_key(profile, output)? != slot.indexed:
+        return Err("compiler output index entry names a record of another slot")
+    return Ok(output)
+
+
+pub def evaluation_revision(selected: Snapshot, profile: str, output: str) -> Result[str, str]:
+    """The revision of an output's evaluation in the selected index, read from index pages alone; empty when it has none."""
+    match locate_value(selected, evaluation_record_key(profile, output)).map_err((error) => error.message())?:
+        Some(location) => return Ok(hexlify(location.digest))
+        None => return Ok("")
+
+
+pub def select_slot_record(selected: Snapshot, output: str, profile: str, cutoff: EditCutoff) -> Result[Option[ReusableRecord], str]:
+    """Select one slot's current output as `select_family_records` selects each of a family's."""
+    key = decode_record_key(output)?
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    match select_evaluation(selected, key, profile, verified, false, cutoff)?:
+        Some(reused) =>
+            return Ok(Some(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
+                receipt=reused.receipt, namespace=reused.namespace, location=reused.location)))
+        None => return Ok(None)
 
 
 pub def family_listing(
@@ -803,6 +861,21 @@ def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
 def digest(value: bytes) -> str:
     """Return one lowercase content identity."""
     return hexlify(sha256.digest(value))
+
+
+def content_digest(value: bytes) -> str:
+    """The digest an evaluation binds a value or receipt by, counting the bytes hashed."""
+    hashed["bytes"] = hashed.get("bytes", 0) + len(value)
+    return digest(value)
+
+
+# Bytes this process hashed to bind values and receipts to their evaluations, for measuring; nothing is cached by them.
+static hashed: dict[str, int] = {}
+
+
+pub def authenticated_bytes() -> int:
+    """The bytes this process has hashed to bind evaluations to their values and receipts, or to check that binding."""
+    return hashed.get("bytes", 0)
 
 
 pub def retire_output(mut transaction: Transaction, profile: str, output: RecordKey) -> Result[None, str]:

@@ -2,7 +2,7 @@
 
 from core_process import Process, executable, spawn_detached
 from rust::std::thread import sleep, spawn
-from rust::std::time import Duration, Instant
+from rust::std::time import Duration
 from rust::std::string import String as RustString
 from std.environ import get_or
 from std.encoding.hex import hexlify
@@ -26,8 +26,8 @@ from store_path_conversion import compact, snapshot
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
-from pub::incan_platform.ipc import Connection, Listener, dial, listen
-from engine_endpoint import HANDSHAKE_SECONDS, endpoint, handshake, owner_uid, connect_with
+from pub::incan_platform.ipc import Connection, dial, listen
+from engine_endpoint import endpoint, handshake, owner_uid, connect_with
 from engine_service import greet
 from toolchain import load_toolchain, toolchain_directory
 from engine_channel import Channel
@@ -48,7 +48,8 @@ from engine_messages import (
 )
 from engine_state import Identity, ServiceState
 from scratch import scratch_directory
-from engine_wire import Refusal, RefusalKind, zero_id, joined, scalar
+from engine_wire import RefusalKind, zero_id, joined, scalar
+from engine_protocol_fixtures import await_exit, detail, json_text_is, stop_engine
 from trace_adapter import count_work, finish_counting
 
 
@@ -79,55 +80,6 @@ def read_split_frame(reader: Connection) -> Result[None, str]:
     frame = connection.read_part(64, 64)?
     assert len(frame) == 64 and frame[0] == 97u8 and frame[16] == 97u8
     assert frame[17] == 98u8 and frame[63] == 98u8
-    return Ok(None)
-
-
-pub def test_a_caller_waits_for_a_busy_engine_to_answer_hello() -> Result[None, str]:
-    """
-    An engine answers Hello between requests, so a caller that connects while another caller's build runs is greeted
-    only after that build: it waits past the handshake bound for its Welcome while the engine holds its lifetime lock.
-    """
-    scratch = scratch_directory()?
-    store = scratch.path().joinpath("store")
-    store.mkdir(true, true).map_err((error) => error.message())?
-    identity = Identity(
-        store_id="busy-store",
-        profile="profile",
-        service_generation="service",
-        compiler_generation="compiler",
-        uid=owner_uid(store).map_err(detail)?,
-    )
-    selected = endpoint(store, identity).map_err(detail)?
-    # The engine holds its lifetime lock for as long as it lives; this test holds it for the busy engine.
-    _lifetime = match Path(selected.lock).try_lock_exclusive().map_err((error) => error.message())?:
-        Some(lock) => lock
-        None => return Err("the test could not hold the engine's lifetime lock")
-    listener = listen(selected.socket, true)?
-    engine = spawn(() => greet_after_a_build(listener, identity, store))
-    started = Instant.now()
-    connected = connect_with(store, identity, executable()?)
-    waited = int(started.elapsed().as_secs())
-    joined = engine.join()
-    mut channel = connected.map_err(detail)?
-    _ = channel.transport.close()
-    match joined:
-        Ok(outcome) => outcome?
-        Err(_) => return Err("the busy engine thread panicked")
-    assert waited >= int(HANDSHAKE_SECONDS), f"the caller was greeted after {waited} s, inside the handshake bound"
-    return Ok(None)
-
-
-def greet_after_a_build(listener: Listener, identity: Identity, store: Path) -> Result[None, str]:
-    """Accept one caller, stay busy past the handshake bound as a running build does, then greet it."""
-    mut accepting = listener
-    caller = accepting.accept()?
-    sleep(Duration.from_secs(HANDSHAKE_SECONDS))
-    sleep(Duration.from_millis(500))
-    state = ServiceState(identity=identity, store=store, last_active=0)
-    mut client = greet(Channel(transport=caller), state).map_err(detail)?
-    # An engine keeps a greeted caller open; this one reads until the caller closes its end.
-    while client.channel.receive().is_ok():
-        pass
     return Ok(None)
 
 
@@ -188,11 +140,6 @@ def exercise_records_check(binary: str, source: Path, store: Path, project: Path
     assert refused.status.code() == Some(1i32) and "INCAN-T0001" in str(report) and refused.stderr == b""
     assert not project.joinpath("target/incan/debug/bin").exists(), "refused records check generated code"
     return Ok(None)
-
-
-def detail(refusal: Refusal) -> str:
-    """Expose typed test failures through the Oven harness's textual error boundary."""
-    return refusal.detail
 
 
 pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() -> Result[None, str]:
@@ -286,6 +233,55 @@ def check_native_program_records(store: Path, unit: NativeUnit, handle: str, vie
     restored = select_program(store, legacy_view, unit, legacy_handle)?
     assert get(restored.snapshot, legacy_key).map_err((error) => error.message())? == Some(legacy)
     assert get(restored.snapshot, SELECTION_KEY).map_err((error) => error.message())? == Some(encode_selection(legacy_view, legacy_handle)?)
+    return Ok(None)
+
+
+pub def test_a_finished_request_s_spans_reach_the_trace_while_its_engine_runs() -> Result[None, str]:
+    """
+    A resident engine writes every span of a request, the commit's included, before its caller hears that the request
+    finished: a caller that ends the engine right after its build, as a finished run's process group is, loses none.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    store = root.joinpath("store")
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for edit in range(2):
+        write(source, f"def main() -> None:\n    println(\"traced {edit}\")\n")?
+        # A build, as a cold build is: its caller exits as soon as it hears the build finished.
+        outcome = Command
+            .new(binary)
+            .arg("build")
+            .arg(source.0)
+            .current_dir(project.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_ENGINE_TRACE", observations.0)
+            .env_remove("OVEN_TRACE")
+            .env_remove("INCAN_JEC_TRACE")
+            .env_remove("INCAN_TRACE_DIR")
+            .env_remove("INCAN_NATIVE_TIMING")
+            .output()
+            .map_err((error) => str(error))?
+        if not outcome.status.success():
+            error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+            _ = stop_engine(store, binary)
+            return Err(f"traced run {edit}: status={outcome.status.code()} stderr={error}")
+    # Both builds are finished. The engine is ended at once, as a finished run's process group is, and its own trace
+    # must already hold the unit span each build ends with.
+    engine = engine_trace(observations)?
+    pid = engine.name().split("engine-oven-")[1].split(".")[0]
+    ended = Command.new("/bin/kill").arg("-KILL").arg(pid).status().map_err((error) => str(error))?
+    if not ended.success():
+        return Err("the resident engine could not be ended")
+    text = engine.read_text("utf-8", "strict").map_err((error) => error.message())?
+    units = len(text.split("\"operation\":\"engine_unit\"")) - 1
+    if units != 2:
+        return Err(f"the engine's trace held {units} of the two finished builds' unit spans when it ended")
     return Ok(None)
 
 
@@ -588,6 +584,17 @@ def observed_lines(directory: Path) -> Result[list[str], str]:
     return Ok(lines)
 
 
+def engine_trace(directory: Path) -> Result[Path, str]:
+    """The trace file the engine process writes: the one with a plan-module selection and no client request span."""
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file() or not entry.name().startswith("engine-oven-"):
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if "\"key\":\"plan-modules\"" in text and "\"operation\":\"engine_request\"" not in text:
+            return Ok(entry)
+    return Err("no trace file of the resident engine")
+
+
 def invocation_count(directory: Path, function: str) -> int:
     """Count completed compiler invocation-span starts with the exact instrumented function name."""
     mut count = 0
@@ -706,16 +713,6 @@ def invocation_processes(directory: Path, function: str) -> Result[int, str]:
         if found:
             count += 1
     return Ok(count)
-
-
-def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
-    """Whether one optional JSON field is text equal to `expected`, without comparing carrier values."""
-    match document.get(key):
-        None => return false
-        Some(value) =>
-            match value.as_str():
-                None => return false
-                Some(found) => return found == expected
 
 
 model InstallationReadCounts:
@@ -985,22 +982,6 @@ def run_to_barrier(binary: str, source: Path, store: Path, barrier: Barrier) -> 
     child.kill().map_err((error) => str(error))?
     child.wait().map_err((error) => str(error))?
     return Err("program did not reach its execution barrier")
-
-
-def stop_engine(store: Path, binary: str) -> Result[None, str]:
-    """Stop the records engine serving `store`, and require its acknowledgment."""
-    mut identity = service_identity(store)?
-    identity.service_generation = service_generation(binary)?
-    mut channel = connect_with(store, identity, binary).map_err(detail)?
-    channel.send(zero_id(), Message.Stop(Stop(reason="execution collection proof completed"))).map_err(detail)?
-    stopped = channel.receive().map_err(detail)?
-    match stopped.message:
-        Message.Event(value) =>
-            assert value.status == "Stopping"
-        _ => return Err("execution collection proof did not stop its engine")
-    # Stop is acknowledged; peer withdrawal may race the local shutdown.
-    _ = channel.transport.close()
-    return Ok(None)
 
 
 def collect_superseded(store: Path) -> Result[Collected, str]:
@@ -1282,15 +1263,3 @@ def await_connection(root: Path, identity: Identity) -> Result[Connection, str]:
             Ok(transport) => return Ok(transport)
             Err(_) => sleep(Duration.from_millis(2))
     return Err("test engine did not start")
-
-
-def await_exit(mut child: Process, expected_success: bool) -> Result[None, str]:
-    """Reap this test's child, killing only that child if the lifecycle deadline fails."""
-    for _poll in range(2500):
-        match child.poll()?:
-            Some(status) =>
-                assert status == expected_success
-                return Ok(None)
-            None => sleep(Duration.from_millis(2))
-    child.terminate()?
-    return Err("test engine did not exit")

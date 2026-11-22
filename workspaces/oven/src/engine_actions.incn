@@ -10,6 +10,7 @@ from request_directory import serve_from, served
 from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection, view_sealed
 from graph_read_demands import begin_graph_demands, finish_graph_demands, note_graph_demand
 from engine_epochs import CapturedRequest, after_projection
+from engine_capture import CaptureCounters
 from engine_proofs import retain, prepare_report
 from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts, measure_frame_reads, finish_frame_reads
 from observation import trace
@@ -35,6 +36,10 @@ pub model Pending:
     pub format: str
     # The directory the client's command ran in; its compilations are for that directory.
     pub directory: str = ""
+    # The canonical unit options the client parsed; empty for an ordinary unit.
+    pub unit_options: str = ""
+    # The generation of the records this request reads and writes: its engine's compiler and Oven.
+    pub records: str = ""
 
 
 pub model ExecutionLease:
@@ -103,6 +108,8 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(pending.capture.epoch),
         pending.producer,
         Some(pending.capture.selected),
+        pending.unit_options,
+        pending.records,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()
@@ -127,6 +134,8 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     record(Operation.EngineUnit, pending.capture.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
+    if produced.library and produced.code == 0:
+        return settled_library(store, pending, run, counters, produced)
     match produced.unit:
         None =>
             mut incomplete = ""
@@ -198,6 +207,40 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
             )
 
 
+def settled_library(
+    store: Path,
+    pending: Pending,
+    run: str,
+    counters: CaptureCounters,
+    produced: ProgramOutcome,
+) -> Result[Ready, str]:
+    """A built library selects no native descriptor: publish its capture and complete successfully without a lease."""
+    captured = after_projection(pending.capture)?
+    mut snapshot = captured.snapshot.digest
+    if let Some(transaction) = captured.transaction:
+        snapshot = commit(transaction).map_err((error) => error.message())?.digest
+    mut observation = ""
+    mut incomplete = ""
+    if pending.proofs:
+        match retain(store, run, counters, produced):
+            Ok(handle) => observation = handle
+            Err(reason) => incomplete = reason
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot=snapshot,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=CompletionStatus.Success,
+                observation_handle=observation,
+            ),
+            console=produced.console,
+            incomplete_proof=incomplete,
+        ),
+    )
+
+
 def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
     """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
     checking = begin()
@@ -214,6 +257,8 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         Some(pending.capture.epoch),
         Some(pending.capture.selected),
         pending.view,
+        pending.unit_options,
+        pending.records,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()

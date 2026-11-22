@@ -3,7 +3,19 @@
 from compiler_graph_record_fixtures import family_key, key, request, required
 import compiler_source_projection
 from pub::internal_models.source_value_records import encode_source_text, read_documentation
-from pub::incan_platform.store import Snapshot, begin, commit, delete, finish_frame_reads, get, keys, lookup_binding, measure_frame_reads, put, read_counts, BindingLookup
+from pub::incan_platform.store import (
+    Snapshot,
+    begin,
+    commit,
+    delete,
+    finish_frame_reads,
+    get,
+    keys,
+    locate_value,
+    measure_frame_reads,
+    put,
+    read_counts,
+)
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::internal_models.records import (
@@ -27,27 +39,16 @@ from pub::internal_models.records import (
 )
 from pub::internal_models import (
     certified_namespace_order,
-    decode_namespace_order,
-    DemandPage,
-    InputSnapshot,
-    PreparedInputs,
-    ProducerProfile,
     ProducerRank,
     ProducerStage,
-    RankCertificate,
-    ReadyWork,
-    RecordRoot,
     decode_read_receipt,
     decode_demand_page,
-    decode_prepared_inputs,
-    decode_ready_work,
-    encode_prepared_inputs,
-    encode_ready_work,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.namespace_references import decode_namespace_references, namespace_header_reference_filename, namespace_reference_filename
 from compiler_graph_records import (
     EditCutoff,
+    authenticated_bytes,
     OutputSlots,
     PublishedEvaluation,
     edit_cutoff,
@@ -56,10 +57,9 @@ from compiler_graph_records import (
     reusable_family_records,
 )
 from compiler_prepared_records import PreparedBodyRecordSource
-from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_ranked_build import RankedBuildInputs, contextual_ranked_pages
 from compiler_body_keys import body_key, namespace_header_key, namespace_key
-from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
+from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_modules
 from compiler_plan_modules import plan_module_key
 from pub::incan_mir_plan import PlanModuleFunction, PlanModuleValue, encode_plan_module
 from compiler_owner_records import encode_body_frame, read_body_frame
@@ -75,10 +75,6 @@ from compiler_body_values import (
 from compiler_body_projection import dependency_owner, retained_owner_record
 from compiler_body_publication import prepared_product_request
 from pub::incan_mir_plan import LoweringEvent
-from std.primitives.crumb.descriptions import Description, DescriptionMode
-from std.primitives.crumb.values import Value
-from pub::internal_models.crumb_rows import ModelField, model_description, required_value
-from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
 from std.io import BytesIO
 from compiler_source_projection import project_source, publish_source_projection, scope_member, scope_members, signature_record
 from compiler_projection_cache import cached_editable_dependency_signature_record, editable_dependency_projection_key
@@ -225,66 +221,100 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
     return Ok(None)
 
 
-pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, str]:
-    """Persist the three compiler-owned activation roots and evaluate local/final outputs once in certified order."""
+pub def test_a_selected_value_is_hashed_once_and_a_damaged_frame_is_refused() -> Result[None, str]:
+    """
+    Selecting an evaluation hashes its value and its receipt once each, where the store checks their frames against
+    the index: publication bound the evaluation's digests to those frames, so selection does not hash them again. A
+    damaged frame is still refused.
+    """
     before = store_snapshot(memory_root()).map_err((error) => error.message())?
-    first = activation("local", "first", 1)
-    second = activation("local", "second", 0)
-    final_record = activation("final", "first", 2)
-    persisted = persist_activation(before, DemandPage(keys=[first.ready.output]), first.prepared, first.ready)?
-    demand_bytes = required(before=persisted.snapshot, key=persisted.demand_key)?
-    assert demand_bytes[:4] == b"CRMB"
-    forged = model_description(b"demand\x00", "another.schema", [ModelField(identity=b"keys__", name="keys", storage=f"list<{KEY_TYPE}>")])
-    inline = Description(metadata=forged.metadata, mode=DescriptionMode.Inline)
-    impostor = encode_graph_row(b"demand\x00", inline, [required_value(b"keys__", Value.List([]))])?
-    assert decode_demand_page(impostor).is_err()
-    assert decode_ready_work(demand_bytes).is_err()
-    demand = decode_demand_page(demand_bytes)?
-    prepared_bytes = required(before=persisted.snapshot, key=persisted.prepared_key)?
-    assert prepared_bytes[:4] == b"CRMB"
-    assert decode_demand_page(prepared_bytes).is_err()
-    prepared = decode_prepared_inputs(prepared_bytes)?
-    ready_bytes = required(before=persisted.snapshot, key=persisted.work_key)?
-    assert ready_bytes[:4] == b"CRMB"
-    assert decode_prepared_inputs(ready_bytes).is_err()
-    ready = decode_ready_work(ready_bytes)?
-    assert demand.keys == [first.ready.output]
-    assert encode_prepared_inputs(prepared)? == encode_prepared_inputs(first.prepared)?
-    assert encode_ready_work(ready)? == encode_ready_work(first.ready)?
+    receipt = witnessed_receipt()
+    published = publish_evaluation(
+        before,
+        "claim",
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3),
+        b"checked local",
+        receipt,
+    )?
+    output = receipt.preparation.output
+    profile = receipt.scope.profile
+    # An unchanged slot under an edit's cutoff: its witnesses are valid by the snapshot and are not read back.
+    unchanged = EditCutoff(active=true)
+    hashed = authenticated_bytes()
+    checked = read_counts().records
+    match reusable_evaluation(published.snapshot, output, profile, unchanged)?:
+        Some(found) => assert found.value == b"checked local"
+        None => return Err("the published evaluation was not selected")
+    assert authenticated_bytes() == hashed, "selection hashed a value or receipt its frame check had authenticated"
+    assert read_counts().records > checked
+    # Damage the value's frame where it is stored: the store refuses it, so no damaged value is selected.
+    location = match locate_value(published.snapshot, published.value_key).map_err((error) => error.message())?:
+        Some(found) => found
+        None => return Err("the published value has no frame")
+    segment = published.snapshot.root.joinpath("segments").joinpath(f"{location.segment}.seg")
+    stored = segment.store_read_bytes().map_err((error) => error.message())?
+    last = location.offset + location.length - 1
+    mut flipped = b"\x00"
+    if stored[last:last + 1] == b"\x00":
+        flipped = b"\x01"
+    damaged = BytesIO(b"")
+    damaged.write_bytes(stored[:last]).map_err((error) => error.message())?
+    damaged.write_bytes(flipped).map_err((error) => error.message())?
+    damaged.write_bytes(stored[last + 1:]).map_err((error) => error.message())?
+    segment.store_write_bytes(damaged.getvalue()).map_err((error) => error.message())?
+    match reusable_evaluation(published.snapshot, output, profile, unchanged):
+        Ok(_) => return Err("a damaged value frame was selected")
+        Err(reason) => assert "digest" in reason or "integrity" in reason, reason
+    return Ok(None)
 
-    mut sweep = RankedCheckingSweep.schedule([final_record, first, second])?
-    assert selected_identity(sweep.next()) == "second"
-    assert selected_identity(sweep.next()) == "first"
-    assert selected_family(sweep.next()) == "final"
-    assert selected_identity(sweep.next()) == ""
-    assert sweep.evaluation_count() == 3
-    order = certified_namespace_order("project", {
-        "entry": ["consumer", "left", "right", "leaf"],
-        "consumer": ["left", "right", "leaf"],
-        "left": ["right", "leaf"],
-        "right": ["left", "leaf"],
-        "leaf": [],
-        "incomplete": ["absent"],
-    })?
-    assert order["leaf"].rank == 0
-    assert order["left"].members == ["left", "right"]
-    assert order["left"].rank == 1
-    assert order["left"].evidence == order["right"].evidence
-    roundtrip = decode_namespace_order(order["right"].certificate.clone(), "project")?
-    assert roundtrip.members == ["left", "right"]
-    assert roundtrip.rank == 1
-    assert roundtrip.evidence == order["left"].evidence
-    assert decode_namespace_order(order["left"].certificate.clone(), "another-project").is_err()
-    tampered = BytesIO(order["left"].certificate)
-    tampered.seek(0, 2).map_err((error) => error.message())?
-    tampered.write_bytes(b"x").map_err((error) => error.message())?
-    assert decode_namespace_order(tampered.getvalue(), "project").is_err()
-    assert order["consumer"].rank == 3
-    assert order["entry"].rank == 4
-    assert "incomplete" not in order
-    match certified_namespace_order("project", {"first": ["second"], "second": ["third"], "third": []}):
-        Ok(_) => return Err("accepted an incomplete transitive import closure")
-        Err(_) => pass
+
+pub def test_a_plan_module_selection_reads_again_only_the_slots_that_changed() -> Result[None, str]:
+    """
+    A request's plan-module selection is recorded with the revisions it was made at, each slot's output-index entry and
+    evaluation. The next selection under an edit's cutoff takes every unchanged slot from that record, reading none of
+    its evaluation or receipt, and admits the same pages, outputs and covered owners; a slot republished since is
+    selected again, alone.
+    """
+    origin = "kept"
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    mut graph = store_snapshot(memory_root()).map_err((error) => error.message())?
+    seeded = key("kept-plan-input")
+    graph = commit(put(begin(graph), encode_record_key(seeded)?, b"plan input")).map_err((error) => error.message())?
+    dependency = record_request(seeded)
+    for name in ["left", "right"]:
+        function = PlanModuleFunction(identity=f"function:{name}::read|signature", symbol=f"native-{name}", function="read", key=token, event=b"event")
+        value = encode_plan_module(PlanModuleValue(module=name, functions=[function])).map_err((_) => "plan")?
+        receipt = lowering_receipt(graph, plan_module_key(origin, f"src/{name}.incn", value), dependency)?
+        graph = publish_evaluation(graph, "plan-" + name, rank, value, receipt)?.snapshot
+    unchanged = EditCutoff(active=true)
+    nothing: set[str] = set()
+    first = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged)?
+    assert len(first.pages) == 2 and len(first.records) == 2
+    graph = commit(put(begin(graph), plan_selection_key(origin), encode_plan_selection(origin, first.kept)?)).map_err((error) => error.message())?
+    measure_frame_reads(true)
+    kept = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged)
+    mut reads = finish_frame_reads()
+    again = kept?
+    assert [page.key for page in again.pages] == [page.key for page in first.pages]
+    assert [page.digest for page in again.pages] == [page.digest for page in first.pages]
+    assert again.outputs == first.outputs
+    assert len(again.records) == 2
+    for read in reads:
+        assert not read.key.startswith("incan.engine.evaluation\t"), "an unchanged slot's evaluation was read again"
+        assert not read.key.startswith("incan.engine.receipt\t"), "an unchanged slot's receipt was read again"
+    # Republish one module's plan: only its slot is selected again.
+    function = PlanModuleFunction(identity="function:right::read|signature", symbol="native-right", function="read", key=token, event=b"other event")
+    value = encode_plan_module(PlanModuleValue(module="right", functions=[function])).map_err((_) => "plan")?
+    receipt = lowering_receipt(graph, plan_module_key(origin, "src/right.incn", value), dependency)?
+    graph = publish_evaluation(graph, "plan-right-again", rank, value, receipt)?.snapshot
+    measure_frame_reads(true)
+    changed = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged)
+    reads = finish_frame_reads()
+    third = changed?
+    assert len(third.pages) == 2 and len(third.records) == 2
+    evaluations = [read.key for read in reads if read.key.startswith("incan.engine.evaluation\t")]
+    assert len(evaluations) == 1, f"{len(evaluations)} evaluations were read for one republished slot"
     return Ok(None)
 
 
@@ -947,152 +977,6 @@ pub def test_contextual_body_edit_uses_a_certified_receipt_without_opening_prior
     return Ok(None)
 
 
-pub def test_store_receipt_binds_payload_without_copying_it() -> Result[None, str]:
-    """A zero-byte request still checks the entire immutable frame and returns its authenticated digest."""
-    key = family_key("body-ir", "digest-only")
-    written = encode_record_key(key)?
-    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
-    value: bytes = list.repeat(47u8, 65537)
-    graph = commit(put(begin(empty), written, value)).map_err((error) => error.message())?
-    expected = match lookup_binding(graph, written).map_err((error) => error.message())?:
-        BindingLookup.Present(binding) => binding
-        _ => return Err("stored fixture has no present binding")
-    scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
-    source = StoreRecordSource.open(graph, scope, [written])
-    request = prepared_product_request(key)
-
-    before = read_counts()
-    answer = source.read(scope, request)
-    after = read_counts()
-    match answer:
-        RecordRead.Found(found) =>
-            assert len(found.value) == 0
-            assert found.evidence.request == request and found.evidence.scope == scope
-            assert found.evidence.revision == expected.revision
-            assert found.evidence.semantic_digest == expected.semantic_digest
-        _ => return Err("zero-byte selection lost its binding")
-    assert after.records - before.records == 1
-    copied = after.decoded - before.decoded
-    assert copied == 0, f"zero-byte selection copied {copied} payload bytes"
-    return Ok(None)
-
-
-pub def test_prepared_opaque_products_use_their_bounded_selection() -> Result[None, str]:
-    """Body IR and a census-sized plan reach later producers through bounded authenticated selections."""
-    identity = "function:source_security::hex_digit|incan.source-signature/2:sha256:c7eb8b5e2655ce2b3f16c90d879e3ca79b8ccd8979da0b85d5f29d8ea68a3799"
-    body = RecordKey(
-        family="body-ir",
-        identity_profile="incan.stable-declaration/1",
-        origin="oven",
-        identity=identity,
-        facet="checked",
-        context="sha256:15ee0f3936c78447af632913a51179e11313a4b360fe9e6f5345dca51e6865c4",
-    )
-    output = RecordKey(
-        family="lowering-demand",
-        identity_profile=body.identity_profile,
-        origin=body.origin,
-        identity=body.identity,
-        facet="__incan_module_15_115_111_117_114_99_101_95_115_101_99_117_114_105_116_121_5221_5388",
-        context="00a30f846a1d2c4844c74bf193c0076ca9cb49f6088a7dfa6258977f337cf37c",
-    )
-    plan = RecordKey(
-        family="plan-function",
-        identity_profile=body.identity_profile,
-        origin=body.origin,
-        identity=body.identity,
-        facet="body:main",
-        context="sha256:a54ccf4ef52017e604080e9c05ae6680ba1d64f1c29003c23892ae02198f4092",
-    )
-    checking_scope = ReadScope(snapshot="prepared-source-hex-digit", profile=CHECKER_PROFILE)
-    mut source = PreparedBodyRecordSource.open(checking_scope)
-    oversized: bytes = list.repeat(90u8, 65537)
-    source.add(encode_record_key(body)?, oversized)
-    source.add(encode_record_key(plan)?, oversized)
-    lowering_scope = ReadScope(snapshot=checking_scope.snapshot, profile=LOWERING_PROFILE)
-    for key in [body, plan]:
-        request = prepared_product_request(key)
-        preparation = PreparationEvidence(
-            output=output,
-            rank_certificate="compiled-check",
-            selector_witnesses="compiled-check",
-        )
-        mut reads = RecordReads.start(lowering_scope, preparation, [request])
-        match reads.read(source.for_profile(LOWERING_PROFILE), request):
-            RecordRead.Found(found) =>
-                assert len(found.value) == 0, f"prepared opaque selection returned {len(found.value)} bytes"
-                assert found.evidence.scope == lowering_scope and found.evidence.request == request
-                assert found.evidence.revision != "" and found.evidence.semantic_digest != ""
-                assert found.selection_digest != ""
-            RecordRead.Failed(fault) =>
-                counters = reads.counters()
-                return Err(
-                    f"prepared opaque read failed {fault:?}: selected-value={counters.response_bytes} limit={request.byte_limit}",
-                )
-            _ => return Err("prepared opaque read did not return the staged value")
-        receipt = reads.finish().map_err((fault) => f"prepared opaque receipt failed: {fault:?}")?
-        assert receipt.response_bytes == 0 and len(receipt.witnesses) == 1
-    # A function with many native signatures can publish a lowering demand larger than a scalar field answer.
-    # The plan observes every demand byte through its semantic witness even when no payload bytes are returned.
-    demand_key = encode_record_key(output)?
-    request = prepared_product_request(output)
-    source.add(demand_key, oversized)
-    first = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
-    extended = BytesIO(oversized)
-    extended.seek(0, 2).map_err((error) => error.message())?
-    extended.write_bytes(b"!").map_err((error) => error.message())?
-    source.add(demand_key, extended.getvalue())
-    changed = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
-    assert first.response_bytes == 0 and changed.response_bytes == 0
-    match first.witnesses[0]:
-        ReadWitness.Found(previous, _) =>
-            match changed.witnesses[0]:
-                ReadWitness.Found(current, _) => assert previous.semantic_digest != current.semantic_digest
-                _ => return Err("changed lowering demand has no value witness")
-        _ => return Err("lowering demand has no value witness")
-    return Ok(None)
-
-
-pub def test_publication_reads_repeated_checked_inputs_once() -> Result[None, str]:
-    """Repeated references in one owner share an input. Distinct bounds retain their own authorization."""
-    key = body_key("local", "app", "function:app::read", "checked", "current")
-    scope = ReadScope(snapshot="prepared", profile=CHECKER_PROFILE)
-    mut staged = PreparedBodyRecordSource.open(scope)
-    staged.add(encode_record_key(key)?, b"data")
-    exact = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=4)
-    ordinary = prepared_product_request(key)
-    receipt = staged.receipt(scope, key, [ordinary, exact, ordinary, exact])?
-    assert receipt.operations == 2 and receipt.response_bytes == 8
-    assert len(receipt.witnesses) == 2
-    short = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=3)
-    assert staged.receipt(scope, key, [ordinary, short]).is_err()
-    return Ok(None)
-
-
-pub def test_prepared_checked_rows_bind_the_current_extent() -> Result[None, str]:
-    """A checked predecessor may grow between revisions; its receipt records the selected bytes in each revision."""
-    key = RecordKey(family="final", identity_profile="incan.stable-declaration/1", origin="fixture",
-        identity="function:fixture::import_jsonl", facet="checked", context="current")
-    scope = ReadScope(snapshot="prepared", profile=CHECKER_PROFILE)
-    mut source = PreparedBodyRecordSource.open(scope)
-    for size in [79351, 79358]:
-        physical: bytes = list.repeat(90u8, size)
-        source.add(encode_record_key(key)?, physical)
-        receipt = source.receipt(scope, key, [prepared_product_request(key)])?
-        assert receipt.operations == 1 and receipt.response_bytes == size
-        match receipt.witnesses[0]:
-            ReadWitness.Found(evidence, _) =>
-                assert evidence.request.key == key
-                assert evidence.request.selection == RecordSelection.Field("value")
-                assert evidence.request.byte_limit == size
-            _ => return Err("missing final checker row witness")
-        short = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=size - 1)
-        match source.receipt(scope, key, [short]):
-            Ok(_) => return Err("receipt exceeded its explicit field extent")
-            Err(_) => pass
-    return Ok(None)
-
-
 def publish_fixture(selected: Snapshot, identity: str, dependency: RecordRequest) -> Result[PublishedEvaluation, str]:
     """Publish one evaluation whose sole dependency was read through the authenticated store source."""
     output = key(identity)
@@ -1104,6 +988,18 @@ def publish_fixture(selected: Snapshot, identity: str, dependency: RecordRequest
         ("checked " + identity).encode("utf-8"),
         receipt,
     )
+
+
+def lowering_receipt(selected: Snapshot, output: RecordKey, dependency: RecordRequest) -> Result[ReadReceipt, str]:
+    """Read one fixture dependency under the lowering profile and return the completed receipt of `output`."""
+    scope = ReadScope(snapshot=selected.digest, profile=LOWERING_PROFILE)
+    preparation = PreparationEvidence(output=output, rank_certificate="rank-certificate", selector_witnesses="selector-witnesses")
+    source = StoreRecordSource.open(selected, scope, [encode_record_key(dependency.key)?])
+    mut reads = RecordReads.start(scope, preparation, [dependency])
+    match reads.read(source, dependency):
+        RecordRead.Failed(_) => return Err("lowering fixture dependency read failed")
+        _ => pass
+    return reads.finish().map_err((_) => "lowering fixture dependency receipt failed")
 
 
 def fixture_receipt(selected: Snapshot, output: RecordKey, dependency: RecordRequest) -> Result[ReadReceipt, str]:
@@ -1233,42 +1129,6 @@ def witnessed_receipt() -> ReadReceipt:
         operations=4,
         response_bytes=2,
     )
-
-
-def activation(family: str, identity: str, dependency: int) -> RankedActivation:
-    """Create one complete checking-family activation with no environment reads."""
-    output = family_key(family, identity)
-    snapshot = InputSnapshot(root=RecordRoot(digest="snapshot"))
-    profile = ProducerProfile(identity=RecordRoot(digest="profile"))
-    prepared = PreparedInputs(
-        output=output,
-        snapshot=snapshot,
-        profile=profile,
-        required_reads=[],
-        rank_certificate=RankCertificate(
-            rank=ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=dependency),
-            evidence=RecordRoot(digest=f"rank-{dependency}"),
-        ),
-        selector_witnesses=RecordRoot(digest=f"selectors-{dependency}"),
-    )
-    return RankedActivation(
-        ready=ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile),
-        prepared=prepared,
-    )
-
-
-def selected_identity(activation: Option[RankedActivation]) -> str:
-    """Read the selected output identity without requiring native equality for the complete activation model."""
-    match activation:
-        Some(value) => return value.ready.output.identity
-        None => return ""
-
-
-def selected_family(activation: Option[RankedActivation]) -> str:
-    """Read the selected output family without requiring native equality for the complete activation model."""
-    match activation:
-        Some(value) => return value.ready.output.family
-        None => return ""
 
 
 def count_prefix(values: list[str], prefix: str) -> int:

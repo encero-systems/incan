@@ -7,6 +7,7 @@ from pub::internal_models.source_value_records import source_value
 from compiler_source_projection import (
     SourceProjectionRecord,
     captured_source_key,
+    compiler_generation_record,
     positioned_source_key,
     project_source,
     scope_member,
@@ -40,9 +41,10 @@ pub def publish_captured_source_inputs(
     selected: Snapshot,
     unit: UnitDescription,
     inputs: list[CapturedInput],
+    compiler: str = "",
 ) -> Result[PublishedSourceInputs, str]:
     """Publish captured Incan source projections in one standalone transaction."""
-    prepared = prepare_captured_source_inputs(selected, begin(selected), unit, inputs)?
+    prepared = prepare_captured_source_inputs(selected, begin(selected), unit, inputs, compiler)?
     published = commit(prepared.transaction).map_err((error) => error.message())?
     return Ok(PublishedSourceInputs(snapshot=published, keys=prepared.keys))
 
@@ -52,12 +54,19 @@ pub def prepare_captured_source_inputs(
     transaction: Transaction,
     unit: UnitDescription,
     inputs: list[CapturedInput],
+    compiler: str = "",
 ) -> Result[PreparedSourceInputs, str]:
-    """Stage captured source projections and report only keys whose semantic values differ from the selected view."""
+    """
+    Stage captured source projections and report only keys whose semantic values differ from the selected view. The
+    unit's compiler generation is one of them: under another compiler it changes, and every checked record reads it.
+    """
     mut prepared = transaction
     mut changed: list[RecordKey] = []
     mut positioned: Dict[str, bytes] = {}
     mut carried: set[str] = set()
+    generation = compiler_generation_record(source_origin(unit), compiler)
+    if stage_changed_projection(selected, prepared, encode_record_key(generation.key)?, generation, positioned)?:
+        changed.append(generation.key)
     engine = observe(Path(executable()?))?.stamp
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
@@ -108,6 +117,12 @@ pub def prepare_captured_source_inputs(
                     placement = projection.placements[facet]
                     if stage_changed_projection(selected, prepared, encode_record_key(placement.key)?, placement, positioned)?:
                         changed.append(placement.key)
+                # Only another unit's checked bodies read a declaration's span: a path dependency's module stages it.
+                if identity[0] != source_origin(unit):
+                    for facet in projection.spans.keys():
+                        span = projection.spans[facet]
+                        if stage_changed_projection(selected, prepared, encode_record_key(span.key)?, span, positioned)?:
+                            changed.append(span.key)
                 for owner in projection.owners:
                     for record in [owner, signature_record(owner)]:
                         key = encode_record_key(record.key)?

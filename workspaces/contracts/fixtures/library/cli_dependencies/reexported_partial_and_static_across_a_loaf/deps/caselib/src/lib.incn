@@ -1,0 +1,1 @@
+"""A Loaf whose facade module re-exports a model's partial and a static of another module."""

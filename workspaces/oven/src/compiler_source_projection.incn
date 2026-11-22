@@ -42,6 +42,8 @@ pub model SourceProjection:
     pub owners: list[SourceProjectionRecord]
     pub documentation: list[tuple[str, str]]
     pub placements: Dict[str, SourceProjectionRecord] = {}
+    # Each owner's absolute UTF-8 span, without its bytes: a checked reader in another unit names it by this span.
+    pub spans: Dict[str, SourceProjectionRecord] = {}
     pub bindings: Dict[str, list[str]] = {}
     # Only guarded project modules depend on the resolved package feature environment.
     pub feature_inputs: list[SourceProjectionRecord] = []
@@ -141,6 +143,7 @@ class SourceProjector:
         mut owners: list[SourceProjectionRecord] = []
         mut docs: list[tuple[str, str]] = []
         mut placements: Dict[str, SourceProjectionRecord] = {}
+        mut spans: Dict[str, SourceProjectionRecord] = {}
         mut bindings: Dict[str, list[str]] = {}
         if len(self.boundaries) == 0:
             header = self.source
@@ -185,6 +188,7 @@ class SourceProjector:
                         # The parser's dedent span reaches the next declaration or EOF, including separating newlines.
                         raw = text[relative:record.end - boundary.start]
                         mark_placement(placements, record, offset, raw)
+                        mark_span(spans, record, offset, raw)
                 byte_start += len(text.encode("utf-8"))
         header_semantic, module_docs = split_documentation(header)
         if module_docs != "":
@@ -224,6 +228,7 @@ class SourceProjector:
                 owners=owners,
                 documentation=docs,
                 placements=placements,
+                spans=spans,
                 bindings=bindings,
             ),
         )
@@ -278,6 +283,31 @@ def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: Bor
     if owner.key.facet in placements:
         stamp = hexlify(sha256.digest((placements[owner.key.facet].text + "|" + stamp).encode("utf-8")))
     placements[owner.key.facet] = SourceProjectionRecord(key=key, text=stamp, start=owner.start, end=owner.end)
+
+
+def mark_span(mut spans: Dict[str, SourceProjectionRecord], owner: Borrowed[SourceProjectionRecord], offset: int, raw: str) -> None:
+    """
+    Bind an owner's absolute UTF-8 offset and byte length, the span its canonical identity carries, including every
+    same-named overload. A body edit that keeps the length keeps the span.
+    """
+    key = owner_span_key(owner.key.origin, owner.key.identity, owner.key.facet)
+    mut text = str(offset) + "+" + str(len(raw.encode("utf-8")))
+    if owner.key.facet in spans:
+        text = spans[owner.key.facet].text + "|" + text
+    spans[owner.key.facet] = SourceProjectionRecord(key=key, text=text, start=owner.start, end=owner.end)
+
+
+pub def owner_span_key(origin: str, path: str, name: str) -> RecordKey:
+    """The span a checked reader in another unit names this source declaration by."""
+    return source_key("owner-span", origin, path, name)
+
+
+pub def compiler_generation_record(origin: str, compiler: str) -> SourceProjectionRecord:
+    """
+    The compiler generation every checked record of `origin` is read under. A record another compiler wrote is
+    withdrawn the first time a request names a different generation, and the new compiler's records are reused after.
+    """
+    return SourceProjectionRecord(key=source_key("compiler-generation", origin, "toolchain", "compiler"), text=compiler, start=0, end=0)
 
 
 pub def project_source(

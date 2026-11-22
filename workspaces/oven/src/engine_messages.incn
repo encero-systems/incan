@@ -36,6 +36,8 @@ pub model Submit:
     pub observation_policy: str
     # The directory the client's command ran in, which its compilations are for; never the engine's own.
     pub directory: str = ""
+    # The canonical unit options the client parsed (`engine_unit_options`); empty for an ordinary unit.
+    pub unit_options: str = ""
 
 
 pub model Accepted:

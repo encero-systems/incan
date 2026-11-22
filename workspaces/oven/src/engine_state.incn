@@ -3,6 +3,7 @@
 from engine_messages import Hello, Welcome
 from engine_wire import DATA_CREDITS, MAX_PAYLOAD, Refusal, RefusalKind, zero_id
 from std.fs import Path
+from unit_freshness import fingerprint
 
 pub const IDLE_SECONDS: int = 600
 const MAX_INTERESTS: int = 16
@@ -130,3 +131,11 @@ pub class ServiceState:
         if self.stopping or self.draining:
             return true
         return now - self.last_active >= timeout
+
+
+pub def records_generation(identity: Identity) -> Result[str, str]:
+    """
+    The generation of the records an engine reads and writes: its compiler and its Oven. Whatever writes a record
+    belongs in the identity that admits it, so another compiler or another Oven over the same store starts cold, once.
+    """
+    return fingerprint(["incan.engine.records-generation/1", identity.compiler_generation, identity.service_generation])

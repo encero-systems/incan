@@ -72,7 +72,7 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn public_module_member(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         module_path: &[String],
         member: &str,
     ) -> Result<Option<PublicModuleMember>, Vec<String>> {
@@ -219,8 +219,17 @@ impl TypeChecker {
         if let Some((_, target)) = &mut type_alias {
             Self::remap_resolved_type_with_import_aliases(target, &remapping);
         }
+        // A partial's target is spelled as its declaring module spells it, like the member's own signature above.
+        let projection_remapping =
+            self.remapping_through_declaring_module(library, manifest, canonical.as_ref(), &remapping);
         let partial_projection = declarations.iter().find_map(|declaration| {
-            Self::public_member_partial_projection(manifest, source_module_path, member, declaration, &remapping)
+            Self::public_member_partial_projection(
+                manifest,
+                source_module_path,
+                member,
+                declaration,
+                &projection_remapping,
+            )
         });
         self.open_package_internal_defaults(manifest, canonical.as_ref(), &mut kind);
         Self::mark_compiled_class_field_provider(&mut kind, library);
@@ -398,7 +407,7 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn public_module_type_remapping(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         owner_module_path: &[String],
     ) -> HashMap<String, String> {
         let mut remapping = self.public_library_canonical_type_remapping(library, manifest);

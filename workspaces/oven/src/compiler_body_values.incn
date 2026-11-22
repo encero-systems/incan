@@ -63,6 +63,11 @@ pub model SelectedBodyPage:
     # The SHA-256 digest of `value` the store verified it by, when known; staging names the page by it, so a
     # resident compiler that read this content before need not read or hash the page again.
     pub digest: str = ""
+    # The immutable store segment file holding `value`, and the value's offset and length in it, when the page is
+    # offered by its frame: staging names that range beside the digest instead of copying the bytes.
+    pub segment: str = ""
+    pub offset: int = 0
+    pub length: int = 0
 
 
 pub model NamespaceInventory:
@@ -308,7 +313,8 @@ pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profil
     """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
     mut owners: set[str] = set()
     # A position edit can restamp a selected executable frame against today's syntax.
-    # Only changed semantic inputs withdraw an owner's checked pair from the compiler.
+    # Only changed semantic inputs withdraw an owner's checked pair from the compiler. A path dependency's changed
+    # declaration span is one: a checked body names that declaration by it, and no restamp of its own frame moves it.
     semantic = [key for key in changed if key.family != "owner-placement"]
     for reader in readers_of(selected, semantic, profile)?:
         if reader.family in ["local", "final", "body-ir"]:

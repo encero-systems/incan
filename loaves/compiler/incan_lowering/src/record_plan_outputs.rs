@@ -15,7 +15,7 @@ use incan_mir_plan_native::{
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
-use crate::plan_modules::{admitted_frames, module_page, read_admitted};
+use crate::plan_modules::{admitted_frames, admitted_plan_page, module_page, read_admitted};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::positioned_product;
 use crate::scalar_store::{event_positions, event_references, finalized_plan_product, report_scalar_refusal};
@@ -489,8 +489,7 @@ fn append_admitted_events(
         if path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE) && !note.inspected {
             return Err("inspected module lacks its placement report".into());
         }
-        let encoded = std::fs::read(&path).map_err(|error| format!("cannot read admitted plan module {error}"))?;
-        let page = decode_plan_module(&encoded).map_err(|error| format!("admitted plan module refused: {error:?}"))?;
+        let page = admitted_plan_page(&path).map_err(|error| format!("cannot read admitted plan module: {error}"))?;
         let stored: HashMap<&str, &[u8]> = page
             .functions
             .iter()

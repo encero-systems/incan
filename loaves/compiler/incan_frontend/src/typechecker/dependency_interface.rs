@@ -13,6 +13,8 @@ pub use checked_namespace::{CheckedNamespaceInterface, NamespaceCell, NamespaceC
 use serde::Serialize;
 use stable_encoding::stable_encode;
 
+use super::transitive_layouts::{built_table, ready_layouts, ready_tables};
+
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
 pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 6;
 
@@ -25,13 +27,67 @@ pub struct DependencyInterfacePreparationCache {
     pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
     /// Each compiled library's nominal public types with their canonical spellings and admitted identities.
     pub(super) canonical_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<[CanonicalTypeEntry]>>>>,
+    /// Each compiled Loaf's nominal type origins, by Loaf key, for the foreign preparations that reach it.
+    pub(super) type_origins: Arc<std::sync::Mutex<HashMap<String, Arc<LoafTypeOrigins>>>>,
     /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.
     #[cfg(test)]
     pub(super) canonical_evaluations: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
+    /// How often the checkers sharing this cache built each compiled declaration's layout, by declaration name.
+    #[cfg(test)]
+    pub(super) layout_builds: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
+    /// How often the checkers sharing this cache collected each compiled Loaf's nominal type origins, by Loaf key.
+    #[cfg(test)]
+    pub(super) origin_collections: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
+    /// Whether the checkers sharing this cache build each deferred layout when they install it.
+    #[cfg(test)]
+    pub(super) eager_layouts: bool,
 }
 
 #[cfg(test)]
 impl DependencyInterfacePreparationCache {
+    /// A cache whose checkers build every compiled declaration's layout when they install it, as every install built
+    /// them before layouts were built on demand.
+    pub(crate) fn eager_layouts() -> Self {
+        Self {
+            eager_layouts: true,
+            ..Self::default()
+        }
+    }
+
+    /// Count one collection of the nominal type origins of the Loaf indexed as `key`.
+    pub(super) fn count_origin_collection(&self, key: &str) {
+        let mut counts = self
+            .origin_collections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *counts.entry(key.to_owned()).or_default() += 1;
+    }
+
+    /// The nominal type origin collections of each compiled Loaf, by Loaf key.
+    pub(crate) fn origin_collection_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        self.origin_collections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Count one build of the compiled declaration `name`'s layout.
+    pub(super) fn count_layout_build(&self, name: &str) {
+        let mut counts = self
+            .layout_builds
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *counts.entry(name.to_owned()).or_default() += 1;
+    }
+
+    /// The layout builds of each compiled declaration, by declaration name.
+    pub(crate) fn layout_build_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        self.layout_builds
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Count one evaluation of `library`'s canonical type remapping.
     pub(super) fn count_canonical_evaluation(&self, library: &str) {
         let mut counts = self
@@ -50,6 +106,9 @@ impl DependencyInterfacePreparationCache {
     }
 }
 
+/// The nominal type origins one compiled Loaf's manifest references, keyed by binding key.
+pub(super) type LoafTypeOrigins = std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>;
+
 /// One nominal public type of a compiled Loaf: its public spelling, the canonical spelling every consumer of the Loaf
 /// binds it to, and the provider identity it is admitted under.
 #[derive(Clone, Debug)]
@@ -65,8 +124,8 @@ pub(super) struct PreparedForeignRemapping {
     pub(super) remapping: Arc<HashMap<String, String>>,
     pub(super) replacing_identities: Arc<HashMap<String, PublicLibraryTypeIdentity>>,
     pub(super) preserving_identities: Arc<HashMap<String, PublicLibraryTypeIdentity>>,
-    pub(super) appending_types: Arc<HashMap<String, Vec<TypeInfo>>>,
-    pub(super) preserving_types: Arc<HashMap<String, Vec<TypeInfo>>>,
+    pub(super) appending_types: Arc<HashMap<String, Vec<TransitiveLayout<TypeInfo>>>>,
+    pub(super) preserving_types: Arc<HashMap<String, Vec<TransitiveLayout<TypeInfo>>>>,
     pub(super) errors: Arc<[crate::diagnostics::CompileError]>,
 }
 
@@ -267,8 +326,14 @@ impl TypeChecker {
             ),
             map_table("module_traits", &self.dependency_module_traits),
             map_table("trait_rust_derive_paths", &self.dependency_trait_rust_derive_paths),
-            map_table("transitive_public_types", &self.transitive_pub_types),
-            map_table("transitive_public_traits", &self.transitive_pub_traits),
+            map_table(
+                "transitive_public_types",
+                &built_table(&self.transitive_pub_types, self),
+            ),
+            map_table(
+                "transitive_public_traits",
+                &built_table(&self.transitive_pub_traits, self),
+            ),
             map_table("public_library_type_identities", &*self.public_library_type_identities),
             DependencyInterfaceTableSnapshot {
                 name: "symbol_rows",
@@ -343,8 +408,8 @@ impl TypeChecker {
             for (name, program, _) in modules {
                 let start = self.symbols.all_symbols().len();
                 let (source_types, source_traits) = self.collected_source_semantics();
-                self.transitive_pub_types = source_types;
-                self.transitive_pub_traits = source_traits;
+                self.transitive_pub_types = ready_tables(source_types);
+                self.transitive_pub_traits = ready_tables(source_traits);
                 self.public_library_type_identities.clear();
                 self.cached_pub_libraries.clear();
                 self.foreign_pub_type_remappings.clear();
@@ -790,13 +855,13 @@ impl TypeChecker {
             self.transitive_pub_types
                 .entry(name.clone())
                 .or_default()
-                .extend(values.iter().cloned());
+                .extend(ready_layouts(values));
         }
         for (name, values) in interface.transitive_public_traits.iter() {
             self.transitive_pub_traits
                 .entry(name.clone())
                 .or_default()
-                .extend(values.iter().cloned());
+                .extend(ready_layouts(values));
         }
         for library in interface.compiled_libraries.iter() {
             self.install_compiled_library_semantics(library);
@@ -814,11 +879,14 @@ impl TypeChecker {
     /// Source dependency declarations are never recollected here. The library key list is retained by the shared
     /// provider interface, and the checker's existing cache guard admits each compiled library at most once.
     fn install_compiled_library_semantics(&mut self, library: &str) {
-        let loaves = Arc::clone(&self.loaves);
-        let Some(manifest) = loaves.manifest(library) else {
+        let Some(manifest) = self
+            .loaves
+            .entry(library)
+            .map(|entry| Arc::clone(&entry.artifact.manifest))
+        else {
             return;
         };
-        self.cache_transitive_pub_export_semantics(library, manifest);
+        self.cache_transitive_pub_export_semantics(library, &manifest);
     }
 
     /// Install selected interfaces without collecting any provider declaration from source again.

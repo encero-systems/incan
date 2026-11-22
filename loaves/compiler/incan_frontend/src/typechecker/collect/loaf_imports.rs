@@ -38,6 +38,7 @@ use incan_semantics_core::{
     CanonicalSymbolId, DecoratorFeature, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolOrigin,
 };
 
+mod deferred_layouts;
 mod import_aliases;
 mod manifest_callables;
 mod manifest_exports;
@@ -119,10 +120,8 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
 fn collect_nominal_type_origins(
     manifest: &LibraryManifest,
 ) -> BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
-    use crate::library_manifest::VisitTypeRefs;
     let mut origins = BTreeMap::new();
-    let mut projection = manifest.clone();
-    projection.visit_type_refs(&mut |ty| {
+    crate::library_manifest::visit_copied_type_refs(manifest, &mut |ty| {
         if let Some(origin) = TypeChecker::nominal_type_origin(ty)
             && !origin
                 .canonical
@@ -148,6 +147,8 @@ fn export_public_name(export: &crate::library_manifest::ExportIdentity) -> Strin
 
 #[cfg(test)]
 mod canonical_remapping_tests;
+#[cfg(test)]
+mod lazy_layout_tests;
 #[cfg(test)]
 mod nominal_origin_tests;
 #[cfg(test)]

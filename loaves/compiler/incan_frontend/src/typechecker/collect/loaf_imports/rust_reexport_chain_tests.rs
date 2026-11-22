@@ -22,7 +22,7 @@ use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin};
 pub(super) type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The Rust crate `native`'s record `RecordKey { value: i64 }` and function `read_key(key: &RecordKey) -> i64`.
-fn native_items() -> Vec<RustItemMetadata> {
+pub(super) fn native_items() -> Vec<RustItemMetadata> {
     let function = RustItemMetadata {
         canonical_path: "native::read_key".into(),
         definition_path: None,
@@ -96,7 +96,7 @@ fn published_module(
 
 /// Check `source` as the root module of `package` against `loaves` and publish its root exports as that package's
 /// manifest, as a Loaf whose `lib.incn` re-exports names publishes them.
-fn published_root(package: &str, source: &str, loaves: LoafIndex) -> TestResult<LibraryManifest> {
+pub(super) fn published_root(package: &str, source: &str, loaves: LoafIndex) -> TestResult<LibraryManifest> {
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let path = vec!["lib".to_owned()];
@@ -126,7 +126,7 @@ fn published_root(package: &str, source: &str, loaves: LoafIndex) -> TestResult<
 }
 
 /// Write `manifest` where the index reads a dependency's compiled artifact and admit it under its own name.
-fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
+pub(super) fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
     let directory = root.join(&manifest.name);
     std::fs::create_dir(&directory)?;
     std::fs::write(
@@ -387,5 +387,34 @@ fn a_rust_item_a_library_reexports_through_a_second_module_keeps_its_identity() 
             );
         }
     }
+    Ok(())
+}
+
+/// Asking whether a package's `rust::` re-export names a nominal type copies none of the Rust metadata the package
+/// ships for it: the item is no nominal type, and only binding it builds the Rust item.
+#[test]
+fn a_shipped_rust_reexport_is_classified_without_building_its_rust_item() -> TestResult {
+    let target = vec!["rust".to_owned(), "native".to_owned(), "RecordKey".to_owned()];
+    let mut manifest = LibraryManifest::new("rusty", "0.1.0");
+    manifest.exports.aliases.push(crate::library_manifest::AliasExport {
+        name: "RecordKey".into(),
+        target_path: target.clone(),
+        projected_function: None,
+        projected_type: None,
+    });
+    manifest.rust_abi = LibraryRustAbi::from_items(native_items());
+    let checker = TypeChecker::new();
+    let before = super::manifest_exports::rust_reexport_builds();
+    assert!(checker.manifest_nominal_type_info(&manifest, "RecordKey").is_none());
+    assert_eq!(
+        super::manifest_exports::rust_reexport_builds() - before,
+        0,
+        "classifying the re-export built its Rust item"
+    );
+    let bound = TypeChecker::rust_reexport_symbol_kind(&manifest, &target);
+    assert!(
+        matches!(&bound, Some(crate::symbols::SymbolKind::RustItem(item)) if item.metadata.is_some()),
+        "binding the re-export builds the shipped item: {bound:?}"
+    );
     Ok(())
 }

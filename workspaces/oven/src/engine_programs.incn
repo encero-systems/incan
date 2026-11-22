@@ -27,7 +27,7 @@ from compiler_body_values import (
     select_body_inventory_except,
     select_namespace_inventory_except,
 )
-from compiler_plan_values import LOWERING_PROFILE, select_plan_inventory_except, plan_reads_changed, select_plan_modules
+from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
 from compiler_graph_records import EditCutoff, edit_cutoff, retire_compiler_versions, supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
@@ -35,25 +35,29 @@ from engine_epochs import load_epoch
 pub from engine_program_records import NativeUnit
 from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection, program_view
 from features import FeatureRequest
-from home import StandardPackage
+from home import StandardPackage, dependency_artifact_dir
 from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
 from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, get, put
 from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
-from unit import UnitDescription, describe
+from unit import UnitDescription, describe, with_c_abi_target
+from engine_unit_options import decode_unit_options
+from clove_units import serve_c_compiler
 from unit_compiler import (
     CheckerRecordCounts,
     PlanRecordCounts,
     checker_record_counts,
     checker_record_report_path,
+    crate_name,
     graph_body_output_path,
     plan_record_counts,
     plan_record_report_path,
 )
-from unit_rust import prepare_native
+from unit_rust import compile_library_unit, prepare_native
+from callable_products import desugared_by_a_dependency
 from unit_freshness import Key, fingerprint, unit_key
-from observation import FileMetadata, file_metadata
+from observation import FileMetadata, file_metadata, trace
 from shared_link import carriers_present, development_link, linkage_key, library_witness
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -114,6 +118,10 @@ pub model ProgramOutcome:
     pub claim: Option[Rc[LockGuard]] = None
     # The executable this request baked, whose view waits for the request's commit: see `view_sealed`.
     pub sealed: Option[SealedProgram] = None
+    # Why the records producer gave this unit no per-declaration records, when the engine compiled it whole.
+    pub whole_unit: str = ""
+    # A library build, which succeeds with no native descriptor to select.
+    pub library: bool = false
 
 
 pub model CheckOutcome:
@@ -170,6 +178,8 @@ pub def check_program(
     captured: Option[BuildEpoch] = None,
     selected_home: Option[SelectedHome] = None,
     view: str = "",
+    unit_options: str = "",
+    record_writer: str = "",
 ) -> Result[CheckOutcome, str]:
     """
     Describe and check one captured build reach without requesting code generation or a native selection. The check
@@ -181,23 +191,16 @@ pub def check_program(
     home = program_home(selected_home)?
     mut toolchain = home.toolchain
     toolchain.console = console
-    described = describe(
-        Path(epoch.roots[0]),
-        epoch.selection.profile,
-        FeatureRequest(),
-        selected_toolchain=Some(toolchain),
-        selected_standard=home.standard,
-    )?
-    if (
-        described.kind != "program"
-        or described.vocabulary
-        or len(described.contract_models) > 0
-        or len(described.c_headers) > 0
-    ):
-        return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    ready = prepared_for(view, described, toolchain)?
+    asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    ready = prepared_for(view, asked, toolchain)?
+    # A unit without per-declaration records is checked whole, keyed by its full inputs as every check is.
+    whole = whole_unit_reason(ready, unit_options)?
+    if whole != "":
+        trace(f"unit {ready.package} {ready.kind}: whole-unit check ({whole})")
+        whole_check = check_prepared(ready, toolchain, format, None, is_editor_view(view))?
+        return Ok(CheckOutcome(code=whole_check.code, console=console))
     # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
-    reading = body_reading(store, view, ready, epoch.inputs)?
+    reading = body_reading(store, view, ready, epoch.inputs, record_writer)?
     directory = check_page_directory(store, view, ready)
     pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
     checked = check_prepared(ready, toolchain, format, Some(pages.directory), is_editor_view(view))?
@@ -224,10 +227,11 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
     return Ok(ready)
 
 
-def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput]) -> Result[BodyReading, str]:
+def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput], record_writer: str) -> Result[BodyReading, str]:
     """
     Read the graph a request selects checked bodies from: an editor view reads its own records, any other view the
-    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid.
+    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid, and so
+    is every owner whose records another writer than `record_writer` (a compiler and an Oven) wrote.
     """
     mut graph_view = str(HOME_VIEW)
     if is_editor_view(view):
@@ -236,7 +240,7 @@ def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[Ca
     graph = snapshot(store, graph_view).map_err((error) => error.message())?
     record_work(Operation.EngineSelect, "graph-snapshot", reading)
     projecting = begin_work()
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer)?
     record_work(Operation.EngineSelect, "captured-sources", projecting)
     invalidating = begin_work()
     invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
@@ -250,12 +254,13 @@ def select_bodies(
     ready: UnitDescription,
     inputs: list[CapturedInput],
     listing_refusals: bool,
+    record_writer: str,
 ) -> Result[BodySelection, str]:
     """
     Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
     refusals checks every owner afresh.
     """
-    reading = body_reading(store, view, ready, inputs)?
+    reading = body_reading(store, view, ready, inputs, record_writer)?
     origin = source_origin(ready)
     mut invalid = reading.invalid
     if listing_refusals:
@@ -274,6 +279,8 @@ pub def obtain(
     captured: Option[BuildEpoch] = None,
     producer: str = "",
     selected_home: Option[SelectedHome] = None,
+    unit_options: str = "",
+    record_writer: str = "",
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -287,7 +294,9 @@ pub def obtain(
     listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
     # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
-    if not listing_refusals:
+    # A unit with options is described and keyed afresh on every request: its inputs reach beyond the captured
+    # sources, as a Clove's C sources do, and its bakery key, not the capture, proves it unchanged.
+    if not listing_refusals and unit_options == "":
         match read_program(store, handle)?:
             Some(unit) =>
                 if restore_program(store, unit)?:
@@ -302,7 +311,10 @@ pub def obtain(
     record_work(Operation.EngineEpoch, revision, opening)
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
-    selector = standalone_selector(epoch, producer)?
+    # The standalone index names a unit by its inputs alone; a unit with options is found by its own view's handle.
+    mut selector: Option[str] = None
+    if unit_options == "":
+        selector = standalone_selector(epoch, producer)?
     if not listing_refusals:
         if let Some(unit) = indexed_program(store, epoch, selector)?:
             if restore_program(store, unit)?:
@@ -313,22 +325,12 @@ pub def obtain(
     mut toolchain = home.toolchain
 
     toolchain.console = console
-    described = describe(
-        Path(epoch.roots[0]),
-        epoch.selection.profile,
-        FeatureRequest(),
-        selected_toolchain=Some(toolchain),
-        selected_standard=home.standard,
-    )?
-    if (
-        described.kind != "program"
-        or described.vocabulary
-        or len(described.contract_models) > 0
-        or len(described.c_headers) > 0
-        or len(described.cloves) > 0
-    ):
-        return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    ready = prepared_for(program_view(handle)?, described, toolchain)?
+    asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    ready = prepared_for(program_view(handle)?, asked, toolchain)?
+    whole = whole_unit_reason(ready, unit_options)?
+    if whole != "":
+        record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
+        return whole_unit_program(store, selector, ready, toolchain, console, whole, epoch_reads)
     compiled_key = unit_key(ready, toolchain)?
     plan_report = plan_record_report_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
     body_output = graph_body_output_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
@@ -346,7 +348,7 @@ pub def obtain(
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
     request_view = program_view(handle)?
     editor = is_editor_view(request_view)
-    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals)?
+    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
     graph = selection.graph
     projected = selection.projected
     invalid = selection.invalid
@@ -471,12 +473,15 @@ pub def obtain(
             Some(admission_report),
             scalar_plans.retained,
             cutoff,
+            record_writer,
         )?
         request_transaction = bodies.transaction
         demand_work = bodies.lowering_demands
         body_evaluations = bodies.checking_evaluations
         body_reuses = bodies.body_reuses
         body_ir_evaluations = bodies.body_ir_evaluations
+    # The plan-module selection is recorded with the request: the next one selects again only the slots that changed.
+    stage_put(request_transaction, plan_selection_key(origin), encode_plan_selection(origin, plan_modules.kept)?)
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
     retire_compiler_versions(graph, request_transaction, origin, CHECKER_PROFILE)?
     retire_compiler_versions(graph, request_transaction, origin, LOWERING_PROFILE)?
@@ -522,6 +527,132 @@ pub def obtain(
             view_transaction=view_records,
             claim=produced.claim,
             sealed=sealed,
+        ),
+    )
+
+
+def requested_unit(
+    root: Path,
+    profile: str,
+    unit_options: str,
+    toolchain: Toolchain,
+    standard: Option[list[StandardPackage]],
+) -> Result[UnitDescription, str]:
+    """
+    Describe the unit a request asks for, as the first engine describes it: the root's unit with the features, program
+    entries and interop target its caller parsed (`unit_options`), and a `lib.incn` root as a library.
+    """
+    options = decode_unit_options(unit_options)?
+    # A Clove is compiled the way the caller's environment says, never the engine's own.
+    serve_c_compiler(options.c_compiler)
+    mut described = describe(
+        root,
+        profile,
+        options.request,
+        selected_toolchain=Some(toolchain),
+        selected_standard=standard,
+    )?
+    described.program_entries = options.program_entries
+    described = with_c_abi_target(described, options.interop_target)?
+    if root.name() == "lib.incn":
+        described.kind = "library"
+    return Ok(described)
+
+
+def whole_unit_reason(ready: UnitDescription, unit_options: str) -> Result[str, str]:
+    """
+    Why the records producer cannot give this unit per-declaration records, or empty when it can. Each reason is a gap
+    the producer has yet to close; until it does, the engine compiles the unit whole, keyed by its full inputs.
+    """
+    if ready.kind != "program":
+        return Ok(f"{ready.kind} unit")
+    if ready.vocabulary:
+        return Ok("owned vocabulary")
+    if len(ready.contract_models) > 0:
+        return Ok("contract models")
+    if len(ready.c_headers) > 0:
+        return Ok("C headers")
+    if len(ready.cloves) > 0:
+        return Ok("Cloves")
+    if len(ready.program_entries) > 0:
+        return Ok("program entries")
+    if ready.c_abi_target is not None:
+        return Ok("interop target")
+    selected = decode_unit_options(unit_options)?.request
+    if len(selected.features) > 0 or not selected.default_features or selected.all_features:
+        return Ok("feature selection")
+    if ready.checked_context is None:
+        return Ok("no checked-source context")
+    if desugared_by_a_dependency(ready)?:
+        return Ok("dependency vocabulary desugaring")
+    return Ok("")
+
+
+def whole_unit_program(
+    store: Path,
+    selector: Option[str],
+    ready: UnitDescription,
+    toolchain: Toolchain,
+    console: str,
+    whole: str,
+    epoch_reads: int,
+) -> Result[ProgramOutcome, str]:
+    """
+    Compile a unit the records producer cannot give per-declaration records whole, through the unit compiler the first
+    engine used, keyed by its full inputs so an unchanged rerun bakes nothing. A library is built into its artifact
+    directory and selects no native descriptor.
+    """
+    trace(f"unit {ready.package} {ready.kind}: whole-unit compile ({whole})")
+    summary = "whole-unit: " + whole
+    if ready.kind == "library":
+        directory = dependency_artifact_dir(ready.project_root, ready.package, ready.profile)
+        built = compile_library_unit(ready, toolchain, directory.joinpath(f"lib{crate_name(ready)}.rlib"))?
+        return Ok(
+            ProgramOutcome(
+                code=built,
+                console=console,
+                epoch_reads=epoch_reads,
+                checker_reuse=summary,
+                whole_unit=whole,
+                library=true,
+            ),
+        )
+    compiled_key = unit_key(ready, toolchain)?
+    if compiled_key.refusal != "":
+        return Err(compiled_key.refusal)
+    key = linkage_key(compiled_key, development_link(ready, true))?
+    binary = program_binary(ready)
+    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true)?
+    if produced.code != 0:
+        return Ok(
+            ProgramOutcome(
+                code=produced.code,
+                evaluations=produced.evaluations,
+                console=console,
+                epoch_reads=epoch_reads,
+                checker_reuse=summary,
+                whole_unit=whole,
+            ),
+        )
+    fact = produced_fact(produced.fact)?
+    unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    mut sealed: Option[SealedProgram] = None
+    if produced.transaction is not None:
+        sealed = Some(SealedProgram(fact=fact, binary=binary.0, shared=development_link(ready, true)))
+    indexed = index_program(store, selector, unit, produced.transaction)?
+    return Ok(
+        ProgramOutcome(
+            code=0,
+            unit=Some(unit),
+            evaluations=produced.evaluations,
+            native_bakes=produced.native_bakes,
+            console=console,
+            epoch_reads=epoch_reads,
+            transaction=indexed,
+            claim=produced.claim,
+            sealed=sealed,
+            checker_reuse=summary,
+            whole_unit=whole,
         ),
     )
 

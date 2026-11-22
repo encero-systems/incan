@@ -108,6 +108,8 @@ mod reserved_names;
 mod source_signatures;
 pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
+mod transitive_layouts;
+pub use transitive_layouts::TransitiveLayout;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall, rust_field_default_function};
 mod undetermined_type_params;
@@ -949,7 +951,7 @@ pub struct TypeChecker {
     /// These entries are intentionally **not** source-visible names: they exist so values returned from imported
     /// functions/methods can still participate in method lookup and trait compatibility even when the consumer did not
     /// explicitly import every referenced carrier type.
-    pub transitive_pub_types: HashMap<String, Vec<TypeInfo>>,
+    pub transitive_pub_types: HashMap<String, Vec<TransitiveLayout<TypeInfo>>>,
     /// Canonical nominal identities for local aliases and provider-qualified signature spellings from `pub::` imports.
     ///
     /// Identity is deliberately separate from [`ResolvedType`]: source diagnostics retain local spellings while
@@ -959,7 +961,7 @@ pub struct TypeChecker {
     ///
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
     /// names ambient in user source.
-    pub transitive_pub_traits: HashMap<String, Vec<TraitInfo>>,
+    pub transitive_pub_traits: HashMap<String, Vec<TransitiveLayout<TraitInfo>>>,
     /// Tracks which `pub::` libraries have already seeded the internal transitive semantic caches for this checker
     /// run.
     pub cached_pub_libraries: HashSet<String>,

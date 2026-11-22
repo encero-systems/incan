@@ -3,7 +3,7 @@
 from scratch import scratch_directory
 from compiler_body_values import SelectedBodyPage
 from unit import UnitDescription
-from unit_compiler import DIGEST_COMPANION, write_selected_records
+from unit_compiler import DIGEST_COMPANION, FRAME_LIST, write_selected_records
 
 const NAMED: str = "6e616d6564.incnmodule.positioned"
 const DIGEST: str = "abababababababababababababababababababababababababababababababab"
@@ -45,4 +45,30 @@ pub def test_a_staged_page_with_a_known_digest_is_named_by_it() -> Result[None, 
     assert named == DIGEST
     assert directory.joinpath(NAMED).read_bytes().map_err((error) => error.message())? == b"module page"
     assert not directory.joinpath("namespace-page" + DIGEST_COMPANION).exists()
+    return Ok(None)
+
+
+pub def test_pages_offered_by_their_store_frames_are_staged_as_one_frame_list() -> Result[None, str]:
+    """
+    Pages selected with their digests and the immutable store frames that hold them are staged as one frame list, one
+    line per page naming its frame range and digest, and no file of their own: an edit writes that list and copies
+    only the pages it has no frame for. The compiler reads a page's bytes from the store only when it does not
+    already hold this content.
+    """
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("records")
+    other = "6f74686572.incnmodule.positioned"
+    pages = [
+        SelectedBodyPage(key=NAMED, value=b"", digest=DIGEST, segment="/store/segments/one.seg", offset=24, length=11),
+        SelectedBodyPage(key=other, value=b"", digest=DIGEST, segment="/store/segments/two.seg", offset=8, length=11),
+        SelectedBodyPage(key="namespace-page", value=b"namespace page", digest=DIGEST),
+    ]
+    write_selected_records(directory, staged_unit(), pages)?
+    listed = directory.joinpath(FRAME_LIST).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert listed == f"{NAMED}\t/store/segments/one.seg\t24\t11\t{DIGEST}\n{other}\t/store/segments/two.seg\t8\t11\t{DIGEST}\n", listed
+    mut names: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        names.append(entry.name())
+    expected = sorted([FRAME_LIST, "namespace-page", "namespace-page" + DIGEST_COMPANION, "producer-profile"])
+    assert sorted(names) == expected, f"staged {sorted(names)}"
     return Ok(None)
