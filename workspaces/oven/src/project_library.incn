@@ -80,9 +80,8 @@ pub def with_testing_features(unit: UnitDescription, features: list[str]) -> Uni
 
 pub def shared_library(unit: UnitDescription, key: str) -> Result[UnitDescription, str]:
     """
-    The shared library a test unit links: the test unit's own project, package features and Loaves, described as a
-    library of the project's modules under its own package, and checked as the project's program is. The unit's
-    testing features stay its own: they are no feature of the package, as in 0.5.1.
+    The shared library carries the requesting unit's own project, package features and Loaves. It has its own package
+    name and checks the project's modules as a program does. Testing features apply only to the test unit.
     """
     mut library = unit
     library.kind = "library"
@@ -103,7 +102,7 @@ pub def library_output(unit: UnitDescription, key: str, native_name: str) -> Pat
 
 
 pub def library_loaf(unit: UnitDescription, key: str, output: Path) -> UnitLoaf:
-    """The shared library as the test unit reaches it, under its key."""
+    """The shared library as a project unit reaches it, under its key."""
     return UnitLoaf(key=key, name=key, dir=output.parent().0, standard=false, source_root=Some(unit.source_root))
 
 
