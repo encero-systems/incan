@@ -231,9 +231,9 @@ def produce_program(
     if pending.proofs:
         note_graph_demand("capture-mode", pending.capture.snapshot, pending.capture.revision)
     return obtain(
-        store, admission, pending.capture.revision, pending.handle, console, Some(pending.capture.epoch),
+        store, admission, pending.capture.revision, pending.handle, console, receipts, Some(pending.capture.epoch),
         pending.producer, Some(pending.capture.selected), pending.unit_options, pending.records, pending.origin,
-        pending.capture.readings, prepared, receipts,
+        pending.capture.readings, prepared,
     )
 
 

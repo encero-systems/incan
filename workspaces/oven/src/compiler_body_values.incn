@@ -90,11 +90,11 @@ pub def select_namespace_inventory_except(
     profile: str,
     origin: str,
     invalid: list[str],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
     use_references: bool = false,
     cutoff: EditCutoff = EditCutoff(),
     use_layouts: bool = false,
     reachable_modules: Option[list[str]] = None,
-    mut receipts: ReceiptProjectionCache = ReceiptProjectionCache.empty(),
 ) -> Result[NamespaceInventory, str]:
     """Select namespace pages and certify which scoped checker peers may travel exclusively in a whole module."""
     mut inventory = NamespaceInventory()

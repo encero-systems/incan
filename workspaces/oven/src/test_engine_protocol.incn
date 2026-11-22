@@ -8,6 +8,7 @@ from std.environ import get_or
 from std.fs import Path
 from files import write, json_text
 from bakery_roots import Collected, collect
+from compiler_graph_records import ReceiptProjectionCache
 from engine_programs import (
     read_program,
     select_program,
@@ -857,6 +858,7 @@ def check_collection_before_selection() -> Result[None, str]:
     source = project.joinpath("hello.incn")
     write(source, "def main() -> None:\n    println(\"hello\")\n")?
     store = root.joinpath("store")
+    mut receipts = ReceiptProjectionCache.empty()
     for turn in range(2):
         view = f"selection-{turn}"
         mut admission = SnapshotAdmission.for_store(store_path(store))
@@ -878,6 +880,7 @@ def check_collection_before_selection() -> Result[None, str]:
             captured.revision,
             handle,
             root.joinpath("console").0,
+            receipts,
             Some(captured.epoch),
             "collection-proof",
             Some(captured.selected),

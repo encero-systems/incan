@@ -323,6 +323,7 @@ pub def obtain(
     revision: str,
     handle: str,
     console: str,
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
     captured: Option[BuildEpoch] = None,
     producer: str = "",
     selected_home: Option[SelectedHome] = None,
@@ -331,7 +332,6 @@ pub def obtain(
     scheduled_origin: str = "",
     source_readings: Option[Rc[Dict[str, SourceReading]]] = None,
     prepared: Option[PreparedProgram] = None,
-    mut receipts: ReceiptProjectionCache = ReceiptProjectionCache.empty(),
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -417,8 +417,8 @@ pub def obtain(
         selection.reached.cutoff.carried = projected.carried
     let cutoff: Borrowed[EditCutoff] = selection.reached.cutoff
     namespaces = select_namespace_inventory_except(
-        graph, CHECKER_PROFILE, origin, invalid_namespaces, toolchain.namespace_references and toolchain.closure_anchors,
-        cutoff, use_layouts=true, reachable_modules=modules, receipts=receipts,
+        graph, CHECKER_PROFILE, origin, invalid_namespaces, receipts,
+        toolchain.namespace_references and toolchain.closure_anchors, cutoff, use_layouts=true, reachable_modules=modules,
     )?
     record_work(Operation.EngineSelect, "namespace-inventory", selecting)
     selecting = begin_work()

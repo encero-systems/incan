@@ -120,7 +120,7 @@ pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Re
             graph = published_layout.snapshot
     mut projections = ReceiptProjectionCache.empty()
     unchanged = EditCutoff(active=true)
-    offered = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true, unchanged, true, None, projections)?
+    offered = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true)?
     pages = {page.key: page.value for page in offered.pages}
     assert len(pages) == 3, "the selected namespace must offer one page for each product"
     frames = decode_namespace_references(pages[namespace_reference_filename()].clone())?
@@ -134,7 +134,7 @@ pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Re
     assert later.generation > graph.generation, "the unrelated commit must publish a new generation"
     measure_frame_reads(true)
     decoded = read_counts().decoded
-    warm = select_namespace_inventory_except(later, CHECKER_PROFILE, origin, [right], true, unchanged, true, None, projections)
+    warm = select_namespace_inventory_except(later, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true)
     copied = read_counts().decoded - decoded
     observed = finish_frame_reads()
     inventory = warm?
@@ -156,14 +156,14 @@ pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Re
     changed = commit(put(begin(later), input_key, b"after")).map_err((error) => error.message())?
     cutoff = edit_cutoff(changed, [dependency.key], [CHECKER_PROFILE])?
     assert cutoff.revalidates(encode_record_key(namespace_key(origin, left))?)
-    assert len(select_namespace_inventory_except(changed, CHECKER_PROFILE, origin, [right], true, cutoff, true, None, projections)?.complete) == 0
+    assert len(select_namespace_inventory_except(changed, CHECKER_PROFILE, origin, [right], projections, true, cutoff, true)?.complete) == 0
     assert reusable_evaluation(later, namespace_key(origin, "missing.incn"), CHECKER_PROFILE, unchanged)? is None
     incomplete = commit(delete(begin(changed), selected_receipts[0])).map_err((error) => error.message())?
-    match select_namespace_inventory_except(incomplete, CHECKER_PROFILE, origin, [right], true, unchanged, true, None, projections):
+    match select_namespace_inventory_except(incomplete, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true):
         Ok(_) => return Err("unchanged namespace selection accepted a missing receipt")
         Err(reason) => assert reason == "selected compiler evaluation is incomplete", reason
     damage_graph_frame(later, selected_receipts[0])?
-    match select_namespace_inventory_except(later, CHECKER_PROFILE, origin, [right], true, unchanged, true, None, projections):
+    match select_namespace_inventory_except(later, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true):
         Ok(_) => return Err("unchanged namespace selection accepted a damaged receipt")
         Err(reason) => assert "digest" in reason or "integrity" in reason, reason
     assert copied <= other_values, f"unchanged namespace selection copied {copied - other_values} receipt payload bytes"
@@ -184,12 +184,13 @@ pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, 
         source = PreparedBodyRecordSource.open(scope)
         receipt = source.receipt(scope, namespace_key(origin, file), [], order[file].evidence)?
         graph = publish_evaluation(graph, file, rank, b"selected namespace page", receipt)?.snapshot
-    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    mut projections = ReceiptProjectionCache.empty()
+    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [], projections)?
     assert len(namespaces.pages) == 2 and namespaces.complete == set([left, right])
-    incomplete = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right])?
+    incomplete = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], projections)?
     assert len(incomplete.pages) == 1 and len(incomplete.complete) == 0
     measure_frame_reads(true)
-    reference_selection = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true)
+    reference_selection = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], projections, true)
     reference_reads = finish_frame_reads()
     offered = reference_selection?
     assert len(offered.pages) == 1 and len(offered.complete) == 0
