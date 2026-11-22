@@ -1,0 +1,59 @@
+"""Compilation warnings survive executable reuse and follow the source into a copied project."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from files import make_directory, write
+from lowering_record_fixtures import stop_example_engine
+from scratch import scratch_directory
+
+
+pub def test_warm_and_copied_programs_replay_cold_diagnostics() -> Result[None, str]:
+    """Both console routes reproduce the exact warnings from a fresh compilation at the request's source path."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    for engine in ["legacy", "records"]:
+        verify_warnings(binary, scratch.path().joinpath(engine), engine)?
+    return Ok(None)
+
+
+def verify_warnings(binary: str, root: Path, engine: str) -> Result[None, str]:
+    """Compare original and copied requests with fresh compiler output at each location."""
+    original = root.joinpath("original")
+    copied = root.joinpath("copied")
+    store = root.joinpath("bakery")
+    independent = root.joinpath("fresh-bakery")
+    source = "def first[T](items: list[T]) -> T:\n    picked = items[0]\n    return picked\n\n\n"
+    program = source + "def main() -> None:\n    println(first([4, 5]))\n"
+    for project in [original, copied]:
+        make_directory(project)?
+        write(project.joinpath("main.incn"), program)?
+    cold = program_warnings(binary, original, store, engine)?
+    warm = program_warnings(binary, original, store, engine)?
+    relocated = program_warnings(binary, copied, store, engine)?
+    copied.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = program_warnings(binary, copied, independent, engine)?
+    if engine == "records":
+        stop_example_engine(binary, store)?
+        stop_example_engine(binary, independent)?
+    diagnostic = from_utf8(cold).map_err((error) => str(error))?
+    assert "INCAN-T0125" in diagnostic, diagnostic
+    assert cold == warm, f"{engine}: unchanged program changed stderr from {len(cold)} to {len(warm)} bytes"
+    assert fresh == relocated, f"{engine}: copied program changed stderr from {len(fresh)} to {len(relocated)} bytes"
+    return Ok(None)
+
+
+def program_warnings(binary: str, project: Path, store: Path, engine: str) -> Result[bytes, str]:
+    """Run the fixture with its selected bakery and return its complete stderr on success."""
+    mut command = Command.new(binary)
+    command.arg("run").arg("main.incn").current_dir(project.0)
+    command.env("OVEN_OWNER", "off").env("OVEN_ENGINE_BINARY", binary)
+    command.env("INCAN_ENGINE", engine).env("INCAN_BAKERY", store.0)
+    command.env_remove("INCAN_ENGINE_TRACE").env_remove("INCAN_NATIVE_TIMING").env_remove("OVEN_TRACE")
+    outcome = command.output().map_err((error) => str(error))?
+    if not outcome.status.success():
+        errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+        return Err(f"{engine} {project.0}: {errors}")
+    assert outcome.stdout == b"4\n"
+    return Ok(outcome.stderr)
