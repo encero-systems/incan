@@ -47,7 +47,7 @@ from compiler_graph_records import (
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_ranked_build import RankedBuildInputs, contextual_ranked_pages
 from compiler_body_keys import body_key, namespace_header_key, namespace_key
-from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
+from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_modules
 from compiler_plan_modules import plan_module_key
 from pub::incan_mir_plan import PlanModuleFunction, PlanModuleValue, encode_plan_module
 from compiler_owner_records import encode_body_frame, read_body_frame
@@ -253,6 +253,57 @@ pub def test_a_selected_value_is_hashed_once_and_a_damaged_frame_is_refused() ->
     match reusable_evaluation(published.snapshot, output, profile, unchanged):
         Ok(_) => return Err("a damaged value frame was selected")
         Err(reason) => assert "digest" in reason or "integrity" in reason, reason
+    return Ok(None)
+
+
+pub def test_a_plan_module_selection_reads_again_only_the_slots_that_changed() -> Result[None, str]:
+    """
+    A request's plan-module selection is recorded with the revisions it was made at, each slot's output-index entry and
+    evaluation. The next selection under an edit's cutoff takes every unchanged slot from that record, reading none of
+    its evaluation or receipt, and admits the same pages, outputs and covered owners; a slot republished since is
+    selected again, alone.
+    """
+    origin = "kept"
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    mut graph = store_snapshot(memory_root()).map_err((error) => error.message())?
+    for name in ["left", "right"]:
+        function = PlanModuleFunction(identity=f"function:{name}::read|signature", symbol=f"native-{name}", function="read", key=token, event=b"event")
+        value = encode_plan_module(PlanModuleValue(module=name, functions=[function])).map_err((_) => "plan")?
+        scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+        staged = PreparedBodyRecordSource.open(scope)
+        receipt = staged.receipt(scope, plan_module_key(origin, f"src/{name}.incn", value), [])?
+        graph = publish_evaluation(graph, "plan-" + name, rank, value, receipt)?.snapshot
+    unchanged = EditCutoff(active=true)
+    nothing: set[str] = set()
+    first = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged)?
+    assert len(first.pages) == 2 and len(first.records) == 2
+    graph = commit(put(begin(graph), plan_selection_key(origin), encode_plan_selection(origin, first.kept)?)).map_err((error) => error.message())?
+    measure_frame_reads(true)
+    kept = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged)
+    reads = finish_frame_reads()
+    again = kept?
+    assert [page.key for page in again.pages] == [page.key for page in first.pages]
+    assert [page.digest for page in again.pages] == [page.digest for page in first.pages]
+    assert again.outputs == first.outputs
+    assert len(again.records) == 2
+    for read in reads:
+        assert not read.key.startswith("incan.engine.evaluation\t"), "an unchanged slot's evaluation was read again"
+        assert not read.key.startswith("incan.engine.receipt\t"), "an unchanged slot's receipt was read again"
+    # Republish one module's plan: only its slot is selected again.
+    function = PlanModuleFunction(identity="function:right::read|signature", symbol="native-right", function="read", key=token, event=b"other event")
+    value = encode_plan_module(PlanModuleValue(module="right", functions=[function])).map_err((_) => "plan")?
+    scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+    staged = PreparedBodyRecordSource.open(scope)
+    receipt = staged.receipt(scope, plan_module_key(origin, "src/right.incn", value), [])?
+    graph = publish_evaluation(graph, "plan-right-again", rank, value, receipt)?.snapshot
+    measure_frame_reads(true)
+    changed = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged)
+    reads = finish_frame_reads()
+    third = changed?
+    assert len(third.pages) == 2 and len(third.records) == 2
+    evaluations = [read.key for read in reads if read.key.startswith("incan.engine.evaluation\t")]
+    assert len(evaluations) == 1, f"{len(evaluations)} evaluations were read for one republished slot"
     return Ok(None)
 
 
