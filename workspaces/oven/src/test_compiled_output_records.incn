@@ -19,6 +19,7 @@ from pub::internal_models import (
     ProducerRank,
     ProducerStage,
     decode_graph_body_values,
+    decode_namespace_header,
     encode_compiled_body_rows,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
@@ -32,7 +33,7 @@ from compiler_namespace_products import (
 )
 from compiler_graph_records import reusable_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource
-from compiler_body_keys import namespace_key, project_declaration_slot
+from compiler_body_keys import namespace_header_key, namespace_key, project_declaration_slot
 from compiler_owner_records import read_eligibility
 from compiler_body_values import (
     invalid_namespace_modules,
@@ -662,4 +663,38 @@ def publish_compiled_output(output: Path, outputs: CompiledBodyOutputs) -> Resul
     rows = encode_compiled_body_rows(outputs).map_err((error) => f"{error:?}")?
     for index in range(len(rows)):
         publish_binary(output.joinpath(str(index) + ".crumb"), rows[index])?
+    return Ok(None)
+
+
+pub def test_a_published_namespace_has_a_header_beside_its_frame() -> Result[None, str]:
+    """A namespace published with the compiler's identity proof has a small header record beside its frame, with the
+    same reads: it is reusable exactly while the namespace is, and carries the module but not its payloads."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("program")
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("main.incn")
+    source.write_text("def main() -> None:\n    println(\"edited\")\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=source.0, project_root=root.0, source_root=root.0, package="main", version="0.1.0", profile="debug",
+        declared_features=[], active_features=[], loaves=[], rust_crates=[], contract_models=[], c_headers=[],
+    )
+    namespace = CompiledNamespaceValue(
+        module="main.incn",
+        interface=b"interface",
+        semantic_interface=b"01234567890123456789012345678901",
+        body_ir=b"namespace-frame",
+        dependencies=[],
+        identity_proof=b"compiler identity proof",
+    )
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_compiled_output(output, CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[]))?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_compiled_bodies(empty, unit, output)?
+    header = match reusable_evaluation(published.snapshot, namespace_header_key("main", "main.incn"), CHECKER_PROFILE)?:
+        Some(found) => decode_namespace_header(found.value).map_err((error) => error)?
+        None => return Err("a published namespace has no reusable header")
+    assert header.module == "main.incn" and header.identity_proof == b"compiler identity proof"
+    edited = publish_source_projection(published.snapshot, project_source("main", "main.incn", "def main() -> None:\n    \"\"\"Docs.\"\"\"\n    println(\"edited\")\n")?)?
+    assert reusable_evaluation(edited.snapshot, namespace_key("main", "main.incn"), CHECKER_PROFILE)?.is_none()
+    assert reusable_evaluation(edited.snapshot, namespace_header_key("main", "main.incn"), CHECKER_PROFILE)?.is_none()
     return Ok(None)
