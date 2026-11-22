@@ -1033,8 +1033,14 @@ fn restore_identity_context(
     let name = next(values)?;
     let canonical = match positions.canonical(&identity) {
         Ok(member) => member,
-        Err(error) if matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. }) => {
-            // A package declaration uses its own anchor. Only a checked generated member belongs at the owner.
+        Err(error)
+            if matches!(
+                owner.origin,
+                incan_semantics_core::SymbolOrigin::Package { .. } | incan_semantics_core::SymbolOrigin::Module(_)
+            ) =>
+        {
+            // A package or sibling-module declaration uses its own anchor. Only a checked generated member belongs at
+            // the owner; any other member this restore cannot bind is checked afresh, never minted at the owner's span.
             let generated = owner.generated_member(name, kind.clone());
             if local.calls.compiler_generated_member_identities.get(&generated) != Some(&owner) {
                 return Err(error);

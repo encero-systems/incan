@@ -31,7 +31,8 @@ enum Nominal<'a> {
 }
 
 /// Include only transitively imported nominals actually named by this owner's decoded references.
-/// An imported callable's return type may carry a package member without introducing a lexical name.
+/// An imported callable's return type may carry a package member, or a sibling module's member, without introducing
+/// a lexical name.
 pub(super) fn bind_transitive(
     checker: &TypeChecker,
     positions: &mut Positions,
@@ -41,12 +42,13 @@ pub(super) fn bind_transitive(
         .iter()
         .filter(|row| row.len() == 8 && row[0] == "identity-context")
         .filter_map(|row| positions.canonical_type(&row[4]).ok())
-        .filter(|owner| matches!(owner.origin, SymbolOrigin::Package { .. }))
+        .filter(|owner| matches!(owner.origin, SymbolOrigin::Package { .. } | SymbolOrigin::Module(_)))
         .collect::<std::collections::BTreeSet<_>>();
     if requested.is_empty() {
         return Ok(());
     }
     let mut members = Vec::new();
+    bind_sibling_members(checker, &requested, &mut members);
     for (binding, export) in checker.public_library_type_identities.iter() {
         let Some(owner) = export.canonical.as_ref().filter(|owner| requested.contains(owner)) else {
             continue;
@@ -72,6 +74,71 @@ pub(super) fn bind_transitive(
         }
     }
     Ok(())
+}
+
+/// Bind the members of each requested sibling-module nominal that the checker reaches only transitively, as a
+/// call's return type, to the declarations its current layout carries. A layout counts only when its members carry
+/// the owner's own module origin, so a same-named nominal of another module never stands in for it.
+fn bind_sibling_members(
+    checker: &TypeChecker,
+    requested: &std::collections::BTreeSet<CanonicalSymbolId>,
+    members: &mut Vec<(String, CanonicalSymbolId)>,
+) {
+    let siblings = requested
+        .iter()
+        .filter(|owner| matches!(owner.origin, SymbolOrigin::Module(_)))
+        .collect::<Vec<_>>();
+    if siblings.is_empty() {
+        return;
+    }
+    for (name, layouts) in checker.transitive_pub_types.iter() {
+        let leaf = name.rsplit(['.', ':']).next().unwrap_or(name);
+        for owner in siblings.iter().filter(|owner| owner.declaration_name == leaf) {
+            for info in layouts.iter().filter_map(|layout| layout.get(checker)) {
+                if declares_members_of(info, owner) {
+                    collect(owner, Nominal::Type(info), members);
+                }
+            }
+        }
+    }
+}
+
+/// Whether a nominal layout's own members were declared in `owner`'s module.
+fn declares_members_of(info: &TypeInfo, owner: &CanonicalSymbolId) -> bool {
+    let same_origin = |identity: &CanonicalSymbolId| identity.origin == owner.origin;
+    match info {
+        TypeInfo::Model(model) => {
+            model
+                .fields
+                .values()
+                .filter_map(|field| field.identity.as_ref())
+                .any(same_origin)
+                || model
+                    .methods
+                    .values()
+                    .filter_map(|method| method.identity.as_ref())
+                    .any(same_origin)
+        }
+        TypeInfo::Class(class) => {
+            class
+                .fields
+                .values()
+                .filter_map(|field| field.identity.as_ref())
+                .any(same_origin)
+                || class
+                    .methods
+                    .values()
+                    .filter_map(|method| method.identity.as_ref())
+                    .any(same_origin)
+        }
+        TypeInfo::Enum(info) => info.variant_identities.values().any(same_origin),
+        TypeInfo::Newtype(info) => info
+            .methods
+            .values()
+            .filter_map(|method| method.identity.as_ref())
+            .any(same_origin),
+        _ => false,
+    }
 }
 
 fn collect(owner: &CanonicalSymbolId, nominal: Nominal<'_>, identities: &mut Vec<(String, CanonicalSymbolId)>) {
