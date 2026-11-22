@@ -9,23 +9,24 @@ from pub::internal_models.graph_crumb_fields import encode_graph_row, integer as
 from engine_proof_pages import PAGE_ROWS, byte_limit, demand_values, frame_values, render_proof, stage_pages
 from engine_proof_records import PROOF, proof_description
 from engine_programs import ProgramOutcome
-from pub::incan_platform.store import Transaction, begin, commit, get, put
-from store_path_conversion import snapshot
+from pub::incan_platform.store import SnapshotAdmission, Transaction, begin, commit, get, put
+from store_path_conversion import snapshot, store_path
 
 
 pub def retain(store: Path, run: str, capture: CaptureCounters, produced: Borrowed[ProgramOutcome]) -> Result[str, str]:
     """Retain one requested report; ordinary unchanged requests never write a report or grow the store."""
-    _ = commit(prepare_report(store, run, capture, produced)?).map_err((error) => error.message())?
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    _ = commit(prepare_report(admission, run, capture, produced)?).map_err((error) => error.message())?
     return Ok(run)
 
 
 pub def prepare_report(
-    store: Path,
+    mut admission: SnapshotAdmission,
     run: str,
     capture: CaptureCounters,
     produced: Borrowed[ProgramOutcome],
 ) -> Result[Transaction, str]:
-    """Prepare an explicitly requested report for the same request publication boundary."""
+    """Prepare a requested report in the current home view using the settlement's authenticated admission."""
     editable = capture.in_reach
     frozen = capture.frozen
     mut whole_units = 0
@@ -66,7 +67,7 @@ pub def prepare_report(
         "store_digest_only_payload_bytes": produced.store_digest_only_payload_bytes,
         "store_digest_only_reads": produced.store_digest_only_reads,
     }
-    selected = snapshot(store).map_err((error) => error.message())?
+    selected = admission.open().map_err((error) => error.message())?
     mut transaction = begin(selected)
     if len(produced.frame_reads) + len(produced.graph_demands) <= PAGE_ROWS:
         small = encode_proof(run, produced.checker_reuse, counts, produced.artifact_refusals,
