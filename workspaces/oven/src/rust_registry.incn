@@ -27,6 +27,7 @@ from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, Regi
 from registry_metadata import complete_legacy, completion_selection
 from registry_pages import artifact_stamps, directory_stamps, question, recall_catalog, retain_catalog
 from registry_pages import current as catalog_current
+from store_path_conversion import ClientStoreAdmission
 from toolchain import load_toolchain, located, rust_compiler
 from unit_freshness import compiler_fingerprint
 from unit_freshness import record
@@ -43,6 +44,7 @@ pub def read_registry_units(
     project: str = "",
     reader: ManifestReader = ManifestReader(),
     use_project_lock: bool = true,
+    admission: Option[ClientStoreAdmission] = None,
 ) -> Result[RegistryUnits, str]:
     """
     Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory.
@@ -64,7 +66,7 @@ pub def read_registry_units(
         observed = observe(path)?
         selection = completion_selection(rust_compiler(toolchain))?
     key = question(path, observed, selection)?
-    if let Some(catalog) = recall_catalog(key)?:
+    if let Some(catalog) = recall_catalog(key, admission)?:
         record_work(Operation.RegistryIndex, path.0, clock)
         # 2. Directory membership and artifact rewrites invalidate independently of the closure file.
         completion_clock = begin()
@@ -73,7 +75,7 @@ pub def read_registry_units(
             return project_registry(catalog_registry(catalog.units, path)?, project, reader, use_project_lock)
     # 3. Only one caller completes a missing generation; waiters recheck after taking its claim.
     held = claim(bakery()?, f"registry/catalog/{key}")?
-    if let Some(catalog) = recall_catalog(key)?:
+    if let Some(catalog) = recall_catalog(key, admission)?:
         if frozen or catalog_current(catalog):
             return project_registry(catalog_registry(catalog.units, path)?, project, reader, use_project_lock)
     return project_registry(read_registry_catalog(path, key, observed)?, project, reader, use_project_lock)

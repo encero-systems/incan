@@ -39,6 +39,7 @@ from semver_req import (
     version_text,
 )
 from rust_registry import read_registry_units, registry_selection, resolve_registry
+from store_path_conversion import ClientStoreAdmission
 from rust_target import target_configuration
 from toolchain import load_toolchain, rust_compiler
 from unit import discovered_project
@@ -113,6 +114,7 @@ pub def ensure_project_lock(
     substitutes: Dict[str, str],
     reader: ManifestReader,
     locked: bool,
+    admission: Option[ClientStoreAdmission] = None,
 ) -> Result[Option[str], str]:
     """
     Read a run, build, test or lint root's lock without ever writing it, or prove `--locked` needs no change.
@@ -137,7 +139,7 @@ pub def ensure_project_lock(
             if settled(root, question, lock)?:
                 return Ok(None)
             # 2. Only a no-change result is retained, for the lock bytes it compared against.
-            result = reconcile(root, profile, request, substitutes, reader, "", locked, false)?
+            result = reconcile(root, profile, request, substitutes, reader, "", locked, false, admission)?
             if not result.changed and result.interop == 0:
                 remember_settled(root, question, reader, lock)
             # 3. The file keeps its bytes; this process selects the closure it resolved.
@@ -253,6 +255,7 @@ def reconcile(
     requested_mode: str,
     locked: bool,
     write: bool,
+    admission: Option[ClientStoreAdmission] = None,
 ) -> Result[LockResult, str]:
     """
     Resolve today's local and shipped-unit graph, retain valid pins, then compare or publish the generated lock.
@@ -288,7 +291,7 @@ def reconcile(
     )
     facets = local_facets(demand, configuration, substitutes, reader)?
     refuse_unmanaged_providers([root.0] + [facet.project for facet in facets], reader)?
-    mut registry = read_registry_units(Path(toolchain.registry_units), root.0, reader, false)?
+    mut registry = read_registry_units(Path(toolchain.registry_units), root.0, reader, false, admission)?
     registry.resolution_mode = mode
     if let Some(known) = existing:
         if keeps_existing(known, requested_mode, mode):

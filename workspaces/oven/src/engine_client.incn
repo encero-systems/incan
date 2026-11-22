@@ -28,7 +28,7 @@ from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
 from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, begin, commit, fork, get, put, view_snapshot
-from store_path_conversion import claim, snapshot, store_path
+from store_path_conversion import ClientStoreAdmission, claim, snapshot, store_path
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity
 from unit_freshness import compiler_fingerprint, fingerprint
@@ -312,6 +312,7 @@ pub def execute(
     proofs: bool,
     unit_options: str = "",
     output: str = "",
+    preflight: Option[ClientStoreAdmission] = None,
 ) -> Result[i32, str]:
     """
     Build or run one file through the selected engine, without a legacy fallback.
@@ -328,7 +329,9 @@ pub def execute(
         view_profile = profile + "+check"
     bound = selected_home_view()?
     view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"), unit_options)?
-    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound, unit_options, output)
+    return execute_in(
+        command, absolute, profile, arguments, argv0, format, proofs, view, bound, unit_options, output, preflight,
+    )
 
 
 def view_scope(bound: Option[str]) -> Result[str, str]:
@@ -353,6 +356,7 @@ def execute_in(
     bound: Option[str],
     unit_options: str = "",
     output: str = "",
+    preflight: Option[ClientStoreAdmission] = None,
 ) -> Result[i32, str]:
     """Run one records request in `view`, forking it from the home view `bound` names when it does not exist yet."""
     source = absolute
@@ -364,7 +368,9 @@ def execute_in(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     compiler = installed_compiler()?
-    mut admission = SnapshotAdmission.for_store(store_path(store))
+    mut admission = match preflight:
+        Some(client) => client.take_reader(store)
+        None => SnapshotAdmission.for_store(store_path(store))
     selected = admission.open(view).map_err((error) => error.message())?
     if selected.index == "":
         # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.

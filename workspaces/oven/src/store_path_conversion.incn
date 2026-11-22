@@ -1,8 +1,12 @@
 """Convert Oven paths at the platform store boundary."""
 
+from rust::std::cell import RefCell
+from rust::std::mem import take
+from rust::std::ops import DerefMut
+from rust::std::rc import Rc
 from std.fs import Path
 from std.primitives.locking import LockGuard
-from pub::incan_platform.store import HOME_VIEW, PreparedPayload, Snapshot
+from pub::incan_platform.store import HOME_VIEW, PreparedPayload, Snapshot, SnapshotAdmission
 from pub::incan_platform.store import claim as platform_claim, compact as platform_compact
 from pub::incan_platform.store import snapshot as platform_snapshot
 from pub::incan_platform.store.collection import Reclaimed
@@ -25,6 +29,48 @@ from pub::incan_platform.store.repair import (
     quarantine_payload as platform_quarantine_payload,
     readmit_payload as platform_readmit_payload,
 )
+
+
+model ClientAdmissionState:
+    """The work bakery last opened by one client's project preparation."""
+
+    root: str = ""
+    reader: Option[SnapshotAdmission] = None
+
+    def take_for(mut self, root: Path) -> SnapshotAdmission:
+        """Transfer the reader only for the same selected work bakery."""
+        previous = take(self.reader)
+        if self.root == root.0:
+            if let Some(reader) = previous:
+                return reader
+        self.root = root.0
+        return SnapshotAdmission.for_store(store_path(root))
+
+
+pub class ClientStoreAdmission:
+    """A records client's lazy store admission from lock preparation until it selects the project view."""
+
+    state: Rc[RefCell[ClientAdmissionState]]
+
+    @staticmethod
+    pub def start() -> ClientStoreAdmission:
+        """Create a command-owned scope before anything opens its work bakery."""
+        return ClientStoreAdmission(state=Rc.new(RefCell.new(ClientAdmissionState())))
+
+    pub def open_home(self, root: Path) -> Result[Snapshot, StoreError]:
+        """Lease the work bakery's current home view for a registry read."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        mut reader = state.take_for(root)
+        selected = reader.open()
+        state.reader = Some(reader)
+        return selected
+
+    pub def take_reader(self, root: Path) -> SnapshotAdmission:
+        """Hand the reader to project selection after lock preparation has finished."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        return state.take_for(root)
 
 
 pub def store_path(path: Union[Path, StorePath]) -> StorePath:
