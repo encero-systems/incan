@@ -18,7 +18,9 @@ use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_wi
 use crate::models::model_type;
 use crate::native_type_identity::{argument_identities, constructor_index};
 use crate::nominal_instances::{NominalInstance, close_layout};
+use crate::nominal_records::{RecordedLayouts, computed_layout_witnesses, unit_product_nominals};
 use crate::options::retain_carrier;
+use crate::program_context::synthetic_program_context;
 use crate::symbols::model_symbol;
 
 fn identity(name: &str) -> CanonicalSymbolId {
@@ -296,5 +298,62 @@ fn native_enum_layout_authenticates_its_variant_payload() -> Result<(), String> 
     let a = enum_layout_witness(&before).map_err(|error| error.to_string())?;
     let b = enum_layout_witness(&after).map_err(|error| error.to_string())?;
     assert!(a.0 == b.0 && a.1 != b.1);
+    Ok(())
+}
+
+/// An edit that changes no model computes no layout witness: a program whose model declarations come with the
+/// witnesses their namespaces recorded when they were checked is described from those records, row for row as
+/// digesting each declaration describes it; a declaration its namespace recorded no witness for is digested.
+#[test]
+fn an_edit_that_changes_no_model_computes_no_layout_witness() -> Result<(), String> {
+    let (point, line) = (identity("Point"), identity("Line"));
+    let (point_key, line_key) = (carrier_key(&point)?, carrier_key(&line)?);
+    let mut module = BodyIrModule::declarations_only("app".into());
+    module.nominal_declarations = vec![
+        nominal(point.clone(), "Point", &[(&point_key, &point)]),
+        nominal(line.clone(), "Line", &[(&line_key, &line)]),
+    ];
+    let constructors = Arc::new(constructor_index(&module.nominal_declarations));
+    let mut digested = synthetic_program_context(&module, constructors.clone());
+    let computed = computed_layout_witnesses();
+    unit_product_nominals(&mut digested, &[]);
+    assert_eq!(
+        computed_layout_witnesses() - computed,
+        2,
+        "a program without records digested no declaration"
+    );
+    let witness = |model: &NominalDeclaration| model_layout_witness(model).map_err(|error| error.to_string());
+    let mut recorded = RecordedLayouts::default();
+    for declaration in &module.nominal_declarations {
+        recorded.record_model(declaration.canonical.clone(), witness(declaration)?);
+    }
+    let mut steady = synthetic_program_context(&module, constructors.clone());
+    steady.recorded = Arc::new(recorded);
+    let computed = computed_layout_witnesses();
+    unit_product_nominals(&mut steady, &[]);
+    assert_eq!(
+        computed_layout_witnesses() - computed,
+        0,
+        "an edit that changed no model computed a layout witness"
+    );
+    assert!(
+        steady.described == digested.described,
+        "a recorded witness described another row"
+    );
+    let mut partial = RecordedLayouts::default();
+    partial.record_model(point.clone(), witness(&module.nominal_declarations[0])?);
+    let mut edited = synthetic_program_context(&module, constructors);
+    edited.recorded = Arc::new(partial);
+    let computed = computed_layout_witnesses();
+    unit_product_nominals(&mut edited, &[]);
+    assert_eq!(
+        computed_layout_witnesses() - computed,
+        1,
+        "a declaration without a record was not digested"
+    );
+    assert!(
+        edited.described == digested.described,
+        "a digested row differs from its recorded witness"
+    );
     Ok(())
 }
