@@ -61,6 +61,7 @@ from release_support import (
     verification_program,
 )
 from reference_cache import census_inputs
+from release_verifier_teardown import finish_installed_verifier
 from relocated_sysroot import shared_relocated_sysroot
 from verify_installation import (
     audit_relocation,
@@ -296,15 +297,17 @@ def test_completed_installed_verification_releases_its_engines_and_unit_lease() 
     """An installed records invocation can finish before a nested Bakery's engine releases the inherited unit."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path().resolve().map_err((error) => error.message())?
-    oven = root.joinpath("verification-home/bin/incan")
+    oven = root.joinpath("private  verification/verification-home/bin/incan")
     oven.parent().mkdir(true, true).map_err((error) => error.message())?
     installed = Path(get_or("INCAN", get_or("INCAN_HOME", "") + "/bin/incan"))
     _ = installed.copy(oven, true, true).map_err((error) => error.message())?
     outer = verifier_program(root.joinpath("outer/main.incn"), NESTED_VERIFICATION)?
     inner = verifier_program(root.joinpath("inner/main.incn"), "def main() -> None:\n    println(\"nested\")\n")?
+    warm = start_warm_engine_control(installed, root, inner)?
+    warm_before = verifier_process_count(warm.0)?
     bakery = root.joinpath("builder-bakery")
     log = root.joinpath("installed-ci.log")
-    status = run_step(
+    result = run_step(
         Step(
             name="installed-ci",
             executable=oven.0,
@@ -321,14 +324,24 @@ def test_completed_installed_verification_releases_its_engines_and_unit_lease() 
             log=log,
             timeout_seconds=90,
         ),
-    )?
+    )
+    status = finish_installed_verifier(oven.0, result)?
     stdout = log.read_text("utf-8", "strict").map_err((error) => error.message())?
     assert status == 0 and stdout.ends_with("nested\nverifier\n"), stdout
     remaining = verifier_process_count(oven.0)?
     leases = bakery.joinpath("unit-leases").iterdir().map_err((error) => error.message())?
     assert len(leases) == 1, "the outer invocation must own one execution lease"
     blocked = held(leases[0].0)?
+    warm_after = verifier_process_count(warm.0)?
+    finish_installed_verifier(warm.0, Ok(None))?
+    assert warm_before == 2 and warm_after == warm_before, "the independently scoped warm engine did not survive"
     println(f"installed verifier result: exit={status}, owned processes={remaining}, unit lease held={blocked}")
+    println(f"independent warm engine: {warm_before} processes before, {warm_after} processes after")
+    if blocked:
+        holders = Command.new("/usr/sbin/lsof").args(["-Fpcn", "--", leases[0].0]).output()
+        match holders:
+            Ok(report) => println(RustString.from_utf8_lossy(report.stdout).into_owned())
+            Err(_) => pass
     assert remaining == 0 and not blocked, f"installed verification left {remaining} processes; unit lease held={blocked}"
     return Ok(None)
 
@@ -356,6 +369,24 @@ def verifier_program(path: Path, content: str) -> Result[Path, str]:
     return Ok(path)
 
 
+def start_warm_engine_control(installed: Path, root: Path, program: Path) -> Result[Path, str]:
+    """Use the same Oven bytes under a sibling executable path and retain its ordinary idle worker as a control."""
+    executable = root.joinpath("private  verification/verification-home/bin/incan-editor")
+    _ = installed.copy(executable, true, true).map_err((error) => error.message())?
+    status = run_step(Step(
+        name="warm-engine-control",
+        executable=executable.0,
+        arguments=["run", program.0],
+        environment={"INCAN_ENGINE": "records", "INCAN_BAKERY": root.joinpath("editor-bakery").0},
+        remove_environment=[],
+        directory=Some(program.parent()),
+        log=root.joinpath("editor.log"),
+        timeout_seconds=90,
+    ))?
+    assert status == 0, f"warm engine control exited {status}"
+    return Ok(executable)
+
+
 def verifier_process_count(oven: str) -> Result[int, str]:
     """Count the test's private executable in both engine roles before the test runner can reap anything."""
     mut command = Command.new("/bin/ps")
@@ -365,7 +396,8 @@ def verifier_process_count(oven: str) -> Result[int, str]:
         return Err("cannot observe installed verification engines")
     text = RustString.from_utf8_lossy(report.stdout).into_owned()
     engines = [line for line in text.split("\n") if
-        line.startswith(oven + " --internal-engine ") or line.startswith(oven + " --internal-engine-settlement ")]
+        line.strip().startswith(oven + " --internal-engine ") or
+        line.strip().startswith(oven + " --internal-engine-settlement ")]
     return Ok(len(engines))
 
 
