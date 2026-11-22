@@ -512,7 +512,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     edited = original.replace("return 1", "return 3")
     before = project_source("package", "src/main.incn", original)?
     after = project_source("package", "src/main.incn", edited)?
-    assert before.header.text == "from std import env\ntype Count = int", before.header.text
+    assert before.header.text == "from std import env", before.header.text
     assert before.header.digest() == after.header.digest()
     verify_documentation_changes_no_record(original, before)?
     documented = project_source("package", "src/main.incn", original.replace("    return 1", "    \"First version\"\n    return 1"))?
@@ -528,7 +528,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert len(revised_docs.documentation) == 1
     documented_owner, _ = revised_docs.documentation[0]
     assert documented_owner == "first"
-    assert len(before.owners) == 4 and len(after.owners) == 4, f"owner counts: {len(before.owners)}, {len(after.owners)}"
+    assert len(before.owners) == 5 and len(after.owners) == 5, f"owner counts: {len(before.owners)}, {len(after.owners)}"
     mut changed = 0
     for index in range(len(before.owners)):
         assert before.owners[index].key == after.owners[index].key
@@ -536,11 +536,12 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
         if before.owners[index].digest() != after.owners[index].digest():
             changed += 1
     assert changed == 1, f"changed owners: {changed}"
-    assert before.owners[0].text.startswith("model Item"), before.owners[0].text
-    assert before.owners[1].text.strip().startswith("value: Count"), before.owners[1].text
-    assert before.owners[2].text.startswith("def first"), before.owners[2].text
-    assert before.owners[3].text.startswith("def second"), before.owners[3].text
-    assert before.owners[0].start < before.owners[0].end
+    assert before.owners[0].text.startswith("type Count = int"), before.owners[0].text
+    assert before.owners[1].text.startswith("model Item"), before.owners[1].text
+    assert before.owners[2].text.strip().startswith("value: Count"), before.owners[2].text
+    assert before.owners[3].text.startswith("def first"), before.owners[3].text
+    assert before.owners[4].text.startswith("def second"), before.owners[4].text
+    assert before.owners[1].start < before.owners[1].end
 
     branches = "def result(first: bool, second: bool) -> int:\n    if first:\n        pass\n    else:\n        pass\n    if second:\n        return 1\n    else:\n        return 2\n"
     branch_projection = project_source("package", "src/branches.incn", branches)?
@@ -574,7 +575,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 17
+    assert len(published.keys) == 20
     assert before.placements["first"].key == after.placements["first"].key
     assert before.placements["first"].text != after.placements["first"].text
     assert before.placements["second"].text == after.placements["second"].text
@@ -729,6 +730,34 @@ pub def test_source_projection_owns_declarations_in_feature_blocks() -> Result[N
     assert edited.header.digest() == projection.header.digest()
     assert projected_owner(edited, "report_json")?.digest() != owner.digest()
     assert projected_owner(edited, "report_value")?.digest() == projected_owner(projection, "report_value")?.digest()
+    return Ok(None)
+
+
+pub def test_source_projection_owns_each_type_declaration() -> Result[None, str]:
+    """
+    Every `type` declaration owns its source record under the kind its stable identity names, so a body that reads a
+    newtype, a Rust type or a type alias, or a method declared on one, binds that declaration's own record.
+    """
+    source = "from rust::std::path import PathBuf\n\ntype Email = newtype str:\n    def label(self) -> str:\n        return \"email:\" + self.0\n\npub type Ratio = float\n\npub type NativePath = rusttype PathBuf:\n    \"\"\"A native carrier.\"\"\"\n\ntype Pair[T] = tuple[T, T]\n\nnewtype Meters = float\n"
+    projection = project_source("package", "src/main.incn", source)?
+    facets = [owner.key.facet for owner in projection.owners]
+    assert facets == ["newtype:Email", "type_alias:Ratio", "rusttype:NativePath", "type_alias:Pair", "newtype:Meters"], str(facets)
+    assert projection.header.text == "from rust::std::path import PathBuf", projection.header.text
+    for name, identity, facet in [
+        ("Email", "newtype:main::Email", "newtype:Email"),
+        ("Ratio", "type_alias:main::Ratio", "type_alias:Ratio"),
+        ("NativePath", "rusttype:main::NativePath", "rusttype:NativePath"),
+        ("Pair", "type_alias:main::Pair", "type_alias:Pair"),
+        ("Meters", "newtype:main::Meters", "newtype:Meters"),
+        ("label", "member/method:main::label#in(newtype:main::Email)[0]", "newtype:Email"),
+        ("exists", "member/method:main::exists#in(rusttype:main::NativePath)[0]", "rusttype:NativePath"),
+    ]:
+        owner = compiler_source_projection.compiled_owner_source(projection, "lib", name, identity)?
+        assert owner.key.facet == facet, f"{identity} selected {owner.key.facet}"
+    # A field that shares a type's name never stands in for the type.
+    shadowed = project_source("package", "src/main.incn", "model User:\n    Email: str\n\ntype Email = newtype str\n")?
+    selected = compiler_source_projection.compiled_owner_source(shadowed, "lib", "Email", "newtype:main::Email")?
+    assert selected.key.facet == "newtype:Email", selected.key.facet
     return Ok(None)
 
 
