@@ -915,7 +915,7 @@ def concurrent_fixture(root: Path, name: str, argument: str) -> Result[Path, str
     """Write a standalone unit whose capture cannot pick up any of the other test units."""
     directory = root.joinpath(name)
     directory.mkdir(true, true).map_err((error) => error.message())?
-    source = directory.joinpath("main.incn")
+    source = directory.joinpath(f"{name}.incn")
     write(
         source,
         f"def twice(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    println(twice({argument}))\n",
