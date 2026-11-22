@@ -308,7 +308,7 @@ pub(super) fn validate_export_identity_binding(
 ) -> Result<(), LibraryManifestError> {
     validate_export_canonical_kind(raw, entry, identity)?;
     let authoritative_path = validate_export_projection_path(raw, entry, identity)?;
-    if authoritative_path.is_empty() || !canonical_identity_matches_path(siblings, identity, authoritative_path) {
+    if authoritative_path.is_empty() || !canonical_identity_matches_path(raw, siblings, identity, authoritative_path) {
         // A path can end on an intermediate hop, so report both the path and every public carrier of the identity.
         let carriers = siblings
             .iter()
@@ -477,8 +477,10 @@ pub(super) fn validate_root_export_projection(
                 };
                 // The prefixes may differ, but both sides must still name the declaration the identity names -- or,
                 // for an alias of an alias, reach it. A chain records each link on the hop it was written on, so the
-                // raw export names the intermediate alias while the identity carries the terminal declaration.
+                // raw export names the intermediate alias while the identity carries the terminal declaration. The
+                // intermediate hop may be a dependency's, which that dependency's manifest binds.
                 let reaches_identity_declaration = raw_alias.target_path.last() == Some(&identity.declaration_name)
+                    || dependency_hop(raw, identity, &raw_alias.target_path)
                     || raw.contract_metadata.api.as_ref().is_some_and(|api| {
                         checked_api_alias_chain_reaches(api, &[], &raw_alias.target_path, &identity.declaration_name)
                     });
