@@ -7,7 +7,8 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.fs import Path
-from files import write, json_text
+from files import discard_file, write, json_text
+from lowering_record_fixtures import stop_example_engine
 from bakery_roots import Collected, collect
 from engine_programs import (
     read_program,
@@ -114,6 +115,39 @@ pub def test_a_caller_waits_for_a_busy_engine_to_answer_hello() -> Result[None, 
         Ok(outcome) => outcome?
         Err(_) => return Err("the busy engine thread panicked")
     assert waited >= int(HANDSHAKE_SECONDS), f"the caller was greeted after {waited} s, inside the handshake bound"
+    return Ok(None)
+
+
+pub def test_a_caller_reconnects_when_the_engine_exits_as_it_connects() -> Result[None, str]:
+    """
+    An engine that exits idle just as a caller connects closes that connection before Welcome. The caller has sent no
+    request, so it connects again and starts a fresh engine instead of failing.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    selected = endpoint(store, identity).map_err(detail)?
+    listener = listen(selected.socket, true)?
+    exiting = spawn(() => close_as_an_exiting_engine(listener, selected.socket))
+    connected = connect_with(store, identity, binary)
+    joined = exiting.join()
+    mut channel = connected.map_err(detail)?
+    _ = channel.transport.close()
+    match joined:
+        Ok(outcome) => outcome?
+        Err(_) => return Err("the exiting engine thread panicked")
+    return stop_example_engine(binary, store)
+
+
+def close_as_an_exiting_engine(listener: Listener, socket: str) -> Result[None, str]:
+    """Accept one caller, then withdraw the socket and close the connection, as an engine exiting idle does."""
+    mut accepting = listener
+    mut caller = accepting.accept()?
+    discard_file(Path(socket))
+    _ = caller.close()
     return Ok(None)
 
 
