@@ -548,9 +548,12 @@ def records_command(command: str, arguments: list[str]) -> None:
                 Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
                 Ok(None) => fail(f"{invoked()} {command}: records engine requires an Incan program", 1)
                 Ok(Some(selected)) => source = selected
-            # Check observes one source reach like the legacy checker; it does not mutate a project lock.
+            # Check observes one source reach like the legacy checker; it does not mutate a project lock, and warns of
+            # the manifest entries this toolchain tolerates as every other project command does.
             if command != "check":
                 prepared_lock(command, options)
+            else:
+                warn_tolerated_entries(command, Path(options.path))
             finish(
                 command,
                 execute_records(command, source, options.profile, passed, options.argv0, format, options.engine_report),
