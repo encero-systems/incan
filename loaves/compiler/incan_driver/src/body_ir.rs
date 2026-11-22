@@ -2,7 +2,7 @@
 
 use crate::session::{CompilationAnalysis, CompilationSession};
 use crate::unit::UnitKind;
-use incan_frontend::body_ir::{ContextModules, ProviderOperationCatalog};
+use incan_frontend::body_ir::{ContextModules, DependencyCallTargets, ProviderOperationCatalog};
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeCheckInfo;
@@ -72,6 +72,7 @@ fn lower_with_namespaces(
     mut namespace_bodies: Vec<Option<Arc<BodyIrModule>>>,
 ) -> Result<BTreeSet<std::path::PathBuf>, String> {
     let authored_start = bodies.len();
+    let dependency_calls = DependencyCallTargets::new(bodies);
     let restored = namespace_bodies.iter().map(Option::is_some).collect::<Vec<_>>();
     let provider_operations = ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
@@ -98,7 +99,7 @@ fn lower_with_namespaces(
             &type_infos,
             &mut namespace_bodies,
             cycle_peers,
-            bodies,
+            &dependency_calls,
             &authored,
             &provider_operations,
             &unit.package,
@@ -128,6 +129,7 @@ fn lower_with_namespaces(
         .into_iter()
         .map(|module| module.ok_or("Body IR source component omitted a module"))
         .collect::<Result<Vec<_>, _>>()?;
+    drop(dependency_calls);
     bodies.extend(lowered);
     let selected = modules
         .iter()
@@ -278,7 +280,7 @@ fn lower_component_wave(
     type_infos: &[&TypeCheckInfo],
     namespace_bodies: &mut [Option<Arc<BodyIrModule>>],
     cycle_peers: &[Vec<usize>],
-    dependency_bodies: &[BodyIrModule],
+    dependency_calls: &DependencyCallTargets<'_>,
     authored: &[Option<BodyIrModule>],
     provider_operations: &ProviderOperationCatalog,
     registry_package: &str,
@@ -317,7 +319,7 @@ fn lower_component_wave(
                             type_infos,
                             retained,
                             cycle_peers,
-                            dependency_bodies,
+                            dependency_calls,
                             authored,
                             provider_operations,
                             registry_package,
@@ -352,7 +354,7 @@ fn lower_component(
     type_infos: &[&TypeCheckInfo],
     retained: Vec<Option<Arc<BodyIrModule>>>,
     cycle_peers: &[Vec<usize>],
-    dependency_bodies: &[BodyIrModule],
+    dependency_calls: &DependencyCallTargets<'_>,
     authored: &[Option<BodyIrModule>],
     provider_operations: &ProviderOperationCatalog,
     registry_package: &str,
@@ -375,12 +377,7 @@ fn lower_component(
                 file = %module.file_path.display(),
                 restored = true,
             )
-            .in_scope(|| {
-                incan_frontend::body_ir::refresh_dependency_call_targets(
-                    &mut restored,
-                    ContextModules::new(dependency_bodies, &borrowed),
-                )
-            });
+            .in_scope(|| dependency_calls.refresh(&mut restored, &borrowed));
             changed_calls.push(changed);
             completed.push(restored);
             continue;
@@ -405,7 +402,7 @@ fn lower_component(
                 .chain(&peers)
                 .collect::<Vec<_>>();
             let context = incan_frontend::body_ir::BodyIrContext {
-                modules: ContextModules::new(dependency_bodies, &borrowed),
+                modules: ContextModules::new(dependency_calls.modules(), &borrowed),
                 provider_operations,
                 registry_package: Some(registry_package),
                 library_package,
@@ -444,10 +441,7 @@ fn lower_component(
                 restored = false,
             )
             .in_scope(|| {
-                incan_frontend::body_ir::refresh_dependency_call_targets(
-                    &mut lowered,
-                    ContextModules::new(dependency_bodies, &borrowed),
-                );
+                dependency_calls.refresh(&mut lowered, &borrowed);
             });
             lowered
         };

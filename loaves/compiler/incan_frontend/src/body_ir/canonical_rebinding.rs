@@ -1,60 +1,84 @@
 //! Refresh edit-unstable dependency call locators in retained whole-module Body IR.
 
-use crate::body_ir::ContextModules;
 use std::cell::{Cell, OnceCell};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use super::bir;
 use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::stable_identity::StableDeclarationId;
 
-/// Rebind retained imported calls against the dependency modules selected for this compilation.
-///
-/// Canonical identities deliberately contain source spans and therefore survive only one compilation. A retained
-/// namespace may keep its Body IR when an imported callable's signature is unchanged, while that callable's edited
-/// body changes its current canonical span. This boundary replaces only the retained call locator; declaration
-/// selection remains keyed by the compiler's span-free stable identity and ambiguous candidates remain untouched.
-pub fn refresh_dependency_call_targets(module: &mut bir::BodyIrModule, dependencies: ContextModules<'_>) -> bool {
-    let changed = Cell::new(false);
-    // Most retained calls still have their precise physical declaration. Borrow the selected dependencies and
-    // compute a stable identity only for a displaced call among declarations of the same name.
-    let by_name = OnceCell::<HashMap<&str, Vec<&CanonicalSymbolId>>>::new();
-    let rebind = |previous: &mut CanonicalSymbolId| {
-        let candidates = by_name.get_or_init(|| {
-            let mut candidates: HashMap<&str, Vec<&CanonicalSymbolId>> = HashMap::new();
-            for identity in dependencies.iter().flat_map(dependency_callable_identities) {
-                candidates.entry(&identity.declaration_name).or_default().push(identity);
-            }
-            candidates
-        });
-        if let Some(owners) = candidates.get(previous.declaration_name.as_str())
-            && let Some(selected) = displaced_call_target(previous, owners)
-        {
-            *previous = selected.clone();
-            changed.set(true);
-        }
-    };
-    for body in &mut module.bodies {
-        refresh_statements(&mut body.block.stmts, &rebind);
-        for parameter in &mut body.params {
-            if let bir::CallableParamDefault::Source(default) = &mut parameter.default {
-                refresh_statements(&mut default.stmts, &rebind);
-            }
+type CallTargets<'a> = HashMap<&'a str, Vec<&'a CanonicalSymbolId>>;
+
+/// The immutable Loaf portion of every authored module's call-target view, indexed at first use.
+pub struct DependencyCallTargets<'a> {
+    modules: &'a [bir::BodyIrModule],
+    callables: OnceLock<CallTargets<'a>>,
+}
+
+impl<'a> DependencyCallTargets<'a> {
+    /// Borrow the fixed dependencies for one compilation and share their index among its workers.
+    pub fn new(modules: &'a [bir::BodyIrModule]) -> Self {
+        Self {
+            modules,
+            callables: OnceLock::new(),
         }
     }
-    changed.get()
+
+    /// The modules whose exact callable identities back the shared index.
+    pub fn modules(&self) -> &'a [bir::BodyIrModule] {
+        self.modules
+    }
+
+    /// Rebind retained imported calls to their current locations. The known Loaves have a shared index.
+    /// The authored portion is specific to a component and includes only the peers this body can see.
+    /// Displaced locations may change only after exact and ambiguous matches have been ruled out.
+    pub fn refresh(&self, module: &mut bir::BodyIrModule, authored: &[&bir::BodyIrModule]) -> bool {
+        let changed = Cell::new(false);
+        let authored_targets = OnceCell::new();
+        let rebind = |previous: &mut CanonicalSymbolId| {
+            let fixed = self.callables.get_or_init(|| index_call_targets(self.modules));
+            let local = authored_targets.get_or_init(|| index_call_targets(authored.iter().copied()));
+            let name = previous.declaration_name.as_str();
+            let fixed = fixed.get(name).map(Vec::as_slice).unwrap_or_default();
+            let local = local.get(name).map(Vec::as_slice).unwrap_or_default();
+            if let Some(selected) = displaced_call_target(previous, fixed, local) {
+                *previous = selected.clone();
+                changed.set(true);
+            }
+        };
+        for body in &mut module.bodies {
+            refresh_statements(&mut body.block.stmts, &rebind);
+            for parameter in &mut body.params {
+                if let bir::CallableParamDefault::Source(default) = &mut parameter.default {
+                    refresh_statements(&mut default.stmts, &rebind);
+                }
+            }
+        }
+        changed.get()
+    }
+}
+
+/// Group borrowed canonical declarations by the spelling at the retained call target.
+fn index_call_targets<'a>(modules: impl IntoIterator<Item = &'a bir::BodyIrModule>) -> CallTargets<'a> {
+    let mut targets = CallTargets::new();
+    for identity in modules.into_iter().flat_map(dependency_callable_identities) {
+        targets.entry(&identity.declaration_name).or_default().push(identity);
+    }
+    targets
 }
 
 /// An exact match needs no rewrite. A displaced call can move only to one distinct matching stable declaration.
 fn displaced_call_target<'a>(
     previous: &CanonicalSymbolId,
-    candidates: &[&'a CanonicalSymbolId],
+    fixed: &[&'a CanonicalSymbolId],
+    authored: &[&'a CanonicalSymbolId],
 ) -> Option<&'a CanonicalSymbolId> {
-    if candidates.contains(&previous) {
+    if (fixed.is_empty() && authored.is_empty()) || fixed.contains(&previous) || authored.contains(&previous) {
         return None;
     }
     let stable = StableDeclarationId::from_canonical(previous, None, None)?;
-    let mut matching = candidates.iter().copied().filter(|candidate| {
+    let mut matching = fixed.iter().chain(authored).copied().filter(|candidate| {
         candidate.origin == previous.origin
             && StableDeclarationId::from_canonical(candidate, None, None).as_ref() == Some(&stable)
     });
@@ -142,7 +166,10 @@ mod tests {
             .bodies
             .push(body(identity("main", "main", 0, 40), Some(previous)));
 
-        refresh_dependency_call_targets(&mut importer, (&[dependency]).into());
+        let loaded = [dependency];
+        let targets = DependencyCallTargets::new(&loaded);
+        assert!(targets.refresh(&mut importer, &[]));
+        assert!(!targets.refresh(&mut importer, &[]));
 
         let Some(statement) = importer.bodies.first().and_then(|body| body.block.stmts.first()) else {
             return Err("retained importer has no call statement".to_owned());
@@ -160,16 +187,17 @@ mod tests {
         Ok(())
     }
 
+    /// The shared Loaf index and authored peer index contribute equally to exact matches and ambiguity.
     #[test]
     fn exact_foreign_duplicate_and_ambiguous_candidates_keep_their_authority() {
         let old = identity("first", "read", 1, 10);
         let new = identity("first", "read", 2, 11);
         let other = identity("first", "read", 3, 12);
         let foreign = identity("second", "read", 1, 10);
-        assert_eq!(displaced_call_target(&old, &[&foreign]), None);
-        assert_eq!(displaced_call_target(&old, &[&old, &new]), None);
-        assert_eq!(displaced_call_target(&old, &[&new, &other]), None);
-        assert_eq!(displaced_call_target(&old, &[&foreign, &new, &new]), Some(&new));
+        assert_eq!(displaced_call_target(&old, &[], &[&foreign]), None);
+        assert_eq!(displaced_call_target(&old, &[&new], &[&old]), None);
+        assert_eq!(displaced_call_target(&old, &[&new], &[&other]), None);
+        assert_eq!(displaced_call_target(&old, &[&foreign, &new], &[&new]), Some(&new));
     }
 
     /// Build one module-level function identity whose span can change independently of its stable identity.
