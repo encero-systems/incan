@@ -8,7 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{AliasExport, CanonicalIdentityExport, ExportIdentity, NominalTypeOriginExport, TypeParamExport, TypeRef};
+use super::{
+    AliasExport, CanonicalIdentityExport, LibraryIdentityGraph, NominalTypeOriginExport, TypeParamExport, TypeRef,
+};
 
 /// Schema of the install record.
 pub const INSTALL_RECORD_SCHEMA: u32 = 1;
@@ -29,9 +31,9 @@ pub struct LoafInstallRecord {
     /// and declaration order. A consumer registers them under its declaration keys; the modules' type scopes are the
     /// Loaf's type-scope records.
     pub modules: Vec<InstallModule>,
-    /// The Loaf's identity graph exports, as its manifest publishes them. Install lays out each nominal one under its
-    /// canonical spelling, and the foreign preparation of a Loaf that reaches this one reads them.
-    pub identity_exports: Vec<ExportIdentity>,
+    /// The Loaf's identity graph, as its manifest publishes it. Install lays out each nominal export under its
+    /// canonical spelling, and the foreign preparation of a Loaf that reaches this one reads it.
+    pub identity_graph: LibraryIdentityGraph,
     /// For each public name the identity graph publishes, in first-occurrence order, the kind of root export the
     /// manifest gives that name first, in the order install searches the root exports.
     pub export_kinds: Vec<InstallNamedExport>,

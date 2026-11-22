@@ -63,7 +63,7 @@ impl TypeChecker {
             },
             type_origins: self.loaf_type_origins(library, manifest).values().cloned().collect(),
             modules: install_modules(manifest),
-            identity_exports: manifest.contract_metadata.identity_graph.exports.clone(),
+            identity_graph: manifest.contract_metadata.identity_graph.clone(),
             export_kinds: install_export_kinds(manifest),
             aliases: manifest.exports.aliases.clone(),
         }

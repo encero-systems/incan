@@ -314,7 +314,7 @@ fn a_loafs_install_record_carries_its_identity_exports_and_the_kind_each_name_fi
         let record = checker.loaf_install_record(library, manifest);
         let graph = &manifest.contract_metadata.identity_graph;
         assert!(!graph.exports.is_empty(), "{library} publishes no identity");
-        assert_eq!(record.identity_exports, graph.exports, "{library}'s identity exports");
+        assert_eq!(record.identity_graph, *graph, "{library}'s identity graph");
         assert_eq!(record.aliases, manifest.exports.aliases, "{library}'s alias exports");
         let mut seen = std::collections::HashSet::new();
         let expected = graph
@@ -440,6 +440,42 @@ fn a_loaf_keys_the_root_exports_its_install_record_lists() -> TestResult {
     assert!(
         !consumer.transitive_pub_types.contains_key("Unused"),
         "a root model the record omits is keyed by its root name"
+    );
+    Ok(())
+}
+
+/// Installing a compiled Loaf lays out its nominal exports under their canonical spellings from the identity graph its
+/// install record carries: given a record whose graph omits one model, that model gets no canonical-spelling entry.
+#[test]
+fn a_loaf_lays_out_the_identity_exports_its_install_record_carries() -> TestResult {
+    use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    let before = record.identity_graph.exports.len();
+    record
+        .identity_graph
+        .exports
+        .retain(|export| export.public_name != "Unused");
+    assert!(
+        record.identity_graph.exports.len() < before,
+        "the graph publishes Unused"
+    );
+    let outer = canonical_public_library_type_name("shapes", "Outer");
+    let unused = canonical_public_library_type_name("shapes", "Unused");
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes", &manifest);
+    assert!(
+        consumer.transitive_pub_types.contains_key(&outer),
+        "a carried export is laid out"
+    );
+    assert!(
+        !consumer.transitive_pub_types.contains_key(&unused),
+        "an export the record's graph omits is laid out under {unused}"
     );
     Ok(())
 }
