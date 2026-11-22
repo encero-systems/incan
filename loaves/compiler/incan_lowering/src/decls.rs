@@ -726,33 +726,34 @@ pub fn static_slot(
 
 /// Name persistent primitive and set cells after checked carrier admission.
 ///
-/// Literal lists and dictionaries use native guarded cells; the remaining carriers use typed runtime cells.
+/// Literal lists and dictionaries use native guarded cells. The remaining carriers use runtime cells keyed by
+/// compiled unit and local slot.
 pub fn static_accessors(ty: &PlanType) -> Result<(&'static str, &'static str), String> {
     match ty {
         PlanType::Set(leaf) => {
             if *leaf == incan_mir_plan_native::ListLeaf::Int {
                 return Ok((
-                    "incan_native_runtime::read_static_int_set",
-                    "incan_native_runtime::write_static_int_set",
+                    "incan_native_runtime::read_static_int_set_in_unit",
+                    "incan_native_runtime::write_static_int_set_in_unit",
                 ));
             }
             Err("unsupported Body IR static set carrier".into())
         }
         PlanType::String => Ok((
-            "incan_native_runtime::read_static_text",
-            "incan_native_runtime::write_static_text",
+            "incan_native_runtime::read_static_text_in_unit",
+            "incan_native_runtime::write_static_text_in_unit",
         )),
         PlanType::Int => Ok((
-            "incan_native_runtime::read_static_int",
-            "incan_native_runtime::write_static_int",
+            "incan_native_runtime::read_static_int_in_unit",
+            "incan_native_runtime::write_static_int_in_unit",
         )),
         PlanType::Float => Ok((
-            "incan_native_runtime::read_static_float",
-            "incan_native_runtime::write_static_float",
+            "incan_native_runtime::read_static_float_in_unit",
+            "incan_native_runtime::write_static_float_in_unit",
         )),
         PlanType::Bool => Ok((
-            "incan_native_runtime::read_static_bool",
-            "incan_native_runtime::write_static_bool",
+            "incan_native_runtime::read_static_bool_in_unit",
+            "incan_native_runtime::write_static_bool_in_unit",
         )),
         _ => Err("unsupported Body IR static carrier".into()),
     }

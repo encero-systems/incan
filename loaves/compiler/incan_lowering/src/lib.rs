@@ -6,9 +6,10 @@
 //! toolchain's on the golden corpus ([`corpus`]).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use incan_semantics_core::CompilerNodeId;
-use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
+use incan_semantics_core::body_ir::{BodyIrModule, LinkedStaticAccessors, NativeUnionDeclaration};
+use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId};
 
 pub mod corpus;
 pub mod corpus_recording;
@@ -157,6 +158,7 @@ mod shared_callables;
 mod signature_lifetimes;
 mod statements;
 mod static_guards;
+mod static_link_exports;
 mod static_methods;
 mod static_storage;
 mod stored_types;
@@ -200,9 +202,12 @@ pub struct SourceInputs {
     pub scalar_bodies: Vec<(CompilerNodeId, String)>,
     /// Request-local producer evidence; absence keeps ordinary lowering and emits no report files.
     pub record_report: Option<String>,
+    /// Native bindings selected by this Loaf's executable publication, shared across lowering attempts.
+    pub linked_static_exports: Arc<BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>>,
 }
 
 impl SourceInputs {
+    /// Borrow the unit's source provenance and prepared producer exports for one lowering attempt.
     fn unit<'a>(&'a self, entry: i64, kind: &'a str) -> lowering::UnitInputs<'a> {
         lowering::UnitInputs {
             sources: &self.sources,
@@ -215,6 +220,7 @@ impl SourceInputs {
             scalar_products: self.scalar_products.clone(),
             scalar_bodies: &self.scalar_bodies,
             record_report: self.record_report.clone(),
+            linked_static_exports: &self.linked_static_exports,
         }
     }
 }
@@ -287,6 +293,11 @@ pub fn publish_plan_records(plan: &Plan, products: String, report: String) -> Re
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.
 pub fn numeric_carrier(ty: &PlanType) -> bool {
     numerics::numeric_carrier(ty)
+}
+
+/// Whether a runtime call keys a process-wide cell by unit and slot, so the native adapter supplies its unit operand.
+pub fn is_unit_keyed_runtime_call(path: &str) -> bool {
+    computed_statics::is_unit_keyed_runtime_call(path)
 }
 
 #[cfg(test)]

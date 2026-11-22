@@ -16,7 +16,7 @@ use crate::callable_calls::{emit_selected_body_call, lower_callable_result};
 use crate::classes::frame_type;
 use crate::closure_lifting::synthesize;
 use crate::closures::return_representation;
-use crate::computed_statics::{initialize_module_statics, is_computed_static, static_owner};
+use crate::computed_statics::{guarded_static_call, initialize_module_statics, is_computed_static, static_owner};
 use crate::decls::static_slot;
 use crate::defaults::library_default_arguments;
 use crate::frame::{Builder, read_place, value_type};
@@ -176,14 +176,8 @@ pub fn lower_static_sdk_method(
     let owner_module = static_owner(&builder.program.statics[slot]);
     initialize_module_statics(builder, &owner_module, span);
     let output = call_destination(builder, destination, result.clone(), span)?;
-    lower_callable_result(
-        builder,
-        CalleeKind::StaticMethod(slot as i64, name),
-        operands,
-        output,
-        result,
-        span,
-    )
+    let callee = guarded_static_call(builder, slot, name, read.fact == OwnershipFact::MutBorrow)?;
+    lower_callable_result(builder, callee, operands, output, result, span)
 }
 
 /// Close ordinary static-method parameters and retain the declaration frame's passing representation.
@@ -381,7 +375,7 @@ pub fn lower_static_method_body(
         synthesize(builder, forwarder);
         symbol = wrapper;
     }
-    let callee = CalleeKind::StaticMethod(slot as i64, symbol);
+    let callee = guarded_static_call(builder, slot, symbol, read.fact == OwnershipFact::MutBorrow)?;
     emit_selected_body_call(module, builder, &body, callee, operands, destination, span)
 }
 

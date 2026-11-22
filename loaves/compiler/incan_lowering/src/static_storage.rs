@@ -21,8 +21,9 @@ use crate::collections::{
     insert_collection, is_collection, is_owned_collection, owned_runtime_operand,
 };
 use crate::computed_statics::{
-    has_native_static_cell, initialize_module_statics, is_computed_static, module_initialization_externals,
-    module_initializer, module_static_key, static_initializer_name, static_owner,
+    guarded_static_call, has_native_static_cell, initialize_module_statics, is_computed_static, linked_static,
+    linked_static_item, module_initialization_externals, module_initializer, module_static_key,
+    static_initializer_name, static_owner, unit_operand,
 };
 use crate::decls::{static_accessors, static_slot};
 use crate::decorator_caches::DecoratorFrame;
@@ -68,6 +69,9 @@ pub fn lower_computed_statics(
     let mut names = function_names();
     for slot in start_slot..module.static_declarations.len() {
         let declaration = &module.static_declarations[slot];
+        if linked_static(declaration).is_some() {
+            continue;
+        }
         for binding in &module.decorated_bindings {
             if binding.original_body.canonical.as_ref() == Some(&declaration.canonical) {
                 let owner_index = static_source_position(
@@ -316,19 +320,35 @@ pub fn read_static(
     } else if fact != OwnershipFact::Copy {
         return Err("unsupported Body IR static ownership".into());
     }
-    let (read_cell, _) = static_accessors(&ty)?;
-    // Keep the immutable initializer owner alive independently while materialization mutates the frame.
-    let initial = static_initial_operand(builder, &statics[slot].initial, &ty, span)?;
-    let target = temporary(builder, ty.clone(), span);
-    external_call(
-        builder,
-        read_cell,
-        vec![PlanType::Int, ty.clone()],
-        ty.clone(),
-        vec![literal(Constant::Int(slot as i64), span), initial],
-        target.clone(),
-        span,
-    );
+    let target = if let Some(accessors) = linked_static(&statics[slot]) {
+        let getter =
+            linked_static_item(&statics[slot], &accessors.load).ok_or("linked static has no declaring Loaf")?;
+        let target = temporary(builder, ty.clone(), span);
+        external_call(
+            builder,
+            &getter,
+            Vec::new(),
+            ty.clone(),
+            Vec::new(),
+            target.clone(),
+            span,
+        );
+        target
+    } else {
+        let (read_cell, _) = static_accessors(&ty)?;
+        let initial = static_initial_operand(builder, &statics[slot].initial, &ty, span)?;
+        let target = temporary(builder, ty.clone(), span);
+        external_call(
+            builder,
+            read_cell,
+            vec![PlanType::U64, PlanType::Int, ty.clone()],
+            ty.clone(),
+            vec![unit_operand(span), literal(Constant::Int(slot as i64), span), initial],
+            target.clone(),
+            span,
+        );
+        target
+    };
     if !owned_collection {
         return Ok(read_place(target, ty == PlanType::String, span));
     }
@@ -392,7 +412,7 @@ fn read_computed_static(
             return projected_element_read(builder, value, entry, 1, span);
         }
     }
-    let snapshot = load_computed_static(builder, slot, &ty, span);
+    let snapshot = load_computed_static(builder, slot, &ty, span)?;
     if !projected {
         return Ok(read_place(snapshot, snapshot_owns(&ty), span));
     }
@@ -464,13 +484,8 @@ fn guarded_field(
     let owner_module = static_owner(&builder.program.statics[slot]);
     initialize_module_statics(builder, &owner_module, span);
     let output = temporary(builder, result, span);
-    terminate_call(
-        builder,
-        CalleeKind::StaticMethod(slot as i64, name),
-        Vec::new(),
-        output.clone(),
-        span,
-    );
+    let callee = guarded_static_call(builder, slot, name, false)?;
+    terminate_call(builder, callee, Vec::new(), output.clone(), span);
     if owned {
         builder.owned.push(output.local);
     }
@@ -539,13 +554,8 @@ fn read_guarded_dictionary_entry(
     };
     builder.synthesized.push(static_entry_reader(reader, &types[0], span));
     let output = temporary(builder, types[1].clone(), span);
-    terminate_call(
-        builder,
-        CalleeKind::StaticMethod(slot as i64, name),
-        vec![admitted],
-        output.clone(),
-        span,
-    );
+    let callee = guarded_static_call(builder, slot, name, false)?;
+    terminate_call(builder, callee, vec![admitted], output.clone(), span);
     // The cloned value is a new owner, as the value a snapshot's lookup clones is.
     let entry = &types[1];
     if *entry == PlanType::String || is_owned_collection(entry) || is_nominal_type(entry) || is_owned_list(entry) {
@@ -595,23 +605,37 @@ fn static_entry_reader(reader: StaticReader, key: &PlanType, span: &SourceSpan) 
 }
 
 /// Load a guarded snapshot; only computed storage enters module initialization before the load.
-fn load_computed_static(builder: &mut Builder, slot: usize, ty: &PlanType, span: &SourceSpan) -> Place {
+fn load_computed_static(builder: &mut Builder, slot: usize, ty: &PlanType, span: &SourceSpan) -> Result<Place, String> {
     if is_computed_static(&builder.program.statics[slot]) {
         let owner_module = static_owner(&builder.program.statics[slot]);
         initialize_module_statics(builder, &owner_module, span);
     }
     let snapshot = temporary(builder, ty.clone(), span);
-    terminate_call(
-        builder,
-        CalleeKind::StaticLoad(slot as i64),
-        Vec::new(),
-        snapshot.clone(),
-        span,
-    );
+    let declaration = &builder.program.statics[slot];
+    if let Some(accessors) = linked_static(declaration) {
+        let path = linked_static_item(declaration, &accessors.load).ok_or("linked static has no declaring Loaf")?;
+        external_call(
+            builder,
+            &path,
+            Vec::new(),
+            ty.clone(),
+            Vec::new(),
+            snapshot.clone(),
+            span,
+        );
+    } else {
+        terminate_call(
+            builder,
+            CalleeKind::StaticLoad(slot as i64),
+            Vec::new(),
+            snapshot.clone(),
+            span,
+        );
+    }
     if snapshot_owns(ty) {
         builder.owned.push(snapshot.local);
     }
-    snapshot
+    Ok(snapshot)
 }
 
 /// The plan place an element read selected, for a caller that needs storage rather than a value.
@@ -650,7 +674,7 @@ pub fn computed_static_root(
         let selected = projected_element_read(builder, value, entry, 1, span)?;
         return Ok(Some(selected_place(selected)?));
     }
-    let snapshot = load_computed_static(builder, slot, &ty, span);
+    let snapshot = load_computed_static(builder, slot, &ty, span)?;
     if value.projection.is_empty() {
         return Ok(Some(snapshot));
     }
@@ -742,6 +766,7 @@ fn static_initial_operand(
         }
         StaticInitializer::Set(members) => static_hashed_initial(builder, ty, members, &[], span),
         StaticInitializer::Computed(_) => Err("invalid Body IR computed static as a literal initial value".into()),
+        StaticInitializer::Linked(_) => Err("invalid Body IR linked static as a local initial value".into()),
     }
 }
 
@@ -859,13 +884,8 @@ fn write_guarded_static_field(
     initialize_module_statics(builder, &owner_module, span);
     forget_owned(builder, replacement.local);
     let output = temporary(builder, PlanType::Unit, span);
-    terminate_call(
-        builder,
-        CalleeKind::StaticMethod(slot as i64, name),
-        vec![read_place(replacement, true, span)],
-        output,
-        span,
-    );
+    let callee = guarded_static_call(builder, slot, name, true)?;
+    terminate_call(builder, callee, vec![read_place(replacement, true, span)], output, span);
     Ok(())
 }
 
@@ -995,12 +1015,16 @@ pub fn persist_static_value(
     let (_, write_cell) = static_accessors(&ty)?;
     let output = temporary(builder, PlanType::Unit, span);
     let moved = ty == PlanType::String || is_owned_collection(&ty);
+    if persist_linked_static(builder, slot, &ty, &target, moved, &output, span)? {
+        return Ok(());
+    }
     external_call(
         builder,
         write_cell,
-        vec![PlanType::Int, ty],
+        vec![PlanType::U64, PlanType::Int, ty],
         PlanType::Unit,
         vec![
+            unit_operand(span),
             literal(Constant::Int(slot as i64), span),
             read_place(target, moved, span),
         ],
@@ -1029,6 +1053,9 @@ fn store_computed_static(
     }
     let output = temporary(builder, PlanType::Unit, span);
     let moved = snapshot_owns(&ty);
+    if persist_linked_static(builder, slot, &ty, &target, moved, &output, span)? {
+        return Ok(());
+    }
     terminate_call(
         builder,
         CalleeKind::StaticStore(slot as i64),
@@ -1037,4 +1064,35 @@ fn store_computed_static(
         span,
     );
     Ok(())
+}
+
+/// Persist a write through the selected producer accessor when this frame borrows a Loaf's storage.
+fn persist_linked_static(
+    builder: &mut Builder,
+    slot: usize,
+    ty: &PlanType,
+    value: &Place,
+    moved: bool,
+    output: &Place,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let declaration = &builder.program.statics[slot];
+    let Some(accessors) = linked_static(declaration) else {
+        return Ok(false);
+    };
+    let store = accessors
+        .store
+        .as_deref()
+        .ok_or("linked static has no writable producer storage")?;
+    let path = linked_static_item(declaration, store).ok_or("linked static has no declaring Loaf")?;
+    external_call(
+        builder,
+        &path,
+        vec![ty.clone()],
+        PlanType::Unit,
+        vec![read_place(value.clone(), moved, span)],
+        output.clone(),
+        span,
+    );
+    Ok(true)
 }

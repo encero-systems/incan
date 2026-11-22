@@ -517,6 +517,35 @@ mod statics_and_names {
         assert!(!begin_module_initialization(77));
     }
 
+    /// The seed's slot-only cells coexist with equal-numbered cells in each candidate unit.
+    #[test]
+    fn static_slots_are_isolated_by_unit_during_bootstrap() {
+        let (loaf, program) = (0x9f3a_51c2_7e10_44d8, 0);
+        write_static_int(0, 19);
+        write_static_int_in_unit(loaf, 0, 2);
+        assert_eq!(read_static_int_in_unit(program, 0, 100), 100);
+        assert_eq!(read_static_int_in_unit(loaf, 0, 0), 2);
+        assert_eq!(read_static_int(0, 0), 19);
+        write_static_text_in_unit(program, 0, text("program"));
+        assert_eq!(read_static_text_in_unit(loaf, 0, text("loaf")), "loaf");
+        write_static_int_set_in_unit(loaf, 0, HashSet::from([3]));
+        assert_eq!(read_static_int_set_in_unit(program, 0, HashSet::new()), HashSet::new());
+    }
+
+    /// A seed module and two candidate modules can each claim the same local initialization key.
+    #[test]
+    fn module_initialization_is_claimed_per_unit_during_bootstrap() {
+        let (loaf, program) = (0x51c2_9f3a_44d8_7e10, 0xe0aa_2b71_1f06_3c95);
+        assert!(begin_module_initialization(0));
+        assert!(begin_unit_module_initialization(loaf, 0));
+        assert!(!begin_unit_module_initialization(loaf, 0));
+        assert!(begin_unit_module_initialization(program, 0));
+        end_unit_module_initialization(loaf, 0);
+        end_module_initialization(0);
+        assert!(!begin_unit_module_initialization(loaf, 0));
+        assert!(!begin_module_initialization(0));
+    }
+
     #[test]
     fn callable_names_are_scoped_by_module() {
         assert_eq!(callable_name(text("m"), 41), "<callable>");

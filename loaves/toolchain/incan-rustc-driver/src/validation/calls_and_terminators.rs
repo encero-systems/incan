@@ -92,6 +92,18 @@ pub(super) fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Re
                 scalar(&method.return_type),
             ))
         }
+        CalleeKind::LinkedStaticMethod(path, name) => {
+            let method = crate::statics::linked_method_target(plan, path, name)?;
+            Ok((
+                method
+                    .parameters
+                    .iter()
+                    .skip(1)
+                    .map(|parameter| scalar(&parameter.ty))
+                    .collect(),
+                scalar(&method.return_type),
+            ))
+        }
         CalleeKind::Planned(name) => planned_function_signature(plan, name),
         CalleeKind::CloneEnum(index, name) => clone_enum_signature(plan, *index, name),
         CalleeKind::CloneModel(index, name) => {

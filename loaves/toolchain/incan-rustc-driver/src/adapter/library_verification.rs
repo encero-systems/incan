@@ -65,11 +65,24 @@ pub(super) fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result
 /// Keep computed storage and its accessors in declaration order; rustc retains their ordinary MIR providers.
 pub(super) fn native_static_items(plan: &Plan, sources: &Sources<'_>) -> Result<Vec<Box<ast::Item>>, PlanError> {
     let mut items = Vec::new();
+    let static_exports = plan
+        .exports
+        .iter()
+        .filter_map(|export| {
+            export
+                .name
+                .starts_with(incan_semantics_core::body_ir::LINKED_STATIC_ACCESSOR_PREFIX)
+                .then(|| export.path.strip_prefix("crate::"))
+                .flatten()
+        })
+        .collect();
     for cell in &plan.statics {
         let span = sources.span(&cell.span)?;
         items.extend(crate::statics::items(cell, span));
+        items.extend(crate::statics::callback_items(cell, &static_exports, span));
         items.extend(crate::statics::method_items(plan, cell, span)?);
     }
+    items.extend(crate::statics::linked_method_items(plan, sources.span(&plan.span)?)?);
     Ok(items)
 }
 

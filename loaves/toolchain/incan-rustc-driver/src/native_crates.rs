@@ -17,25 +17,33 @@ use rustc_hir::def_id::{CrateNum, DefId, LocalDefId};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
 
-/// Load the explicit crate aliases of retained native constants even when their value types name no native owner.
-/// Body IR materializes each constant read into a Use assignment before other operations consume that temporary.
-fn constant_crate_roots(plan: &Plan) -> impl Iterator<Item = &str> {
+/// Load the explicit aliases named directly by a block's retained constants and linked guarded calls.
+fn body_crate_roots(plan: &Plan) -> impl Iterator<Item = &str> {
     plan.functions
         .iter()
         .flat_map(|function| &function.blocks)
-        .flat_map(|block| &block.statements)
-        .filter_map(|statement| {
-            let StatementKind::Assign(_, value) = &statement.kind else {
-                return None;
+        .flat_map(|block| {
+            let constants = block.statements.iter().filter_map(|statement| {
+                let StatementKind::Assign(_, value) = &statement.kind else {
+                    return None;
+                };
+                let RvalueKind::Use(Operand {
+                    kind: OperandKind::Literal(Constant::RustItem(path, _)),
+                    ..
+                }) = &value.kind
+                else {
+                    return None;
+                };
+                callee_root(path)
+            });
+            let guarded = match &block.terminator.kind {
+                crate::plan::TerminatorKind::Call(callee, ..) => match &callee.kind {
+                    CalleeKind::LinkedStaticMethod(path, _) => callee_root(path),
+                    _ => None,
+                },
+                _ => None,
             };
-            let RvalueKind::Use(Operand {
-                kind: OperandKind::Literal(Constant::RustItem(path, _)),
-                ..
-            }) = &value.kind
-            else {
-                return None;
-            };
-            callee_root(path)
+            constants.chain(guarded)
         })
 }
 
@@ -54,7 +62,7 @@ pub(crate) fn native_roots(plan: &Plan) -> BTreeSet<&str> {
                 .filter(|root| !root.is_empty()),
         )
         .collect();
-    roots.extend(constant_crate_roots(plan));
+    roots.extend(body_crate_roots(plan));
     if plan.functions.iter().any(|function| {
         function.locals.iter().any(|local| {
             matches!(
