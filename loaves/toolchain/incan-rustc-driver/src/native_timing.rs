@@ -97,6 +97,8 @@ impl Timing {
         if self.0.is_some() {
             config.opts.unstable_opts.time_passes = true;
             config.opts.unstable_opts.time_passes_format = rustc_data_structures::profiling::TimePassesFormat::Json;
+            // An incremental session also reports how many codegen units it reused; the option is untracked.
+            config.opts.unstable_opts.incremental_info = true;
         }
     }
 
