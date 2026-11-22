@@ -314,6 +314,7 @@ pub def execute(
     mut preflight: BorrowedMut[ClientStoreAdmission],
     unit_options: str = "",
     output: str = "",
+    from_directory: bool = false,
 ) -> Result[i32, str]:
     """
     Build or run one file through the selected engine, without a legacy fallback.
@@ -328,8 +329,12 @@ pub def execute(
     mut view_profile = profile
     if command == "check":
         view_profile = profile + "+check"
+    # The directory route has checked the Loaf and its entry. Discard only self-directory components in its view key.
+    mut view_source = absolute.0
+    if from_directory and "/./" in view_source:
+        view_source = "/".join([part for part in view_source.split("/") if part != "."])
     bound = selected_home_view()?
-    view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"), unit_options)?
+    view = project_view_name(view_scope(bound)?, view_source, view_profile, get_optional("OVEN_BODY_REFUSALS"), unit_options)?
     return execute_in(
         command, absolute, profile, arguments, argv0, format, proofs, view, bound, preflight, unit_options, output,
     )
