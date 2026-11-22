@@ -18,6 +18,22 @@ use rustc_span::{Span, Symbol};
 use std::collections::BTreeSet;
 use thin_vec::{ThinVec, thin_vec};
 
+/// The unit operand of a call `incan_lowering::is_unit_keyed_runtime_call` names: this crate's stable id, in place of
+/// the plan's 0.
+///
+/// The runtime keeps one cell table per carrier for the whole process, and every unit (a Loaf, or the program)
+/// numbers its statics from 0, so a cell is keyed by its unit and its slot; rustc gives every crate of one build its
+/// own stable id.
+pub(crate) fn unit_operand<'tcx>(tcx: TyCtxt<'tcx>, span: Span) -> rustc_middle::mir::Operand<'tcx> {
+    let unit = tcx.stable_crate_id(rustc_hir::def_id::LOCAL_CRATE).as_u64();
+    rustc_middle::mir::Operand::const_from_scalar(
+        tcx,
+        tcx.types.u64,
+        rustc_middle::mir::interpret::Scalar::from_u64(unit),
+        span,
+    )
+}
+
 /// Name the guarded accessor for one exact storage slot and selected planned method.
 pub(crate) fn method_name(slot: i64, method: &str) -> String {
     format!("__incan_static_method_{slot}_{method}")
