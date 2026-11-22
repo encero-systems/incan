@@ -351,3 +351,31 @@ impl Drop for Capture {
         self.route(None);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{incremental_statistics, split_captured};
+    use std::ffi::OsStr;
+
+    /// A timed build reports rustc's dependency-graph statistics only when the trace setting names them; an ordinary
+    /// timing request leaves rustc's incremental reporting off.
+    #[test]
+    fn incremental_statistics_need_their_own_trace_setting() {
+        assert!(!incremental_statistics(None));
+        assert!(!incremental_statistics(Some(OsStr::new("1"))));
+        assert!(!incremental_statistics(Some(OsStr::new("heap"))));
+        assert!(incremental_statistics(Some(OsStr::new("incremental"))));
+    }
+
+    /// rustc's own phase and incremental lines go to the trace, and only the program's other lines reach stderr.
+    #[test]
+    fn rustc_s_own_lines_never_reach_stderr() {
+        let captured = b"time: {\"pass\":\"link\"}\n[incremental] DepGraph Statistics\n[incremental]\nwarning: kept\n";
+        let (records, console) = split_captured(captured);
+        assert_eq!(console, b"warning: kept\n");
+        assert_eq!(
+            records,
+            b"time: {\"pass\":\"link\"}\n[incremental] DepGraph Statistics\n[incremental]\n"
+        );
+    }
+}
