@@ -154,6 +154,8 @@ pub model Key:
     # The identity over every authored byte, comments included, for outcomes that show source text or byte offsets:
     # replayed check reports and refusals, and codegraph exports. Empty when it equals `digest`.
     pub replay: str = ""
+    # Project-relative modules of an exact source-only program graph. This is request evidence outside its identity.
+    pub source_modules: Option[list[str]] = None
 
     pub def replayed(self) -> str:
         """The identity of an outcome that renders source: the raw identity, or `digest` when they agree."""
@@ -201,7 +203,26 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     mut key = reconciled_key(unit, selected_compiler, described, project, graph)?
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
+    key.source_modules = collected_project_modules(unit, graph)
     return Ok(key)
+
+
+def collected_project_modules(unit: UnitDescription, graph: Option[SourceGraph]) -> Option[list[str]]:
+    """Name this key's source-only reach when its paths match the compiler's project-relative record spelling."""
+    if unit.kind != "program" or unit.project_library is not None:
+        return None
+    collected = match graph:
+        Some(value) => value
+        None => return None
+    root = unit.project_root + "/"
+    if unit.source not in collected.read:
+        return None
+    mut modules: list[str] = []
+    for path in collected.read:
+        if not path.startswith(root):
+            return None
+        modules.append(path[len(root):])
+    return Some(unique(modules))
 
 
 pub def collect_program_reach(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[SourceGraph], str]:
