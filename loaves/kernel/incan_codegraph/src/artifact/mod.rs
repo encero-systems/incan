@@ -268,11 +268,13 @@ fn crumb_model(kind: &str) -> Option<(&'static [u8], &'static str)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{GraphArtifact, crumb_model, encode_graph};
+    use super::{GraphArtifact, GraphArtifactError, crumb_model, encode_graph};
     use crate::{
         CODEGRAPH_SCHEMA_VERSION, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphLanguage, CodegraphMode,
         CodegraphProvenance, CodegraphRecord,
     };
+    use serde_json::{Value, json};
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     #[test]
@@ -344,6 +346,210 @@ mod tests {
             super::paths::restore(value, Path::new("."));
         }
         assert_eq!(graph.records(Path::new("."), "")?, expected);
+        Ok(())
+    }
+
+    /// The projection the origins read made before the index existed, kept as the oracle: decode every reference,
+    /// call and import record and collect the package origins on its own and its bindings' identities.
+    fn decoded_origins(graph: &GraphArtifact) -> Result<Vec<Value>, GraphArtifactError> {
+        let mut origins = BTreeMap::new();
+        for entry in &graph.index.entries {
+            if !matches!(entry.kind.as_str(), "reference" | "call" | "import") {
+                continue;
+            }
+            let record = graph.value(entry)?;
+            let bindings = record.get("bindings").and_then(Value::as_array);
+            for value in std::iter::once(&record).chain(bindings.into_iter().flatten()) {
+                for field in ["canonical_identity", "stable_identity"] {
+                    if let Some(origin) = value.get(field).and_then(|value| value.get("origin"))
+                        && origin.get("kind").and_then(Value::as_str) == Some("package")
+                    {
+                        origins.insert(serde_json::to_string(origin)?, origin.clone());
+                    }
+                }
+            }
+        }
+        Ok(origins.into_values().collect())
+    }
+
+    fn package(library: &str, module: &str) -> Value {
+        json!({"kind": "package", "library": library, "module_path": [module]})
+    }
+
+    fn canonical(origin: Value, name: &str) -> Value {
+        json!({
+            "namespace": "value",
+            "origin": origin,
+            "declaration_name": name,
+            "declaration_kind": "function",
+            "scope_discriminant": null,
+            "declaration_span": {"start": 0, "end": 1}
+        })
+    }
+
+    fn stable(origin: Value, name: &str) -> Value {
+        json!({
+            "namespace": "value",
+            "origin": origin,
+            "declaration_name": name,
+            "declaration_kind": "function",
+            "location": {"kind": "module_level"}
+        })
+    }
+
+    /// A header, then a reference, a call and an import whose identities and bindings name package, module and Rust
+    /// origins, one package twice, and an export naming a package no reference, call or import names.
+    fn origin_records() -> Result<Vec<CodegraphRecord>, serde_json::Error> {
+        let rust_crate = json!({"kind": "rust_crate", "path": ["serde_json"]});
+        let values = [
+            json!({
+                "record": "header",
+                "schema_version": CODEGRAPH_SCHEMA_VERSION,
+                "compiler_version": "test",
+                "mode": "strict",
+                "root_path": "src/main.incn",
+                "languages": ["incan"],
+                "package": null,
+                "semantic_contexts": [],
+                "degraded": false
+            }),
+            json!({
+                "record": "reference",
+                "id": "reference:1",
+                "language": "incan",
+                "module_id": "module:main",
+                "name": "first",
+                "kind": "identifier",
+                "canonical_identity": canonical(package("lib_a", "m"), "first"),
+                "stable_identity": stable(package("lib_b", "n"), "first"),
+                "provenance": "checked",
+                "degraded": false
+            }),
+            json!({
+                "record": "call",
+                "id": "call:1",
+                "language": "incan",
+                "module_id": "module:main",
+                "callee": "second",
+                "kind": "function",
+                "argument_count": 0,
+                "type_argument_count": 0,
+                "canonical_identity": canonical(json!({"kind": "module", "path": ["main"]}), "second"),
+                "stable_identity": stable(package("lib_c", "p"), "second"),
+                "provenance": "checked",
+                "degraded": false
+            }),
+            json!({
+                "record": "import",
+                "id": "import:1",
+                "language": "incan",
+                "module_id": "module:main",
+                "kind": "from",
+                "path": "lib_a.m",
+                "items": ["first", "native", "third"],
+                "bindings": [
+                    {"local_name": "first", "canonical_identity": canonical(package("lib_a", "m"), "first")},
+                    {"local_name": "native", "canonical_identity": canonical(rust_crate, "native")},
+                    {"local_name": "third", "stable_identity": stable(package("lib_d", "q"), "third")}
+                ],
+                "visibility": "private",
+                "provenance": "checked",
+                "degraded": false
+            }),
+            json!({
+                "record": "export",
+                "id": "export:1",
+                "language": "incan",
+                "module_id": "module:main",
+                "name": "exported",
+                "kind": "declaration",
+                "source_id": "call:1",
+                "canonical_identity": canonical(package("lib_z", "z"), "exported"),
+                "provenance": "checked",
+                "degraded": false
+            }),
+        ];
+        values.into_iter().map(serde_json::from_value).collect()
+    }
+
+    #[test]
+    fn the_origins_index_holds_what_a_full_decode_of_the_records_collects() -> Result<(), Box<dyn std::error::Error>> {
+        let graph = GraphArtifact::decode(&encode_graph(&origin_records()?, Path::new("."))?)?;
+        let expected = vec![
+            package("lib_a", "m"),
+            package("lib_b", "n"),
+            package("lib_c", "p"),
+            package("lib_d", "q"),
+        ];
+        assert_eq!(decoded_origins(&graph)?, expected);
+        assert_eq!(graph.origins()?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn the_origins_read_decodes_no_reference_call_or_import_record() -> Result<(), Box<dyn std::error::Error>> {
+        let mut encoded = encode_graph(&origin_records()?, Path::new("."))?;
+        let graph = GraphArtifact::decode(&encoded)?;
+        let reference = graph
+            .index
+            .entries
+            .iter()
+            .find(|entry| entry.kind == "reference")
+            .ok_or("the graph has no reference record")?;
+        // Damage the reference row's Crumb magic: decoding that record now fails, while its range stays valid.
+        let damaged = encoded.len() - graph.payload.len() + usize::try_from(reference.offset)?;
+        encoded[damaged] ^= 0xff;
+        let graph = GraphArtifact::decode(&encoded)?;
+        assert!(graph.records(Path::new("."), "reference").is_err());
+        assert_eq!(graph.origins()?.len(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn a_graph_without_the_origins_index_is_refused_with_its_reason() -> Result<(), Box<dyn std::error::Error>> {
+        let mut encoded = encode_graph(&origin_records()?, Path::new("."))?;
+        encoded[..4].copy_from_slice(&2u32.to_le_bytes());
+        let Err(refusal) = GraphArtifact::decode(&encoded) else {
+            return Err("a version 2 graph was read".into());
+        };
+        assert!(matches!(refusal, GraphArtifactError::Version(2)));
+        let reason = refusal.to_string();
+        assert!(reason.contains("version 2"), "{reason}");
+        assert!(reason.contains("origins index"), "{reason}");
+        assert!(reason.contains("rebuild"), "{reason}");
+        Ok(())
+    }
+
+    /// The standard primitives graphs the selected installation ships, every profile it ships one for.
+    fn installed_primitives_graphs(home: &Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+        let mut graphs = Vec::new();
+        for toolchain in std::fs::read_dir(home.join("toolchains"))? {
+            let loaf = toolchain?.path().join("loaves/incan_stdlib_primitives");
+            for profile in ["release", "debug"] {
+                let graph = loaf.join(profile).join("incan_stdlib_primitives.incngraph");
+                if graph.is_file() {
+                    graphs.push(graph);
+                }
+            }
+        }
+        Ok(graphs)
+    }
+
+    /// The largest graph a release ships: its index must hold exactly what decoding all of its records collects. Run
+    /// outside an installation, with no `INCAN_HOME`, there is no shipped graph to compare.
+    #[test]
+    fn the_installed_primitives_graph_indexes_the_origins_its_records_name() -> Result<(), Box<dyn std::error::Error>> {
+        let Ok(home) = std::env::var("INCAN_HOME") else {
+            return Ok(());
+        };
+        let graphs = installed_primitives_graphs(Path::new(&home))?;
+        assert!(!graphs.is_empty(), "{home} ships no standard primitives graph");
+        for path in graphs {
+            let graph = GraphArtifact::decode(&std::fs::read(&path)?)?;
+            let indexed = graph.origins()?;
+            assert!(!indexed.is_empty(), "{} names no package origin", path.display());
+            assert_eq!(indexed, decoded_origins(&graph)?, "{}", path.display());
+        }
         Ok(())
     }
 }
