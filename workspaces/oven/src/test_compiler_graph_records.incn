@@ -3,7 +3,7 @@
 from compiler_graph_record_fixtures import family_key, key, request, required
 import compiler_source_projection
 from pub::internal_models.source_value_records import encode_source_text, read_documentation
-from pub::incan_platform.store import Snapshot, begin, commit, delete, finish_frame_reads, get, keys, lookup_binding, measure_frame_reads, put, read_counts, BindingLookup
+from pub::incan_platform.store import Snapshot, begin, commit, delete, finish_frame_reads, get, keys, locate_value, lookup_binding, measure_frame_reads, put, read_counts, BindingLookup
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::internal_models.records import (
@@ -36,6 +36,7 @@ from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.namespace_references import decode_namespace_references, namespace_header_reference_filename, namespace_reference_filename
 from compiler_graph_records import (
     EditCutoff,
+    authenticated_bytes,
     OutputSlots,
     PublishedEvaluation,
     edit_cutoff,
@@ -205,6 +206,53 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
     assert count_prefix(selected, "incan.engine.edge-out/3\t") == 4
     assert count_prefix(selected, "incan.engine.edge-in/3\t") == 4
     assert published.edge_count == 4
+    return Ok(None)
+
+
+pub def test_a_selected_value_is_hashed_once_and_a_damaged_frame_is_refused() -> Result[None, str]:
+    """
+    Selecting an evaluation hashes its value and its receipt once each, where the store checks their frames against
+    the index: publication bound the evaluation's digests to those frames, so selection does not hash them again. A
+    damaged frame is still refused.
+    """
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    receipt = witnessed_receipt()
+    published = publish_evaluation(
+        before,
+        "claim",
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3),
+        b"checked local",
+        receipt,
+    )?
+    output = receipt.preparation.output
+    profile = receipt.scope.profile
+    # An unchanged slot under an edit's cutoff: its witnesses are valid by the snapshot and are not read back.
+    unchanged = EditCutoff(active=true)
+    hashed = authenticated_bytes()
+    checked = read_counts().records
+    match reusable_evaluation(published.snapshot, output, profile, unchanged)?:
+        Some(found) => assert found.value == b"checked local"
+        None => return Err("the published evaluation was not selected")
+    assert authenticated_bytes() == hashed, "selection hashed a value or receipt its frame check had authenticated"
+    assert read_counts().records > checked
+    # Damage the value's frame where it is stored: the store refuses it, so no damaged value is selected.
+    location = match locate_value(published.snapshot, published.value_key).map_err((error) => error.message())?:
+        Some(found) => found
+        None => return Err("the published value has no frame")
+    segment = published.snapshot.root.joinpath("segments").joinpath(f"{location.segment}.seg")
+    stored = segment.store_read_bytes().map_err((error) => error.message())?
+    last = location.offset + location.length - 1
+    mut flipped = b"\x00"
+    if stored[last:last + 1] == b"\x00":
+        flipped = b"\x01"
+    damaged = BytesIO(b"")
+    damaged.write_bytes(stored[:last]).map_err((error) => error.message())?
+    damaged.write_bytes(flipped).map_err((error) => error.message())?
+    damaged.write_bytes(stored[last + 1:]).map_err((error) => error.message())?
+    segment.store_write_bytes(damaged.getvalue()).map_err((error) => error.message())?
+    match reusable_evaluation(published.snapshot, output, profile, unchanged):
+        Ok(_) => return Err("a damaged value frame was selected")
+        Err(reason) => assert "digest" in reason or "integrity" in reason, reason
     return Ok(None)
 
 
