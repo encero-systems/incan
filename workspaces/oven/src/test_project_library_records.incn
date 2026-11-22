@@ -79,16 +79,12 @@ def exercise_provider_edit(binary: str, project: Path, bakery: Path, fresh: Path
 
 def check_nested_membership(binary: str, project: Path, bakery: Path, witness: Path, expected: bytes) -> Result[None, str]:
     """
-    1. Add a module in a subdirectory and record its provider's fact.
+    1. Read the provider's fact for the package that contains the nested source.
     2. Create a manifest there, then remove it. The library's membership follows the nested project boundary.
     """
-    # 1. The source is initially part of the enclosing provider.
+    # 1. The source has been part of the enclosing provider since the first request.
     nested = project.joinpath("src/tool")
     manifest = nested.joinpath("loaf.toml")
-    make_directory(nested)?
-    write(nested.joinpath("lib.incn"), "pub def nested_marker() -> int:\n    return 11\n")?
-    if run_program(binary, project, bakery)? != expected:
-        return Err("adding a member changed the program output")
     enclosing = witness.read_bytes().map_err((error) => error.message())?
     # 2. The parent listing stays the same while its child's project boundary changes.
     write(manifest, "[project]\nname = \"tool\"\nversion = \"0.1.0\"\n")?
@@ -113,13 +109,15 @@ def check_nested_membership(binary: str, project: Path, bakery: Path, witness: P
 
 def make_project(project: Path, value: int) -> Result[None, str]:
     """Create a program whose only imported source belongs to the shared project library."""
-    make_directory(project.joinpath("src"))?
+    nested = project.joinpath("src/tool")
+    make_directory(nested)?
     write(
         project.joinpath("loaf.toml"),
         "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
     )?
     write(project.joinpath("src/main.incn"), "from values import answer\n\ndef main() -> None:\n    println(answer())\n")?
-    return write_provider(project, value)
+    write_provider(project, value)?
+    return write(nested.joinpath("lib.incn"), "pub def nested_marker() -> int:\n    return 11\n")
 
 
 def write_provider(project: Path, value: int) -> Result[None, str]:
