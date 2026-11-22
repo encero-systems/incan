@@ -1003,7 +1003,7 @@ mod tests {
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
     fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
-        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n";
+        let source = "@requires(quantity: int)\npub trait Counted:\n    def count(self) -> int:\n        return self.quantity\n\npub model Order with Counted:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let module_path = vec!["domain".to_string()];
@@ -1024,7 +1024,7 @@ mod tests {
         let reopened_scope = restore_executable_scope_value(executable_scope_value(&retained.nominal_scope))?;
         assert_eq!(reopened_scope, retained.nominal_scope);
         let providers = crate::body_ir::ProviderOperationCatalog::new();
-        let mut expected = crate::body_ir::build_body_ir_module(
+        let expected = crate::body_ir::build_body_ir_module(
             &program,
             &module_path,
             checker.type_info(),
@@ -1036,29 +1036,7 @@ mod tests {
                 include_inline_tests: false,
             },
         );
-        let bytes = internal_models::encode_executable_module(&to_atom(executable_module_value(&expected)))?;
-        assert!(bytes.starts_with(b"CRMB"));
-        let reopened = restore_executable_module_value(to_cell(internal_models::decode_executable_module(&bytes)?)?)?;
-        expected.published_callables.clear();
-        assert_eq!(reopened, expected);
-        assert_eq!(
-            internal_models::encode_executable_module(&to_atom(executable_module_value(&reopened)))?,
-            bytes
-        );
-        assert!(internal_models::decode_executable_body(&bytes).is_err());
-        let body = expected
-            .bodies
-            .first()
-            .ok_or("missing checked body in executable codec fixture")?;
-        let owner = internal_models::encode_executable_body(&to_atom(executable_body_value(body)))?;
-        assert_eq!(
-            restore_executable_body_value(to_cell(internal_models::decode_executable_body(&owner)?)?)?,
-            *body
-        );
-        assert!(internal_models::decode_executable_module(&owner).is_err());
-        let package = incan_semantics_core::executable_representation::encode_module(&expected)
-            .map_err(|error| error.to_string())?;
-        assert!(internal_models::decode_executable_module(&package).is_err());
+        wire::verify_executable_codec(expected)?;
         let installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed

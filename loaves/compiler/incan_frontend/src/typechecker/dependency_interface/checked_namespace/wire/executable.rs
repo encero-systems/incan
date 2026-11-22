@@ -124,3 +124,45 @@ pub fn executable_module_value(module: &BodyIrModule) -> NamespaceCell {
 pub fn restore_executable_module_value(value: NamespaceCell) -> Result<BodyIrModule, String> {
     BodyIrModule::restore(value)
 }
+
+/// Check the graph-only body and module round trips against actual checked facts and portable admission.
+#[cfg(test)]
+pub(crate) fn verify_executable_codec(mut expected: BodyIrModule) -> Result<(), String> {
+    use super::{to_atom, to_cell};
+    let adoption = expected
+        .nominal_declarations
+        .iter()
+        .find_map(|nominal| nominal.trait_adoptions.first())
+        .ok_or("missing checked adoption")?;
+    assert_eq!(adoption.fields.len(), 1);
+    let bytes = internal_models::encode_executable_module(&to_atom(executable_module_value(&expected)))?;
+    assert!(bytes.starts_with(b"CRMB"));
+    let reopened = restore_executable_module_value(to_cell(internal_models::decode_executable_module(&bytes)?)?)?;
+    let reopened_adoption = reopened
+        .nominal_declarations
+        .iter()
+        .find_map(|nominal| nominal.trait_adoptions.first())
+        .ok_or("missing restored adoption")?;
+    assert_eq!(reopened_adoption.fields, adoption.fields);
+    expected.published_callables.clear();
+    assert_eq!(reopened, expected);
+    assert_eq!(
+        internal_models::encode_executable_module(&to_atom(executable_module_value(&reopened)))?,
+        bytes
+    );
+    assert!(internal_models::decode_executable_body(&bytes).is_err());
+    let body = expected
+        .bodies
+        .first()
+        .ok_or("missing checked body in executable codec fixture")?;
+    let owner = internal_models::encode_executable_body(&to_atom(executable_body_value(body)))?;
+    assert_eq!(
+        restore_executable_body_value(to_cell(internal_models::decode_executable_body(&owner)?)?)?,
+        *body
+    );
+    assert!(internal_models::decode_executable_module(&owner).is_err());
+    let package =
+        incan_semantics_core::executable_representation::encode_module(&expected).map_err(|error| error.to_string())?;
+    assert!(internal_models::decode_executable_module(&package).is_err());
+    Ok(())
+}
