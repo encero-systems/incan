@@ -1,0 +1,9 @@
+[project]
+name = "refused_dependency_defaults_reading_its_statics"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+helpers = { path = "deps/helpers" }
