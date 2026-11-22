@@ -596,8 +596,9 @@ fn an_aggregate_only_runtime_refuses_disagreeing_facade_owners() -> Result<(), B
     Ok(())
 }
 
+/// An installed Loaf can serve either an authored signature or an admitted root layout in one record read.
 #[test]
-fn a_consumer_reads_one_declarations_signature_record_alone() -> Result<(), Box<dyn std::error::Error>> {
+fn a_consumer_reads_one_declaration_or_root_export_record_alone() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     // One copy of the checked API module, so `prices::price` names one declaration.
     let mut manifest = surfaced_library()?;
@@ -618,6 +619,15 @@ fn a_consumer_reads_one_declarations_signature_record_alone() -> Result<(), Box<
         records, 1,
         "the consumer read {records} records, {bytes} bytes; it needs the signature record alone"
     );
+    let after_signature = set.reads();
+    let (models, _) =
+        read_declaration_in(&set, &dir, "prices", "model", "Money")?.ok_or("the root model record is installed")?;
+    let [model] = models.as_slice() else {
+        return Err("expected one root model named Money".into());
+    };
+    assert_eq!(model["name"], "Money");
+    assert_eq!(model["fields"][0]["name"], "cents");
+    assert_eq!(set.reads().records - after_signature.records, 1);
     Ok(())
 }
 
