@@ -6,7 +6,8 @@ use super::{ExecutableDeclaration, ExecutableRepresentationError, malformed};
 
 /// Zero cannot start an existing declaration trailer, which encodes a nonempty trait-field binding list.
 const HEADER: &[u8] = &[0, 1];
-const DIGEST_BYTES: usize = 64;
+const DIGEST_PREFIX: &[u8] = b"sha256:";
+const DIGEST_BYTES: usize = DIGEST_PREFIX.len() + 64;
 
 /// Bytes contributed to a declaration range by its layout witness.
 pub const LINKED_LAYOUT_WITNESS_BYTES: usize = HEADER.len() + 2 * DIGEST_BYTES;
@@ -56,10 +57,11 @@ pub(super) fn restore<'a>(
     Ok(rest)
 }
 
-/// Read exactly one canonical lowercase hexadecimal SHA-256 digest.
+/// Read the semantic digest's canonical prefixed SHA-256 spelling.
 fn checked_digest(bytes: &[u8]) -> Result<&str, ExecutableRepresentationError> {
     if bytes.len() != DIGEST_BYTES
-        || !bytes
+        || !bytes.starts_with(DIGEST_PREFIX)
+        || !bytes[DIGEST_PREFIX.len()..]
             .iter()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
