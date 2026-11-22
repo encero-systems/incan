@@ -35,10 +35,10 @@ use incan_semantics_core::body_ir::{
     PlaceOperand, PlaceRoot, PrimitiveTraitAdapter, ProviderActivation, ProviderActivationState,
     ProviderOperationInput, ProviderOperationPlan, RaceArm, ReflectionOperation, ResultVariant, ResultVariantKind,
     ReturnedView, Rvalue, ScopeId, ScopeInfo, SpreadElement, SpreadKind, Statement, StatementKind, StaticDeclaration,
-    StaticInitializer, StringConversionContract, StringConversionSelection, TraitAdoption, TraitImplementation,
-    TraitTypeArgument, TryErrorRouting, TypeAliasDeclaration, TypeMetadataOperation, TypeMetadataTarget,
-    TypedNumericConstant, UnOp, UnsafeAcknowledgment, ValidatedConstructor, ValueEnumBacking, ValueEnumDeclaration,
-    ValueEnumVariantDeclaration, ValueEnumVariantTarget,
+    StaticInitializer, StringConversionContract, StringConversionSelection, TraitAdoption, TraitFieldImplementation,
+    TraitImplementation, TraitTypeArgument, TryErrorRouting, TypeAliasDeclaration, TypeMetadataOperation,
+    TypeMetadataTarget, TypedNumericConstant, UnOp, UnsafeAcknowledgment, ValidatedConstructor, ValueEnumBacking,
+    ValueEnumDeclaration, ValueEnumVariantDeclaration, ValueEnumVariantTarget,
 };
 use incan_semantics_core::record_identity::RecordPackageIdentity;
 use incan_semantics_core::{AbiV0RuntimeRequirement, CompilerNodeKind};
@@ -122,7 +122,14 @@ pub fn executable_module_value(module: &BodyIrModule) -> NamespaceCell {
 
 /// Restore an admitted checked module with fresh defaults for invocation-only state.
 pub fn restore_executable_module_value(value: NamespaceCell) -> Result<BodyIrModule, String> {
-    BodyIrModule::restore(value)
+    let module = BodyIrModule::restore(value)?;
+    for nominal in &module.nominal_declarations {
+        for adoption in &nominal.trait_adoptions {
+            incan_semantics_core::executable_representation::validate_required_trait_fields(nominal, &adoption.fields)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(module)
 }
 
 /// Check the graph-only body and module round trips against actual checked facts and portable admission.
@@ -164,5 +171,25 @@ pub(crate) fn verify_executable_codec(mut expected: BodyIrModule) -> Result<(), 
     let package =
         incan_semantics_core::executable_representation::encode_module(&expected).map_err(|error| error.to_string())?;
     assert!(internal_models::decode_executable_module(&package).is_err());
+    let portable =
+        incan_semantics_core::executable_representation::decode_module(&package).map_err(|error| error.to_string())?;
+    assert_eq!(portable, reopened);
+    let mut invalid = reopened;
+    let invalid_field = invalid
+        .nominal_declarations
+        .iter_mut()
+        .flat_map(|nominal| &mut nominal.trait_adoptions)
+        .find_map(|adoption| adoption.fields.first_mut())
+        .ok_or("missing required-field witness to damage")?;
+    invalid_field.implementation.declaration_name = "unrelated".into();
+    let rejected = internal_models::encode_executable_module(&to_atom(executable_module_value(&invalid)))?;
+    let decoded = to_cell(internal_models::decode_executable_module(&rejected)?)?;
+    assert_eq!(
+        restore_executable_module_value(decoded).map(|_| ()),
+        Err(
+            "executable representation could not be decoded: required-field witness differs from the checked layout"
+                .into()
+        )
+    );
     Ok(())
 }

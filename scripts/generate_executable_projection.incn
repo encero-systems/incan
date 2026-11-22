@@ -17,7 +17,6 @@ def omitted_fields(name: str) -> str:
         "EnumDeclaration" => return "linked_layout_witness"
         "LoafCallable" => return "declaration_frame"
         "NominalDeclaration" => return "linked_layout_witness, owned_callable_fields"
-        "TraitAdoption" => return "fields"
         _ => return ""
 
 

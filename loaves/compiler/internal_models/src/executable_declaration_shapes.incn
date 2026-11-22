@@ -34,6 +34,7 @@ pub def descriptions() -> list[Description]:
         describe_string_conversion_contract(),
         describe_string_conversion_selection(),
         describe_trait_adoption(),
+        describe_trait_field_implementation(),
         describe_trait_implementation(),
         describe_trait_type_argument(),
         describe_type_alias_declaration(),
@@ -279,7 +280,14 @@ def describe_trait_adoption() -> Description:
         ModelField(identity=b"\x24\xc0\x71\x5f\x72\x4c", name="trait_identity", storage="record@28cdd429f7ec", canonical=true),
         ModelField(identity=b"\xb1\x92\x01\x7d\xa4\x7f", name="arguments", storage="list<enum@b0e0f36c4c22>", canonical=true),
         ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="option<list<record@28cdd429f7ec>>", canonical=true),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<record@da72b155784a>", canonical=true),
         ModelField(identity=b"\x0f\xd9\x7b\xe2\x0e\xf1", name="primitive_adapter", storage="option<record@641b217247d8>", canonical=true),
+    ])
+
+def describe_trait_field_implementation() -> Description:
+    return model_description(b"\xda\x72\xb1\x55\x78\x4a\x00", "incan.graph.executable/1/TraitFieldImplementation", [
+        ModelField(identity=b"\xf8\xdc\xb7\xa1\x3b\xf4", name="requirement", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xda\x31\x01\x2c\x40\x33", name="implementation", storage="record@28cdd429f7ec", canonical=true),
     ])
 
 def describe_trait_implementation() -> Description:

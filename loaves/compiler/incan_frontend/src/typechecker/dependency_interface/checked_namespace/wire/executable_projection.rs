@@ -1065,12 +1065,18 @@ sum! { StringMethodId {
     Slice = 0x87bd78650264,
 } }
 
-model_with_omissions! { TraitAdoption {
+model! { TraitAdoption {
     trait_identity: 0x24c0715f724c,
     arguments: 0xb192017da47f,
     methods: 0x3f3867313a9d,
+    fields: 0xbfe5d697162d,
     primitive_adapter: 0x0fd97be20ef1,
-} default [fields] }
+} }
+
+model! { TraitFieldImplementation {
+    requirement: 0xf8dcb7a13bf4,
+    implementation: 0xda31012c4033,
+} }
 
 model! { TraitImplementation {
     owner: 0x4c1029697ee3,
