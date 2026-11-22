@@ -873,13 +873,18 @@ def start_step(step: Step) -> Result[Child, str]:
 
 pub def release_process_tree(rows: list[ProcessResource], root: int) -> list[int]:
     """Return one release root and every currently observed descendant, independent of process-group boundaries."""
-    mut members: set[int] = {root}
+    return release_descendant_pids([(row.pid, row.parent) for row in rows], [root])
+
+
+pub def release_descendant_pids(parents: list[tuple[int, int]], roots: list[int]) -> list[int]:
+    """Follow the parent relations in one process sample from the supplied owned roots."""
+    mut members = set(roots)
     mut changed = true
     while changed:
         changed = false
-        for row in rows:
-            if row.parent in members and row.pid not in members:
-                members.add(row.pid)
+        for pid, parent in parents:
+            if parent in members and pid not in members:
+                members.add(pid)
                 changed = true
     return sorted([pid for pid in members])
 
