@@ -13,7 +13,8 @@ from engine_epoch_records import read_epoch, read_head
 from engine_messages import BindingOutcome, Complete, CompletionStatus, Message, Submit
 from engine_programs import program_handle, selected_program
 from engine_protocol_fixtures import await_exit, await_service, detail, json_text_is, launch_service, release_service_result
-from engine_wire import joined, scalar
+from engine_replies import refusal_code
+from engine_wire import RefusalKind, joined, scalar
 from files import make_directory, read, write
 from scratch import scratch_directory
 from store_path_conversion import snapshot
@@ -79,11 +80,13 @@ def check_requests(mut channel: Channel, store: Path, trace: Path, source: Path)
     assert len(first_epoch.listings) == 0, "first durable capture used source membership listings"
     cold_requests = compiler_requests(trace)?
     assert cold_requests == (1, 1), f"expected one graph collection and one native request, found {cold_requests}"
+    println(f"cold capture: generation {before.generation} to {first.generation}, requests {cold_requests}")
     # 2. The same request must select the existing program.
     repeated_epoch, repeated = completed_request(channel, store, source, 2, b"cold\n")?
     assert repeated.digest == first.digest, "second identical request published a capture"
     assert repeated_epoch == first_epoch
     assert compiler_requests(trace)? == cold_requests, "second identical request activated the compiler"
+    println(f"identical repeat: generation {repeated.generation}, no driver requests")
     # 3. Changing bytes with their mtime restored must still change the reachable graph.
     edit_with_restored_mtime(helper, "pub def helper() -> int:\n    return 42\n")?
     edit_with_restored_mtime(source, "from nested.helper import helper\n\ndef main() -> None:\n    println(helper())\n")?
@@ -92,6 +95,7 @@ def check_requests(mut channel: Channel, store: Path, trace: Path, source: Path)
     assert edited_epoch.identity()? != first_epoch.identity()?
     graphs, native = compiler_requests(trace)?
     assert graphs > 1 and native == 2, "the changed import did not collect reach and activate the native compiler once"
+    println(f"restored-mtime import: generation {edited.generation}, total graph requests {graphs}, total native requests {native}")
     return Ok(None)
 
 
@@ -182,6 +186,8 @@ def compiler_requests(trace: Path) -> Result[tuple[int, int], str]:
                 graphs += 1
             elif key.startswith("--unit "):
                 units += 1
+            elif key.startswith("--"):
+                return Err(f"unexpected compiler request: {key}")
     return Ok((graphs, units))
 
 
@@ -219,6 +225,7 @@ def check_fault(binary: str, root: Path) -> Result[None, str]:
     after = snapshot(store, VIEW).map_err((error) => error.message())?
     assert after.digest == before.digest and after.generation == before.generation
     assert len(keys_with_prefix(after, HEAD).map_err((error) => error.message())?) == 0
+    println(f"pre-pin refusal preserved generation {after.generation} and wrote no capture head")
     return Ok(None)
 
 
@@ -233,7 +240,8 @@ def refused_publication(mut channel: Channel, source: Path) -> Result[None, str]
         match frame.message:
             Message.Captured(_) => captured = true
             Message.Refused(value) =>
-                assert captured and "pin-acquired" in value.detail, value.detail
+                # The injected exit closes the private worker socket. The coordinator relays its typed short read.
+                assert captured and value.code == refusal_code(RefusalKind.ShortRead), value.detail
                 return Ok(None)
             Message.Complete(_) => return Err("interrupted publication completed")
             _ => pass
