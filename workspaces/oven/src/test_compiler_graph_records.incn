@@ -770,7 +770,16 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
 pub def test_source_projection_owns_declarations_in_feature_blocks() -> Result[None, str]:
     """A declaration in a top-level `when` block owns its source record; the condition and its imports stay in the header."""
-    source = "pub def report_value() -> int:\n    return 11\n\n\nwhen feature(\"json\"):\n    from pub::json_support import encode_report\n\n    pub def report_json(name: str) -> str:\n        return encode_report(name, report_value())\n\n    pub model Report:\n        name: str = \"report\"\n"
+    source = (
+        "pub def report_value() -> int:\n    return 11\n\n"
+        + "when feature(\"json\"):\n    from pub::json_support import encode_report\n\n"
+        + "    @traced(\n        \"use report_value (\"\n    )\n"
+        + "    pub def report_json(\n        name: str = \")\",\n"
+        + "        labels: list[tuple[str, str]] = [(\"left]\", \"right{\")],  # ]})\n"
+        + "    ) -> str:\n        return encode_report(name, report_value())\n\n"
+        + "    pub model Report:\n        name: str = \"report\"\n\n"
+        + "from std import env\n"
+    )
     projection = project_source("package", "src/lib.incn", source)?
     owner = compiler_source_projection.compiled_owner_source(
         projection,
@@ -778,15 +787,21 @@ pub def test_source_projection_owns_declarations_in_feature_blocks() -> Result[N
         "report_json",
         "function:pub::reporting::main::report_json",
     )?
-    assert owner.text.strip().startswith("pub def report_json"), owner.text
+    assert owner.text.strip().startswith("@traced("), owner.text
+    assert "pub def report_json(" in owner.text, owner.text
     assert "when feature(\"json\"):" in projection.header.text, projection.header.text
     assert "import encode_report" in projection.header.text, projection.header.text
+    assert "from std import env" in projection.header.text, projection.header.text
+    assert "return encode_report" not in projection.header.text, projection.header.text
     assert projected_owner(projection, "model:Report")?.text.strip().startswith("pub model Report")
     assert projected_owner(projection, "default:model:Report:name")?.text == "\"report\""
     edited_source = source.replace("encode_report(name, report_value())", "encode_report(name, 12)")
     edited = project_source("package", "src/lib.incn", edited_source)?
     assert edited.header.digest() == projection.header.digest()
-    assert projected_owner(edited, "report_json")?.digest() != owner.digest()
+    edited_owner = projected_owner(edited, "report_json")?
+    assert edited_owner.digest() != owner.digest()
+    assert signature_record(edited_owner).digest() == signature_record(owner).digest()
+    assert edited.declarations.digest() == projection.declarations.digest()
     assert projected_owner(edited, "report_value")?.digest() == projected_owner(projection, "report_value")?.digest()
     return Ok(None)
 

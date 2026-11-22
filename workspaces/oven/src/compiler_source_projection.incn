@@ -11,7 +11,7 @@ from std.fs import Path
 from pub::incan_platform.store import Snapshot, begin, commit, put
 from pub::internal_models import CompiledNamespaceValue
 from pub::internal_models.records import RecordKey, encode_record_key
-from semantic_text import comment_free, documentation_free, split_documentation
+from semantic_text import StatementContinuation, comment_free, documentation_free, split_documentation
 from jec import begin as begin_work, record as record_work, text_size
 from pub::incan_platform.trace import Operation
 
@@ -99,15 +99,20 @@ class SourceProjector:
         """
         Locate owner chunks while attaching consecutive decorators to their following declaration.
 
-        Top-level lines start chunks. Inside a top-level conditional block, such as `when feature("json"):`, the lines
-        at the block's member indentation start chunks too, so a feature-gated declaration owns its own record while
-        the condition and the block's imports stay in the module header.
+        Top-level statements start chunks. Inside a top-level conditional block, statements at the block's member
+        indentation start chunks too. A continued callable signature or decorator keeps its original chunk.
         """
         mut offset = 0
         mut decorated_start = -1
         mut conditional = false
         mut member_indent = -1
+        mut statement = StatementContinuation()
+        mut continuing = false
         for line in self.lines:
+            if continuing:
+                continuing = statement.after_line(line)
+                offset += len(line)
+                continue
             content = line.strip()
             indent = leading_whitespace(line)
             mut chunk = false
@@ -122,7 +127,10 @@ class SourceProjector:
                 if member_indent < 0:
                     member_indent = indent
                 chunk = indent == member_indent
-            if chunk and content.startswith("@"):
+            decorator = chunk and content.startswith("@")
+            if decorator or (chunk and callable_declaration(content)):
+                continuing = statement.after_line(line)
+            if decorator:
                 if decorated_start < 0:
                     decorated_start = offset
             elif chunk and not content.startswith("#"):
@@ -520,21 +528,18 @@ pub def publish_source_projection(
 def declaration_surface(source: str) -> str:
     """Project a callable header without its body; retain complete non-callable declarations conservatively."""
     mut callable = false
-    mut depth = 0
+    mut statement = StatementContinuation()
+    mut continuing = false
     mut surface = ""
     for line in source.split("\n"):
         content = line.strip()
-        if not callable and not content.startswith("@"):
+        if not callable and not continuing and not content.startswith("@"):
             callable = callable_declaration(content)
             if not callable:
                 return source
         surface += line + "\n"
-        for character in line:
-            if character in "([{":
-                depth += 1
-            elif character in ")]}":
-                depth -= 1
-        if callable and depth == 0 and content.endswith(":"):
+        continuing = statement.after_line(line)
+        if callable and not continuing and content.endswith(":"):
             return surface
     return source
 
