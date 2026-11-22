@@ -1,7 +1,7 @@
 """
 Run installed CI's Oven test step through an installed Oven, with isolated projects tested concurrently.
 
-Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]` from a checkout.
+Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--worker-projects N] [--memory GIB] [--keep-going]` from a checkout.
 OVEN is the installed command; EVIDENCE is the run's evidence directory. Without `--keep-going` the first failure stops
 the step; with it every planned invocation runs, so one run names every failure. The step runs, one source per
 invocation so a source can be excluded on its own:
@@ -14,7 +14,7 @@ it does not depend on scheduling. The passing ids must equal `workspaces/contrac
 
 At most N invocations run at once: `--jobs N`, else the core count. Each invocation also reserves memory, and one starts
 only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Oven
-sources share a pool of private worker projects under `.agents/state`, one per job. Each Oven source starts in whichever
+sources share a pool of private worker projects under `.agents/state`, by default one per job. Each Oven source starts in whichever
 worker project is free, so a long source never holds back the sources planned after it, and a worker project runs one
 source at a time, so concurrent generations never share mutable output. The Oven sources link one project library,
 which the first of them to start builds, so the Loaf tests run while it builds and the other Oven sources follow; the
@@ -44,6 +44,7 @@ from release_support import (
     ReleaseTermination,
     merge_release_terminations,
     observe_release_processes,
+    reclaim_paths,
     stop_child_process_tree,
 )
 
@@ -252,7 +253,8 @@ def run(options: Options) -> Result[str, str]:
     mut projects = options.jobs
     if options.worker_projects > 0:
         projects = min([projects, options.worker_projects])
-    planned = invocations(root, options.evidence, logs, projects, bakery)?
+    private_checkout = get_or("INCAN_RELEASE_TEST_CHECKOUT", "") == root.0
+    planned = invocations(root, options.evidence, logs, projects, bakery, private_checkout)?
     outcome = planned_outcome(options.oven, planned, options.jobs, options.memory, options.keep_going)?
     remove_worker_projects(planned)?
     log = options.evidence.joinpath("oven-tests.log")
@@ -268,6 +270,7 @@ pub def invocations(
     logs: Path,
     projects: int,
     builder_bakery: str = "",
+    private_checkout: bool = false,
 ) -> Result[list[Invocation], str]:
     """
     Plan fixed-order invocations; each Oven source may run in any of the caller's private worker projects.
@@ -298,14 +301,42 @@ pub def invocations(
         planned_source.environment = shared
         planned.append(planned_source)
     compiler = root.joinpath("loaves/compiler").0 + "/"
+    mut scratch_targets: Dict[str, str] = {}
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
         mut planned_loaf = invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source)
         planned_loaf.environment = shared
+        if private_checkout:
+            if loaf.0 not in scratch_targets:
+                scratch_targets[loaf.0] = private_loaf_target(loaf)?
+            planned_loaf.scratch_target = scratch_targets[loaf.0]
         planned.append(planned_loaf)
     return Ok(planned)
+
+
+def private_loaf_target(loaf: Path) -> Result[str, str]:
+    """Claim a fresh target in the release checkout only when this pool owns all of its test consumers."""
+    target = loaf.joinpath("target")
+    if target.exists() or target.is_symlink():
+        return Ok("")
+    if loaf.resolve().map_err((error) => error.message())?.0 != loaf.0:
+        return Ok("")
+    manifest = read(loaf.joinpath("loaf.toml"))?
+    if owns_rust_facet(manifest):
+        # The separately scheduled Rust facet gate can also use this target.
+        return Ok("")
+    return Ok(target.0)
+
+
+pub def owns_rust_facet(manifest: str) -> bool:
+    """Whether the verification gate schedules this manifest's Rust library or binary facet."""
+    for line in manifest.split("\n"):
+        selected = line.split("#")[0].strip()
+        if selected == "[rust]" or selected == "[[rust.bin]]":
+            return true
+    return false
 
 
 pub def selected_builder_bakery(selected: str, builder_home: str) -> str:
@@ -588,6 +619,10 @@ def run_pool(
         if settled.stopped:
             break
 
+        if len(settled.running) < len(active):
+            match reclaim_settled_targets(planned, waiting, active, settled.running):
+                Ok(_) => pass
+                Err(message) => return Err("; ".join([message] + stop_owned_children(settled.running)))
         admission = start_waiting(oven, planned, reservations, waiting, settled.running, jobs, memory)
         if len(admission.errors) > 0:
             return Err("; ".join(admission.errors))
@@ -596,6 +631,28 @@ def run_pool(
         if len(active) > 0:
             sleep(Duration.from_millis(20))
     return Ok(PoolOutcome(started=[index for index in range(len(planned)) if index not in waiting], failed=sorted(failed)))
+
+
+def reclaim_settled_targets(
+    planned: list[Invocation],
+    waiting: list[int],
+    active: list[Running],
+    running: list[Running],
+) -> Result[None, str]:
+    """Release each target once its final owning invocation and its process tree have settled."""
+    remaining = waiting + [item.position for item in running]
+    held = [planned[position].scratch_target for position in remaining]
+    mut released: list[str] = []
+    for item in active:
+        target = planned[item.position].scratch_target
+        if target == "" or target in held or target in released:
+            continue
+        released.append(target)
+        if Path(target).is_symlink():
+            return Err(f"release Loaf target became a symlink: {target}")
+        bytes = reclaim_paths([Path(target)])?
+        println(f"Reclaimed {bytes} logical bytes from completed Loaf tests at {target}")
+    return Ok(None)
 
 
 def settle_active(active: list[Running], ignored_prefix: int) -> ActiveSettlement:

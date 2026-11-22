@@ -930,6 +930,7 @@ def prepare_installation(run: ReleaseRun, candidate: Candidate) -> Result[Prepar
         println("installed verification: the build links natives the installation lacks; it reuses no build unit")
     environment["INCAN_BUILDER_BAKERY"] = reuse
     environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
+    environment["INCAN_RELEASE_TEST_CHECKOUT"] = verification.resolve().map_err((error) => error.message())?.0
     return Ok(PreparedInstallation(verification=verification, home=home, environment=environment, inputs=inputs))
 
 

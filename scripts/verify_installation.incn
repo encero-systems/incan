@@ -14,6 +14,7 @@ from oven_tests import (
     PROJECT_RESERVATION_BYTES as OVEN_PROJECT_RESERVATION_BYTES,
     Invocation,
     host_memory,
+    owns_rust_facet,
     run_all_failures,
     selected_builder_bakery,
     shared_memory,
@@ -894,15 +895,6 @@ def command_environment(installation: Installation) -> Dict[str, str]:
         "OVEN_ENGINE_BINARY": installation.oven.0,
         "RUSTUP_TOOLCHAIN": "1.98.0",
     }
-
-
-def owns_rust_facet(manifest: str) -> bool:
-    """Return whether a production Loaf manifest declares a Rust library or binary facet."""
-    for line in manifest.split("\n"):
-        selected = line.split("#")[0].strip()
-        if selected == "[rust]" or selected == "[[rust.bin]]":
-            return true
-    return false
 
 
 def audited_path(observed: str) -> str:

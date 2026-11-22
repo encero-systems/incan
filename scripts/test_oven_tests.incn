@@ -324,6 +324,22 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     remove_worker_projects(planned)?
     assert not oven_a.parent().parent().exists() and not oven_b.parent().parent().exists()
     assert root.joinpath("loaves").is_dir() and loaf_a.joinpath("tests/test_one.incn").is_file()
+    assert [item.scratch_target for item in planned] == ["" for _ in planned]
+
+    # Release checkout owns fresh Incan-only targets. The facet gate and preexisting outputs keep theirs.
+    private_root = root.resolve().map_err((error) => error.message())?
+    retained = private_root.joinpath("loaves/group_a/loaf_b/target")
+    retained.mkdir(true, true).map_err((error) => error.message())?
+    write(root, "loaves/compiler/internal_models/loaf.toml", "[project]\nname = \"models\"\n")?
+    write(root, "loaves/compiler/lowering/loaf.toml", "[rust] # facet gate also opens this project\n")?
+    write(root, "loaves/group_b/loaf_a/loaf.toml", "[project]\nname = \"loaf_a\"\n")?
+    private_plan = invocations(private_root, evidence, logs, 2, "", true)?
+    models_output = private_root.joinpath("loaves/compiler/internal_models/target").0
+    loaf_a_output = private_root.joinpath("loaves/group_b/loaf_a/target").0
+    assert [item.scratch_target for item in private_plan] == [
+        "", "", "", models_output, "", "", loaf_a_output, loaf_a_output,
+    ]
+    remove_worker_projects(private_plan)?
     return Ok(None)
 
 
