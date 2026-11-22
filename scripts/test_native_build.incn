@@ -1,9 +1,12 @@
 """Verify how native release production schedules the shipped tools beside the debug standard providers."""
 
+from std.fs import Path
 from native_build import (
+    NativeContext,
     PROJECT_RESERVATION_BYTES,
     STANDARD_RESERVATION_BYTES,
     ShippedToolOverlap,
+    common_environment,
     shipped_tool_overlap,
 )
 
@@ -24,4 +27,27 @@ def test_oven_starts_first_and_never_waits_for_the_debug_providers_it_does_not_r
     assert shipped_tool_overlap(3, one_beside) == ShippedToolOverlap.OvenBeside
     assert shipped_tool_overlap(3, one_beside + PROJECT_RESERVATION_BYTES) == ShippedToolOverlap.AllBeside
     assert shipped_tool_overlap(4, one_beside - 1) == ShippedToolOverlap.Serial
+    return Ok(None)
+
+
+def test_every_production_step_names_its_own_builder_as_the_engine() -> Result[None, str]:
+    """
+    Oven hands a scheduled unit to `OVEN_ENGINE_BINARY`. A release's step must name the Oven building it there, the
+    seed's in the seed context and the conductor in the candidate's, so no unit is keyed by another Oven's identities.
+    """
+    context = NativeContext(
+        repo=Path("/repo"),
+        lane=Path("/lane"),
+        home=Path("/home"),
+        builder="/lane/oven-bin/incan",
+        stdlib="/repo/loaves/stdlib",
+        evidence=Path("/evidence"),
+        timings=Path("/evidence/timings.tsv"),
+        jobs=2,
+        memory=0,
+        timeout_seconds=60,
+    )
+    environment = common_environment(context)
+    assert environment["OVEN_ENGINE_BINARY"] == "/lane/oven-bin/incan"
+    assert environment["SELFBUILD_OVEN"] == environment["OVEN_ENGINE_BINARY"]
     return Ok(None)
