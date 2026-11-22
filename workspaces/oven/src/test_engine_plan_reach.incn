@@ -1,0 +1,81 @@
+"""An import deletion limits plan selection without retiring the unused owners."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from engine_protocol_fixtures import stop_engine
+from files import make_directory, write
+from scratch import scratch_directory
+
+
+pub def test_only_current_import_reach_selects_namespace_and_plan_modules() -> Result[None, str]:
+    """Publish both branches, remove one branch, then make its owners required again in the same store."""
+    scratch = scratch_directory()?
+    root = scratch.path().resolve().map_err((error) => error.message())?
+    project = root.joinpath("project")
+    store = root.joinpath("bakery")
+    make_directory(project)?
+    write(project.joinpath("required.incn"), "pub def retained() -> int:\n    return 41\n")?
+    write(project.joinpath("spare.incn"), "pub def extra() -> int:\n    return 7\n")?
+    write(project.joinpath("unrelated.incn"), "from spare import extra\n\npub def unused() -> int:\n    return extra()\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    exercised = measure_reach(binary, project, store)
+    if store.joinpath("CURRENT").is_file():
+        stop_engine(store, binary)?
+    return exercised
+
+
+def measure_reach(binary: str, project: Path, store: Path) -> Result[None, str]:
+    """Count plan reads for the authored import deletion and its add-back."""
+    source = project.joinpath("main.incn")
+    both = "from required import retained\nfrom unrelated import unused\n\ndef main() -> None:\n"
+    write(source, both + "    println(str(retained() + unused()))\n")?
+    _ = run_report(binary, project, store, "48")?
+    write(source, "from required import retained\n\ndef main() -> None:\n    println(str(retained() + 1))\n")?
+    reduced = run_report(binary, project, store, "42")?
+    write(source, both + "    println(str(retained() + unused() + 1))\n")?
+    restored = run_report(binary, project, store, "49")?
+    seed_only = ["spare.incn", "unrelated.incn"]
+    unwanted = module_reads(reduced, seed_only)?
+    assert module_reads(restored, seed_only)? > 0, "the add-back must select the published owners again"
+    assert unwanted == 0, f"the reduced import reach opened {unwanted} seed-only slots or plans"
+    return Ok(None)
+
+
+def run_report(binary: str, project: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+    """Collect the engine report and require the new program's exact stdout."""
+    mut command = Command.new(binary)
+    command.arg("run").arg("main.incn").arg("--engine-report").current_dir(project.0)
+    command.env("INCAN_ENGINE", "records").env("OVEN_ENGINE_BINARY", binary)
+    command.env("INCAN_BAKERY", store.0)
+    command.env_remove("INCAN_ENGINE_TRACE").env_remove("OVEN_TRACE").env_remove("INCAN_NATIVE_TIMING")
+    result = command.output().map_err((error) => str(error))?
+    if not result.status.success():
+        return Err(str(from_utf8(result.stderr).map_err((error) => str(error))?))
+    lines = str(from_utf8(result.stdout).map_err((error) => str(error))?).split("\n")
+    assert len(lines) >= 2 and lines[1] == expected
+    return parse(lines[0]).map_err((error) => error.message())
+
+
+def module_reads(report: JsonValue, names: list[str]) -> Result[int, str]:
+    """Count openings of actual module and namespace slots named by the authored fixture."""
+    records = report.require("store_reads").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    mut calls = 0
+    for record in records:
+        key = record.require("key").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )?
+        fields = key.split("\t")
+        slot = len(fields) == 7 and fields[0] == "incan.engine.output/2" and fields[2] in [
+            "namespace", "namespace-header", "plan-module",
+        ] and fields[5] in names
+        payload = len(fields) == 6 and fields[0] == "plan-module" and fields[3] in names
+        if slot or payload:
+            calls += record.require("reads").map_err((error) => error.message())?.expect_int().map_err(
+                (error) => error.message(),
+            )?
+    return Ok(calls)
