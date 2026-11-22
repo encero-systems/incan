@@ -1,0 +1,113 @@
+"""The records engine keeps a linked program in step with its project's shared library."""
+
+from rust::std::process import Command
+from std.environ import get_or
+from std.fs import Path
+from engine_protocol_fixtures import stop_engine
+from files import make_directory, write
+from home import dependency_artifact_dir
+from scratch import scratch_directory
+
+
+pub def test_a_library_edit_replaces_the_selected_project_program() -> Result[None, str]:
+    """A warm program follows edits and additions in its provider. A source check still checks the provider's sources."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("warm")
+    bakery = root.joinpath("bakery")
+    fresh_bakery = root.joinpath("fresh-bakery")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    exercised = exercise_provider_edit(binary, project, bakery, root.joinpath("fresh"), fresh_bakery)
+    # A failed claim in the exercise still leaves the engine owned by this test.
+    mut stopped: Result[None, str] = Ok(None)
+    for store in [bakery, fresh_bakery]:
+        if store.joinpath("CURRENT").is_file():
+            match stop_engine(store, binary):
+                Ok(_) => pass
+                Err(reason) => stopped = Err(reason)
+    exercised?
+    return stopped
+
+
+def exercise_provider_edit(binary: str, project: Path, bakery: Path, fresh: Path, fresh_bakery: Path) -> Result[None, str]:
+    """
+    1. Build the linked program and run it again over the same records.
+    2. Edit its library's source and require the program and the provider fact to change.
+    3. Add an unreferenced module and require a new provider fact without changing the program's output.
+    4. Compare with a fresh build, then check the reached and unreachable source refusals.
+    """
+    # 1. Build and warm the selected program record.
+    make_project(project, 7)?
+    first = run_program(binary, project, bakery)?
+    warm = run_program(binary, project, bakery)?
+    if first != b"7\n" or warm != first:
+        return Err("the linked program did not keep its original output")
+    witness = dependency_artifact_dir(project.0, "route_edit_project_library", "debug").joinpath("fact.crumb")
+    before = witness.read_bytes().map_err((error) => error.message())?
+    # 2. Write only a module the shared library owns.
+    write_provider(project, 9)?
+    edited = run_program(binary, project, bakery)?
+    after = witness.read_bytes().map_err((error) => error.message())?
+    if edited != b"9\n" or before == after:
+        return Err("editing the compiled provider did not refresh the linked program")
+    # 3. A new module changes the provider's membership even when the entry has no lookup for it.
+    extra = "pub def extra() -> int:\n    return 11\n"
+    write(project.joinpath("src/extra.incn"), extra)?
+    with_extra = run_program(binary, project, bakery)?
+    expanded = witness.read_bytes().map_err((error) => error.message())?
+    if with_extra != edited or expanded == after:
+        return Err("adding a provider module did not refresh the linked program's library")
+    # 4. A fresh source tree and store independently select the edited behavior. Check still visits the source.
+    make_project(fresh, 9)?
+    write(fresh.joinpath("src/extra.incn"), extra)?
+    if run_program(binary, fresh, fresh_bakery)? != with_extra:
+        return Err("the warm program differs from a fresh build of the same sources")
+    write(project.joinpath("src/extra.incn"), "pub def extra() -> int:\n    return \"invalid\"\n")?
+    if run_program(binary, project, bakery)? != edited:
+        return Err("a refused provider stopped a program outside the refusal's reach")
+    write(project.joinpath("src/extra.incn"), extra)?
+    clean_check = command(binary, project, bakery, "check")?
+    if not clean_check[0]:
+        return Err("checking the linked program's unchanged sources failed")
+    write(project.joinpath("src/values.incn"), "pub def answer() -> int:\n    return \"invalid\"\n")?
+    invalid_check = command(binary, project, bakery, "check")?
+    if invalid_check[0]:
+        return Err("checking the linked program missed a provider source error")
+    return Ok(None)
+
+
+def make_project(project: Path, value: int) -> Result[None, str]:
+    """Create a program whose only imported source belongs to the shared project library."""
+    make_directory(project.joinpath("src"))?
+    write(project.joinpath("loaf.toml"), "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n")?
+    write(project.joinpath("src/main.incn"), "from values import answer\n\ndef main() -> None:\n    println(answer())\n")?
+    return write_provider(project, value)
+
+
+def write_provider(project: Path, value: int) -> Result[None, str]:
+    """Write the project's library module with the selected return value."""
+    return write(project.joinpath("src/values.incn"), f"pub def answer() -> int:\n    return {value}\n")
+
+
+def run_program(binary: str, project: Path, bakery: Path) -> Result[bytes, str]:
+    """Run the program through the real records engine and return its exact output."""
+    succeeded, output, errors = command(binary, project, bakery, "run")?
+    if not succeeded:
+        diagnostic = errors.decode().unwrap_or("<non-UTF-8 diagnostics>")
+        return Err(f"records run failed at {project.0}: {diagnostic}")
+    return Ok(output)
+
+
+def command(binary: str, project: Path, bakery: Path, action: str) -> Result[tuple[bool, bytes, bytes], str]:
+    """Issue one records request in the chosen project, retaining the status and both exact output streams."""
+    completed = Command
+        .new(binary)
+        .arg(action)
+        .arg(project.joinpath("src/main.incn").0)
+        .current_dir(project.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", bakery.0)
+        .env("OVEN_ENGINE_BINARY", binary)
+        .output()
+        .map_err((error) => str(error))?
+    return Ok((completed.status.success(), completed.stdout, completed.stderr))

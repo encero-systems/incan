@@ -1,0 +1,6 @@
+"""Values provided by the shared project library."""
+
+
+pub def answer() -> int:
+    """Return the value printed by the programs."""
+    return 7
