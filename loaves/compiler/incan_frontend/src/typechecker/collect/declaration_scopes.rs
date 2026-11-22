@@ -14,7 +14,8 @@ use std::sync::Arc;
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
-use crate::library_manifest::{LibraryManifest, resolved_type_from_manifest_type_ref};
+use crate::library_manifest::install_record::{InstallDeclaration, InstallDeclarationKind};
+use crate::library_manifest::{CanonicalIdentityExport, LibraryManifest, resolved_type_from_manifest_type_ref};
 use crate::symbols::SymbolKind;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
@@ -265,42 +266,24 @@ impl TypeChecker {
         manifest: &Arc<LibraryManifest>,
         root_remapping: &HashMap<String, String>,
     ) {
-        let Some(api) = manifest.contract_metadata.api.as_ref() else {
-            return;
-        };
-        let graph = &manifest.contract_metadata.identity_graph;
-        for (module_index, module) in api.modules.iter().enumerate() {
+        let record = self.prepared_install_record(library, manifest);
+        for (module_index, module) in record.modules.iter().enumerate() {
             let mut scope = None;
-            for (declaration_index, declaration) in module.declarations.iter().enumerate() {
-                if !matches!(
-                    declaration,
-                    ApiDeclaration::Model(_)
-                        | ApiDeclaration::Class(_)
-                        | ApiDeclaration::Enum(_)
-                        | ApiDeclaration::Newtype(_)
-                        | ApiDeclaration::TypeAlias(_)
-                        | ApiDeclaration::Trait(_)
-                ) {
-                    continue;
-                }
+            for declared in &module.declarations {
                 if is_package_root_module(&module.module_path)
-                    && !matches!(declaration, ApiDeclaration::TypeAlias(_) | ApiDeclaration::Trait(_))
+                    && !matches!(
+                        declared.kind,
+                        InstallDeclarationKind::TypeAlias | InstallDeclarationKind::Trait
+                    )
                 {
                     continue;
                 }
-                let name = Self::api_declaration_name(declaration);
-                let key = Self::declaration_type_key(library, &module.module_path, name);
+                let key = Self::declaration_type_key(library, &module.module_path, &declared.name);
                 if !self.public_library_type_identities.contains_key(&key) {
                     let mut source_path = module.module_path.clone();
-                    source_path.push(name.to_string());
-                    let public_path = std::iter::once(manifest.name.clone())
-                        .chain(source_path.iter().cloned())
-                        .collect::<Vec<_>>();
-                    let identity = self.admitted_public_type_identity(
-                        library,
-                        &source_path,
-                        graph.canonical_for_public_path(&public_path),
-                    );
+                    source_path.push(declared.name.clone());
+                    let canonical = declared.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate);
+                    let identity = self.admitted_public_type_identity(library, &source_path, canonical);
                     self.public_library_type_identities.insert(key.clone(), identity);
                 }
                 if self.transitive_pub_types.contains_key(&key)
@@ -316,10 +299,10 @@ impl TypeChecker {
                 });
                 let position = LayoutDeclaration::Api {
                     module: module_index,
-                    declaration: declaration_index,
+                    declaration: declared.position,
                 };
                 let scope = Arc::clone(scope);
-                self.cache_declared_library_type(library, manifest, key, declaration, position, scope);
+                self.cache_declared_library_type(library, manifest, key, declared, position, scope);
             }
         }
     }
@@ -334,23 +317,21 @@ impl TypeChecker {
         library: &str,
         manifest: &Arc<LibraryManifest>,
         key: String,
-        declaration: &ApiDeclaration,
+        declared: &InstallDeclaration,
         position: LayoutDeclaration,
         scope: Arc<HashMap<String, String>>,
     ) {
-        if let ApiDeclaration::TypeAlias(item) = declaration {
-            let mut target = resolved_type_from_manifest_type_ref(&item.type_alias.target);
+        if declared.kind == InstallDeclarationKind::TypeAlias {
+            let Some(alias_target) = declared.alias_target.as_ref() else {
+                return;
+            };
+            let mut target = resolved_type_from_manifest_type_ref(alias_target);
             Self::remap_resolved_type_with_import_aliases(&mut target, scope.as_ref());
             self.type_aliases.insert(
                 key,
                 crate::typechecker::TypeAliasTarget {
                     nominal_identities: Default::default(),
-                    type_params: item
-                        .type_alias
-                        .type_params
-                        .iter()
-                        .map(|param| param.name.clone())
-                        .collect(),
+                    type_params: declared.type_params.iter().map(|param| param.name.clone()).collect(),
                     target,
                 },
             );
@@ -362,11 +343,11 @@ impl TypeChecker {
             remappings: vec![scope],
             field_provider: Some(library.to_owned()),
         };
-        match declaration {
-            ApiDeclaration::Model(_)
-            | ApiDeclaration::Class(_)
-            | ApiDeclaration::Enum(_)
-            | ApiDeclaration::Newtype(_) => {
+        match declared.kind {
+            InstallDeclarationKind::Model
+            | InstallDeclarationKind::Class
+            | InstallDeclarationKind::Enum
+            | InstallDeclarationKind::Newtype => {
                 let declaration = self
                     .public_library_type_identities
                     .get(&key)
@@ -376,11 +357,11 @@ impl TypeChecker {
                 self.cache_retained_nominal_layout(declaration.as_ref(), &layout);
                 self.transitive_pub_types.entry(key).or_default().push(layout);
             }
-            ApiDeclaration::Trait(_) => {
+            InstallDeclarationKind::Trait => {
                 let layout = self.deferred_layout(recipe);
                 self.transitive_pub_traits.entry(key).or_default().push(layout);
             }
-            _ => {}
+            InstallDeclarationKind::TypeAlias => {}
         }
     }
 }
