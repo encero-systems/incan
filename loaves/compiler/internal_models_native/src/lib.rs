@@ -28,6 +28,7 @@ mod hex_text;
 mod incan_debug;
 mod input_fields;
 pub mod manifest_cache;
+pub mod namespace_headers;
 pub mod namespace_order;
 pub mod namespace_proof;
 pub mod namespace_references;
@@ -122,6 +123,9 @@ pub use manifest_cache::{
     ManifestCacheValue, ManifestInventory, decode_manifest_cache, decode_manifest_inventory, encode_manifest_cache,
     encode_manifest_inventory,
 };
+pub use namespace_headers::{
+    NamespaceHeaderValue, decode_namespace_header, encode_namespace_header, namespace_header_of,
+};
 pub use namespace_order::{
     CHECKING_BASIS, IMPORT_ORDER_FILE, NamespaceOrder, certified_namespace_order, checking_basis_key,
     checking_completion_receipt, decode_namespace_order, encode_checking_basis, encode_checking_completion,
@@ -132,7 +136,7 @@ pub use namespace_proof::{
 };
 pub use namespace_references::{
     NAMESPACE_IDENTITY_PROFILE, NamespaceReference, decode_namespace_references, encode_namespace_references,
-    namespace_key, namespace_reference_filename,
+    namespace_header_key, namespace_header_reference_filename, namespace_key, namespace_reference_filename,
 };
 pub use namespace_rows::{
     NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader,
@@ -174,6 +178,8 @@ pub use toolchain_search::{decode_search_paths, encode_search_paths};
 pub use unit_admission::{PayloadAdmission, decode_unit_admission, encode_unit_admission};
 pub use unit_document::{decode_unit_document, encode_unit_document};
 
+#[cfg(test)]
+mod namespace_header_tests;
 #[cfg(test)]
 mod ported_tests;
 #[cfg(test)]
