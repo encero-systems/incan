@@ -173,6 +173,31 @@ mod tests {
     }
 
     #[test]
+    fn a_project_library_lists_each_member_partial_of_its_classes_with_its_presets() {
+        let source = "pub static COUNT: int = 3\n\n\npub class Box:\n    pub v: int\n\n    pub def add(self, n: int, m: int = 1) -> int:\n        return n + m + self.v\n\n    capped = partial add(n=COUNT)\n";
+        let tokens = crate::lexer::lex(source).unwrap_or_default();
+        let program = crate::parser::parse(&tokens).ok();
+        assert!(program.is_some());
+        let exports = checked_exports(source);
+        let section = program.map(|program| {
+            PackageInternalExports::new().with_member_partials("demo_project_library", &program, &exports)
+        });
+        let listed = section
+            .iter()
+            .flat_map(|section| section.member_partials.iter())
+            .map(|partial| {
+                (
+                    partial.owner.declaration_name.as_str(),
+                    partial.name.as_str(),
+                    partial.target.as_str(),
+                    partial.presets.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(listed, [("Box", "capped", "add", vec![0])]);
+    }
+
+    #[test]
     fn a_section_without_source_defaults_serializes_as_the_empty_frame() {
         let mut manifest = LibraryManifest::new("demo_project_library", "0.1.0");
         manifest.package_internal = Some(PackageInternalExports::new());
