@@ -690,9 +690,15 @@ def require_native_step(context: NativeContext, child: Step) -> Result[None, str
     return Ok(None)
 
 
-def common_environment(context: NativeContext) -> Dict[str, str]:
-    """Return the explicit candidate build environment shared by native release producers."""
-    return {"INCAN_HOME": context.home.0, "INCAN_STDLIB": context.stdlib, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": context.lane.0, "SELFBUILD_HOME": context.home.0, "SELFBUILD_OVEN": context.builder, "SELFBUILD_STDLIB": context.stdlib}
+pub def common_environment(context: NativeContext) -> Dict[str, str]:
+    """
+    Return the explicit candidate build environment shared by native release producers. Oven hands a scheduled unit to
+    `OVEN_ENGINE_BINARY`, so each step names the Oven building it, never one an outer environment selected: a unit
+    keyed by another Oven's identities is refused as stale, or reused where it must not be.
+    """
+    mut environment = {"INCAN_HOME": context.home.0, "INCAN_STDLIB": context.stdlib, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": context.lane.0, "SELFBUILD_HOME": context.home.0, "SELFBUILD_OVEN": context.builder, "SELFBUILD_STDLIB": context.stdlib}
+    environment["OVEN_ENGINE_BINARY"] = context.builder
+    return environment
 
 
 def step(
