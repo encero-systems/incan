@@ -180,9 +180,16 @@ pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = ""
             return Err(reason)
 
 
+def source_ledger(unit: UnitDescription) -> Ledger:
+    """Open retained observations and prefer the inputs already read and hashed for this activation."""
+    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    project.readings = unit.source_readings
+    return project
+
+
 def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[Key, str]:
     """Finish identity only when the compiler and every linked unit have admitted identities."""
-    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    mut project = source_ledger(unit)
     mut base_compiler = compiler
     if base_compiler == "":
         base_compiler = compiler_fingerprint(toolchain)?
@@ -199,7 +206,7 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
 
 pub def collect_program_reach(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[SourceGraph], str]:
     """Collect the ordinary unit-key graph before a standalone program has a recorded capture."""
-    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    mut project = source_ledger(unit)
     compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
     graph = source_graph(unit, toolchain, f"{compiler} {description_digest(unit)?}", project)?
     project.save()?
@@ -211,7 +218,7 @@ pub def graph_imports(unit: UnitDescription, toolchain: Toolchain) -> Result[Opt
     The Rust crate requests recorded with the unit's current source graph under the scope `unit_key` reads, when the
     compiler reported them: the requests `--rust-imports` prints for the same files, compiler and description.
     """
-    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    mut project = source_ledger(unit)
     selected_compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
     return recorded_imports(unit, f"{selected_compiler} {description_digest(unit)?}", project)
 

@@ -65,6 +65,9 @@ pub model Toolchain:
     pub compiler_record_export_crumb: bool = false
     pub namespace_references: bool = false
     pub retain_checked_modules: bool = false
+    pub captured_source_inputs: bool = false
+    # The current request owns the files here. Installed compiler records never retain this path.
+    pub captured_source_directory: str = ""
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -85,6 +88,7 @@ pub model Toolchain:
             compiler_record_export_crumb=self.compiler_record_export_crumb,
             namespace_references=self.namespace_references,
             retain_checked_modules=self.retain_checked_modules,
+            captured_source_inputs=self.captured_source_inputs,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -118,6 +122,7 @@ pub model InstalledCompiler:
     pub compiler_record_export_crumb: bool = false
     pub namespace_references: bool = false
     pub retain_checked_modules: bool = false
+    pub captured_source_inputs: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -150,6 +155,7 @@ pub model InstalledCompiler:
             compiler_record_export_crumb=self.compiler_record_export_crumb,
             namespace_references=self.namespace_references,
             retain_checked_modules=self.retain_checked_modules,
+            captured_source_inputs=self.captured_source_inputs,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

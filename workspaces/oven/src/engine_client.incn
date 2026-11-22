@@ -15,7 +15,7 @@ from core_process import executable
 from compiler_worker import collect_console, relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
-from engine_epochs import prepare_submit
+from engine_epochs import probe_submit
 from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
@@ -472,7 +472,7 @@ def execute_local(
     """An unchanged local capture of an existing project view and its selected native record need no service request."""
     view = selected.view
     capturing = begin_work()
-    captured = prepare_submit(
+    probed = probe_submit(
         store,
         Submit(
             command=command,
@@ -484,8 +484,9 @@ def execute_local(
         ),
     )?
     record_work(Operation.EngineCapture, source.0, capturing)
-    if captured.commits != 0:
-        return Ok(None)
+    captured = match probed:
+        Some(found) => found
+        None => return Ok(None)
     handle = program_handle(captured.identity, compiler, view)?
     selecting = begin_work()
     exact = view_snapshot(captured.snapshot, view).map_err((error) => error.message())?

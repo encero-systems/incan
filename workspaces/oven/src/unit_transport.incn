@@ -1,10 +1,18 @@
 """Publish one prepared unit in the selected compiler's private transport or its public JSON compatibility format."""
 
+from rust::std::rc import Rc
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.hash import sha256
 from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
 from pub::internal_models.unit_document import encode_unit_document, decode_unit_document
+from pub::incan_platform.trace import Operation
 from files import read_json
+from jec import begin, record
+from observation import SourceReading
 from publication import publish, publish_binary
+from toolchain import Toolchain
 from unit import UnitDescription
 
 
@@ -13,6 +21,37 @@ pub def descriptor_path(directory: Path, stem: str, typed: bool) -> Path:
     if typed:
         return directory.joinpath(f"{stem}.unit.crumb")
     return directory.joinpath(f"{stem}.unit.json")
+
+
+pub model CompilerSourceCapture:
+    """A request's source snapshots and the directory lease that keeps them available during compilation."""
+
+    pub path: str = ""
+    directory: Option[TemporaryDirectory] = None
+
+    @staticmethod
+    pub def stage(toolchain: Toolchain, readings: Option[Rc[Dict[str, SourceReading]]]) -> Result[CompilerSourceCapture, str]:
+        """Publish changed source bytes once in a private request directory shared by the compiler's consumers."""
+        if not toolchain.captured_source_inputs:
+            return Ok(CompilerSourceCapture())
+        if let Some(found) = readings:
+            directory = TemporaryDirectory.try_new().map_err((error) => error.message())?
+            captured = found.as_ref()
+            for path in captured.keys():
+                filename = hexlify(sha256.digest(str(path).encode("utf-8"))) + ".source"
+                content = captured[path].text.encode("utf-8")
+                clock = begin()
+                publish_binary(directory.path().joinpath(filename), content)?
+                record(Operation.EngineGraphStaging, f"captured-source\t{path}", clock, len(content))
+            return Ok(CompilerSourceCapture(path=directory.path().0, directory=Some(directory)))
+        return Ok(CompilerSourceCapture())
+
+
+pub def captured_source_arguments(toolchain: Toolchain) -> list[str]:
+    """Pass the source directory only for an invocation with staged captures and an installed compiler that reads it."""
+    if toolchain.captured_source_inputs and toolchain.captured_source_directory != "":
+        return ["--captured-sources", toolchain.captured_source_directory]
+    return []
 
 
 pub def publish_unit_document(path: Path, unit: UnitDescription, typed: bool) -> Result[None, str]:

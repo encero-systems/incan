@@ -51,6 +51,9 @@ pub struct UnitDescription {
     pub schema: String,
     /// The unit's entry source: a program's entry file, a Loaf's `lib.incn` or a test module.
     pub source: PathBuf,
+    /// Request-local source bytes admitted by Oven. The compiler invocation, not its durable unit, selects them.
+    #[serde(skip)]
+    pub captured_sources: Option<PathBuf>,
     /// The entry contract; descriptions predating explicit kinds describe programs.
     #[serde(default)]
     pub kind: UnitKind,

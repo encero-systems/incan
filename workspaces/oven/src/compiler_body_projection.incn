@@ -131,7 +131,7 @@ def body_projection_refusal(reason: str, value: CompiledBodyValue) -> str:
 pub def source_projection(unit: UnitDescription, origin: str, module: str) -> Result[SourceProjection, str]:
     """Recreate one already-published projection to select its logical owner and header keys."""
     path = Path(unit.project_root).joinpath(module)
-    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    source = unit.source_text(path)?
     return project_source(origin, module, source, unit.declared_features, Some(unit.active_features))
 
 

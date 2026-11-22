@@ -3,7 +3,7 @@
 use crate::error::PlanError;
 use crate::plan::SourceSpan;
 use rustc_span::source_map::SourceMap;
-use rustc_span::{BytePos, DUMMY_SP, SourceFile, Span, SyntaxContext};
+use rustc_span::{BytePos, DUMMY_SP, FileName, SourceFile, Span, SyntaxContext};
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -15,6 +15,27 @@ use std::sync::{Arc, Mutex};
 /// The entries lie past the file's own last line, so their spans resolve only against that copy. The registry is this
 /// process's alone: a plan compiled in another process takes the texts with it ([`checked_texts`]).
 static CHECKED_SOURCES: Mutex<BTreeMap<String, PathBuf>> = Mutex::new(BTreeMap::new());
+static CAPTURED_SOURCES: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Keep an invocation's authored source directory visible to rustc query threads until native compilation ends.
+pub(crate) struct CapturedSourceScope(Option<PathBuf>);
+
+impl Drop for CapturedSourceScope {
+    /// Restore the previous capture so a subsequent resident invocation cannot see these bytes.
+    fn drop(&mut self) {
+        if let Ok(mut directory) = CAPTURED_SOURCES.lock() {
+            *directory = self.0.take();
+        }
+    }
+}
+
+/// Select an invocation's captured directory for native span translation.
+pub(crate) fn captured_source_scope(directory: Option<PathBuf>) -> Result<CapturedSourceScope, String> {
+    let mut active = CAPTURED_SOURCES
+        .lock()
+        .map_err(|_| "captured source registry is poisoned")?;
+    Ok(CapturedSourceScope(std::mem::replace(&mut *active, directory)))
+}
 
 /// Record the texts the unit's files were checked as where they differ from the files, replacing the previous unit's
 /// records, so a file checked as itself resolves against itself. Each copy lives in the temporary directory under its
@@ -78,6 +99,29 @@ impl<'a> Sources<'a> {
         }
     }
 
+    /// Keep rustc's logical filename and remapping while reading a captured file from its private placement.
+    fn load(&self, file: &str) -> Result<Arc<SourceFile>, PlanError> {
+        let failed = |reason: String| PlanError::Invalid {
+            function: file.to_owned(),
+            reason,
+        };
+        let path = checked_copy(file).unwrap_or_else(|| PathBuf::from(file));
+        if path == PathBuf::from(file) {
+            let directory = CAPTURED_SOURCES
+                .lock()
+                .map_err(|_| failed("captured source registry is poisoned".into()))?;
+            if let Some(directory) = directory.as_deref()
+                && let Some(text) = incan_driver::sources::read_captured_source(directory, file)
+                    .map_err(|error| failed(error.message))?
+            {
+                let name = FileName::Real(self.map.path_mapping().to_real_filename(self.map.working_dir(), &path));
+                return Ok(self.map.new_source_file(name, text));
+            }
+        }
+        let _span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::load_source_file", input = %path.display()).entered();
+        self.map.load_file(&path).map_err(|error| failed(error.to_string()))
+    }
+
     /// Map a character column into its source line's byte offset, refusing out-of-range coordinates.
     /// Published package identities have no source file; preserve that absence with a dummy span instead of loading
     /// a canonical identity as a path or attributing the declaration to the consumer.
@@ -92,11 +136,7 @@ impl<'a> Sources<'a> {
             reason: "source coordinate is outside the retained file".into(),
         };
         if !self.files.borrow().contains_key(file) {
-            let path = checked_copy(file).unwrap_or_else(|| PathBuf::from(file));
-            let source = self.map.load_file(&path).map_err(|error| PlanError::Invalid {
-                function: file.to_owned(),
-                reason: error.to_string(),
-            })?;
+            let source = self.load(file)?;
             self.files.borrow_mut().insert(file.to_owned(), source);
         }
         let files = self.files.borrow();
