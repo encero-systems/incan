@@ -1,7 +1,15 @@
 """Native-source admission shared by every Oven Rust and C compilation path."""
 
+from rust::std::fs import metadata
 from std.fs import Path
 from loaf_local_graph import LocalFacet
+from observation import SETTLE_SECONDS, described
+
+# Native sources this process found free of raw bidirectional controls, by path, with the settled metadata they were
+# scanned at: a resident engine scans a source again only after it changes.
+static admitted_sources: Dict[str, str] = {}
+# How many times this process read each native source to scan it.
+static source_reads: Dict[str, int] = {}
 
 
 pub class NativeSourceScanner:
@@ -40,24 +48,39 @@ pub class NativeSourceScanner:
         return Ok(None)
 
     def scan_file(self, path: Path) -> Result[None, str]:
-        """Report an exact byte position, Unicode name and visible replacement for the first unsafe scalar."""
+        """
+        Report an exact byte position, Unicode name and visible replacement for the first unsafe scalar. A source this
+        process already found clean is scanned again only after its settled metadata change.
+        """
+        stamp = settled_stamp(path)
+        if stamp != "" and admitted_sources.get(path.0, "") == stamp:
+            return Ok(None)
         data = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
-        mut line = 1
-        mut column = 1
+        source_reads[path.0] = source_reads.get(path.0, 0) + 1
         mut index = 0
         while index < len(data):
-            if let Some(control) = control_at(data, index):
-                escape, name = control
-                return Err(
-                    f"error[INCAN-P0101]: raw bidirectional control {name} at {path.0}:{line}:{column}; write `{escape}` instead",
-                )
+            # Every refused control's UTF-8 encoding starts with byte 0xD8 or 0xE2.
             octet = int(data[index])
-            if octet == 10:
-                line += 1
-                column = 1
-            elif octet < 128 or octet > 191:
-                column += 1
+            if octet == 216 or octet == 226:
+                if let Some(control) = control_at(data, index):
+                    escape, name = control
+                    mut line = 1
+                    mut column = 1
+                    mut before = 0
+                    while before < index:
+                        prior = int(data[before])
+                        if prior == 10:
+                            line += 1
+                            column = 1
+                        elif prior < 128 or prior > 191:
+                            column += 1
+                        before += 1
+                    return Err(
+                        f"error[INCAN-P0101]: raw bidirectional control {name} at {path.0}:{line}:{column}; write `{escape}` instead",
+                    )
             index += 1
+        if stamp != "":
+            admitted_sources[path.0] = stamp
         return Ok(None)
 
 
@@ -124,3 +147,19 @@ def triple(data: Borrowed[bytes], index: int, first: int, second: int, third: in
 def hex_digit(value: int) -> str:
     """Spell the one hexadecimal digit used by the U+202A through U+202E controls."""
     return "0123456789abcdef"[value:value + 1]
+
+
+def settled_stamp(path: Path) -> str:
+    """A file's metadata as one text when its last change is settled, else empty, so its scan is not remembered."""
+    match metadata(path.0):
+        Ok(info) =>
+            observed = described(info)
+            if observed.settled(SETTLE_SECONDS):
+                return observed.stamp()
+            return ""
+        Err(_) => return ""
+
+
+pub def source_reads_of(path: str) -> int:
+    """How many times this process read the native source at `path` to scan it."""
+    return source_reads.get(path, 0)
