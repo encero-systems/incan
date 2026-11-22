@@ -78,19 +78,19 @@ pub def serve(arguments: list[str]) -> Result[None, Refusal]:
 
 
 pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None, Refusal]:
-    """Hold the store scheduling lock through startup, all client work and final socket withdrawal."""
+    """Hold this generation's scheduling lock through startup, all client work and final socket withdrawal."""
     selected = endpoint(root, identity)?
     held = Path(selected.lock).try_lock_exclusive().map_err((error) => transport(error.message()))?
     if held is None:
-        return Err(transport("another engine owns this store"))
+        return Err(transport("another engine of this generation owns this store"))
     withdraw_stale(selected.socket)?
     mut listener = listen(selected.socket, false).map_err(transport)?
     # A caller whose runtime directory names another socket path finds this one through the store; without the
     # record only callers sharing this environment can.
-    _ = record_endpoint(root, selected.socket)
+    _ = record_endpoint(selected.record, selected.socket)
     mut state = ServiceState(identity=identity, store=root, last_active=0)
     outcome = event_loop(listener, state, idle)
-    withdraw_endpoint(root, selected.socket)
+    withdraw_endpoint(selected.record, selected.socket)
     discard_file(Path(selected.socket))
     return outcome
 
