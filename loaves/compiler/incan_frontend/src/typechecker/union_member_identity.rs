@@ -462,14 +462,16 @@ impl TypeChecker {
                 _ => None,
             };
         }
-        let module_key = self.dependency_direct_member_symbols.keys().find(|key| {
+        let Some(module_key) = self.dependency_direct_member_symbols.keys().find(|key| {
             let path = self
                 .dependency_module_path_segments
                 .get(*key)
                 .cloned()
                 .unwrap_or_else(|| vec![(*key).clone()]);
             canonicalize_source_module_segments(&path) == module_path
-        })?;
+        }) else {
+            return self.compiled_module_qualified_type_info(&module_path, declaration_name);
+        };
         match self
             .dependency_direct_member_symbols
             .get(module_key)?
@@ -478,6 +480,31 @@ impl TypeChecker {
             SymbolKind::Type(info) => Some(info),
             _ => None,
         }
+    }
+
+    /// The layout of the nominal `declaration_name` that the module `module_path` of a compiled Loaf this checker
+    /// installed declares, read under the Loaf's declaration key, when exactly one installed Loaf declares it there.
+    ///
+    /// A spelling by declaring module names no package, and a compiled Loaf's module is no source dependency of the
+    /// check, so its declaration is found by the key install registered it under.
+    fn compiled_module_qualified_type_info(&self, module_path: &[String], declaration_name: &str) -> Option<&TypeInfo> {
+        let mut found = None;
+        for library in &self.cached_pub_libraries {
+            let key = Self::declaration_type_key(library, module_path, declaration_name);
+            let Some(info) = self
+                .transitive_pub_types
+                .get(&key)
+                .and_then(|layouts| layouts.first())
+                .and_then(|layout| layout.get(self))
+            else {
+                continue;
+            };
+            if found.is_some() {
+                return None;
+            }
+            found = Some(info);
+        }
+        found
     }
 
     /// Retain, for lowering, the target of each non-generic type alias this module declares or imports.
