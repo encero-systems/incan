@@ -86,12 +86,12 @@ pub fn retain_nominal_tables(program: &mut ProgramContext, module: &BodyIrModule
 
 /// Extend retained storage and layout generations after runtime resolution.
 ///
-/// The caller has already extended the shared body index before discovering carriers for the appended frames.
+/// The caller has already indexed appended bodies and passes only the newly discovered union shapes.
 pub fn extend_program_context(
     program: &mut ProgramContext,
     module: &BodyIrModule,
     constructors: Arc<ConstructorIndex>,
-    unions: &[IncanType],
+    new_unions: &[IncanType],
 ) -> Result<(), String> {
     if program.statics.len() > module.static_declarations.len()
         || program.nominals.len() > module.nominal_declarations.len()
@@ -111,7 +111,7 @@ pub fn extend_program_context(
     Arc::make_mut(&mut program.value_enums).extend(module.value_enum_declarations[value_enums..].iter().cloned());
     let bindings = program.decorated_bindings.len();
     Arc::make_mut(&mut program.decorated_bindings).extend(module.decorated_bindings[bindings..].iter().cloned());
-    for ty in unions {
+    for ty in new_unions {
         Arc::make_mut(&mut program.union_types).insert(ty.clone());
     }
     program.constructors = constructors;

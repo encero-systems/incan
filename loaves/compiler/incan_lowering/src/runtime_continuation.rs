@@ -97,6 +97,7 @@ fn complete_runtime_plan(
         mut unions,
         nominal_instances: mut retained_nominals,
         intrinsic_layouts: mut intrinsics,
+        layout_inputs_grew,
         models,
         enums,
         functions,
@@ -116,9 +117,10 @@ fn complete_runtime_plan(
     let previous_nominal_count = context.nominal_declarations.len();
     let previous_model_count = inventories.models.len();
     let previous_static_count = context.static_declarations.len();
-    refresh_entry_context(Arc::make_mut(&mut context), modules[entry].module);
+    let callables_changed = refresh_entry_context(Arc::make_mut(&mut context), modules[entry].module);
     let additions = continuation_inputs(&source_context, &context, &owners, modules, entry)?;
-    if !additions.modules.is_empty() {
+    let added_context = !additions.modules.is_empty();
+    if added_context {
         let addition_source_files = source_file_index(&additions.modules, &additions.files)?;
         let added = plan_contexts_parallel(
             additions.modules.clone(),
@@ -155,17 +157,20 @@ fn complete_runtime_plan(
     extend_constructor_index(Arc::make_mut(&mut constructors), &context.nominal_declarations);
     extend_generic_constructor_arities(Arc::make_mut(&mut constructors), &template_constructors);
     extend_constructor_authority(Arc::make_mut(&mut constructors), &source_files, package_versions);
-    // Appended execution bodies enter the shared index before carrier discovery and later frame dispatch.
-    extend_body_index(&mut program.body_indices, &context)?;
-    extend_unions(&mut unions, &context);
-    intrinsics = intrinsic_declarations(
-        &constructors,
-        &context,
-        &program.body_indices,
-        &entry_file,
-        intrinsics,
-        "continuation",
-    )?;
+    let retained_union_count = unions.len();
+    // Linkage-only batches change runtime scopes without changing the inputs these layouts consumed.
+    if added_context || callables_changed || layout_inputs_grew {
+        extend_body_index(&mut program.body_indices, &context)?;
+        extend_unions(&mut unions, &context);
+        intrinsics = intrinsic_declarations(
+            &constructors,
+            &context,
+            &program.body_indices,
+            &entry_file,
+            intrinsics,
+            "continuation",
+        )?;
+    }
     resume_plan_roots(
         &mut program,
         constructors.clone(),
@@ -174,7 +179,7 @@ fn complete_runtime_plan(
         &mut intrinsics,
         &retained_nominals,
         kind,
-        &unions,
+        &unions[retained_union_count..],
         previous_nominal_count,
         previous_model_count,
         &mut inventories,
@@ -210,6 +215,7 @@ fn complete_runtime_plan(
                 unions,
                 nominal_instances: retained_nominals,
                 intrinsic_layouts: intrinsics,
+                layout_inputs_grew: false,
                 models: inventories.models,
                 enums: inventories.enums,
                 functions: inventories.functions,

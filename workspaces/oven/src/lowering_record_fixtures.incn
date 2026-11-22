@@ -3,12 +3,19 @@ the example engine."""
 
 from rust::std::process import Command
 from rust::std::str import from_utf8
+from std.environ import get_or
 from std.fs import Path
+from std.io import BytesIO
 from std.json import JsonValue, parse
+from pub::incan_platform.store import begin, commit, get, stage_put
+from compiler_runtime_requirements import runtime_requirements_key
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import zero_id
+from files import write
+from scratch import scratch_directory
+from store_path_conversion import snapshot
 
 
 pub def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
@@ -88,3 +95,124 @@ pub def attempt_trace(root: Path, name: str) -> Result[Path, str]:
     path = root.joinpath(name)
     path.mkdir(true, true).map_err((error) => error.message())?
     return Ok(path)
+
+
+pub def lowering_attempts(trace: Option[Path]) -> Result[int, str]:
+    """Count entry to the driver lowering attempt in the selected fixture's cumulative trace."""
+    return compiler_trace_count(trace, "\"kind\":\"begin\"", "\"function\":\"incan_rustc_driver::lower_program\"")
+
+
+def compiler_trace_count(trace: Option[Path], kind: str, event: str) -> Result[int, str]:
+    """Count exact trace event fields from the compiler processes this fixture started."""
+    mut attempts = 0
+    if let Some(directory) = trace:
+        for path in directory.iterdir().map_err((error) => error.message())?:
+            if not path.name().startswith("engine-compiler-"):
+                continue
+            text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+            for line in text.split("\n"):
+                if kind in line and event in line:
+                    attempts += 1
+    return Ok(attempts)
+
+
+pub def verify_generic_runtime_batches() -> Result[None, str]:
+    """Replay two ordered runtime batches across an unrelated edit and compare the independent native result."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("probe.incn")
+    plan = root.joinpath("native.plan")
+    target = root.joinpath("target")
+    executable = target.joinpath("incan/release/bin/probe")
+    warm_store = root.joinpath("warm-store")
+    warm_trace = Some(attempt_trace(root, "warm-trace")?)
+    seed = generic_runtime_source()
+    write(source, seed)?
+    _ = lowering_example_run(binary, source, warm_store, "4\n7\n1\n7\na\n42", trace=warm_trace)?
+    seed_attempts = lowering_attempts(warm_trace)?
+    carrier_event = "\"operation\":\"carrier_traversal\""
+    union_event = "\"operation\":\"carrier_unions\""
+    trace_line = "\"kind\":\"line\""
+    seed_carriers = compiler_trace_count(warm_trace, trace_line, carrier_event)?
+    seed_unions = compiler_trace_count(warm_trace, trace_line, union_event)?
+    write(source, seed.replace("value + 1", "value + 2"))?
+    output = "4\n7\n1\n7\na\n43"
+    _ = lowering_example_run(binary, source, warm_store, output, trace=warm_trace)?
+    steady_attempts = lowering_attempts(warm_trace)? - seed_attempts
+    steady_carriers = compiler_trace_count(warm_trace, trace_line, carrier_event)? - seed_carriers
+    steady_unions = compiler_trace_count(warm_trace, trace_line, union_event)? - seed_unions
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    warm_executable = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    target.remove_tree().map_err((error) => error.message())?
+    fresh_store = root.joinpath("fresh-store")
+    fresh_trace = Some(attempt_trace(root, "fresh-trace")?)
+    _ = lowering_example_run(binary, source, fresh_store, output, trace=fresh_trace)?
+    stop_example_engine(binary, fresh_store)?
+    assert warm_plan == plan.read_bytes().map_err((error) => error.message())?, "two-batch plans differ"
+    assert warm_executable == executable.read_bytes().map_err((error) => error.message())?, "two-batch executables differ"
+    fresh_attempts = lowering_attempts(fresh_trace)?
+    verify_stale_runtime_batch(binary, root, source, seed, warm_store)?
+    assert seed_attempts == 3 and fresh_attempts == 3, f"two-batch ordinary lowering spans: {seed_attempts}, {fresh_attempts}"
+    assert steady_attempts == 1, f"two-batch steady lowering spans: {steady_attempts}"
+    assert steady_carriers == 2 and steady_unions == 2, f"steady carrier and union passes: {steady_carriers}, {steady_unions}"
+    return Ok(None)
+
+
+def verify_stale_runtime_batch(binary: str, root: Path, source: Path, seed: str, warm_store: Path) -> Result[None, str]:
+    """Change only the recorded second batch under the same key and require live resolution without reading that path."""
+    stale_saved_runtime_batch(warm_store, source)?
+    write(source, seed.replace("value + 1", "value + 3"))?
+    target = root.joinpath("target")
+    target.remove_tree().map_err((error) => error.message())?
+    trace = attempt_trace(root, "stale-batch-trace")?
+    output = "4\n7\n1\n7\na\n44"
+    _ = lowering_example_run(binary, source, warm_store, output, trace=Some(trace))?
+    stop_example_engine(binary, warm_store)?
+    plan = root.joinpath("native.plan")
+    executable = target.joinpath("incan/release/bin/probe")
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    warm_executable = executable.read_bytes().map_err((error) => error.message())?
+    target.remove_tree().map_err((error) => error.message())?
+    fresh_store = root.joinpath("fresh-stale-control")
+    _ = lowering_example_run(binary, source, fresh_store, output)?
+    stop_example_engine(binary, fresh_store)?
+    assert warm_plan == plan.read_bytes().map_err((error) => error.message())?, "stale-batch plan differs from fresh"
+    assert warm_executable == executable.read_bytes().map_err((error) => error.message())?, "stale-batch executable differs from fresh"
+    for path in trace.iterdir().map_err((error) => error.message())?:
+        if path.name().startswith("engine-compiler-"):
+            text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+            assert "incan_stdlib_primitives::__incan_v0_" not in text, "stale provider binding was read"
+    attempts = lowering_attempts(Some(trace))?
+    assert attempts == 2, f"stale second batch lowering spans: {attempts}"
+    return Ok(None)
+
+
+def stale_saved_runtime_batch(store: Path, source: Path) -> Result[None, str]:
+    """Replace the second batch's one encoded path in the existing postcard recipe without disturbing its shape."""
+    key = runtime_requirements_key("probe", source.0, "release")
+    graph = snapshot(store).map_err((error) => error.message())?
+    saved = get(graph, key).map_err((error) => error.message())?
+    if let Some(value) = saved:
+        path_prefix = b"incan_stdlib_primitives::__incan_v1_"
+        positions = [index for index in range(len(value) - len(path_prefix) + 1) if value[index:index + len(path_prefix)] == path_prefix]
+        assert len(positions) == 1, f"expected one linked spelling in the runtime recipe: {positions}"
+        position = positions[0]
+        damaged = BytesIO(b"")
+        damaged.write_bytes(value[:position]).map_err((error) => error.message())?
+        damaged.write_bytes(b"incan_stdlib_primitives::__incan_v0_").map_err((error) => error.message())?
+        damaged.write_bytes(value[position + len(path_prefix):]).map_err((error) => error.message())?
+        mut transaction = begin(graph)
+        stage_put(transaction, key, damaged.getvalue())
+        _ = commit(transaction).map_err((error) => error.message())?
+        return Ok(None)
+    return Err("two-batch fixture has no saved runtime recipe")
+
+
+def generic_runtime_source() -> str:
+    """The ordinary UTF-8 call loads its provider before generic lowering demands the exact linked spelling."""
+    unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
+    generic = "def pick[T](items: list[T]) -> T:\n    println(len(\"generic\".encode(\"utf-8\")))\n    return items[0]\n\n\n"
+    entry = "def main() -> None:\n    println(len(\"text\".encode(\"utf-8\")))\n"
+    return unrelated + generic + entry + "    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\"]))\n    println(unrelated(41))\n"

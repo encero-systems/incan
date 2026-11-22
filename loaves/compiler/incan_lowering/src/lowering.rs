@@ -73,6 +73,8 @@ pub struct UnitContinuation {
     pub unions: Vec<IncanType>,
     pub nominal_instances: Vec<NominalInstance>,
     pub intrinsic_layouts: Vec<EnumDeclaration>,
+    /// A suspended generic instance pass appended nominals after these layouts were settled.
+    layout_inputs_grew: bool,
     pub models: Vec<ModelDeclaration>,
     pub enums: Vec<EnumDeclaration>,
     pub functions: Vec<Function>,
@@ -366,6 +368,7 @@ fn lowered_plan(
                 unions,
                 nominal_instances,
                 intrinsic_layouts: intrinsics,
+                layout_inputs_grew: false,
                 models: inventories.models,
                 enums: inventories.enums,
                 functions: inventories.functions,
@@ -524,6 +527,7 @@ fn finish_unit_plan(
                 inventories.functions[index].future_callee = Some(callee);
             }
             let retry = UnitContinuation {
+                layout_inputs_grew: context.nominal_declarations.len() != original_nominal_count,
                 source_context,
                 template_constructors,
                 owners,
@@ -686,6 +690,7 @@ pub fn initial_plan_roots(
 ///
 /// `previous_nominal_count` separates newly resolved runtime declarations from layouts an earlier generic-instance
 /// pass appended. `previous_model_count` also admits those already-closed layouts without rebuilding older models.
+/// `new_unions` contains only the suffix the retained program has not indexed yet.
 #[allow(clippy::too_many_arguments)]
 fn resume_plan_roots(
     program: &mut ProgramContext,
@@ -695,7 +700,7 @@ fn resume_plan_roots(
     intrinsics: &mut Vec<EnumDeclaration>,
     nominal_instances: &[NominalInstance],
     kind: &str,
-    unions: &[IncanType],
+    new_unions: &[IncanType],
     previous_nominal_count: usize,
     previous_model_count: usize,
     inventories: &mut Inventories,
@@ -719,7 +724,7 @@ fn resume_plan_roots(
         kind == "library",
         previous_model_count,
     )?;
-    extend_program_context(program, context, constructors, unions)?;
+    extend_program_context(program, context, constructors, new_unions)?;
     inventories.functions.extend(checked_functions);
     inventories.functions.extend(string_functions);
     inventories.externals.extend(checked_runtime);

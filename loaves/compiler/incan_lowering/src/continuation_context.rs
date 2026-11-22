@@ -22,16 +22,20 @@ pub(crate) struct RuntimeModule<'a> {
     pub file: &'a str,
 }
 
-/// Refresh the compact entry-owned facts the frontend can extend while resolving runtime declarations.
-pub fn refresh_entry_context(context: &mut BodyIrModule, entry: &BodyIrModule) {
+/// Refresh entry-owned facts and report whether the replacement changes the callable layout inputs.
+pub fn refresh_entry_context(context: &mut BodyIrModule, entry: &BodyIrModule) -> bool {
     context.runtime_callable_bindings = entry.runtime_callable_bindings.clone();
     context.runtime_binding_scopes = entry.runtime_binding_scopes.clone();
-    context.loaf_callables = entry.loaf_callables.clone();
+    let callables_changed = context.loaf_callables != entry.loaf_callables;
+    if callables_changed {
+        context.loaf_callables.clone_from(&entry.loaf_callables);
+    }
     context.entrypoint_effects = entry.entrypoint_effects.clone();
     context.program_entrypoints = entry.program_entrypoints.clone();
     context.string_conversion_contract = entry.string_conversion_contract.clone();
     context.constant_declarations = entry.constant_declarations.clone();
     context.type_alias_declarations = entry.type_alias_declarations.clone();
+    callables_changed
 }
 
 /// Select changed modules and their entry, preserving the entry's invocation-only contracts in the reduced slice.
