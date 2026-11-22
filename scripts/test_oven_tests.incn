@@ -5,6 +5,7 @@ from std.tempfile import TemporaryDirectory
 from check_test_support import write
 from pub::incan_platform.probes import process_table
 from oven_tests import (
+    CUSTODY_INTERVAL_MS,
     HEADROOM_BYTES,
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES,
@@ -12,6 +13,7 @@ from oven_tests import (
     admission_order,
     admitted,
     compile_ahead,
+    custody_due,
     default_jobs,
     file_lines,
     free_worker,
@@ -478,6 +480,20 @@ def test_concurrent_invocations_have_distinct_compiler_worker_scopes() -> Result
     for item in planned:
         found = item.log.read_text("utf-8", "strict").map_err((error) => error.message())?
         assert found == item.log.0 + "\n"
+    return Ok(None)
+
+
+def test_a_running_invocation_is_probed_for_its_process_tree_at_most_once_a_second() -> Result[None, str]:
+    """
+    Each probe of a running tree starts `ps`, so a running invocation is probed when it starts being watched and then at
+    most once per interval, and always just before it is stopped; a settled one is not probed again.
+    """
+    assert CUSTODY_INTERVAL_MS == 1000
+    assert custody_due(None, 0)
+    assert not custody_due(Some(0), 999)
+    assert custody_due(Some(0), 1000)
+    assert custody_due(Some(4000), 5200)
+    assert not custody_due(Some(4900), 5200)
     return Ok(None)
 
 
