@@ -113,9 +113,10 @@ def make_project(project: Path, value: int) -> Result[None, str]:
     make_directory(nested)?
     write(
         project.joinpath("loaf.toml"),
-        "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+        "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\nsecond = \"src/second.incn\"\n",
     )?
     write(project.joinpath("src/main.incn"), "from values import answer\n\ndef main() -> None:\n    println(answer())\n")?
+    write(project.joinpath("src/second.incn"), "from values import answer\n\ndef main() -> None:\n    println(answer())\n")?
     write_provider(project, value)?
     return write(nested.joinpath("lib.incn"), "pub def nested_marker() -> int:\n    return 11\n")
 
