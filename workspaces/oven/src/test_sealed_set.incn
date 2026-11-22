@@ -6,7 +6,7 @@ from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.io import BytesIO, Endian, IoError
 from scratch import scratch_directory
-from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, read_counts, segments
+from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, begin, commit, durable_syncs, get, put, read_counts, segments
 from store_path_conversion import oven_path, payload_path, put_payload, snapshot
 from sealed_set import (
     ExternalReference,
@@ -505,4 +505,33 @@ def prove_frozen_readmission(
     repaired_records = readmit(home, directory, root, profile).map_err((error) => error.message())?
     assert repaired_records.generation > restored.generation
     admit(home, directory, root, profile).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def test_a_sealed_set_installs_all_its_new_objects_behind_one_drive_flush() -> Result[None, str]:
+    """
+    Every object a set brings is synced and renamed into place, and its directories ordered, before one drive flush
+    covers them all; the commit that selects the set adds its own. The stored bytes are the transported bytes.
+    """
+    scratch = scratch_directory()?
+    base = scratch.path()
+    profile = Profile(identity="test/1", schema="bytes/1", codec="raw/1")
+    source = base.joinpath("source")
+    mut payloads: list[str] = []
+    for index in range(6):
+        file = base.joinpath(f"native-{index}")
+        file.write_bytes(f"native file {index}".encode("utf-8")).map_err((error) => error.message())?
+        payloads.append(put_payload(source, file).map_err((error) => error.message())?.digest)
+    first = write_value(source, "entry", b"set value")?
+    spec = specification(profile, "package", payloads)
+    exported = base.joinpath("exported")
+    root = export_set(first, spec, exported).map_err((error) => error.message())?
+    home = base.joinpath("home")
+    flushes = durable_syncs()
+    _ = admit(home, exported, root, profile).map_err((error) => error.message())?
+    made = durable_syncs() - flushes
+    assert made <= 2, f"admitting {len(payloads) + 1} objects flushed the drive {made} times"
+    for digest in payloads:
+        stored = payload_path(home, digest)
+        assert hexlify(file_digest(stored, "sha256").map_err((error) => error.message())?) == digest
     return Ok(None)
