@@ -33,6 +33,9 @@ pub struct DependencyInterfacePreparationCache {
     /// How often the checkers sharing this cache built each compiled declaration's layout, by declaration name.
     #[cfg(test)]
     pub(super) layout_builds: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
+    /// How often the checkers sharing this cache collected each compiled Loaf's nominal type origins, by Loaf key.
+    #[cfg(test)]
+    pub(super) origin_collections: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
     /// Whether the checkers sharing this cache build each deferred layout when they install it.
     #[cfg(test)]
     pub(super) eager_layouts: bool,
@@ -47,6 +50,23 @@ impl DependencyInterfacePreparationCache {
             eager_layouts: true,
             ..Self::default()
         }
+    }
+
+    /// Count one collection of the nominal type origins of the Loaf indexed as `key`.
+    pub(super) fn count_origin_collection(&self, key: &str) {
+        let mut counts = self
+            .origin_collections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *counts.entry(key.to_owned()).or_default() += 1;
+    }
+
+    /// The nominal type origin collections of each compiled Loaf, by Loaf key.
+    pub(crate) fn origin_collection_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        self.origin_collections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Count one build of the compiled declaration `name`'s layout.
