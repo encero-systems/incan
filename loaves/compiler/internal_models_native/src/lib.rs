@@ -41,6 +41,7 @@ mod published_defaults;
 pub mod read_receipts;
 pub mod record_scope;
 pub mod record_service;
+pub mod runtime_requirement_rows;
 pub mod selection_bindings;
 pub mod settled_call_reads;
 pub mod source_value_records;
