@@ -100,6 +100,8 @@ pub model Invocation:
     # Worker projects this invocation may run in: it starts in the first one no other invocation is running in, and its
     # relative arguments resolve there. Empty runs it in `directory`.
     pub workers: list[str] = []
+    # A release-owned Loaf target shared by the invocations naming it.
+    pub scratch_target: str = ""
 
 
 pub model Summary:

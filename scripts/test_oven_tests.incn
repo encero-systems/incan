@@ -599,7 +599,7 @@ def test_an_ignored_prefix_covering_every_position_stops_no_invocation() -> Resu
 
 
 def test_completed_slot_is_settled_before_queued_admission() -> Result[None, str]:
-    """A failure raised during another child's cleanup is observed before its freed slot admits queued work."""
+    """Settle failures and reclaim a finished Loaf's target before admitting queued work."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     logs = root.joinpath("logs")
@@ -624,6 +624,30 @@ def test_completed_slot_is_settled_before_queued_admission() -> Result[None, str
     assert run_all_failures("/bin/sh", [failure, completed, queued], 2, 0)? == [0]
     assert not queued_log.exists(), "the queued invocation was admitted before the active failure was settled"
     assert not root.joinpath("queued").exists()
+
+    # A later test of the same Loaf still needs the target. Unrelated work can start after its last consumer.
+    target = root.joinpath("target")
+    producer = Invocation(
+        arguments=["-c", "mkdir target && touch target/product"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("003-producer.log"),
+        scratch_target=target.0,
+    )
+    consumer = Invocation(
+        arguments=["-c", "test -f target/product"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("004-consumer.log"),
+        scratch_target=target.0,
+    )
+    unrelated = Invocation(
+        arguments=["-c", "test ! -e target"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("005-unrelated.log"),
+    )
+    assert run_all("/bin/sh", [producer, consumer, unrelated], 1, 0)?, "the finished Loaf target survived its last consumer"
     return Ok(None)
 
 
