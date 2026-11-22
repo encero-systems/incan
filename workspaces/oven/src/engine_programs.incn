@@ -385,7 +385,7 @@ pub def obtain(
     let cutoff: Borrowed[EditCutoff] = selection.reached.cutoff
     namespaces = select_namespace_inventory_except(
         graph, CHECKER_PROFILE, origin, invalid_namespaces, toolchain.namespace_references and toolchain.closure_anchors,
-        cutoff,
+        cutoff, use_layouts=true,
     )?
     record_work(Operation.EngineSelect, "namespace-inventory", selecting)
     selecting = begin_work()
