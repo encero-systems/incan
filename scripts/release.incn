@@ -41,6 +41,7 @@ from release_support import (
     append_timing,
     append_timing_file,
     installed_builder_bakery,
+    unselected_native_generations,
     cancel_background_step,
     check_baseline,
     counts_json,
@@ -524,7 +525,32 @@ def source_providers(run: ReleaseRun, context: NativeContext, helper: Path) -> R
     readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
     require_unique_runtime_root(context)?
-    return build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))
+    build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
+    return withdraw_seed_native_generations(run)
+
+
+def withdraw_seed_native_generations(run: ReleaseRun) -> Result[None, str]:
+    """
+    Remove the native generations the build home copied from its seed and its published support no longer selects, so
+    the build home carries what the archive will carry and installed verification may reuse the units built from here.
+    """
+    document = read_json(run.paths.toolchain.joinpath("toolchain.json"))?
+    externs = document.get("externs").unwrap_or(JsonValue.array([]))
+    searched = document.get("search").unwrap_or(JsonValue.array([]))
+    mut selected: list[str] = []
+    for native in externs.expect_array().map_err((error) => error.message())?:
+        path = native.require("path").and_then((value) => value.expect_str())
+        selected.append(path.map_err((error) => error.message())?)
+    for path in searched.expect_array().map_err((error) => error.message())?:
+        selected.append(path.expect_str().map_err((error) => error.message())?)
+    withdrawn = unselected_native_generations(run.paths.toolchain, selected)?
+    for directory in withdrawn:
+        if directory.is_symlink():
+            directory.unlink().map_err((error) => error.message())?
+        else:
+            directory.remove_tree().map_err((error) => f"cannot withdraw {directory.0}: {error.message()}")?
+    println(f"build home: withdrew {len(withdrawn)} seed native generations its published support does not select")
+    return Ok(None)
 
 
 def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
