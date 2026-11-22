@@ -558,6 +558,11 @@ pub def test_unsettled_metadata_are_read_again_and_the_epoch_encodes_determinist
     decoded = read_epoch(encoded)?
     assert decoded == epoch
     assert encode_epoch(decoded)? == encoded
+    mut scripted = decoded
+    scripted.declarations[0].scripts = ["src/main.incn", "src/second.incn"]
+    scripted_bytes = encode_epoch(scripted)?
+    assert read_epoch(scripted_bytes)? == scripted
+    assert encode_epoch(read_epoch(scripted_bytes)?)? == scripted_bytes
     legacy = b'["incan.engine.build-epoch/2",["/app"],["check","release",[]],[],[],[],[],[]]'
     previous = read_epoch(legacy)?
     assert previous.roots == ["/app"] and previous.selection.command == "check"

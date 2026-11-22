@@ -134,9 +134,11 @@ def linked_project_editor(root: Path, binary: str) -> Result[None, str]:
     if store.exists():
         stop_engine(binary, store)?
     report, _ = linked?
-    assert count(report, "all_declarations")? == 1
+    native_work = report.to_json().map_err((error) => error.message())?
+    assert count(report, "all_declarations")? == 1, native_work
     save = saved?
-    assert save.require("ok").and_then((value) => value.expect_bool()).map_err((error) => error.message())?
+    saved_text = save.to_json().map_err((error) => error.message())?
+    assert save.require("ok").and_then((value) => value.expect_bool()).map_err((error) => error.message())?, saved_text
     checked_result = checked?
     text = checked_result.to_json().map_err((error) => error.message())?
     work = checked_result.require("work").map_err((error) => error.message())?

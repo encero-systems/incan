@@ -35,12 +35,13 @@ from home import StandardPackage, home, standard_library_dir, standard_packages
 from manifest_intent import parse_document
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, FileMetadata, SourceReading, children, file_metadata, source_reading
+from project_library import selects_shared_executable
 from pub::incan_platform.trace import Operation
 from jec import begin as begin_work, record as record_work
 from toolchain import Toolchain, installation, toolchain_file
 from installation_page import admitted_identity
 from unit import manifest_candidates
-from unit_sources import SourceGraph
+from unit_sources import SourceGraph, recorded_linked_reach
 
 const EPOCH_SCHEMA: str = "incan.engine.build-epoch/2"
 # How many times a file that changes while it is read is read before it is reported unstable.
@@ -172,6 +173,8 @@ pub model Declarations:
     pub rust_source_root: str = ""
     # Editable Incan dependency project roots, made absolute against this manifest.
     pub dependencies: list[str] = []
+    # Distinct script paths when the manifest could select a shared executable provider.
+    pub scripts: list[str] = []
 
 
 
@@ -225,11 +228,15 @@ pub model BuildEpoch:
                 return Some(item)
         return None
 
-    pub def project_sources(self, root: str) -> list[str]:
-        """The current project's admitted Incan membership, including the selected entry if it is under `root`."""
-        return [item.path for item in self.inputs if item.role == InputRole.ProjectMember or (
-            item.role == InputRole.Root and item.path.startswith(root + "/")
-        )]
+    pub def project_sources(self, root: str) -> Option[list[str]]:
+        """The selected shared provider's membership, including its entry if it lies under `root`."""
+        mut sources = [item.path for item in self.inputs if item.role == InputRole.ProjectMember]
+        if len(sources) == 0:
+            return None
+        sources.extend([
+            item.path for item in self.inputs if item.role == InputRole.Root and item.path.startswith(root + "/")
+        ])
+        return Some(sources)
 
 
 pub model ClassCounters:
@@ -396,7 +403,8 @@ pub def capture_with(
     mut membership: list[SourceMembership] = []
     for root in request.roots:
         members = state.root(
-            absolute(root), request.selection.command, request.whole_unit, request.reach, request.project_library,
+            absolute(root), request.selection.command, request.selection.profile, request.whole_unit, request.reach,
+            request.project_library,
         )?
         membership.extend(members)
     # 3. A package's membership is listed with the compiler's collection rules; a graph's paths were checked by name.
@@ -457,6 +465,7 @@ model Capture:
         mut self,
         path: str,
         command: str,
+        profile: str,
         whole_unit: bool,
         reach: Option[SourceGraph],
         project_library: bool,
@@ -465,8 +474,8 @@ model Capture:
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
         1. `run` captures its file and looks up its manifest from the file's directory upward. A whole unit captures
-           what its recorded graphs name, or, without them, returns its membership directories. A project build or
-           run also lists the shared provider's membership for an entry with a recorded graph.
+           what its recorded graphs name, or, without them, returns its membership directories. An executable
+           selected to share a provider also captures that provider's membership.
         2. `build` and `bake` capture the Loaf root's manifest and list its source root.
         """
         if self.is_frozen(path):
@@ -479,19 +488,28 @@ model Capture:
                 _ => pass
             project = self.manifest_lookup(Path(path))?
             if whole_unit:
+                if project_library:
+                    if let Some(root) = project:
+                        if self.shared_executable(Path(root), path):
+                            if let Some(graph) = recorded_linked_reach(Path(root), Path(path), profile):
+                                self.graph_members(graph)?
+                            if let Some(graph) = reach:
+                                self.graph_members(graph)?
+                            return self.unit_membership(Path(path), project, true)
                 match reach:
-                    Some(graph) =>
-                        self.graph_members(graph)?
-                        if project_library:
-                            if let Some(root) = project:
-                                return self.source_memberships(root, true)
-                    None => return self.unit_membership(Path(path), project, project_library)
+                    Some(graph) => self.graph_members(graph)?
+                    None => return self.unit_membership(Path(path), project, false)
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
         if not self.manifest(manifest)?:
             return Err(f"{manifest}: no such manifest")
         return self.source_memberships(path)
+
+    def shared_executable(self, project: Path, source: str) -> bool:
+        """Decide from this capture's admitted declaration of the executable's own project."""
+        manifest = project.joinpath("loaf.toml").0
+        return manifest in self.declared and selects_shared_executable(project, source, self.declared[manifest].scripts)
 
     def graph_members(mut self, graph: SourceGraph) -> Result[None, str]:
         """
@@ -868,12 +886,16 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
             if let Some(declared_root) = document.rust_source_root:
                 rust_source_root = declared_root
             dependencies = [dependency_root(root, dependency.path) for dependency in intent.dependencies if not dependency.rust_facet]
+            mut scripts = sorted(unique([value for value in intent.scripts.values()]))
+            if len(scripts) < 2:
+                scripts = []
             return Declarations(
                 manifest=manifest,
                 files=files,
                 source_root=source_root,
                 rust_source_root=rust_source_root,
                 dependencies=dependencies,
+                scripts=scripts,
             )
 
 
