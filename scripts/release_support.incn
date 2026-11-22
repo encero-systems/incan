@@ -572,6 +572,21 @@ def native_generations(toolchain: Path) -> Result[list[str], str]:
     return Ok(names)
 
 
+pub def unselected_native_generations(toolchain: Path, selected: list[str]) -> Result[list[Path], str]:
+    """
+    The toolchain's native generation directories that none of the `selected` extern or search paths lies in, by
+    name. A build home starts as a copy of its seed; once the candidate publishes its own support, the seed's
+    generations it copied are these, and withdrawing them leaves the build home carrying what its archive carries.
+    """
+    native = toolchain.joinpath("native")
+    mut unselected: list[Path] = []
+    for name in sorted(native_generations(toolchain)?):
+        directory = native.joinpath(name).0
+        if len([path for path in selected if path == directory or path.startswith(directory + "/")]) == 0:
+            unselected.append(native.joinpath(name))
+    return Ok(unselected)
+
+
 pub def release_rust_cache_root(seed_home: Path) -> Path:
     """Keep the relocated pinned Rust cache inside the caller-owned seed home boundary."""
     return seed_home.joinpath("cache/release-rust")
