@@ -302,9 +302,16 @@ impl PublicationFacts {
         manifest.vocab = vocab::prepared_registration(unit)?;
         manifest.rust_abi =
             LibraryRustAbi::from_items(self.rust_items.into_values().map(Arc::unwrap_or_clone).collect());
-        // A project's shared library publishes its package-internal section; no other Loaf does (DD-0007).
+        // A project's shared library publishes its package-internal section; no other Loaf does (DD-0007). It lists
+        // the defaults its public family leaves required, which the units of its own package may omit.
         if unit.program_checks {
-            manifest.package_internal = Some(PackageInternalExports::new());
+            let exports = self
+                .exports_by_source_module
+                .iter()
+                .flat_map(|(_, exports)| exports.iter().cloned())
+                .collect::<Vec<_>>();
+            manifest.package_internal =
+                Some(PackageInternalExports::new().with_source_defaults(&self.package, &exports));
         }
         retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(
