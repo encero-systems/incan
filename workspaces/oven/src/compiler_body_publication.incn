@@ -20,6 +20,7 @@ from pub::internal_models import (
     checking_basis_key,
     GraphNamespaceValue,
     encode_graph_namespace_value,
+    namespace_header_of,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
@@ -70,7 +71,7 @@ from compiler_body_projection import (
     root,
     source_projection,
 )
-from compiler_body_keys import body_key, eligibility_key, namespace_key, project_declaration_slot
+from compiler_body_keys import body_key, eligibility_key, namespace_header_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord, select_body_inventory_of
 from compiler_source_projection import (
@@ -503,6 +504,12 @@ def stage_compiled_namespaces(
             value,
             receipt,
         )?
+        # The header beside the frame carries the namespace's admission facts, read under the same witnesses, so an
+        # unchanged namespace is admitted without opening its interface or Body IR.
+        if let Some(header) = namespace_header_of(value)?:
+            header_key = namespace_header_key(origin, namespace.module)
+            header_receipt = source.receipt(scope, header_key, reads, position.evidence)?
+            _ = prepare_evaluation(prepared, "compiled-namespace-header-" + namespace.module, rank, header, header_receipt)?
         # A member body's plan reads this row: it carries the member's Body IR, which has no owner record of its own.
         source.add(encode_record_key(key)?, value)
     return Ok(None)
