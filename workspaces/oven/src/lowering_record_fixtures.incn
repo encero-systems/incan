@@ -7,7 +7,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.io import BytesIO
 from std.json import JsonValue, parse
-from pub::incan_platform.store import begin, commit, get, stage_put
+from pub::incan_platform.store import begin, commit, get, stage_delete, stage_put
 from compiler_runtime_requirements import runtime_requirements_key
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
@@ -130,6 +130,7 @@ pub def verify_generic_runtime_batches() -> Result[None, str]:
     seed = generic_runtime_source()
     write(source, seed)?
     _ = lowering_example_run(binary, source, warm_store, "4\n7\n1\n7\na\n42", trace=warm_trace)?
+    require_crumb_runtime_recipe(warm_store, source)?
     seed_attempts = lowering_attempts(warm_trace)?
     carrier_event = "\"operation\":\"carrier_traversal\""
     union_event = "\"operation\":\"carrier_unions\""
@@ -154,9 +155,47 @@ pub def verify_generic_runtime_batches() -> Result[None, str]:
     assert warm_executable == executable.read_bytes().map_err((error) => error.message())?, "two-batch executables differ"
     fresh_attempts = lowering_attempts(fresh_trace)?
     verify_stale_runtime_batch(binary, root, source, seed, warm_store)?
+    verify_old_runtime_recipe_rebuild(binary, root, source, seed, warm_store)?
     assert seed_attempts == 3 and fresh_attempts == 3, f"two-batch ordinary lowering spans: {seed_attempts}, {fresh_attempts}"
     assert steady_attempts == 1, f"two-batch steady lowering spans: {steady_attempts}"
     assert steady_carriers == 2 and steady_unions == 2, f"steady carrier and union passes: {steady_carriers}, {steady_unions}"
+    return Ok(None)
+
+
+def typed_runtime_fixture_key(source: Path) -> str:
+    """Name the new recipe slot independently of the implementation under test."""
+    return f"incan.engine.runtime-requirements/2\tprobe\t{source.0}\trelease"
+
+
+def require_crumb_runtime_recipe(store: Path, source: Path) -> Result[None, str]:
+    """Read the compiler-authorized recipe from the fixture's selected home graph."""
+    graph = snapshot(store).map_err((error) => error.message())?
+    selected = get(graph, typed_runtime_fixture_key(source)).map_err((error) => error.message())?
+    if let Some(value) = selected:
+        assert value[:4] == b"CRMB", "the selected runtime recipe is not Crumb"
+        return Ok(None)
+    return Err("the successful plan did not publish a typed runtime recipe")
+
+
+def verify_old_runtime_recipe_rebuild(binary: str, root: Path, source: Path, seed: str, store: Path) -> Result[None, str]:
+    """An old-only recipe misses on a real edit and retires after the typed plan publication succeeds."""
+    old = f"incan.engine.runtime-requirements/1\tprobe\t{source.0}\trelease"
+    current = typed_runtime_fixture_key(source)
+    graph = snapshot(store).map_err((error) => error.message())?
+    mut edit = begin(graph)
+    stage_delete(edit, current)
+    stage_put(edit, old, b"incan.plan.runtime-requirements/1\n\x00")
+    selected = commit(edit).map_err((error) => error.message())?
+    assert get(selected, current).map_err((error) => error.message())?.is_none()
+    assert get(selected, old).map_err((error) => error.message())?.is_some()
+    write(source, seed.replace("value + 1", "value + 4"))?
+    trace = Some(attempt_trace(root, "old-runtime-recipe")?)
+    _ = lowering_example_run(binary, source, store, "4\n7\n1\n7\na\n45", trace=trace)?
+    stop_example_engine(binary, store)?
+    require_crumb_runtime_recipe(store, source)?
+    after = snapshot(store).map_err((error) => error.message())?
+    assert get(after, old).map_err((error) => error.message())?.is_none(), "legacy recipe was not retired with the typed value"
+    assert lowering_attempts(trace)? == 3, "the old-only slot did not use ordinary lowering"
     return Ok(None)
 
 
