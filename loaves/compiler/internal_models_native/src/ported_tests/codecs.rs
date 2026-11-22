@@ -268,6 +268,7 @@ fn a_facts_record_near_its_bound_round_trips() -> Result<(), String> {
     Ok(())
 }
 
+/// Verify byte-stable inventory recovery and reject mismatched or changed retained evidence.
 #[test]
 fn retained_manifest_evidence() -> Result<(), String> {
     let guard = Sha256::digest(b"observed source and compiler").to_vec();
@@ -290,6 +291,7 @@ fn retained_manifest_evidence() -> Result<(), String> {
         declares_abi_cache: true,
         has_abi_cache: false,
         abi_digest: Some("sha256:abc".into()),
+        install_digest: Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()),
     };
     let summary = encode_manifest_inventory(&row)?;
     let envelope = encode_manifest_cache("inventory", &guard, &digest, &summary)?;

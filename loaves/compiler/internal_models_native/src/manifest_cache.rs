@@ -118,6 +118,8 @@ pub struct ManifestInventory {
     pub declares_abi_cache: bool,
     pub has_abi_cache: bool,
     pub abi_digest: Option<String>,
+    /// Exact path install record bound by the current manifest, when it supplies one.
+    pub install_digest: Option<String>,
 }
 crate::incan_debug::incan_debug!(ManifestInventory {
     name,
@@ -129,20 +131,23 @@ crate::incan_debug::incan_debug!(ManifestInventory {
     rust_paths,
     declares_abi_cache,
     has_abi_cache,
-    abi_digest
+    abi_digest,
+    install_digest
 });
 
 const SUMMARY: &[u8] = b"lfmsum\x00";
 
+/// Define the current inventory wire schema, including the optional install record digest.
 fn summary_description() -> Description {
     model_description(
         SUMMARY,
-        "incan.loaf-manifest-inventory/2",
+        "incan.loaf-manifest-inventory/3",
         &[
             ModelField::new(b"abidcl", "declares_abi_cache", "boolean"),
             ModelField::new(b"abidig", "abi_digest", "option<string>"),
             ModelField::new(b"abihas", "has_abi_cache", "boolean"),
             ModelField::new(b"featur", "features", "list<string>"),
+            ModelField::new(b"instal", "install_digest", "option<string>"),
             ModelField::new(b"name__", "name", "string"),
             ModelField::new(b"ops___", "provider_operations", "boolean"),
             ModelField::new(b"paths_", "rust_paths", "list<string>"),
@@ -162,8 +167,8 @@ pub fn encode_manifest_inventory(row: &ManifestInventory) -> Result<Vec<u8>, Str
     if !ordered(&row.features) || !ordered(&row.rust_paths) {
         return Err("manifest index sets require strictly increasing order".into());
     }
-    let abi = match &row.abi_digest {
-        Some(digest) => Value::Some(vec![Value::Text(digest.clone())]),
+    let digest = |value: &Option<String>| match value {
+        Some(value) => Value::Some(vec![Value::Text(value.clone())]),
         None => Value::NoneValue,
     };
     let texts = |values: &[String]| Value::List(values.iter().cloned().map(Value::Text).collect());
@@ -172,9 +177,10 @@ pub fn encode_manifest_inventory(row: &ManifestInventory) -> Result<Vec<u8>, Str
         &summary_description(),
         vec![
             required_value(b"abidcl", Value::Boolean(row.declares_abi_cache)),
-            required_value(b"abidig", abi),
+            required_value(b"abidig", digest(&row.abi_digest)),
             required_value(b"abihas", Value::Boolean(row.has_abi_cache)),
             required_value(b"featur", texts(&row.features)),
+            required_value(b"instal", digest(&row.install_digest)),
             required_value(b"name__", Value::Text(row.name.clone())),
             required_value(b"ops___", Value::Boolean(row.operations)),
             required_value(b"paths_", texts(&row.rust_paths)),
@@ -200,27 +206,29 @@ fn flag(value: &Value) -> Result<bool, String> {
     }
 }
 
+/// Decode an absent or single text digest and reject other option shapes.
 fn optional_string(value: &Value) -> Result<Option<String>, String> {
     match value {
         Value::NoneValue => Ok(None),
         Value::Some(parts) if parts.len() == 1 => Ok(Some(text(&parts[0])?)),
-        _ => Err("invalid optional manifest ABI digest".into()),
+        _ => Err("invalid optional manifest digest".into()),
     }
 }
 
 /// Decode the admitted inventory of one manifest.
 pub fn decode_manifest_inventory(encoded: &[u8]) -> Result<ManifestInventory, String> {
-    let f = decode_graph_row(encoded, SUMMARY, &summary_description(), 10)?;
+    let f = decode_graph_row(encoded, SUMMARY, &summary_description(), 11)?;
     Ok(ManifestInventory {
-        name: text(&f[4].value)?,
-        version: text(&f[8].value)?,
+        name: text(&f[5].value)?,
+        version: text(&f[9].value)?,
         features: strings(&f[3].value)?,
-        vocabulary: flag(&f[9].value)?,
-        operations: flag(&f[5].value)?,
-        native_unions: flag(&f[7].value)?,
-        rust_paths: strings(&f[6].value)?,
+        vocabulary: flag(&f[10].value)?,
+        operations: flag(&f[6].value)?,
+        native_unions: flag(&f[8].value)?,
+        rust_paths: strings(&f[7].value)?,
         declares_abi_cache: flag(&f[0].value)?,
         has_abi_cache: flag(&f[2].value)?,
         abi_digest: optional_string(&f[1].value)?,
+        install_digest: optional_string(&f[4].value)?,
     })
 }

@@ -106,6 +106,7 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
         rust_abi_cache_declared: metadata.rust_abi_cache_declared,
         rust_abi_cache: metadata.rust_abi_cache_declared,
         rust_abi_cache_digest: metadata.rust_abi_cache_digest,
+        install_record_digest: None,
     };
     set.summaries
         .lock()
