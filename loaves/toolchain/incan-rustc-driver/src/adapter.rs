@@ -506,7 +506,7 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{PrivateOutput, UnitKind, debuginfo, optimization_level};
+    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, optimization_level};
     use std::path::Path;
 
     /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
@@ -553,6 +553,27 @@ mod tests {
         assert_eq!(std::fs::read(&requested)?, b"executable");
         assert!(!executable.exists());
         assert!(!object.exists());
+        Ok(())
+    }
+
+    /// A program's incremental session is named by the crates it links as well as by its crate and compiler: the same
+    /// linked crates name the same session; a linked crate that changed, such as a Rust facet built under another
+    /// `-C metadata`, names a new one, since rustc stops on a session naming a crate whose identity changed; and the
+    /// session named for the earlier crates is removed.
+    #[test]
+    fn a_program_s_incremental_session_is_named_by_the_crates_it_links() -> Result<(), Box<dyn std::error::Error>> {
+        let (units, crates) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let library = crates.path().join("libfacet.rlib");
+        std::fs::write(&library, b"facet built under one metadata")?;
+        let linked = vec![("facet".to_owned(), library.clone())];
+        let first = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        assert!(first.is_dir());
+        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked, true)?, first);
+        std::fs::write(&library, b"facet built under another metadata")?;
+        let second = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        assert_ne!(second, first, "a changed linked crate kept the earlier session");
+        assert!(second.is_dir());
+        assert!(!first.exists(), "the session named for the earlier crates was kept");
         Ok(())
     }
 
