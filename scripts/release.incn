@@ -40,7 +40,7 @@ from release_support import (
     append_bytes,
     append_timing,
     append_timing_file,
-    builder_bakery,
+    installed_builder_bakery,
     cancel_background_step,
     check_baseline,
     counts_json,
@@ -917,8 +917,12 @@ def prepare_installation(run: ReleaseRun, candidate: Candidate) -> Result[Prepar
     )?
     environment["INCAN_RELEASE_ARCHIVE"] = run.paths.bundle.joinpath("toolchain.tar.zst").0
     environment["INCAN_BUILDER_HOME"] = run.paths.home.0
-    # The installed Loaf and Rust-facet tests reuse the release units from the bakery the builds above compiled into.
-    environment["INCAN_BUILDER_BAKERY"] = builder_bakery(get_or("INCAN_BAKERY", ""), run.paths.home)
+    # The installed tests reuse the release units from the bakery the builds above compiled into, while the
+    # installation carries the native generations those units link.
+    reuse = installed_builder_bakery(get_or("INCAN_BAKERY", ""), run.paths.home, home)?
+    if reuse == home.joinpath("bakery").0:
+        println("installed verification: the build links natives the installation lacks; it reuses no build unit")
+    environment["INCAN_BUILDER_BAKERY"] = reuse
     environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
     return Ok(PreparedInstallation(verification=verification, home=home, environment=environment, inputs=inputs))
 
