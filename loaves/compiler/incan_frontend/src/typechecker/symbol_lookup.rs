@@ -508,7 +508,12 @@ impl TypeChecker {
                 .filter(|(binding, candidate)| {
                     split_canonical_public_library_type_name(binding).is_some() && *candidate == identity
                 })
-                .find_map(|(binding, _)| self.transitive_pub_types.get(binding).and_then(|infos| infos.first()))
+                .find_map(|(binding, _)| {
+                    self.transitive_pub_types
+                        .get(binding)
+                        .and_then(|infos| infos.first())
+                        .and_then(|layout| layout.get(self))
+                })
         {
             return Some(info);
         }
@@ -525,7 +530,7 @@ impl TypeChecker {
         // method it gets from an adopted trait resolved through no trait at all and emitted a plain Rust method call
         // that nothing in scope provides.
         if let Some(infos) = self.transitive_pub_types.get(name)
-            && let Some(first) = infos.first()
+            && let Some(first) = infos.first().and_then(|layout| layout.get(self))
             && (infos.len() == 1 || split_canonical_public_library_type_name(name).is_some())
         {
             return Some(first);
@@ -568,7 +573,10 @@ impl TypeChecker {
             }
         }
         let infos = self.transitive_pub_traits.get(name)?;
-        (infos.len() == 1).then(|| &infos[0])
+        if infos.len() != 1 {
+            return None;
+        }
+        infos[0].get(self)
     }
 
     /// Look up the exact trait metadata named by a collected adoption.

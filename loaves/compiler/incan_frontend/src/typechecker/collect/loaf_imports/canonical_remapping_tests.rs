@@ -13,14 +13,18 @@ const PROVIDER: &str = "from pub::facade.store import RecordKey, read_key\nfrom 
 /// A project module that reads the provider's sealed interface and the package-root re-export of the same items.
 const CONSUMER: &str = "from provider import fresh, total\nfrom pub::rootfacade import RecordKey, read_key\nimport pub::rootfacade as rf\n\ndef main() -> int:\n    first = fresh(3)\n    second = rf.RecordKey(value=6)\n    return read_key(first) + rf.read_key(second) + total()\n";
 
-fn parse(source: &str) -> TestResult<Program> {
+pub(super) fn parse(source: &str) -> TestResult<Program> {
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     Ok(crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?)
 }
 
 /// A fresh checker for `module` against `loaves` with the build's preparation `cache`, as module-graph checking
 /// configures each module's checker.
-fn checker(module: &str, loaves: &Arc<LoafIndex>, cache: &DependencyInterfacePreparationCache) -> TypeChecker {
+pub(super) fn checker(
+    module: &str,
+    loaves: &Arc<LoafIndex>,
+    cache: &DependencyInterfacePreparationCache,
+) -> TypeChecker {
     let mut checker = TypeChecker::new();
     checker.set_current_module_path(Some(vec![module.to_owned()]));
     checker.register_dependency_module_path_segments("provider", vec!["provider".to_owned()]);
@@ -30,7 +34,7 @@ fn checker(module: &str, loaves: &Arc<LoafIndex>, cache: &DependencyInterfacePre
 }
 
 /// The rendered Body IR of one checked module.
-fn body_ir(program: &Program, checker: TypeChecker) -> String {
+pub(super) fn body_ir(program: &Program, checker: TypeChecker) -> String {
     let facts = checker.into_type_info();
     let providers = crate::body_ir::ProviderOperationCatalog::new();
     let context = crate::body_ir::BodyIrContext {

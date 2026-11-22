@@ -38,6 +38,7 @@ use incan_semantics_core::{
     CanonicalSymbolId, DecoratorFeature, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolOrigin,
 };
 
+mod deferred_layouts;
 mod import_aliases;
 mod manifest_callables;
 mod manifest_exports;
@@ -148,6 +149,8 @@ fn export_public_name(export: &crate::library_manifest::ExportIdentity) -> Strin
 
 #[cfg(test)]
 mod canonical_remapping_tests;
+#[cfg(test)]
+mod lazy_layout_tests;
 #[cfg(test)]
 mod nominal_origin_tests;
 #[cfg(test)]

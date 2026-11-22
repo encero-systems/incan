@@ -5,6 +5,9 @@ use super::*;
 impl TypeChecker {
     /// Convert one manifest model export into semantic model metadata.
     pub(in crate::typechecker::collect) fn model_info_from_manifest(&self, export: &ModelExport) -> ModelInfo {
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache
+            .count_layout_build(&export.name);
         let methods = self.methods_from_manifest(&export.methods, Some(&export.name));
         let method_overloads = self.method_overloads_from_manifest(&export.methods, Some(&export.name));
         ModelInfo {
@@ -25,6 +28,9 @@ impl TypeChecker {
 
     /// Convert one manifest class export into semantic class metadata.
     pub(in crate::typechecker::collect) fn class_info_from_manifest(&self, export: &ClassExport) -> ClassInfo {
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache
+            .count_layout_build(&export.name);
         let methods = self.methods_from_manifest(&export.methods, Some(&export.name));
         let method_overloads = self.method_overloads_from_manifest(&export.methods, Some(&export.name));
         ClassInfo {
@@ -211,6 +217,9 @@ impl TypeChecker {
 
     /// Convert one manifest trait export into semantic trait metadata.
     pub(in crate::typechecker::collect) fn trait_info_from_manifest(&self, export: &TraitExport) -> TraitInfo {
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache
+            .count_layout_build(&export.name);
         TraitInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             supertraits: export
@@ -328,6 +337,9 @@ impl TypeChecker {
 
     /// Convert a manifest enum export into local enum symbol metadata.
     pub(in crate::typechecker::collect) fn enum_info_from_manifest(&self, export: &EnumExport) -> EnumInfo {
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache
+            .count_layout_build(&export.name);
         let value_enum = export.value_type.map(|value_type| ValueEnumInfo {
             value_type: match value_type {
                 EnumValueTypeExport::Str => ValueEnumBacking::Str,
@@ -394,6 +406,9 @@ impl TypeChecker {
 
     /// Convert a manifest newtype export into local typechecker metadata.
     pub(in crate::typechecker::collect) fn newtype_info_from_manifest(&self, export: &NewtypeExport) -> NewtypeInfo {
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache
+            .count_layout_build(&export.name);
         NewtypeInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             is_rusttype: export.is_rusttype,
