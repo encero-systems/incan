@@ -479,3 +479,30 @@ fn a_loaf_lays_out_the_identity_exports_its_install_record_carries() -> TestResu
     );
     Ok(())
 }
+
+/// A compiled Loaf's foreign preparation starts from the type origins its install record lists: given a record that
+/// lists none, the Loaf's foreign remapping reaches no other Loaf's type.
+#[test]
+fn a_loafs_foreign_preparation_starts_from_the_origins_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    assert!(!record.type_origins.is_empty(), "shapes names a base type");
+    let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
+    assert!(
+        !whole
+            .public_library_foreign_type_remapping("shapes", &manifest)
+            .is_empty(),
+        "the whole record reaches base"
+    );
+    record.type_origins.clear();
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    let remapping = consumer.public_library_foreign_type_remapping("shapes", &manifest);
+    assert!(remapping.is_empty(), "a record without origins reaches {remapping:?}");
+    Ok(())
+}
