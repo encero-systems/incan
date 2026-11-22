@@ -918,3 +918,84 @@ mod retained_namespace_tests {
         assert_eq!(needed, [false; 4]);
     }
 }
+
+#[cfg(test)]
+mod source_surface_tests {
+    use std::fs;
+    use std::path::Path;
+
+    use super::{SourceFileSurface, collect_source_graph_reads, source_file_surface};
+    use crate::session::CompilationSession;
+    use crate::unit::UnitDescription;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// A program unit whose entry is `src/main.incn` under `project`, reaching no Loaf.
+    fn unit(project: &Path) -> Result<UnitDescription, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_value(serde_json::json!({
+            "schema": "incan.unit/1",
+            "source": project.join("src/main.incn"),
+            "project_root": project,
+            "source_root": project.join("src"),
+            "package": "app",
+            "version": "0.1.0",
+            "profile": "debug",
+            "declared_features": [],
+            "active_features": [],
+            "loaves": [],
+            "rust_crates": [],
+            "contract_models": [],
+            "c_headers": [],
+            "externs": [],
+            "search": [],
+            "rust_abi": [],
+        }))?)
+    }
+
+    /// The surface a collection recorded for the file named `name`.
+    fn recorded<'a>(surfaces: &'a [SourceFileSurface], name: &str) -> Result<&'a SourceFileSurface, String> {
+        surfaces
+            .iter()
+            .find(|surface| surface.path.ends_with(name))
+            .ok_or_else(|| format!("the collection recorded no surface for {name}"))
+    }
+
+    /// A file's surface is what its graph's collection found for it: the modules its imports resolved to and the paths
+    /// their lookups probed. Collecting the one file again finds the same surface, also after an edit that keeps its
+    /// imports, and a different one after an edit that changes them.
+    #[test]
+    fn a_file_s_surface_is_what_its_collection_found_and_survives_a_body_edit() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let sources = root.path().join("src");
+        fs::create_dir_all(&sources)?;
+        fs::write(
+            sources.join("main.incn"),
+            "from helper import value\n\ndef main() -> None:\n    println(\"one\")\n",
+        )?;
+        fs::write(sources.join("helper.incn"), "def value() -> int:\n    return 1\n")?;
+        fs::write(sources.join("other.incn"), "def thing() -> int:\n    return 0\n")?;
+        let unit = unit(root.path())?;
+        let session = CompilationSession::for_formatting(&unit).map_err(|error| error.message)?;
+        let (reads, collected) = collect_source_graph_reads(unit.source.clone(), &session);
+        collected.map_err(|failure| failure.render_human())?;
+        assert_eq!(reads.surfaces.len(), reads.read.len());
+        let helper = recorded(&reads.surfaces, "helper.incn")?.clone();
+        let entry = recorded(&reads.surfaces, "main.incn")?;
+        assert_eq!(entry.modules.len(), 1);
+        assert!(entry.modules[0].ends_with("helper.incn"));
+        assert!(helper.modules.is_empty());
+        let collect =
+            |path: &Path| source_file_surface(path.to_path_buf(), &session).map_err(|failure| failure.render_human());
+        assert_eq!(collect(&helper.path)?.0, helper);
+        fs::write(&helper.path, "def value() -> int:\n    return 2\n")?;
+        assert_eq!(collect(&helper.path)?.0, helper, "a body edit changed the surface");
+        fs::write(
+            &helper.path,
+            "from other import thing\n\ndef value() -> int:\n    return thing()\n",
+        )?;
+        let changed = collect(&helper.path)?.0;
+        assert_ne!(changed, helper, "a new import kept the surface");
+        assert!(changed.modules[0].ends_with("other.incn"));
+        Ok(())
+    }
+}
