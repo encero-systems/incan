@@ -287,29 +287,28 @@ fn keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -> Result<(
     Ok(())
 }
 
-/// A unit whose main is async or returns a value still compiles: it publishes no interface, and says why.
+/// A unit whose main returns a value, as a `Result` main does, still compiles: it publishes no interface, and says why.
+///
+/// An async main never gets this far: its product refuses coroutine state, so its unit publishes no interface anyway.
 #[test]
-fn keyed_plan_with_a_non_unit_main_refuses_the_interface() -> Result<(), String> {
-    for (test, asynchronous, result) in [("async-main", true, PlanType::Unit), ("int-main", false, PlanType::Int)] {
-        let request = Request::new(test)?;
-        let mut main = unit_function("main", 1);
-        main.is_async = asynchronous;
-        main.return_type = result;
-        let unit = plan(vec![main.clone()], &[]);
-        retain_product(&request, &main, false)?;
-        publish_plan_records(&unit, &request.products, &request.report)?;
-        assert!(
-            !request.report(INTERFACE_REPORT).is_file(),
-            "{test}: a main the entry record cannot bind published an interface"
-        );
-        assert!(
-            request
-                .refusals()?
-                .iter()
-                .any(|refusal| refusal.function == "main" && refusal.refusal.contains("synchronous unit main")),
-            "{test}: an omitted interface did not say why the entry was refused"
-        );
-    }
+fn keyed_plan_with_a_returning_main_refuses_the_interface() -> Result<(), String> {
+    let request = Request::new("returning-main")?;
+    let mut main = unit_function("main", 1);
+    main.return_type = PlanType::Int;
+    let unit = plan(vec![main.clone()], &[]);
+    retain_product(&request, &main, false)?;
+    publish_plan_records(&unit, &request.products, &request.report)?;
+    assert!(
+        !request.report(INTERFACE_REPORT).is_file(),
+        "a main the entry record cannot bind published an interface"
+    );
+    assert!(
+        request
+            .refusals()?
+            .iter()
+            .any(|refusal| refusal.function == "main" && refusal.refusal.contains("synchronous unit main")),
+        "an omitted interface did not say why the entry was refused"
+    );
     Ok(())
 }
 
