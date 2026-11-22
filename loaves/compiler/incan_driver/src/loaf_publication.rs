@@ -310,8 +310,13 @@ impl PublicationFacts {
                 .iter()
                 .flat_map(|(_, exports)| exports.iter().cloned())
                 .collect::<Vec<_>>();
-            manifest.package_internal =
-                Some(PackageInternalExports::new().with_source_defaults(&self.package, &exports));
+            let mut section = PackageInternalExports::new().with_source_defaults(&self.package, &exports);
+            for (module_path, exports) in &self.exports_by_source_module {
+                if let Some(module) = modules.iter().find(|module| &module.path_segments == module_path) {
+                    section = section.with_member_partials(&self.package, &module.ast, exports);
+                }
+            }
+            manifest.package_internal = Some(section);
         }
         retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(
