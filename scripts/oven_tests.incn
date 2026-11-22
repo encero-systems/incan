@@ -236,7 +236,7 @@ def run(options: Options) -> Result[str, str]:
     root = repository_root()?
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
-    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_BAKERY", ""), get_or("INCAN_BUILDER_HOME", ""))
     planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
     outcome = planned_outcome(options.oven, planned, options.jobs, options.memory, options.keep_going)?
     remove_worker_projects(planned)?
@@ -289,11 +289,17 @@ pub def invocations(
     return Ok(planned)
 
 
-pub def selected_builder_bakery(builder_home: str) -> str:
-    """Select the release builder's existing bakery for exact-identity reuse, or no override outside a release."""
-    if builder_home == "":
-        return ""
-    bakery = Path(builder_home).joinpath("bakery")
+pub def selected_builder_bakery(selected: str, builder_home: str) -> str:
+    """
+    Select the release builder's existing bakery for exact-identity reuse, or no override outside a release: the bakery
+    the release names (`INCAN_BUILDER_BAKERY`, which `INCAN_BAKERY` may have selected for its builds), else the build
+    home's own.
+    """
+    mut bakery = Path(selected)
+    if selected == "":
+        if builder_home == "":
+            return ""
+        bakery = Path(builder_home).joinpath("bakery")
     if not bakery.is_dir():
         return ""
     return bakery.0

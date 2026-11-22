@@ -566,6 +566,13 @@ pub def reuse_reference_log(cached: Path, log: Path) -> Result[None, str]:
     return Ok(None)
 
 
+pub def builder_bakery(configured: str, builder_home: Path) -> str:
+    """The bakery the release's builds compile into: the one `INCAN_BAKERY` selects, else the build home's own."""
+    if configured != "":
+        return configured
+    return builder_home.joinpath("bakery").0
+
+
 pub def release_rust_cache_root(seed_home: Path) -> Path:
     """Keep the relocated pinned Rust cache inside the caller-owned seed home boundary."""
     return seed_home.joinpath("cache/release-rust")

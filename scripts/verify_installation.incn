@@ -521,7 +521,7 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
     mut environment = command_environment(installation)
-    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_BAKERY", ""), get_or("INCAN_BUILDER_HOME", ""))
     if bakery != "":
         environment["INCAN_BAKERY"] = bakery
     manifests = sorted(
