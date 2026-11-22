@@ -6,15 +6,19 @@ use std::path::Path;
 use incan_lowering::{
     RecordedRuntimeInputs, RuntimeRequirement, UnitContinuation, UnitPlanning, complete_recorded_runtime_plan,
 };
-use incan_semantics_core::CanonicalSymbolId;
+use incan_mir_plan_native::source_span;
 use incan_semantics_core::body_ir::{LinkedStaticAccessors, NativeUnionDeclaration};
+use incan_semantics_core::{CanonicalSymbolId, decode_incan_symbol_identity, encode_incan_symbol_identity};
+use internal_models_native::PlanSourceSpanRecord;
+use internal_models_native::runtime_requirement_rows::{
+    RuntimeRequirementRow, decode_runtime_requirement_batches, encode_runtime_requirement_batches,
+};
 
 use super::checked_program::{PreparedRuntimeRequirements, apply_runtime_requirements, prepare_runtime_requirements};
 use super::{CheckedProgram, RefusalReceipt};
 
-const PAGE: &str = "runtime-requirements";
-const REPORT: &str = "runtime-requirements.report";
-const FORMAT: &[u8] = b"incan.plan.runtime-requirements/1\n";
+const PAGE: &str = "runtime-requirements.crumb2";
+const REPORT: &str = "runtime-requirements.crumb2.report";
 
 /// Prior demands are hints. Only the requirements selected by this request become its published evidence.
 #[derive(Default)]
@@ -36,7 +40,14 @@ impl RuntimePlanRecords {
     pub(super) fn read(products: Option<&Path>) -> Self {
         let prior = products
             .and_then(|directory| std::fs::read(directory.join(PAGE)).ok())
-            .and_then(|bytes| postcard::from_bytes(bytes.strip_prefix(FORMAT)?).ok())
+            .and_then(|bytes| decode_runtime_requirement_batches(&bytes).ok())
+            .and_then(|batches| {
+                batches
+                    .into_iter()
+                    .map(|batch| batch.into_iter().map(planning_requirement).collect())
+                    .collect::<Result<Vec<_>, _>>()
+                    .ok()
+            })
             .unwrap_or_default();
         Self {
             prior,
@@ -101,10 +112,45 @@ impl RuntimePlanRecords {
 
     /// Report this request's demands, including an empty list when the edit removed all of them.
     pub(super) fn publish(self, products: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let mut bytes = FORMAT.to_vec();
-        bytes.extend(postcard::to_allocvec(&self.selected)?);
+        let batches = self
+            .selected
+            .into_iter()
+            .map(|batch| batch.into_iter().map(graph_requirement).collect())
+            .collect();
+        let bytes = encode_runtime_requirement_batches(batches)?;
         std::fs::write(products.join(REPORT), bytes)?;
         Ok(())
+    }
+}
+
+/// Restore complete canonical declarations and shared source locations at the driver boundary.
+fn planning_requirement(row: RuntimeRequirementRow) -> Result<RuntimeRequirement, String> {
+    let canonical = row
+        .canonical
+        .as_deref()
+        .map(|identity| {
+            decode_incan_symbol_identity(identity)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "runtime requirement has no canonical symbol identity".to_owned())
+        })
+        .transpose()?;
+    Ok(RuntimeRequirement {
+        path: row.path,
+        canonical,
+        span: source_span(&row.span.file, row.span.line, row.span.column),
+    })
+}
+
+/// Encode one chosen demand without replacing its exact path or its live diagnostic coordinates.
+fn graph_requirement(requirement: RuntimeRequirement) -> RuntimeRequirementRow {
+    RuntimeRequirementRow {
+        path: requirement.path,
+        canonical: requirement.canonical.as_ref().map(encode_incan_symbol_identity),
+        span: PlanSourceSpanRecord {
+            file: requirement.span.file.as_str().to_owned(),
+            line: requirement.span.line,
+            column: requirement.span.column,
+        },
     }
 }
 

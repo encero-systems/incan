@@ -5,9 +5,11 @@ from rust::std::process import Command
 from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
-from std.io import BytesIO
 from std.json import JsonValue, parse
 from pub::incan_platform.store import begin, commit, get, stage_delete, stage_put
+from pub::internal_models.runtime_requirement_rows import (
+    RuntimeRequirementRow, decode_runtime_requirement_batches, encode_runtime_requirement_batches,
+)
 from compiler_runtime_requirements import runtime_requirements_key
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
@@ -173,6 +175,8 @@ def require_crumb_runtime_recipe(store: Path, source: Path) -> Result[None, str]
     selected = get(graph, typed_runtime_fixture_key(source)).map_err((error) => error.message())?
     if let Some(value) = selected:
         assert value[:4] == b"CRMB", "the selected runtime recipe is not Crumb"
+        batches = decode_runtime_requirement_batches(value)?
+        assert len(batches) == 2 and len(batches[1]) == 1, "the selected runtime recipe lost the ordered batches"
         return Ok(None)
     return Err("the successful plan did not publish a typed runtime recipe")
 
@@ -229,21 +233,23 @@ def verify_stale_runtime_batch(binary: str, root: Path, source: Path, seed: str,
 
 
 def stale_saved_runtime_batch(store: Path, source: Path) -> Result[None, str]:
-    """Replace the second batch's one encoded path in the existing postcard recipe without disturbing its shape."""
+    """Replace the second batch's lookup path while retaining the exact typed recipe shape and authority."""
     key = runtime_requirements_key("probe", source.0, "release")
     graph = snapshot(store).map_err((error) => error.message())?
     saved = get(graph, key).map_err((error) => error.message())?
     if let Some(value) = saved:
-        path_prefix = b"incan_stdlib_primitives::__incan_v1_"
-        positions = [index for index in range(len(value) - len(path_prefix) + 1) if value[index:index + len(path_prefix)] == path_prefix]
-        assert len(positions) == 1, f"expected one linked spelling in the runtime recipe: {positions}"
-        position = positions[0]
-        damaged = BytesIO(b"")
-        damaged.write_bytes(value[:position]).map_err((error) => error.message())?
-        damaged.write_bytes(b"incan_stdlib_primitives::__incan_v0_").map_err((error) => error.message())?
-        damaged.write_bytes(value[position + len(path_prefix):]).map_err((error) => error.message())?
+        batches = decode_runtime_requirement_batches(value)?
+        assert len(batches) == 2 and len(batches[1]) == 1, "expected two runtime batches and one late binding"
+        selected = batches[1][0]
+        assert selected.path.startswith("incan_stdlib_primitives::__incan_v1_"), "expected the exact linked spelling"
+        stale = RuntimeRequirementRow(
+            path=selected.path.replace("__incan_v1_", "__incan_v0_"),
+            canonical=selected.canonical,
+            span=selected.span,
+        )
+        altered = encode_runtime_requirement_batches([batches[0], [stale]])?
         mut transaction = begin(graph)
-        stage_put(transaction, key, damaged.getvalue())
+        stage_put(transaction, key, altered)
         _ = commit(transaction).map_err((error) => error.message())?
         return Ok(None)
     return Err("two-batch fixture has no saved runtime recipe")
