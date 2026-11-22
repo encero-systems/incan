@@ -17,7 +17,7 @@ use incan_semantics_core::body_ir::{BodyIrModule, LinkedStaticAccessors, NativeU
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, IncanType};
 
 use crate::async_::validate_futures;
-use crate::body_index::body_index;
+use crate::body_index::{BodyIndex, body_index, extend_body_index};
 use crate::checked_json::lower_checked_deserialize;
 use crate::classes::{body_module_identity, is_program_entry};
 use crate::comparison_methods::{attach_enum_comparisons, comparison_functions};
@@ -202,8 +202,12 @@ pub fn unit_plan(
 }
 
 /// Freeze program dispatch mappings after layout admission, copying storage once from the still-borrowed module.
+///
+/// The body index was built from this module for carrier discovery. Moving it here keeps both consumers on the
+/// same checked positions.
 pub fn program_context(
     constructors: Arc<ConstructorIndex>,
+    body_indices: BodyIndex,
     module: &BodyIrModule,
     intrinsics: &mut Vec<EnumDeclaration>,
     unions: &[IncanType],
@@ -213,7 +217,7 @@ pub fn program_context(
     let display = display_functions(constructor_view, module, intrinsics)?;
     let comparisons = comparison_functions(constructor_view, module, intrinsics)?;
     Ok(ProgramContext {
-        body_indices: body_index(module),
+        body_indices,
         display_functions: Arc::new(display),
         statics: Arc::new(module.static_declarations.clone()),
         comparison_functions: Arc::new(comparisons),
@@ -275,7 +279,7 @@ fn lowered_plan(
     } = contexts;
     let shared_source_context = Arc::new(source_context);
     let context = Arc::new(context);
-    let (constructor_table, unions, initial_intrinsics) = layout_tables(
+    let (constructor_table, body_indices, unions, initial_intrinsics) = layout_tables(
         &context,
         &files[entry],
         &source_files,
@@ -290,6 +294,7 @@ fn lowered_plan(
     let mut inventories = Inventories::default();
     let mut program = initial_plan_roots(
         constructors.clone(),
+        body_indices,
         &context,
         &files[entry],
         &mut intrinsics,
@@ -637,6 +642,7 @@ fn finish_unit_plan(
 #[allow(clippy::too_many_arguments)]
 pub fn initial_plan_roots(
     constructors: Arc<ConstructorIndex>,
+    body_indices: BodyIndex,
     context: &BodyIrModule,
     file: &str,
     intrinsics: &mut Vec<EnumDeclaration>,
@@ -654,6 +660,7 @@ pub fn initial_plan_roots(
     let (string_functions, conversion_runtime) = lower_string_conversions(&constructors, context, file, intrinsics, 0)?;
     let (prepared_models, prepared_enums, program) = initial_plan_layouts(
         constructors,
+        body_indices,
         context,
         file,
         intrinsics,
@@ -728,6 +735,7 @@ fn resume_plan_roots(
 #[allow(clippy::too_many_arguments)]
 fn initial_plan_layouts(
     constructors: Arc<ConstructorIndex>,
+    body_indices: BodyIndex,
     context: &BodyIrModule,
     file: &str,
     intrinsics: &mut Vec<EnumDeclaration>,
@@ -750,23 +758,31 @@ fn initial_plan_layouts(
     trace_lowering(trace, "enum declarations");
     let mut enums = lower_enum_declarations(&constructors, context, file, intrinsics)?;
     attach_enum_comparisons(&constructors, context, &mut enums, intrinsics)?;
-    let program = program_context(constructors, context, intrinsics, unions, overflow_checks)?;
+    let program = program_context(constructors, body_indices, context, intrinsics, unions, overflow_checks)?;
     Ok((models, enums, program))
 }
 
-/// Matched constructor, union and intrinsic tables for either planning entry point.
+/// Prepare matching layout tables and the single specialized body index used by carrier discovery and dispatch.
 pub fn layout_tables(
     context: &BodyIrModule,
     file: &str,
     source_files: &BTreeMap<String, String>,
     package_versions: &BTreeMap<String, String>,
     retained_intrinsics: Vec<EnumDeclaration>,
-) -> Result<(ConstructorIndex, Vec<IncanType>, Vec<EnumDeclaration>), String> {
+) -> Result<(ConstructorIndex, BodyIndex, Vec<IncanType>, Vec<EnumDeclaration>), String> {
     let constructors = index_constructors(&context.nominal_declarations, source_files, package_versions);
+    let body_indices = body_index(context);
     let unions = collect_unions(context);
-    let intrinsics = intrinsic_declarations(&constructors, context, file, retained_intrinsics, "initial")?;
+    let intrinsics = intrinsic_declarations(
+        &constructors,
+        context,
+        &body_indices,
+        file,
+        retained_intrinsics,
+        "initial",
+    )?;
     trace_union_selection("initial", unions.len(), unions.len(), &unions);
-    Ok((constructors, unions, intrinsics))
+    Ok((constructors, body_indices, unions, intrinsics))
 }
 
 /// Admit the completed unit's test and program entries, then transfer its owned native inventories into the plan.

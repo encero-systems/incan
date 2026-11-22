@@ -155,8 +155,17 @@ fn complete_runtime_plan(
     extend_constructor_index(Arc::make_mut(&mut constructors), &context.nominal_declarations);
     extend_generic_constructor_arities(Arc::make_mut(&mut constructors), &template_constructors);
     extend_constructor_authority(Arc::make_mut(&mut constructors), &source_files, package_versions);
+    // Appended execution bodies enter the shared index before carrier discovery and later frame dispatch.
+    extend_body_index(&mut program.body_indices, &context)?;
     extend_unions(&mut unions, &context);
-    intrinsics = intrinsic_declarations(&constructors, &context, &entry_file, intrinsics, "continuation")?;
+    intrinsics = intrinsic_declarations(
+        &constructors,
+        &context,
+        &program.body_indices,
+        &entry_file,
+        intrinsics,
+        "continuation",
+    )?;
     resume_plan_roots(
         &mut program,
         constructors.clone(),

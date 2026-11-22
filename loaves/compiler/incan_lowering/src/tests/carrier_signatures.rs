@@ -6,7 +6,8 @@ use incan_semantics_core::{
 };
 use sha2::{Digest, Sha256};
 
-use super::{BodyIrModule, CarrierPass, ConstructorIndex, IncanType, NamedCallableTarget, generic};
+use super::{BodyIrModule, CarrierPass, CarrierSignatures, ConstructorIndex, IncanType, NamedCallableTarget, generic};
+use crate::body_index::body_index;
 use crate::tests::bodies::empty_body;
 
 /// The complete source owner used by the carrier lookup, independent of the caller's spelling.
@@ -88,16 +89,19 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
     module.loaf_callables.push(linked);
 
     let constructors = ConstructorIndex::default();
+    let body_indices = body_index(&module);
+    let signatures = CarrierSignatures::new(&body_indices, &module);
     let mut layouts = Vec::new();
-    let mut pass = CarrierPass::new(&constructors, &module, &mut layouts, "src/main.incn");
+    let mut pass = CarrierPass::new(&constructors, &module, &mut layouts, "src/main.incn", Some(&signatures));
     let started = std::time::Instant::now();
     pass.retain_call(&target)?;
-    let work = (pass.body_candidates, pass.loaf_candidates, pass.parameter_copy_bytes);
+    let work = (pass.body_candidates, pass.loaf_candidates, pass.borrowed_position_bytes);
     println!(
-        "source candidates={}, linked candidates={}, copied slot bytes={}, ns={}",
+        "source candidates={}, linked candidates={}, borrowed position bytes={}, borrowed parameter slot bytes={}, ns={}",
         work.0,
         work.1,
         work.2,
+        pass.borrowed_parameter_bytes,
         started.elapsed().as_nanos()
     );
     let retained: Vec<&str> = layouts.iter().map(|layout| layout.source_type.as_str()).collect();
@@ -117,12 +121,17 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
         return Err("fixture has no linked callable".into());
     };
     linked.type_parameters.clear();
+    let signatures = CarrierSignatures::new(&body_indices, &module);
     let mut layouts = Vec::new();
-    let mut pass = CarrierPass::new(&constructors, &module, &mut layouts, "src/main.incn");
+    let mut pass = CarrierPass::new(&constructors, &module, &mut layouts, "src/main.incn", Some(&signatures));
     assert_eq!(
         pass.retain_call(&target),
         Err("the standard library carrier type argument count is unsupported".into())
     );
-    assert_eq!(work, (3, 1, 0), "the carrier pass scanned or copied a signature");
+    assert_eq!(
+        work,
+        (3, 1, 3 * std::mem::size_of::<usize>()),
+        "the carrier pass did not borrow only matching rows"
+    );
     Ok(())
 }
