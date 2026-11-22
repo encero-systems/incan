@@ -2,7 +2,7 @@
 
 from pub::internal_models.records import RecordKey
 
-pub from pub::internal_models.namespace_references import NAMESPACE_IDENTITY_PROFILE, namespace_key
+pub from pub::internal_models.namespace_references import NAMESPACE_IDENTITY_PROFILE, namespace_header_key, namespace_key
 
 pub const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 
