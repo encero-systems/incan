@@ -6,7 +6,7 @@ use super::*;
 use crate::loaf_index::LoafIdentity;
 
 mod wire;
-pub use wire::{NamespaceCell, NamespaceCrumb};
+pub use wire::{NamespaceCell, NamespaceCrumb, executable_scope_value, restore_executable_scope_value};
 pub(crate) use wire::{Project as CheckedCellProjection, callable_fields as callable_projection};
 
 /// Durable checked surface of one editable source namespace.
@@ -1015,9 +1015,11 @@ mod tests {
             vec!["dependency".into()],
             "PrivateState",
             SemanticSourceTargetKind::Model,
-            Default::default(),
+            incan_semantics_core::HirSourceSpan::new(1, 9).with_expansion(Some([11; 32])),
         );
         Arc::make_mut(&mut retained.nominal_scope).insert("PrivateState".into(), external.clone());
+        let reopened_scope = restore_executable_scope_value(executable_scope_value(&retained.nominal_scope))?;
+        assert_eq!(reopened_scope, retained.nominal_scope);
         let installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed

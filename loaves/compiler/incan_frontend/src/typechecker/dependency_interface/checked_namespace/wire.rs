@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use incan_semantics_core::body_ir::SharedIdentities;
+
 /// Logical cells passed across the checked frontend to graph-adapter boundary. A field selector is a six-byte
 /// Crumb member identity, represented as a u64 only while the native adapter carries the logical value.
 #[derive(Clone, Debug, PartialEq)]
@@ -227,4 +229,14 @@ pub(super) fn project(value: &super::CheckedNamespaceInterface) -> NamespaceCell
 }
 pub(super) fn restore(value: NamespaceCell) -> Result<super::CheckedNamespaceInterface, String> {
     super::CheckedNamespaceInterface::restore(value)
+}
+
+/// Project the complete checked nominal scope, including positioned identities, for the graph scope writer.
+pub fn executable_scope_value(scope: &SharedIdentities) -> NamespaceCell {
+    scope.project()
+}
+
+/// Restore one authenticated nominal map as a single shared handle for its executable owners.
+pub fn restore_executable_scope_value(value: NamespaceCell) -> Result<SharedIdentities, String> {
+    SharedIdentities::restore(value)
 }
