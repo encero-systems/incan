@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
+use crate::library_manifest::declaration_records::qualified_name;
 use crate::library_manifest::install_record::{
     InstallDeclaration, InstallDeclarationKind, InstallScopeTarget, LoafInstallRecord,
 };
@@ -355,6 +356,7 @@ impl TypeChecker {
                     Arc::new(module_scope)
                 });
                 let position = LayoutDeclaration::Api {
+                    qualified: qualified_name(&module.module_path, &declared.name),
                     module: module_index,
                     declaration: declared.position,
                 };

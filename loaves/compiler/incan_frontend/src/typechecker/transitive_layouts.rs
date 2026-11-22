@@ -18,8 +18,12 @@ use crate::symbols::SymbolKind;
 pub(in crate::typechecker) enum LayoutDeclaration {
     /// An admitted nominal or trait root projection, addressed by its public spelling and record family.
     Root { family: RecordFamily, name: String },
-    /// The checked API declaration at this position of this checked API module.
-    Api { module: usize, declaration: usize },
+    /// An authored declaration's record name and its position for legacy manifest reads.
+    Api {
+        qualified: String,
+        module: usize,
+        declaration: usize,
+    },
     /// The checked API declaration at this target path.
     ApiPath(Vec<String>),
 }

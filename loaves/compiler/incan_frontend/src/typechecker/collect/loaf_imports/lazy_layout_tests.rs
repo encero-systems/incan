@@ -787,7 +787,7 @@ fn compare_authored_layouts(
     use crate::api_metadata::ApiDeclaration;
     use crate::library_manifest::LibraryManifest;
     use crate::library_manifest::compiler_records::RecordFamily;
-    use crate::library_manifest::declaration_records::{qualified_name, restored_nominal_declaration};
+    use crate::library_manifest::declaration_records::qualified_name;
 
     let Some(api) = manifest.contract_metadata.api.as_ref() else {
         return Ok(0);
@@ -817,26 +817,20 @@ fn compare_authored_layouts(
             let signatures = read(RecordFamily::DeclarationSignature)?;
             let layouts = read(RecordFamily::Layout)?;
             let defaults = read(RecordFamily::Default)?;
-            let [signature] = signatures.as_slice() else {
-                differences.push(format!("{}::{name} ({digest}): expected one signature", manifest.name));
-                continue;
-            };
-            if layouts.len() > 1 || defaults.len() > 1 {
+            let Some(actual) = checker.layout_from_declaration_records(&signatures, &layouts, &defaults) else {
                 differences.push(format!(
-                    "{}::{name} ({digest}): ambiguous layout or defaults",
+                    "{}::{name} ({digest}): could not restore the declaration",
                     manifest.name
                 ));
                 continue;
-            }
-            let restored = serde_json::from_value(restored_nominal_declaration(
-                signature.clone(),
-                layouts.first(),
-                defaults.first(),
-            ))?;
+            };
+            let expected = checker
+                .symbol_kind_from_api_declaration(Some(api), declaration)
+                .ok_or_else(|| format!("{}::{name} has no manifest layout", manifest.name))?;
             let mut fields = Vec::new();
             layout_difference_paths(
-                &serde_json::to_value(checker.symbol_kind_from_api_declaration(None, &restored))?,
-                &serde_json::to_value(checker.symbol_kind_from_api_declaration(Some(api), declaration))?,
+                &serde_json::to_value(actual)?,
+                &serde_json::to_value(expected)?,
                 "",
                 &mut fields,
             );

@@ -700,9 +700,9 @@ impl LoafIndex {
         indexed.names_record(&exports, Some(name))
     }
 
-    /// The admitted root layout records for the export `name`. A Loaf without named records returns `None`, so
-    /// callers can use its ordinary manifest. An unreadable admitted record is an error.
-    pub(crate) fn root_layout_records(
+    /// The admitted records of a root export or authored layout addressed by `family` and `name`. A Loaf without
+    /// the named records returns `None`. An unreadable admitted record is an error.
+    pub(crate) fn named_layout_records(
         &self,
         key: &str,
         family: crate::library_manifest::compiler_records::RecordFamily,
