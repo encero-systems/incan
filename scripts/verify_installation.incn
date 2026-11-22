@@ -702,9 +702,14 @@ def json_text(value: JsonValue, key: str) -> Result[str, str]:
 
 pub def require_lsp_contract(report: Borrowed[BaselineReport]) -> Result[None, str]:
     """Require the census to have passed its live language-server case, whatever the committed baseline lists."""
-    if LSP_CONTRACT_CASE not in report.result_statuses:
-        return Err(f"the installed census did not run the language-server case {LSP_CONTRACT_CASE}")
-    status = report.result_statuses[LSP_CONTRACT_CASE]
+    for key in report.result_keys:
+        if key == LSP_CONTRACT_CASE:
+            return require_lsp_pass(report.result_statuses[key])
+    return Err(f"the installed census did not run the language-server case {LSP_CONTRACT_CASE}")
+
+
+def require_lsp_pass(status: str) -> Result[None, str]:
+    """Accept only a passing verdict for the language-server case."""
     if status != "PASS":
         return Err(f"the installed census reports {status} for the language-server case {LSP_CONTRACT_CASE}")
     return Ok(None)
