@@ -3,9 +3,8 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::Mutex;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::SystemTime;
 
 use incan_mir_plan_native::{
     ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, PARTIAL_MODULE_NOTE, POSITIONED_MODULE_PAGE,
@@ -17,32 +16,85 @@ use sha2::{Digest, Sha256};
 
 use crate::resident_products::{ResidentPage, resident_full_page, resident_page};
 
-/// The companion of a staged page that names the immutable store frame range holding its bytes, when Oven offers the
-/// page by reference instead of a copy: the segment file, the value's offset and its length, one per line.
-pub const FRAME_COMPANION: &str = ".frame";
+/// The file of a staged directory naming every page Oven offers by the immutable store frame that holds it instead of
+/// a copy, one line per page: its file name, the segment file, the value's offset and length, and its content digest,
+/// separated by tabs. Oven writes it once per request.
+pub const FRAME_LIST: &str = "frames.list";
 
 /// Where Bakery places the plan record of an admitted module: named by the module, never by a product key. A page
-/// offered by its store frame has only its companions at that name.
+/// offered by its store frame is named in its directory's frame list instead of having a file.
 pub fn module_page(products: &str, module: &str) -> PathBuf {
     let basename = hex::encode(module.as_bytes());
     let placed = Path::new(products).join(format!("{basename}{POSITIONED_MODULE_PAGE}"));
-    if placed.is_file() || frame_companion(&placed).is_file() {
+    if placed.is_file() || listed_frame(&placed).is_some() {
         return placed;
     }
     Path::new(products).join(format!("{basename}{REPOSITION_MODULE_PAGE}"))
 }
 
-/// The frame companion of a staged page.
-fn frame_companion(path: &Path) -> PathBuf {
-    PathBuf::from(format!("{}{FRAME_COMPANION}", path.display()))
+/// One page a frame list offers: where its bytes are and the digest they must have.
+#[derive(Clone)]
+struct ListedFrame {
+    segment: PathBuf,
+    offset: u64,
+    length: usize,
+    content: [u8; 32],
 }
 
-/// A staged page's bytes: its copy, or the store frame range its companion names. The caller checks them against the
-/// page's content digest.
+/// The frame list this worker parsed last, by its path, size and modification time: a request reads one list for
+/// every page it stages.
+type ParsedList = (PathBuf, u64, SystemTime, Arc<HashMap<String, ListedFrame>>);
+static LISTED: Mutex<Option<ParsedList>> = Mutex::new(None);
+
+/// The frame the list of a staged page's directory offers for it, if it names the page.
+fn listed_frame(path: &Path) -> Option<ListedFrame> {
+    let list = path.parent()?.join(FRAME_LIST);
+    let name = path.file_name()?.to_str()?;
+    let metadata = std::fs::metadata(&list).ok()?;
+    let (size, modified) = (metadata.len(), metadata.modified().ok()?);
+    if let Ok(guard) = LISTED.lock()
+        && let Some((kept, kept_size, kept_modified, frames)) = guard.as_ref()
+        && *kept == list
+        && *kept_size == size
+        && *kept_modified == modified
+    {
+        return frames.get(name).cloned();
+    }
+    let frames = Arc::new(read_frame_list(&list)?);
+    let found = frames.get(name).cloned();
+    if let Ok(mut guard) = LISTED.lock() {
+        *guard = Some((list, size, modified, frames));
+    }
+    found
+}
+
+/// Every page a frame list names; none when any line is malformed.
+fn read_frame_list(list: &Path) -> Option<HashMap<String, ListedFrame>> {
+    let text = std::fs::read_to_string(list).ok()?;
+    let mut frames = HashMap::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let [name, segment, offset, length, content] = fields.as_slice() else {
+            return None;
+        };
+        let content: [u8; 32] = hex::decode(content).ok()?.try_into().ok()?;
+        let frame = ListedFrame {
+            segment: PathBuf::from(segment),
+            offset: offset.parse().ok()?,
+            length: length.parse().ok()?,
+            content,
+        };
+        frames.insert((*name).to_owned(), frame);
+    }
+    Some(frames)
+}
+
+/// A staged page's bytes: its copy, or the store frame range its directory's frame list names. The caller checks them
+/// against the page's content digest.
 fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
     match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => framed_bytes(&frame_companion(path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => framed_bytes(&listed_frame(path)?),
         Err(_) => None,
     }
 }
@@ -105,19 +157,12 @@ pub(crate) fn staged_page_reads(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// The bytes of the store frame range a companion names: `segment\noffset\nlength\n`.
-fn framed_bytes(companion: &Path) -> Option<Vec<u8>> {
+/// The bytes of the store frame range a frame list names.
+fn framed_bytes(frame: &ListedFrame) -> Option<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
-    let text = std::fs::read_to_string(companion).ok()?;
-    let mut lines = text.lines();
-    let (Some(segment), Some(offset), Some(length), None) = (lines.next(), lines.next(), lines.next(), lines.next())
-    else {
-        return None;
-    };
-    let (offset, length) = (offset.parse::<u64>().ok()?, length.parse::<usize>().ok()?);
-    let mut file = std::fs::File::open(segment).ok()?;
-    file.seek(SeekFrom::Start(offset)).ok()?;
-    let mut bytes = vec![0; length];
+    let mut file = std::fs::File::open(&frame.segment).ok()?;
+    file.seek(SeekFrom::Start(frame.offset)).ok()?;
+    let mut bytes = vec![0; frame.length];
     file.read_exact(&mut bytes).ok()?;
     Some(bytes)
 }
@@ -203,9 +248,12 @@ fn page_bytes<'a>(cell: &'a OnceLock<Option<Vec<u8>>>, path: &Path, content: &[u
     .as_deref()
 }
 
-/// The content digest Oven named a staged page by, from its `.digest` companion: 64 lowercase hexadecimal digits.
+/// The content digest Oven named a staged page by: its `.digest` companion's 64 lowercase hexadecimal digits, or the
+/// digest its directory's frame list names it by.
 fn named_content(path: &Path) -> Option<[u8; 32]> {
-    let named = std::fs::read(format!("{}.digest", path.display())).ok()?;
+    let Ok(named) = std::fs::read(format!("{}.digest", path.display())) else {
+        return listed_frame(path).map(|frame| frame.content);
+    };
     if named.len() != 64
         || !named
             .iter()
@@ -465,13 +513,35 @@ mod tests {
     };
 
     use super::{
-        FRAME_COMPANION, admitted_frames, admitted_page, admitted_plan_page, read_admitted, report_admitted,
-        staged_page, staged_page_reads,
+        FRAME_LIST, admitted_frames, admitted_page, admitted_plan_page, read_admitted, report_admitted, staged_page,
+        staged_page_reads,
     };
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
     use crate::scalar_store::AdmittedPayload;
     use sha2::{Digest, Sha256};
+
+    /// Offer the page at `path` by a frame range of `segment` in its directory's frame list, named by `digest`,
+    /// replacing any line the list had for it.
+    fn list_frame(path: &Path, segment: &Path, offset: usize, length: usize, digest: &[u8]) -> Result<(), String> {
+        let list = path.parent().ok_or("page has no directory")?.join(FRAME_LIST);
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("page has no name")?;
+        let kept = std::fs::read_to_string(&list).unwrap_or_default();
+        let mut lines: Vec<String> = kept
+            .lines()
+            .filter(|line| line.split('\t').next() != Some(name))
+            .map(str::to_owned)
+            .collect();
+        lines.push(format!(
+            "{name}\t{}\t{offset}\t{length}\t{}",
+            segment.display(),
+            hex::encode(digest)
+        ));
+        std::fs::write(&list, lines.join("\n") + "\n").map_err(|error| error.to_string())
+    }
 
     /// A fresh directory for one test.
     fn directory(test: &str) -> PathBuf {
@@ -813,15 +883,7 @@ mod tests {
             stored.extend_from_slice(encoded);
             write(&segment, &stored)?;
             let path = root.join(format!("{}.incnmodule.positioned", hex::encode(name)));
-            let frame = format!("{}\n{offset}\n{}\n", segment.display(), encoded.len());
-            write(
-                &PathBuf::from(format!("{}{FRAME_COMPANION}", path.display())),
-                frame.as_bytes(),
-            )?;
-            write(
-                &PathBuf::from(format!("{}.digest", path.display())),
-                hex::encode(Sha256::digest(encoded)).as_bytes(),
-            )?;
+            list_frame(&path, &segment, offset, encoded.len(), &Sha256::digest(encoded))?;
             Ok(path)
         };
         let first = offer("resident_kappa", &encode_plan_module(&page("resident_kappa", 1))?)?;
@@ -852,32 +914,20 @@ mod tests {
     fn every_reader_of_a_staged_page_reads_a_frame_offered_page_checked_by_its_digest() -> Result<(), String> {
         let root = directory("frame-reader");
         let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
-        let companion = |path: &Path, suffix: &str| PathBuf::from(format!("{}{suffix}", path.display()));
         let segment = root.join("one.seg");
         write(&segment, b"prefix page bytes suffix")?;
         let framed = root.join("framed.incnmodule.positioned");
-        write(
-            &companion(&framed, FRAME_COMPANION),
-            format!("{}\n7\n10\n", segment.display()).as_bytes(),
-        )?;
-        write(
-            &companion(&framed, ".digest"),
-            hex::encode(Sha256::digest(b"page bytes")).as_bytes(),
-        )?;
+        list_frame(&framed, &segment, 7, 10, &Sha256::digest(b"page bytes"))?;
         assert_eq!(staged_page(&framed)?, b"page bytes".to_vec());
         let copied = root.join("copied.incnmodule.positioned");
         write(&copied, b"copied page")?;
         assert_eq!(staged_page(&copied)?, b"copied page".to_vec());
         let unnamed = root.join("unnamed.incnmodule.positioned");
-        write(
-            &companion(&unnamed, FRAME_COMPANION),
-            format!("{}\n7\n10\n", segment.display()).as_bytes(),
-        )?;
-        assert!(staged_page(&unnamed).is_err(), "a frame without its digest was read");
-        write(
-            &companion(&unnamed, ".digest"),
-            hex::encode(Sha256::digest(b"other bytes")).as_bytes(),
-        )?;
+        assert!(
+            staged_page(&unnamed).is_err(),
+            "a page with neither a copy nor a frame was read"
+        );
+        list_frame(&unnamed, &segment, 7, 10, &Sha256::digest(b"other bytes"))?;
         assert!(
             staged_page(&unnamed).is_err(),
             "a frame whose bytes are not its digest was read"
@@ -902,15 +952,7 @@ mod tests {
             stored.extend_from_slice(b"the next frame");
             write(&segment, &stored)?;
             let path = root.join(format!("{}.incnmodule.reposition", hex::encode(module)));
-            let frame = format!("{}\n{offset}\n{}\n", segment.display(), encoded.len());
-            write(
-                &PathBuf::from(format!("{}{FRAME_COMPANION}", path.display())),
-                frame.as_bytes(),
-            )?;
-            write(
-                &PathBuf::from(format!("{}.digest", path.display())),
-                hex::encode(Sha256::digest(named)).as_bytes(),
-            )?;
+            list_frame(&path, &segment, offset, encoded.len(), &Sha256::digest(named))?;
             Ok(path)
         };
         let page = |module: &str| PlanModuleValue {
