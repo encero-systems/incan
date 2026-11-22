@@ -60,6 +60,8 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
 # break, so they run after the others have finished; only their compilation runs beside the others.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
+# How long a running invocation's observed process tree stands before it is probed again: each probe starts `ps`.
+pub const CUSTODY_INTERVAL_MS: int = 1000
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
@@ -134,6 +136,8 @@ model Running:
     census_error: Option[str]
     # The worker project it runs in; empty when it has none.
     worker: str
+    # When its process tree was last probed, in milliseconds after it started; none before the first probe.
+    probed_ms: Option[int] = None
 
 
 model ActiveSettlement:
@@ -614,8 +618,8 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
     mut stopped = false
     mut completed = false
     for item in active:
-        custody = running_custody(item)
         if stopped:
+            custody = running_custody(item, true)
             if let Some(message) = stop_owned_child(item.child, custody, item.position):
                 errors.append(message)
             completed = true
@@ -623,11 +627,14 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
         match item.child.borrow_mut().try_wait():
             Err(error) =>
                 errors.append(f"cannot poll Oven test invocation {item.position}: {error}")
+                custody = running_custody(item, true)
                 if let Some(message) = stop_owned_child(item.child, custody, item.position):
                     errors.append(message)
                 stopped = true
                 completed = true
             Ok(Some(status)) =>
+                # The root has exited, so a probe now reaches nothing through it: the members observed stand.
+                custody = running_custody(item, false)
                 if let Some(message) = stop_owned_child(item.child, custody, item.position):
                     errors.append(message)
                     stopped = true
@@ -638,6 +645,7 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
                 completed = true
             Ok(None) =>
                 if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
+                    custody = running_custody(item, true)
                     if let Some(message) = stop_owned_child(item.child, custody, item.position):
                         errors.append(message)
                         stopped = true
@@ -646,6 +654,12 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
                         stopped = true
                     completed = true
                 else:
+                    elapsed_ms = int(item.started.elapsed().as_millis())
+                    probe = custody_due(item.probed_ms, elapsed_ms)
+                    custody = running_custody(item, probe)
+                    mut probed_ms = item.probed_ms
+                    if probe:
+                        probed_ms = Some(elapsed_ms)
                     running.append(
                         Running(
                             position=item.position,
@@ -656,6 +670,7 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
                             members=custody.members,
                             census_error=custody.census_error,
                             worker=item.worker,
+                            probed_ms=probed_ms,
                         ),
                     )
     if stopped or len(errors) > 0:
@@ -713,10 +728,19 @@ def start_waiting(
     return Admission(active=running, waiting=remaining, errors=errors)
 
 
-def running_custody(item: Borrowed[Running]) -> ReleaseTermination:
-    """Merge one invocation's retained descendants with the operating system's current observation."""
+pub def custody_due(probed_ms: Option[int], elapsed_ms: int) -> bool:
+    """Whether a running invocation's tree is probed now: never probed yet, or last probed an interval ago."""
+    match probed_ms:
+        None => return true
+        Some(last) => return elapsed_ms - last >= CUSTODY_INTERVAL_MS
+
+
+def running_custody(item: Borrowed[Running], probe: bool) -> ReleaseTermination:
+    """One invocation's retained descendants, merged with the operating system's current observation when `probe`."""
     root = int(item.child.borrow().id())
     known = ReleaseTermination(root=root, members=item.members.clone(), census_error=item.census_error.clone())
+    if not probe:
+        return known
     observed = observe_release_processes(root)
     return merge_release_terminations(known, observed)
 
@@ -725,7 +749,7 @@ def stop_owned_children(active: list[Running]) -> list[str]:
     """Attempt to stop every owned invocation, retaining all cleanup failures instead of abandoning later children."""
     mut errors: list[str] = []
     for item in active:
-        custody = running_custody(item)
+        custody = running_custody(item, true)
         if let Some(message) = stop_owned_child(item.child, custody, item.position):
             errors.append(message)
     return errors
