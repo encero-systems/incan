@@ -34,6 +34,10 @@ pub struct TypecheckedModules {
     pub namespace_package_roots: std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
     /// Lowering witnesses carried by the complete namespace records admitted in this pass.
     pub namespace_lowering_inputs: Vec<Arc<[(incan_semantics_core::CompilerNodeId, String)]>>,
+    /// Modules admitted whole by their namespace header, aligned with `type_infos`: checking read no frame of theirs
+    /// beyond the interfaces it installed, so their Body IR, witnesses and package roots are still to be read by a
+    /// consumer that lowers them.
+    pub header_admitted: Vec<bool>,
     /// Non-fatal parser and typechecker diagnostics, for reports that expose them.
     ///
     /// Ordered by module, then by parser-before-typechecker within each module, so a machine-readable report is
@@ -96,6 +100,7 @@ pub(crate) fn typecheck_modules(
     let mut namespace_bodies = Vec::with_capacity(modules.len());
     let mut namespace_package_roots = std::collections::BTreeSet::new();
     let mut namespace_lowering_inputs = Vec::new();
+    let mut header_admitted = vec![false; modules.len()];
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = imports.cycle_peers();
     let memory_trace = incan_frontend::trace_flags::enabled(incan_frontend::trace_flags::Category::TypecheckMemory);
@@ -136,17 +141,20 @@ pub(crate) fn typecheck_modules(
                 .strip_prefix(&unit.project_root)
                 .ok()
                 .map(|path| path.to_string_lossy().into_owned());
-            match source {
-                Some(source) => graph_body_records
+            let Some(source) = source else { return Ok(None) };
+            let refused = |error| format!("graph namespace `{source}` refused: {error:?}");
+            // An unchanged namespace is admitted by its header when the request offers one; its frame is opened only
+            // for the interfaces a checked module installs, or by a consumer that lowers it.
+            let admitted = match graph_body_records.namespace_admission(&source).map_err(refused)? {
+                Some(header) => Some(NamespaceAdmission::Header(header)),
+                None => graph_body_records
                     .namespace(&source)
-                    .map(|record| {
-                        record.filter(|record| record.header.interface.belongs_to(&module.name, &module.path_segments))
-                    })
-                    .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
-                None => Ok(None),
-            }
+                    .map_err(refused)?
+                    .map(NamespaceAdmission::Record),
+            };
+            Ok(admitted.filter(|admitted| admitted.interface().belongs_to(&module.name, &module.path_segments)))
         })
-        .collect::<Result<Vec<_>, _>>()
+        .collect::<Result<Vec<_>, String>>()
         .map_err(|message| {
             CliDiagnosticFailure::single(
                 "",
@@ -178,7 +186,7 @@ pub(crate) fn typecheck_modules(
         .filter(|(index, _)| restored[*index] && needed_interfaces[*index])
         .filter_map(|(index, row)| {
             row.as_ref()
-                .map(|record| (index, modules[index].file_path.as_path(), &record.header.interface))
+                .map(|admitted| (index, modules[index].file_path.as_path(), admitted.interface()))
         })
         .collect::<Vec<_>>();
     for (index, interface) in restore_dependency_interfaces(&selected).map_err(|message| {
@@ -200,14 +208,22 @@ pub(crate) fn typecheck_modules(
         // A cycle shares its declaration environment. Restore it only if every member has an authenticated
         // interface and Body IR for the current logical module. Any missing member takes the entire component
         // through the ordinary component interface builder below.
-        if let Some(record) = namespace
+        if let Some(admitted) = namespace
             && restored[idx]
         {
             warnings_out.extend(parser_warning_diagnostics(module));
             type_infos.push(TypeCheckInfo::default());
-            namespace_bodies.push(Some(record.body_ir));
-            namespace_lowering_inputs.push(Arc::clone(&record.header.lowering_inputs));
-            namespace_package_roots.extend(record.header.package_roots.iter().cloned());
+            match admitted {
+                NamespaceAdmission::Record(record) => {
+                    namespace_bodies.push(Some(record.body_ir));
+                    namespace_lowering_inputs.push(Arc::clone(&record.header.lowering_inputs));
+                    namespace_package_roots.extend(record.header.package_roots.iter().cloned());
+                }
+                NamespaceAdmission::Header(_) => {
+                    namespace_bodies.push(None);
+                    header_admitted[idx] = true;
+                }
+            }
             continue;
         }
         if let Some(entry) = retained.as_deref().and_then(|cache| cache.get(idx)) {
@@ -385,6 +401,7 @@ pub(crate) fn typecheck_modules(
             namespace_bodies,
             namespace_lowering_inputs,
             namespace_package_roots,
+            header_admitted,
             warnings: warnings_out,
         })
     } else {
@@ -640,6 +657,23 @@ fn resolve_package_owned_c_binding_header(unit: &UnitDescription, binding: &CBin
     let mut resolved = binding.clone();
     resolved.header = unit.project_root.join(&binding.header).to_string_lossy().into_owned();
     resolved
+}
+
+/// How one unchanged namespace was admitted: by its header, with its interface frame opened on installation, or by its
+/// complete record, Body IR included.
+enum NamespaceAdmission {
+    Header(incan_frontend::checker_records::GraphNamespaceAdmission),
+    Record(incan_frontend::checker_records::GraphNamespaceRecord),
+}
+
+impl NamespaceAdmission {
+    /// The admitted declaration surface.
+    fn interface(&self) -> &Arc<dyn incan_frontend::checker_records::GraphNamespaceInterface> {
+        match self {
+            Self::Header(header) => &header.interface,
+            Self::Record(record) => &record.header.interface,
+        }
+    }
 }
 
 type SelectedNamespace<'a> = (

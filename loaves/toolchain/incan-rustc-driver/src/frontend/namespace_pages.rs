@@ -10,6 +10,7 @@ use incan_semantics_core::body_ir::BodyIrModule;
 use internal_models::{GraphNamespaceView, NamespaceReference};
 use sha2::{Digest, Sha256};
 
+use super::namespace_admission::{FrameAccess, admit_header};
 use super::namespace_crumb;
 
 const RETAINED_BODY_BYTES: usize = 128 * 1024 * 1024;
@@ -75,7 +76,9 @@ static RESIDENT: Mutex<Option<ResidentBodies>> = Mutex::new(None);
 #[derive(Debug, Default)]
 pub(super) struct NamespacePages {
     references: Vec<NamespaceReference>,
-    reader: Option<Mutex<incan_worker_host_native::NamespaceFrameReader>>,
+    /// The header beside each offered frame, sorted like `references`; empty when Oven offers none.
+    headers: Vec<NamespaceReference>,
+    access: Option<FrameAccess>,
     scope: Option<ProgramScope>,
     checked: Mutex<HashMap<String, SelectedBody>>,
 }
@@ -102,22 +105,20 @@ impl NamespacePages {
         let bakery = bakery
             .and_then(Path::to_str)
             .ok_or("namespace frame references require a UTF-8 Bakery anchor")?;
-        let reader = Some(Mutex::new(incan_worker_host_native::namespace_frame_reader(bakery)));
+        let access = Some(FrameAccess::new(incan_worker_host_native::namespace_frame_reader(
+            bakery,
+        )));
         let bytes = std::fs::read(path).map_err(|error| format!("cannot read namespace frame references: {error}"))?;
         let mut references = internal_models::decode_namespace_references(&bytes)?;
         references.sort_unstable_by(|left, right| left.key.identity.cmp(&right.key.identity));
-        Ok(Self::with_selection(
-            references,
-            reader,
-            Some(Path::new(bakery)),
-            project,
-            retain_bodies,
-        ))
+        let mut selection = Self::with_selection(references, access, Some(Path::new(bakery)), project, retain_bodies);
+        selection.headers = read_header_references(directory)?;
+        Ok(selection)
     }
 
     fn with_selection(
         references: Vec<NamespaceReference>,
-        reader: Option<Mutex<incan_worker_host_native::NamespaceFrameReader>>,
+        access: Option<FrameAccess>,
         bakery: Option<&Path>,
         project: &Path,
         retain_bodies: bool,
@@ -148,7 +149,8 @@ impl NamespacePages {
         }
         Self {
             references,
-            reader,
+            headers: Vec::new(),
+            access,
             scope,
             checked: Mutex::default(),
         }
@@ -195,8 +197,8 @@ impl NamespacePages {
             self.note(source, retained.selected);
             return Ok(Some(record));
         }
-        let reader = self
-            .reader
+        let access = self
+            .access
             .as_ref()
             .ok_or_else(|| RecordAdapterFault::InvalidField("namespace frame has no Bakery reader".into()))?;
         let bytes = reference.length
@@ -219,11 +221,7 @@ impl NamespacePages {
                 module = source, segment = reference.segment.as_str(), bytes,
             )
             .entered();
-            let mut reader = reader
-                .lock()
-                .map_err(|_| RecordAdapterFault::InvalidField("Bakery namespace reader is poisoned".into()))?;
-            incan_worker_host_native::read_namespace_frame(&mut reader, &frame_reference(reference))
-                .map_err(RecordAdapterFault::InvalidField)?
+            access.frame(source, reference)?
         };
         let record = {
             let _row = tracing::trace_span!(
@@ -247,6 +245,23 @@ impl NamespacePages {
             },
         );
         Ok(Some(record))
+    }
+
+    /// Admit an unchanged namespace by the header Oven offers beside its frame, without opening the frame. `None` when
+    /// the request offers no header for `source`, or no frame beside it; the caller then reads the namespace whole.
+    pub(super) fn read_header(
+        &self,
+        source: &str,
+    ) -> Result<Option<incan_frontend::checker_records::GraphNamespaceAdmission>, RecordAdapterFault> {
+        let by_source = |reference: &NamespaceReference| reference.key.identity.as_str().cmp(source);
+        let (Ok(header), Ok(frame), Some(access)) = (
+            self.headers.binary_search_by(by_source),
+            self.references.binary_search_by(by_source),
+            self.access.as_ref(),
+        ) else {
+            return Ok(None);
+        };
+        admit_header(access, source, &self.headers[header], &self.references[frame]).map(Some)
     }
 
     /// Take the one decoded owner. The cache never keeps a second copy alongside an active compiler.
@@ -340,6 +355,30 @@ impl NamespacePages {
         }
         held.values.insert(source, ResidentBody { selected, body });
     }
+}
+
+/// The header references Oven offers beside the frame references, sorted by source; none from an Oven that offers no
+/// headers. Each must name a namespace header record.
+fn read_header_references(directory: &Path) -> Result<Vec<NamespaceReference>, String> {
+    let path = directory.join(internal_models_native::namespace_header_reference_filename());
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("cannot inspect namespace header references: {error}")),
+    };
+    if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
+        return Err("namespace header references require a bounded regular page".into());
+    }
+    let bytes = std::fs::read(path).map_err(|error| format!("cannot read namespace header references: {error}"))?;
+    let mut headers = internal_models::decode_namespace_references(&bytes)?;
+    let header_key = |reference: &NamespaceReference| {
+        internal_models_native::namespace_header_key(&reference.key.origin, &reference.key.identity)
+    };
+    if headers.iter().any(|reference| reference.key != header_key(reference)) {
+        return Err("namespace header references name another record family".into());
+    }
+    headers.sort_unstable_by(|left, right| left.key.identity.cmp(&right.key.identity));
+    Ok(headers)
 }
 
 /// Report a schema refusal identically for both namespace transports.
@@ -476,7 +515,9 @@ fn admit_namespace(
 
 /// The worker host's frame reference for one admitted namespace reference: the same fields in the Rust record model,
 /// until the record models are one Rust type.
-fn frame_reference(reference: &NamespaceReference) -> internal_models_native::namespace_references::NamespaceReference {
+pub(super) fn frame_reference(
+    reference: &NamespaceReference,
+) -> internal_models_native::namespace_references::NamespaceReference {
     let key = &reference.key;
     internal_models_native::namespace_references::NamespaceReference {
         key: internal_models_native::records::RecordKey {
