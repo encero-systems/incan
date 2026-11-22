@@ -219,14 +219,16 @@ impl IndexedLoaf {
     }
 
     /// Admit a small inventory, or use full admission when its private proof is missing or stale.
+    ///
+    /// In records mode a standard package is admitted only from the installed set. A dependency outside that set keeps
+    /// its ordinary artifact contract, so its retained inventory admits it as it does outside records mode.
     pub fn open(key: String, namespace: LoafNamespace, dir: PathBuf, name: &str) -> Result<Self, LoafIndexError> {
         let path = dir.join(format!("{}.incnlib", artifact_stem(name)));
-        if super::compiler_record_set::configured()
-            && let Some(summary) = super::compiler_record_set::summary(&dir, name)?
-        {
+        let records = super::compiler_record_set::configured();
+        if records && let Some(summary) = super::compiler_record_set::summary(&dir, name)? {
             return Ok(Self::known(key, namespace, dir, summary));
         }
-        if !super::compiler_record_set::configured()
+        if (!records || matches!(namespace, LoafNamespace::Dependency { .. }))
             && let Some(summary) = retained(&path)
             && summary.identity.name == name
         {
