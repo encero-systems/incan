@@ -573,6 +573,17 @@ fn generic_metadata_belongs_to(
     let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &target.operation else {
         return false;
     };
+    binder_belongs_to(binder, callable, parameters, nominals)
+}
+
+/// Whether `binder` is a declared parameter of `callable` or of its checked nominal owner, by source span and
+/// expansion ancestry; a same-spelled binder of another frame does not belong.
+pub(super) fn binder_belongs_to(
+    binder: &CanonicalSymbolId,
+    callable: &CanonicalSymbolId,
+    parameters: &BTreeSet<String>,
+    nominals: &[crate::body_ir::NominalDeclaration],
+) -> bool {
     if !parameters.contains(&binder.declaration_name) {
         return false;
     }
