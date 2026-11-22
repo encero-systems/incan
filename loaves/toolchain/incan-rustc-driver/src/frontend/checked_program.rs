@@ -688,6 +688,7 @@ fn checked_attempt(
             modules: bodies,
             sources,
             files,
+            captured_source_paths: session.take_captured_source_paths().map_err(|error| error.message)?,
             entry,
             own: loaf_modules,
             dependency_modules: loaf_modules,
@@ -703,6 +704,20 @@ fn checked_attempt(
     )?;
     session.loaves().validate_demands().map_err(|error| error.to_string())?;
     Ok(CheckedAttempt::Complete(program))
+}
+
+/// Move the texts that the checker read from this capture after lowering has finished with source diagnostics.
+pub(super) fn take_captured_texts(program: &mut CheckedProgram) -> BTreeMap<String, String> {
+    let mut captured = std::mem::take(&mut program.captured_source_paths);
+    if captured.is_empty() {
+        return BTreeMap::new();
+    }
+    program
+        .files
+        .iter()
+        .zip(&mut program.sources)
+        .filter_map(|(file, text)| captured.remove(file).then(|| (file.clone(), std::mem::take(text))))
+        .collect()
 }
 
 /// Resolve explicit program sources to checked main identities before joining module contexts. Ordinary imported
