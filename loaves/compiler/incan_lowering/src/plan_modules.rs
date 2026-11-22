@@ -15,14 +15,51 @@ use sha2::{Digest, Sha256};
 
 use crate::resident_products::{ResidentPage, resident_page};
 
-/// Where Bakery places the plan record of an admitted module: named by the module, never by a product key.
+/// The companion of a staged page that names the immutable store frame range holding its bytes, when Oven offers the
+/// page by reference instead of a copy: the segment file, the value's offset and its length, one per line.
+pub const FRAME_COMPANION: &str = ".frame";
+
+/// Where Bakery places the plan record of an admitted module: named by the module, never by a product key. A page
+/// offered by its store frame has only its companions at that name.
 pub fn module_page(products: &str, module: &str) -> PathBuf {
     let basename = hex::encode(module.as_bytes());
     let placed = Path::new(products).join(format!("{basename}{POSITIONED_MODULE_PAGE}"));
-    if placed.is_file() {
+    if placed.is_file() || frame_companion(&placed).is_file() {
         return placed;
     }
     Path::new(products).join(format!("{basename}{REPOSITION_MODULE_PAGE}"))
+}
+
+/// The frame companion of a staged page.
+fn frame_companion(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}{FRAME_COMPANION}", path.display()))
+}
+
+/// A staged page's bytes: its copy, or the store frame range its companion names. The caller checks them against the
+/// page's content digest.
+fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => framed_bytes(&frame_companion(path)),
+        Err(_) => None,
+    }
+}
+
+/// The bytes of the store frame range a companion names: `segment\noffset\nlength\n`.
+fn framed_bytes(companion: &Path) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let text = std::fs::read_to_string(companion).ok()?;
+    let mut lines = text.lines();
+    let (Some(segment), Some(offset), Some(length), None) = (lines.next(), lines.next(), lines.next(), lines.next())
+    else {
+        return None;
+    };
+    let (offset, length) = (offset.parse::<u64>().ok()?, length.parse::<usize>().ok()?);
+    let mut file = std::fs::File::open(segment).ok()?;
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let mut bytes = vec![0; length];
+    file.read_exact(&mut bytes).ok()?;
+    Some(bytes)
 }
 
 /// An admitted module's final events by native function name, and whether its bodies must be placed at the current
@@ -96,10 +133,11 @@ impl ModulePage {
     }
 }
 
-/// Read a page's bytes into `cell` once, keeping them only when their digest is `content`.
+/// Read a page's bytes into `cell` once, from its copy or its store frame, keeping them only when their digest is
+/// `content`.
 fn page_bytes<'a>(cell: &'a OnceLock<Option<Vec<u8>>>, path: &Path, content: &[u8; 32]) -> Option<&'a [u8]> {
     cell.get_or_init(|| {
-        let bytes = std::fs::read(path).ok()?;
+        let bytes = staged_bytes(path)?;
         (<[u8; 32]>::from(Sha256::digest(&bytes)) == *content).then_some(bytes)
     })
     .as_deref()
@@ -135,7 +173,7 @@ pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&s
     let content = match named_content(&path) {
         Some(content) => content,
         None => {
-            let Ok(bytes) = std::fs::read(&path) else {
+            let Some(bytes) = staged_bytes(&path) else {
                 return ModulePage::empty();
             };
             let content = Sha256::digest(&bytes).into();
