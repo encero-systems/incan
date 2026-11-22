@@ -189,7 +189,7 @@ fn prepass_names(corpus: &Corpus, case: &Case, scratch: &Path) -> Result<BTreeMa
     Ok(names)
 }
 
-/// Recreate one captured invocation with the replay's own product and report directories.
+/// Recreate a captured invocation with its own product and report directories and the corpus's empty static exports.
 fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result<SourceInputs, String> {
     let scalar_products = match &step.scalar_products {
         Some(_) => {
@@ -208,6 +208,7 @@ fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result
         overflow_checks: step.overflow_checks,
         scalar_products,
         scalar_bodies: step.scalar_bodies.clone(),
+        linked_static_exports: Default::default(),
         record_report: step
             .record_report
             .as_ref()

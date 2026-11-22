@@ -56,7 +56,12 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     return Ok(captured)
 
 
-pub def prepare_submit(store: Path, submit: Submit, discover_standalone: bool = false) -> Result[CapturedRequest, str]:
+pub def prepare_submit(
+    store: Path,
+    submit: Submit,
+    discover_standalone: bool = false,
+    canonical_source: Option[Path] = None,
+) -> Result[CapturedRequest, str]:
     """
     Capture a file request and prepare its revision without publishing any part of the request.
 
@@ -74,7 +79,9 @@ pub def prepare_submit(store: Path, submit: Submit, discover_standalone: bool = 
             return Err("unit records check requires a text or json report format")
     elif submit.options != "":
         return Err("unit records run and build accept no additional build options")
-    source = Path(submit.requested_roots).resolve().map_err((error) => f"cannot {error.message()}")?
+    source = match canonical_source:
+        Some(resolved) => resolved
+        None => Path(submit.requested_roots).resolve().map_err((error) => f"cannot {error.message()}")?
     if not source.0.endswith(".incn") or submit.view == "":
         return Err("unit records require one Incan program file and a project view")
     selected = selected_home()?

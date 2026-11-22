@@ -9,14 +9,31 @@
 //! planned method call. The storage and accessors keep rustc's own MIR; only initializers and selected methods are
 //! planned bodies.
 
-use crate::ast_build::{RUST_CLONE_SYMBOL, ident};
+use crate::ast_build::{RUST_CLONE_SYMBOL, function_pointer, ident, path_ty};
 use crate::plan::{CalleeKind, Function, ListLeaf, PlanType, StaticCell, TerminatorKind, tuple_element_type};
 use crate::{declarations, error::PlanError, plan::Plan};
+use incan_mir_plan_native::plan::static_accessor_name;
 use rustc_ast as ast;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Span, Symbol};
 use std::collections::BTreeSet;
 use thin_vec::{ThinVec, thin_vec};
+
+/// The unit operand of a call `incan_lowering::is_unit_keyed_runtime_call` names: this crate's stable id, in place of
+/// the plan's 0.
+///
+/// The runtime keeps one cell table per carrier for the whole process, and every unit (a Loaf, or the program)
+/// numbers its statics from 0, so a cell is keyed by its unit and its slot; rustc gives every crate of one build its
+/// own stable id.
+pub(crate) fn unit_operand<'tcx>(tcx: TyCtxt<'tcx>, span: Span) -> rustc_middle::mir::Operand<'tcx> {
+    let unit = tcx.stable_crate_id(rustc_hir::def_id::LOCAL_CRATE).as_u64();
+    rustc_middle::mir::Operand::const_from_scalar(
+        tcx,
+        tcx.types.u64,
+        rustc_middle::mir::interpret::Scalar::from_u64(unit),
+        span,
+    )
+}
 
 /// Name the guarded accessor for one exact storage slot and selected planned method.
 pub(crate) fn method_name(slot: i64, method: &str) -> String {
@@ -237,10 +254,11 @@ pub(crate) fn verify_method_results(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
             let TerminatorKind::Call(callee, ..) = &block.terminator.kind else {
                 continue;
             };
-            let CalleeKind::StaticMethod(slot, name) = &callee.kind else {
-                continue;
+            let (method, name) = match &callee.kind {
+                CalleeKind::StaticMethod(slot, name) => (method_target(plan, *slot, name)?, name),
+                CalleeKind::LinkedStaticMethod(path, name) => (linked_method_target(plan, path, name)?, name),
+                _ => continue,
             };
-            let method = method_target(plan, *slot, name)?;
             if !result_outlives_guard(plan, method, Some(tcx)) {
                 return Err(PlanError::Invalid {
                     function: name.clone(),
@@ -250,6 +268,132 @@ pub(crate) fn verify_method_results(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// Resolve a consumer helper only when its receiver mutability agrees with the producer callback operation.
+pub(crate) fn linked_method_target<'plan>(
+    plan: &'plan Plan,
+    path: &str,
+    method: &str,
+) -> Result<&'plan Function, PlanError> {
+    let Some((root, item)) = path.split_once("::") else {
+        return Err(PlanError::UnknownCallee(path.into()));
+    };
+    let prefix = incan_semantics_core::body_ir::LINKED_STATIC_ACCESSOR_PREFIX;
+    let Some(operation) = item.strip_prefix(prefix) else {
+        return Err(PlanError::UnknownCallee(path.into()));
+    };
+    if root.is_empty() || item.contains("::") {
+        return Err(PlanError::UnknownCallee(path.into()));
+    }
+    let function = plan
+        .functions
+        .iter()
+        .find(|function| function.name == method)
+        .ok_or_else(|| PlanError::UnknownCallee(method.into()))?;
+    let matching_guard = match function.parameters.first().map(|parameter| &parameter.ty) {
+        Some(PlanType::ModelRef(..) | PlanType::DictRef(..)) => operation.starts_with("with_ref_"),
+        Some(PlanType::ModelMutRef(..) | PlanType::DictMutRef(..)) => operation.starts_with("with_mut_"),
+        _ => false,
+    };
+    if !matching_guard || !result_outlives_guard(plan, function, None) {
+        return Err(PlanError::Invalid {
+            function: method.into(),
+            reason: "invalid linked static guard or escaping result".into(),
+        });
+    }
+    Ok(function)
+}
+
+/// Name a consumer's native forwarder by the producer accessor and its specialized helper.
+pub(crate) fn linked_method_name(path: &str, method: &str) -> String {
+    format!("__incan_static_delegate_{}_{method}", hex::encode(path.as_bytes()))
+}
+
+/// Emit one forwarder per distinct producer operation and consumer helper selected by the native plan.
+pub(crate) fn linked_method_items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+    let selected = plan
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .filter_map(|block| {
+            let TerminatorKind::Call(callee, ..) = &block.terminator.kind else {
+                return None;
+            };
+            let CalleeKind::LinkedStaticMethod(path, method) = &callee.kind else {
+                return None;
+            };
+            Some((path.as_str(), method.as_str()))
+        })
+        .collect::<BTreeSet<_>>();
+    let mut items = Vec::new();
+    for (accessor, method) in selected {
+        let method = linked_method_target(plan, accessor, method)?;
+        items.extend(linked_method_forwarders(accessor, method, span)?);
+    }
+    Ok(items)
+}
+
+/// Pass an ordinary argument tuple to the producer under its native callback ABI, then unpack it inside the guard.
+fn linked_method_forwarders(accessor: &str, method: &Function, span: Span) -> Result<[Box<ast::Item>; 2], PlanError> {
+    let (receiver, parameters) = method
+        .parameters
+        .split_first()
+        .ok_or_else(|| PlanError::UnknownCallee(method.name.clone()))?;
+    let names = (0..parameters.len())
+        .map(|position| format!("__arg_{position}"))
+        .collect::<Vec<_>>();
+    let result = || Some(declarations::ty(&method.return_type, span));
+    let name = linked_method_name(accessor, &method.name);
+    let callback = format!("{name}__callback");
+    let mut forwarded = vec![path_expr(&["cell"], false, span)];
+    forwarded.extend((0..names.len()).map(|position| {
+        expression(
+            ast::ExprKind::Field(
+                path_expr(&["arguments"], false, span),
+                ident(&position.to_string(), span),
+            ),
+            span,
+        )
+    }));
+    let tuple_ty = Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Tup(
+            parameters
+                .iter()
+                .map(|parameter| declarations::ty(&parameter.ty, span))
+                .collect(),
+        ),
+        span,
+        tokens: None,
+    });
+    let adapter = function(
+        &callback,
+        vec![("cell", declarations::ty(&receiver.ty, span)), ("arguments", tuple_ty)],
+        result(),
+        vec![tail(call_local(&method.name, forwarded, span), span)],
+        span,
+    );
+    let arguments = expression(
+        ast::ExprKind::Tup(names.iter().map(|name| path_expr(&[name], false, span)).collect()),
+        span,
+    );
+    let path = accessor.split("::").collect::<Vec<_>>();
+    let wrapper = function(
+        &name,
+        names
+            .iter()
+            .zip(parameters)
+            .map(|(name, parameter)| (name.as_str(), declarations::ty(&parameter.ty, span)))
+            .collect(),
+        result(),
+        vec![tail(
+            call(&path, vec![arguments, path_expr(&[&callback], false, span)], span),
+            span,
+        )],
+        span,
+    );
+    Ok([adapter, wrapper])
 }
 /// Declare each selected guarded method once. Caller arguments are evaluated before this accessor acquires its guard;
 /// mutation, panic poisoning and guard release then follow the legacy StaticCell call shape.
@@ -352,17 +496,17 @@ fn cell_name(slot: i64) -> String {
 
 /// Name the accessor returning a clone of slot `slot`'s current value.
 pub(crate) fn load_name(slot: i64) -> String {
-    format!("__incan_static_load_{slot}")
+    static_accessor_name(slot, "load")
 }
 
 /// Name the accessor replacing slot `slot`'s value.
 pub(crate) fn store_name(slot: i64) -> String {
-    format!("__incan_static_store_{slot}")
+    static_accessor_name(slot, "store")
 }
 
 /// Name the accessor initializing slot `slot` unless it already is.
 pub(crate) fn force_name(slot: i64) -> String {
-    format!("__incan_static_force_{slot}")
+    static_accessor_name(slot, "force")
 }
 
 /// Select the declared cell of slot `slot`.
@@ -558,6 +702,93 @@ pub fn items(cell: &StaticCell, span: Span) -> Vec<Box<ast::Item>> {
         items.extend(completion_items(cell.slot, span));
     }
     items
+}
+
+/// Emit only the producer's selected guarded callback operations. The argument pack and return type are native
+/// generics so a consumer can use a signature the producer was never asked to instantiate.
+pub(crate) fn callback_items(cell: &StaticCell, exports: &BTreeSet<&str>, span: Span) -> Vec<Box<ast::Item>> {
+    [("with_ref", ast::Mutability::Not), ("with_mut", ast::Mutability::Mut)]
+        .into_iter()
+        .filter_map(|(operation, mutability)| {
+            let name = static_accessor_name(cell.slot, operation);
+            exports
+                .contains(name.as_str())
+                .then(|| callback_item(cell, &name, mutability, span))
+        })
+        .collect()
+}
+
+/// Run a consumer callback while this producer owns the guard. `fn(&T, A) -> R` cannot return a borrow of the guard.
+fn callback_item(cell: &StaticCell, name: &str, mutability: ast::Mutability, span: Span) -> Box<ast::Item> {
+    let args_ty = || path_ty(path(&["A"], false, span), span);
+    let result_ty = || path_ty(path(&["R"], false, span), span);
+    let receiver = Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: declarations::ty(&cell.ty, span),
+                mutbl: mutability,
+            },
+        ),
+        span,
+        tokens: None,
+    });
+    let callback = function_pointer(thin_vec![receiver, args_ty()], result_ty(), span);
+    let lock = expression(
+        ast::ExprKind::AddrOf(
+            ast::BorrowKind::Ref,
+            ast::Mutability::Not,
+            deref(path_expr(&[&storage_name(cell.slot)], false, span), span),
+        ),
+        span,
+    );
+    let operation = if mutability == ast::Mutability::Mut {
+        "write"
+    } else {
+        "read"
+    };
+    let guard = call(
+        &["std", "result", "Result", "unwrap_or_else"],
+        vec![
+            call(&["std", "sync", "RwLock", operation], vec![lock], span),
+            path_expr(&["std", "sync", "PoisonError", "into_inner"], true, span),
+        ],
+        span,
+    );
+    let guarded = expression(
+        ast::ExprKind::AddrOf(ast::BorrowKind::Ref, mutability, deref(guard, span)),
+        span,
+    );
+    let invocation = expression(
+        ast::ExprKind::Call(
+            path_expr(&["callback"], false, span),
+            thin_vec![guarded, path_expr(&["args"], false, span)],
+        ),
+        span,
+    );
+    let mut item = function(
+        name,
+        vec![("args", args_ty()), ("callback", callback)],
+        Some(result_ty()),
+        vec![tail(invocation, span)],
+        span,
+    );
+    if let ast::ItemKind::Fn(function) = &mut item.kind {
+        function.generics.params = ["A", "R"]
+            .into_iter()
+            .map(|name| ast::GenericParam {
+                id: ast::DUMMY_NODE_ID,
+                ident: ident(name, span),
+                attrs: ThinVec::new(),
+                bounds: Vec::new(),
+                is_placeholder: false,
+                kind: ast::GenericParamKind::Type { default: None },
+                colon_span: None,
+            })
+            .collect();
+    }
+    item
 }
 
 /// Build an AST expression with identities left for rustc's node allocation.

@@ -374,7 +374,7 @@ pub def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[End
     )
 
 
-def pool_size() -> int:
+pub def pool_size() -> int:
     """
     How many workers one compiler generation may run at once: `INCAN_JOBS` when the run sets its concurrency, else the
     CPU count; never more than physical memory holds at the workers' footprint ceiling, and never fewer than one.

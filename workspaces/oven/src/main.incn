@@ -13,6 +13,7 @@ from engine_unit_options import unit_options_text
 from overlay_request import parse_overlay, parse_serve
 from engine_proofs import report as proof_report
 from engine_service import serve as serve_engine, refusal_code
+from engine_settlement import serve as serve_settlement
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
 from storage_admission import take_decision
 from store_status import parse_status, status_command
@@ -235,6 +236,11 @@ def dispatch(command: str, rest: list[str]) -> None:
         match serve_engine(rest):
             Ok(_) => return
             Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return
+    if command == "--internal-engine-settlement":
+        match serve_settlement(rest):
+            Ok(_) => return
+            Err(reason) => fail(f"incan engine settlement: {reason.detail}", 1)
         return
     if command == "tools" and len(rest) > 0 and rest[0] == "metadata":
         begin_installation_command()

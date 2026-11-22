@@ -1,0 +1,72 @@
+"""Bounded replies shared by the records coordinator and its private settlement processes."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from engine_channel import Channel, SendOutcome
+from engine_endpoint import transport
+from engine_messages import Event, Message, Refused
+from engine_wire import MAX_PAYLOAD, Refusal, RefusalKind
+
+
+pub def send(mut channel: Channel, request: bytes, message: Message) -> Result[None, Refusal]:
+    """Require an available credit at a handler boundary; admission gates leave room for all replies."""
+    match channel.send(request, message)?:
+        SendOutcome.Sent(_) => return Ok(None)
+        SendOutcome.Blocked =>
+            return Err(Refusal(kind=RefusalKind.Credit, detail="engine sender is blocked awaiting credit"))
+
+
+pub def send_refusal(mut channel: Channel, request: bytes, reason: Refusal, command: str) -> Result[None, Refusal]:
+    """Send a stable refusal code with context; receivers never parse prose to choose their next action."""
+    return send(
+        channel,
+        request,
+        Message.Refused(Refused(code=refusal_code(reason.kind), command=command, detail=reason.detail)),
+    )
+
+
+pub def send_request_refusal(
+    mut channel: Channel,
+    store: Path,
+    request: bytes,
+    reason: Refusal,
+    command: str,
+) -> Result[None, Refusal]:
+    """Keep control frames bounded while relaying an exact large diagnostic through the console channel."""
+    detail = reason.detail.encode("utf-8")
+    body_size = 14 + len(command.encode("utf-8")) + len(detail)
+    if body_size <= MAX_PAYLOAD:
+        return send_refusal(channel, request, reason, command)
+    prefix = store.joinpath("engine/console").joinpath(f"{hexlify(request)}-refusal").0
+    Path(f"{prefix}.err")
+        .write_text(reason.detail, "utf-8", "strict", None)
+        .map_err((error) => transport(f"cannot retain engine refusal: {error.message()}"))?
+    send(channel, request, Message.Event(Event(status="Console", trace_handle=prefix)))?
+    return send_refusal(
+        channel,
+        request,
+        Refusal(
+            kind=reason.kind,
+            detail="engine request refused; the full diagnostic was relayed through the console stream",
+        ),
+        command,
+    )
+
+
+pub def refusal_code(kind: RefusalKind) -> int:
+    """The stable v1 refusal discriminants carried by Refused bodies."""
+    match kind:
+        RefusalKind.BadMagic => return 1
+        RefusalKind.Version => return 2
+        RefusalKind.Oversized => return 3
+        RefusalKind.ShortRead => return 4
+        RefusalKind.Reserved => return 5
+        RefusalKind.Flags => return 6
+        RefusalKind.Schema => return 7
+        RefusalKind.Identity => return 8
+        RefusalKind.Sequence => return 9
+        RefusalKind.Credit => return 10
+        RefusalKind.UnsupportedCommand => return 11
+        RefusalKind.Busy => return 12
+        RefusalKind.Draining => return 13
+        RefusalKind.Transport => return 14

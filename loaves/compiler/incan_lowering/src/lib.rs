@@ -6,9 +6,10 @@
 //! toolchain's on the golden corpus ([`corpus`]).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use incan_semantics_core::CompilerNodeId;
-use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
+use incan_semantics_core::body_ir::{BodyIrModule, LinkedStaticAccessors, NativeUnionDeclaration};
+use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId};
 
 pub mod corpus;
 pub mod corpus_recording;
@@ -157,6 +158,7 @@ mod shared_callables;
 mod signature_lifetimes;
 mod statements;
 mod static_guards;
+mod static_link_exports;
 mod static_methods;
 mod static_storage;
 mod stored_types;
@@ -203,7 +205,9 @@ pub struct SourceInputs {
     /// Request-local producer evidence; absence keeps ordinary lowering and emits no report files.
     pub record_report: Option<String>,
     /// Checked layout witnesses selected for this request. Dependencies without records use ordinary lowering.
-    pub recorded_layouts: std::sync::Arc<RecordedLayouts>,
+    pub recorded_layouts: Arc<RecordedLayouts>,
+    /// Native bindings selected by this Loaf's executable publication, shared across lowering attempts.
+    pub linked_static_exports: Arc<BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>>,
 }
 
 /// Borrow the current checked runtime delta without copying the entry module or its source into a retry.
@@ -216,6 +220,8 @@ pub struct RecordedRuntimeInputs<'a> {
     pub kind: &'a str,
     pub tests: &'a [String],
     pub package_versions: &'a BTreeMap<String, String>,
+    /// The same producer-owned exports used before resolving the recorded runtime batch.
+    pub linked_static_exports: &'a BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
 }
 
 impl SourceInputs {
@@ -233,6 +239,7 @@ impl SourceInputs {
             scalar_bodies: &self.scalar_bodies,
             record_report: self.record_report.clone(),
             recorded_layouts: &self.recorded_layouts,
+            linked_static_exports: &self.linked_static_exports,
         }
     }
 }
@@ -315,6 +322,11 @@ pub fn publish_plan_records(plan: &Plan, products: String, report: String) -> Re
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.
 pub fn numeric_carrier(ty: &PlanType) -> bool {
     numerics::numeric_carrier(ty)
+}
+
+/// Whether a runtime call keys a process-wide cell by unit and slot, so the native adapter supplies its unit operand.
+pub fn is_unit_keyed_runtime_call(path: &str) -> bool {
+    computed_statics::is_unit_keyed_runtime_call(path)
 }
 
 #[cfg(test)]

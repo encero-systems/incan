@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 use crate::dependency_report::RootOrigin;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::CliDiagnosticFailure;
-use incan_driver::loaf_publication::{PublicationFacts, prepare_loaf_publication, publish_native_unions, write_loaf};
+use incan_driver::loaf_publication::{
+    PublicationFacts, prepare_executable_surface, prepare_loaf_publication, publish_native_unions, write_loaf,
+};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
@@ -23,7 +25,10 @@ use incan_lowering::{
     RecordedLayouts, RecordedRuntimeInputs, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning,
     complete_recorded_runtime_plan, layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
 };
-use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
+use incan_semantics_core::body_ir::{
+    BodyIrModule, LinkedStaticAccessors, LoafCallable, NativeUnionDeclaration, NominalDeclaration,
+};
+use incan_semantics_core::executable_representation::PreparedSurface;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 mod callable_crumb;
@@ -787,6 +792,10 @@ fn compile_unit(
     // Checking freed its analysis and the session; return those pages before lowering allocates its contexts.
     incan_platform::release_free_heap();
     timing.mark("checked_heap_released");
+    let mut surface = prepare_native_executable_surface(&program)?;
+    let linked_static_exports = surface.as_mut().map_or_else(Arc::default, |surface| {
+        Arc::new(std::mem::take(&mut surface.linked_statics))
+    });
     let mut published_unions = Vec::new();
     let mut runtime_records = RuntimePlanRecords::read(dependencies.plan_record_products.as_deref());
     let plan = lower_compilation_plan(
@@ -796,6 +805,7 @@ fn compile_unit(
         &source_path,
         &receipt,
         &mut published_unions,
+        &linked_static_exports,
         native_products,
         recorded_layouts,
         dependencies
@@ -836,7 +846,7 @@ fn compile_unit(
         let prepared = prepare_loaf_publication(
             &directory,
             manifest,
-            &program.modules[program.own..],
+            surface.ok_or("library plan has no prepared executable surface")?.bytes,
             &closure,
             &dependencies.anchors,
             program.graph.as_deref(),
@@ -924,6 +934,16 @@ fn check_compilation_source(
     }
 }
 
+/// Select the same executable publication for a library build and its dependency report.
+fn prepare_native_executable_surface(program: &CheckedProgram) -> Result<Option<PreparedSurface>, String> {
+    program
+        .manifest
+        .as_ref()
+        .map(|manifest| prepare_executable_surface(manifest, &program.modules[program.own..], true))
+        .transpose()
+        .map_err(|error| error.to_string())
+}
+
 /// Preserve ordinary-frame lowering while resolving only the authenticated runtime declarations it selects. A
 /// lowering refusal or missing program entry receives the same deterministic certificate as ordinary compilation.
 fn lower_compilation_plan(
@@ -933,6 +953,7 @@ fn lower_compilation_plan(
     source: &Path,
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
+    linked_static_exports: &Arc<BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>>,
     native_products: Option<String>,
     recorded_layouts: Arc<RecordedLayouts>,
     plan_record_report: Option<String>,
@@ -982,6 +1003,7 @@ fn lower_compilation_plan(
                     overflow_checks,
                     record_report: plan_record_report.clone(),
                     recorded_layouts: Arc::default(),
+                    linked_static_exports: Arc::clone(linked_static_exports),
                 };
                 resume_unit_plan(
                     preserved,
@@ -1004,6 +1026,7 @@ fn lower_compilation_plan(
                     overflow_checks,
                     record_report: plan_record_report.clone(),
                     recorded_layouts: Arc::clone(&recorded_layouts),
+                    linked_static_exports: Arc::clone(linked_static_exports),
                 };
                 unit_plan(
                     &program.modules,
@@ -1035,6 +1058,7 @@ fn lower_compilation_plan(
                 kind: &kind_name,
                 tests: &tests,
                 package_versions: &program.dependencies.package_versions,
+                linked_static_exports,
             };
             planning = complete_recorded_runtime_plan(preserved, &inputs, &mut attempt_unions)
                 .inspect_err(|_| receipt.deterministic())?;
@@ -1159,6 +1183,7 @@ fn census_complete(
                 overflow_checks,
                 record_report: None,
                 recorded_layouts: Arc::default(),
+                linked_static_exports: Arc::default(),
             },
             program.entry.try_into()?,
             false,
@@ -1186,6 +1211,7 @@ fn census_complete(
                 overflow_checks,
                 record_report: None,
                 recorded_layouts: Arc::default(),
+                linked_static_exports: Arc::default(),
             },
             program.entry.try_into()?,
             true,

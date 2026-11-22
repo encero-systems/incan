@@ -1,40 +1,39 @@
 """Serve disposable engine control state from Oven under the physical store's lifetime lock."""
 
 from rust::std::fs import symlink_metadata
+from rust::std::mem import take
 from rust::std::os::unix::fs import FileTypeExt
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
-from pub::incan_platform.children import reap_retained_children
 from pub::incan_platform.ipc import Listener, listen, session_id, stale
+from pub::incan_platform.trace import flush as flush_trace
+from compiler_worker import pool_size
 from decimal_text import digits_only
-from engine_channel import Channel, Envelope, SendOutcome
+from engine_channel import Channel, Envelope
 from engine_endpoint import HANDSHAKE_SECONDS, endpoint, owner_uid, record_endpoint, transport, withdraw_endpoint
 from engine_messages import (
     Accepted,
     Cancelled,
-    Captured,
-    Complete,
     Event,
     Message,
     Refused,
     BindingOutcome,
-    CompletionStatus,
     EffectDisposition,
 )
-from engine_state import Identity, ServiceState, records_generation
-from engine_epochs import prepare_submit
-from engine_actions import Pending, ExecutionLease, finish_request
-from engine_programs import read_program, program_handle
+from engine_state import Identity, Interest, ServiceState, records_generation
+from engine_slot import Activation, Lease, LeaseRelease, Queued, Slot
+from engine_settlement import SettlementProgram
+from engine_programs import read_program
 from engine_messages import Resolve, Resolution
 from engine_messages import Submit
-from engine_wire import MAX_PAYLOAD, Refusal, RefusalKind, zero_id
-from bakery import forget_verified, verification_entries
-from observation import trace
+from engine_replies import send, send_refusal
+pub from engine_replies import refusal_code
+from engine_wire import Refusal, RefusalKind, zero_id
 from files import discard_file
-from jec import begin as begin_work, record as record_work
-from pub::incan_platform.trace import Operation, flush as flush_trace
+from intake import read_project
+from unit import project_root_of
 
 const MAX_CLIENTS: int = 16
 
@@ -43,8 +42,8 @@ pub class Client:
     """A client's bounded volatile interests; disconnect releases exactly these reader pins and requests."""
 
     pub channel: Channel
-    pub pending: list[Pending] = []
-    pub pins: list[ExecutionLease] = []
+    pub pending: list[Interest] = []
+    pub pins: list[Lease] = []
     pub closed: bool = false
 
 
@@ -106,31 +105,10 @@ def withdraw_stale(path: str) -> Result[None, Refusal]:
     return Ok(None)
 
 
-def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Result[None, Refusal]:
-    """Poll bounded client state and release it after use; no decoded compilation closure enters this process."""
-    mut clients: list[Client] = []
-    mut greetings: list[Greeting] = []
-    clock = Instant.now()
-    while true:
-        now = int(clock.elapsed().as_millis())
-        match listener.poll().map_err(transport)?:
-            Some(connected) =>
-                if len(clients) + len(greetings) < MAX_CLIENTS and not state.stopping:
-                    greetings.append(Greeting(channel=Channel(transport=connected), accepted=now))
-            None => pass
-        greetings = greet_ready(greetings, clients, state, now)
-        if len(clients) > 0:
-            for index in range(len(clients)):
-                mut client = clients[index]
-                service_client(client, state)
-                clients[index] = client
-            clients = [client for client in clients if not client.closed]
-        state.clients = len(clients) + len(greetings)
-        # A compiler worker this engine started retires on its own; reap it once it has exited (D.9).
-        _ = reap_retained_children().map_err(transport)?
-        if state.stopping or state.exits(now, idle * 1000):
-            return Ok(None)
-        sleep(Duration.from_millis(2))
+def event_loop(mut listener: Listener, state: ServiceState, idle: int) -> Result[None, Refusal]:
+    """Keep one coordinator and reap its settlement processes before withdrawing the public endpoint."""
+    records = records_generation(state.identity).map_err(transport)?
+    return Coordinator.run(listener, state, records, idle)
 
 
 def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: ServiceState, now: int) -> list[Greeting]:
@@ -174,238 +152,394 @@ pub def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
         _ => return Err(Refusal(kind=RefusalKind.Schema, detail="Hello must be the first engine message"))
 
 
-def service_client(mut client: Client, mut state: ServiceState) -> None:
-    """One invalid connection retires only its own interests; other clients retain their requests."""
-    match poll_client(client, state):
-        Ok(_) => pass
-        Err(_) => close_client(client, state)
-    if len(client.pending) == 0 and verification_entries() > 0:
-        released = verification_entries()
-        forget_verified()
-        trace(f"engine request released: captures=0 verification={verification_entries()} released={released}")
+class Coordinator:
+    """Authenticate and schedule bounded interests. Captures and execution locks stay in their settlement process."""
 
+    state: ServiceState
+    records: str
+    program: SettlementProgram
+    limit: int
+    clients: list[Client] = []
+    waiting: list[Queued] = []
+    slots: list[Slot] = []
+    releases: list[LeaseRelease] = []
 
-def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
-    """Consume at most eight ready frames, then settle accepted requests within available credits."""
-    for _turn in range(8):
-        if not client.channel.transport.readable().map_err(transport)?:
-            break
-        frame = client.channel.receive()?
-        match handle(client, state, frame):
-            Err(reason) => send_refusal(client.channel, frame.header.request, reason, "request")?
-            Ok(_) => pass
-        client.channel.acknowledge(frame)?
-        if state.stopping:
-            return Ok(None)
-    return settle(client, state)
+    @staticmethod
+    pub def run(mut listener: Listener, state: ServiceState, records: str, idle: int) -> Result[None, Refusal]:
+        """Run the coordinator and reap its children on success or refusal."""
+        mut coordinator = Coordinator(
+            state=state,
+            records=records,
+            limit=min([MAX_CLIENTS, pool_size()]),
+            program=SettlementProgram.current()?,
+        )
+        served = coordinator.serve(listener, idle)
+        coordinator.shutdown()
+        return served
 
+    def serve(mut self, mut listener: Listener, idle: int) -> Result[None, Refusal]:
+        """
+        1. Poll connections and admit control messages.
+        2. Relay worker replies, then dispatch releases and independent units.
+        3. Retire only after active publications have settled.
+        """
+        mut greetings: list[Greeting] = []
+        clock = Instant.now()
+        while true:
+            # 1. An active compiler never holds the public control loop.
+            now = int(clock.elapsed().as_millis())
+            if let Some(connected) = listener.poll().map_err(transport)?:
+                if len(self.clients) + len(greetings) < MAX_CLIENTS and not self.state.stopping:
+                    greetings.append(Greeting(channel=Channel(transport=connected), accepted=now))
+            greetings = greet_ready(greetings, self.clients, self.state, now)
+            self.poll_clients()
+            # 2. A completed request releases its scheduling key, independently of its execution lease.
+            self.poll_slots()
+            self.dispatch_releases()
+            if not self.state.stopping:
+                self.dispatch_units()
+            # 3. Drain also waits for pending interests and reader leases. Stop admits no new work.
+            self.state.clients = len(self.clients) + len(greetings)
+            self.state.workers = len([slot.identity for slot in self.slots if slot.active is not None])
+            if (self.state.stopping and self.state.workers == 0) or self.state.exits(now, idle * 1000):
+                return Ok(None)
+            sleep(Duration.from_millis(2))
 
-def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Result[None, Refusal]:
-    """Handle E1 controls and drain observations before acknowledging Stop; unsupported execution families refuse."""
-    request = frame.header.request
-    match frame.message:
-        Message.Ack(_) => return Ok(None)
-        Message.Submit(submit) => return accept(client, state, request, submit)
-        Message.Cancel(cancel) =>
-            if cancel.interest_token not in [item.token for item in client.pending]:
+    def shutdown(mut self) -> None:
+        """Close every private channel before waiting, so children release pins and retire independently."""
+        for index in range(len(self.slots)):
+            self.slots[index].close()
+        for index in range(len(self.slots)):
+            self.slots[index].reap()
+
+    def poll_clients(mut self) -> None:
+        """One invalid connection loses only its own interests; other clients retain their requests."""
+        for index in range(len(self.clients)):
+            mut client = self.clients[index]
+            if not client.closed and self.poll_client(client).is_err():
+                self.close_client(client)
+            self.clients[index] = client
+        self.clients = [client for client in self.clients if not client.closed]
+
+    def poll_client(mut self, mut client: Client) -> Result[None, Refusal]:
+        """Bound the frames one caller can consume per turn, even while another caller is compiling."""
+        for _turn in range(8):
+            if not client.channel.transport.readable().map_err(transport)?:
+                break
+            frame = client.channel.receive()?
+            match self.handle(client, frame):
+                Err(reason) => send_refusal(client.channel, frame.header.request, reason, "request")?
+                Ok(_) => pass
+            client.channel.acknowledge(frame)?
+            if self.state.stopping:
+                break
+        return Ok(None)
+
+    def handle(mut self, mut client: Client, frame: Envelope) -> Result[None, Refusal]:
+        """Handle public lifecycle controls and verify that requests and pins belong to this client."""
+        request = frame.header.request
+        match frame.message:
+            Message.Ack(_) => return Ok(None)
+            Message.Submit(submit) => return self.accept(client, request, submit)
+            Message.Cancel(cancel) => return self.cancel(client, request, cancel.interest_token)
+            Message.Pin(pin) =>
+                for held in client.pins:
+                    if held.token == pin.lease_id and held.snapshot == pin.snapshot and held.handle == pin.allowed_roots:
+                        return send(
+                            client.channel, request, Message.Event(Event(status="Pinned", trace_handle=held.token)),
+                        )
                 return Err(
-                    Refusal(kind=RefusalKind.Identity, detail="interest belongs to another client or is complete"),
+                    Refusal(kind=RefusalKind.Identity, detail="execution lease does not belong to this caller and result"),
                 )
-            state.detach(request, cancel.interest_token)?
-            client.pending = [item for item in client.pending if item.token != cancel.interest_token]
-            return send(
-                client.channel,
-                request,
-                Message.Cancelled(
-                    Cancelled(interest_token=cancel.interest_token, effects_stopped=EffectDisposition.NoEffects),
-                ),
-            )
-        Message.Pin(pin) =>
-            mut found = false
-            for held in client.pins:
-                if held.token == pin.lease_id and held.snapshot == pin.snapshot and held.handle == pin.allowed_roots:
-                    found = true
-            if not found:
-                return Err(
-                    Refusal(
-                        kind=RefusalKind.Identity,
-                        detail="execution lease does not belong to this caller and result",
-                    ),
+            Message.Release(release) => return self.release(client, request, release.lease_id)
+            Message.Resolve(resolve) =>
+                mut outcome = Resolution.NotCommitted
+                if read_program(self.state.store, resolve.transaction).map_err(transport)? is not None:
+                    outcome = Resolution.Committed
+                return send(
+                    client.channel,
+                    request,
+                    Message.Resolve(Resolve(transaction=resolve.transaction, outcome=outcome)),
                 )
-            return send(client.channel, request, Message.Event(Event(status="Pinned", trace_handle=pin.lease_id)))
-        Message.Release(release) =>
-            if release.lease_id not in [held.token for held in client.pins]:
-                return Err(Refusal(kind=RefusalKind.Identity, detail="reader lease belongs to another client"))
-            state.release(release.lease_id)?
-            client.pins = [held for held in client.pins if held.token != release.lease_id]
-            return send(client.channel, request, Message.Event(Event(status="Released", trace_handle=release.lease_id)))
-        Message.Resolve(resolve) =>
-            mut outcome = Resolution.NotCommitted
-            if read_program(state.store, resolve.transaction).map_err(transport)? is not None:
-                outcome = Resolution.Committed
-            return send(
-                client.channel,
-                request,
-                Message.Resolve(Resolve(transaction=resolve.transaction, outcome=outcome)),
-            )
-        Message.Drain(_) =>
-            state.draining = true
-            return send(client.channel, request, Message.Event(Event(status="Draining", trace_handle="")))
-        Message.Stop(_) =>
-            state.stopping = true
-            _ = flush_trace()
-            return send(client.channel, request, Message.Event(Event(status="Stopping", trace_handle="")))
-        _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
+            Message.Drain(_) =>
+                self.state.draining = true
+                return send(client.channel, request, Message.Event(Event(status="Draining", trace_handle="")))
+            Message.Stop(_) =>
+                self.state.stopping = true
+                _ = flush_trace()
+                return send(client.channel, request, Message.Event(Event(status="Stopping", trace_handle="")))
+            _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
 
-
-def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: Submit) -> Result[None, Refusal]:
-    """Accept work before capture and name its initial store generation; completion publishes the whole request."""
-    if len(client.pending) == 4 or client.channel.pending.held() > 4:
-        return Err(Refusal(kind=RefusalKind.Busy, detail="client admission window is full"))
-    token = f"{hexlify(client.channel.session)}:{hexlify(request)}"
-    state.accept(request, submit.requested_roots, token)?
-    send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
-    capturing = begin_work()
-    captured_request = prepare_submit(state.store, submit, discover_standalone=true)
-    record_work(Operation.EngineCapture, submit.requested_roots, capturing)
-    match captured_request:
-        Err(reason) =>
-            state.detach(request, token)?
-            return Err(transport(reason))
-        Ok(captured) =>
-            selected = f"snapshot:{captured.snapshot.generation}:{captured.snapshot.digest}"
-            client.pending.append(
-                Pending(
-                    request=request,
-                    token=token,
-                    capture=captured,
-                    producer=state.identity.compiler_generation,
-                    view=submit.view,
-                    proofs=submit.observation_policy == "proofs",
-                    command=submit.command,
-                    format=submit.options,
-                    directory=submit.directory,
-                    unit_options=submit.unit_options,
-                    records=records_generation(state.identity).map_err(transport)?,
-                    handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
-                        transport,
-                    )?,
-                ),
-            )
-            return send(client.channel, request, Message.Captured(Captured(epoch=captured.identity, snapshot=selected)))
-
-
-def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
-    """Settle available requests, then replace the interest list after its iteration has ended."""
-    mut waiting: list[Pending] = []
-    for pending in client.pending:
-        if client.channel.pending.exhausted():
-            waiting.append(pending)
-            continue
-        finished = finish_request(state.store, pending)
-        # Every span the request opened, its commit's included, reaches the trace before its caller hears it ended.
-        _ = flush_trace()
-        match finished:
+    def accept(mut self, mut client: Client, request: bytes, submit: Submit) -> Result[None, Refusal]:
+        """Admit one interest before capture and queue it under the authority that owns its graph records."""
+        if len(client.pending) == 4 or client.channel.pending.held() > 4:
+            return Err(Refusal(kind=RefusalKind.Busy, detail="client admission window is full"))
+        session = client.channel.session
+        token = f"{hexlify(session)}:{hexlify(request)}"
+        self.state.accept(request, submit.requested_roots, token)?
+        client.pending.append(Interest(request=request, token=token, work=submit.requested_roots))
+        send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
+        match normalized(submit):
+            Ok((canonical, origin)) =>
+                self.waiting.append(
+                    Queued(session=session, request=request, token=token, origin=origin, submit=canonical),
+                )
+                return Ok(None)
             Err(reason) =>
-                # A refused request's own compiler diagnostics come before the refusal that summarizes them.
-                console = state.store.joinpath("engine/console").joinpath(hexlify(pending.request)).0
-                if Path(f"{console}.out").is_file() or Path(f"{console}.err").is_file():
-                    send(client.channel, pending.request, Message.Event(Event(status="Console", trace_handle=console)))?
-                send_request_refusal(client.channel, state.store, pending.request, transport(reason), "unit-record")?
-            Ok(ready) =>
-                if ready.console != "":
-                    send(
-                        client.channel,
-                        pending.request,
-                        Message.Event(Event(status="Console", trace_handle=ready.console)),
-                    )?
-                if ready.incomplete_proof != "":
-                    send(
-                        client.channel,
-                        pending.request,
-                        Message.Event(Event(status="ProofIncomplete", trace_handle=ready.incomplete_proof[:2048])),
-                    )?
-                match ready.pin:
-                    Some(pin) =>
-                        state.pin(pin.token)?
-                        client.pins.append(pin)
-                    None => pass
-                send(client.channel, pending.request, Message.Complete(ready.message))?
-        state.detach(pending.request, pending.token)?
-    client.pending = waiting
-    return Ok(None)
+                self.detach(client, request, token)?
+                return Err(transport(reason))
+
+    def cancel(mut self, mut client: Client, request: bytes, token: str) -> Result[None, Refusal]:
+        """Cancel queued work; an active settlement may still publish and keeps its ordering exclusion until done."""
+        if token not in [item.token for item in client.pending]:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="interest belongs to another client or is complete"))
+        self.detach(client, request, token)?
+        mut effects = EffectDisposition.Pending
+        if token in [work.token for work in self.waiting]:
+            self.waiting = [work for work in self.waiting if work.token != token]
+            effects = EffectDisposition.NoEffects
+        return send(client.channel, request, Message.Cancelled(Cancelled(interest_token=token, effects_stopped=effects)))
+
+    def detach(mut self, mut client: Client, request: bytes, token: str) -> Result[None, Refusal]:
+        """Remove exactly this client's interest from both admission lists."""
+        self.state.detach(request, token)?
+        client.pending = [item for item in client.pending if item.token != token]
+        return Ok(None)
+
+    def release(mut self, mut client: Client, request: bytes, token: str) -> Result[None, Refusal]:
+        """Route the caller's release to the process that holds the lock."""
+        for held in client.pins:
+            if held.token == token:
+                client.pins = [pin for pin in client.pins if pin.token != token]
+                self.releases.append(LeaseRelease(lease=held, session=client.channel.session, request=request))
+                return Ok(None)
+        return Err(Refusal(kind=RefusalKind.Identity, detail="reader lease belongs to another client"))
+
+    def close_client(mut self, mut client: Client) -> None:
+        """Drop queued work and send releases for this client without waiting for another unit to finish."""
+        for pending in client.pending:
+            _ = self.state.detach(pending.request, pending.token)
+        self.waiting = [work for work in self.waiting if work.session != client.channel.session]
+        for held in client.pins:
+            self.releases.append(LeaseRelease(lease=held))
+        client.pending = []
+        client.pins = []
+        client.closed = true
+        _ = client.channel.transport.close()
+
+    def dispatch_units(mut self) -> None:
+        """Walk admission order once, preserving it for each client, graph origin and publication view."""
+        mut origins: set[str] = set()
+        mut views: set[str] = set()
+        mut sessions: set[bytes] = set()
+        for slot in self.slots:
+            if let Some(active) = slot.active:
+                origins.add(active.work.origin)
+                views.add(active.work.submit.view)
+                sessions.add(active.work.session)
+        admitted = take(self.waiting)
+        for work in admitted:
+            available = work.origin not in origins and work.submit.view not in views and work.session not in sessions
+            # An older waiting request excludes later work under either of its authorities.
+            origins.add(work.origin)
+            views.add(work.submit.view)
+            sessions.add(work.session)
+            if available:
+                match self.try_dispatch(work):
+                    Ok(true) => continue
+                    Ok(false) => pass
+                    Err(reason) =>
+                        active = Activation(work=work, request=work.request)
+                        self.relay_to_client(active, refusal_reply(reason), None, true)
+                        continue
+            self.waiting.append(work)
+    def try_dispatch(mut self, work: Queued) -> Result[bool, Refusal]:
+        """Reuse an idle process first; start a new one only when the compiler pool can reserve another slot."""
+        match self.client_index(work.session):
+            Some(index) =>
+                if self.clients[index].channel.pending.held() > 4:
+                    return Ok(false)
+            None => return Ok(true)
+        match self.available_slot()?:
+            None => return Ok(false)
+            Some(index) =>
+                mut slot = self.slots[index]
+                result = slot.submit(work)
+                if let Err(reason) = result:
+                    # The caller of try_dispatch still owns reporting this failure to the queued client.
+                    slot.active = None
+                    self.lose_slot(slot, reason)
+                self.slots[index] = slot
+                self.slots = [worker for worker in self.slots if not worker.closed]
+                result?
+                return Ok(true)
+
+    def available_slot(mut self) -> Result[Option[int], Refusal]:
+        """Find an idle process or grow the pool by one within its reservation."""
+        for index in range(len(self.slots)):
+            if self.slots[index].active is None and self.slots[index].releasing is None:
+                return Ok(Some(index))
+        if len(self.slots) == self.limit:
+            return Ok(None)
+        index = len(self.slots)
+        slot = Slot.start(self.program, self.state.store, self.state.identity.compiler_generation, self.records)?
+        self.slots.append(slot)
+        return Ok(Some(index))
+
+    def dispatch_releases(mut self) -> None:
+        """Wait for a private release acknowledgment without pausing public I/O or consuming another build slot."""
+        queued = take(self.releases)
+        for pending in queued:
+            match self.slot_index(pending.lease.slot):
+                None => self.released(pending)
+                Some(index) =>
+                    mut slot = self.slots[index]
+                    if slot.active is not None or slot.releasing is not None:
+                        self.releases.append(pending)
+                    else:
+                        match slot.release(pending, hexlify(pending.lease.request)):
+                            Err(reason) => self.lose_slot(slot, reason)
+                            Ok(_) => pass
+                    self.slots[index] = slot
+        self.slots = [slot for slot in self.slots if not slot.closed]
+
+    def poll_slots(mut self) -> None:
+        """Relay complete frames from the private channels and retire any process whose channel failed."""
+        for index in range(len(self.slots)):
+            mut slot = self.slots[index]
+            match self.poll_slot(slot):
+                Err(reason) => self.lose_slot(slot, reason)
+                Ok(_) => pass
+            self.slots[index] = slot
+        self.slots = [slot for slot in self.slots if not slot.closed]
+
+    def poll_slot(mut self, mut slot: Slot) -> Result[None, Refusal]:
+        """Process bounded replies without reading ahead of the original caller's available credits."""
+        for _turn in range(8):
+            if not slot.channel.transport.readable().map_err(transport)?:
+                break
+            if not self.state.stopping:
+                if let Some(active) = slot.active:
+                    if let Some(index) = self.client_index(active.work.session):
+                        if self.clients[index].channel.pending.exhausted():
+                            break
+            frame = slot.channel.receive()?
+            slot.channel.acknowledge(frame)?
+            match frame.message:
+                Message.Ack(_) => pass
+                Message.Event(event) =>
+                    if event.status == "Released":
+                        match take(slot.releasing):
+                            Some(pending) => self.released(pending)
+                            None => return Err(transport("settlement acknowledged an unknown lease release"))
+                    else:
+                        self.relay(slot, frame)?
+                _ => self.relay(slot, frame)?
+        return Ok(None)
+
+    def relay(mut self, mut slot: Slot, frame: Envelope) -> Result[None, Refusal]:
+        """Translate private activation correlation to the original client and retain a selected remote lease."""
+        match slot.active:
+            None => return Err(transport("settlement replied without an active request"))
+            Some(active) =>
+                if frame.header.request != active.request:
+                    return Err(transport("settlement replied for another activation"))
+                mut lease: Option[Lease] = None
+                match frame.message:
+                    Message.Complete(value) =>
+                        slot.active = None
+                        if value.binding_outcome == BindingOutcome.Selected:
+                            lease = Some(Lease(
+                                token=active.work.token,
+                                snapshot=value.snapshot,
+                                handle=value.result_handles,
+                                slot=slot.identity,
+                                request=active.request,
+                            ))
+                    Message.Refused(_) => slot.active = None
+                    Message.Captured(_) | Message.Event(_) => pass
+                    _ => return Err(transport("unexpected settlement reply"))
+                self.relay_to_client(active, frame.message, lease, slot.active is None)
+                return Ok(None)
+
+    def relay_to_client(mut self, active: Activation, message: Message, lease: Option[Lease], terminal: bool) -> None:
+        """Discard a detached reply and release its lock, or finish the connected client's exact interest."""
+        if let Some(index) = self.client_index(active.work.session):
+            mut client = self.clients[index]
+            if active.work.token in [item.token for item in client.pending]:
+                delivered = self.reply(client, active.work, message, lease, terminal)
+                if delivered.is_err():
+                    self.close_client(client)
+                self.clients[index] = client
+                return
+        if let Some(held) = lease:
+            self.releases.append(LeaseRelease(lease=held, admitted=false))
+
+    def reply(mut self, mut client: Client, work: Queued, message: Message, lease: Option[Lease], terminal: bool) -> Result[None, Refusal]:
+        """Admit the public lease before delivering Complete, then detach the settled request."""
+        if terminal:
+            self.detach(client, work.request, work.token)?
+        if let Some(held) = lease:
+            match self.state.pin(held.token):
+                Ok(_) => client.pins.append(held)
+                Err(reason) =>
+                    self.releases.append(LeaseRelease(lease=held, admitted=false))
+                    return send_refusal(client.channel, work.request, reason, "unit-record")
+        return send(client.channel, work.request, message)
+
+    def released(mut self, pending: LeaseRelease) -> None:
+        """Drop the logical pin only after the worker dropped the store lock (or exited)."""
+        if pending.admitted:
+            _ = self.state.release(pending.lease.token)
+        if let Some(index) = self.client_index(pending.session):
+            mut client = self.clients[index]
+            reply = Message.Event(Event(status="Released", trace_handle=pending.lease.token))
+            if send(client.channel, pending.request, reply).is_err():
+                self.close_client(client)
+            self.clients[index] = client
+
+    def lose_slot(mut self, mut slot: Slot, reason: Refusal) -> None:
+        """Reap the failed process and refuse its active request without replaying side effects."""
+        slot.close()
+        slot.reap()
+        if let Some(active) = take(slot.active):
+            self.relay_to_client(active, refusal_reply(reason), None, true)
+        if let Some(pending) = take(slot.releasing):
+            self.released(pending)
+        for index in range(len(self.clients)):
+            mut client = self.clients[index]
+            for held in client.pins:
+                if held.slot == slot.identity:
+                    _ = self.state.release(held.token)
+            client.pins = [pin for pin in client.pins if pin.slot != slot.identity]
+            self.clients[index] = client
+
+    def client_index(self, session: bytes) -> Option[int]:
+        """Look up a live client by its authenticated session, never by an untrusted request id alone."""
+        for index in range(len(self.clients)):
+            if not self.clients[index].closed and self.clients[index].channel.session == session:
+                return Some(index)
+        return None
+
+    def slot_index(self, identity: bytes) -> Option[int]:
+        """Find the specific process that owns a lease, even after its old pool position was reused."""
+        for index in range(len(self.slots)):
+            if not self.slots[index].closed and self.slots[index].identity == identity:
+                return Some(index)
+        return None
 
 
-def close_client(mut client: Client, mut state: ServiceState) -> None:
-    """Drop only the disconnected client's volatile requests and scoped reader interests."""
-    for pending in client.pending:
-        state.detach(pending.request, pending.token)
-    for held in client.pins:
-        state.release(held.token)
-    client.pending = []
-    client.pins = []
-    client.closed = true
+def normalized(submit: Submit) -> Result[tuple[Submit, str], str]:
+    """Resolve aliases and use the package origin that the checked and lowering records share across requests."""
+    source = Path(submit.requested_roots).resolve().map_err((error) => f"cannot {error.message()}")?
+    mut canonical = submit
+    canonical.requested_roots = source.0
+    if let Some(root) = project_root_of(source):
+        project = read_project(root).map_err((error) => error.message())?
+        return Ok((canonical, project.intent.name))
+    return Ok((canonical, source.stem()))
 
 
-def send(mut channel: Channel, request: bytes, message: Message) -> Result[None, Refusal]:
-    """Require an available credit at a handler boundary; admission gates leave room for all replies."""
-    match channel.send(request, message)?:
-        SendOutcome.Sent(_) => return Ok(None)
-        SendOutcome.Blocked =>
-            return Err(Refusal(kind=RefusalKind.Credit, detail="engine sender is blocked awaiting credit"))
-
-
-def send_refusal(mut channel: Channel, request: bytes, reason: Refusal, command: str) -> Result[None, Refusal]:
-    """Send a stable refusal code with context; receivers never parse prose to choose their next action."""
-    return send(
-        channel,
-        request,
-        Message.Refused(Refused(code=refusal_code(reason.kind), command=command, detail=reason.detail)),
-    )
-
-
-def send_request_refusal(
-    mut channel: Channel,
-    store: Path,
-    request: bytes,
-    reason: Refusal,
-    command: str,
-) -> Result[None, Refusal]:
-    """Keep control frames bounded while relaying an exact large diagnostic through the console channel."""
-    detail = reason.detail.encode("utf-8")
-    body_size = 14 + len(command.encode("utf-8")) + len(detail)
-    if body_size <= MAX_PAYLOAD:
-        return send_refusal(channel, request, reason, command)
-    prefix = store.joinpath("engine/console").joinpath(f"{hexlify(request)}-refusal").0
-    Path(f"{prefix}.err")
-        .write_text(reason.detail, "utf-8", "strict", None)
-        .map_err((error) => transport(f"cannot retain engine refusal: {error.message()}"))?
-    send(channel, request, Message.Event(Event(status="Console", trace_handle=prefix)))?
-    return send_refusal(
-        channel,
-        request,
-        Refusal(
-            kind=reason.kind,
-            detail="engine request refused; the full diagnostic was relayed through the console stream",
-        ),
-        command,
-    )
-
-
-pub def refusal_code(kind: RefusalKind) -> int:
-    """The stable v1 refusal discriminants carried by Refused bodies."""
-    match kind:
-        RefusalKind.BadMagic => return 1
-        RefusalKind.Version => return 2
-        RefusalKind.Oversized => return 3
-        RefusalKind.ShortRead => return 4
-        RefusalKind.Reserved => return 5
-        RefusalKind.Flags => return 6
-        RefusalKind.Schema => return 7
-        RefusalKind.Identity => return 8
-        RefusalKind.Sequence => return 9
-        RefusalKind.Credit => return 10
-        RefusalKind.UnsupportedCommand => return 11
-        RefusalKind.Busy => return 12
-        RefusalKind.Draining => return 13
-        RefusalKind.Transport => return 14
+def refusal_reply(reason: Refusal) -> Message:
+    """Keep private channel failures typed when reporting an activation to the public client."""
+    return Message.Refused(Refused(code=refusal_code(reason.kind), command="unit-record", detail=reason.detail))

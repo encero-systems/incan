@@ -3,6 +3,7 @@
 from engine_messages import Hello, Welcome
 from engine_wire import DATA_CREDITS, MAX_PAYLOAD, Refusal, RefusalKind, zero_id
 from std.fs import Path
+from retained_readings import installed_digest
 from unit_freshness import fingerprint
 
 pub const IDLE_SECONDS: int = 600
@@ -139,3 +140,8 @@ pub def records_generation(identity: Identity) -> Result[str, str]:
     belongs in the identity that admits it, so another compiler or another Oven over the same store starts cold, once.
     """
     return fingerprint(["incan.engine.records-generation/1", identity.compiler_generation, identity.service_generation])
+
+
+pub def service_generation(binary: str) -> Result[str, str]:
+    """Name the engine service implementation by exact bytes, independent of its installed path."""
+    return fingerprint(["incan.engine.service/2", installed_digest(Path(binary))?])

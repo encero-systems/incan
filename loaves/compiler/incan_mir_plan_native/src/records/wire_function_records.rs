@@ -375,6 +375,7 @@ pub(crate) enum StoredTarget {
     StaticStore(i64),
     StaticForce(i64),
     StaticMethod(i64, String),
+    LinkedStaticMethod(String, String),
 }
 
 /// Project one `StoredTarget` alternative onto its identity and positional payload.
@@ -421,6 +422,10 @@ pub(crate) fn wire_stored_target(value: &StoredTarget) -> Result<Wire, String> {
         StoredTarget::StaticMethod(field0, field1) => alternative(
             b"N\xbc\x12Ac$",
             vec![Wire::integer(*field0), Wire::Text(field1.clone())],
+        ),
+        StoredTarget::LinkedStaticMethod(path, method) => alternative(
+            b"\x9d\x1d\x51\xf8\x49\xbc",
+            vec![Wire::Text(path.clone()), Wire::Text(method.clone())],
         ),
     })
 }
@@ -479,6 +484,9 @@ fn read_stored_target_alternative(
         b";\xf1N\xb8uk" if fields.len() == 1 => StoredTarget::StaticForce(number(&fields[0].value)?),
         b"N\xbc\x12Ac$" if fields.len() == 2 => {
             StoredTarget::StaticMethod(number(&fields[0].value)?, text(&fields[1].value)?)
+        }
+        b"\x9d\x1d\x51\xf8\x49\xbc" if fields.len() == 2 => {
+            StoredTarget::LinkedStaticMethod(text(&fields[0].value)?, text(&fields[1].value)?)
         }
         _ => return Err("unknown or incomplete StoredTarget alternative".to_owned()),
     })

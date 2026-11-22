@@ -27,6 +27,7 @@ pub fn resume_unit_plan(
         inputs.kind,
         inputs.tests,
         inputs.package_versions,
+        inputs.linked_static_exports,
         published,
     )
 }
@@ -56,6 +57,7 @@ pub fn complete_recorded_runtime_plan(
         inputs.kind,
         inputs.tests,
         inputs.package_versions,
+        inputs.linked_static_exports,
         published,
     )
 }
@@ -68,6 +70,7 @@ fn complete_runtime_plan(
     kind: &str,
     tests: &[String],
     package_versions: &BTreeMap<String, String>,
+    linked_static_exports: &BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
     published: &mut Vec<NativeUnionDeclaration>,
 ) -> Result<UnitPlanning, String> {
     let trace = traced("INCAN_TRACE_LOWERING");
@@ -232,6 +235,7 @@ fn complete_runtime_plan(
         },
         kind,
         tests,
+        linked_static_exports,
         published,
         trace,
     )

@@ -1,0 +1,185 @@
+"""Run records activations in a persistent process whose request scopes cannot mix with another activation."""
+
+from rust::std::io import stdin
+from rust::std::os::fd import AsFd, OwnedFd
+from rust::std::os::unix::net import UnixStream
+from rust::std::process import Command, Stdio
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.encoding.hex import hexlify
+from std.fs import Path
+from pub::incan_platform.children import reap_retained_children
+from pub::incan_platform.ipc import Connection
+from pub::incan_platform.trace import Operation, flush as flush_trace
+from bakery import forget_verified, verification_entries
+from core_process import Process, executable
+from engine_actions import ExecutionLease, Pending, Ready, finish_request
+from engine_channel import Channel
+from engine_endpoint import transport
+from engine_epochs import prepare_submit
+from engine_messages import Captured, Event, Message, Submit
+from engine_programs import program_handle
+from engine_replies import send, send_request_refusal
+from engine_state import service_generation
+from engine_wire import Refusal, zero_id
+from jec import begin as begin_work, record as record_work
+from observation import trace
+
+
+pub model SettlementProgram:
+    """The immutable service generation that may execute jobs for this coordinator."""
+
+    pub binary: str
+    pub generation: str
+
+    @staticmethod
+    pub def current() -> Result[SettlementProgram, Refusal]:
+        """Bind child launches to the Oven binary the coordinator selected when serving began."""
+        binary = executable().map_err(transport)?
+        generation = service_generation(binary).map_err(transport)?
+        return Ok(SettlementProgram(binary=binary, generation=generation))
+
+    pub def start(self, store: Path, producer: str, records: str) -> Result[tuple[Process, Channel], Refusal]:
+        """Start a private child and retain its socket and process handles."""
+        here, peer = UnixStream.pair().map_err((error) => transport(str(error)))?
+        child = Command
+            .new(self.binary)
+            .args(["--internal-engine-settlement", store.0, producer, records, self.generation])
+            .stdin(Stdio.from(OwnedFd.from(peer)))
+            .stdout(Stdio.null())
+            .spawn()
+            .map_err((error) => transport(f"cannot start engine settlement: {error}"))?
+        return Ok((Process.from_child(child), Channel(transport=Connection.from_stream(here))))
+
+
+pub def serve(arguments: list[str]) -> Result[None, Refusal]:
+    """Serve only the engine that created the inherited socket; no filesystem endpoint admits other clients."""
+    if len(arguments) != 4:
+        return Err(transport("settlement requires its store and compiler, records, and service generations"))
+    binary = executable().map_err(transport)?
+    if service_generation(binary).map_err(transport)? != arguments[3]:
+        return Err(transport("the installed Oven changed before settlement started"))
+    socket = stdin().as_fd().try_clone_to_owned().map_err((error) => transport(str(error)))?
+    channel = Channel(transport=Connection.from_stream(UnixStream.from(socket)))
+    return Settlement.run(Path(arguments[0]), arguments[1], arguments[2], channel)
+
+
+class Settlement:
+    """One process's request scopes and live execution pins, owned until release or coordinator shutdown."""
+
+    store: Path
+    producer: str
+    records: str
+    channel: Channel
+    pins: list[ExecutionLease] = []
+    origin: str = ""
+    origin_request: bytes = zero_id()
+
+    @staticmethod
+    pub def run(store: Path, producer: str, records: str, channel: Channel) -> Result[None, Refusal]:
+        """Own the worker's store context until its coordinator closes the private stream."""
+        mut settlement = Settlement(store=store, producer=producer, records=records, channel=channel)
+        return settlement.serve()
+
+    def serve(mut self) -> Result[None, Refusal]:
+        """Read one command at a time and reap every compiler worker that retires while this process is idle."""
+        while true:
+            _ = reap_retained_children().map_err(transport)?
+            if not self.channel.transport.readable().map_err(transport)?:
+                sleep(Duration.from_millis(2))
+                continue
+            match self.channel.receive():
+                Err(_) => return Ok(None)
+                Ok(frame) =>
+                    self.channel.acknowledge(frame)?
+                    request = frame.header.request
+                    match frame.message:
+                        Message.Ack(_) => pass
+                        Message.Event(event) =>
+                            if event.status != "GraphOrigin" or self.origin != "":
+                                return Err(transport("settlement received an unexpected origin"))
+                            self.origin = event.trace_handle
+                            self.origin_request = request
+                        Message.Submit(submit) =>
+                            if self.origin == "" or self.origin_request != request:
+                                return Err(transport("settlement received work without a scheduled origin"))
+                            self.settle(request, submit)?
+                            self.origin = ""
+                        Message.Release(release) => self.release(request, release.lease_id)?
+                        _ => return Err(transport("unexpected command on the private settlement socket"))
+
+    def settle(mut self, request: bytes, submit: Submit) -> Result[None, Refusal]:
+        """
+        1. Capture once and acknowledge the exact epoch about to settle.
+        2. Produce and publish through the existing records activation.
+        3. Release request observations before sending completion, keeping only the caller's live lease.
+        """
+        # 1. Capture is ordered with production, so a queued edit sees the preceding request's publication.
+        capturing = begin_work()
+        captured = prepare_submit(
+            self.store, submit, discover_standalone=true, canonical_source=Some(Path(submit.requested_roots)),
+        )
+        record_work(Operation.EngineCapture, submit.requested_roots, capturing)
+        match captured:
+            Err(reason) =>
+                return send_request_refusal(self.channel, self.store, request, transport(reason), "request")
+            Ok(found) =>
+                selected = f"snapshot:{found.snapshot.generation}:{found.snapshot.digest}"
+                handle = program_handle(found.identity, self.producer, submit.view).map_err(transport)?
+                send(self.channel, request, Message.Captured(Captured(epoch=found.identity, snapshot=selected)))?
+                # 2. All staged records and the caller's result still use the original transaction boundary.
+                finished = finish_request(
+                    self.store,
+                    Pending(
+                        request=request,
+                        token=hexlify(request),
+                        capture=found,
+                        producer=self.producer,
+                        view=submit.view,
+                        proofs=submit.observation_policy == "proofs",
+                        command=submit.command,
+                        format=submit.options,
+                        directory=submit.directory,
+                        unit_options=submit.unit_options,
+                        records=self.records,
+                        origin=self.origin,
+                        handle=handle,
+                    ),
+                )
+                # 3. The trace, including the commit and scope teardown, precedes the terminal reply.
+                released = verification_entries()
+                if released > 0:
+                    forget_verified()
+                    trace(
+                        f"engine request released: captures=0 verification={verification_entries()} released={released}",
+                    )
+                _ = flush_trace()
+                match finished:
+                    Ok(ready) => return self.complete(request, ready)
+                    Err(reason) => return self.refuse(request, reason)
+
+    def complete(mut self, request: bytes, ready: Ready) -> Result[None, Refusal]:
+        """Keep the actual store lock through the client's execution and deliver its bounded protocol replies."""
+        if ready.console != "":
+            send(self.channel, request, Message.Event(Event(status="Console", trace_handle=ready.console)))?
+        if ready.incomplete_proof != "":
+            send(
+                self.channel,
+                request,
+                Message.Event(Event(status="ProofIncomplete", trace_handle=ready.incomplete_proof[:2048])),
+            )?
+        if let Some(pin) = ready.pin:
+            self.pins.append(pin)
+        return send(self.channel, request, Message.Complete(ready.message))
+
+    def refuse(mut self, request: bytes, reason: str) -> Result[None, Refusal]:
+        """Deliver this request's compiler diagnostics before the refusal that summarizes them."""
+        console = self.store.joinpath("engine/console").joinpath(hexlify(request)).0
+        if Path(f"{console}.out").is_file() or Path(f"{console}.err").is_file():
+            send(self.channel, request, Message.Event(Event(status="Console", trace_handle=console)))?
+        return send_request_refusal(self.channel, self.store, request, transport(reason), "unit-record")
+
+    def release(mut self, request: bytes, token: str) -> Result[None, Refusal]:
+        """Acknowledge release only after dropping the store lock in its owning process."""
+        self.pins = [pin for pin in self.pins if pin.token != token]
+        return send(self.channel, request, Message.Event(Event(status="Released", trace_handle=token)))
