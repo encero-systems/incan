@@ -542,6 +542,33 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_graph_file_answers_its_origins_from_the_bytes_ahead_of_its_records() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let encoded = encode_graph(&origin_records()?, Path::new("."))?;
+        let graph = GraphArtifact::decode(&encoded)?;
+        let directory = std::env::temp_dir().join(format!("incan-codegraph-origins-{}", std::process::id()));
+        std::fs::create_dir_all(&directory)?;
+        let whole = directory.join("whole.incngraph");
+        std::fs::write(&whole, &encoded)?;
+        assert_eq!(super::read_origins(&whole)?, graph.origins()?);
+        // Without the record index and the records, the file still answers its origins, and nothing else.
+        let records_start = encoded.len() - graph.payload.len();
+        let truncated = directory.join("truncated.incngraph");
+        std::fs::write(&truncated, &encoded[..records_start - graph_index_length(&encoded)?])?;
+        assert_eq!(super::read_origins(&truncated)?, graph.origins()?);
+        assert!(GraphArtifact::decode(&std::fs::read(&truncated)?).is_err());
+        std::fs::remove_dir_all(&directory)?;
+        Ok(())
+    }
+
+    /// The byte length of an encoded graph's record index, read from the length that precedes it.
+    fn graph_index_length(encoded: &[u8]) -> Result<usize, Box<dyn std::error::Error>> {
+        let origins = usize::try_from(u64::from_le_bytes(encoded[4..12].try_into()?))?;
+        let at = 12 + origins;
+        Ok(usize::try_from(u64::from_le_bytes(encoded[at..at + 8].try_into()?))? + 8)
+    }
+
     /// The standard primitives graphs the selected installation ships, every profile it ships one for.
     fn installed_primitives_graphs(home: &Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
         let mut graphs = Vec::new();
