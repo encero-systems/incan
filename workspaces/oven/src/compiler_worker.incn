@@ -155,10 +155,10 @@ def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
     return Ok(capturing)
 
 
-pub def relay_console(prefix: str) -> Result[None, str]:
-    """Relay exact diagnostic bytes before withdrawing foreground request files, including on a compile refusal."""
-    relay_file(Path(f"{prefix}.out"), false)?
-    relay_file(Path(f"{prefix}.err"), true)?
+pub def relay_console(prefix: str, destination: str = "") -> Result[None, str]:
+    """Withdraw request console files, relaying their exact bytes to the named console or to the current streams."""
+    relay_file(prefix, "out", destination)?
+    relay_file(prefix, "err", destination)?
     return Ok(None)
 
 
@@ -171,17 +171,23 @@ pub def collect_console(prefix: str) -> Result[list[str], str]:
     return Ok(streams)
 
 
-def relay_file(path: Path, error_stream: bool) -> Result[None, str]:
+def relay_file(prefix: str, stream: str, destination: str) -> Result[None, str]:
     """Copy a completed compiler stream without changing its encoding or adding a newline."""
-    contents = collected(path)?
-    if error_stream:
-        mut stream = stderr()
-        console_result(stream.write_all(contents))?
-        console_result(stream.flush())?
+    contents = collected(Path(f"{prefix}.{stream}"))?
+    if destination != "":
+        if len(contents) == 0:
+            return Ok(None)
+        mut file = open_stream(f"{destination}.{stream}")?
+        console_result(file.write_all(contents))?
+        return console_result(file.flush())
+    if stream == "err":
+        mut terminal = stderr()
+        console_result(terminal.write_all(contents))?
+        console_result(terminal.flush())?
     else:
-        mut stream = stdout()
-        console_result(stream.write_all(contents))?
-        console_result(stream.flush())?
+        mut terminal = stdout()
+        console_result(terminal.write_all(contents))?
+        console_result(terminal.flush())?
     return Ok(None)
 
 

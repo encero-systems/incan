@@ -305,10 +305,11 @@ pub def skipped_directory(name: str) -> bool:
     return name.startswith(".") or name == "target" or name == "node_modules"
 
 
-pub def children(directory: Path, extension: str) -> Result[Children, str]:
+pub def children(directory: Path, extension: str, include_nested: bool = false) -> Result[Children, str]:
     """
     List a directory once: the files whose names end with `extension` (every file when it is empty) and the
-    subdirectories worth entering (see `entered`).
+    subdirectories worth entering (see `entered`). Membership capture may ask for candidate directory names so it can
+    check for a nested project at the child even when its parent's name listing is unchanged.
     """
     mut files: list[str] = []
     mut directories: list[str] = []
@@ -317,9 +318,13 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
         name = child.name()
         checked += 1
         if child.is_dir():
-            checked += 1
-            if entered(child):
-                directories.append(name)
+            if include_nested:
+                if not skipped_directory(name):
+                    directories.append(name)
+            else:
+                checked += 1
+                if entered(child):
+                    directories.append(name)
             continue
         checked += 1
         if child.is_file() and name.endswith(extension):

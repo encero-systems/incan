@@ -186,6 +186,25 @@ pub def make_unit(
     3. Compile a library, or reuse an executable whose inputs have not changed.
     """
     # 1. The shared library is compiled once per project and profile.
+    described, library_code = prepare_project_library(unit, toolchain)?
+    if library_code != 0:
+        return Ok(Made(code=library_code, launch=output))
+    # 2. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
+    ready = prepare_native(described, toolchain)?
+    # 3. Both libraries and executables reuse their complete, unchanged artifact sets.
+    if ready.kind == "library":
+        return Ok(Made(code=compile_library_unit(ready, toolchain, output)?, launch=output))
+    return obtain_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
+
+
+pub def prepare_project_library(
+    unit: UnitDescription, toolchain: Toolchain,
+) -> Result[tuple[UnitDescription, i32], str]:
+    """
+    Bind the exact shared library when the planner selected one. A program whose provider refuses returns its own
+    source unit with status zero so its executable producer reports only diagnostics it reaches. A test requires
+    the provider and returns its compilation status directly.
+    """
     mut described = unit
     if let Some(key) = unit.project_library:
         library_path = library_output(unit, key, native_crate_name(key))
@@ -197,13 +216,8 @@ pub def make_unit(
             described.project_library = None
             described.excluded_sources = []
         else:
-            return Ok(Made(code=library_code, launch=output))
-    # 2. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
-    ready = prepare_native(described, toolchain)?
-    # 3. Both libraries and executables reuse their complete, unchanged artifact sets.
-    if ready.kind == "library":
-        return Ok(Made(code=compile_library_unit(ready, toolchain, output)?, launch=output))
-    return obtain_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
+            return Ok((described, library_code))
+    return Ok((described, 0))
 
 
 def compile_project_library(
@@ -221,7 +235,7 @@ def compile_project_library(
     capturing.console = library_console
     code = compile_unit(library, capturing, output)?
     if code == 0:
-        relay_console(library_console)?
+        relay_console(library_console, toolchain.console)?
     return Ok(code)
 
 
