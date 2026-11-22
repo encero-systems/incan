@@ -8,6 +8,35 @@
 
 #![allow(clippy::type_complexity)]
 
+/// Keep the temporary slot-only ABI out of the runtime's explicit crate-root reexports.
+#[test]
+fn the_runtime_exports_only_unit_keyed_static_operations() {
+    let retired = [
+        "begin_module_initialization",
+        "end_module_initialization",
+        "read_static_bool",
+        "read_static_float",
+        "read_static_int",
+        "read_static_int_set",
+        "read_static_text",
+        "read_static_text_int_dict",
+        "write_static_bool",
+        "write_static_float",
+        "write_static_int",
+        "write_static_int_set",
+        "write_static_text",
+        "write_static_text_int_dict",
+    ];
+    let exported =
+        include_str!("lib.rs").split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'));
+    for name in exported {
+        assert!(
+            !retired.contains(&name),
+            "runtime still exports retired slot-only operation {name}"
+        );
+    }
+}
+
 #[test]
 /// Reject runtime exports whose Rust signatures differ from the native plan call sites.
 fn every_runtime_function_takes_its_call_site_types() {
