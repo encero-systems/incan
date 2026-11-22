@@ -1135,18 +1135,12 @@ mod tests {
         assert_eq!(fallback_identity(Some("owner".to_owned())), Some("owner".to_owned()));
     }
 
-    /// A checked body the module's Body IR gives no row of its own, a trait's abstract method or a top-level partial's
-    /// generated function, is published as a fallback owner with its reason instead of refusing the whole output.
-    #[test]
-    fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
-        let source = concat!(
-            "trait Named:\n    def label(self) -> str:\n        \"\"\"Return the value label.\"\"\"\n        ...\n\n",
-            "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
-            "pub def route(method: str, path: str) -> str:\n    return method + path\n\n",
-            "pub get = partial route(method=\"GET\")\n\n",
-            "def main() -> None:\n    println(get(path=\"/\"))\n",
-        );
-        let scratch = std::env::temp_dir().join(format!("incan-graph-fallbacks-{}", std::process::id()));
+    /// Check one module `source`, lower its Body IR and attach it to a graph-body collector, as a compile does.
+    fn attached_output(
+        source: &str,
+        test: &str,
+    ) -> Result<(GraphBodyOutput, std::path::PathBuf), Box<dyn std::error::Error>> {
+        let scratch = std::env::temp_dir().join(format!("incan-graph-{test}-{}", std::process::id()));
         std::fs::create_dir_all(scratch.join("src"))?;
         let root = scratch.canonicalize()?;
         let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
@@ -1188,6 +1182,51 @@ mod tests {
             &std::collections::BTreeMap::new(),
             None,
         )?;
+        Ok((output, scratch))
+    }
+
+    /// Two overloads whose source signatures differ only in their bounds share one stable identity, so neither can
+    /// own a graph-body row: their spelling is one fallback owner, and the output keeps one row per identity.
+    #[test]
+    fn overloads_sharing_one_source_signature_are_one_fallback_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = concat!(
+            "model Left:\n    value: int\n\n",
+            "model Right:\n    value: int\n\n",
+            "def kind[T with Left]() -> str:\n    return \"left\"\n\n",
+            "def kind[T with Right]() -> str:\n    return \"right\"\n\n",
+            "def main() -> None:\n    println(kind[Right]())\n",
+        );
+        let (output, scratch) = attached_output(source, "shared-signature")?;
+        let mut identities = std::collections::BTreeSet::new();
+        assert!(
+            output
+                .values
+                .iter()
+                .all(|value| identities.insert((value.module.clone(), value.identity.clone()))),
+            "two graph-body values share one identity"
+        );
+        let kinds = output
+            .fallbacks
+            .iter()
+            .filter(|fallback| fallback.name == "kind")
+            .count();
+        assert_eq!(kinds, 1, "the shared spelling is not one fallback owner");
+        std::fs::remove_dir_all(&scratch)?;
+        Ok(())
+    }
+
+    /// A checked body the module's Body IR gives no row of its own, a trait's abstract method or a top-level partial's
+    /// generated function, is published as a fallback owner with its reason instead of refusing the whole output.
+    #[test]
+    fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let source = concat!(
+            "trait Named:\n    def label(self) -> str:\n        \"\"\"Return the value label.\"\"\"\n        ...\n\n",
+            "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
+            "pub def route(method: str, path: str) -> str:\n    return method + path\n\n",
+            "pub get = partial route(method=\"GET\")\n\n",
+            "def main() -> None:\n    println(get(path=\"/\"))\n",
+        );
+        let (output, scratch) = attached_output(source, "fallbacks")?;
         let fallbacks: Vec<(&str, &str)> = output
             .fallbacks
             .iter()
