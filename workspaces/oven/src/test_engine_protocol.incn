@@ -98,18 +98,21 @@ pub def test_a_caller_waits_for_a_busy_engine_to_answer_hello() -> Result[None, 
         uid=owner_uid(store).map_err(detail)?,
     )
     selected = endpoint(store, identity).map_err(detail)?
-    lifetime = Path(selected.lock).try_lock_exclusive().map_err((error) => error.message())?
-    assert lifetime is not None, "the test could not hold the engine's lifetime lock"
+    # The engine holds its lifetime lock for as long as it lives; this test holds it for the busy engine.
+    _lifetime = match Path(selected.lock).try_lock_exclusive().map_err((error) => error.message())?:
+        Some(lock) => lock
+        None => return Err("the test could not hold the engine's lifetime lock")
     listener = listen(selected.socket, true)?
     engine = spawn(() => greet_after_a_build(listener, identity, store))
     started = Instant.now()
     connected = connect_with(store, identity, executable()?)
     waited = int(started.elapsed().as_secs())
-    match engine.join():
-        Ok(outcome) => outcome?
-        Err(_) => return Err("the busy engine thread panicked")
+    joined = engine.join()
     mut channel = connected.map_err(detail)?
     _ = channel.transport.close()
+    match joined:
+        Ok(outcome) => outcome?
+        Err(_) => return Err("the busy engine thread panicked")
     assert waited >= int(HANDSHAKE_SECONDS), f"the caller was greeted after {waited} s, inside the handshake bound"
     return Ok(None)
 
@@ -121,7 +124,10 @@ def greet_after_a_build(listener: Listener, identity: Identity, store: Path) -> 
     sleep(Duration.from_secs(HANDSHAKE_SECONDS))
     sleep(Duration.from_millis(500))
     state = ServiceState(identity=identity, store=store, last_active=0)
-    _ = greet(Channel(transport=caller), state).map_err(detail)?
+    mut client = greet(Channel(transport=caller), state).map_err(detail)?
+    # An engine keeps a greeted caller open; this one reads until the caller closes its end.
+    while client.channel.receive().is_ok():
+        pass
     return Ok(None)
 
 
