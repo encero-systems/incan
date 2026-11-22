@@ -7,7 +7,7 @@ from compiler_source_projection import positioned_source_key
 from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
-from compiler_graph_records import EditCutoff, InputReaders, OutputSlot, OutputSlots, decode_record_key, evaluation_revision, family_slots, reusable_evaluation, reusable_family_records, select_slot_record, slot_output
+from compiler_graph_records import EditCutoff, InputReaders, OutputSlot, OutputSlots, PlanImportReach, decode_record_key, evaluation_revision, family_slots, reusable_evaluation, reusable_family_records, select_slot_record, slot_output
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value as crumb_field
@@ -55,13 +55,15 @@ pub def select_plan_inventory_except(
     admitted_outputs: list[str] = [],
     keyed_readers: Option[list[str]] = None,
     cutoff: EditCutoff = EditCutoff(),
+    plan_reach: Option[PlanImportReach] = None,
 ) -> Result[PlanFunctionSelection, str]:
     """
     Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit. A
     function whose exact output is in `admitted_outputs` travels in its module page. Its product is not read twice.
     """
     mut inventory = PlanFunctionSelection(retained=RetainedPlanInputs(snapshot=selected.digest))
-    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, excluded_outputs=admitted_outputs, included=keyed_readers)
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid,
+        excluded_outputs=admitted_outputs, included=keyed_readers, plan_reach=plan_reach)
     for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE, Some(slots), cutoff=cutoff)?:
         # A rechecked reader may probe its old ordinary scalar by the compiler's newly computed full key.
         # A module or entry admission bypasses that lookup and therefore remains unavailable on this path.
@@ -357,6 +359,7 @@ pub def select_plan_modules(
     complete_namespaces: set[str] = set(),
     changed_positions: set[str] = set(),
     cutoff: EditCutoff = EditCutoff(),
+    reachable_modules: Option[list[str]] = None,
 ) -> Result[PlanModuleSelection, str]:
     """
     Admit whole every module whose plan record still validates in the selected graph and that this request leaves
@@ -372,7 +375,8 @@ pub def select_plan_modules(
     for owner in invalid_owners:
         refused.add(owner)
     mut selection = PlanModuleSelection()
-    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules)
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules,
+        included=reachable_modules)
     mut recorded: Dict[str, SelectedPlanModule] = {}
     if cutoff.active:
         recorded = recorded_plan_selection(selected, origin)?

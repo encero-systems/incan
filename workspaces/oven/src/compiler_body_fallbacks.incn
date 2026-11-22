@@ -3,6 +3,7 @@
 from pub::internal_models import CompiledBodyFallback
 from rust::incan_semantics_core import SymbolNamespace, SymbolOrigin, decode_incan_symbol_identity
 from std.fs import Path
+from cfg_predicate import identifier
 from unit import UnitDescription
 
 
@@ -72,6 +73,26 @@ def source_module_of(unit: UnitDescription, module: str) -> Result[Option[str], 
     if not path.startswith(source_root):
         return Ok(None)
     return Ok(Some(source_module(path[len(source_root):])))
+
+
+pub def plan_module_origins(unit: UnitDescription, modules: list[str]) -> Option[set[str]]:
+    """Name plain source-root-relative modules in the stable top-level function identity's spelling."""
+    root = unit.source_root + "/"
+    mut names: set[str] = set()
+    for module in modules:
+        file = unit.project_root + "/" + module
+        if not file.startswith(root) or not file.endswith(".incn"):
+            return None
+        relative = file[len(root):]
+        # For these components, the compiler's file-stem normalization leaves the directory names intact.
+        for part in relative[:len(relative) - 5].split("/"):
+            if not identifier(part):
+                return None
+        name = source_module(relative)
+        if name == "":
+            return None
+        names.add(name.replace("/", "::"))
+    return Some(names)
 
 
 def source_module(relative: str) -> str:
