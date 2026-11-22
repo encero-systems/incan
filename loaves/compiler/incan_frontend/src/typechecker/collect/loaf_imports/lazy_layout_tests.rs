@@ -632,22 +632,27 @@ fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manife
     Ok(())
 }
 
-/// Reconstruct every root nominal and trait layout from the record addressed by its exported name.
-/// Run the same comparison on captured compiled Loaves, including renamed exports and member partials.
+/// Reconstruct root and authored nominal layouts from records addressed by the public or declaration name,
+/// respectively. Check the fixtures and any supplied corpus, including renamed roots and member partials.
 #[test]
-fn root_export_layouts_match_their_named_records() -> TestResult {
+fn root_and_authored_layouts_match_their_named_records() -> TestResult {
     let root = tempfile::tempdir()?;
     let loaves = shapes(root.path())?;
     let mut differences = Vec::new();
     let mut roots = 0;
+    let mut authored = 0;
     for entry in loaves.entries() {
-        roots += compare_root_layouts(
+        let (root_count, authored_count) = compare_layouts(
             &entry.artifact.manifest,
             &entry.artifact.identity.digest,
             &mut differences,
         )?;
+        roots += root_count;
+        authored += authored_count;
     }
     assert_eq!(roots, 8, "the fixtures must exercise every root layout kind");
+    assert!(authored > 0, "the fixtures must exercise authored layouts");
+    println!("{roots} fixture roots and {authored} authored layouts");
 
     if let Some(directory) = std::env::var_os("INCAN_RECORDS_LAYOUT_CORPUS") {
         use sha2::{Digest, Sha256};
@@ -657,6 +662,7 @@ fn root_export_layouts_match_their_named_records() -> TestResult {
         paths.sort();
         let mut manifests = 0;
         let mut layouts = 0;
+        let mut authored = 0;
         for path in paths {
             if path.extension().and_then(|extension| extension.to_str()) != Some("incnlib") {
                 continue;
@@ -664,25 +670,28 @@ fn root_export_layouts_match_their_named_records() -> TestResult {
             let text = std::fs::read_to_string(&path)?;
             let manifest = crate::library_manifest::LibraryManifest::from_json_str(&text)?;
             let digest = format!("sha256:{:x}", Sha256::digest(text.as_bytes()));
-            match compare_root_layouts(&manifest, &digest, &mut differences) {
-                Ok(checked) => layouts += checked,
+            match compare_layouts(&manifest, &digest, &mut differences) {
+                Ok((roots, declarations)) => {
+                    layouts += roots;
+                    authored += declarations;
+                }
                 Err(error) => differences.push(format!("{}: {error}", path.display())),
             }
             manifests += 1;
         }
         assert!(manifests > 0 && layouts > 0, "the corpus contains no root layouts");
-        println!("{manifests} census Loaves and {layouts} root layouts");
+        println!("{manifests} census Loaves, {layouts} root layouts and {authored} authored layouts");
     }
     assert!(differences.is_empty(), "{}", differences.join("\n"));
     Ok(())
 }
 
-/// Compare the typed layouts of the admitted root projections with the layouts built from their named records.
-fn compare_root_layouts(
+/// Compare both the root projection and the authored declaration layouts with their corresponding record routes.
+fn compare_layouts(
     manifest: &crate::library_manifest::LibraryManifest,
     digest: &str,
     differences: &mut Vec<String>,
-) -> TestResult<usize> {
+) -> TestResult<(usize, usize)> {
     use crate::library_manifest::LibraryManifest;
     use crate::library_manifest::compiler_records::RecordFamily;
     use crate::symbols::{SymbolKind, TypeInfo};
@@ -762,6 +771,80 @@ fn compare_root_layouts(
             ));
         }
         count += 1;
+    }
+    let authored = compare_authored_layouts(&checker, manifest, &records, digest, differences)?;
+    Ok((count, authored))
+}
+
+/// Compare the canonical declaration's layout before any root-export spelling or consumer scope is applied.
+fn compare_authored_layouts(
+    checker: &crate::typechecker::TypeChecker,
+    manifest: &crate::library_manifest::LibraryManifest,
+    records: &crate::library_manifest::compiler_records::CompilerRecordSet,
+    digest: &str,
+    differences: &mut Vec<String>,
+) -> TestResult<usize> {
+    use crate::api_metadata::ApiDeclaration;
+    use crate::library_manifest::LibraryManifest;
+    use crate::library_manifest::compiler_records::RecordFamily;
+    use crate::library_manifest::declaration_records::{qualified_name, restored_nominal_declaration};
+
+    let Some(api) = manifest.contract_metadata.api.as_ref() else {
+        return Ok(0);
+    };
+    let mut count = 0;
+    for module in &api.modules {
+        for declaration in &module.declarations {
+            if !matches!(
+                declaration,
+                ApiDeclaration::Model(_)
+                    | ApiDeclaration::Class(_)
+                    | ApiDeclaration::Enum(_)
+                    | ApiDeclaration::Newtype(_)
+                    | ApiDeclaration::Trait(_)
+            ) {
+                continue;
+            }
+            let name = qualified_name(&module.module_path, declaration.name());
+            let read = |family| {
+                records
+                    .records
+                    .iter()
+                    .filter(|record| record.family == family && record.name == name)
+                    .map(|record| LibraryManifest::decode_compiler_record_value::<serde_json::Value>(&record.value))
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            let signatures = read(RecordFamily::DeclarationSignature)?;
+            let layouts = read(RecordFamily::Layout)?;
+            let defaults = read(RecordFamily::Default)?;
+            let [signature] = signatures.as_slice() else {
+                differences.push(format!("{}::{name} ({digest}): expected one signature", manifest.name));
+                continue;
+            };
+            if layouts.len() > 1 || defaults.len() > 1 {
+                differences.push(format!(
+                    "{}::{name} ({digest}): ambiguous layout or defaults",
+                    manifest.name
+                ));
+                continue;
+            }
+            let restored = serde_json::from_value(restored_nominal_declaration(
+                signature.clone(),
+                layouts.first(),
+                defaults.first(),
+            ))?;
+            let mut fields = Vec::new();
+            layout_difference_paths(
+                &serde_json::to_value(checker.symbol_kind_from_api_declaration(None, &restored))?,
+                &serde_json::to_value(checker.symbol_kind_from_api_declaration(Some(api), declaration))?,
+                "",
+                &mut fields,
+            );
+            if !fields.is_empty() {
+                differences.push(format!("{}::{name} ({digest}): {}", manifest.name, fields.join(", ")));
+            }
+            count += 1;
+        }
     }
     Ok(count)
 }
