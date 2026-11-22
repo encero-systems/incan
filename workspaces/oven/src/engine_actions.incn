@@ -16,7 +16,7 @@ from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
 from installation_page import begin_command, end_command
-from trace_adapter import count_frozen_work, finish_frozen_counting
+from trace_adapter import collect_reasons, collected_reasons, count_frozen_work, finish_frozen_counting
 from toolchain import toolchain_directory
 from home import standard_library_dir
 
@@ -56,13 +56,20 @@ pub model Ready:
 
 
 pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
-    """Capture installed facts once for this activation and resume reconciliation before the next request."""
+    """
+    Capture installed facts once for this activation and resume reconciliation before the next request. The unit
+    reasons the request records travel back with its completion, so they reach the caller's own trace channel.
+    """
     begin_command()
     serve_from(pending.directory)
-    ready = settled_request(store, pending)
+    collect_reasons()
+    settled = settled_request(store, pending)
+    notes = "\n".join(collected_reasons())
     served()
     end_command()
-    return ready
+    mut ready = settled?
+    ready.message.notes = notes
+    return Ok(ready)
 
 
 def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:

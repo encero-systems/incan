@@ -86,6 +86,8 @@ pub model Complete:
     pub binding_outcome: BindingOutcome
     pub status: CompletionStatus
     pub observation_handle: str
+    # The unit reasons the engine recorded for this request, one per line, for the caller's own trace channel.
+    pub notes: str = ""
 
 
 pub model Cancel:
