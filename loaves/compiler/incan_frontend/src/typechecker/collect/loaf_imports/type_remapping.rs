@@ -71,11 +71,13 @@ impl TypeChecker {
         remapping
     }
 
-    /// Evaluate one compiled library's nominal public types once for the fresh checkers of one module graph.
+    /// One compiled library's nominal public types, read once from its install record for the fresh checkers of one
+    /// module graph.
     ///
-    /// Whether a public export names a nominal type, and the provider identity it is admitted under, are facts of the
-    /// library's manifest and the shared Loaf index, never of the asking checker's declarations or imports. Every
-    /// consumer replays the same entries, in identity-graph order, into its own identity table.
+    /// Whether a public export names a nominal type, and the declaration it names, are facts of the Loaf's install
+    /// record; the provider identity each is admitted under is the shared Loaf index's, never the asking checker's
+    /// declarations or imports. Every consumer replays the same entries, in identity-graph order, into its own identity
+    /// table.
     pub(in crate::typechecker::collect) fn prepared_canonical_type_remapping(
         &self,
         library: &str,
@@ -89,6 +91,40 @@ impl TypeChecker {
         {
             return Arc::clone(entries);
         }
+        let record = self.prepared_install_record(library, manifest);
+        let entries: Arc<[_]> = record
+            .canonical_types
+            .iter()
+            .map(|row| crate::typechecker::dependency_interface::CanonicalTypeEntry {
+                public_name: row.public_name.clone(),
+                canonical_name: canonical_public_library_type_name(library, &row.public_name),
+                identity: self.admitted_type_identity_at(
+                    library,
+                    &row.source_path,
+                    row.canonical
+                        .as_ref()
+                        .and_then(crate::library_manifest::CanonicalIdentityExport::hydrate),
+                ),
+            })
+            .collect::<Vec<_>>()
+            .into();
+        Arc::clone(
+            prepared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(library.to_owned())
+                .or_insert(entries),
+        )
+    }
+
+    /// The nominal public types of the compiled library `library` as its manifest publishes them: each unique
+    /// top-level public name that names a nominal type, in identity-graph order, with the identity it is admitted
+    /// under. Its install record lists these.
+    pub(in crate::typechecker::collect) fn manifest_nominal_public_types(
+        &self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> Vec<crate::typechecker::dependency_interface::CanonicalTypeEntry> {
         #[cfg(test)]
         self.dependency_interface_preparation_cache
             .count_canonical_evaluation(library);
@@ -114,14 +150,7 @@ impl TypeChecker {
                 identity,
             });
         }
-        let entries: Arc<[_]> = entries.into();
-        Arc::clone(
-            prepared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .entry(library.to_owned())
-                .or_insert(entries),
-        )
+        entries
     }
 
     /// Hydrate foreign signature types from the Loaves that declare them.

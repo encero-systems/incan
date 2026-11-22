@@ -146,7 +146,7 @@ fn a_loafs_install_record_holds_what_install_reads_and_reads_back() -> TestResul
         checker.set_loaves(Arc::clone(&loaves));
         let record = checker.loaf_install_record(library, manifest);
         let expected = checker
-            .prepared_canonical_type_remapping(library, manifest)
+            .manifest_nominal_public_types(library, manifest)
             .iter()
             .map(|entry| {
                 (
