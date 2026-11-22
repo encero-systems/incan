@@ -632,10 +632,10 @@ fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manife
     Ok(())
 }
 
-/// Reconstruct every root nominal and trait layout from its declaration signature, layout, and defaults.
-/// A captured corpus can be checked through the same comparison as the fixture Loaves.
+/// Reconstruct every root nominal and trait layout from the record addressed by its exported name.
+/// Run the same comparison on captured compiled Loaves, including renamed exports and member partials.
 #[test]
-fn root_export_layouts_match_their_declaration_facets() -> TestResult {
+fn root_export_layouts_match_their_named_records() -> TestResult {
     let root = tempfile::tempdir()?;
     let loaves = shapes(root.path())?;
     let mut differences = Vec::new();
@@ -677,7 +677,7 @@ fn root_export_layouts_match_their_declaration_facets() -> TestResult {
     Ok(())
 }
 
-/// Compare the exact symbol kinds the root manifest exports with the layouts of their restored declarations.
+/// Compare the typed layouts of the admitted root projections with the layouts built from their named records.
 fn compare_root_layouts(
     manifest: &crate::library_manifest::LibraryManifest,
     digest: &str,
@@ -685,7 +685,6 @@ fn compare_root_layouts(
 ) -> TestResult<usize> {
     use crate::library_manifest::LibraryManifest;
     use crate::library_manifest::compiler_records::RecordFamily;
-    use crate::library_manifest::declaration_records::{qualified_name, restored_nominal_declaration};
     use crate::symbols::{SymbolKind, TypeInfo};
     use crate::typechecker::TypeChecker;
 
@@ -696,65 +695,64 @@ fn compare_root_layouts(
         .iter()
         .map(|value| {
             (
+                RecordFamily::Model,
                 &value.name,
                 SymbolKind::Type(TypeInfo::Model(checker.model_info_from_manifest(value))),
             )
         })
         .chain(exports.classes.iter().map(|value| {
             (
+                RecordFamily::Class,
                 &value.name,
                 SymbolKind::Type(TypeInfo::Class(checker.class_info_from_manifest(value))),
             )
         }))
         .chain(exports.enums.iter().map(|value| {
             (
+                RecordFamily::Enum,
                 &value.name,
                 SymbolKind::Type(TypeInfo::Enum(checker.enum_info_from_manifest(value))),
             )
         }))
         .chain(exports.newtypes.iter().map(|value| {
             (
+                RecordFamily::Newtype,
                 &value.name,
                 SymbolKind::Type(TypeInfo::Newtype(checker.newtype_info_from_manifest(value))),
             )
         }))
-        .chain(
-            exports
-                .traits
-                .iter()
-                .map(|value| (&value.name, SymbolKind::Trait(checker.trait_info_from_manifest(value)))),
-        );
+        .chain(exports.traits.iter().map(|value| {
+            (
+                RecordFamily::Trait,
+                &value.name,
+                SymbolKind::Trait(checker.trait_info_from_manifest(value)),
+            )
+        }));
     let records = manifest.compiler_records(digest)?;
     let mut count = 0;
-    for (name, mut expected) in layouts {
-        let identity = manifest
-            .contract_metadata
-            .identity_graph
-            .entry_for_public_name(name)
-            .ok_or_else(|| format!("{} publishes no identity for {name}", manifest.name))?;
-        let (module, declaration) = TypeChecker::normalized_api_declaration_target(&identity.source_path)
-            .ok_or_else(|| format!("{}::{name} has no declaration path", manifest.name))?;
-        let key = qualified_name(&module, &declaration);
-        let read = |family| {
-            records
-                .records
-                .iter()
-                .find(|record| record.name == key && record.family == family)
-                .map(|record| LibraryManifest::decode_compiler_record_value(&record.value))
-                .transpose()
+    for (family, name, mut expected) in layouts {
+        let record = records
+            .records
+            .iter()
+            .find(|record| record.name == *name && record.family == family)
+            .ok_or_else(|| format!("{}::{name} has no {} record", manifest.name, family.as_str()))?;
+        let value = LibraryManifest::decode_compiler_record_value(&record.value)?;
+        let mut actual = match family {
+            RecordFamily::Model => SymbolKind::Type(TypeInfo::Model(
+                checker.model_info_from_manifest(&serde_json::from_value(value)?),
+            )),
+            RecordFamily::Class => SymbolKind::Type(TypeInfo::Class(
+                checker.class_info_from_manifest(&serde_json::from_value(value)?),
+            )),
+            RecordFamily::Enum => SymbolKind::Type(TypeInfo::Enum(
+                checker.enum_info_from_manifest(&serde_json::from_value(value)?),
+            )),
+            RecordFamily::Newtype => SymbolKind::Type(TypeInfo::Newtype(
+                checker.newtype_info_from_manifest(&serde_json::from_value(value)?),
+            )),
+            RecordFamily::Trait => SymbolKind::Trait(checker.trait_info_from_manifest(&serde_json::from_value(value)?)),
+            _ => return Err(format!("{} is not a root layout record", family.as_str()).into()),
         };
-        let signature = read(RecordFamily::DeclarationSignature)?
-            .ok_or_else(|| format!("{}::{name} has no signature record for {key}", manifest.name))?;
-        let layout = read(RecordFamily::Layout)?;
-        let defaults = read(RecordFamily::Default)?;
-        let declaration = serde_json::from_value(restored_nominal_declaration(
-            signature,
-            layout.as_ref(),
-            defaults.as_ref(),
-        ))?;
-        let mut actual = checker
-            .symbol_kind_from_api_declaration(None, &declaration)
-            .ok_or_else(|| format!("{}::{name} restores no layout", manifest.name))?;
         TypeChecker::mark_compiled_class_field_provider(&mut expected, &manifest.name);
         TypeChecker::mark_compiled_class_field_provider(&mut actual, &manifest.name);
         let mut fields = Vec::new();
@@ -766,8 +764,9 @@ fn compare_root_layouts(
         );
         if !fields.is_empty() {
             differences.push(format!(
-                "{}::{name} ({digest}) using declaration {key}: {}",
+                "{}::{name} ({digest}) using its {} record: {}",
                 manifest.name,
+                family.as_str(),
                 fields.join(", "),
             ));
         }
