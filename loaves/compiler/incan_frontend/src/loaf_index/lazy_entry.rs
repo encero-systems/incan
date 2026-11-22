@@ -436,7 +436,7 @@ impl IndexedLoaf {
 
     /// The `family` records named `name`, read from the installed set the first time they are asked for and kept for
     /// the rest of the compilation; `None` when the set holds no such record.
-    fn named_records(
+    pub(super) fn named_records(
         &self,
         family: &'static str,
         name: &str,

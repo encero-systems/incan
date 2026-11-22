@@ -2,9 +2,11 @@
 //! the build a lookup runs the first time it reads one.
 
 use super::*;
+use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::install_record::LoafInstallRecord;
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe, LayoutValue};
+use serde::Deserialize;
 
 /// The declaring-module scopes one install has read, by declaring module, so each is read once per install.
 pub(in crate::typechecker::collect) type DeclaringScopes = HashMap<Vec<String>, Arc<HashMap<String, String>>>;
@@ -24,34 +26,19 @@ impl TypeChecker {
     }
 
     /// Build one deferred layout's symbol kind exactly as its install would have: the declaration, each remapping in
-    /// order, then the compiled class field provider. The layout read is the first time this recipe needs the Loaf's
-    /// manifest. Missing or changed admitted inputs cannot yield a layout.
+    /// order, then the compiled class field provider. An installed root uses its named projection. Authored and
+    /// legacy layouts use the manifest. Unreadable admitted inputs cannot yield a layout.
     pub(in crate::typechecker) fn build_deferred_layout(&self, recipe: &LayoutRecipe) -> Option<SymbolKind> {
-        let manifest = self.loaves.manifest(&recipe.library)?;
-        let exports = &manifest.exports;
         let mut kind = match &recipe.declaration {
-            LayoutDeclaration::Model(index) => SymbolKind::Type(TypeInfo::Model(
-                self.model_info_from_manifest(exports.models.get(*index)?),
-            )),
-            LayoutDeclaration::Class(index) => SymbolKind::Type(TypeInfo::Class(
-                self.class_info_from_manifest(exports.classes.get(*index)?),
-            )),
-            LayoutDeclaration::Enum(index) => {
-                SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(exports.enums.get(*index)?)))
-            }
-            LayoutDeclaration::Newtype(index) => SymbolKind::Type(TypeInfo::Newtype(
-                self.newtype_info_from_manifest(exports.newtypes.get(*index)?),
-            )),
-            LayoutDeclaration::Trait(index) => {
-                SymbolKind::Trait(self.trait_info_from_manifest(exports.traits.get(*index)?))
-            }
-            LayoutDeclaration::Export(name) => SymbolKind::Type(self.manifest_nominal_type_info(manifest, name)?),
+            LayoutDeclaration::Root { family, name } => self.build_root_layout(&recipe.library, *family, name)?,
             LayoutDeclaration::Api { module, declaration } => {
+                let manifest = self.loaves.manifest(&recipe.library)?;
                 let api = manifest.contract_metadata.api.as_ref()?;
                 let declaration = api.modules.get(*module)?.declarations.get(*declaration)?;
                 self.symbol_kind_from_api_declaration(Some(api), declaration)?
             }
             LayoutDeclaration::ApiPath(path) => {
+                let manifest = self.loaves.manifest(&recipe.library)?;
                 let declaration = Self::api_declaration_for_target_path(manifest, path)?;
                 self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)?
             }
@@ -63,6 +50,73 @@ impl TypeChecker {
             Self::mark_compiled_class_field_provider(&mut kind, library);
         }
         Some(kind)
+    }
+
+    /// Read one root projection by the name it is admitted under. Its member identities are carried by the
+    /// projection, independently of that public spelling. Legacy Loaves use the same projection in their manifest.
+    fn build_root_layout(&self, library: &str, family: RecordFamily, name: &str) -> Option<SymbolKind> {
+        if let Some(values) = self.loaves.root_layout_records(library, family, name).ok()? {
+            let [value] = values.as_slice() else {
+                return None;
+            };
+            if value.get("name").and_then(serde_json::Value::as_str) != Some(name) {
+                return None;
+            }
+            return self.layout_from_root_record(family, value);
+        }
+        let exports = &self.loaves.manifest(library)?.exports;
+        match family {
+            RecordFamily::Model => {
+                let export = exports.models.iter().find(|export| export.name == name)?;
+                Some(SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export))))
+            }
+            RecordFamily::Class => {
+                let export = exports.classes.iter().find(|export| export.name == name)?;
+                Some(SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export))))
+            }
+            RecordFamily::Enum => {
+                let export = exports.enums.iter().find(|export| export.name == name)?;
+                Some(SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))))
+            }
+            RecordFamily::Newtype => {
+                let export = exports.newtypes.iter().find(|export| export.name == name)?;
+                Some(SymbolKind::Type(TypeInfo::Newtype(
+                    self.newtype_info_from_manifest(export),
+                )))
+            }
+            RecordFamily::Trait => {
+                let export = exports.traits.iter().find(|export| export.name == name)?;
+                Some(SymbolKind::Trait(self.trait_info_from_manifest(export)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Decode the published root projection into the same checker layout as a manifest export, preserving its
+    /// visibility and materializable defaults. Same-package member partials and executable defaults enter elsewhere.
+    pub(super) fn layout_from_root_record(
+        &self,
+        family: RecordFamily,
+        value: &serde_json::Value,
+    ) -> Option<SymbolKind> {
+        match family {
+            RecordFamily::Model => Some(SymbolKind::Type(TypeInfo::Model(
+                self.model_info_from_manifest(&Deserialize::deserialize(value).ok()?),
+            ))),
+            RecordFamily::Class => Some(SymbolKind::Type(TypeInfo::Class(
+                self.class_info_from_manifest(&Deserialize::deserialize(value).ok()?),
+            ))),
+            RecordFamily::Enum => Some(SymbolKind::Type(TypeInfo::Enum(
+                self.enum_info_from_manifest(&Deserialize::deserialize(value).ok()?),
+            ))),
+            RecordFamily::Newtype => Some(SymbolKind::Type(TypeInfo::Newtype(
+                self.newtype_info_from_manifest(&Deserialize::deserialize(value).ok()?),
+            ))),
+            RecordFamily::Trait => Some(SymbolKind::Trait(
+                self.trait_info_from_manifest(&Deserialize::deserialize(value).ok()?),
+            )),
+            _ => None,
+        }
     }
 
     /// The scope of the module that declares `canonical` in the identity graph `graph` of `library`, as

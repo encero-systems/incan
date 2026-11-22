@@ -603,8 +603,8 @@ impl TypeChecker {
             nested,
         } = *source;
         let (deferred, built) = if export.public_path.len() == 2 {
-            if is_nominal_export(kind) {
-                (Some(LayoutDeclaration::Export(export.public_name.clone())), None)
+            if let Some(root) = LayoutDeclaration::root_nominal(&export.public_name, kind) {
+                (Some(root), None)
             } else if kind != Some(InstallExportKind::Alias) {
                 return None;
             } else {

@@ -1,5 +1,5 @@
 //! A Loaf's records read by name from the installed set (RFC 179): a consumer that needs one declaration's signature,
-//! layout or defaults, or one public namespace, opens that record of that family alone.
+//! layout or defaults, an admitted root layout, or one public namespace, opens that record of that family alone.
 
 use std::path::Path;
 use std::sync::PoisonError;
@@ -51,7 +51,8 @@ pub(super) fn read_declaration_in(
     family: &str,
     declaration: &str,
 ) -> Result<Option<(Vec<Value>, String)>, LoafIndexError> {
-    if !NAMED_FAMILIES.contains(&family) {
+    // Root exports also remain members of the complete manifest projection.
+    if !NAMED_FAMILIES.contains(&family) && !matches!(family, "model" | "class" | "enum" | "newtype" | "trait") {
         return Err(unreadable(
             dir,
             name,

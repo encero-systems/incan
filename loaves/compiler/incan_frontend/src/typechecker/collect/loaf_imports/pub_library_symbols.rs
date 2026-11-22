@@ -3,9 +3,8 @@
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
 use crate::library_manifest::CanonicalIdentityExport;
-use crate::library_manifest::install_record::{
-    InstallDeclarationKind, InstallExportKind, LoafInstallRecord, is_nominal_export,
-};
+use crate::library_manifest::compiler_records::RecordFamily;
+use crate::library_manifest::install_record::{InstallDeclarationKind, InstallExportKind, LoafInstallRecord};
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
@@ -226,37 +225,40 @@ impl TypeChecker {
         };
         self.cached_pub_libraries.insert(library.to_owned());
         let canonical_remapping = Arc::new(self.replay_library_type_remapping(library, &record));
-        let root_layout = |declaration, field_provider: Option<&str>| LayoutRecipe {
+        let root_layout = |family, name: &str, field_provider: Option<&str>| LayoutRecipe {
             library: library.to_owned(),
-            declaration,
+            declaration: LayoutDeclaration::Root {
+                family,
+                name: name.to_owned(),
+            },
             remappings: Vec::new(),
             field_provider: field_provider.map(str::to_owned),
         };
         let roots = &record.root_exports;
-        for (index, model) in roots.models.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Model(index), None));
+        for model in &roots.models {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Model, model, None));
             self.transitive_pub_types.entry(model.clone()).or_default().push(layout);
         }
-        for (index, class) in roots.classes.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Class(index), Some(library)));
+        for class in &roots.classes {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Class, class, Some(library)));
             self.transitive_pub_types.entry(class.clone()).or_default().push(layout);
         }
-        for (index, enum_export) in roots.enums.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Enum(index), None));
+        for enum_export in &roots.enums {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Enum, enum_export, None));
             self.transitive_pub_types
                 .entry(enum_export.clone())
                 .or_default()
                 .push(layout);
         }
-        for (index, newtype) in roots.newtypes.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Newtype(index), None));
+        for newtype in &roots.newtypes {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Newtype, newtype, None));
             self.transitive_pub_types
                 .entry(newtype.clone())
                 .or_default()
                 .push(layout);
         }
-        for (index, trait_export) in roots.traits.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Trait(index), None));
+        for trait_export in &roots.traits {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Trait, trait_export, None));
             self.transitive_pub_traits
                 .entry(trait_export.clone())
                 .or_default()
@@ -297,12 +299,12 @@ impl TypeChecker {
         for identity in &identity_graph.exports {
             let public_name = identity.public_name.as_str();
             let kind = kinds.get(public_name).copied().flatten();
-            let (declaration, layout) = if is_nominal_export(kind) {
+            let (declaration, layout) = if let Some(root) = LayoutDeclaration::root_nominal(public_name, kind) {
                 let declaration = identity_graph.canonical_for_public_name(public_name);
                 let scope = self.declaring_module_scope(library, record, declaration.as_ref(), &mut scopes);
                 let layout = self.deferred_layout(LayoutRecipe {
                     library: library.to_owned(),
-                    declaration: LayoutDeclaration::Export(public_name.to_owned()),
+                    declaration: root,
                     remappings: scope.into_iter().chain([Arc::clone(canonical_remapping)]).collect(),
                     field_provider: Some(library.to_owned()),
                 });

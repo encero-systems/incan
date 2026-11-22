@@ -737,22 +737,13 @@ fn compare_root_layouts(
             .find(|record| record.name == *name && record.family == family)
             .ok_or_else(|| format!("{}::{name} has no {} record", manifest.name, family.as_str()))?;
         let value = LibraryManifest::decode_compiler_record_value(&record.value)?;
-        let mut actual = match family {
-            RecordFamily::Model => SymbolKind::Type(TypeInfo::Model(
-                checker.model_info_from_manifest(&serde_json::from_value(value)?),
-            )),
-            RecordFamily::Class => SymbolKind::Type(TypeInfo::Class(
-                checker.class_info_from_manifest(&serde_json::from_value(value)?),
-            )),
-            RecordFamily::Enum => SymbolKind::Type(TypeInfo::Enum(
-                checker.enum_info_from_manifest(&serde_json::from_value(value)?),
-            )),
-            RecordFamily::Newtype => SymbolKind::Type(TypeInfo::Newtype(
-                checker.newtype_info_from_manifest(&serde_json::from_value(value)?),
-            )),
-            RecordFamily::Trait => SymbolKind::Trait(checker.trait_info_from_manifest(&serde_json::from_value(value)?)),
-            _ => return Err(format!("{} is not a root layout record", family.as_str()).into()),
-        };
+        let mut actual = checker.layout_from_root_record(family, &value).ok_or_else(|| {
+            format!(
+                "{}::{name} does not restore a {} layout",
+                manifest.name,
+                family.as_str()
+            )
+        })?;
         TypeChecker::mark_compiled_class_field_provider(&mut expected, &manifest.name);
         TypeChecker::mark_compiled_class_field_provider(&mut actual, &manifest.name);
         let mut fields = Vec::new();

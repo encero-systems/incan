@@ -9,27 +9,36 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use super::{TraitInfo, TypeChecker, TypeInfo};
+use crate::library_manifest::compiler_records::RecordFamily;
+use crate::library_manifest::install_record::InstallExportKind;
 use crate::symbols::SymbolKind;
 
 /// The compiled declaration a deferred layout is built from.
 #[derive(Debug)]
 pub(in crate::typechecker) enum LayoutDeclaration {
-    /// The model at this position of the manifest's root exports.
-    Model(usize),
-    /// The class at this position of the manifest's root exports.
-    Class(usize),
-    /// The enum at this position of the manifest's root exports.
-    Enum(usize),
-    /// The newtype at this position of the manifest's root exports.
-    Newtype(usize),
-    /// The trait at this position of the manifest's root exports.
-    Trait(usize),
-    /// The model, class, enum or newtype the manifest's root exports under this public name.
-    Export(String),
+    /// An admitted nominal or trait root projection, addressed by its public spelling and record family.
+    Root { family: RecordFamily, name: String },
     /// The checked API declaration at this position of this checked API module.
     Api { module: usize, declaration: usize },
     /// The checked API declaration at this target path.
     ApiPath(Vec<String>),
+}
+
+impl LayoutDeclaration {
+    /// Select the root projection for a nominal export, including when its canonical declaration has another name.
+    pub(in crate::typechecker) fn root_nominal(name: &str, kind: Option<InstallExportKind>) -> Option<Self> {
+        let family = match kind? {
+            InstallExportKind::Model => RecordFamily::Model,
+            InstallExportKind::Class => RecordFamily::Class,
+            InstallExportKind::Enum => RecordFamily::Enum,
+            InstallExportKind::Newtype => RecordFamily::Newtype,
+            _ => return None,
+        };
+        Some(Self::Root {
+            family,
+            name: name.to_owned(),
+        })
+    }
 }
 
 /// How to build one compiled declaration's layout as its install would: the declaration, then each remapping in
