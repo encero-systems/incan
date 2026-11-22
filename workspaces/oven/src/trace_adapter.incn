@@ -236,10 +236,12 @@ model CollectedReasons:
         self.active = true
         self.lines = []
 
-    def keep(mut self, message: str) -> None:
-        """Keep one `unit ...` reason while collecting, up to the bound."""
+    def keep(mut self, message: str) -> bool:
+        """Keep one `unit ...` reason while collecting, up to the bound; whether this collection took it."""
         if self.active and message.startswith("unit ") and len(self.lines) < COLLECTED_REASONS:
             self.lines.append(message)
+            return true
+        return false
 
     def taken(mut self) -> list[str]:
         """End the collection and hand over its reasons in order."""
@@ -282,9 +284,10 @@ pub def work(category: Operation, key: str, clock: Option[Clock], bytes: int) ->
 pub def reason(message: str) -> None:
     """
     Record a local reasoning event and export the requested legacy text representation. While an engine request
-    collects reasons, each `unit ...` reason is kept for its caller too.
+    collects reasons, each `unit ...` reason goes to its caller instead, which records it once in its own channel.
     """
-    COLLECTED.keep(message)
+    if COLLECTED.keep(message):
+        return
     CHANNELS.reason(message)
 
 
