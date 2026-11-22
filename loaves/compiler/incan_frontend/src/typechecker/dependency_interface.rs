@@ -27,6 +27,8 @@ pub struct DependencyInterfacePreparationCache {
     pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
     /// Each compiled library's nominal public types with their canonical spellings and admitted identities.
     pub(super) canonical_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<[CanonicalTypeEntry]>>>>,
+    /// Each compiled Loaf's nominal type origins, by Loaf key, for the foreign preparations that reach it.
+    pub(super) type_origins: Arc<std::sync::Mutex<HashMap<String, Arc<LoafTypeOrigins>>>>,
     /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.
     #[cfg(test)]
     pub(super) canonical_evaluations: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
@@ -103,6 +105,9 @@ impl DependencyInterfacePreparationCache {
             .clone()
     }
 }
+
+/// The nominal type origins one compiled Loaf's manifest references, keyed by binding key.
+pub(super) type LoafTypeOrigins = std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>;
 
 /// One nominal public type of a compiled Loaf: its public spelling, the canonical spelling every consumer of the Loaf
 /// binds it to, and the provider identity it is admitted under.
