@@ -4,7 +4,7 @@ from rust::std::env::consts import OS
 from rust::std::fs import metadata
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::thread import sleep
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
 from std.fs import Path
 from pub::incan_platform.ipc import dial
 from core_process import executable as current_executable, spawn_detached, running, terminate
@@ -62,7 +62,7 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
     selected = endpoint(root, identity)?
     held = Path(selected.startup_lock).lock_exclusive().map_err((error) => transport(error.message()))?
     match dial(selected.socket):
-        Ok(transport) => return handshake(Channel(transport=transport), identity)
+        Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
         Err(_) => pass
     # The service holds this lock for its entire lifetime, including its final drain.
     if not service_available(selected.lock)?:
@@ -71,7 +71,7 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
         if let Some(recorded) = recorded_endpoint(root):
             if recorded != selected.socket:
                 match dial(recorded):
-                    Ok(transport) => return handshake(Channel(transport=transport), identity)
+                    Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
                     Err(_) => pass
         return Err(
             Refusal(kind=RefusalKind.Identity, detail="another engine generation owns this store; drain it first"),
@@ -88,7 +88,7 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
     mut child = spawn_detached(executable, arguments, idle_memory_environment()).map_err(transport)?
     for _poll in range(STARTUP_POLLS):
         match dial(selected.socket):
-            Ok(transport) => return handshake(Channel(transport=transport), identity)
+            Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
             Err(_) => pass
         if not running(child).map_err(transport)?:
             return Err(transport("engine exited before Welcome"))
@@ -104,8 +104,14 @@ def idle_memory_environment() -> dict[str, str]:
     return {}
 
 
-pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refusal]:
-    """Require OS user, exact negotiated identities and limits; startup errors never select legacy compilation."""
+pub def handshake(initial: Channel, identity: Identity, lifetime: str = "") -> Result[Channel, Refusal]:
+    """
+    Require OS user, exact negotiated identities and limits; startup errors never select legacy compilation.
+
+    `lifetime` names the engine's lifetime lock. An engine answers Hello between requests, so a caller that connects
+    while another caller's build runs is greeted when that build ends: it waits for its Welcome as long as the engine
+    holds that lock. A peer that holds none, or a caller that names no lock, is refused once the handshake bound passes.
+    """
     mut channel = initial
     if channel.transport.peer().map_err(transport)?.uid != identity.uid:
         return Err(Refusal(kind=RefusalKind.Identity, detail="engine service peer user mismatch"))
@@ -115,6 +121,7 @@ pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refus
     match sent:
         SendOutcome.Blocked => return Err(transport("initial Hello has no data credit"))
         SendOutcome.Sent(_) => pass
+    await_welcome(channel, lifetime)?
     reply = channel.receive()?
     match reply.message:
         Message.Welcome(welcome) =>
@@ -135,6 +142,22 @@ pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refus
         Message.Ack(_) => pass
         _ => return Err(transport("engine did not acknowledge Hello"))
     return Ok(channel)
+
+
+def await_welcome(channel: Borrowed[Channel], lifetime: str) -> Result[None, Refusal]:
+    """
+    Wait until the engine's answer to Hello is readable: within the handshake bound, or for as long as the engine
+    holding `lifetime` lives. Its whole Welcome is then read within the bound.
+    """
+    started = Instant.now()
+    while not channel.transport.readable().map_err(transport)?:
+        if int(started.elapsed().as_secs()) < int(HANDSHAKE_SECONDS):
+            sleep(Duration.from_millis(2))
+            continue
+        if lifetime == "" or service_available(lifetime)?:
+            return Err(transport("the engine did not answer Hello and holds no lifetime lock"))
+        sleep(Duration.from_millis(20))
+    return Ok(None)
 
 
 pub def transport(detail: str) -> Refusal:

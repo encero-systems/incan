@@ -148,7 +148,7 @@ def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: Ser
     return waiting
 
 
-def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
+pub def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
     """Authenticate OS credentials and Hello before assigning a fresh nonzero session id."""
     mut channel = initial
     channel.transport.wait_at_most(HANDSHAKE_SECONDS)
