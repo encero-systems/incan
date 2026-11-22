@@ -32,8 +32,46 @@ impl TypeChecker {
                     }
                 }
             }
+            SymbolKind::Type(TypeInfo::Class(info)) => {
+                if let Some(identity) = canonical {
+                    bind_member_partials(section, identity, &mut info.methods, &mut info.method_overloads);
+                }
+            }
+            SymbolKind::Type(TypeInfo::Model(info)) => {
+                if let Some(identity) = canonical {
+                    bind_member_partials(section, identity, &mut info.methods, &mut info.method_overloads);
+                }
+            }
             _ => {}
         }
+    }
+}
+
+/// Bind each member partial the section lists for the owner `identity` as its target method with the presets
+/// defaulted, as the owner's own package binds it (`collect_method_partials`).
+fn bind_member_partials(
+    section: &PackageInternalExports,
+    identity: &CanonicalSymbolId,
+    methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
+) {
+    for partial in section
+        .member_partials
+        .iter()
+        .filter(|partial| partial.owner.represents(identity))
+    {
+        let Some(mut projected) = methods.get(&partial.target).cloned() else {
+            continue;
+        };
+        for preset in &partial.presets {
+            if let Some(param) = projected.params.get_mut(*preset as usize) {
+                param.has_default = true;
+            }
+        }
+        projected.has_body = true;
+        projected.alias_of = Some(partial.target.clone());
+        methods.insert(partial.name.clone(), projected.clone());
+        overloads.insert(partial.name.clone(), vec![projected]);
     }
 }
 
