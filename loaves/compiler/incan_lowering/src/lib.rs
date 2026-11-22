@@ -289,5 +289,10 @@ pub fn numeric_carrier(ty: &PlanType) -> bool {
     numerics::numeric_carrier(ty)
 }
 
+/// Whether a runtime call keys a process-wide cell by unit and slot, so the native adapter supplies its unit operand.
+pub fn is_unit_keyed_runtime_call(path: &str) -> bool {
+    computed_statics::is_unit_keyed_runtime_call(path)
+}
+
 #[cfg(test)]
 mod tests;
