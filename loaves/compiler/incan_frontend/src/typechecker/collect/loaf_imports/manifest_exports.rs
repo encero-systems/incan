@@ -225,6 +225,7 @@ impl TypeChecker {
             .transitive_pub_types
             .get(&qualified)
             .and_then(|infos| infos.first())
+            .and_then(|layout| layout.get(self))
         {
             return Some(SymbolKind::Type(info.clone()));
         }

@@ -1,6 +1,9 @@
 //! Public library type remapping, type origins, artifact layouts, and nominal identities.
 
+use super::deferred_layouts::DeclaringScopes;
 use super::*;
+use crate::typechecker::TransitiveLayout;
+use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
 impl TypeChecker {
     /// Build the provider-aware type remapping shared by every import statement for one compiled library.
@@ -421,54 +424,93 @@ impl TypeChecker {
         local_remapping: &HashMap<String, String>,
     ) -> HashSet<String> {
         let artifact = &entry.artifact;
+        let manifest = &artifact.manifest;
         let owner_route = entry.key.as_str();
+        let local_remapping = Arc::new(local_remapping.clone());
+        let mut scopes = DeclaringScopes::new();
         let mut preserving_type_keys = HashSet::new();
-        for export in &artifact.manifest.contract_metadata.identity_graph.exports {
-            // A top-level export is described by the manifest's own nominal info; a nested one has to be read back
-            // from its declaration, because only the declaration records the members.
-            let info = if export.public_path.len() == 2 {
-                self.manifest_nominal_type_info(&artifact.manifest, &export.public_name)
-            } else {
-                Self::api_declaration_for_target_path(&artifact.manifest, &export.source_path)
-                    .and_then(|declaration| {
-                        self.symbol_kind_from_api_declaration(
-                            artifact.manifest.contract_metadata.api.as_ref(),
-                            declaration,
-                        )
-                    })
-                    .and_then(|kind| match kind {
-                        SymbolKind::Type(info) => Some(info),
-                        _ => None,
-                    })
-            };
-            let Some(info) = info else {
-                continue;
-            };
-            let qualified = canonical_public_library_type_name(owner_route, &export_public_name(export));
-            let mut kind = SymbolKind::Type(info);
+        for export in &manifest.contract_metadata.identity_graph.exports {
             // A member type is spelled as the declaring module spells it; the names that module reaches through a
             // private import or a submodule the root does not republish resolve through its scope first.
             let declaration = export.canonical.as_ref().and_then(|identity| identity.hydrate());
-            self.remap_symbol_kind_through_declaring_module(
-                owner_route,
-                &artifact.manifest,
-                declaration.as_ref(),
-                &mut kind,
-            );
-            self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping);
-            Self::mark_compiled_class_field_provider(&mut kind, owner_route);
-            if let SymbolKind::Type(info) = kind {
-                if let Some(carrier) = declaration
-                    .as_ref()
-                    .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
-                {
-                    preserving_type_keys.insert(carrier);
-                }
-                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
-                self.transitive_pub_types.entry(qualified).or_default().push(info);
+            let Some(layout) =
+                self.artifact_export_layout(entry, export, declaration.as_ref(), &local_remapping, &mut scopes)
+            else {
+                continue;
+            };
+            if let Some(carrier) = declaration
+                .as_ref()
+                .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+            {
+                preserving_type_keys.insert(carrier);
             }
+            let qualified = canonical_public_library_type_name(owner_route, &export_public_name(export));
+            self.cache_retained_nominal_layout(declaration.as_ref(), &layout);
+            self.transitive_pub_types.entry(qualified).or_default().push(layout);
         }
         preserving_type_keys
+    }
+
+    /// One exported type's layout in `entry`, its members read in its declaring module's scope and then through
+    /// `local_remapping`. `None` for an export that names no type.
+    ///
+    /// A top-level export is described by the manifest's own nominal info; a nested one has to be read back from its
+    /// declaration, because only the declaration records the members. A model, class, enum or newtype is deferred to
+    /// the first lookup that reads it; an alias reads the tables, so it is built now, as is a type alias.
+    fn artifact_export_layout(
+        &mut self,
+        entry: &LoafEntry,
+        export: &crate::library_manifest::ExportIdentity,
+        declaration: Option<&CanonicalSymbolId>,
+        local_remapping: &Arc<HashMap<String, String>>,
+        scopes: &mut DeclaringScopes,
+    ) -> Option<TransitiveLayout<TypeInfo>> {
+        let manifest = &entry.artifact.manifest;
+        let owner_route = entry.key.as_str();
+        let (deferred, built) = if export.public_path.len() == 2 {
+            if Self::export_layout_is_deferrable(manifest, &export.public_name) {
+                (Some(LayoutDeclaration::Export(export.public_name.clone())), None)
+            } else {
+                (
+                    None,
+                    Some(self.manifest_nominal_type_info(manifest, &export.public_name)?),
+                )
+            }
+        } else {
+            let api_declaration = Self::api_declaration_for_target_path(manifest, &export.source_path)?;
+            match api_declaration {
+                ApiDeclaration::Model(_)
+                | ApiDeclaration::Class(_)
+                | ApiDeclaration::Enum(_)
+                | ApiDeclaration::Newtype(_) => (Some(LayoutDeclaration::ApiPath(export.source_path.clone())), None),
+                _ => {
+                    let api = manifest.contract_metadata.api.as_ref();
+                    let SymbolKind::Type(info) = self.symbol_kind_from_api_declaration(api, api_declaration)? else {
+                        return None;
+                    };
+                    (None, Some(info))
+                }
+            }
+        };
+        let scope = self.declaring_module_scope(owner_route, manifest, declaration, scopes);
+        if let Some(position) = deferred {
+            return Some(self.deferred_layout(LayoutRecipe {
+                manifest: Arc::clone(manifest),
+                declaration: position,
+                remappings: scope.into_iter().chain([Arc::clone(local_remapping)]).collect(),
+                field_provider: Some(owner_route.to_owned()),
+            }));
+        }
+        let mut kind = SymbolKind::Type(built?);
+        if let Some(scope) = scope {
+            self.remap_symbol_kind_with_import_aliases(&mut kind, scope.as_ref());
+        }
+        self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping.as_ref());
+        Self::mark_compiled_class_field_provider(&mut kind, owner_route);
+        let SymbolKind::Type(info) = kind else {
+            return None;
+        };
+        Some(TransitiveLayout::ready(info))
     }
 
     /// Report a malformed compiled-library input without repeating the diagnostic's shape at each call.
