@@ -65,7 +65,9 @@ from compiler_body_projection import (
     dependency_projection_refusal,
     dependency_read_key,
     dependency_signature_key,
+    dependency_span_key,
     lowering_symbol,
+    module_spans,
     projection_refusal_mode,
     projection_refusals,
     root,
@@ -89,6 +91,7 @@ from compiler_source_projection import (
 )
 from compiler_projection_cache import (
     cached_editable_dependency_signature_record,
+    cached_editable_dependency_span_record,
     cached_project_signature_record,
     project_dependency_module,
     projection_cache,
@@ -299,7 +302,10 @@ pub def prepare_compiled_bodies(
     if let Some(prior) = selected:
         retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
     executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
-    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable)?
+    spans = module_spans(staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff)?
+    for slot in spans.retained.keys():
+        staged.source.add(slot, spans.retained[slot])
+    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules)?
     published = stage_compiled_body_values(
         staged.transaction,
         staged.source,
@@ -404,6 +410,9 @@ def stage_compiled_body_values(
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
+            match dependency_span_key(projections, dependency, editable_packages)?:
+                Some(key) => local_reads.append(prepared_product_request(key))
+                None => pass
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) =>
                     local_reads.append(prepared_product_request(key))
@@ -464,12 +473,14 @@ def stage_compiled_namespaces(
     origin: str,
     order: Borrowed[Dict[str, NamespaceOrder]],
     executable: Borrowed[ExecutableCallInputs],
+    spans: Borrowed[Dict[str, list[RecordKey]]],
 ) -> Result[None, str]:
     """
     Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
 
     A namespace row carries its module's whole Body IR, so it reads every owner's source: a body edit that leaves the
     census and the declaration index unchanged must still retire the row, or the module is restored with the old body.
+    For the same reason it reads the span of every editable dependency declaration its owners read.
     """
     for namespace in namespaces:
         projection = projections[namespace.module]
@@ -493,6 +504,8 @@ def stage_compiled_namespaces(
         prepare_namespace_products(prepared, source, scope, namespace, origin, reads, rank, position.evidence)?
         # Restoring the complete record also restores positioned spans and editor documentation.
         reads.append(prepared_product_request(projection.positioned.key))
+        if spans.contains_key(namespace.module):
+            reads.extend([prepared_product_request(span) for span in spans[namespace.module]])
         if namespace.module in executable.modules:
             reads.extend([prepared_product_request(target) for target in executable.modules[namespace.module]])
         receipt = source.receipt(scope, key, reads, position.evidence)?
@@ -730,6 +743,15 @@ def stage_compiled_dependency_sources(
                             ),
                         )?
                         stage_source_record(prepared, source, owner)?
+                        # Its readers also read its span: checked bodies name it by its span.
+                        span = cached_editable_dependency_span_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        )?
+                        stage_source_record(prepared, source, span)?
                 None => stage_project_dependency_source(prepared, source, slots, projections, value, dependency, origin, unit)?
     return Ok(None)
 
@@ -832,6 +854,9 @@ def lowering_witnesses(
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => signatures.append(key)
                 None => pass
+            match dependency_span_key(projections, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) =>
                     signatures.append(key)
@@ -894,6 +919,8 @@ def lowering_witnesses(
                         "declaration-index",
                         "owner-census",
                         "scope-name",
+                        # Only an editable dependency's declaration is a checked owner's span read.
+                        "owner-span",
                     ]:
                         encoded = encode_record_key(input)?
                         value = match get(prior, encoded).map_err((error) => error.message())?:
