@@ -8,7 +8,11 @@
 //! library and opened only by a unit that names that library as its project library, so another package's view of any
 //! Loaf is unchanged, and a manifest without it is byte for byte what it was before the family existed.
 
+use incan_semantics_core::CanonicalSymbolId;
 use serde::{Deserialize, Serialize};
+
+use super::{CanonicalIdentityExport, param_default_from_checked};
+use crate::library_exports::{CheckedExportKind, CheckedNamedExport};
 
 /// Stable schema version of the package-internal section.
 pub const PACKAGE_INTERNAL_SCHEMA_VERSION: u32 = 1;
@@ -17,6 +21,18 @@ pub const PACKAGE_INTERNAL_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageInternalExports {
     pub schema_version: u32,
+    /// The parameters a unit of the same package may omit although the public family leaves them required.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_defaults: Vec<SourceDefaultExport>,
+}
+
+/// One parameter whose default is no value the public family can carry, such as an expression reading its module's
+/// static. A unit of the same package may omit it: the call's omitted slot runs the callee's own default frame, as a
+/// linked Loaf call's defaults always run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceDefaultExport {
+    pub callable: CanonicalIdentityExport,
+    pub parameter: u32,
 }
 
 impl PackageInternalExports {
@@ -24,7 +40,51 @@ impl PackageInternalExports {
     pub fn new() -> Self {
         Self {
             schema_version: PACKAGE_INTERNAL_SCHEMA_VERSION,
+            source_defaults: Vec::new(),
         }
+    }
+
+    /// Add each parameter of `exports`' functions that has a default in source while the public family, which keeps
+    /// only defaults it can carry as values, publishes it as required (`params_from_checked`).
+    pub fn with_source_defaults(mut self, package: &str, exports: &[CheckedNamedExport]) -> Self {
+        for export in exports {
+            let CheckedExportKind::Function(function) = &export.kind else {
+                continue;
+            };
+            let Some(callable) = export
+                .identity
+                .canonical
+                .as_ref()
+                .and_then(|identity| CanonicalIdentityExport::from_canonical(package, identity))
+            else {
+                continue;
+            };
+            if function.param_defaults.is_empty() {
+                continue;
+            }
+            for (index, param) in function.params.iter().enumerate() {
+                let carried = function
+                    .param_defaults
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .and_then(param_default_from_checked);
+                if param.has_default && carried.is_none() {
+                    self.source_defaults.push(SourceDefaultExport {
+                        callable: callable.clone(),
+                        parameter: index as u32,
+                    });
+                }
+            }
+        }
+        self
+    }
+
+    /// The parameters of the callable `identity` a unit of the same package may omit.
+    pub fn omittable_parameters<'a>(&'a self, identity: &'a CanonicalSymbolId) -> impl Iterator<Item = usize> + 'a {
+        self.source_defaults
+            .iter()
+            .filter(|default| default.callable.represents(identity))
+            .map(|default| default.parameter as usize)
     }
 
     /// Whether a consuming unit may open the package-internal section of the library named `library`: only a unit
