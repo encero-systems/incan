@@ -29,7 +29,7 @@ pub use checked_replay::CheckedExportReplay;
 pub use model::*;
 pub use ownership::OwnershipExport;
 pub use type_projection::{
-    VisitTypeRefs, contains_native_union, with_checked_type_origins, with_checked_type_routes,
+    VisitTypeRefs, contains_native_union, visit_copied_type_refs, with_checked_type_origins, with_checked_type_routes,
     with_native_nominal_origins, with_self_owned_native_unions,
 };
 pub use type_refs::resolved_type_from_manifest_type_ref;
