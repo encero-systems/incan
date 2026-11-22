@@ -1,0 +1,6 @@
+static count: int = 0
+
+
+pub def bump() -> int:
+    count = count + 1
+    return count
