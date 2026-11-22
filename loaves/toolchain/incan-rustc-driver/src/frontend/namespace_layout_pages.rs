@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use incan_lowering::RecordedLayouts;
 use incan_semantics_core::body_ir::BodyIrModule;

@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, mpsc};
+use std::thread::{self, JoinHandle};
 
 use incan_frontend::typechecker::executable_frames::open_mapped_graph_executable_scope;
 use incan_semantics_core::body_ir::SharedIdentities;
@@ -18,17 +19,91 @@ static EXECUTABLE_SCOPES: LazyLock<Result<internal_models_native::PreparedWireRe
 pub(super) struct GraphScopeAccess {
     request: PathBuf,
     bakery: Option<PathBuf>,
-    snapshot: OnceLock<Result<ExecutableSnapshot, String>>,
-    decoded: Mutex<HashMap<String, HashMap<String, SharedIdentities>>>,
+    state: Mutex<ScopeState>,
+}
+
+#[derive(Default)]
+struct ScopeState {
+    reader: Option<Result<ScopeReader, String>>,
+    decoded: HashMap<String, HashMap<String, SharedIdentities>>,
+}
+
+struct ScopeAddress {
+    module: String,
+    digest: String,
+}
+
+/// Keep the thread-bound Incan lease with its owner. Compiler workers share only the resulting immutable bindings.
+struct ScopeReader {
+    requests: Option<mpsc::SyncSender<ScopeAddress>>,
+    replies: mpsc::Receiver<(ScopeAddress, Result<SharedIdentities, String>)>,
+    owner: Option<JoinHandle<()>>,
+}
+
+impl ScopeReader {
+    /// Start one lazy reader for the request's exact graph. Opening the snapshot here keeps its lease on this thread.
+    fn start(request: PathBuf, bakery: Option<PathBuf>) -> Result<Self, String> {
+        let (requests, queries) = mpsc::sync_channel::<ScopeAddress>(0);
+        // One caller holds the request lock at a time. An unbounded reply channel lets the lease close during unwind.
+        let (results, replies) = mpsc::channel();
+        let parent = tracing::Span::current();
+        let owner = thread::Builder::new()
+            .name("incan-executable-scopes".to_owned())
+            .spawn(move || {
+                let _parent = parent.enter();
+                let snapshot = open_snapshot(&request, bakery.as_deref());
+                for address in queries {
+                    let result = snapshot.as_ref().map_err(Clone::clone).and_then(|selected| {
+                        let view =
+                            internal_models::selected_executable_scope(selected, &address.module, &address.digest)?;
+                        let reader = EXECUTABLE_SCOPES.as_ref().map_err(Clone::clone)?;
+                        open_mapped_graph_executable_scope(reader, &view, &address.module, &address.digest)
+                    });
+                    if results.send((address, result)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| format!("cannot start executable scope reader: {error}"))?;
+        Ok(Self {
+            requests: Some(requests),
+            replies,
+            owner: Some(owner),
+        })
+    }
+
+    /// Return the address with its checked binding so the cache owns the inputs already transferred to the reader.
+    fn read(&self, module: &str, digest: &str) -> Result<(ScopeAddress, SharedIdentities), String> {
+        let address = ScopeAddress {
+            module: module.to_owned(),
+            digest: digest.to_owned(),
+        };
+        self.requests
+            .as_ref()
+            .ok_or("the executable scope reader is closed")?
+            .send(address)
+            .map_err(|_| "the executable scope reader stopped")?;
+        let (address, scope) = self.replies.recv().map_err(|_| "the executable scope reader stopped")?;
+        Ok((address, scope?))
+    }
+}
+
+impl Drop for ScopeReader {
+    /// Disconnect the request channel and release the lease on its owning thread before leaving the request.
+    fn drop(&mut self) {
+        drop(self.requests.take());
+        if let Some(owner) = self.owner.take() {
+            let _ = owner.join();
+        }
+    }
 }
 
 impl std::fmt::Debug for GraphScopeAccess {
-    /// Describe the authority without opening it or formatting the cached maps.
+    /// Describe the authority without opening the snapshot or formatting its cached bindings.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("GraphScopeAccess")
             .field("request", &self.request)
-            .field("snapshot_open", &self.snapshot.get().is_some())
             .finish_non_exhaustive()
     }
 }
@@ -67,50 +142,53 @@ impl GraphScopeAccess {
         }
     }
 
-    /// Open the exact generation named in the request, retaining its owned store lease.
-    fn snapshot(&self) -> Result<&ExecutableSnapshot, String> {
-        self.snapshot
-            .get_or_init(|| {
-                const MAX_DESCRIPTOR: u64 = 65_536;
-                let bakery = self
-                    .bakery
-                    .as_deref()
-                    .and_then(Path::to_str)
-                    .ok_or("executable scopes require a UTF-8 Bakery anchor")?;
-                let path = self.request.join("reopen-snapshot.crumb");
-                let input = std::fs::File::open(&path)
-                    .map_err(|error| format!("cannot open executable scope snapshot {}: {error}", path.display()))?;
-                if !input.metadata().map_err(|error| error.to_string())?.is_file() {
-                    return Err("executable scope snapshot is not a regular file".into());
-                }
-                let mut encoded = Vec::new();
-                input
-                    .take(MAX_DESCRIPTOR + 1)
-                    .read_to_end(&mut encoded)
-                    .map_err(|error| error.to_string())?;
-                if encoded.len() as u64 > MAX_DESCRIPTOR {
-                    return Err("executable scope snapshot exceeds its byte limit".into());
-                }
-                internal_models::reopen_executable_snapshot(&bakery.to_owned(), &encoded)
-            })
-            .as_ref()
-            .map_err(Clone::clone)
-    }
-
-    /// Share one restored scope per module and complete digest for the lifetime of this request.
+    /// Share one checked scope per module and complete digest for the lifetime of this request.
     pub(super) fn resolve(&self, source: &str, digest: &str) -> Result<SharedIdentities, String> {
-        let mut decoded = self.decoded.lock().map_err(|_| "executable scope cache is poisoned")?;
-        if let Some(value) = decoded.get(source).and_then(|scopes| scopes.get(digest)) {
+        let mut state = self.state.lock().map_err(|_| "executable scope cache is poisoned")?;
+        if let Some(value) = state.decoded.get(source).and_then(|scopes| scopes.get(digest)) {
             return Ok(Arc::clone(value));
         }
-        let view =
-            internal_models::selected_executable_scope(self.snapshot()?, &source.to_owned(), &digest.to_owned())?;
-        let reader = EXECUTABLE_SCOPES.as_ref().map_err(Clone::clone)?;
-        let scope = open_mapped_graph_executable_scope(reader, &view, source, digest)?;
-        decoded
-            .entry(source.to_owned())
+        let _restore = tracing::trace_span!(
+            target: "incan::invocation", "incan_rustc_driver::restore_executable_scope",
+            module = source, digest,
+        )
+        .entered();
+        let reader = state
+            .reader
+            .get_or_insert_with(|| ScopeReader::start(self.request.clone(), self.bakery.clone()));
+        let (address, scope) = reader.as_ref().map_err(Clone::clone)?.read(source, digest)?;
+        state
+            .decoded
+            .entry(address.module)
             .or_default()
-            .insert(digest.to_owned(), Arc::clone(&scope));
+            .insert(address.digest, Arc::clone(&scope));
         Ok(scope)
     }
+}
+
+/// Open the manifest and lease once on the scope reader thread, using the request's authenticated view.
+fn open_snapshot(request: &Path, bakery: Option<&Path>) -> Result<ExecutableSnapshot, String> {
+    let _open = tracing::trace_span!(
+        target: "incan::invocation", "incan_rustc_driver::open_executable_graph_snapshot",
+    )
+    .entered();
+    const MAX_DESCRIPTOR: u64 = 65_536;
+    let bakery = bakery
+        .and_then(Path::to_str)
+        .ok_or("executable scopes require a UTF-8 Bakery anchor")?;
+    let path = request.join("reopen-snapshot.crumb");
+    let input = std::fs::File::open(&path)
+        .map_err(|error| format!("cannot open executable scope snapshot {}: {error}", path.display()))?;
+    if !input.metadata().map_err(|error| error.to_string())?.is_file() {
+        return Err("executable scope snapshot is not a regular file".into());
+    }
+    let mut encoded = Vec::new();
+    input
+        .take(MAX_DESCRIPTOR + 1)
+        .read_to_end(&mut encoded)
+        .map_err(|error| error.to_string())?;
+    if encoded.len() as u64 > MAX_DESCRIPTOR {
+        return Err("executable scope snapshot exceeds its byte limit".into());
+    }
+    internal_models::reopen_executable_snapshot(&bakery.to_owned(), &encoded)
 }
