@@ -197,6 +197,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "namespace_references", JsonValue.bool(true))?
     if toolchain.retain_checked_modules:
         description = replaced(description, "retain_checked_modules", JsonValue.bool(true))?
+    if toolchain.captured_source_inputs:
+        description = replaced(description, "captured_source_inputs", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # The release signer the installation carries travels inside the archive (DD-0016).
     _ = ship(directory, stage)?

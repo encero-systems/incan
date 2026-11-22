@@ -113,6 +113,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         pending.unit_options,
         pending.records,
         pending.origin,
+        pending.capture.readings,
     )
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()

@@ -8,6 +8,7 @@ use incan_driver::modules::{
     SourceFileSurface, collect_modules_detailed_with_session, collect_source_graph_reads, source_file_surface,
 };
 use incan_driver::session::CompilationSession;
+use incan_driver::sources::captured_source_options;
 use incan_driver::unit::UnitDescription;
 use incan_frontend::ast::{Declaration, ImportKind};
 use incan_frontend::parsed_module::ParsedModule;
@@ -26,17 +27,19 @@ use sha2::{Digest, Sha256};
 /// `--rust-imports UNIT --source-surfaces FILE...` collects only the named files of that graph, as
 /// `{"surfaces": [...]}`: a recorded graph whose edited files kept their surfaces is still the unit's graph.
 pub fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let (path, mode, files) = match arguments {
-        [path] => (path, None, &[][..]),
-        [path, flag] if flag == "--source-graph" => (path, Some(flag), &[][..]),
-        [path, flag, files @ ..] if flag == "--source-surfaces" && !files.is_empty() => (path, Some(flag), files),
+    let failure = || "usage: incan-rustc-driver --rust-imports UNIT [--captured-sources DIRECTORY] [--source-graph | --source-surfaces FILE...]";
+    let (path, args) = arguments.split_first().ok_or_else(failure)?;
+    let (captured_sources, args) = captured_source_options(args)?;
+    let (mode, files) = match args {
+        [] => (None, &[][..]),
+        [flag] if flag == "--source-graph" => (Some(flag), &[][..]),
+        [flag, files @ ..] if flag == "--source-surfaces" && !files.is_empty() => (Some(flag), files),
         _ => {
-            return Err(
-                "usage: incan-rustc-driver --rust-imports UNIT [--source-graph | --source-surfaces FILE...]".into(),
-            );
+            return Err(failure().into());
         }
     };
-    let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
+    let mut unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
+    unit.captured_sources = captured_sources.map(Path::to_path_buf);
     let session = CompilationSession::for_formatting(&unit).map_err(|error| error.message)?;
     match mode.map(String::as_str) {
         Some("--source-graph") => {

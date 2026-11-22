@@ -21,7 +21,7 @@ from native_closure_input import native_bindings
 from native_references import closure_reference, native_anchors
 from toml_fields import optional_string, optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain
-from unit_transport import descriptor_path, publish_unit_document
+from unit_transport import captured_source_arguments, descriptor_path, publish_unit_document
 from unit import UnitDescription
 from unit_freshness import fingerprint, graph_imports, unit_key
 from pub::incan_platform.trace import Operation
@@ -157,7 +157,7 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
 
 def rust_import_records(toolchain: Toolchain, path: Path) -> Result[bytes, str]:
     """Ask the resident compiler for import records, retaining one short-lived process only as its cold fallback."""
-    arguments = ["--rust-imports", path.0]
+    arguments = ["--rust-imports", path.0] + captured_source_arguments(toolchain)
     match captured_resident(toolchain, arguments)?:
         Some(completed) =>
             if completed.code != 0:

@@ -23,6 +23,8 @@ Metadata only detects change. An epoch's identity is the digest of its roots, it
 its inputs, so touching a file without changing its bytes leaves the identity as it was.
 """
 
+from rust::std::mem import take
+from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
@@ -31,7 +33,9 @@ from engine_capture_identity import capture_identity
 from home import StandardPackage, home, standard_library_dir
 from manifest_intent import parse_document
 from loaf_local_graph import unique
-from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
+from observation import SETTLE_SECONDS, FileMetadata, SourceReading, children, file_metadata, source_reading
+from pub::incan_platform.trace import Operation
+from jec import begin as begin_work, record as record_work
 from toolchain import Toolchain, installation, toolchain_file
 from installation_page import admitted_identity
 from unit import manifest_candidates
@@ -306,6 +310,8 @@ pub model CaptureResult:
     # The inputs that kept changing while they were read.
     pub unstable: list[str]
     pub counters: CaptureCounters
+    # Changed Incan text belongs to this request only, outside the durable epoch.
+    pub readings: Option[Rc[Dict[str, SourceReading]]] = None
 
 
 pub def admitted_home() -> Result[AdmittedHome, str]:
@@ -342,9 +348,10 @@ pub def capture(
     previous: Option[BuildEpoch],
     admitted: AdmittedHome,
     settle: int = SETTLE_SECONDS,
+    probe_only: bool = false,
 ) -> Result[CaptureResult, str]:
-    """Capture `request` against the previous epoch, reading files whole."""
-    return capture_with(request, previous, admitted, settle, (path) => read_file(path))
+    """Capture `request`, or probe an existing epoch without reading candidate source bytes."""
+    return capture_with(request, previous, admitted, settle, (path) => read_file(path), probe_only)
 
 
 pub def capture_with(
@@ -353,6 +360,7 @@ pub def capture_with(
     admitted: AdmittedHome,
     settle: int,
     reader: (Path) -> Result[bytes, str],
+    probe_only: bool = false,
 ) -> Result[CaptureResult, str]:
     """
     Capture `request` against the previous epoch, reading files with `reader`.
@@ -366,7 +374,7 @@ pub def capture_with(
     """
     if request.selection.command not in ["run", "build", "bake"]:
         return Err(f"capture knows the roots of `run`, `build` and `bake`, not of `{request.selection.command}`")
-    mut state = Capture(admitted=admitted, settle=settle, reader=reader)
+    mut state = Capture(admitted=admitted, settle=settle, reader=reader, probe_only=probe_only)
     state.remember(previous)
     # 1. Frozen roots come first, so that nothing under them is ever checked.
     state.take_frozen_roots()?
@@ -389,6 +397,8 @@ model Capture:
     admitted: AdmittedHome
     settle: int
     reader: (Path) -> Result[bytes, str]
+    probe_only: bool
+    readings: Dict[str, SourceReading] = {}
     # The frozen roots: the home's own, and those the pin names (sorted and distinct). A path is frozen when it or one
     # of its ancestors is one of them.
     frozen: list[str] = []
@@ -651,6 +661,9 @@ model Capture:
                 )
                 return Ok(Admission.Reused)
         # 4. Changed or new metadata is a reason to read the bytes.
+        if self.probe_only:
+            self.unstable.append(path)
+            return Ok(Admission.Unstable)
         return self.admit(path, role, observed)
 
     def admit(mut self, path: str, role: InputRole, observed: FileMetadata) -> Result[Admission, str]:
@@ -663,7 +676,9 @@ model Capture:
         for attempt in range(READ_ATTEMPTS):
             if attempt > 0:
                 self.counters.retries += 1
+            reading = begin_work()
             content = read(Path(path))?
+            record_work(Operation.FileRead, path, reading, len(content))
             self.counters.in_reach.reads += 1
             self.counters.in_reach.stats += 1
             match file_metadata(Path(path))?:
@@ -673,7 +688,12 @@ model Capture:
                 Some(after) =>
                     if stable_across_read(before, after):
                         self.counters.in_reach.hashes += 1
+                        hashing = begin_work()
                         digest = hexlify(sha256.digest(content))
+                        record_work(Operation.FileHash, path, hashing, len(content))
+                        if path.endswith(".incn"):
+                            if let Ok(source) = content.decode("utf-8", "strict"):
+                                self.readings[path] = source_reading(source, digest)
                         settled = after.settled_for_capture(self.settle)
                         self.found[path] = CapturedInput(
                             path=path,
@@ -699,7 +719,7 @@ model Capture:
             current = parent
         return false
 
-    def result(self, request: CaptureRequest, previous: Option[BuildEpoch]) -> Result[CaptureResult, str]:
+    def result(mut self, request: CaptureRequest, previous: Option[BuildEpoch]) -> Result[CaptureResult, str]:
         """
         The capture's outcome.
 
@@ -722,9 +742,14 @@ model Capture:
                     return Ok(self.outcome(CaptureOutcome.Refreshed, Some(epoch)))
                 return Ok(self.outcome(CaptureOutcome.Changed, Some(epoch)))
 
-    def outcome(self, outcome: CaptureOutcome, epoch: Option[BuildEpoch]) -> CaptureResult:
+    def outcome(mut self, outcome: CaptureOutcome, epoch: Option[BuildEpoch]) -> CaptureResult:
         """A result with this capture's unstable inputs and counters."""
-        return CaptureResult(outcome=outcome, epoch=epoch, unstable=sorted(self.unstable), counters=self.counters)
+        mut readings: Option[Rc[Dict[str, SourceReading]]] = None
+        if len(self.readings) > 0:
+            readings = Some(Rc.new(take(self.readings)))
+        return CaptureResult(
+            outcome=outcome, epoch=epoch, unstable=sorted(self.unstable), counters=self.counters, readings=readings,
+        )
 
     def epoch(self, request: CaptureRequest) -> BuildEpoch:
         """The epoch of what this capture found, each list sorted by path."""

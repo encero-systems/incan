@@ -27,7 +27,7 @@ from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
 from native_references import anchor_arguments
-from unit_transport import descriptor_path, publish_unit_document
+from unit_transport import captured_source_arguments, descriptor_path, publish_unit_document
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
 from compiler_body_values import SelectedBodyPage
@@ -82,7 +82,7 @@ pub def compile_prepared_unit(
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     # 2. Native flags match the profile and the caller's explicit linkage request; published closures are anchored.
     executable = unit.kind in ["program", "test"]
-    mut native = compiled_arguments(
+    mut native = captured_source_arguments(toolchain) + compiled_arguments(
         unit.profile,
         key.codegen,
         unit.project_root,

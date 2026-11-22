@@ -14,7 +14,7 @@ use incan_lang::lang::stdlib;
 use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};
 use crate::session::CompilationSession;
-use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
+use crate::sources::{collect_incan_source_files, read_captured_source, read_source_for_diagnostics};
 use incan_frontend::ast::{Declaration, ImportKind, ImportPath, Program};
 use incan_frontend::module::{
     MissingSourceModule, SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
@@ -348,7 +348,19 @@ fn collect_file(
 ) -> Result<CollectedFile, CliDiagnosticFailure> {
     let source = match open_sources.get(Path::new(&file_path)) {
         Some(source) => source.clone(),
-        None => read_source_for_diagnostics(&file_path)?,
+        None => {
+            let captured = session
+                .unit()
+                .captured_sources
+                .as_deref()
+                .map(|directory| read_captured_source(directory, file_path))
+                .transpose()?
+                .flatten();
+            match captured {
+                Some(source) => source,
+                None => read_source_for_diagnostics(file_path)?,
+            }
+        }
     };
     let file_path_obj = Path::new(&file_path);
     let (mut ast, gated_exports) =

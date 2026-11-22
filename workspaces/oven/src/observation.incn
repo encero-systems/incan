@@ -17,6 +17,7 @@ and the next reconciliation hashes it again.
 """
 
 from rust::std::fs import Metadata, metadata
+from rust::std::rc import Rc
 from rust::std::io import ErrorKind
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::time import SystemTime, UNIX_EPOCH
@@ -111,6 +112,23 @@ pub model Observation:
     pub newest: int
 
 
+pub model SourceReading:
+    """An editable source read once for this request, with both identities its consumers need."""
+
+    pub text: str
+    pub raw_digest: str
+    pub positioned_digest: str
+
+
+pub def source_reading(text: str, raw_digest: str) -> SourceReading:
+    """Keep the raw identity as the positioned identity when projection changes none of the source bytes."""
+    positioned = positioned_code(text)
+    mut digest = raw_digest
+    if positioned != text:
+        digest = hexlify(sha256.digest(positioned.encode("utf-8")))
+    return SourceReading(text=text, raw_digest=raw_digest, positioned_digest=digest)
+
+
 model FileEntry:
     """
     A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled. `code` is
@@ -137,6 +155,8 @@ pub model Ledger:
     pub settle: int
     # Which files a listing keeps: those whose names end with this, every file when it is empty.
     pub extension: str = ".incn"
+    # A records request already owns these readings and validates their observations before publication.
+    pub readings: Option[Rc[Dict[str, SourceReading]]] = None
     # Files hashed and directories listed since the ledger was loaded: the work reconciliation could not avoid.
     pub hashed: int = 0
     pub listed: int = 0
@@ -146,6 +166,10 @@ pub model Ledger:
 
     pub def digest(mut self, path: Path) -> Result[str, str]:
         """The digest of `path`'s bytes, read only when its metadata differs from the retained observation."""
+        if let Some(readings) = self.readings:
+            captured = readings.as_ref()
+            if path.0 in captured:
+                return Ok(captured[path.0].raw_digest)
         observed = observe(path)?
         if path.0 in self.files and self.files[path.0].stamp == observed.stamp:
             return Ok(self.files[path.0].digest)
@@ -162,14 +186,21 @@ pub model Ledger:
         metadata differs from the retained observation or no code digest was retained. A comment edit that moves no
         code leaves it unchanged.
         """
+        if let Some(readings) = self.readings:
+            captured = readings.as_ref()
+            if path.0 in captured:
+                return Ok(captured[path.0].positioned_digest)
         observed = observe(path)?
         if path.0 in self.files and self.files[path.0].stamp == observed.stamp and self.files[path.0].code != "":
             return Ok(self.files[path.0].code)
         trace(f"hashing {path.0}")
-        content = file_digest(path)?
+        raw = read_file_bytes(path)?
+        clock = begin()
+        content = hexlify(sha256.digest(raw))
+        record(Operation.FileHash, path.0, clock, len(raw))
         mut code = content
-        match path.read_text("utf-8", "strict"):
-            Ok(text) => code = hexlify(sha256.digest(positioned_code(text).encode("utf-8")))
+        match raw.decode("utf-8", "strict"):
+            Ok(text) => code = source_reading(text, content).positioned_digest
             Err(_) => pass
         self.hashed += 1
         self.changed = true
@@ -354,11 +385,19 @@ def read_digest(value: Value, optional: bool) -> Result[str, str]:
 
 pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
-    content = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
+    content = read_file_bytes(path)?
     clock = begin()
     result = hexlify(sha256.digest(content))
     record(Operation.FileHash, path.0, clock, len(content))
     return Ok(result)
+
+
+def read_file_bytes(path: Path) -> Result[bytes, str]:
+    """Read bytes without a separate text-mode reopen, and attribute the actual file read."""
+    clock = begin()
+    content = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
+    record(Operation.FileRead, path.0, clock, len(content))
+    return Ok(content)
 
 
 pub def observe(path: Path) -> Result[Observation, str]:

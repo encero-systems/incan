@@ -1,6 +1,7 @@
 """Prepare request captures for atomic publication; idle services retain no decoded inputs."""
 
 from rust::std::str import from_utf8
+from rust::std::rc import Rc
 from std.environ import get_optional
 from std.fs import Path
 from std.encoding.hex import hexlify
@@ -20,7 +21,7 @@ from engine_messages import Submit
 from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
 from store_path_conversion import snapshot
 from features import FeatureRequest
-from observation import children, observe, trace
+from observation import SourceReading, children, observe, trace
 from unit import describe, discovered_project
 from unit_freshness import collect_program_reach, fingerprint
 from unit_sources import SourceGraph, recorded_reach
@@ -46,6 +47,8 @@ pub model CapturedRequest:
     pub transaction: Option[Transaction] = None
     # The recorded source-graph reach this request was captured with, which its later capture checks again.
     pub reach: Option[SourceGraph] = None
+    # The authority doing this capture shares changed bytes only for this activation.
+    pub readings: Option[Rc[Dict[str, SourceReading]]] = None
 
 
 pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
@@ -62,6 +65,20 @@ pub def prepare_submit(
     discover_standalone: bool = false,
     canonical_source: Option[Path] = None,
 ) -> Result[CapturedRequest, str]:
+    """Prepare this request's authoritative inputs without publishing them."""
+    match prepare_capture(store, submit, discover_standalone, canonical_source, false)?:
+        Some(captured) => return Ok(captured)
+        None => return Err("authoritative capture returned no input epoch")
+
+
+pub def probe_submit(store: Path, submit: Submit) -> Result[Option[CapturedRequest], str]:
+    """Select an unchanged caller-local epoch, leaving changed source reads to the producing service."""
+    return prepare_capture(store, submit, false, None, true)
+
+
+def prepare_capture(
+    store: Path, submit: Submit, discover_standalone: bool, canonical_source: Option[Path], probe_only: bool,
+) -> Result[Option[CapturedRequest], str]:
     """
     Capture a file request and prepare its revision without publishing any part of the request.
 
@@ -106,14 +123,17 @@ pub def prepare_submit(
         reach=reach,
     )
     checking = begin_work()
-    captured = capture(request, previous, admitted, 0)?
+    captured = capture(request, previous, admitted, 0, probe_only)?
     record_work(Operation.EngineCaptureInputs, source.0, checking)
     match captured.epoch:
-        None => return Err(f"capture could not settle inputs: {captured.unstable}")
+        None =>
+            if probe_only:
+                return Ok(None)
+            return Err(f"capture could not settle inputs: {captured.unstable}")
         Some(epoch) =>
             if captured.outcome == CaptureOutcome.Unchanged and prior_identity != "":
                 return Ok(
-                    CapturedRequest(
+                    Some(CapturedRequest(
                         epoch=epoch,
                         revision=prior_revision,
                         identity=prior_identity,
@@ -125,8 +145,10 @@ pub def prepare_submit(
                         commits=0,
                         identity_encodings=0,
                         head=head,
-                    ),
+                    )),
                 )
+            if probe_only:
+                return Ok(None)
             # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
             publishing = begin_work()
             encoded = encode_epoch(epoch)?
@@ -138,7 +160,7 @@ pub def prepare_submit(
 
             record_work(Operation.EngineCaptureEncode, source.0, publishing)
             return Ok(
-                CapturedRequest(
+                Some(CapturedRequest(
                     epoch=epoch,
                     revision=revision,
                     identity=identity,
@@ -148,7 +170,8 @@ pub def prepare_submit(
                     counters=captured.counters,
                     selected=selected,
                     reach=request.reach,
-                ),
+                    readings=captured.readings,
+                )),
             )
 
 

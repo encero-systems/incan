@@ -61,7 +61,7 @@ def run_source(binary: str, project: Path, store: Path, trace: Path) -> Result[b
 
 
 model Counts:
-    """Traced reads and hashes of the edited file, and hashes of all paths."""
+    """Operations on the authored source, including compiler opens, and hashes of all paths."""
     reads: int = 0
     hashes: int = 0
     all_hashes: int = 0
@@ -77,7 +77,15 @@ def observation_counts(trace: Path, source: Path) -> Result[Counts, str]:
             if line == "":
                 continue
             event = parse(line).map_err((error) => error.message())?
-            if trace_text(event, "kind")? != "span":
+            kind = trace_text(event, "kind")?
+            if kind == "begin":
+                reader = trace_text(event, "function")?
+                if reader in ["incan_driver::read_authored_source", "incan_rustc_driver::load_source_file"]:
+                    fields = event.require("fields").map_err((error) => error.message())?
+                    if trace_text(fields, "input")? == source.0:
+                        found.reads += 1
+                continue
+            if kind != "span":
                 continue
             operation = trace_text(event, "operation")?
             if operation in ["file_read", "file_hash"]:

@@ -55,9 +55,10 @@ from unit_compiler import (
     plan_record_report_path,
 )
 from unit_rust import compile_library_unit, prepare_native
+from unit_transport import CompilerSourceCapture
 from callable_products import desugared_by_a_dependency
 from unit_freshness import Key, fingerprint, unit_key
-from observation import FileMetadata, file_metadata, trace
+from observation import FileMetadata, SourceReading, file_metadata, trace
 from shared_link import carriers_present, development_link, linkage_key, library_witness
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -284,6 +285,7 @@ pub def obtain(
     unit_options: str = "",
     record_writer: str = "",
     scheduled_origin: str = "",
+    source_readings: Option[Rc[Dict[str, SourceReading]]] = None,
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -328,7 +330,10 @@ pub def obtain(
     mut toolchain = home.toolchain
 
     toolchain.console = console
-    asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    mut asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    asked.source_readings = source_readings
+    source_directory = CompilerSourceCapture.stage(toolchain, source_readings)?
+    toolchain.captured_source_directory = source_directory.path
     verify_scheduled_origin(asked, scheduled_origin)?
     ready = prepared_for(program_view(handle)?, asked, toolchain)?
     whole = whole_unit_reason(ready, unit_options)?

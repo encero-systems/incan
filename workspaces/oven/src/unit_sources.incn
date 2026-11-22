@@ -27,7 +27,7 @@ from publication import publish_binary
 from source_graph_records import decode_scopes, encode_scopes
 from rust_target import decoded
 from toolchain import Toolchain
-from unit_transport import descriptor_path, publish_unit_document
+from unit_transport import captured_source_arguments, descriptor_path, publish_unit_document
 from unit import UnitDescription, manifest_candidates
 from pub::incan_platform.trace import Operation
 from jec import begin, record
@@ -253,7 +253,7 @@ def surfaces_kept(
         if path not in graph.surfaces:
             return Ok(false)
     description = published_description(unit, toolchain, location)?
-    arguments = ["--rust-imports", description.0, "--source-surfaces"] + changed
+    arguments = ["--rust-imports", description.0] + captured_source_arguments(toolchain) + ["--source-surfaces"] + changed
     match compiler_report(toolchain, arguments, f"--rust-imports {description.0} --source-surfaces"):
         None => return Ok(false)
         Some(output) =>
@@ -290,7 +290,7 @@ def compiler_report(toolchain: Toolchain, arguments: list[str], label: str) -> O
 def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Option[SourceGraph], str]:
     """Ask the resident compiler, or one compiler process, which files the unit's collection reads and probes."""
     description = published_description(unit, toolchain, location)?
-    arguments = ["--rust-imports", description.0, "--source-graph"]
+    arguments = ["--rust-imports", description.0] + captured_source_arguments(toolchain) + ["--source-graph"]
     mut output = b""
     match compiler_report(toolchain, arguments, f"--rust-imports {description.0} --source-graph"):
         Some(stdout) => output = stdout

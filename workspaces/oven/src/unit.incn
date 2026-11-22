@@ -13,6 +13,8 @@ from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
 from loaf_local_graph import LocalFacet, root_purpose
+from rust::std::rc import Rc
+from observation import SourceReading
 from rust_activation import ActivationPurpose
 from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
@@ -58,6 +60,8 @@ pub model UnitDescription:
     pub source: str
     pub project_root: str
     pub source_root: str
+    # Request-only readings are derived from capture and never enter the portable unit description.
+    pub source_readings: Option[Rc[Dict[str, SourceReading]]] = None
     pub package: str
     pub version: str
     pub profile: str
@@ -130,6 +134,14 @@ pub model UnitDescription:
     pub manifests: ManifestReader = ManifestReader()
     # Preparation retains the selected compiler generation; it is never serialized as a compiler input field.
     pub selected_toolchain: Option[Toolchain] = None
+
+    pub def source_text(self, path: Path) -> Result[str, str]:
+        """Read an already captured source from its request, or open a source that has no captured reading."""
+        if let Some(readings) = self.source_readings:
+            captured = readings.as_ref()
+            if path.0 in captured:
+                return Ok(captured[path.0].text)
+        return path.read_text("utf-8", "strict").map_err((error) => error.message())
 
     pub def to_json(self) -> JsonValue:
         """The description as the compiler reads it; only a unit that declares access names `toolchain_access`."""

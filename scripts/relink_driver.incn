@@ -410,6 +410,7 @@ pub def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tup
     fields["closure_anchors"] = JsonValue.bool(true)
     fields["search_index_crumb"] = JsonValue.bool(true)
     fields["checked_body_counts_crumb"] = JsonValue.bool(true)
+    fields["captured_source_inputs"] = JsonValue.bool(true)
     fields["worker_protocol_crumb"] = JsonValue.bool(true)
     fields["unit_descriptor_crumb"] = JsonValue.bool(true)
     fields["compiler_record_export_crumb"] = JsonValue.bool(true)

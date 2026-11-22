@@ -722,6 +722,11 @@ fn compile_unit(
     let identity = crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let (certificate, options) = crate::certified_options(&arguments[4..]);
+    let (captured_sources, options) = incan_driver::sources::captured_source_options(options)?;
+    let captured_sources = captured_sources.map(Path::to_path_buf);
+    // Checking owns the unit and may release it before rustc runs; both stages need the directory path, not a copy of
+    // its contents.
+    unit.captured_sources = captured_sources.clone();
     let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
     let dependencies = dependencies(&unit, options)?;
     if dependencies.library {
@@ -854,6 +859,7 @@ fn compile_unit(
             .transpose()?,
         publication,
         checked_sources: Vec::new(),
+        captured_sources,
     };
     // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
     if hands_off.is_some_and(|hands_off| hands_off()) {

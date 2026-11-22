@@ -89,7 +89,7 @@ pub def prepare_captured_source_inputs(
                         carried.add(identity[1])
                     continue
                 stage_put(prepared, encode_record_key(capture.key)?, capture.encoded()?)
-                source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
+                source = unit.source_text(Path(input.path))?
                 projection = project_source(identity[0], identity[1], source, declared, active)?
                 doc_key = projection.documentation_key()
                 doc_slot = encode_record_key(doc_key)?
