@@ -544,6 +544,34 @@ pub def builder_bakery(configured: str, builder_home: Path) -> str:
     return builder_home.joinpath("bakery").0
 
 
+pub def installed_builder_bakery(configured: str, builder_home: Path, installed_home: Path) -> Result[str, str]:
+    """
+    The bakery installed verification may reuse the build's units from. A unit names the native generations of the
+    home it linked, and a release's build home links its seed's support generations while its archive carries newly
+    identified ones; a unit reused across that difference names natives the installation lacks. So the builder's
+    bakery serves only while the installed toolchain carries every native generation the build home holds, and the
+    installation's own bakery otherwise.
+    """
+    built = native_generations(builder_home.joinpath(TOOLCHAIN_DIRECTORY))?
+    carried = native_generations(installed_home.joinpath(TOOLCHAIN_DIRECTORY))?
+    for generation in built:
+        if generation not in carried:
+            return Ok(installed_home.joinpath("bakery").0)
+    return Ok(builder_bakery(configured, builder_home))
+
+
+def native_generations(toolchain: Path) -> Result[list[str], str]:
+    """The names of the native generation directories a toolchain holds."""
+    native = toolchain.joinpath("native")
+    if not native.is_dir():
+        return Ok([])
+    mut names: list[str] = []
+    for entry in native.iterdir().map_err((error) => f"cannot list {native.0}: {error.message()}")?:
+        if entry.is_dir() and not entry.name().startswith("."):
+            names.append(entry.name())
+    return Ok(names)
+
+
 pub def release_rust_cache_root(seed_home: Path) -> Path:
     """Keep the relocated pinned Rust cache inside the caller-owned seed home boundary."""
     return seed_home.joinpath("cache/release-rust")
