@@ -2,6 +2,8 @@
 
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
+use crate::library_manifest::CanonicalIdentityExport;
+use crate::library_manifest::install_record::InstallDeclarationKind;
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
@@ -228,60 +230,47 @@ impl TypeChecker {
             remappings: Vec::new(),
             field_provider: field_provider.map(str::to_owned),
         };
-        let exports = &manifest.exports;
-        for (index, model) in exports.models.iter().enumerate() {
+        let record = self.prepared_install_record(library, manifest);
+        let roots = &record.root_exports;
+        for (index, model) in roots.models.iter().enumerate() {
             let layout = self.deferred_layout(root_layout(LayoutDeclaration::Model(index), None));
-            self.transitive_pub_types
-                .entry(model.name.clone())
-                .or_default()
-                .push(layout);
+            self.transitive_pub_types.entry(model.clone()).or_default().push(layout);
         }
-        for (index, class) in exports.classes.iter().enumerate() {
+        for (index, class) in roots.classes.iter().enumerate() {
             let layout = self.deferred_layout(root_layout(LayoutDeclaration::Class(index), Some(library)));
-            self.transitive_pub_types
-                .entry(class.name.clone())
-                .or_default()
-                .push(layout);
+            self.transitive_pub_types.entry(class.clone()).or_default().push(layout);
         }
-        for (index, enum_export) in exports.enums.iter().enumerate() {
+        for (index, enum_export) in roots.enums.iter().enumerate() {
             let layout = self.deferred_layout(root_layout(LayoutDeclaration::Enum(index), None));
             self.transitive_pub_types
-                .entry(enum_export.name.clone())
+                .entry(enum_export.clone())
                 .or_default()
                 .push(layout);
         }
-        for (index, newtype) in exports.newtypes.iter().enumerate() {
+        for (index, newtype) in roots.newtypes.iter().enumerate() {
             let layout = self.deferred_layout(root_layout(LayoutDeclaration::Newtype(index), None));
             self.transitive_pub_types
-                .entry(newtype.name.clone())
+                .entry(newtype.clone())
                 .or_default()
                 .push(layout);
         }
-        for (index, trait_export) in exports.traits.iter().enumerate() {
+        for (index, trait_export) in roots.traits.iter().enumerate() {
             let layout = self.deferred_layout(root_layout(LayoutDeclaration::Trait(index), None));
             self.transitive_pub_traits
-                .entry(trait_export.name.clone())
+                .entry(trait_export.clone())
                 .or_default()
                 .push(layout);
         }
 
         self.register_pub_library_declarations(library, manifest, &canonical_remapping);
-        if let Some(api) = manifest.contract_metadata.api.as_ref() {
-            for module in &api.modules {
-                let mut public_path = std::iter::once(manifest.name.clone())
-                    .chain(module.module_path.iter().cloned())
-                    .collect::<Vec<_>>();
-                for declaration in &module.declarations {
-                    self.record_provider_type_param_bounds(declaration, || {
-                        public_path.push(Self::api_declaration_name(declaration).to_owned());
-                        let canonical = manifest
-                            .contract_metadata
-                            .identity_graph
-                            .canonical_for_public_path(&public_path);
-                        let _ = public_path.pop();
-                        canonical
-                    });
-                }
+        for declared in record.modules.iter().flat_map(|module| &module.declarations) {
+            if matches!(
+                declared.kind,
+                InstallDeclarationKind::Model | InstallDeclarationKind::Class
+            ) {
+                self.record_declared_type_param_bounds(&declared.type_params, || {
+                    declared.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate)
+                });
             }
         }
         self.cache_canonical_type_layouts(library, manifest, &canonical_remapping);
