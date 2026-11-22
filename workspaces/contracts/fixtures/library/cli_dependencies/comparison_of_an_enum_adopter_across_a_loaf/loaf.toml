@@ -1,0 +1,9 @@
+[project]
+name = "comparison_of_an_enum_adopter_across_a_loaf"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+caselib = { path = "deps/caselib" }

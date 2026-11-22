@@ -1,0 +1,12 @@
+# behavior: the Ord dunders of an enum adopter imported from a path-dependency Loaf compare as its operators
+# pending: lowering refuses the comparison across a Loaf ("unsupported Body IR enum comparison without retained equality"): the imported enum's checked derives cross without the equality its `Ord` adoption gives it
+# expect-stdout:
+#   true
+#   false
+
+from pub::caselib.levels import Level
+
+
+def main() -> None:
+    println(Level.High.__gt__(Level.Low))
+    println(Level.Low.__ge__(Level.High))
