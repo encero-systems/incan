@@ -108,8 +108,8 @@ const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT 
 /// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
 /// settled dependency closure (`--dependencies`), or write the ABI cache of Rust crates (`--rust-abi`), format source
 /// with the unit's vocabulary (`--fmt`), discover authored files (`--source-files`), explain a stable diagnostic
-/// (`--explain`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--read-codegraph-origins`, `--rust-codegraph` and
-/// `--rust-compile-codegraph`).
+/// (`--explain`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--read-codegraph-origins`,
+/// `--rust-codegraph` and `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 /// A command that fails prints its error as [`report`] does and exits with that status.
