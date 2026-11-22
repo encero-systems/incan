@@ -9,12 +9,13 @@ use crate::CodegraphRecord;
 use crumb::{decode_payload_row, encode_payload_row};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use value::GraphValue;
 
 /// Layout version of `.incngraph`: little-endian u32 version, u64 index length, postcard index, then Crumb rows.
-pub const GRAPH_ARTIFACT_VERSION: u32 = 2;
+/// Version 3 added the index of the package origins the graph names.
+pub const GRAPH_ARTIFACT_VERSION: u32 = 3;
 
 /// A malformed or unsupported graph never supplies partial semantic facts to an inspection consumer.
 #[derive(Debug, thiserror::Error)]
@@ -26,7 +27,10 @@ pub enum GraphArtifactError {
     #[error("malformed graph artifact: {0}")]
     Malformed(String),
     /// The installed reader does not implement the artifact's layout version.
-    #[error("graph artifact version {0}; this compiler reads version {GRAPH_ARTIFACT_VERSION}")]
+    #[error(
+        "graph artifact version {0}; this compiler reads version {GRAPH_ARTIFACT_VERSION}, the layout with the origins \
+         index; rebuild the graph with this compiler"
+    )]
     Version(u32),
 }
 
@@ -44,6 +48,9 @@ struct Entry {
 struct Index {
     fields: Vec<String>,
     entries: Vec<Entry>,
+    /// Every package origin a reference, call or import record names on its own or its bindings' identities, once,
+    /// as its JSON text in text order: what dependency selection reads, so no reader decodes the records for it.
+    origins: Vec<String>,
 }
 
 /// Encode compiler-owned facts without persisting JSON, physical source roots or span-bearing declaration IDs.
@@ -53,6 +60,7 @@ pub fn encode_graph(records: &[CodegraphRecord], root: &Path) -> Result<Vec<u8>,
     let mut fields = BTreeMap::new();
     let mut payload = Vec::new();
     let mut entries = Vec::with_capacity(records.len());
+    let mut origins = BTreeSet::new();
     for record in records {
         let mut wire = serde_json::to_value(record)?;
         paths::portable(&mut wire, &root, &ids);
@@ -61,6 +69,9 @@ pub fn encode_graph(records: &[CodegraphRecord], root: &Path) -> Result<Vec<u8>,
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
+        if matches!(kind.as_str(), "reference" | "call" | "import") {
+            package_origins(&wire, &mut origins)?;
+        }
         let id = wire.get("id").and_then(Value::as_str).unwrap_or_default().to_owned();
         let document = postcard::to_allocvec(&GraphValue::pack(wire, &mut fields)?)
             .map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
@@ -81,6 +92,7 @@ pub fn encode_graph(records: &[CodegraphRecord], root: &Path) -> Result<Vec<u8>,
     let index = Index {
         fields: names.into_iter().map(|(name, _)| name).collect(),
         entries,
+        origins: origins.into_iter().collect(),
     };
     let index = postcard::to_allocvec(&index).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
     let mut bytes = GRAPH_ARTIFACT_VERSION.to_le_bytes().to_vec();
@@ -94,6 +106,22 @@ pub fn encode_graph(records: &[CodegraphRecord], root: &Path) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
+/// Add the package origins one portable reference, call or import record names, on its own identities and its
+/// bindings', to the graph's origins index as their JSON text.
+fn package_origins(record: &Value, origins: &mut BTreeSet<String>) -> Result<(), GraphArtifactError> {
+    let bindings = record.get("bindings").and_then(Value::as_array);
+    for value in std::iter::once(record).chain(bindings.into_iter().flatten()) {
+        for field in ["canonical_identity", "stable_identity"] {
+            if let Some(origin) = value.get(field).and_then(|value| value.get("origin"))
+                && origin.get("kind").and_then(Value::as_str) == Some("package")
+            {
+                origins.insert(serde_json::to_string(origin)?);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A validated artifact index and its uninterpreted payload. Readers can request record groups without decoding
 /// unrelated facts.
 pub struct GraphArtifact {
@@ -102,33 +130,27 @@ pub struct GraphArtifact {
 }
 
 impl GraphArtifact {
-    /// Project compiler-owned package origins from reference, call and import records. This is a storage
-    /// projection for selecting dependency Loaves; package selection and closure traversal remain with the consumer.
+    /// The compiler-owned package origins the graph's reference, call and import records name, read from the index the
+    /// producer wrote, so no record is decoded. This is a storage projection for selecting dependency Loaves; package
+    /// selection and closure traversal remain with the consumer.
     pub fn origins(&self) -> Result<Vec<Value>, GraphArtifactError> {
-        let mut origins = std::collections::BTreeMap::new();
         self.value(
             self.index
                 .entries
                 .first()
                 .ok_or_else(|| GraphArtifactError::Malformed("missing header".into()))?,
         )?;
-        for entry in &self.index.entries {
-            if !matches!(entry.kind.as_str(), "reference" | "call" | "import") {
-                continue;
+        let mut origins = Vec::with_capacity(self.index.origins.len());
+        for text in &self.index.origins {
+            let origin: Value = serde_json::from_str(text)?;
+            if origin.get("kind").and_then(Value::as_str) != Some("package") {
+                return Err(GraphArtifactError::Malformed(
+                    "the origins index names a non-package origin".into(),
+                ));
             }
-            let record = self.value(entry)?;
-            let bindings = record.get("bindings").and_then(Value::as_array);
-            for value in std::iter::once(&record).chain(bindings.into_iter().flatten()) {
-                for field in ["canonical_identity", "stable_identity"] {
-                    if let Some(origin) = value.get(field).and_then(|value| value.get("origin"))
-                        && origin.get("kind").and_then(Value::as_str) == Some("package")
-                    {
-                        origins.insert(serde_json::to_string(origin)?, origin.clone());
-                    }
-                }
-            }
+            origins.push(origin);
         }
-        Ok(origins.into_values().collect())
+        Ok(origins)
     }
 
     /// Decode and validate the complete directory of record ranges before exposing any graph values.
