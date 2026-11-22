@@ -308,7 +308,8 @@ pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profil
     """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
     mut owners: set[str] = set()
     # A position edit can restamp a selected executable frame against today's syntax.
-    # Only changed semantic inputs withdraw an owner's checked pair from the compiler.
+    # Only changed semantic inputs withdraw an owner's checked pair from the compiler. A path dependency's changed
+    # declaration span is one: a checked body names that declaration by it, and no restamp of its own frame moves it.
     semantic = [key for key in changed if key.family != "owner-placement"]
     for reader in readers_of(selected, semantic, profile)?:
         if reader.family in ["local", "final", "body-ir"]:
