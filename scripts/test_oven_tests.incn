@@ -17,6 +17,7 @@ from oven_tests import (
     free_worker,
     invocations,
     join_logs,
+    library_prebuild_arguments,
     planned_outcome,
     log_name,
     parse_options,
@@ -160,10 +161,11 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     return Ok(None)
 
 
-def test_loaf_tests_share_the_release_builder_bakery() -> Result[None, str]:
+def test_every_release_test_asks_the_builder_bakery_which_admits_units_by_identity() -> Result[None, str]:
     """
-    Release-profile Loaf tests ask the builder's bakery, which already holds the release units the release built; Oven
-    sources keep the installation's own bakery, which their nested commands select through the inherited environment.
+    Oven sources and Loaf tests alike ask the release builder's bakery, which already holds the units the release
+    built, the Oven sources' shared project library among them, and admits one only by its full unit identity. Outside
+    a release every invocation keeps the installation's own bakery.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
@@ -171,12 +173,26 @@ def test_loaf_tests_share_the_release_builder_bakery() -> Result[None, str]:
     evidence = root.joinpath("evidence")
     logs = evidence.joinpath("oven-tests")
     shared = invocations(root, evidence, logs, 2, "/builder/bakery")?
-    assert [len(item.environment) for item in shared] == [0, 0, 0, 1, 1, 1, 1, 1]
-    assert [item.environment["INCAN_BAKERY"] for item in shared[3:]] == ["/builder/bakery" for _ in range(5)]
+    assert [len(item.environment) for item in shared] == [1, 1, 1, 1, 1, 1, 1, 1]
+    assert [item.environment["INCAN_BAKERY"] for item in shared] == ["/builder/bakery" for _ in range(8)]
+    assert [item.environment["INCAN_BAKERY"] for item in compile_ahead(shared)] == ["/builder/bakery"]
     remove_worker_projects(shared)?
     own = invocations(root, evidence, logs, 2)?
     assert [len(item.environment) for item in own] == [0, 0, 0, 0, 0, 0, 0, 0]
     remove_worker_projects(own)?
+    return Ok(None)
+
+
+def test_the_release_prebuilds_exactly_the_compile_the_oven_step_starts_with() -> Result[None, str]:
+    """The project library a release builds ahead comes from the same compile-only invocation the step starts first."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    planned = invocations(root, evidence, evidence.joinpath("oven-tests"), 2)?
+    assert library_prebuild_arguments() == compile_ahead(planned)[0].arguments
+    assert library_prebuild_arguments() == ["test", "src/test_engine_protocol.incn", "--list"]
+    remove_worker_projects(planned)?
     return Ok(None)
 
 
