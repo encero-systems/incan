@@ -2,7 +2,7 @@
 //!
 //! `test_parallel_ranges` and `test_runtime_layouts` live beside their modules (`parallel_ranges`, `runtime_calls`).
 
-mod bodies;
+pub(super) mod bodies;
 mod body_positions;
 mod carrier_identities;
 mod cleanup_chains;
