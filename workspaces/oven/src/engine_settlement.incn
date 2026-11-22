@@ -14,6 +14,7 @@ from pub::incan_platform.store import SnapshotAdmission
 from pub::incan_platform.trace import Operation, flush as flush_trace
 from bakery import forget_verified, verification_entries
 from core_process import Process, executable
+from compiler_graph_records import ReceiptProjectionCache
 from engine_actions import ExecutionLease, Pending, Ready, finish_request
 from engine_channel import Channel
 from engine_endpoint import transport
@@ -66,13 +67,14 @@ pub def serve(arguments: list[str]) -> Result[None, Refusal]:
 
 
 class Settlement:
-    """One process's request scopes and live execution pins, owned until release or coordinator shutdown."""
+    """Own one process's request scopes, live execution pins, and bounded deferred receipt metadata."""
 
     store: Path
     producer: str
     records: str
     channel: Channel
     pins: list[ExecutionLease] = []
+    receipt_projections: ReceiptProjectionCache = ReceiptProjectionCache.empty()
     origin: str = ""
     origin_request: bytes = zero_id()
 
@@ -145,6 +147,7 @@ class Settlement:
                         origin=self.origin,
                     ),
                     self.channel,
+                    self.receipt_projections,
                 )
                 # 3. The trace, including the commit and scope teardown, precedes the terminal reply.
                 released = verification_entries()

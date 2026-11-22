@@ -33,7 +33,10 @@ from compiler_body_values import (
 from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
 from compiler_refusals import PreparedWarnings, replay_checked_warnings
-from compiler_graph_records import EditCutoff, EditReaders, PlanImportReach, retire_compiler_versions, select_edit_readers, supersede_outputs
+from compiler_graph_records import (
+    EditCutoff, EditReaders, PlanImportReach, ReceiptProjectionCache,
+    retire_compiler_versions, select_edit_readers, supersede_outputs,
+)
 from compiler_body_fallbacks import plan_module_origins
 from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import load_epoch
@@ -328,6 +331,7 @@ pub def obtain(
     scheduled_origin: str = "",
     source_readings: Option[Rc[Dict[str, SourceReading]]] = None,
     prepared: Option[PreparedProgram] = None,
+    mut receipts: ReceiptProjectionCache = ReceiptProjectionCache.empty(),
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -414,7 +418,7 @@ pub def obtain(
     let cutoff: Borrowed[EditCutoff] = selection.reached.cutoff
     namespaces = select_namespace_inventory_except(
         graph, CHECKER_PROFILE, origin, invalid_namespaces, toolchain.namespace_references and toolchain.closure_anchors,
-        cutoff, use_layouts=true, reachable_modules=modules,
+        cutoff, use_layouts=true, reachable_modules=modules, receipts=receipts,
     )?
     record_work(Operation.EngineSelect, "namespace-inventory", selecting)
     selecting = begin_work()
