@@ -25,11 +25,7 @@ impl TypeChecker {
     ///
     /// A root-module declaration is keyed by its root public name, as the root's own exports are. Any other declaration
     /// is keyed by its module path, the key a module-namespace import of it already uses.
-    pub(in crate::typechecker::collect) fn declaration_type_key(
-        library: &str,
-        module_path: &[String],
-        name: &str,
-    ) -> String {
+    pub(in crate::typechecker) fn declaration_type_key(library: &str, module_path: &[String], name: &str) -> String {
         if is_package_root_module(module_path) {
             return canonical_public_library_type_name(library, name);
         }
