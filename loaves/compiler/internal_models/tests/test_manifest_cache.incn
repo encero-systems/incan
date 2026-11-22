@@ -20,7 +20,7 @@ pub def test_retained_manifest_evidence() -> Result[None, str]:
 
     row = ManifestInventory(name="example", version="1.2.3", features=["a", "b"], vocabulary=true, operations=false,
         native_unions=true, rust_paths=["native::A", "native::B"], declares_abi_cache=true, has_abi_cache=false,
-        abi_digest=Some("sha256:abc"))
+        abi_digest=Some("sha256:abc"), install_digest=Some("sha256:install"))
     summary = encode_manifest_inventory(row)?
     envelope = encode_manifest_cache("inventory", guard, digest, summary)?
     recovered = decode_manifest_cache("inventory", guard, envelope)?
@@ -30,6 +30,7 @@ pub def test_retained_manifest_evidence() -> Result[None, str]:
     assert decoded.vocabulary and not decoded.operations and decoded.native_unions
     assert decoded.rust_paths == row.rust_paths and decoded.declares_abi_cache and not decoded.has_abi_cache
     assert decoded.abi_digest == row.abi_digest
+    assert decoded.install_digest == row.install_digest
 
     payload = b"selected native facts"
     facts = encode_manifest_cache("facts", guard, digest, payload)?
