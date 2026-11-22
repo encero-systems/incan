@@ -796,6 +796,85 @@ impl TypeChecker {
         }
     }
 
+    /// Refuse a library's public re-export whose links loop among the library's own modules, with INCAN-I0104.
+    ///
+    /// A library publishes each public re-export, so publication demands it as a use demands an imported name;
+    /// otherwise nothing follows the links, and the name is published with no declaration behind it. A module's
+    /// checker knows its own link only as the import it is collecting, so the walk is given that link here. Each
+    /// module of the loop finds the same loop; the one whose link spells first reports it, starting at its own link.
+    pub(super) fn refuse_republished_import_loops(
+        &mut self,
+        visibility: Visibility,
+        module: &ImportPath,
+        items: &[ImportItem],
+        span: Span,
+    ) {
+        let (Visibility::Public, Some(library), Some(own_path)) = (
+            visibility,
+            self.symbols.package_identity().map(str::to_owned),
+            self.current_module_path.clone(),
+        ) else {
+            return;
+        };
+        let key = own_path.join("_");
+        let mut own = self
+            .dependency_member_reexports
+            .get(&key)
+            .map(|links| links.as_ref().clone())
+            .unwrap_or_default();
+        for item in items {
+            own.insert(
+                item.alias.as_ref().unwrap_or(&item.name).clone(),
+                DependencyMemberReexport {
+                    target_module: module.clone(),
+                    target_name: item.name.clone(),
+                    declaration_origin: SymbolOrigin::Package {
+                        library: library.clone(),
+                        module_path: own_path.clone(),
+                    },
+                    declaration_span: span,
+                },
+            );
+        }
+        let previous = self.dependency_member_reexports.insert(key.clone(), Arc::new(own));
+        let loops = items
+            .iter()
+            .filter_map(|item| {
+                let own_link = format!(
+                    "{}.{}",
+                    own_path.join("."),
+                    item.alias.as_ref().unwrap_or(&item.name).clone()
+                );
+                let Err(DependencyMemberResolutionFailure::LinkLoop { mut links }) =
+                    self.resolve_dependency_member_links(module, &item.name)
+                else {
+                    return None;
+                };
+                let start = links.iter().position(|link| link.spelling == own_link)?;
+                if links.iter().any(|link| link.spelling < own_link) {
+                    return None;
+                }
+                links.rotate_left(start);
+                Some(links)
+            })
+            .collect::<Vec<_>>();
+        match previous {
+            Some(links) => {
+                self.dependency_member_reexports.insert(key, links);
+            }
+            None => {
+                self.dependency_member_reexports.remove(&key);
+            }
+        }
+        for links in loops {
+            let locations = links
+                .into_iter()
+                .map(|link| (link.spelling, link.declaration_origin, link.declaration_span))
+                .collect::<Vec<_>>();
+            self.errors.push(errors::import_link_loop(&locations, span));
+        }
+    }
+
     /// The Rust item a dependency module binds as `name` with a by-name `rust::` import, as a resolved member.
     fn dependency_rust_member(&self, module_key: &str, name: &str) -> Option<ResolvedDependencyMember> {
         match self.dependency_member_symbols.get(module_key)?.get(name)? {
