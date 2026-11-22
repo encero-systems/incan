@@ -411,7 +411,55 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{UnitKind, debuginfo, optimization_level};
+    use super::{PrivateOutput, UnitKind, debuginfo, optimization_level};
+    use std::path::Path;
+
+    /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
+    /// output filenames, an input of every codegen unit, are the same between edits; one compilation holds it at a
+    /// time.
+    #[test]
+    fn a_program_with_native_reuse_compiles_to_one_private_output() -> Result<(), Box<dyn std::error::Error>> {
+        let units = tempfile::tempdir()?;
+        let arguments = |requested: &str| {
+            vec![
+                "incan-rustc-driver".to_owned(),
+                "-o".to_owned(),
+                requested.to_owned(),
+                "lib.incn".to_owned(),
+            ]
+        };
+        let (mut first, mut second) = (arguments("/staging/one/oven"), arguments("/staging/two/oven"));
+        let held = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free")?;
+        held.redirect(&mut first);
+        assert!(PrivateOutput::acquire(units.path(), "oven", "abc")?.is_none());
+        drop(held);
+        let again = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free again")?;
+        again.redirect(&mut second);
+        assert_eq!(first, second);
+        assert!(Path::new(&first[2]).starts_with(units.path()));
+        Ok(())
+    }
+
+    /// The executable reaches the requested output, and the unit objects the development link already stored by
+    /// content do not stay behind to be written again in place by the next build.
+    #[test]
+    fn a_private_output_publishes_its_executable_and_keeps_no_stored_objects() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (units, staging) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let held = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free")?;
+        let mut arguments = vec!["-o".to_owned(), String::new()];
+        held.redirect(&mut arguments);
+        let executable = Path::new(&arguments[1]).to_path_buf();
+        std::fs::write(&executable, b"executable")?;
+        let object = executable.with_file_name("oven.unit.rcgu.o");
+        std::fs::write(&object, b"object")?;
+        let requested = staging.path().join("oven");
+        held.publish(&requested, true)?;
+        assert_eq!(std::fs::read(&requested)?, b"executable");
+        assert!(!executable.exists());
+        assert!(!object.exists());
+        Ok(())
+    }
 
     /// Release executables omit debug metadata while development executables and libraries retain it.
     #[test]
