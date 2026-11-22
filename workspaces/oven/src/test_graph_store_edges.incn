@@ -22,6 +22,7 @@ from pub::incan_platform.store import (
 from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from store_path_conversion import snapshot
+from compiler_body_keys import body_key
 from compiler_graph_rows import encode_pointer
 from compiler_graph_records import (
     OutputSlots,
@@ -236,9 +237,9 @@ pub def test_an_edited_declaration_s_output_index_entry_is_written_in_place() ->
     dependency = graph_key("final", "function:helper", "checked")
     read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
     _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
-    mut output = graph_key("body-ir", "function:main", "edit 0")
+    mut output = body_key("body-ir", dependency.origin, "function:main", "facet", "edit 0")
     for edit in range(12):
-        output = graph_key("body-ir", "function:main", f"edit {edit}")
+        output = body_key("body-ir", dependency.origin, "function:main", "facet", f"edit {edit}")
         publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
     latest = snapshot(root).map_err((error) => error.message())?
     indexed = indexed_keys(root, latest, "incan.engine.output/2\t")?
