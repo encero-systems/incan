@@ -191,7 +191,7 @@ def verify_stale_runtime_batch(binary: str, root: Path, source: Path, seed: str,
 
 def stale_saved_runtime_batch(store: Path, source: Path) -> Result[None, str]:
     """Replace the second batch's one encoded path in the existing postcard recipe without disturbing its shape."""
-    key = runtime_requirements_key("standalone:" + source.0, source.0, "release")
+    key = runtime_requirements_key("probe", source.0, "release")
     graph = snapshot(store).map_err((error) => error.message())?
     saved = get(graph, key).map_err((error) => error.message())?
     if let Some(value) = saved:
