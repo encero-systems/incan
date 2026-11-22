@@ -173,8 +173,7 @@ impl TypeChecker {
         .entered();
         let mut builder = TypeChecker::new();
         builder.set_loaves(Arc::clone(&self.loaves));
-        // The builder's layouts are this build's, so the build's test counters see them.
-        #[cfg(test)]
+        // The builder prepares for this build, so it shares the build's preparations of the Loaves it reaches.
         builder.set_dependency_interface_preparation_cache(self.dependency_interface_preparation_cache.clone());
         let (remapping, preserving_identity_keys, preserving_type_keys) =
             builder.build_foreign_remapping(library, manifest);
@@ -257,7 +256,7 @@ impl TypeChecker {
         library: &str,
         manifest: &LibraryManifest,
     ) -> (HashMap<String, String>, HashSet<String>, HashSet<String>) {
-        let seeds = collect_nominal_type_origins(manifest);
+        let seeds = self.loaf_type_origins(library, manifest);
         let (remapping, loaves) = self.resolve_public_type_origins(library, seeds);
         let (preserving_identity_keys, preserving_type_keys) =
             self.reconstruct_artifact_layouts(library, &remapping, &loaves);
@@ -273,9 +272,9 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn resolve_public_type_origins(
         &mut self,
         library: &str,
-        seeds: BTreeMap<String, NominalTypeOriginExport>,
+        seeds: Arc<BTreeMap<String, NominalTypeOriginExport>>,
     ) -> (HashMap<String, String>, BTreeMap<String, LoafEntry>) {
-        let mut pending = std::collections::VecDeque::from_iter(seeds.into_values());
+        let mut pending = std::collections::VecDeque::from_iter(seeds.values().cloned());
         let mut seen = HashSet::new();
         let mut loaves = BTreeMap::new();
         let mut remapping = HashMap::new();
@@ -312,11 +311,48 @@ impl TypeChecker {
             remapping.insert(key, qualified);
 
             if let std::collections::btree_map::Entry::Vacant(vacant) = loaves.entry(entry.key.clone()) {
-                pending.extend(collect_nominal_type_origins(&entry.artifact.manifest).into_values());
+                pending.extend(
+                    self.loaf_type_origins(&entry.key, &entry.artifact.manifest)
+                        .values()
+                        .cloned(),
+                );
                 vacant.insert(entry);
             }
         }
         (remapping, loaves)
+    }
+
+    /// The nominal type origins the manifest of the Loaf indexed as `key` references, keyed by binding key: a fact of
+    /// the Loaf, collected once for the checkers of one module graph however many foreign preparations reach it.
+    pub(in crate::typechecker::collect) fn loaf_type_origins(
+        &self,
+        key: &str,
+        manifest: &LibraryManifest,
+    ) -> Arc<BTreeMap<String, NominalTypeOriginExport>> {
+        let collected = &self.dependency_interface_preparation_cache.type_origins;
+        if let Some(origins) = collected
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+        {
+            return Arc::clone(origins);
+        }
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache.count_origin_collection(key);
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::collect_loaf_type_origins",
+            loaf = key,
+        )
+        .entered();
+        let origins = Arc::new(collect_nominal_type_origins(manifest));
+        Arc::clone(
+            collected
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(key.to_owned())
+                .or_insert(origins),
+        )
     }
 
     /// Rebuild each discovered Loaf's nominal layouts against the completed remapping.

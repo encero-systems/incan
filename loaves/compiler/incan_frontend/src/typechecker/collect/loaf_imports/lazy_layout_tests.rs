@@ -108,3 +108,24 @@ fn a_loaf_installed_by_name_checks_and_seals_as_one_installed_whole() -> TestRes
     assert_eq!(by_name, whole);
     Ok(())
 }
+
+/// A Loaf's nominal type origins are a fact of the Loaf: the module graph collects them once for each Loaf, however
+/// many compiled Loaves' foreign preparations reach it. Here `base` is reached by its own preparation and by that of
+/// `shapes`, whose `Outer` holds a `base` model.
+#[test]
+fn a_loafs_type_origins_are_collected_once_per_module_graph() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let cache = DependencyInterfacePreparationCache::default();
+    check_graph(&loaves, &cache)?;
+    let collections = cache.origin_collection_counts();
+    assert!(
+        collections.contains_key("base") && collections.contains_key("shapes"),
+        "the graph's foreign preparations reached no Loaf: {collections:?}"
+    );
+    assert!(
+        collections.values().all(|&count| count == 1),
+        "type origins collected more than once per Loaf: {collections:?}"
+    );
+    Ok(())
+}

@@ -27,12 +27,17 @@ pub struct DependencyInterfacePreparationCache {
     pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
     /// Each compiled library's nominal public types with their canonical spellings and admitted identities.
     pub(super) canonical_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<[CanonicalTypeEntry]>>>>,
+    /// Each compiled Loaf's nominal type origins, by Loaf key, for the foreign preparations that reach it.
+    pub(super) type_origins: Arc<std::sync::Mutex<HashMap<String, Arc<LoafTypeOrigins>>>>,
     /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.
     #[cfg(test)]
     pub(super) canonical_evaluations: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
     /// How often the checkers sharing this cache built each compiled declaration's layout, by declaration name.
     #[cfg(test)]
     pub(super) layout_builds: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
+    /// How often the checkers sharing this cache collected each compiled Loaf's nominal type origins, by Loaf key.
+    #[cfg(test)]
+    pub(super) origin_collections: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
     /// Whether the checkers sharing this cache build each deferred layout when they install it.
     #[cfg(test)]
     pub(super) eager_layouts: bool,
@@ -47,6 +52,23 @@ impl DependencyInterfacePreparationCache {
             eager_layouts: true,
             ..Self::default()
         }
+    }
+
+    /// Count one collection of the nominal type origins of the Loaf indexed as `key`.
+    pub(super) fn count_origin_collection(&self, key: &str) {
+        let mut counts = self
+            .origin_collections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *counts.entry(key.to_owned()).or_default() += 1;
+    }
+
+    /// The nominal type origin collections of each compiled Loaf, by Loaf key.
+    pub(crate) fn origin_collection_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        self.origin_collections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Count one build of the compiled declaration `name`'s layout.
@@ -83,6 +105,9 @@ impl DependencyInterfacePreparationCache {
             .clone()
     }
 }
+
+/// The nominal type origins one compiled Loaf's manifest references, keyed by binding key.
+pub(super) type LoafTypeOrigins = std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>;
 
 /// One nominal public type of a compiled Loaf: its public spelling, the canonical spelling every consumer of the Loaf
 /// binds it to, and the provider identity it is admitted under.
