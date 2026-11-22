@@ -14,7 +14,7 @@ use crate::body::{
 use crate::plan::{ExternalFunction, Function};
 use crate::positions::WirePositions;
 use crate::records::function::{
-    decode_product, encode_product, encode_runtime, place_product_record, product_nominals,
+    decode_product, decode_runtime, encode_product, encode_runtime, place_product_record, product_nominals,
 };
 use crate::types::{PlanType, source_span};
 
@@ -197,6 +197,70 @@ fn product_keeps_a_rust_constant() -> Result<(), String> {
     assert!(
         linked_reader == reader,
         "a product reading a linked crate's constant did not restore"
+    );
+    Ok(())
+}
+
+/// A primitive receiver's method, such as `f64::powf` or `i64::pow`, is Rust's own item and not a crate named `f64`:
+/// a product calling one restores in a unit that links no crate for it, and a unit's runtime inventory keeps it.
+#[test]
+fn a_primitive_method_is_rusts_own_item() -> Result<(), String> {
+    let span = source_span("numbers.incn", 3, 5);
+    let call = TerminatorKind::Call(
+        Callee {
+            kind: CalleeKind::External("f64::powf".to_owned()),
+            span: span.clone(),
+        },
+        Vec::new(),
+        place_at(0, Projection::Whole, &span),
+        1,
+        Unwind::Continue,
+    );
+    let caller = Function::new(
+        "power".to_owned(),
+        Vec::new(),
+        PlanType::Unit,
+        vec![local(PlanType::Unit, &span)],
+        vec![
+            block(
+                Vec::new(),
+                Terminator {
+                    kind: call,
+                    span: span.clone(),
+                },
+                &span,
+            ),
+            block(Vec::new(), returning(&span), &span),
+        ],
+        span.clone(),
+    );
+    let powf = ExternalFunction {
+        path: "f64::powf".to_owned(),
+        type_arguments: Vec::new(),
+        parameters: vec![PlanType::Float, PlanType::Float],
+        return_type: PlanType::Float,
+        span: span.clone(),
+    };
+    let runtime = vec![
+        powf.clone(),
+        ExternalFunction {
+            path: "i64::pow".to_owned(),
+            parameters: vec![PlanType::Int, PlanType::U32],
+            return_type: PlanType::Int,
+            ..powf
+        },
+    ];
+    let references = product_nominals(&caller, &runtime, &[])?;
+    let product = encode_product(&caller, &runtime, &[], &[])?;
+    let placed = place_product_record(&product, &WirePositions::preserve())?;
+    let (restored, restored_runtime, _) = placed.restore(&references, &BTreeSet::new())?;
+    assert!(
+        restored == caller && restored_runtime == runtime,
+        "a product calling a primitive method did not restore in a unit that links no crate"
+    );
+    assert!(
+        decode_runtime(&encode_runtime(&runtime)?)? == runtime,
+        "a runtime inventory did not keep primitive methods"
     );
     Ok(())
 }
