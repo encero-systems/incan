@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use incan_mir_plan_native::PlacedRecord;
+use incan_mir_plan_native::{PlacedRecord, PlanModuleValue};
 use sha2::{Digest, Sha256};
 
 use crate::plan_modules::AdmittedPage;
@@ -26,6 +26,10 @@ const MAX_PAGES: usize = 4096;
 
 static PLACED: Mutex<Option<HashMap<[u8; 32], (PlacedRecord, u64)>>> = Mutex::new(None);
 static PAGES: Mutex<Option<HashMap<[u8; 32], Arc<ResidentPage>>>> = Mutex::new(None);
+/// Module pages with their events, by the digest of their bytes, and the bytes they were read from in all.
+static FULL_PAGES: Mutex<Option<(HashMap<[u8; 32], Arc<PlanModuleValue>>, u64)>> = Mutex::new(None);
+/// The bytes of module pages with their events one worker keeps: one program's pages, many times over.
+const MAX_FULL_PAGE_BYTES: u64 = 2 << 30;
 
 /// What a product restored from a module page is a function of besides the page's bytes: the body's frame name, its
 /// file and line, its overflow policy, its checker witness, the producer profile, and the body's current node
@@ -151,6 +155,32 @@ pub fn resident_page(
     Some(page)
 }
 
+/// The page with its events this worker read and checked for `content`, the SHA-256 digest of its bytes, or the one
+/// `read` makes now with the number of bytes it read. A worker restoring every unchanged module of an edit then reads,
+/// hashes and decodes only the pages whose content changed. A page `read` refuses is not kept.
+pub fn resident_full_page(
+    content: &[u8; 32],
+    read: impl FnOnce() -> Result<(PlanModuleValue, u64), String>,
+) -> Result<Arc<PlanModuleValue>, String> {
+    if let Ok(guard) = FULL_PAGES.lock()
+        && let Some(kept) = guard.as_ref().and_then(|(pages, _)| pages.get(content))
+    {
+        return Ok(kept.clone());
+    }
+    let (page, bytes) = read()?;
+    let page = Arc::new(page);
+    if let Ok(mut guard) = FULL_PAGES.lock() {
+        let (pages, held) = guard.get_or_insert_with(|| (HashMap::new(), 0));
+        if pages.len() >= MAX_PAGES || *held + bytes > MAX_FULL_PAGE_BYTES {
+            pages.clear();
+            *held = 0;
+        }
+        pages.insert(*content, page.clone());
+        *held += bytes;
+    }
+    Ok(page)
+}
+
 /// Place a product's bytes at `positions` in `file` from `line`, or read the placement this worker already made of
 /// the same bytes at the same nodes; the flag says whether the worker kept it.
 pub fn resident_placed(
@@ -189,6 +219,11 @@ pub fn resident_inventory() -> Vec<(&'static str, usize, u64)> {
             .sum();
         inventory.push(("lowering module pages", pages.len(), bytes));
         inventory.push(("lowering restored products", restored, 0));
+    }
+    if let Ok(guard) = FULL_PAGES.lock()
+        && let Some((pages, held)) = guard.as_ref()
+    {
+        inventory.push(("lowering module pages with events", pages.len(), *held));
     }
     if let Ok(guard) = PLACED.lock() {
         let placements: Vec<u64> = guard
