@@ -4,7 +4,7 @@ from rust::std::process import id, exit as process_exit
 from rust::std::string import String as RustString
 from std.primitives.environ import read as read_environment
 from crate.trace.schema import Clock, Operation, WorkObserver
-from crate.store.index import IndexError
+from crate.store.index import IndexError, observe_index_work
 from crate.store.path import StoreIoError, StorePath as Path
 
 static WORK: WorkObserver = WorkObserver()
@@ -17,6 +17,7 @@ pub def observe_work(observer: WorkObserver) -> None:
     The caller owns tracing policy and flushing. Configure once before starting store work, never between an
     operation's start and completion. The store's default observer touches no clock or output channel.
     """
+    observe_index_work(observer)
     WORK = observer
 
 

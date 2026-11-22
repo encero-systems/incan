@@ -35,6 +35,7 @@ from std.primitives.hex import hexlify
 from std.primitives.views import MappedFile, MappedView
 from crate.store.bytes import append_bytes, append_u64
 from crate.store.path import StorePath as Path
+from crate.trace.schema import Operation, WorkObserver
 
 const FANOUT: int = 32
 const NAME_BYTES: int = 64
@@ -161,6 +162,13 @@ static pages_read: dict[str, int] = {}
 # The pages this process has checked. A lookup reads them in place through the model's own methods: reading a key of a
 # static dictionary would copy the whole dictionary.
 static CHECKED: CheckedPages = CheckedPages()
+
+static FIRST_PAGE_WORK: WorkObserver = WorkObserver()
+
+
+pub def observe_index_work(observer: WorkObserver) -> None:
+    """Observe the successful first authentication of an immutable index page."""
+    FIRST_PAGE_WORK = observer
 
 
 pub def page_checked_bytes() -> int:
@@ -462,6 +470,7 @@ def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
         mut found = checked
         found.pack = location.pack
         return Ok(found)
+    clock = FIRST_PAGE_WORK.begin()
     path = location.file
     mapped = path.store_map_read().map_err((error) => IndexError(object=path.value, detail=error.message()))?
     mut length = location.length
@@ -478,6 +487,8 @@ def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
                 location.digest,
                 layout(checked_copy(path, view)?, location.pack).map_err((detail) => malformed(path, detail))?,
             )
+            if clock is not None:
+                FIRST_PAGE_WORK.record(Operation.StoreIndexPageRead, f"{path.value}\t{reference}", clock, length)
             match CHECKED.checked(location.digest):
                 Some(checked) => return Ok(checked)
                 None => return Err(malformed(path, "a checked page was not kept"))
