@@ -841,6 +841,9 @@ fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<E
 mod import_refusals;
 
 #[cfg(test)]
+mod overloads;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
