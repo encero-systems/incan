@@ -301,7 +301,10 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
         if client.channel.pending.exhausted():
             waiting.append(pending)
             continue
-        match finish_request(state.store, pending):
+        finished = finish_request(state.store, pending)
+        # Every span the request opened, its commit's included, reaches the trace before its caller hears it ended.
+        _ = flush_trace()
+        match finished:
             Err(reason) =>
                 # A refused request's own compiler diagnostics come before the refusal that summarizes them.
                 console = state.store.joinpath("engine/console").joinpath(hexlify(pending.request)).0
