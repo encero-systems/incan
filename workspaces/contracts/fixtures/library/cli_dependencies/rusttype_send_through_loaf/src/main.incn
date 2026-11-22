@@ -1,0 +1,17 @@
+# behavior: a compiled Loaf preserves the Send and Sync evidence of a rusttype nested in a model field captured by a Rust callback
+# expect-stdout:
+#   1
+
+"""Move an imported model containing an explicitly thread-safe rusttype onto a Rust thread."""
+
+from pub::guard_provider.guard import memory_lease, reference_count
+from rust::std::thread import spawn
+
+
+def main() -> None:
+    """Require the imported rusttype's retained Send evidence while checking the callback capture."""
+    lease = memory_lease()
+    worker = spawn(() => reference_count(lease))
+    match worker.join():
+        Ok(count) => println(count)
+        Err(_) => assert false

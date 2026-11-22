@@ -189,6 +189,7 @@ fn prepass_names(corpus: &Corpus, case: &Case, scratch: &Path) -> Result<BTreeMa
     Ok(names)
 }
 
+/// Restore the retained source inputs, with no linked storage exports in the reference corpus.
 fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result<SourceInputs, String> {
     let scalar_products = match &step.scalar_products {
         Some(_) => {
@@ -207,6 +208,7 @@ fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result
         overflow_checks: step.overflow_checks,
         scalar_products,
         scalar_bodies: step.scalar_bodies.clone(),
+        linked_static_exports: Default::default(),
         record_report: step
             .record_report
             .as_ref()

@@ -49,7 +49,7 @@ use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::body_ir::NativeUnionDeclaration;
 use incan_semantics_core::executable_representation::{
-    EXECUTABLE_REPRESENTATION_VERSION, SurfaceReader, build_surface,
+    EXECUTABLE_REPRESENTATION_VERSION, PreparedSurface, SurfaceReader, prepare_surface,
 };
 
 /// Encoded Loaf artifacts retained across native compilation without retaining checked modules or Body IR.
@@ -387,39 +387,54 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
         .collect();
 }
 
-/// Prepare a Loaf's native files beside its rlib: governed bodies, native closure, optional ABI cache and manifest.
-/// Inspection graphs have a separate requested publication and proof. The native closure names its inputs from the
-/// current home's `anchors`, so homes that share a bakery publish the same closure bytes. The manifest is written last,
-/// so its presence means the native artifact set is complete.
-pub fn prepare_loaf_publication(
-    dir: &Path,
-    mut manifest: LibraryManifest,
+/// Select the executable declarations and native storage bindings from the producing Loaf's own checked Body IR.
+pub fn prepare_executable_surface(
+    manifest: &LibraryManifest,
     bodies: &[BodyIrModule],
-    closure: &LoafNativeClosure,
-    anchors: &NativeAnchors,
-    graph: Option<&[u8]>,
-) -> CliResult<PreparedLoafPublication> {
-    let name = manifest.name.clone();
-
-    // ---- Executable representation ----
+    native_storage: bool,
+) -> CliResult<PreparedSurface> {
     // A Body IR gap refuses publication of that executable body. A compiled export can independently publish its
     // declaration frame, because consumers call its rlib item rather than instantiate its implementation.
-    let public = public_executable_identities(&manifest);
+    let public = public_executable_identities(manifest);
     let unrepresentable = bodies
         .iter()
         .flat_map(|module| module.bodies.iter())
         .filter(|body| body.first_representation_gap().is_some())
         .filter_map(|body| body.canonical.clone())
         .collect::<BTreeSet<_>>();
-    let surface = build_surface(bodies, &name, &manifest.version, &public, &unrepresentable).map_err(|error| {
+    let surface = prepare_surface(
+        bodies,
+        &manifest.name,
+        &manifest.version,
+        &public,
+        &unrepresentable,
+        native_storage,
+    )
+    .map_err(|error| {
         CliError::failure(format!(
-            "failed to produce the executable representation of {name}: {error}"
+            "failed to produce the executable representation of {}: {error}",
+            manifest.name
         ))
     })?;
     if tracing::enabled!(target: "incan::invocation", tracing::Level::DEBUG) {
-        let reader = SurfaceReader::open(&surface).map_err(|error| CliError::failure(error.to_string()))?;
-        tracing::debug!(target: "incan::invocation", package = %name, coverage = ?reader.index().declarations, "published governed coverage");
+        let reader = SurfaceReader::open(&surface.bytes).map_err(|error| CliError::failure(error.to_string()))?;
+        tracing::debug!(target: "incan::invocation", package = %manifest.name, coverage = ?reader.index().declarations, "published governed coverage");
     }
+    Ok(surface)
+}
+
+/// Prepare a Loaf's artifact set using the same executable surface that selected its native bindings.
+/// The native closure names inputs from the current home's `anchors`, so homes sharing a bakery publish the same
+/// closure bytes. The manifest stays the final completeness marker.
+pub fn prepare_loaf_publication(
+    dir: &Path,
+    mut manifest: LibraryManifest,
+    surface: Vec<u8>,
+    closure: &LoafNativeClosure,
+    anchors: &NativeAnchors,
+    graph: Option<&[u8]>,
+) -> CliResult<PreparedLoafPublication> {
+    let name = manifest.name.clone();
     manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
         representation_version: EXECUTABLE_REPRESENTATION_VERSION,
         content_digest: hex::encode(Sha256::digest(&surface)),
@@ -456,7 +471,8 @@ pub fn write_loaf(
     anchors: &NativeAnchors,
     graph: Option<&[u8]>,
 ) -> CliResult<()> {
-    prepare_loaf_publication(dir, manifest, bodies, closure, anchors, graph)?.write(dir)
+    let surface = prepare_executable_surface(&manifest, bodies, false)?;
+    prepare_loaf_publication(dir, manifest, surface.bytes, closure, anchors, graph)?.write(dir)
 }
 
 /// The semantic facts a library publishes beside its manifest (RFC 179): the digest consumers that only compile
