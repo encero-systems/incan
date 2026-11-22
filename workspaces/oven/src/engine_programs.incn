@@ -68,7 +68,8 @@ from unit_compiler import (
 from unit_rust import compile_library_unit, prepare_native
 from unit_transport import CompilerSourceCapture
 from callable_products import desugared_by_a_dependency
-from unit_freshness import Key, fingerprint, unit_key
+from unit_freshness import Key, fingerprint, unit_key, unit_key_and_reach
+from unit_sources import SourceGraph
 from observation import FileMetadata, SourceReading, file_metadata, trace
 from shared_link import carriers_present, development_link, linkage_key, library_witness
 from jec import begin as begin_work, record as record_work
@@ -171,6 +172,18 @@ model ProgramHome:
 
     toolchain: Toolchain
     standard: Option[list[StandardPackage]] = None
+
+
+pub model PreparedProgram:
+    """One request's prepared unit, exact key and compiler source lease, kept through native activation."""
+
+    pub unit: UnitDescription
+    pub toolchain: Toolchain
+    # Owns the private directory named by the toolchain for both graph collection and native compilation.
+    pub sources: CompilerSourceCapture
+    pub whole: str
+    pub key: Option[Key] = None
+    pub reach: Option[SourceGraph] = None
 
 
 pub model NativeSelection:
@@ -314,6 +327,7 @@ pub def obtain(
     record_writer: str = "",
     scheduled_origin: str = "",
     source_readings: Option[Rc[Dict[str, SourceReading]]] = None,
+    prepared: Option[PreparedProgram] = None,
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -355,31 +369,16 @@ pub def obtain(
         if let Some(unit) = indexed_program(store, epoch, selector, admission)?:
             if restore_program(store, unit, console)?:
                 return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console, epoch_reads=epoch_reads))
-    preparing = begin_work()
-
-    home = program_home(selected_home)?
-    mut toolchain = home.toolchain
-
-    toolchain.console = console
-    mut asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
-    asked.source_readings = source_readings
-    source_directory = CompilerSourceCapture.stage(toolchain, source_readings)?
-    toolchain.captured_source_directory = source_directory.path
-    verify_scheduled_origin(asked, scheduled_origin)?
-    asked.unattended = is_editor_view(request_view)
-    planned = match epoch.project_sources(asked.source_root):
-        Some(files) => planned_program(asked, false, Some(files))?
-        None => asked
-    shared = planned.project_library is not None
-    described, _ = prepare_project_library(planned, toolchain)?
-    ready = prepared_for(request_view, described, toolchain)?
-    mut whole = whole_unit_reason(ready, unit_options)?
-    if whole == "" and shared and ready.project_library is None:
-        whole = "shared library refused"
-    if whole != "":
-        record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
-        return whole_unit_program(store, selector, ready, toolchain, console, whole, epoch_reads)
-    compiled_key = unit_key(ready, toolchain)?
+    preparation = match prepared:
+        Some(found) => found
+        None => prepare_program(epoch, request_view, console, selected_home, unit_options, scheduled_origin, source_readings)?
+    ready = preparation.unit
+    toolchain = preparation.toolchain
+    if preparation.whole != "":
+        return whole_unit_program(store, selector, ready, toolchain, console, preparation.whole, epoch_reads)
+    compiled_key = match preparation.key:
+        Some(key) => key
+        None => return Err("prepared records program has no unit key")
     plan_report = plan_record_report_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
     body_output = graph_body_output_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
     if compiled_key.refusal != "":
@@ -391,7 +390,6 @@ pub def obtain(
     # Build and run ask for the same debug program, including its existing shared native linkage policy.
     key = linkage_key(native_key, development_link(ready, true))?
     binary = program_binary(ready)
-    record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. The native producer owns the payload claim. Checked records follow the graph that authorized them.
     mut selection = select_bodies(admission, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
     graph = selection.reading.graph
@@ -593,6 +591,38 @@ pub def obtain(
             sealed=sealed,
         ),
     )
+
+
+pub def prepare_program(
+    epoch: BuildEpoch, view: str, console: str, selected_home: Option[SelectedHome], unit_options: str,
+    scheduled_origin: str, source_readings: Option[Rc[Dict[str, SourceReading]]],
+) -> Result[PreparedProgram, str]:
+    """Prepare the unit and collect its graph once under the pinned compiler and private source lease."""
+    preparing = begin_work()
+    home = program_home(selected_home)?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    mut asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    asked.source_readings = source_readings
+    sources = CompilerSourceCapture.stage(toolchain, source_readings)?
+    toolchain.captured_source_directory = sources.path
+    verify_scheduled_origin(asked, scheduled_origin)?
+    asked.unattended = is_editor_view(view)
+    planned = match epoch.project_sources(asked.source_root):
+        Some(files) => planned_program(asked, false, Some(files))?
+        None => asked
+    shared = planned.project_library is not None
+    described, _ = prepare_project_library(planned, toolchain)?
+    ready = prepared_for(view, described, toolchain)?
+    mut whole = whole_unit_reason(ready, unit_options)?
+    if whole == "" and shared and ready.project_library is None:
+        whole = "shared library refused"
+    if whole != "":
+        record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
+        return Ok(PreparedProgram(unit=ready, toolchain=toolchain, sources=sources, whole=whole))
+    key, reach = unit_key_and_reach(ready, toolchain)?
+    record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
+    return Ok(PreparedProgram(unit=ready, toolchain=toolchain, sources=sources, whole="", key=Some(key), reach=reach))
 
 
 def verify_scheduled_origin(unit: Borrowed[UnitDescription], scheduled: str) -> Result[None, str]:

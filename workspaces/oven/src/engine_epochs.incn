@@ -2,6 +2,7 @@
 
 from rust::std::str import from_utf8
 from rust::std::rc import Rc
+from rust::std::mem import take
 from std.environ import get_optional
 from std.fs import Path
 from std.encoding.hex import hexlify
@@ -12,6 +13,8 @@ from engine_capture import (
     CaptureRequest,
     CaptureCounters,
     CaptureOutcome,
+    InputPath,
+    InputRole,
     InputSelection,
     SelectedHome,
     capture,
@@ -48,6 +51,8 @@ pub model CapturedRequest:
     pub identity_encodings: int = 1
     pub head: str = ""
     pub transaction: Option[Transaction] = None
+    # A new head may still contain the provisional project listing when there was no source graph.
+    pub first: bool = false
     # The recorded source-graph reach this request was captured with, which its later capture checks again.
     pub reach: Option[SourceGraph] = None
     # Whether the request permits capture to select a project's native provider.
@@ -189,6 +194,7 @@ def prepare_capture(
                     snapshot=before,
                     head=head,
                     transaction=Some(transaction),
+                    first=prior_revision == "",
                     counters=captured.counters,
                     selected=selected,
                     reach=request.reach,
@@ -253,6 +259,43 @@ pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, s
             return refreshed_request(captured, epoch, captured.reach)
 
 
+pub def initial_program_epoch(
+    mut captured: BorrowedMut[CapturedRequest], graph: SourceGraph, source_root: str,
+) -> Result[None, str]:
+    """Replace a provisional listing only when the compiler collected from this request's captured sources."""
+    readings = match captured.readings:
+        Some(found) => found
+        None => return Ok(None)
+    original = readings.as_ref()
+    for path in graph.read:
+        if path not in original:
+            return Ok(None)
+    # This source-only projection keeps the manifest and its other declared inputs. Outside probes keep the legacy
+    # capture so the published epoch never claims an absence the admitted project scope cannot recheck.
+    for path in graph.absent:
+        if not path.startswith(source_root + "/"):
+            return Ok(None)
+    read_paths = set(graph.read)
+    probed = set(graph.absent)
+    for item in captured.epoch.inputs:
+        if item.path in probed:
+            return Err("captured inputs changed before the source graph was selected")
+    inputs = take(captured.epoch.inputs)
+    captured.epoch.inputs = [item for item in inputs if item.role != InputRole.Member or item.path in read_paths]
+    missing = take(captured.epoch.absent)
+    mut absent = {item.path: item for item in missing if item.role != InputRole.Member}
+    for path in graph.absent:
+        if path not in absent:
+            absent[path] = InputPath(path=path, role=InputRole.Member)
+    captured.epoch.absent = [absent[path] for path in sorted([path for path in absent.keys()])]
+    captured.epoch.listings = []
+    captured.identity = captured.epoch.identity()?
+    captured.identity_encodings += 1
+    captured.encodings += 1
+    captured.reach = Some(graph)
+    return stage_epoch(captured)
+
+
 def graph_published(captured: CapturedRequest) -> Result[Option[CapturedRequest], str]:
     """The request refreshed with its unit's newly recorded graph reach, when that reach captures the same identity."""
     reach = recorded_reach(Path(captured.epoch.roots[0]), captured.epoch.selection.profile)
@@ -283,17 +326,23 @@ def refreshed_request(
     epoch: BuildEpoch,
     reach: Option[SourceGraph],
 ) -> Result[CapturedRequest, str]:
-    """`captured` with an epoch of the same identity and fresher metadata, staged for publication with its reach."""
+    """Stage the selected epoch with its reach and the identity already established by the caller."""
     mut refreshed = captured
-    encoded = encode_epoch(epoch)?
     refreshed.epoch = epoch
-    refreshed.revision = hexlify(sha256.digest(encoded))
     refreshed.reach = reach
-    mut transaction = begin_compared(captured.snapshot)
-    transaction = put(transaction, epoch_key(refreshed.revision), encoded)
-    transaction = put(transaction, captured.head, encode_head(refreshed.revision, captured.identity)?)
-    refreshed.transaction = Some(transaction)
+    stage_epoch(refreshed)?
     return Ok(refreshed)
+
+
+def stage_epoch(mut captured: BorrowedMut[CapturedRequest]) -> Result[None, str]:
+    """Replace the tentative capture writes while keeping their original compared snapshot."""
+    encoded = encode_epoch(captured.epoch)?
+    captured.revision = hexlify(sha256.digest(encoded))
+    mut transaction = begin_compared(captured.snapshot)
+    transaction = put(transaction, epoch_key(captured.revision), encoded)
+    transaction = put(transaction, captured.head, encode_head(captured.revision, captured.identity)?)
+    captured.transaction = Some(transaction)
+    return Ok(None)
 
 
 def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[BuildEpoch]], str]:
