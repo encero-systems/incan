@@ -81,3 +81,10 @@ pub def lowering_example_run(
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
         return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
+
+
+pub def attempt_trace(root: Path, name: str) -> Result[Path, str]:
+    """Prepare a separate compiler trace for a measured lowering arm."""
+    path = root.joinpath(name)
+    path.mkdir(true, true).map_err((error) => error.message())?
+    return Ok(path)

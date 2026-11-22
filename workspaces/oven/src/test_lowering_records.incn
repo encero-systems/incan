@@ -15,7 +15,14 @@ from pub::internal_models.records import ReadWitness, encode_record_key
 from files import write
 from json_fields import required_items, required_text
 from engine_protocol_fixtures import json_text_is
-from lowering_record_fixtures import command_proof, lowering_example_run, proof_count, report_fixture_build, stop_example_engine
+from lowering_record_fixtures import (
+    attempt_trace,
+    command_proof,
+    lowering_example_run,
+    proof_count,
+    report_fixture_build,
+    stop_example_engine,
+)
 from scratch import scratch_directory
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
@@ -856,13 +863,6 @@ def unrelated_edit_reports(
         attempts = compare_runtime_demand_edit(binary, source, warm_store, added, "4\nb\n4\n44", "added")?
         assert attempts == 2, f"new runtime demand lowering attempts: {attempts}"
     return Ok((edited, cold))
-
-
-def attempt_trace(root: Path, name: str) -> Result[Path, str]:
-    """Prepare a separate compiler trace for a measured lowering arm."""
-    path = root.joinpath(name)
-    path.mkdir(true, true).map_err((error) => error.message())?
-    return Ok(path)
 
 
 def lowering_attempts(trace: Option[Path]) -> Result[int, str]:
