@@ -155,12 +155,7 @@ pub fn collection_call(
     if parameters.len() != operands.len() {
         return Err("unsupported Body IR collection runtime arity".into());
     }
-    let kind = undisplayed_key(ty, operation);
-    if !kind.is_empty() {
-        return Err(format!(
-            "unsupported Body IR keyed lookup in a dictionary with {kind} keys"
-        ));
-    }
+    refuse_undisplayed_key(ty, operation)?;
     let mut admitted = Vec::with_capacity(operands.len());
     for (operand, parameter) in operands.into_iter().zip(&parameters) {
         match owned_runtime_operand(builder, operand, parameter, span)? {
@@ -168,10 +163,38 @@ pub fn collection_call(
             None => return Err("unsupported Body IR collection runtime argument coercion".into()),
         }
     }
-    let arguments = collection_arguments(ty);
-    let path = format!("incan_native_runtime::{}", collection_name(ty, operation)?);
     let owned_result = result == PlanType::String || is_owned_collection(&result);
     let local = destination.local;
+    let callee = declare_collection_runtime(builder, ty, operation, parameters, result, span)?;
+    terminate_call(builder, callee, admitted, destination, span);
+    if owned_result {
+        builder.owned.push(local);
+    }
+    Ok(())
+}
+
+/// Refuse a keyed dictionary lookup whose missing-key diagnostic cannot display its key.
+pub fn refuse_undisplayed_key(ty: &PlanType, operation: &str) -> Result<(), String> {
+    let kind = undisplayed_key(ty, operation);
+    if kind.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "unsupported Body IR keyed lookup in a dictionary with {kind} keys"
+    ))
+}
+
+/// Declare one hashed runtime operation with exactly its checked generic instantiation, and name it as a callee.
+pub fn declare_collection_runtime(
+    builder: &mut Builder,
+    ty: &PlanType,
+    operation: &str,
+    parameters: Vec<PlanType>,
+    result: PlanType,
+    span: &SourceSpan,
+) -> Result<CalleeKind, String> {
+    let arguments = collection_arguments(ty);
+    let path = format!("incan_native_runtime::{}", collection_name(ty, operation)?);
     builder.externals.push(ExternalFunction {
         path: path.clone(),
         type_arguments: arguments.clone(),
@@ -179,17 +202,7 @@ pub fn collection_call(
         return_type: result,
         span: span.clone(),
     });
-    terminate_call(
-        builder,
-        CalleeKind::Instantiated(path, arguments),
-        admitted,
-        destination,
-        span,
-    );
-    if owned_result {
-        builder.owned.push(local);
-    }
-    Ok(())
+    Ok(CalleeKind::Instantiated(path, arguments))
 }
 
 /// Pass one evaluated value at its runtime carrier, or nothing when the carriers differ. Text an inferred-shared
