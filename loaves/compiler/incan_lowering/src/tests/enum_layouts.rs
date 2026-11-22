@@ -26,6 +26,7 @@ fn source_enum(name: &str, parameters: &[&str], fields: Vec<IncanType>) -> EnumD
     let mut identities = BTreeMap::new();
     identities.insert(name.to_owned(), canonical.clone());
     EnumDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         native_item: String::new(),
         direct_declaration_id: CompilerNodeId::declaration_span("app::layouts", 0, 10),
@@ -48,6 +49,7 @@ fn source_enum(name: &str, parameters: &[&str], fields: Vec<IncanType>) -> EnumD
 /// A model whose one field has type `field`.
 fn holder(field: IncanType) -> NominalDeclaration {
     let mut declaration = NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),

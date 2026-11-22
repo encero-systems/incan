@@ -62,6 +62,7 @@ pub(super) fn nominal(
         .map(|(key, identity)| ((*key).to_owned(), (*identity).clone()))
         .collect();
     NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),

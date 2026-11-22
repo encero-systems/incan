@@ -251,6 +251,7 @@ fn generic_holder_declaration(
     field: CanonicalSymbolId,
 ) -> crate::body_ir::NominalDeclaration {
     crate::body_ir::NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),

@@ -409,6 +409,7 @@ pub fn prepare_executable_surface(
         &public,
         &unrepresentable,
         native_storage,
+        native_storage.then_some(incan_frontend::body_ir::publish_linked_layout),
     )
     .map_err(|error| {
         CliError::failure(format!(

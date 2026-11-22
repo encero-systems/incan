@@ -61,6 +61,7 @@ use std::collections::{HashMap, HashSet};
 pub use canonical_rebinding::refresh_dependency_call_targets;
 pub use context_modules::{ContextModules, ContextModulesIter};
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
+pub use nominal_carriers::{linked_enum_item, linked_model_item, publish_linked_layout};
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use settled_call_inputs::needs_call_witness;

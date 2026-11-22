@@ -14,12 +14,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+mod linked_layout_codec;
 mod module_codec;
 mod namespace_codec;
 mod publication;
 mod surface_build;
 mod surface_reading;
 
+pub use linked_layout_codec::LINKED_LAYOUT_WITNESS_BYTES;
 pub use module_codec::*;
 pub use namespace_codec::{decode_namespace_module, encode_namespace_module};
 pub use surface_build::*;
@@ -308,6 +310,24 @@ impl ExecutableDeclaration {
             Self::Nominal(value) | Self::NominalWithTraits(value, _) => Some(value),
             Self::NominalWithCallables { nominal, .. } => Some(nominal),
             _ => None,
+        }
+    }
+
+    /// The mutable enum layout this fragment carries, including the native layout of a value enum.
+    pub fn enum_layout_mut(&mut self) -> Option<&mut EnumDeclaration> {
+        match self {
+            Self::Enum(value) | Self::EnumWithTraits(value, _) | Self::ValueEnumWithLayout(_, value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// A witness retained from this declaration's authenticated fragment, if the producer carried it.
+    pub fn linked_layout_witness(&self) -> Option<&crate::body_ir::LinkedLayoutWitness> {
+        match self {
+            Self::Enum(value) | Self::EnumWithTraits(value, _) | Self::ValueEnumWithLayout(_, value) => {
+                value.linked_layout_witness.as_ref()
+            }
+            _ => self.nominal()?.linked_layout_witness.as_ref(),
         }
     }
 
