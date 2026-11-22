@@ -136,7 +136,7 @@ pub use namespace_proof::{
 };
 pub use namespace_references::{
     NAMESPACE_IDENTITY_PROFILE, NamespaceReference, decode_namespace_references, encode_namespace_references,
-    namespace_key, namespace_reference_filename,
+    namespace_header_key, namespace_header_reference_filename, namespace_key, namespace_reference_filename,
 };
 pub use namespace_rows::{
     NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader,
