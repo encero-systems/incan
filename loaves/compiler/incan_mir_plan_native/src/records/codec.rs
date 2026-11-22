@@ -1,8 +1,12 @@
 //! Loss-check the complete native interface for ordinary programs through the existing function codec.
 
+use std::collections::BTreeSet;
+
 use crate::nominal::{NominalKind, NominalReference, ProductNominal};
 use crate::plan::{Function, Plan};
-use crate::records::function::{decode_product, decode_runtime, encode_product, encode_runtime, product_nominals};
+use crate::records::function::{
+    decode_noted_product, decode_noted_runtime, encode_product, encode_runtime, product_nominals,
+};
 use crate::records::layout::{
     decode_enums, decode_models, decode_zip_carriers, encode_enums, encode_models, encode_zip_carriers,
 };
@@ -152,20 +156,41 @@ pub fn encode_record_plan_products(
     Ok(encoded)
 }
 
-/// Restore one exact bounded native plan without resolving names or lowering a body.
+/// Restore one exact bounded native plan without resolving names or lowering a body. It checks no linked crate, so it
+/// serves the producer's own round trip and parity reads; a unit restoring an interface uses [`restore_record_plan`].
 pub fn decode_record_plan(encoded: &[u8]) -> Result<Plan, String> {
+    decode_noted_record_plan(encoded).map(|(plan, _)| plan)
+}
+
+/// Restore an interface for a unit that links `linked`, refused when its runtime inventory or a product names a
+/// function or constant of another crate, as a product restored for a unit is (`PlacedRecord::restore`).
+pub fn restore_record_plan(encoded: &[u8], linked: &BTreeSet<String>) -> Result<Plan, String> {
+    let (plan, crates) = decode_noted_record_plan(encoded)?;
+    if let Some(name) = crates.iter().find(|name| !linked.contains(*name)) {
+        return Err(format!(
+            "native interface names crate {name}, which this unit does not link"
+        ));
+    }
+    Ok(plan)
+}
+
+/// Restore an interface's plan, with every linked crate its products and runtime inventory name.
+fn decode_noted_record_plan(encoded: &[u8]) -> Result<(Plan, Vec<String>), String> {
     let stored = read_plan(encoded)?;
     if stored.functions.is_empty() || stored.references.len() != stored.functions.len() {
         return Err("unsupported native-interface schema".to_owned());
     }
     let mut functions: Vec<Function> = Vec::with_capacity(stored.functions.len());
+    let mut crates = Vec::new();
     for (product, references) in stored.functions.iter().zip(&stored.references) {
-        let (function, _demand) = decode_product(product, references)?;
+        let (function, _demand, named) = decode_noted_product(product, references)?;
         functions.push(function);
+        crates.extend(named);
     }
     let models = decode_models(&stored.models)?;
     let enums = decode_enums(&stored.enums)?;
-    let externals = decode_runtime(&stored.runtime)?;
+    let (externals, named) = decode_noted_runtime(&stored.runtime)?;
+    crates.extend(named);
     let zip_carriers = decode_zip_carriers(&stored.zip_carriers)?;
     let mut plan = Plan::new(
         enums,
@@ -176,7 +201,7 @@ pub fn decode_record_plan(encoded: &[u8]) -> Result<Plan, String> {
     );
     plan.programs = stored.programs;
     plan.zip_carriers = zip_carriers;
-    Ok(plan)
+    Ok((plan, crates))
 }
 
 /// Expose the whole interface's ordered function contributions for byte-equivalence checks.

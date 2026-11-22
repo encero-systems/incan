@@ -11,10 +11,11 @@ use super::support::{assign_at, block, empty_function, local, place_at, returnin
 use crate::body::{
     Callee, CalleeKind, Constant, Operand, OperandKind, Projection, RvalueKind, Terminator, TerminatorKind, Unwind,
 };
-use crate::plan::{ExternalFunction, Function};
+use crate::plan::{ExternalFunction, Function, Plan};
 use crate::positions::WirePositions;
+use crate::records::codec::{encode_record_plan, restore_record_plan};
 use crate::records::function::{
-    decode_product, encode_product, encode_runtime, place_product_record, product_nominals,
+    decode_product, decode_runtime, encode_product, encode_runtime, place_product_record, product_nominals,
 };
 use crate::types::{PlanType, source_span};
 
@@ -127,25 +128,21 @@ fn product_keeps_a_loaf_rust_facet_external() -> Result<(), String> {
 }
 
 /// A product naming a Rust-facet function restores only in a unit that links the function's crate; one naming
-/// another crate is refused rather than reaching rustc as an unresolved path. A unit's runtime inventory, which its
-/// native interface carries without that check, keeps the bounded identities.
+/// another crate is refused rather than reaching rustc as an unresolved path.
 #[test]
 fn a_restored_product_names_only_crates_its_unit_links() -> Result<(), String> {
     let (caller, runtime) = facet_caller();
     let references = product_nominals(&caller, &runtime, &[])?;
     let product = encode_product(&caller, &runtime, &[], &[])?;
     let placed = place_product_record(&product, &WirePositions::preserve())?;
-    let linked: BTreeSet<String> = ["incan_stdlib_primitives", "internal_models_native", "incan_loaf_names"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    let linked = facet_crates();
     let (restored, restored_runtime, _) = placed.restore(&references, &linked)?;
     assert!(restored == caller, "a product of linked crates did not restore");
     assert!(
         restored_runtime == runtime,
         "a product of linked crates lost its demand"
     );
-    for name in ["incan_stdlib_primitives", "internal_models_native", "incan_loaf_names"] {
+    for name in &linked {
         let mut unlinked = linked.clone();
         unlinked.remove(name);
         assert!(
@@ -153,11 +150,44 @@ fn a_restored_product_names_only_crates_its_unit_links() -> Result<(), String> {
             "a product naming {name} restored in a unit that does not link it"
         );
     }
-    assert!(
-        encode_runtime(&runtime).is_err(),
-        "a runtime inventory kept a linked-crate identity"
-    );
     Ok(())
+}
+
+/// A unit's native interface keeps a Rust-facet function in its runtime inventory, as a product keeps one, and the
+/// interface restores only in a unit that links every crate its inventory and products name.
+#[test]
+fn a_unit_interface_keeps_a_linked_crate_external() -> Result<(), String> {
+    let (caller, runtime) = facet_caller();
+    let plan = Plan::new(
+        Vec::new(),
+        Vec::new(),
+        vec![caller],
+        runtime,
+        source_span("records.incn", 1, 1),
+    );
+    let encoded = encode_record_plan(&plan)?;
+    let linked = facet_crates();
+    assert!(
+        restore_record_plan(&encoded, &linked)? == plan,
+        "an interface of linked crates did not restore"
+    );
+    for name in &linked {
+        let mut unlinked = linked.clone();
+        unlinked.remove(name);
+        assert!(
+            restore_record_plan(&encoded, &unlinked).is_err(),
+            "an interface naming {name} restored in a unit that does not link it"
+        );
+    }
+    Ok(())
+}
+
+/// The crates the Rust-facet caller and its requirements name.
+fn facet_crates() -> BTreeSet<String> {
+    ["incan_stdlib_primitives", "internal_models_native", "incan_loaf_names"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// A Rust constant, of Rust's own crates or of a Loaf's Rust facet, round-trips by the path its crate exports it at,
@@ -197,6 +227,70 @@ fn product_keeps_a_rust_constant() -> Result<(), String> {
     assert!(
         linked_reader == reader,
         "a product reading a linked crate's constant did not restore"
+    );
+    Ok(())
+}
+
+/// A primitive receiver's method, such as `f64::powf` or `i64::pow`, is Rust's own item and not a crate named `f64`:
+/// a product calling one restores in a unit that links no crate for it, and a unit's runtime inventory keeps it.
+#[test]
+fn a_primitive_method_is_rusts_own_item() -> Result<(), String> {
+    let span = source_span("numbers.incn", 3, 5);
+    let call = TerminatorKind::Call(
+        Callee {
+            kind: CalleeKind::External("f64::powf".to_owned()),
+            span: span.clone(),
+        },
+        Vec::new(),
+        place_at(0, Projection::Whole, &span),
+        1,
+        Unwind::Continue,
+    );
+    let caller = Function::new(
+        "power".to_owned(),
+        Vec::new(),
+        PlanType::Unit,
+        vec![local(PlanType::Unit, &span)],
+        vec![
+            block(
+                Vec::new(),
+                Terminator {
+                    kind: call,
+                    span: span.clone(),
+                },
+                &span,
+            ),
+            block(Vec::new(), returning(&span), &span),
+        ],
+        span.clone(),
+    );
+    let powf = ExternalFunction {
+        path: "f64::powf".to_owned(),
+        type_arguments: Vec::new(),
+        parameters: vec![PlanType::Float, PlanType::Float],
+        return_type: PlanType::Float,
+        span: span.clone(),
+    };
+    let runtime = vec![
+        powf.clone(),
+        ExternalFunction {
+            path: "i64::pow".to_owned(),
+            parameters: vec![PlanType::Int, PlanType::U32],
+            return_type: PlanType::Int,
+            ..powf
+        },
+    ];
+    let references = product_nominals(&caller, &runtime, &[])?;
+    let product = encode_product(&caller, &runtime, &[], &[])?;
+    let placed = place_product_record(&product, &WirePositions::preserve())?;
+    let (restored, restored_runtime, _) = placed.restore(&references, &BTreeSet::new())?;
+    assert!(
+        restored == caller && restored_runtime == runtime,
+        "a product calling a primitive method did not restore in a unit that links no crate"
+    );
+    assert!(
+        decode_runtime(&encode_runtime(&runtime)?)? == runtime,
+        "a runtime inventory did not keep primitive methods"
     );
     Ok(())
 }

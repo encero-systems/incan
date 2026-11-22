@@ -312,10 +312,10 @@ fn keyed_plan_with_a_returning_main_refuses_the_interface() -> Result<(), String
     Ok(())
 }
 
-/// A unit that calls a function of a crate it links, as a Loaf's own Rust facet, still compiles: its runtime inventory
-/// cannot travel in an interface another unit might restore, so it publishes none, and says why.
+/// A unit that calls a function of a crate it links, as a Loaf's own Rust facet, publishes its interface: the
+/// interface keeps the linked-crate external, and only a unit that links the crate restores it.
 #[test]
-fn keyed_plan_calling_a_linked_crate_refuses_the_interface() -> Result<(), String> {
+fn keyed_plan_calling_a_linked_crate_publishes_the_interface() -> Result<(), String> {
     let request = Request::new("linked-crate")?;
     let main = unit_function("main", 1);
     let mut unit = plan(vec![main.clone()], &[]);
@@ -329,15 +329,15 @@ fn keyed_plan_calling_a_linked_crate_refuses_the_interface() -> Result<(), Strin
     retain_product(&request, &main, false)?;
     publish_plan_records(&unit, &request.products, &request.report)?;
     assert!(
-        !request.report(INTERFACE_REPORT).is_file(),
-        "a unit inventory naming a linked crate published an interface"
+        request.report(INTERFACE_REPORT).is_file(),
+        "a unit inventory naming a linked crate published no interface"
     );
     assert!(
-        request
+        !request
             .refusals()?
             .iter()
             .any(|refusal| refusal.refusal.contains("Incan binding identity")),
-        "an omitted interface did not say why its runtime inventory was refused"
+        "a linked-crate external was refused instead of kept"
     );
     Ok(())
 }
