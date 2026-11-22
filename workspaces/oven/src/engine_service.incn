@@ -23,7 +23,7 @@ from engine_messages import (
     CompletionStatus,
     EffectDisposition,
 )
-from engine_state import Identity, ServiceState
+from engine_state import COMPILER_GENERATION_MISMATCH, Identity, ServiceState
 from engine_epochs import prepare_submit
 from engine_actions import Pending, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
@@ -133,8 +133,12 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
         sleep(Duration.from_millis(2))
 
 
-def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: ServiceState, now: int) -> list[Greeting]:
-    """Admit every ready Hello while silent peers wait independently until their bounded handshake expires."""
+def greet_ready(greetings: list[Greeting], mut clients: list[Client], mut state: ServiceState, now: int) -> list[Greeting]:
+    """
+    Admit every ready Hello while silent peers wait independently until their bounded handshake expires. A Hello of
+    another compiler generation means the toolchain was updated: this engine drains its admitted work and retires,
+    so the caller can start the engine of its own generation.
+    """
     mut waiting: list[Greeting] = []
     for index in range(len(greetings)):
         mut greeting = greetings[index]
@@ -145,7 +149,9 @@ def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: Ser
             Ok(true) =>
                 match greet(greeting.channel, state):
                     Ok(client) => clients.append(client)
-                    Err(_) => pass
+                    Err(reason) =>
+                        if reason.detail == COMPILER_GENERATION_MISMATCH:
+                            state.draining = true
             Ok(false) => waiting.append(greeting)
             Err(_) => _ = greeting.channel.transport.close()
     return waiting

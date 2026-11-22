@@ -5,6 +5,8 @@ from engine_wire import DATA_CREDITS, MAX_PAYLOAD, Refusal, RefusalKind, zero_id
 from std.fs import Path
 
 pub const IDLE_SECONDS: int = 600
+# A Hello of another compiler generation: the toolchain was updated under a running engine, which then retires.
+pub const COMPILER_GENERATION_MISMATCH: str = "engine compiler generation mismatch"
 const MAX_INTERESTS: int = 16
 const MAX_PINS: int = 16
 
@@ -65,7 +67,7 @@ pub class ServiceState:
         if hello.service_generation != expected.service_generation:
             return Err(Refusal(kind=RefusalKind.Identity, detail="engine service generation mismatch"))
         if hello.compiler_generation != expected.compiler_generation:
-            return Err(Refusal(kind=RefusalKind.Identity, detail="engine compiler generation mismatch"))
+            return Err(Refusal(kind=RefusalKind.Identity, detail=COMPILER_GENERATION_MISMATCH))
         if hello.credits != DATA_CREDITS or hello.payload_limit != MAX_PAYLOAD:
             return Err(Refusal(kind=RefusalKind.Version, detail="engine transport limits mismatch"))
         return Ok(

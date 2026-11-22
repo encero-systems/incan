@@ -10,7 +10,7 @@ from pub::incan_platform.ipc import dial
 from core_process import executable as current_executable, spawn_detached, running, terminate
 from engine_channel import Channel, SendOutcome
 from engine_messages import Message
-from engine_state import Identity
+from engine_state import COMPILER_GENERATION_MISMATCH, Identity
 from engine_wire import Refusal, RefusalKind, zero_id
 from owner_endpoint import bindable, prepare_directory, socket_prefix
 from unit_freshness import fingerprint
@@ -20,6 +20,8 @@ from publication import publish
 const STARTUP_POLLS: int = 2500
 # A handshake that has not completed in five seconds is a stuck peer, not engine work to wait for.
 pub const HANDSHAKE_SECONDS: u64 = 5
+# How long a caller waits for an engine of another compiler generation to finish its admitted work and exit.
+const RETIREMENT_SECONDS: int = 120
 
 
 pub model ServiceEndpoint:
@@ -61,7 +63,9 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
     """
     Connect using an explicit Oven executable, allowing process-level tests of the installed service entry. An engine
     that exits idle just as this caller connects closes the connection before Welcome. The caller has sent no request,
-    so once that engine no longer holds its lifetime lock it connects once more, which starts a fresh engine.
+    so once that engine no longer holds its lifetime lock it connects once more, which starts a fresh engine. An
+    engine another compiler generation started, before a toolchain update, refuses this caller and retires once its
+    admitted work is done; the caller waits for it to release its lifetime lock and then starts its own.
     """
     match connect_once(root, identity, executable, idle):
         Ok(channel) => return Ok(channel)
@@ -71,9 +75,22 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
                 RefusalKind.Transport => closed = true
                 RefusalKind.ShortRead => closed = true
                 _ => pass
-            if closed and service_available(endpoint(root, identity)?.lock)?:
+            lock = endpoint(root, identity)?.lock
+            if closed and service_available(lock)?:
+                return connect_once(root, identity, executable, idle)
+            if refusal.detail == COMPILER_GENERATION_MISMATCH and await_retired(lock)?:
                 return connect_once(root, identity, executable, idle)
             return Err(refusal)
+
+
+def await_retired(lock: str) -> Result[bool, Refusal]:
+    """Wait, for at most RETIREMENT_SECONDS, until the engine holding `lock` has exited."""
+    started = Instant.now()
+    while int(started.elapsed().as_secs()) < RETIREMENT_SECONDS:
+        if service_available(lock)?:
+            return Ok(true)
+        sleep(Duration.from_millis(20))
+    return Ok(false)
 
 
 def connect_once(root: Path, identity: Identity, executable: str, idle: int) -> Result[Channel, Refusal]:
