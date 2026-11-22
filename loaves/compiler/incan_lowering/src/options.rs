@@ -31,7 +31,9 @@ use crate::lists::taking_iterator_locals;
 use crate::native_type_identity::{ConstructorIndex, native_owner};
 use crate::nominal_frames::{closed_arguments, closed_type, declaration_storage};
 use crate::numerics::numeric_carrier;
+use crate::program_entries::frame_label;
 use crate::text_plan::clone_text;
+use crate::trace_channel::{emit, tracing_products};
 use crate::tuples::{is_tuple_type, tuple_fields, tuple_has_owners};
 use crate::type_parameters::substitute;
 use crate::unions::lower_union_declaration;
@@ -42,9 +44,13 @@ pub fn intrinsic_declarations(
     module: &BodyIrModule,
     file: &str,
     retained: Vec<EnumDeclaration>,
+    phase: &str,
 ) -> Result<Vec<EnumDeclaration>, String> {
     let mut declarations = retained;
+    let retained_count = declarations.len();
     let mut pass = CarrierPass::new(constructors, module, &mut declarations, file);
+    let tracing = tracing_products();
+    let mut bodies = Vec::new();
     for ty in declaration_storage(module) {
         if closed_type(&ty) {
             pass.retain(&ty)?;
@@ -87,12 +93,28 @@ pub fn intrinsic_declarations(
             continue;
         }
         pass.retain_body(body)?;
+        if tracing {
+            bodies.push(body);
+        }
     }
     for declaration in &module.static_declarations {
         pass.retain(&declaration.ty)?;
         if let StaticInitializer::Computed(body) = &declaration.initial {
             pass.retain_body(body)?;
         }
+    }
+    if tracing {
+        let owners: Vec<String> = bodies.into_iter().map(frame_label).collect();
+        let row = serde_json::json!({
+            "phase": phase,
+            "bodies": owners,
+            "nominals": module.nominal_declarations.len(),
+            "enums": module.enum_declarations.len(),
+            "statics": module.static_declarations.len(),
+            "callable_candidates": pass.callable_candidates,
+            "carriers_constructed": pass.declarations.len() - retained_count,
+        });
+        emit("carrier_traversal", "", &row.to_string());
     }
     Ok(declarations)
 }
@@ -120,9 +142,11 @@ struct CarrierPass<'a> {
     declarations: &'a mut Vec<EnumDeclaration>,
     file: &'a str,
     retained: HashSet<IncanType>,
+    callable_candidates: usize,
 }
 
 impl<'a> CarrierPass<'a> {
+    /// Start demand discovery against one checked context and its already assigned carrier slots.
     fn new(
         constructors: &'a ConstructorIndex,
         module: &'a BodyIrModule,
@@ -135,6 +159,7 @@ impl<'a> CarrierPass<'a> {
             declarations,
             file,
             retained: HashSet::new(),
+            callable_candidates: 0,
         }
     }
 
@@ -243,6 +268,7 @@ impl<'a> CarrierPass<'a> {
             return Ok(());
         }
         let module = self.module;
+        self.callable_candidates += module.bodies.len() + module.loaf_callables.len();
         for candidate in &module.bodies {
             if target.canonical != candidate.canonical || candidate.type_parameters.len() != target.type_args.len() {
                 continue;
