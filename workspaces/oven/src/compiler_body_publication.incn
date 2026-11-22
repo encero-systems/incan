@@ -695,8 +695,13 @@ def stage_compiled_dependency_sources(
     origin: str,
     unit: UnitDescription,
 ) -> Result[None, str]:
-    """Stage the exact editable-package or same-project declaration records each compiled owner reports reading."""
-    mut slots: Dict[str, str] = {}
+    """
+    Stage the exact editable-package or same-project declaration records each compiled owner reports reading.
+
+    Overloads of one spelling are distinct checked declarations behind one project slot, so the slot binds every
+    declaration this publication's readers claim through it, and a signature edit to any of them changes the binding.
+    """
+    mut slots = project_slot_claims(values, origin)?
     for value in values:
         for dependency in value.dependency_reads:
             match dependency.package:
@@ -722,10 +727,24 @@ def stage_compiled_dependency_sources(
     return Ok(None)
 
 
+def project_slot_claims(values: list[CompiledBodyValue], origin: str) -> Result[Dict[str, list[str]], str]:
+    """Every same-project declaration slot the compiled owners read through, with the checked identities claiming it."""
+    mut claims: Dict[str, list[str]] = {}
+    for value in values:
+        for dependency in value.dependency_reads:
+            if dependency.package is None:
+                slot_key = encode_record_key(project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity))?
+                if slot_key not in claims:
+                    claims[slot_key] = []
+                if dependency.identity not in claims[slot_key]:
+                    claims[slot_key].append(dependency.identity)
+    return Ok(claims)
+
+
 def stage_project_dependency_source(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
-    mut slots: Dict[str, str],
+    mut slots: Dict[str, list[str]],
     projections: Borrowed[Dict[str, SourceProjection]],
     value: CompiledBodyValue,
     dependency: CompiledBodyDependencyRead,
@@ -735,13 +754,13 @@ def stage_project_dependency_source(
     """Stage one same-project declaration slot, module index and exact checked signature."""
     slot = project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)
     slot_key = encode_record_key(slot)?
-    if slot_key in slots:
-        if slots[slot_key] != dependency.identity:
-            return Err(f"two checked declarations claim the same project slot: {slot_key}")
-        # The same supplier's projection, name and signature were staged with its binding.
+    if slot_key not in slots:
+        return Err(f"a checked declaration read has no project slot claim: {slot_key}")
+    if len(slots[slot_key]) == 0:
+        # The slot, its supplier's projection, name and signature were staged with its first read.
         return Ok(None)
-    slots[slot_key] = dependency.identity
-    slot_value = encode_binding(slot_key, dependency.identity)?
+    slot_value = encode_binding(slot_key, "\n".join(sorted(slots[slot_key])))?
+    slots[slot_key] = []
     stage_put(prepared, slot_key, slot_value)
     source.add(slot_key, slot_value)
     projection = projections[project_dependency_module(unit, dependency.module)?]
