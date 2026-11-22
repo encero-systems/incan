@@ -149,6 +149,8 @@ fn export_public_name(export: &crate::library_manifest::ExportIdentity) -> Strin
 #[cfg(test)]
 mod canonical_remapping_tests;
 #[cfg(test)]
+mod lazy_layout_tests;
+#[cfg(test)]
 mod nominal_origin_tests;
 #[cfg(test)]
 mod rust_reexport_chain_tests;
