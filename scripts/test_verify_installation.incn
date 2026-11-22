@@ -6,8 +6,10 @@ from release_support import TOOLCHAIN_DIRECTORY, builder_bakery, check_baseline
 from std.fs import Path
 from verify_installation import (
     CENSUS_WORKER_RESERVATION_BYTES,
+    Installation,
     LSP_CONTRACT_CASE,
     audit_relocation,
+    builder_environment,
     census_jobs,
     require_lsp_contract,
     verification_gate_width,
@@ -128,4 +130,29 @@ def test_the_relocation_audit_refuses_text_naming_any_builder_path() -> Result[N
             Err(message) => assert message == f"installed records name the builder: {builder}", message
     note.write_bytes(b"\xff\xfe/build/home/x").map_err((error) => error.message())?
     audit_relocation(home, builders)?
+    return Ok(None)
+
+
+def test_release_unit_builds_in_installed_verification_ask_the_builder_bakery() -> Result[None, str]:
+    """
+    The Rust-facet suites and driver integration's helper build compile release units the release already built, so
+    they ask the builder's bakery when the release names one, and the installation's own otherwise; nothing else of the
+    installed environment changes.
+    """
+    installation = Installation(
+        root=Path("/checkout"),
+        home=Path("/installed"),
+        oven=Path("/installed/bin/incan"),
+        lsp=Path("/installed/bin/incan-lsp"),
+        run=Path("/evidence/run.x"),
+        jobs=2,
+        timeout_seconds=600,
+    )
+    shared = builder_environment(installation, "/builder/bakery")
+    assert shared["INCAN_BAKERY"] == "/builder/bakery"
+    assert shared["INCAN_HOME"] == "/installed"
+    assert shared["OVEN_ENGINE_BINARY"] == "/installed/bin/incan"
+    own = builder_environment(installation, "")
+    assert "INCAN_BAKERY" not in own
+    assert len(shared) == len(own) + 1
     return Ok(None)
