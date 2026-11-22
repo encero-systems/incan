@@ -39,6 +39,7 @@ use crate::models::{field_path, field_step_type, model_type};
 use crate::numerics::numeric_carrier;
 use crate::program_context::ProgramContext;
 use crate::statements::is_nominal_type;
+use crate::static_guards::{FieldCopy, field_copier, field_copy, uncloned_enum};
 use crate::string_input::{SyntheticFrame, synthetic_builder};
 use crate::type_parameters::merge_instance_requests;
 
@@ -341,7 +342,7 @@ pub fn read_static(
 }
 
 /// The checked carrier of a static's declared type in this frame.
-fn static_carrier(builder: &Builder, global: &GlobalPlace) -> Result<PlanType, String> {
+pub fn static_carrier(builder: &Builder, global: &GlobalPlace) -> Result<PlanType, String> {
     native_source_type(
         builder.constructors(),
         builder.nominals(),
@@ -355,9 +356,9 @@ fn static_carrier(builder: &Builder, global: &GlobalPlace) -> Result<PlanType, S
 
 /// Read a native guarded static (RFC 052), initializing its module only for a computed value.
 ///
-/// Selected enum and text fields are cloned under the actual shared guard, without cloning unrelated fields. Other
-/// supported reads use an owned snapshot. Only a collection is borrowed mutably, by a method that commits its changed
-/// copy back.
+/// A selected model field is copied or cloned under the actual shared guard, without copying unrelated fields, and a
+/// keyed dictionary entry is cloned alone. Other supported reads use an owned snapshot. Only a collection is borrowed
+/// mutably, by a method that commits its changed copy back.
 fn read_computed_static(
     builder: &mut Builder,
     value: &SourcePlace,
@@ -379,8 +380,10 @@ fn read_computed_static(
         _ => {}
     }
     if projected {
-        if let Some(operand) = read_guarded_static_field(builder, value, slot, &ty, span)? {
-            return Ok(operand);
+        match guarded_field(builder, value, slot, &ty, span)? {
+            GuardedField::Read(field, owned) => return Ok(read_place(field, owned, span)),
+            GuardedField::Uncloned => return Err("unsupported Body IR static enum field without retained Clone".into()),
+            GuardedField::Unread => {}
         }
         // A keyed read borrows the stored dictionary under its guard instead of copying it into a snapshot.
         if let Some(entry) = read_guarded_dictionary_entry(builder, value, slot, &ty, span)? {
@@ -405,16 +408,27 @@ fn read_computed_static(
     target_read(builder, selected, fact, span)
 }
 
-/// Clone a selected enum or text field under the actual storage guard, without cloning unrelated object fields.
-fn read_guarded_static_field(
+/// What a guarded field read found for one projection.
+enum GuardedField {
+    /// The field copied out under the guard into this frame-owned local, and whether that local owns resources.
+    Read(Place, bool),
+    /// An enum field whose declaration retains no Clone.
+    Uncloned,
+    /// A projection this route does not read: a payload, an index, or a carrier it cannot copy.
+    Unread,
+}
+
+/// Copy one selected field of a model static under its actual shared storage guard, never its unrelated fields: a
+/// plain value is copied and an owned one cloned, into a local of this frame made before any later write.
+fn guarded_field(
     builder: &mut Builder,
     value: &SourcePlace,
     slot: usize,
     owner: &PlanType,
     span: &SourceSpan,
-) -> Result<Option<Operand>, String> {
+) -> Result<GuardedField, String> {
     let PlanType::Model(index, name) = owner else {
-        return Ok(None);
+        return Ok(GuardedField::Unread);
     };
     let receiver = PlanType::ModelRef(*index, name.clone());
     let fields = field_path(
@@ -424,59 +438,27 @@ fn read_guarded_static_field(
         value.projection.len(),
     )?;
     let Some(last) = fields.last() else {
-        return Ok(None);
+        return Ok(GuardedField::Unread);
     };
     if fields.iter().any(|field| field.variant >= 0) {
-        return Ok(None);
+        return Ok(GuardedField::Unread);
     }
     let result = last.ty.clone();
-    let (reference, callee) = match &result {
-        PlanType::String => {
-            let path = "incan_native_runtime::clone_text";
-            builder.externals.push(ExternalFunction {
-                path: path.into(),
-                type_arguments: Vec::new(),
-                parameters: vec![PlanType::StringRef],
-                return_type: result.clone(),
-                span: span.clone(),
-            });
-            (PlanType::StringRef, CalleeKind::External(path.into()))
-        }
-        PlanType::Enum(index, name) => {
-            let cloned = usize::try_from(*index)
-                .ok()
-                .and_then(|slot| builder.enums().get(slot))
-                .is_some_and(|declaration| declaration.derives.iter().any(|derive| derive == "Clone"));
-            if !cloned {
-                return Err("unsupported Body IR static enum field without retained Clone".into());
-            }
-            let reference = PlanType::EnumRef(*index, name.clone());
-            let path = "core::clone::Clone::clone";
-            builder.externals.push(ExternalFunction {
-                path: path.into(),
-                type_arguments: vec![result.clone()],
-                parameters: vec![reference.clone()],
-                return_type: result.clone(),
-                span: span.clone(),
-            });
-            (reference, CalleeKind::Instantiated(path.into(), vec![result.clone()]))
-        }
-        _ => return Ok(None),
+    if uncloned_enum(builder, &result) {
+        return Ok(GuardedField::Uncloned);
+    }
+    let Some(copy) = field_copy(builder, &result, span)? else {
+        return Ok(GuardedField::Unread);
     };
+    let owned = matches!(copy, FieldCopy::Clone { .. });
     let name = format!(
         "{}__incan_static_field_{slot}_{}",
         builder.name,
         builder.synthesized.len()
     );
-    let reader = StaticReader {
-        name: name.clone(),
-        receiver,
-        result: result.clone(),
-        callee,
-    };
     builder
         .synthesized
-        .push(static_field_reader(reader, fields, reference, span));
+        .push(field_copier(name.clone(), receiver, result.clone(), fields, copy, span));
     let owner_module = static_owner(&builder.program.statics[slot]);
     initialize_module_statics(builder, &owner_module, span);
     let output = temporary(builder, result, span);
@@ -487,8 +469,10 @@ fn read_guarded_static_field(
         output.clone(),
         span,
     );
-    builder.owned.push(output.local);
-    Ok(Some(read_place(output, true, span)))
+    if owned {
+        builder.owned.push(output.local);
+    }
+    Ok(GuardedField::Read(output, owned))
 }
 
 /// One synthesized StaticMethod accessor: its name, borrowed receiver, result and the call it makes.
@@ -497,60 +481,6 @@ struct StaticReader {
     receiver: PlanType,
     result: PlanType,
     callee: CalleeKind,
-}
-
-/// Borrow the exact checked field path while the enclosing StaticMethod accessor keeps its shared guard alive.
-fn static_field_reader(
-    reader: StaticReader,
-    fields: Vec<FieldProjection>,
-    reference: PlanType,
-    span: &SourceSpan,
-) -> Function {
-    let field = Place {
-        local: 1,
-        projection: Projection::DerefFields(fields),
-        span: span.clone(),
-    };
-    let borrowed = plan_assign(plan_place(2, span), RvalueKind::Borrow(field), span);
-    let invocation = TerminatorKind::Call(
-        Callee {
-            kind: reader.callee,
-            span: span.clone(),
-        },
-        vec![read_place(plan_place(2, span), false, span)],
-        plan_place(0, span),
-        1,
-        Unwind::Continue,
-    );
-    let locals = vec![
-        Local {
-            ty: reader.result.clone(),
-            span: span.clone(),
-        },
-        Local {
-            ty: reader.receiver.clone(),
-            span: span.clone(),
-        },
-        Local {
-            ty: reference,
-            span: span.clone(),
-        },
-    ];
-    Function::new(
-        reader.name,
-        vec![Parameter {
-            name: "__incan_receiver".into(),
-            ty: reader.receiver,
-            span: span.clone(),
-        }],
-        reader.result,
-        locals,
-        vec![
-            plan_block(vec![borrowed], invocation, span),
-            plan_block(Vec::new(), TerminatorKind::Return, span),
-        ],
-        span.clone(),
-    )
 }
 
 /// Clone the one value a key selects in a guarded dictionary, without copying the dictionary.
@@ -692,7 +622,8 @@ fn selected_place(selected: Operand) -> Result<Place, String> {
 
 /// Select a native guarded static's projection, or return None for other storage.
 ///
-/// A keyed dictionary entry is read under the storage guard; any other projection is selected inside a fresh snapshot.
+/// A model field is copied alone and a keyed dictionary entry read under the storage guard; any other projection is
+/// selected inside a fresh snapshot.
 pub fn computed_static_root(
     builder: &mut Builder,
     value: &SourcePlace,
@@ -706,6 +637,11 @@ pub fn computed_static_root(
         return Ok(None);
     }
     let ty = static_carrier(builder, global)?;
+    if !value.projection.is_empty()
+        && let GuardedField::Read(field, _) = guarded_field(builder, value, slot, &ty, span)?
+    {
+        return Ok(Some(field));
+    }
     if !value.projection.is_empty()
         && let Some(entry) = read_guarded_dictionary_entry(builder, value, slot, &ty, span)?
     {
