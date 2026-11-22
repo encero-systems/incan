@@ -372,7 +372,7 @@ impl TypeChecker {
         for entry in loaves.values() {
             let (local_remapping, entry_preserving_keys) = self.register_artifact_type_names(library, entry, remapping);
             preserving_identity_keys.extend(entry_preserving_keys);
-            preserving_type_keys.extend(self.rebuild_artifact_symbol_layouts(entry, &local_remapping));
+            preserving_type_keys.extend(self.rebuild_artifact_symbol_layouts(entry, local_remapping));
         }
         (preserving_identity_keys, preserving_type_keys)
     }
@@ -457,12 +457,12 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn rebuild_artifact_symbol_layouts(
         &mut self,
         entry: &LoafEntry,
-        local_remapping: &HashMap<String, String>,
+        local_remapping: HashMap<String, String>,
     ) -> HashSet<String> {
         let artifact = &entry.artifact;
         let manifest = &artifact.manifest;
         let owner_route = entry.key.as_str();
-        let local_remapping = Arc::new(local_remapping.clone());
+        let local_remapping = Arc::new(local_remapping);
         let mut scopes = DeclaringScopes::new();
         let mut preserving_type_keys = HashSet::new();
         for export in &manifest.contract_metadata.identity_graph.exports {
