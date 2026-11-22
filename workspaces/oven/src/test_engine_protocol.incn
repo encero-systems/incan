@@ -104,13 +104,13 @@ pub def test_a_caller_waits_for_a_busy_engine_to_answer_hello() -> Result[None, 
     engine = spawn(() => greet_after_a_build(listener, identity, store))
     started = Instant.now()
     connected = connect_with(store, identity, executable()?)
-    waited = started.elapsed().as_secs()
+    waited = int(started.elapsed().as_secs())
     match engine.join():
         Ok(outcome) => outcome?
         Err(_) => return Err("the busy engine thread panicked")
     mut channel = connected.map_err(detail)?
     _ = channel.transport.close()
-    assert waited >= HANDSHAKE_SECONDS, f"the caller was greeted after {waited} s, inside the handshake bound"
+    assert waited >= int(HANDSHAKE_SECONDS), f"the caller was greeted after {waited} s, inside the handshake bound"
     return Ok(None)
 
 
