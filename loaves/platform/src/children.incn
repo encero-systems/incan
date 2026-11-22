@@ -1,0 +1,15 @@
+"""Children a long-lived process starts and does not wait on: retained so each is reaped once it exits."""
+
+from rust::std::process import Child
+from rust::incan_platform_clock import reap_retained_children as native_reap, retain_child as native_retain
+
+
+pub def retain_child(child: Child) -> Result[None, str]:
+    """Keep a started child this process will not wait on, so it never outlives its exit as a zombie."""
+    return native_retain(child).map_err((error) => f"cannot retain a child process: {error}")
+
+
+pub def reap_retained_children() -> Result[int, str]:
+    """Reap every retained child that has exited and return how many; a running child stays retained."""
+    reaped = native_reap().map_err((error) => f"cannot reap retained children: {error}")?
+    return Ok(int(reaped))

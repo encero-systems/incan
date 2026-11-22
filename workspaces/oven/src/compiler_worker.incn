@@ -14,6 +14,7 @@ from std.environ import get_or
 from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
+from pub::incan_platform.children import retain_child
 from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file, open_stream
 from home import owners_dir
@@ -472,16 +473,18 @@ def launch(toolchain: Toolchain, endpoint: Endpoint, snapshot_authority: Option[
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
     clock = begin()
-    child = command.spawn().map_err((error) => f"cannot start compiler worker: {error}")?
+    mut child = command.spawn().map_err((error) => f"cannot start compiler worker: {error}")?
     record(Operation.DriverSpawn, toolchain.driver, clock)
     waiting = begin()
     started = await_ready(listener, child, endpoint)
+    # The worker outlives this request and retires on its own; its handle is kept so it is reaped once it exits (D.9).
+    retain_child(child)?
     record(Operation.WorkerReady, toolchain.driver, waiting)
     discard_file(Path(endpoint.ready))
     return started
 
 
-def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) -> Result[None, str]:
+def await_ready(mut listener: Listener, mut child: BorrowedMut[Child], endpoint: Endpoint) -> Result[None, str]:
     """Require the child's protocol, generation and PID; a silent or failed child never receives a request."""
     for poll in range(READINESS_POLLS):
         match listener.poll()?:
