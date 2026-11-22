@@ -108,6 +108,12 @@ pub def prepare_captured_source_inputs(
                     placement = projection.placements[facet]
                     if stage_changed_projection(selected, prepared, encode_record_key(placement.key)?, placement, positioned)?:
                         changed.append(placement.key)
+                # Only another unit's checked bodies read a declaration's span: a path dependency's module stages it.
+                if identity[0] != source_origin(unit):
+                    for facet in projection.spans.keys():
+                        span = projection.spans[facet]
+                        if stage_changed_projection(selected, prepared, encode_record_key(span.key)?, span, positioned)?:
+                            changed.append(span.key)
                 for owner in projection.owners:
                     for record in [owner, signature_record(owner)]:
                         key = encode_record_key(record.key)?
