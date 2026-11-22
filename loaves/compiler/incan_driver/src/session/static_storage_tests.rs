@@ -78,6 +78,7 @@ fn selected_native_loaf_requires_producer_owned_static_storage() -> Result<(), B
             &public,
             &BTreeSet::new(),
             native_storage,
+            None,
         )?;
         manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
             representation_version: representation_version(&surface.bytes)?,
