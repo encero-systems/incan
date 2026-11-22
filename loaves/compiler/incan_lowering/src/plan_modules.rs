@@ -404,7 +404,7 @@ mod tests {
         source_span,
     };
 
-    use super::{FRAME_COMPANION, admitted_frames, admitted_page, read_admitted, report_admitted};
+    use super::{FRAME_COMPANION, admitted_frames, admitted_page, read_admitted, report_admitted, staged_page};
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
     use crate::scalar_store::AdmittedPayload;
@@ -721,6 +721,47 @@ mod tests {
             admitted_page(Some(&products), "named_zeta", Some("profile"))
                 .events
                 .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Every reader of a staged page, such as the one that appends the events of an admitted module's restored
+    /// functions, reads a page Oven offers by its store frame from the segment range, checked against the digest the
+    /// page is named by; a copied page is read as before, and a frame without its digest, or with another, is refused.
+    #[test]
+    fn every_reader_of_a_staged_page_reads_a_frame_offered_page_checked_by_its_digest() -> Result<(), String> {
+        let root = directory("frame-reader");
+        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        let companion = |path: &Path, suffix: &str| PathBuf::from(format!("{}{suffix}", path.display()));
+        let segment = root.join("one.seg");
+        write(&segment, b"prefix page bytes suffix")?;
+        let framed = root.join("framed.incnmodule.positioned");
+        write(
+            &companion(&framed, FRAME_COMPANION),
+            format!("{}\n7\n10\n", segment.display()).as_bytes(),
+        )?;
+        write(
+            &companion(&framed, ".digest"),
+            hex::encode(Sha256::digest(b"page bytes")).as_bytes(),
+        )?;
+        assert_eq!(staged_page(&framed)?, b"page bytes".to_vec());
+        let copied = root.join("copied.incnmodule.positioned");
+        write(&copied, b"copied page")?;
+        assert_eq!(staged_page(&copied)?, b"copied page".to_vec());
+        let unnamed = root.join("unnamed.incnmodule.positioned");
+        write(
+            &companion(&unnamed, FRAME_COMPANION),
+            format!("{}\n7\n10\n", segment.display()).as_bytes(),
+        )?;
+        assert!(staged_page(&unnamed).is_err(), "a frame without its digest was read");
+        write(
+            &companion(&unnamed, ".digest"),
+            hex::encode(Sha256::digest(b"other bytes")).as_bytes(),
+        )?;
+        assert!(
+            staged_page(&unnamed).is_err(),
+            "a frame whose bytes are not its digest was read"
         );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
