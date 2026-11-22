@@ -891,7 +891,9 @@ def shared_unit_runs(binary: str, source: Path, store: Path, trace: Path) -> Res
     spans = unit_spans(trace)?
     assert len(spans) == 4, f"expected four shared-unit spans, found {len(spans)}"
     for index in range(1, len(spans)):
-        assert spans[index - 1].1 <= spans[index].0, "requests for one unit overlapped"
+        _, previous_end = spans[index - 1]
+        started, _ = spans[index]
+        assert previous_end <= started, "requests for one unit overlapped"
     return Ok(None)
 
 
@@ -907,7 +909,9 @@ def distinct_unit_runs(binary: str, root: Path, store: Path, trace: Path) -> Res
     _ = finished_run(second_output.status.success(), second_output.stdout, second_output.stderr)?
     spans = unit_spans(trace)?
     assert len(spans) == 6, f"expected two additional unit spans, found {len(spans) - 4}"
-    assert spans[5].0 < spans[4].1, "requests for different units did not overlap"
+    _, earlier_end = spans[4]
+    later_start, _ = spans[5]
+    assert later_start < earlier_end, "requests for different units did not overlap"
     return Ok(None)
 
 
@@ -916,7 +920,10 @@ def concurrent_fixture(root: Path, name: str, argument: str) -> Result[Path, str
     directory = root.joinpath(name)
     directory.mkdir(true, true).map_err((error) => error.message())?
     source = directory.joinpath("main.incn")
-    write(source, f"def twice(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    println(twice({argument}))\n")?
+    write(
+        source,
+        f"def twice(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    println(twice({argument}))\n",
+    )?
     return Ok(source)
 
 
