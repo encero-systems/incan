@@ -28,7 +28,6 @@ pub struct DependencyInterfacePreparationCache {
     /// Each compiled library's nominal public types with their canonical spellings and admitted identities.
     pub(super) canonical_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<[CanonicalTypeEntry]>>>>,
     /// Each compiled Loaf's install record, by Loaf key: what installing it reads of it.
-    #[cfg(test)]
     pub(super) install_records:
         Arc<std::sync::Mutex<HashMap<String, Arc<crate::library_manifest::install_record::LoafInstallRecord>>>>,
     /// Each compiled Loaf's nominal type origins, by Loaf key, for the foreign preparations that reach it.

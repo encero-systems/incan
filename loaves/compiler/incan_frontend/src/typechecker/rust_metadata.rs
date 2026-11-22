@@ -453,8 +453,18 @@ impl TypeChecker {
                 .declaration_source_path(canonical),
             _ => None,
         };
-        let mut identity =
-            PublicLibraryTypeIdentity::new(library, declaration_path.unwrap_or(source_path)).with_canonical(canonical);
+        self.admitted_type_identity_at(library, declaration_path.unwrap_or(source_path), canonical)
+    }
+
+    /// The identity a nominal type of the compiled Loaf `library`, declared at `source_path`, is admitted under: its
+    /// canonical identity and the exact artifact the index selects for the Loaf that declares it.
+    pub(in crate::typechecker) fn admitted_type_identity_at(
+        &self,
+        library: &str,
+        source_path: &[String],
+        canonical: Option<CanonicalSymbolId>,
+    ) -> PublicLibraryTypeIdentity {
+        let mut identity = PublicLibraryTypeIdentity::new(library, source_path).with_canonical(canonical);
         // The declaring Loaf of a re-exported type may be another Loaf than the one it was imported through.
         identity.selected_provider = match &identity.canonical {
             Some(canonical) => self.loaves.declaring_loaf(canonical),

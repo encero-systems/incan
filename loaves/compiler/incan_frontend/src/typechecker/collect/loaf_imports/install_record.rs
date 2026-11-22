@@ -9,11 +9,36 @@ use crate::library_manifest::install_record::{
 };
 
 impl TypeChecker {
+    /// The install record of the compiled Loaf indexed as `library`, produced once for the checkers of one module
+    /// graph from its manifest `manifest`.
+    pub(in crate::typechecker::collect) fn prepared_install_record(
+        &self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> Arc<LoafInstallRecord> {
+        let prepared = &self.dependency_interface_preparation_cache.install_records;
+        if let Some(record) = prepared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(library)
+        {
+            return Arc::clone(record);
+        }
+        let record = Arc::new(self.loaf_install_record(library, manifest));
+        Arc::clone(
+            prepared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(library.to_owned())
+                .or_insert(record),
+        )
+    }
+
     /// The install record of the compiled Loaf indexed as `library`, whose manifest is `manifest`: its nominal public
     /// types as its canonical type remapping admits them, its root exports by kind and its type origins.
     pub fn loaf_install_record(&self, library: &str, manifest: &LibraryManifest) -> LoafInstallRecord {
         let canonical_types = self
-            .prepared_canonical_type_remapping(library, manifest)
+            .manifest_nominal_public_types(library, manifest)
             .iter()
             .map(|entry| InstallCanonicalType {
                 public_name: entry.public_name.clone(),
