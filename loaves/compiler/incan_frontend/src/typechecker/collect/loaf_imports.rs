@@ -120,10 +120,8 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
 fn collect_nominal_type_origins(
     manifest: &LibraryManifest,
 ) -> BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
-    use crate::library_manifest::VisitTypeRefs;
     let mut origins = BTreeMap::new();
-    let mut projection = manifest.clone();
-    projection.visit_type_refs(&mut |ty| {
+    crate::library_manifest::visit_copied_type_refs(manifest, &mut |ty| {
         if let Some(origin) = TypeChecker::nominal_type_origin(ty)
             && !origin
                 .canonical
