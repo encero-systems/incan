@@ -16,8 +16,9 @@ At most N invocations run at once: `--jobs N`, else the core count. Each invocat
 only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Oven
 sources share a pool of private worker projects under `.agents/state`, one per job. Each Oven source starts in whichever
 worker project is free, so a long source never holds back the sources planned after it, and a worker project runs one
-source at a time, so concurrent generations never share mutable output. The worker projects are removed once every
-invocation has exited.
+source at a time, so concurrent generations never share mutable output. The Oven sources link one project library,
+which the first of them to start builds, so the Loaf tests run while it builds and the other Oven sources follow; the
+logs still join in the order above. The worker projects are removed once every invocation has exited.
 
 A source that needs a settled installation runs alone after every other invocation has exited. Its compile-only
 listing (`--list`, logged as `NNN-<source>-compile.log` and never joined) starts first among the others, so the run
@@ -331,7 +332,7 @@ pub def planned_outcome(
     mut pooled_ignored = len(early)
     if keep_going:
         pooled_ignored = len(pooled)
-    first = run_pool(oven, pooled, jobs, memory, pooled_ignored)?
+    first = run_pool(oven, pooled, jobs, memory, pooled_ignored, admission_order(pooled))?
     mut logs = [pooled[index].log.0 for index in first.started if index >= len(early)]
     mut succeeded = len([index for index in first.failed if index >= len(early)]) == 0
     if succeeded or keep_going:
@@ -344,6 +345,26 @@ pub def planned_outcome(
             logs.append(settled[index].log.0)
         succeeded = succeeded and len(second.failed) == 0
     return Ok(PlannedOutcome(started=[item for item in planned if item.log.0 in logs], succeeded=succeeded))
+
+
+pub def admission_order(pooled: list[Invocation]) -> list[int]:
+    """
+    The order the pool admits its invocations in. Invocations in worker projects link the project library that the
+    first of them to start builds, and the others wait for it; invocations without one, the Loaf tests, never do. So
+    the first worker invocation (the compile-ahead, when there is one) starts the library first, every invocation
+    without a worker project runs while it builds, and the other worker invocations follow.
+    """
+    mut leading: list[int] = []
+    mut beside: list[int] = []
+    mut after: list[int] = []
+    for index in range(len(pooled)):
+        if len(pooled[index].workers) == 0:
+            beside.append(index)
+        elif len(leading) == 0:
+            leading.append(index)
+        else:
+            after.append(index)
+    return leading + beside + after
 
 
 pub def compile_ahead(planned: list[Invocation]) -> list[Invocation]:
@@ -506,10 +527,22 @@ pub def run_all_failures(
     return Ok(run_pool(oven, planned, jobs, memory, ignored_prefix)?.failed)
 
 
-def run_pool(oven: str, planned: list[Invocation], jobs: int, memory: int, ignored_prefix: int) -> Result[PoolOutcome, str]:
-    """Keep the positions this run admitted so earlier logs cannot stand in for unscheduled work."""
+def run_pool(
+    oven: str,
+    planned: list[Invocation],
+    jobs: int,
+    memory: int,
+    ignored_prefix: int,
+    order: list[int] = [],
+) -> Result[PoolOutcome, str]:
+    """
+    Keep the positions this run admitted so earlier logs cannot stand in for unscheduled work. `order` is the order
+    positions are admitted in; empty admits them in position order.
+    """
     reservations = [item.reservation for item in planned]
-    mut waiting = [index for index in range(len(planned))]
+    mut waiting = order
+    if len(waiting) == 0:
+        waiting = [index for index in range(len(planned))]
     mut active: list[Running] = []
     mut failed: list[int] = []
     while len(waiting) > 0 or len(active) > 0:

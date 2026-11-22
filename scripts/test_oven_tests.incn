@@ -5,11 +5,11 @@ from std.tempfile import TemporaryDirectory
 from check_test_support import write
 from pub::incan_platform.probes import process_table
 from oven_tests import (
-    admission_order,
     HEADROOM_BYTES,
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES,
     Invocation,
+    admission_order,
     admitted,
     compile_ahead,
     default_jobs,
