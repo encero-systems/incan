@@ -9,15 +9,11 @@ from check_support import repository_root, write_stderr
 from driver_evidence import retain_driver_evidence
 from native_build import (
     NativeContext,
-    PendingToolBuild,
     StandardGeneration,
     StandardProfile,
-    build_candidate_standard_with_lsp,
-    build_oven_with_standard_profile,
+    build_shipped_tools,
     build_source_tools,
     build_standard_packages,
-    cancel_tool_build,
-    finish_tool_build,
     publish_support,
     readmit_build_home,
     require_unique_runtime_root,
@@ -139,7 +135,6 @@ pub model Candidate:
     pub context: NativeContext
     pub oven: Path
     pub lsp: Path
-    pub pending_lsp: Option[PendingToolBuild]
 
 
 def main() -> None:
@@ -259,7 +254,7 @@ def produce_candidate(run: ReleaseRun) -> Result[Candidate, str]:
         _ = adopt_signed_bundle(Path(run.options.signed_bundle), run.paths.bundle)?
         oven = run.paths.bundle.joinpath("incan")
         lsp = run.paths.bundle.joinpath("incan-lsp")
-        return Ok(Candidate(context=native_context(run, oven, run.paths.home), oven=oven, lsp=lsp, pending_lsp=None))
+        return Ok(Candidate(context=native_context(run, oven, run.paths.home), oven=oven, lsp=lsp))
     # 2. Source closure, then 3. the compiler that produces the runtime and standard Loaves, then 4. the shipped tools.
     phase(run, "source-closure")?
     mut candidate = build_source_closure(run)?
@@ -513,7 +508,7 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     publish_support(context, helper)?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
-    return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
+    return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
 
 
 def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
@@ -640,8 +635,9 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
     build_candidate_providers(context, helper)?
-    lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-")?
-    return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+    # The language server's and Oven's Rust closures import the release providers, so they are published first.
+    build_standard_packages(context, helper, "candidate-", [StandardProfile.Release])?
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=Path("")))
 
 
 def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
@@ -696,23 +692,7 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
     """Build the shipped tools, stamped for the workflow, copy the bundle tools, and pack the candidate toolchain."""
     _ = stamp_release_signer(run.paths.source, run.paths.toolchain, run.options.stamp_signer)?
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
-    overlap = candidate.pending_lsp.is_some()
-    oven = match build_oven_with_standard_profile(
-        candidate.context,
-        helper,
-        "candidate-",
-        StandardProfile.Debug,
-        overlap,
-    ):
-        Ok(built) => built
-        Err(message) =>
-            if let Some(pending) = candidate.pending_lsp:
-                _ = cancel_tool_build(pending)
-            return Err(message)
-
-    lsp = match candidate.pending_lsp:
-        Some(pending) => finish_tool_build(candidate.context, pending)?
-        None => candidate.lsp
+    oven, lsp = build_shipped_tools(candidate.context, helper, "candidate-")?
 
     bundle_oven = run.paths.bundle.joinpath("incan")
     _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
@@ -730,7 +710,7 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
             build_environment(run, run.paths.home, bundle_oven),
         ),
     )?
-    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp, pending_lsp=None))
+    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp))
 
 
 def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
