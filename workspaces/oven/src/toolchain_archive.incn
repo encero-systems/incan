@@ -212,7 +212,7 @@ def sealed_records(driver: str, stage: Path, manifests: Path, typed: bool) -> Re
 
 pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
     """
-    Copy the shipped manifests and executable sidecars as plain files at their staged relative paths.
+    Copy the shipped manifests and their executable and facts sidecars as plain files at their staged relative paths.
 
     The compiler exports the records of each manifest below one directory and follows no link. The packing home may
     hold Loaves the archive leaves behind, such as a runtime an earlier compiler built, so the sealed set is exported
@@ -227,7 +227,7 @@ pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
             if entry.is_dir():
                 if not entry.is_symlink():
                     pending.append(entry)
-            elif entry.name().endswith(".incnlib") or entry.name().endswith(".incnbody"):
+            elif entry.name().endswith(".incnlib") or entry.name().endswith(".incnbody") or entry.name().endswith(".incnfacts"):
                 copy = view.joinpath(entry.0[len(stage.0) + 1:])
                 make_directory(copy.parent())?
                 contents = entry.read_bytes().map_err((error) => f"staged compiler artifact: cannot {error.message()}")?

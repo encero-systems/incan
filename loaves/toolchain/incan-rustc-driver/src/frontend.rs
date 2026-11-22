@@ -807,6 +807,14 @@ fn compile_unit(
             search: published_search,
             macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
         };
+        let mut checker = incan_frontend::typechecker::TypeChecker::new();
+        checker.set_loaves(std::sync::Arc::clone(&program.dependencies.loaves));
+        let install = checker.loaf_install_record(&manifest.name, &manifest);
+        program
+            .dependencies
+            .loaves
+            .validate_demands()
+            .map_err(|error| error.to_string())?;
         let prepared = prepare_loaf_publication(
             &directory,
             manifest,
@@ -814,6 +822,7 @@ fn compile_unit(
             &closure,
             &dependencies.anchors,
             program.graph.as_deref(),
+            Some(&install),
         )
         .map_err(|error| error.to_string())?;
         Some((directory, prepared))

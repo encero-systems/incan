@@ -18,6 +18,9 @@ use crate::library_manifest::capabilities::Contributions;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use crate::library_manifest::install_record::{
+    INSTALL_RECORD_SCHEMA, LoafInstallRecord, read_published_install_record,
+};
 use crate::library_manifest::type_scope::ModuleTypeScope;
 use crate::rust_abi_cache::RustAbiCache;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
@@ -97,12 +100,15 @@ pub(super) struct IndexedLoaf {
     /// The records read by family and name, kept for the rest of the compilation so each is read once; `None` where
     /// the installed set holds no such record.
     named: Arc<Mutex<NamedRecords>>,
+    /// The one admitted install record, including any authentication failure, for this indexed owner.
+    install: Arc<OnceLock<Result<Option<Arc<LoafInstallRecord>>, LoafIndexError>>>,
 }
 
 /// Records read by name, keyed by family and name.
 type NamedRecords = HashMap<(&'static str, String), Option<Arc<Vec<serde_json::Value>>>>;
 
 impl IndexedLoaf {
+    /// Start with the admitted owner and keep each later demand local to that exact indexed artifact.
     fn new(
         key: String,
         namespace: LoafNamespace,
@@ -126,6 +132,7 @@ impl IndexedLoaf {
             vocabulary: Arc::default(),
             rust_abi: Arc::default(),
             named: Arc::default(),
+            install: Arc::default(),
         }
     }
 
@@ -457,6 +464,44 @@ impl IndexedLoaf {
         Ok(values)
     }
 
+    /// Admit just this Loaf's install value. Only an absent descriptor on a legacy dependency enables recomputation.
+    pub(super) fn install_record(&self) -> Result<Option<Arc<LoafInstallRecord>>, LoafIndexError> {
+        self.install
+            .get_or_init(|| {
+                let record: LoafInstallRecord = if matches!(self.namespace, LoafNamespace::Dependency { .. }) {
+                    let artifact = &self.demand()?.artifact;
+                    let Some(expected) = artifact.manifest.contract_metadata.install_record_digest.as_deref() else {
+                        return Ok(None);
+                    };
+                    let value = read_published_install_record(
+                        &artifact.manifest_path(),
+                        &self.name,
+                        &artifact.identity.digest,
+                        expected,
+                    )
+                    .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
+                    tracing::trace!(target: "incan::invocation", phase = "path_install_record",
+                        loaf = %self.name, key = %value.key(), revision = expected, bytes = value.value.len());
+                    super::LibraryManifest::decode_compiler_record_value(&value.value)
+                        .map_err(|error| self.inventory_mismatch(&error.to_string()))?
+                } else {
+                    let Some(values) = self.named_records(RecordFamily::InstallRecord.as_str(), &self.name)? else {
+                        return Ok(None);
+                    };
+                    let [value] = values.as_slice() else {
+                        return Err(self.inventory_mismatch("ambiguous named install record"));
+                    };
+                    serde::Deserialize::deserialize(value)
+                        .map_err(|error| self.inventory_mismatch(&error.to_string()))?
+                };
+                if record.schema != INSTALL_RECORD_SCHEMA {
+                    return Err(self.inventory_mismatch("unsupported install record schema"));
+                }
+                Ok(Some(Arc::new(record)))
+            })
+            .clone()
+    }
+
     /// Validate every record selected under this path, including aliases, before exposing its canonical identity.
     pub fn runtime_binding(&self, path: &str) -> Result<Option<RuntimeCallableBinding>, LoafIndexError> {
         let mut selected = None;
@@ -540,6 +585,7 @@ impl IndexedLoaf {
             .and_then(|result| result.as_ref().err())
             .or_else(|| self.selected_summary.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.vocabulary.get().and_then(|result| result.as_ref().err()))
+            .or_else(|| self.install.get().and_then(|result| result.as_ref().err()))
     }
 
     /// Resolve namespace ownership from the index's declared binding, before reading manifest contents.

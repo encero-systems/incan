@@ -714,6 +714,17 @@ impl LoafIndex {
         indexed.named_records(family.as_str(), name)
     }
 
+    /// The install record selected for one compiled owner, or absence for a legacy publication.
+    pub(crate) fn install_record(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<crate::library_manifest::install_record::LoafInstallRecord>>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        indexed.install_record()
+    }
+
     /// What the index admitted of the entry indexed as `key`, without demanding its manifest.
     pub fn admitted(&self, key: &str) -> Option<AdmittedLoaf> {
         let indexed = self.entries.get(key)?;

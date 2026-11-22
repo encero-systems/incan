@@ -18,8 +18,6 @@ use sha2::{Digest, Sha256};
 use crate::error::{CliError, CliResult};
 use crate::unit::UnitDescription;
 
-/// The schema of the semantic facts a library publishes beside its manifest, read by Oven's publication record.
-const LOAF_FACTS_SCHEMA: &str = "incan.loaf-facts/1";
 use exports::{LibraryReexportResolver, module_key};
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
@@ -32,6 +30,7 @@ use incan_frontend::diagnostics;
 use incan_frontend::library_exports::{
     CheckedNamedExport, checked_exports_by_name, collect_checked_made_private_types, collect_checked_public_exports,
 };
+use incan_frontend::library_manifest::install_record::LoafInstallRecord;
 use incan_frontend::library_manifest::public_identities::public_executable_identities;
 use incan_frontend::library_manifest::{
     ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, NativeUnionExport,
@@ -398,6 +397,7 @@ pub fn prepare_loaf_publication(
     closure: &LoafNativeClosure,
     anchors: &NativeAnchors,
     graph: Option<&[u8]>,
+    install: Option<&LoafInstallRecord>,
 ) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
 
@@ -432,10 +432,16 @@ pub fn prepare_loaf_publication(
         .map_err(|error| CliError::failure(format!("cannot publish the native closure of {name}: {error}")))?;
     let closure = serde_json::to_vec_pretty(&published)
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
+    let install = install
+        .map(|install| manifest.prepare_install_record(install))
+        .transpose()
+        .map_err(|error| CliError::failure(format!("cannot encode the install record of {name}: {error}")))?;
     let encoded = manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
-    let facts = loaf_facts(&manifest, &encoded)?;
+    let facts = manifest
+        .encode_loaf_facts(&encoded, install)
+        .map_err(|error| CliError::failure(format!("cannot encode the facts of {name}: {error}")))?;
     Ok(PreparedLoafPublication {
         name,
         surface,
@@ -456,24 +462,7 @@ pub fn write_loaf(
     anchors: &NativeAnchors,
     graph: Option<&[u8]>,
 ) -> CliResult<()> {
-    prepare_loaf_publication(dir, manifest, bodies, closure, anchors, graph)?.write(dir)
-}
-
-/// The semantic facts a library publishes beside its manifest (RFC 179): the digest consumers that only compile
-/// against it are keyed on, bound to the exact manifest bytes it describes.
-fn loaf_facts(manifest: &LibraryManifest, encoded: &str) -> CliResult<Vec<u8>> {
-    let manifest_digest = hex::encode(Sha256::digest(encoded.as_bytes()));
-    let digests = manifest
-        .compiler_records(&manifest_digest)
-        .map_err(|error| CliError::failure(format!("cannot derive the facts of {}: {error}", manifest.name)))?
-        .digests;
-    serde_json::to_vec(&serde_json::json!({
-        "schema": LOAF_FACTS_SCHEMA,
-        "manifest_digest": manifest_digest,
-        "semantic_facts": digests.semantic_facts,
-        "record_content": digests.record_content,
-    }))
-    .map_err(|error| CliError::failure(format!("cannot encode the facts of {}: {error}", manifest.name)))
+    prepare_loaf_publication(dir, manifest, bodies, closure, anchors, graph, None)?.write(dir)
 }
 
 /// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts

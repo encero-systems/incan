@@ -24,8 +24,10 @@ impl TypeChecker {
         {
             return Some(Arc::clone(record));
         }
-        let manifest = self.loaves.manifest(library)?;
-        let record = Arc::new(self.loaf_install_record(library, manifest));
+        let record = match self.loaves.install_record(library).ok()? {
+            Some(record) => record,
+            None => Arc::new(self.loaf_install_record(library, self.loaves.manifest(library)?)),
+        };
         Some(Arc::clone(
             prepared
                 .lock()

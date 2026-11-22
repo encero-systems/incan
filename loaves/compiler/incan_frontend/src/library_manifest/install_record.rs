@@ -7,12 +7,80 @@
 //! manifest's own published forms: names, paths, canonical identities and type origins.
 
 use std::collections::BTreeMap;
+use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
+use super::compiler_records::{CompilerRecord, RecordFamily};
 use super::{
-    AliasExport, CanonicalIdentityExport, LibraryIdentityGraph, NominalTypeOriginExport, TypeParamExport, TypeRef,
+    AliasExport, CanonicalIdentityExport, LibraryIdentityGraph, LibraryManifestError, NominalTypeOriginExport,
+    TypeParamExport, TypeRef,
 };
+
+/// Version of the Oven library-facts sidecar, including optional independently addressed values.
+pub const LOAF_FACTS_SCHEMA: &str = "incan.loaf-facts/1";
+
+/// The install value's independent address and exact encoded bytes in the existing facts sidecar.
+#[derive(Deserialize, Serialize)]
+pub struct PublishedInstallRecord {
+    key: String,
+    revision: String,
+    value: String,
+}
+
+impl PublishedInstallRecord {
+    /// Transport the same key and byte identity as the compiler record set.
+    pub fn new(record: &CompilerRecord) -> Self {
+        Self {
+            key: record.key(),
+            revision: format!("{:x}", Sha256::digest(&record.value)),
+            value: hex::encode(&record.value),
+        }
+    }
+}
+
+/// Open only the install record selected by this exact manifest, and authenticate its bytes and independent name.
+/// Callers preserve legacy behavior only when the admitted manifest has no install descriptor.
+pub fn read_published_install_record(
+    manifest_path: &Path,
+    name: &str,
+    manifest_digest: &str,
+    expected_digest: &str,
+) -> Result<CompilerRecord, LibraryManifestError> {
+    #[derive(Deserialize)]
+    struct Facts {
+        schema: String,
+        manifest_digest: String,
+        install_record: PublishedInstallRecord,
+    }
+
+    let path = manifest_path.with_extension("incnfacts");
+    let content = fs::read(&path).map_err(|source| LibraryManifestError::Read {
+        path: path.clone(),
+        source,
+    })?;
+    let invalid =
+        |reason: &str| LibraryManifestError::Invalid(format!("install record sidecar {}: {reason}", path.display()));
+    let facts: Facts = serde_json::from_slice(&content).map_err(|error| invalid(&error.to_string()))?;
+    let manifest_digest = manifest_digest.strip_prefix("sha256:").unwrap_or(manifest_digest);
+    if facts.schema != LOAF_FACTS_SCHEMA || facts.manifest_digest != manifest_digest {
+        return Err(invalid("sidecar names a different manifest or schema"));
+    }
+    let stored = facts.install_record;
+    let value = hex::decode(stored.value).map_err(|error| invalid(&error.to_string()))?;
+    let record = CompilerRecord {
+        family: RecordFamily::InstallRecord,
+        index: 0,
+        name: name.to_owned(),
+        value,
+    };
+    let revision = format!("{:x}", Sha256::digest(&record.value));
+    if stored.key != record.key() || stored.revision != revision || revision != expected_digest {
+        return Err(invalid("named value disagrees with its selected content identity"));
+    }
+    Ok(record)
+}
 
 /// Schema of the install record.
 pub const INSTALL_RECORD_SCHEMA: u32 = 1;
