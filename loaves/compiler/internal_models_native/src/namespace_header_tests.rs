@@ -63,3 +63,30 @@ fn a_namespace_header_needs_a_proof_and_refuses_damage() -> Result<(), String> {
     assert!(encode_namespace_header(&unordered).is_err());
     Ok(())
 }
+
+/// A namespace header is its own record beside the namespace frame, under the same module identity, and Oven offers
+/// its frame address to a compiler request in the same bounded reference form, on a page of its own.
+#[test]
+fn a_namespace_header_has_its_own_key_and_reference_page() -> Result<(), String> {
+    use crate::namespace_references::{
+        NamespaceReference, decode_namespace_references, encode_namespace_references, namespace_header_key,
+        namespace_header_reference_filename, namespace_key, namespace_reference_filename,
+    };
+    let header = namespace_header_key("app", "src/domain.incn");
+    let frame = namespace_key("app", "src/domain.incn");
+    assert_eq!(header.identity, frame.identity);
+    assert_eq!(header.identity_profile, frame.identity_profile);
+    assert_ne!(header.family, frame.family);
+    assert_ne!(namespace_header_reference_filename(), namespace_reference_filename());
+    let reference = NamespaceReference {
+        key: header,
+        segment: "ab".repeat(32),
+        offset: 0,
+        length: 4096,
+        frame_digest: vec![7; 32],
+        value_digest: "cd".repeat(32),
+    };
+    let page = encode_namespace_references(std::slice::from_ref(&reference))?;
+    assert!(decode_namespace_references(&page)? == vec![reference]);
+    Ok(())
+}
