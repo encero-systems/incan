@@ -1,0 +1,138 @@
+"""
+The release run's records (its paths, its settings and the candidate it builds) and the one way a release phase runs
+a child process: named, logged, timed and, where the phase needs it, required to succeed.
+"""
+
+from rust::std::time import Instant
+from std.fs import Path
+from native_build import NativeContext
+from release_support import (
+    TOOLCHAIN_DIRECTORY,
+    BackgroundStep,
+    ReleaseOptions,
+    ReleaseTrace,
+    Step,
+    append_timing,
+    log_tail,
+    run_step,
+)
+
+
+pub model ReleasePaths:
+    """Stable release output, source, lane, home, toolchain, and bundle paths."""
+
+    pub output: Path
+    pub source: Path
+    pub lane: Path
+    pub home: Path
+    pub toolchain: Path
+    pub bundle: Path
+
+
+pub model ReleaseRun:
+    """Release-wide source, seed, host, caller settings, and retained path selection."""
+
+    pub root: Path
+    pub options: ReleaseOptions
+    pub paths: ReleasePaths
+    pub seed_home: Path
+    pub seed_oven: Path
+    pub seed_lsp: Path
+    pub target: str
+    pub started: Instant
+    pub trace: ReleaseTrace
+
+
+pub model Candidate:
+    """Candidate build context, its shipped Oven and language server, and the Oven test library still building."""
+
+    pub context: NativeContext
+    pub oven: Path
+    pub lsp: Path
+    pub library: Option[BackgroundStep] = None
+
+
+pub def release_paths(output: Path) -> ReleasePaths:
+    """Lay out every release-owned path below one caller-selected output directory."""
+    home = output.joinpath("build-home")
+    return ReleasePaths(
+        output=output,
+        source=output.joinpath("source"),
+        lane=output.joinpath("lane"),
+        home=home,
+        toolchain=home.joinpath(TOOLCHAIN_DIRECTORY),
+        bundle=output.joinpath("bundle"),
+    )
+
+
+pub def release_step(
+    run: ReleaseRun,
+    name: str,
+    executable: str,
+    arguments: list[str],
+    directory: Path,
+    environment: Dict[str, str],
+    timeout_multiplier: int = 1,
+) -> Step:
+    """Create one release child process with complete output and an explicit per-child environment."""
+    return Step(
+        name=name,
+        executable=executable,
+        arguments=arguments,
+        environment=environment,
+        remove_environment=["RUSTC_BOOTSTRAP", "INCAN_LSP"],
+        directory=Some(directory),
+        log=run.paths.output.joinpath(f"{name}.log"),
+        timeout_seconds=run.options.timeout_seconds * timeout_multiplier,
+        trace=Some(run.trace),
+    )
+
+
+def timed_release_step(run: ReleaseRun, child: Step) -> Result[int, str]:
+    """Run one release phase and append its wall duration even when the child refuses."""
+    return timed_release_step_at(run, run.paths.output.joinpath("timings.tsv"), child)
+
+
+pub def timed_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Result[int, str]:
+    """Run one release child while directing its timing row to an exclusive writer's file."""
+    name = str(child.name)
+    log = child.log.clone()
+    started = Instant.now()
+    outcome = run_step(child)
+    append_timing(timings, name, started.elapsed().as_secs_f64())?
+    code = match outcome:
+        Ok(observed) => observed
+        Err(message) => return Err(f"{message}\n{log_tail(log)}")
+
+    return Ok(code)
+
+
+pub def require_release_step(run: ReleaseRun, child: Step) -> Result[None, str]:
+    """Require one timed release child to succeed while preserving its exact named log."""
+    name = str(child.name)
+    log = child.log.clone()
+    code = timed_release_step(run, child)?
+    if code != 0:
+        return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
+    return Ok(None)
+
+
+pub def require_linked_release_step(run: ReleaseRun, mut child: Step) -> Result[None, str]:
+    """Run one release child below a span whose identity its process can inherit for nested trace records."""
+    span = run.trace.begin(child.name)?
+    child.environment["INCAN_RELEASE_TRACE_DIR"] = run.paths.output.joinpath("trace").0
+    child.environment["INCAN_RELEASE_TRACE_PARENT"] = span.id
+    child.trace = None
+    outcome = require_release_step(run, child)
+    run.trace.finish(span)?
+    return outcome
+
+
+pub def require_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Result[None, str]:
+    """Require one release child while retaining its duration in the selected exclusive timing file."""
+    name = str(child.name)
+    log = child.log.clone()
+    code = timed_release_step_at(run, timings, child)?
+    if code != 0:
+        return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
+    return Ok(None)

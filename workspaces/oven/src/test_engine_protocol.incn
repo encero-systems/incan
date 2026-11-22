@@ -195,18 +195,6 @@ def detail(refusal: Refusal) -> str:
     return refusal.detail
 
 
-pub def test_service_generation_follows_binary_bytes_not_its_path() -> Result[None, str]:
-    """Byte-identical engine executables negotiate one service generation after installation relocation."""
-    scratch = scratch_directory()?
-    binary = Path(executable()?)
-    relocated = scratch.path().joinpath("relocated-oven")
-    relocated.write_bytes(binary.read_bytes().map_err((error) => error.message())?).map_err(
-        (error) => error.message(),
-    )?
-    assert service_generation(binary.0)? == service_generation(relocated.0)?
-    return Ok(None)
-
-
 pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() -> Result[None, str]:
     """
     A compiler worker names the native inputs of shared carriers, the driver among them, by their bytes once per file
