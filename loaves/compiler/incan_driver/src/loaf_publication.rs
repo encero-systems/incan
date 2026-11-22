@@ -35,7 +35,7 @@ use incan_frontend::library_exports::{
 use incan_frontend::library_manifest::public_identities::public_executable_identities;
 use incan_frontend::library_manifest::{
     ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, NativeUnionExport,
-    NativeUnionOwnerExport, TypeRef,
+    NativeUnionOwnerExport, PackageInternalExports, TypeRef,
 };
 use incan_frontend::loaf_index::{LoafNativeClosure, NativeAnchors};
 use incan_frontend::parsed_module::ParsedModule;
@@ -302,6 +302,22 @@ impl PublicationFacts {
         manifest.vocab = vocab::prepared_registration(unit)?;
         manifest.rust_abi =
             LibraryRustAbi::from_items(self.rust_items.into_values().map(Arc::unwrap_or_clone).collect());
+        // A project's shared library publishes its package-internal section; no other Loaf does (DD-0007). It lists
+        // the defaults its public family leaves required, which the units of its own package may omit.
+        if unit.program_checks {
+            let exports = self
+                .exports_by_source_module
+                .iter()
+                .flat_map(|(_, exports)| exports.iter().cloned())
+                .collect::<Vec<_>>();
+            let mut section = PackageInternalExports::new().with_source_defaults(&self.package, &exports);
+            for (module_path, exports) in &self.exports_by_source_module {
+                if let Some(module) = modules.iter().find(|module| &module.path_segments == module_path) {
+                    section = section.with_member_partials(&self.package, &module.ast, exports);
+                }
+            }
+            manifest.package_internal = Some(section);
+        }
         retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(
             model_bundles

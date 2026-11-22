@@ -1,0 +1,12 @@
+# behavior: a test of the project calls a member partial of a class in a module beside its entry that the class does not make public, as any module of one package may; the test links the project's shared library, and the partial's preset still reads the module's static
+# cli-commands:
+#   test tests
+# expect-stdout-contains:
+#   test_shapes.incn::test_a_private_member_partial_is_called_with_its_preset PASSED
+# expect-exit: 0
+
+from shapes import Box
+
+
+def main() -> None:
+    println(Box(v=0).capped())
