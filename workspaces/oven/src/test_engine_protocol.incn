@@ -319,6 +319,55 @@ def check_native_program_records(store: Path, unit: NativeUnit, handle: str, vie
     return Ok(None)
 
 
+pub def test_a_finished_request_s_spans_reach_the_trace_while_its_engine_runs() -> Result[None, str]:
+    """
+    A resident engine writes every span of a request, the commit's included, before its caller hears that the request
+    finished: a caller that ends the engine right after its build, as a finished run's process group is, loses none.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    store = root.joinpath("store")
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for edit in range(2):
+        write(source, f"def main() -> None:\n    println(\"traced {edit}\")\n")?
+        # A build, as a cold build is: its caller exits as soon as it hears the build finished.
+        outcome = Command
+            .new(binary)
+            .arg("build")
+            .arg(source.0)
+            .current_dir(project.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_ENGINE_TRACE", observations.0)
+            .env_remove("OVEN_TRACE")
+            .env_remove("INCAN_JEC_TRACE")
+            .env_remove("INCAN_TRACE_DIR")
+            .env_remove("INCAN_NATIVE_TIMING")
+            .output()
+            .map_err((error) => str(error))?
+        if not outcome.status.success():
+            error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+            _ = stop_engine(store, binary)
+            return Err(f"traced run {edit}: status={outcome.status.code()} stderr={error}")
+    # Both builds are finished. The engine is ended at once, as a finished run's process group is, and its own trace
+    # must already hold the unit span each build ends with.
+    engine = engine_trace(observations)?
+    pid = engine.name().split("engine-oven-")[1].split(".")[0]
+    ended = Command.new("/bin/kill").arg("-KILL").arg(pid).status().map_err((error) => str(error))?
+    if not ended.success():
+        return Err("the resident engine could not be ended")
+    text = engine.read_text("utf-8", "strict").map_err((error) => error.message())?
+    units = len(text.split("\"operation\":\"engine_unit\"")) - 1
+    if units != 2:
+        return Err(f"the engine's trace held {units} of the two finished builds' unit spans when it ended")
+    return Ok(None)
+
+
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
     admission = scratch_directory()?
@@ -616,6 +665,17 @@ def observed_lines(directory: Path) -> Result[list[str], str]:
     for name in sorted(names):
         lines.extend(Path(name).read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"))
     return Ok(lines)
+
+
+def engine_trace(directory: Path) -> Result[Path, str]:
+    """The trace file the engine process writes: the one with a plan-module selection and no client request span."""
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file() or not entry.name().startswith("engine-oven-"):
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if "\"key\":\"plan-modules\"" in text and "\"operation\":\"engine_request\"" not in text:
+            return Ok(entry)
+    return Err("no trace file of the resident engine")
 
 
 def invocation_count(directory: Path, function: str) -> int:
