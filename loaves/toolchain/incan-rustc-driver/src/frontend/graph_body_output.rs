@@ -100,6 +100,9 @@ const PARTIAL_FALLBACK: &str = "a partial's generated function has no checked ow
 const ROWLESS_METHOD_FALLBACK: &str =
     "the module has no Body IR row for this method: it is abstract or lowered per implementation";
 
+/// Why overloads are one fallback owner when they share one stable identity.
+const SHARED_IDENTITY_FALLBACK: &str = "overloads share one source signature, so no stable identity separates them";
+
 /// Normalize an optional fallback owner before it crosses the Incan codec boundary.
 fn fallback_identity(identity: Option<String>) -> Option<String> {
     identity.filter(|value| !value.is_empty())
@@ -604,6 +607,7 @@ impl GraphBodyOutput {
             }
         }
         self.retire_rowless_methods();
+        self.retire_shared_identities();
         if let Some(value) = self.values.iter().find(|value| value.body_ir.is_empty()) {
             return Err(format!(
                 "compiled graph output has no Body IR row for {} in {}",
@@ -638,6 +642,37 @@ impl GraphBodyOutput {
                 reason: ROWLESS_METHOD_FALLBACK.into(),
                 artifact_refusals: Vec::new(),
             });
+        }
+    }
+
+    /// Publish overloads that share one stable identity, as two whose source signatures differ only in their bounds,
+    /// as one fallback owner of their spelling: no graph-body row can name either. The module's namespace record stays
+    /// their witness, and they are checked again from source on each request.
+    fn retire_shared_identities(&mut self) {
+        let mut counts = std::collections::HashMap::<(String, String), usize>::new();
+        for value in &self.values {
+            *counts
+                .entry((value.module.clone(), value.identity.clone()))
+                .or_default() += 1;
+        }
+        let shared = |value: &PendingBodyValue| {
+            counts
+                .get(&(value.module.clone(), value.identity.clone()))
+                .is_some_and(|count| *count > 1)
+        };
+        let (retired, values): (Vec<_>, Vec<_>) = std::mem::take(&mut self.values).into_iter().partition(shared);
+        self.values = values;
+        let mut published = std::collections::BTreeSet::new();
+        for value in retired {
+            if published.insert((value.module.clone(), value.identity.clone())) {
+                self.fallbacks.push(PendingBodyFallback {
+                    module: value.module,
+                    name: value.name,
+                    identity: fallback_identity(Some(value.identity)),
+                    reason: SHARED_IDENTITY_FALLBACK.into(),
+                    artifact_refusals: Vec::new(),
+                });
+            }
         }
     }
 
