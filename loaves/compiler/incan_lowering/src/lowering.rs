@@ -220,6 +220,7 @@ pub fn program_context(
         overflow_checks,
         observe_work: std::env::var_os("INCAN_NATIVE_TIMING").is_some(),
         described: Arc::default(),
+        recorded: Arc::default(),
     })
 }
 
