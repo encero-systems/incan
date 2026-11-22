@@ -127,7 +127,7 @@ impl CheckedNamespaceInterface {
             let Some(symbol_id) = checker.symbols.lookup(name) else {
                 return Err(format!("checked namespace declaration `{name}` has no symbol"));
             };
-            let identity = declared_identity(checker, symbol_id, declaration)?;
+            let identity = declared_identity(checker, symbol_id, declaration, &key)?;
             if identities.insert(key, identity).is_some() {
                 return Ok(None);
             }
@@ -909,12 +909,15 @@ fn declaration_identity_keys(declarations: &[crate::api_metadata::ApiDeclaration
         .collect()
 }
 
-/// The canonical identity the checker declared for one API declaration: the symbol's own, or for a member of an
-/// overload set, the identity of the overload declared at the declaration's span. A member without one is refused.
+/// The canonical identity the checker declared for one API declaration under its identity `key`: the symbol's own,
+/// or for a member of an overload set, the overload declared at the declaration's span. An imported overload keeps no
+/// span here, so its position in the set finds it, and a re-export of the whole set is named by its first member. A
+/// member without an identity is refused.
 fn declared_identity(
     checker: &TypeChecker,
     symbol_id: crate::symbols::SymbolId,
     declaration: &crate::api_metadata::ApiDeclaration,
+    key: &str,
 ) -> Result<CanonicalSymbolId, String> {
     let name = declaration.name();
     if let Some(Symbol {
@@ -923,9 +926,15 @@ fn declared_identity(
     }) = checker.symbols.get(symbol_id)
     {
         let span = namespace_declaration_span(declaration);
+        let position = key
+            .rsplit_once(OVERLOAD_KEY_SEPARATOR)
+            .and_then(|(_, position)| position.parse::<usize>().ok());
+        let reexport = matches!(declaration, crate::api_metadata::ApiDeclaration::Alias(_));
         let overload = overloads
             .iter()
             .find(|overload| overload.span == span)
+            .or_else(|| position.and_then(|position| overloads.get(position)))
+            .or_else(|| if reexport { overloads.first() } else { None })
             .ok_or_else(|| format!("checked namespace overload `{name}` has no checked member at its declaration"))?;
         return overload
             .identity
