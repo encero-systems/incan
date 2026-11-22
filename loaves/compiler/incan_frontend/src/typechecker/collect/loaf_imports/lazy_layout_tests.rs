@@ -200,3 +200,100 @@ fn a_loafs_install_record_holds_what_install_reads_and_reads_back() -> TestResul
     }
     Ok(())
 }
+
+/// A compiled Loaf's install record lists, for each checked API module, the models, classes, enums, newtypes, type
+/// aliases and traits install registers from it: each one's position, name and kind, the canonical identity the
+/// identity graph publishes at its public path, a type alias's target, and the type parameters of a type alias, model
+/// or class.
+#[test]
+fn a_loafs_install_record_lists_each_modules_nominal_declarations() -> TestResult {
+    use crate::api_metadata::ApiDeclaration;
+    use crate::library_manifest::CanonicalIdentityExport;
+    use crate::library_manifest::install_record::InstallDeclarationKind;
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = loaves.manifest("shapes").ok_or("missing manifest")?;
+    let api = manifest
+        .contract_metadata
+        .api
+        .as_ref()
+        .ok_or("shapes has no checked API")?;
+    let graph = &manifest.contract_metadata.identity_graph;
+    let mut checker = TypeChecker::new();
+    checker.set_loaves(Arc::clone(&loaves));
+    let record = checker.loaf_install_record("shapes", manifest);
+    let mut expected = Vec::new();
+    for module in &api.modules {
+        let mut declarations = Vec::new();
+        for (position, declaration) in module.declarations.iter().enumerate() {
+            let (name, kind, alias_target, type_params) = match declaration {
+                ApiDeclaration::Model(item) => (
+                    &item.name,
+                    InstallDeclarationKind::Model,
+                    None,
+                    item.type_params.clone(),
+                ),
+                ApiDeclaration::Class(item) => (
+                    &item.name,
+                    InstallDeclarationKind::Class,
+                    None,
+                    item.type_params.clone(),
+                ),
+                ApiDeclaration::Enum(item) => (&item.name, InstallDeclarationKind::Enum, None, Vec::new()),
+                ApiDeclaration::Newtype(item) => (&item.name, InstallDeclarationKind::Newtype, None, Vec::new()),
+                ApiDeclaration::Trait(item) => (&item.name, InstallDeclarationKind::Trait, None, Vec::new()),
+                ApiDeclaration::TypeAlias(item) => (
+                    &item.name,
+                    InstallDeclarationKind::TypeAlias,
+                    Some(item.type_alias.target.clone()),
+                    item.type_alias.type_params.clone(),
+                ),
+                _ => continue,
+            };
+            let public_path = std::iter::once(manifest.name.clone())
+                .chain(module.module_path.iter().cloned())
+                .chain(std::iter::once(name.clone()))
+                .collect::<Vec<_>>();
+            declarations.push((
+                position,
+                name.clone(),
+                kind,
+                graph.canonical_for_public_path(&public_path),
+                alias_target,
+                type_params,
+            ));
+        }
+        expected.push((module.module_path.clone(), declarations));
+    }
+    let recorded = record
+        .modules
+        .iter()
+        .map(|module| {
+            let declarations = module
+                .declarations
+                .iter()
+                .map(|declaration| {
+                    (
+                        declaration.position,
+                        declaration.name.clone(),
+                        declaration.kind,
+                        declaration
+                            .canonical
+                            .as_ref()
+                            .and_then(CanonicalIdentityExport::hydrate),
+                        declaration.alias_target.clone(),
+                        declaration.type_params.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (module.module_path.clone(), declarations)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        expected.iter().any(|(_, declarations)| declarations.len() >= 5),
+        "the fixture declares too little"
+    );
+    assert_eq!(recorded, expected);
+    Ok(())
+}

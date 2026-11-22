@@ -8,13 +8,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{CanonicalIdentityExport, NominalTypeOriginExport};
+use super::{CanonicalIdentityExport, NominalTypeOriginExport, TypeParamExport, TypeRef};
 
 /// Schema of the install record.
 pub const INSTALL_RECORD_SCHEMA: u32 = 1;
 
 /// What installing one compiled Loaf reads of it.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LoafInstallRecord {
     pub schema: u32,
     /// Each unique top-level public name of the Loaf that names a nominal type, in identity-graph order: the public
@@ -25,6 +25,43 @@ pub struct LoafInstallRecord {
     pub root_exports: InstallRootExports,
     /// The foreign nominal type origins the Loaf's published signatures carry, in binding-key order.
     pub type_origins: Vec<NominalTypeOriginExport>,
+    /// Each checked API module with its model, class, enum, newtype, type alias and trait declarations, in module
+    /// and declaration order. A consumer registers them under its declaration keys; the modules' type scopes are the
+    /// Loaf's type-scope records.
+    pub modules: Vec<InstallModule>,
+}
+
+/// One checked API module of a compiled Loaf and the nominal declarations install registers from it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstallModule {
+    pub module_path: Vec<String>,
+    pub declarations: Vec<InstallDeclaration>,
+}
+
+/// One model, class, enum, newtype, type alias or trait of a checked API module.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstallDeclaration {
+    /// Its position among the module's checked declarations, where its layout is built from.
+    pub position: usize,
+    pub name: String,
+    pub kind: InstallDeclarationKind,
+    /// The canonical identity the Loaf's identity graph publishes at the declaration's public path.
+    pub canonical: Option<CanonicalIdentityExport>,
+    /// A type alias's target.
+    pub alias_target: Option<TypeRef>,
+    /// The type parameters of a type alias, model or class.
+    pub type_params: Vec<TypeParamExport>,
+}
+
+/// The kinds of declaration install registers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstallDeclarationKind {
+    Model,
+    Class,
+    Enum,
+    Newtype,
+    TypeAlias,
+    Trait,
 }
 
 /// One nominal public type of a compiled Loaf.
