@@ -162,6 +162,8 @@ pub(super) fn admit(
     proof: &[u8],
     bytes: MappedView,
 ) -> Result<(Arc<dyn GraphNamespaceInterface>, [u8; 32]), String> {
+    #[cfg(test)]
+    count_interface_digest();
     let digest = Sha256::digest(bytes.0.as_bytes()).into();
     let root = if proof.is_empty() {
         if let Some(hit) = published(&digest) {
@@ -195,6 +197,23 @@ pub(super) fn admit(
         }),
         digest,
     ))
+}
+
+#[cfg(test)]
+thread_local! {
+    static INTERFACE_DIGESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count one digest of an admitted interface's bytes on this thread.
+#[cfg(test)]
+fn count_interface_digest() {
+    INTERFACE_DIGESTS.with(|count| count.set(count.get() + 1));
+}
+
+/// The admitted interfaces this thread has hashed.
+#[cfg(test)]
+fn interface_digests() -> usize {
+    INTERFACE_DIGESTS.with(std::cell::Cell::get)
 }
 
 fn restore_digest(
@@ -372,6 +391,50 @@ mod tests {
         let second = super::restore(&moved.interface)?.installable()?;
         assert!(std::sync::Arc::ptr_eq(&installed, &second));
         assert!(super::restore(&moved.interface[..moved.interface.len() - 1]).is_err());
+        Ok(())
+    }
+
+    /// An unchanged namespace is admitted by its frame and its compiler's identity proof without hashing its
+    /// interface: the interface is hashed, and the proof checked against it, only when a checker installs it. An
+    /// interface whose proof names another source, or whose bytes differ from the ones the proof names, is still
+    /// refused there.
+    #[test]
+    fn an_interface_is_hashed_and_its_proof_checked_only_when_installed() -> Result<(), String> {
+        let provider = program(
+            "pub model Line:\n    pub width: int\n\npub def width(line: Line) -> int:\n    return line.width\n",
+        )?;
+        let path = vec!["shapes".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker
+            .check_program(&provider)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let interface = CheckedNamespaceInterface::from_checked("shapes", &path, &provider, &checker)?
+            .ok_or("missing provider interface")?;
+        let bytes = interface.to_bytes(&CheckedNamespaceCrumb)?;
+        let (proof, _) = super::remember_published("shapes.incn", &bytes, interface, true)?;
+
+        let before = super::interface_digests();
+        let (admitted, _) = super::admit("shapes.incn", &proof, view(&bytes)?)?;
+        assert!(admitted.belongs_to("shapes", &path));
+        assert_eq!(
+            super::interface_digests(),
+            before,
+            "admission hashed an interface no checker installed"
+        );
+        admitted.installable()?;
+        assert_eq!(super::interface_digests(), before + 1);
+
+        let (renamed, _) = super::admit("renamed.incn", &proof, view(&bytes)?)?;
+        assert!(
+            renamed.installable().is_err(),
+            "a proof for another source was installed"
+        );
+        let (truncated, _) = super::admit("shapes.incn", &proof, view(&bytes[..bytes.len() - 1])?)?;
+        assert!(
+            truncated.installable().is_err(),
+            "bytes the proof does not name were installed"
+        );
         Ok(())
     }
 
