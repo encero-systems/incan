@@ -164,3 +164,32 @@ fn an_ambiguous_overloaded_call_is_refused_through_the_published_namespace() -> 
     assert_eq!(refusals[1], refusals[0]);
     Ok(())
 }
+
+/// A facade that re-exports an overload set under another name publishes its namespace, and a consumer of the
+/// facade resolves each overload through it as through the facade's source.
+#[test]
+fn a_reexported_overload_set_publishes_its_facade() -> Result<(), String> {
+    let (provider_source, _, provider_installed) = provider()?;
+    let facade = program("pub from conversions import convert as relayed\n")?;
+    let mut checker = configured("facade");
+    checker.register_dependency_module_path_segments("facade", path("facade"));
+    checker.select_dependency_interfaces(vec![Arc::clone(&provider_installed)]);
+    let empty = program("")?;
+    checker
+        .check_with_imports(&facade, &[("conversions", &empty)])
+        .map_err(|errors| format!("{errors:?}"))?;
+    let retained = CheckedNamespaceInterface::from_checked("facade", &path("facade"), &facade, &checker)?
+        .ok_or("a facade re-exporting an overload set published no checked namespace")?;
+    let installed = CheckedNamespaceInterface::from_wire_value(retained.wire_value()?)?.installable()?;
+    let consumer = program("from facade import relayed\n\ndef main() -> None:\n    println(relayed(1))\n")?;
+    let mut warm = configured("main");
+    warm.register_dependency_module_path_segments("facade", path("facade"));
+    warm.select_dependency_interfaces(vec![Arc::clone(&provider_installed), installed]);
+    warm.check_with_imports(&consumer, &[("conversions", &empty), ("facade", &empty)])
+        .map_err(|errors| format!("warm: {errors:?}"))?;
+    let mut cold = configured("main");
+    cold.register_dependency_module_path_segments("facade", path("facade"));
+    cold.check_with_imports(&consumer, &[("conversions", &provider_source), ("facade", &facade)])
+        .map_err(|errors| format!("cold: {errors:?}"))?;
+    Ok(())
+}
