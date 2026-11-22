@@ -9,8 +9,10 @@ from files import json_text, read, remove
 from retained_readings import recall
 from store_path_conversion import readmit_payload
 from bakery import fact_file, find, forget_verified, seal, staging
+from bakery_views import observed_file_digest, remember_file_digest
 from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
 from incan_units import executable_outputs, test_report, view_executable
+from observation import file_digest, file_metadata
 from rust_target import decoded
 from testing import tests_binary
 from standalone_rust import standalone_crates
@@ -666,7 +668,7 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     view_executable(store, fact, tests.joinpath("app"), "test")?
     assert read(test_report(tests.joinpath("app")))? == "[]"
     # A view replaced behind Oven's back is the user's; the next view restores the fact's executable.
-    write(tests.joinpath("app"), "someone else's binary")?
+    verify_stale_executable_receipt(tests.joinpath("app"))?
     match fact_file(store, fact, "app"):
         Some(payload) =>
             assert read(payload)? == "first build"
@@ -758,6 +760,29 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
         Err(_) => pass
         Ok(_) =>
             assert false, "missing linked artifacts cannot supply compilation observations"
+    return Ok(None)
+
+
+def verify_stale_executable_receipt(view: Path) -> Result[None, str]:
+    """A receipt can vouch for the exact file generation it observed. Replacing the view leaves that receipt stale."""
+    before = match file_metadata(view)?:
+        Some(metadata) => metadata
+        None => return Err("the executable view is missing")
+    digest = file_digest(view)?
+    remember_file_digest(view, before.stamp(), digest)?
+    assert observed_file_digest(view, before.stamp())? == Some(digest)
+    receipt = Path(f"{view.0}.oven-view")
+    original = receipt.read_bytes().map_err((error) => error.message())?
+    replacement = view.parent().joinpath("replacement")
+    write(replacement, "other build")?
+    _ = replacement.replace(view).map_err((error) => error.message())?
+    after = match file_metadata(view)?:
+        Some(metadata) => metadata
+        None => return Err("the replacement executable view is missing")
+    assert before.size == after.size and before.stamp() != after.stamp()
+    assert file_digest(view)? != digest
+    assert receipt.read_bytes().map_err((error) => error.message())? == original
+    assert observed_file_digest(view, after.stamp())? == None
     return Ok(None)
 
 
