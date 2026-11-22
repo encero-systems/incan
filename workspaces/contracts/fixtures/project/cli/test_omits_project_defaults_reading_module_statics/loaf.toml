@@ -1,0 +1,6 @@
+[project]
+name = "test_omits_project_defaults_reading_module_statics"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
