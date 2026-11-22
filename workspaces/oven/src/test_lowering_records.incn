@@ -13,6 +13,7 @@ from compiler_plan_values import LOWERING_PROFILE
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import ReadWitness, encode_record_key
 from files import write
+from json_fields import required_items, required_text
 from engine_protocol_fixtures import json_text_is
 from lowering_record_fixtures import command_proof, proof_count, report_fixture_build, stop_example_engine
 from scratch import scratch_directory
@@ -115,6 +116,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
     assert proof_count(edited, "lowering_demand_reuses")? == 1, diagnostic
     assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
+    require_single_reverse_edge_reads(edited)?
     write(
         source,
         "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n",
@@ -174,6 +176,25 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     verify_signature_edit(binary, linked)?
     verify_unit_reads_only_its_graph(binary, root.joinpath("graph"))?
     return verify_rust_closure_debug_reproducibility(binary, root.joinpath("rust-closure"))
+
+
+def require_single_reverse_edge_reads(report: JsonValue) -> Result[None, str]:
+    """Require one physical read for each reverse-edge frame selected from the pinned edit view."""
+    mut selected: set[str] = set()
+    for demand in required_items(report, "graph_demands")?:
+        if required_text(demand, "role")? == "reverse-edge":
+            selected.add(required_text(demand, "key")?)
+    assert len(selected) > 0, "the edit selected no reverse edges"
+    mut observed: set[str] = set()
+    for frame in required_items(report, "store_reads")?:
+        key = required_text(frame, "key")?
+        if key not in selected:
+            continue
+        reads = proof_count(frame, "reads")?
+        assert reads == 1 and key not in observed, f"selected reverse edge read {reads} times: {key}"
+        observed.add(key)
+    assert observed == selected, "the edit omitted physical reads for selected reverse edges"
+    return Ok(None)
 
 
 def verify_unit_reads_only_its_graph(binary: str, root: Path) -> Result[None, str]:
