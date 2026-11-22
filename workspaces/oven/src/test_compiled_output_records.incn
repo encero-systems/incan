@@ -563,8 +563,9 @@ pub def test_overloads_of_one_spelling_share_one_declaration_slot() -> Result[No
     )
     identity = "main|module:main|main|function|module|0|() -> unit"
     signed = "function:helper::cast|incan.source-signature/2:sha256:"
-    first = signed + "2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
-    second = signed + "1afbf05e3e945151320b9294edf7fc24ac471db805ece1c9c010f3c3669ca4c5"
+    # Reads are published in ascending order.
+    first = signed + "1afbf05e3e945151320b9294edf7fc24ac471db805ece1c9c010f3c3669ca4c5"
+    second = signed + "2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
     value = CompiledBodyValue(
         module="main.incn",
         name="main",
