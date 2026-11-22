@@ -1,5 +1,5 @@
-"""A module in a nested source directory."""
+"""An invalid module outside the program's import reach."""
 
 
 def helper() -> int:
-    return 1
+    return "unused"

@@ -42,8 +42,10 @@ from bakery_roots import lease_unit, register_root
 from compiler_body_values import SelectedBodyPage
 from compiler_ranked_build import RankedBuildInputs, ranked_build_pages
 from compiler_refusals import check_or_replay
+from compiler_worker import relay_console
 from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
+from scratch import scratch_directory
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import (
@@ -179,24 +181,48 @@ pub def make_unit(
 
     A development request may share debug native inputs; ordinary builds and all libraries retain archive linkage.
 
-    1. Compile or reuse the project's shared library a test unit links, and reach it as one of the unit's Loaves.
+    1. Compile or reuse the project's shared library. If it refuses a program, compile the program's own source reach.
     2. Prepare the shared local graph and bind the exact native inputs.
     3. Compile a library, or reuse an executable whose inputs have not changed.
     """
-    # 1. The shared library is compiled once per project and profile; a test unit then compiles only its own modules.
+    # 1. The shared library is compiled once per project and profile.
     mut described = unit
     if let Some(key) = unit.project_library:
         library_path = library_output(unit, key, native_crate_name(key))
-        library = make_unit(shared_library(unit, key)?, toolchain, library_path)?
-        if library.code != 0:
-            return Ok(Made(code=library.code, launch=output))
-        described.loaves.append(library_loaf(unit, key, library_path))
+        program = unit.kind == "program"
+        library_code = compile_project_library(shared_library(unit, key)?, toolchain, library_path, program)?
+        if library_code == 0:
+            described.loaves.append(library_loaf(unit, key, library_path))
+        elif program:
+            described.project_library = None
+            described.excluded_sources = []
+        else:
+            return Ok(Made(code=library_code, launch=output))
     # 2. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
     ready = prepare_native(described, toolchain)?
     # 3. Both libraries and executables reuse their complete, unchanged artifact sets.
     if ready.kind == "library":
         return Ok(Made(code=compile_library_unit(ready, toolchain, output)?, launch=output))
     return obtain_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
+
+
+def compile_project_library(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    program: bool,
+) -> Result[i32, str]:
+    """Compile the shared provider. A program reports diagnostics from its own build if the provider is refused."""
+    if not program:
+        return compile_unit(library, toolchain, output)
+    scratch = scratch_directory()?
+    mut capturing = toolchain
+    library_console = scratch.path().joinpath("library").0
+    capturing.console = library_console
+    code = compile_unit(library, capturing, output)?
+    if code == 0:
+        relay_console(library_console)?
+    return Ok(code)
 
 
 pub def compile_executable(

@@ -1,0 +1,8 @@
+"""A second program of the project, which reads the same module as the first."""
+
+from shapes import Square, sides
+
+
+def main() -> None:
+    """Print the sides of a square of side 2."""
+    println(str(sides(Square(side=2))))

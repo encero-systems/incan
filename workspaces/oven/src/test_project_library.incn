@@ -1,4 +1,4 @@
-"""A project's test units link its shared library, which every test source of the project describes the same way."""
+"""A project's test and program units link its shared library, which each of them describes the same way."""
 
 from std.fs import Path
 from files import make_directory, write
@@ -7,6 +7,7 @@ from project_library import (
     LIBRARY_SUFFIX,
     library_loaf,
     library_output,
+    planned_program,
     shared_library,
     source_modules,
     with_project_library,
@@ -70,7 +71,6 @@ pub def test_a_test_unit_links_its_projects_shared_library() -> Result[None, str
     ]
     description = linked.to_json()
     assert description.get("project_library") != None
-    assert with_project_library(project_unit(root, "main.incn", "program"))?.project_library == None
     assert with_project_library(project_unit(root, "reader.incn"))?.project_library == None
     # A source root of tests and entry files alone has nothing to share.
     for name in ["reader.incn", "nested/shape.incn"]:
@@ -99,6 +99,31 @@ pub def test_two_test_sources_share_one_shared_library() -> Result[None, str]:
     assert description_digest(reading)? == description_digest(shaping)?
     assert library_output(first, key, key).0 == library_output(second, key, key).0
     assert library_loaf(first, key, library_output(first, key, key)).key == key
+    return Ok(None)
+
+
+pub def test_a_program_unit_links_the_shared_library_its_projects_tests_link() -> Result[None, str]:
+    """
+    A project's program, from its root entry or from one of its modules, links the shared library the project's
+    tests link: the same test modules left out, the same library unit, as `build` and `run` both plan it. A direct
+    source never links it, and a program with further program entries keeps compiling its whole source graph, since
+    each entry must stay a module of the program.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    demo_project(root)?
+    key = "demo_app" + LIBRARY_SUFFIX
+    tested = with_project_library(project_unit(root, "test_reader.incn"))?
+    for entry in ["main.incn", "reader.incn"]:
+        program = planned_program(project_unit(root, entry, "program"), false)?
+        assert program.project_library == Some(key), entry
+        assert program.excluded_sources == tested.excluded_sources, entry
+        assert description_digest(shared_library(program, key)?)? == description_digest(shared_library(tested, key)?)?
+        assert planned_program(project_unit(root, entry, "program"), true)?.project_library == None, entry
+    mut entries = project_unit(root, "main.incn", "program")
+    entries.program_entries = [root.joinpath("src/reader.incn").0]
+    assert with_project_library(entries)?.project_library == None
+    assert with_project_library(project_unit(root, "reader.incn", "library"))?.project_library == None
     return Ok(None)
 
 
