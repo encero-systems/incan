@@ -22,8 +22,8 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
 use incan_lowering::{
-    RecordedLayouts, RecordedRuntimeInputs, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning,
-    complete_recorded_runtime_plan, layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
+    RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements,
+    program_refusals, resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{
     BodyIrModule, LinkedStaticAccessors, LoafCallable, NativeUnionDeclaration, NominalDeclaration,
@@ -45,7 +45,7 @@ mod runtime_plan_records;
 
 use checked_program::*;
 use declaration_validation::*;
-use runtime_plan_records::{RuntimePlanRecords, same_requirements};
+use runtime_plan_records::{RuntimeCompletion, RuntimePlanRecords, same_requirements};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -987,6 +987,12 @@ fn lower_compilation_plan(
     let mut continuation = None;
     let mut retry_indices: Option<Vec<usize>> = None;
     let tests: Vec<_> = program.tests.iter().map(|test| test.entry.clone()).collect();
+    let completion = RuntimeCompletion {
+        kind: &kind_name,
+        tests: &tests,
+        linked_static_exports,
+        receipt,
+    };
     loop {
         let prepared = runtime_records.next().and_then(|requirements| {
             let _prefetch =
@@ -1060,21 +1066,14 @@ fn lower_compilation_plan(
             && let UnitPlanning::NeedsRuntime(preserved, requirements) = planning
         {
             program.dependencies.loaves = loaves;
-            let selected = apply_runtime_requirements(program, &requirements, prepared)?;
-            runtime_records.record(requirements);
-            let inputs = RecordedRuntimeInputs {
-                modules: &program.modules,
-                sources: &program.sources,
-                files: &program.files,
-                selected: &selected,
-                entry: program.entry,
-                kind: &kind_name,
-                tests: &tests,
-                package_versions: &program.dependencies.package_versions,
-                linked_static_exports,
-            };
-            planning = complete_recorded_runtime_plan(preserved, &inputs, &mut attempt_unions)
-                .inspect_err(|_| receipt.deterministic())?;
+            planning = runtime_records.complete_matches(
+                program,
+                preserved,
+                requirements,
+                prepared,
+                &completion,
+                &mut attempt_unions,
+            )?;
         }
         match planning {
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
