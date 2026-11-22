@@ -36,14 +36,14 @@ Consumers preserve the producer's checked type, layout, callable and ownership c
 
 Runtime dependency selection is demand-driven. An incomplete plan identifies its missing prerequisites without publishing a final result, and progress must be demonstrable. Standard packages are compiled Loaves supplied by the toolchain, never source modules collected into the consumer.
 
-A project's shared library also publishes a package-internal section beside its public declarations, and only a unit of the same package opens it: one that links that library as its project library. The section names, by canonical identity, the parameters such a unit may omit although the public declarations leave them required, because their defaults are no values a public declaration can carry (the callee's own default frame computes them at the omitted call site), and the non-public members such a unit may use. No other Loaf publishes the section, so another package's view of every Loaf is unchanged.
+A project's shared library also publishes a package-internal section beside its public declarations, and only a unit of the same package opens it: one that links that library as its project library. The section names, by canonical identity, the parameters such a unit may omit although the public declarations leave them required, because their defaults are no values a public declaration can carry (the callee's own default frame computes them at the omitted call site), and the member partials of its classes and models, which are never public, each with the method it presets and the parameters it presets. No other Loaf publishes the section, so another package's view of every Loaf is unchanged.
 
 ## Consequences
 
 - The provider plan, the library-manifest index, the SDK inventory with its components, profiles and bootstrap grants, the standard source publication, and the generated-crate artifact record are replaced by the artifact and the index.
 - Ordinary dependency preparation remains eager (DD-0005); an explicitly selected checked source interface supplies only its checked declarations and governed bodies, and a consumer requiring its compiled items refuses until native compilation completes.
 - The checker sees the standard library only through manifests, the same contract every dependency already meets.
-- A unit of a project's own package that links the project's shared library keeps the same-package meaning of its defaults and non-public members; a call from another package still supplies every argument whose default is no value.
+- A unit of a project's own package that links the project's shared library keeps the same-package meaning of its defaults and member partials; a call from another package still supplies every argument whose default is no value.
 - Incan native compilation omits graph collection. Inspection and explicit graph publication share a checked export cache keyed by exact source, compiler and dependency inputs; native and graph proofs remain separate.
 
 ## Non-goals

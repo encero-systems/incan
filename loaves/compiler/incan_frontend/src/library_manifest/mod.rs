@@ -29,7 +29,7 @@ use incan_vocab::{
 pub use checked_replay::CheckedExportReplay;
 pub use model::*;
 pub use ownership::OwnershipExport;
-pub use package_internal::{PackageInternalExports, SourceDefaultExport};
+pub use package_internal::{MemberPartialExport, PackageInternalExports, SourceDefaultExport};
 pub use type_projection::{
     VisitTypeRefs, contains_native_union, with_checked_type_origins, with_checked_type_routes,
     with_native_nominal_origins, with_self_owned_native_unions,

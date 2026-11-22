@@ -12,7 +12,8 @@ use incan_semantics_core::CanonicalSymbolId;
 use serde::{Deserialize, Serialize};
 
 use super::{CanonicalIdentityExport, param_default_from_checked};
-use crate::library_exports::{CheckedExportKind, CheckedNamedExport};
+use crate::ast::{Declaration, MethodPartialDecl, Program, Spanned};
+use crate::library_exports::{CheckedExportKind, CheckedMethod, CheckedNamedExport};
 
 /// Stable schema version of the package-internal section.
 pub const PACKAGE_INTERNAL_SCHEMA_VERSION: u32 = 1;
@@ -24,6 +25,23 @@ pub struct PackageInternalExports {
     /// The parameters a unit of the same package may omit although the public family leaves them required.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_defaults: Vec<SourceDefaultExport>,
+    /// The member partials of the library's classes and models; a member partial is never public, so the public
+    /// family has no record of it, and a unit of the same package may still call it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub member_partials: Vec<MemberPartialExport>,
+}
+
+/// One member partial, `capped = partial add(n=COUNT)` inside a class: the owner it belongs to, its name and identity,
+/// the method it presets, and the indices of that method's parameters it presets. A unit of the same package binds it
+/// as the target method with those parameters defaulted; each preset runs from the owner's retained partial frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberPartialExport {
+    pub owner: CanonicalIdentityExport,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<CanonicalIdentityExport>,
+    pub target: String,
+    pub presets: Vec<u32>,
 }
 
 /// One parameter whose default is no value the public family can carry, such as an expression reading its module's
@@ -41,6 +59,7 @@ impl PackageInternalExports {
         Self {
             schema_version: PACKAGE_INTERNAL_SCHEMA_VERSION,
             source_defaults: Vec::new(),
+            member_partials: Vec::new(),
         }
     }
 
@@ -79,6 +98,37 @@ impl PackageInternalExports {
         self
     }
 
+    /// Add each member partial of `program`'s classes and models whose owner `exports` publishes.
+    pub fn with_member_partials(mut self, package: &str, program: &Program, exports: &[CheckedNamedExport]) -> Self {
+        for declaration in &program.declarations {
+            let (owner, partials) = match &declaration.node {
+                Declaration::Class(class) => (&class.name, &class.method_partials),
+                Declaration::Model(model) => (&model.name, &model.method_partials),
+                _ => continue,
+            };
+            let Some((identity, methods)) = exports.iter().find_map(|export| match &export.kind {
+                CheckedExportKind::Class(class) if &class.name == owner => {
+                    Some((export.identity.canonical.as_ref()?, &class.methods))
+                }
+                CheckedExportKind::Model(model) if &model.name == owner => {
+                    Some((export.identity.canonical.as_ref()?, &model.methods))
+                }
+                _ => None,
+            }) else {
+                continue;
+            };
+            let Some(owner) = CanonicalIdentityExport::from_canonical(package, identity) else {
+                continue;
+            };
+            for partial in partials {
+                if let Some(record) = member_partial(package, &owner, methods, partial) {
+                    self.member_partials.push(record);
+                }
+            }
+        }
+        self
+    }
+
     /// The parameters of the callable `identity` a unit of the same package may omit.
     pub fn omittable_parameters<'a>(&'a self, identity: &'a CanonicalSymbolId) -> impl Iterator<Item = usize> + 'a {
         self.source_defaults
@@ -92,6 +142,41 @@ impl PackageInternalExports {
     pub fn opened_by(consumer_project_library: Option<&str>, library: &str) -> bool {
         consumer_project_library == Some(library)
     }
+}
+
+/// The record of one member partial of `owner`, from its target among the owner's checked `methods`.
+fn member_partial(
+    package: &str,
+    owner: &CanonicalIdentityExport,
+    methods: &[CheckedMethod],
+    partial: &Spanned<MethodPartialDecl>,
+) -> Option<MemberPartialExport> {
+    let target = methods.iter().find(|method| method.name == partial.node.target)?;
+    let presets = partial
+        .node
+        .args
+        .iter()
+        .map(|arg| {
+            target
+                .params
+                .iter()
+                .position(|param| param.name.as_deref() == Some(arg.name.as_str()))
+                .map(|index| index as u32)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let identity = methods
+        .iter()
+        .find(|method| method.name == partial.node.name)
+        .or(Some(target))
+        .and_then(|method| method.canonical.as_ref())
+        .and_then(|identity| CanonicalIdentityExport::from_canonical(package, identity));
+    Some(MemberPartialExport {
+        owner: owner.clone(),
+        name: partial.node.name.clone(),
+        identity,
+        target: partial.node.target.clone(),
+        presets,
+    })
 }
 
 impl Default for PackageInternalExports {
