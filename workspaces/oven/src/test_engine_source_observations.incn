@@ -5,9 +5,11 @@ from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
+from pub::incan_platform.store import keys
 from files import make_directory, read, write
 from lowering_record_fixtures import stop_example_engine
 from scratch import scratch_directory
+from store_path_conversion import snapshot
 
 
 const OUTCOME_HEADER: str = "incan.oven.outcome/2\n"
@@ -51,20 +53,53 @@ pub def test_an_edit_reads_and_hashes_its_source_once() -> Result[None, str]:
     assert unchanged.captured_reads == edited.captured_reads, "an unchanged run opened a captured source"
     assert unchanged.other_hashes == edited.other_hashes, "an unchanged run hashed content outside compiler outcomes"
     assert unchanged.outcome_hashes - edited.outcome_hashes <= 1, "an unchanged run rehashed a compiler outcome"
+    return check_warning_publication(binary, root)
+
+
+def check_warning_publication(binary: str, root: Path) -> Result[None, str]:
+    """A refused native publication leaves no warning receipt; a later cold and warm run replay the same bytes."""
+    project = root.joinpath("warnings")
+    store = root.joinpath("warning-bakery")
+    trace = root.joinpath("warning-trace")
+    make_directory(project)?
+    make_directory(trace)?
+    write(project.joinpath("hello.incn"), "def main() -> None:\n    unused = 1\n    println(\"hello\")\n")?
+    mut interrupted = source_command(binary, project, store, trace)
+    interrupted.env("INCAN_STORE_CRASH_AFTER", "pin-acquired")
+    refused = interrupted.output().map_err((error) => str(error))?
+    stop_example_engine(binary, store)?
+    assert not refused.status.success(), "the injected publication fault did not refuse the request"
+    selected = snapshot(store).map_err((error) => error.message())?
+    for key in keys(selected).map_err((error) => error.message())?:
+        assert not key.endswith("\tchecked warnings"), "a refused native publication left a warning receipt"
+    cold = source_command(binary, project, store, trace).output().map_err((error) => str(error))?
+    first = snapshot(store).map_err((error) => error.message())?
+    warm = source_command(binary, project, store, trace).output().map_err((error) => str(error))?
+    second = snapshot(store).map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    assert cold.status.success() and warm.status.success()
+    assert cold.stdout == b"hello\n" and warm.stdout == cold.stdout
+    assert len(cold.stderr) > 0 and warm.stderr == cold.stderr, "warm warning bytes differ from the fresh check"
+    assert second.digest == first.digest, "warning replay published another generation"
     return Ok(None)
 
 
 def run_source(binary: str, project: Path, store: Path, trace: Path) -> Result[bytes, str]:
     """Run the fixture through the normal records entry point and trace file operations."""
+    outcome = source_command(binary, project, store, trace).output().map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(str(from_utf8(outcome.stderr).map_err((error) => str(error))?))
+    return Ok(outcome.stdout)
+
+
+def source_command(binary: str, project: Path, store: Path, trace: Path) -> Command:
+    """Select the fixture's private Bakery and trace on the ordinary Records command."""
     mut command = Command.new(binary)
     command.arg("run").arg("hello.incn").current_dir(project.0)
     command.env("INCAN_ENGINE", "records").env("OVEN_ENGINE_BINARY", binary)
     command.env("INCAN_BAKERY", store.0).env("INCAN_ENGINE_TRACE", trace.0)
     command.env_remove("OVEN_TRACE").env_remove("INCAN_NATIVE_TIMING")
-    outcome = command.output().map_err((error) => str(error))?
-    if not outcome.status.success():
-        return Err(str(from_utf8(outcome.stderr).map_err((error) => str(error))?))
-    return Ok(outcome.stdout)
+    return command
 
 
 model Counts:
