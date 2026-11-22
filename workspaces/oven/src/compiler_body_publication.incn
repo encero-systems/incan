@@ -80,6 +80,7 @@ from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
     compiled_owner_source,
+    compiler_generation_record,
     declaration_index_key,
     import_declaration_indexes,
     owner_census_key,
@@ -236,9 +237,10 @@ pub def publish_compiled_bodies(
     selected: Snapshot,
     unit: UnitDescription,
     output: Path,
+    compiler: str = "",
 ) -> Result[PublishedCompiledBodies, str]:
     """Publish one successful compiler sidecar in a standalone atomic transaction."""
-    prepared = prepare_compiled_bodies(begin(selected), unit, output)?
+    prepared = prepare_compiled_bodies(begin(selected), unit, output, compiler=compiler)?
     published = commit(prepared.transaction).map_err((error) => error.message())?
     return Ok(
         PublishedCompiledBodies(
@@ -267,6 +269,7 @@ pub def prepare_compiled_bodies(
     admission_report: Option[Path] = None,
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
     cutoff: EditCutoff = EditCutoff(),
+    compiler: str = "",
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -287,7 +290,7 @@ pub def prepare_compiled_bodies(
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     staging = begin_work()
-    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods)?
+    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods, compiler)?
     for positioned in captured_positions.keys():
         staged.source.add(positioned, captured_positions[positioned])
 
@@ -607,11 +610,18 @@ def stage_compiled_body_sources(
     origin: str,
     outputs: CompiledBodyOutputs,
     methods: Borrowed[MethodReads],
+    compiler: str,
 ) -> Result[StagedCompiledBodySources, str]:
-    """Stage source, dependency, declaration and eligibility records that authenticate compiler output rows."""
+    """
+    Stage source, dependency, declaration and eligibility records that authenticate compiler output rows, and the
+    unit's compiler generation, which every receipt of this publication reads.
+    """
     scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
     mut source = PreparedBodyRecordSource.open(scope)
     mut prepared = transaction
+    generation = compiler_generation_record(origin, compiler)
+    stage_source_record(prepared, source, generation)?
+    source.bind_compiler(generation.key)
     mut lookup_modules: set[str] = set()
     for groups in methods.groups.values():
         for group in groups:
