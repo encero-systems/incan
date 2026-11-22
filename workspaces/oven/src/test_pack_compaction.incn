@@ -167,7 +167,7 @@ def pack_report(root: Path) -> Result[PackReport, str]:
     mut live: Dict[str, int] = {}
     mut leaves: list[str] = []
     mut seen: set[str] = set()
-    mut pending: list[str] = [entry.root for entry in latest.views]
+    mut pending: list[str] = [entry.root for entry in latest.views.as_ref()]
     mut position = 0
     while position < len(pending):
         reference = pending[position]

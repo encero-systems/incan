@@ -39,9 +39,11 @@ from engine_program_records import SELECTION_KEY, decode_program, decode_selecti
 from features import FeatureRequest
 from home import StandardPackage, dependency_artifact_dir
 from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
-from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, get, put
+from pub::incan_platform.store import (
+    EXPECT_REPAIR, HOME_VIEW, Snapshot, SnapshotAdmission, Transaction, begin, commit, get, put,
+)
 from engine_overlay import is_editor_view
-from store_path_conversion import snapshot
+from store_path_conversion import snapshot, store_path
 from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import UnitDescription, describe, with_c_abi_target
 from engine_unit_options import decode_unit_options
@@ -202,7 +204,8 @@ pub def check_program(
         whole_check = check_prepared(ready, toolchain, format, None, is_editor_view(view))?
         return Ok(CheckOutcome(code=whole_check.code, console=console))
     # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
-    reading = body_reading(store, view, ready, epoch.inputs, record_writer)?
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    reading = body_reading(admission, view, ready, epoch.inputs, record_writer)?
     invalidating = begin_work()
     invalid = body_owners_reading(reading.graph, reading.projected.keys, CHECKER_PROFILE)?
     record_work(Operation.EngineSelect, "invalid-owners", invalidating)
@@ -233,7 +236,11 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
 
 
 def body_reading(
-    store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput], record_writer: str,
+    mut admission: SnapshotAdmission,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    record_writer: str,
     retain_projections: bool = false,
 ) -> Result[BodyReading, str]:
     """
@@ -244,7 +251,7 @@ def body_reading(
     if is_editor_view(view):
         graph_view = view
     reading = begin_work()
-    graph = snapshot(store, graph_view).map_err((error) => error.message())?
+    graph = admission.open(graph_view).map_err((error) => error.message())?
     record_work(Operation.EngineSelect, "graph-snapshot", reading)
     projecting = begin_work()
     projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer, retain_projections)?
@@ -253,7 +260,7 @@ def body_reading(
 
 
 def select_bodies(
-    store: Path,
+    mut admission: SnapshotAdmission,
     view: str,
     ready: UnitDescription,
     inputs: list[CapturedInput],
@@ -264,7 +271,7 @@ def select_bodies(
     Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
     refusals checks every owner afresh.
     """
-    reading = body_reading(store, view, ready, inputs, record_writer, retain_projections=true)?
+    reading = body_reading(admission, view, ready, inputs, record_writer, retain_projections=true)?
     origin = source_origin(ready)
     selecting = begin_work()
     reached = select_edit_readers(reading.graph, reading.projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE], not listing_refusals)?
@@ -302,12 +309,16 @@ pub def obtain(
     5. A unit baked here is returned unviewed: the caller commits the request and then calls `view_sealed`.
     """
     listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
+    request_view = program_view(handle)?
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    # The project descriptor, standalone index and checked graph select their own current view in this request.
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
     # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
     # A unit with options is described and keyed afresh on every request: its inputs reach beyond the captured
     # sources, as a Clove's C sources do, and its bakery key, not the capture, proves it unchanged.
     if not listing_refusals and unit_options == "":
-        match read_program(store, handle)?:
+        selected = admission.open(request_view).map_err((error) => error.message())?
+        match selected_program(selected, handle)?:
             Some(unit) =>
                 if restore_program(store, unit)?:
                     return Ok(ProgramOutcome(code=0, unit=Some(unit)))
@@ -326,7 +337,7 @@ pub def obtain(
     if unit_options == "":
         selector = standalone_selector(epoch, producer)?
     if not listing_refusals:
-        if let Some(unit) = indexed_program(store, epoch, selector)?:
+        if let Some(unit) = indexed_program(store, epoch, selector, admission)?:
             if restore_program(store, unit)?:
                 return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
     preparing = begin_work()
@@ -337,7 +348,7 @@ pub def obtain(
     toolchain.console = console
     asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
     verify_scheduled_origin(asked, scheduled_origin)?
-    ready = prepared_for(program_view(handle)?, asked, toolchain)?
+    ready = prepared_for(request_view, asked, toolchain)?
     whole = whole_unit_reason(ready, unit_options)?
     if whole != "":
         record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
@@ -357,9 +368,8 @@ pub def obtain(
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit. An editor's overlay reads and
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
-    request_view = program_view(handle)?
     editor = is_editor_view(request_view)
-    mut selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
+    mut selection = select_bodies(admission, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
     graph = selection.reading.graph
     mut captured_sources = take(selection.reading.projected.projections)
     projected = selection.reading.projected
@@ -896,12 +906,14 @@ def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str],
     return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
 
 
-def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Result[Option[NativeUnit], str]:
+def indexed_program(
+    store: Path, epoch: BuildEpoch, selector: Option[str], mut admission: SnapshotAdmission,
+) -> Result[Option[NativeUnit], str]:
     """Resolve a finalized unit index and give its executable the requesting project's ordinary projection path."""
     match selector:
         None => return Ok(None)
         Some(key) =>
-            selected = snapshot(store).map_err((error) => error.message())?
+            selected = admission.open().map_err((error) => error.message())?
             note_graph_demand("standalone-selector", selected, key)
             match stored_program(selected, key)?:
                 None => return Ok(None)

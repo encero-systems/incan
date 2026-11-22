@@ -54,7 +54,7 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
     check_retained(committed)?
     candidate = read_manifest(root, committed.generation, committed.digest, committed.view)?
     # 2. No selected view may hide a damaged index path or frame.
-    for selected in candidate.views:
+    for selected in candidate.views.as_ref():
         for entry in index_entries(root, selected.root).map_err(index_failure)?:
             match entry.location:
                 None => return Err(failure("integrity", entry.key, "leaf has no frame location"))

@@ -23,6 +23,7 @@ from pub::incan_platform.store import (
     EXPECT_ABSENT_OR_DAMAGED,
     Lookup,
     Snapshot,
+    SnapshotAdmission,
     begin,
     begin_compared,
     commit,
@@ -554,10 +555,11 @@ def prepare_view_admission(root: Path, extra: int) -> Result[None, str]:
 
 def prove_view_admission(root: Path, views: int) -> Result[int, str]:
     """Count just the admissions, then exercise their independent leases across a real publishing process."""
+    mut admission = SnapshotAdmission.for_store(store_path(root))
     observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
     before = observed_work.get("store_manifest_read", 0)
-    mut home = snapshot(root).map_err((error) => error.message())?
-    mut peer = snapshot(root, "peer").map_err((error) => error.message())?
+    mut home = admission.open().map_err((error) => error.message())?
+    mut peer = admission.open("peer").map_err((error) => error.message())?
     reads = observed_work.get("store_manifest_read", 0) - before
     observe_work(WorkObserver())
     assert home.generation == peer.generation and home.digest == peer.digest
@@ -571,8 +573,16 @@ def prove_view_admission(root: Path, views: int) -> Result[int, str]:
     assert child.wait().map_err((error) => str(error))?.success(), "concurrent publisher or collector failed"
     assert text(lookup(home, "key")) == "home-old"
     assert text(lookup(peer, "key")) == "peer-old"
-    latest = snapshot(root, "peer").map_err((error) => error.message())?
+    observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
+    refreshed = observed_work.get("store_manifest_read", 0)
+    latest = admission.open("peer").map_err((error) => error.message())?
+    latest_home = admission.open().map_err((error) => error.message())?
+    refreshed_reads = observed_work.get("store_manifest_read", 0) - refreshed
+    observe_work(WorkObserver())
+    assert refreshed_reads == 1, f"opening two views after CURRENT advanced read {refreshed_reads} manifests"
     assert latest.generation > peer.generation and text(lookup(latest, "key")) == "peer-new"
+    assert latest_home.generation == latest.generation and latest_home.digest == latest.digest
+    assert text(lookup(latest_home, "key")) == "home-new"
 
     # The collector can now take home's lease lock exclusively, while peer's own guard still protects its pages.
     home.pin = None
