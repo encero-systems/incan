@@ -2,6 +2,47 @@
 
 use super::*;
 
+/// A published binding can move in its source file without changing the native names consumers call.
+#[test]
+fn linked_static_paths_follow_the_declaration_name() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::body_ir::{Constant, LinkedStaticAccessors, StaticDeclaration, StaticInitializer};
+
+    let mut canonical = identity("counter", 2);
+    canonical.kind = SemanticSourceTargetKind::Static;
+    let mut declaration = StaticDeclaration {
+        canonical,
+        ty: IncanType::Primitive(IncanPrimitiveType::Int),
+        initial: StaticInitializer::Literal(Constant::Int(100)),
+    };
+    let old = postcard::to_allocvec(&ExecutableDeclaration::Static(declaration.clone()))?;
+    let accessors = LinkedStaticAccessors::for_declaration(&declaration).ok_or("missing static binding")?;
+    assert!(accessors.guarded.is_none());
+    assert!(accessors.initialize_module.is_none());
+    assert!(accessors.store.is_some());
+
+    declaration.canonical.declaration_span = HirSourceSpan::new(350, 355);
+    assert_eq!(
+        LinkedStaticAccessors::for_declaration(&declaration),
+        Some(accessors.clone())
+    );
+    declaration.initial = StaticInitializer::Linked(accessors);
+    let linked = ExecutableDeclaration::Static(declaration);
+    let encoded = postcard::to_allocvec(&linked)?;
+    let decoded: ExecutableDeclaration = postcard::from_bytes(&encoded)?;
+    assert_eq!(decoded, linked);
+
+    let seed: ExecutableDeclaration = postcard::from_bytes(&old)?;
+    assert!(matches!(
+        seed,
+        ExecutableDeclaration::Static(StaticDeclaration {
+            initial: StaticInitializer::Literal(Constant::Int(100)),
+            ..
+        })
+    ));
+    assert_eq!(postcard::to_allocvec(&seed)?, old);
+    Ok(())
+}
+
 /// Publication rebases the profile's proven owner together with the body, without repairing a wrong owner.
 #[test]
 fn input_profile_publication_retains_canonical_owner() -> Result<(), Box<dyn std::error::Error>> {
