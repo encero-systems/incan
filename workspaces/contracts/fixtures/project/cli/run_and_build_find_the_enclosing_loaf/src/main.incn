@@ -1,4 +1,4 @@
-# behavior: `incan run` with no PATH, or with a directory inside a Loaf, runs the enclosing Loaf's program, as 0.5.1 runs the project's main script (#3143).
+# behavior: `incan run` selects the enclosing Loaf's program, including from a nested directory, and ignores an invalid module outside its import reach (#3143).
 # cli-commands:
 #   run
 #   run .
@@ -7,6 +7,7 @@
 #   oven run src
 # expect-stdout:
 #   main ran
+# expect-stderr:
 
 def main() -> None:
     println("main ran")
