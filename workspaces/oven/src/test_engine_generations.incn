@@ -1,0 +1,34 @@
+"""
+After a toolchain update the engine the old compiler started cannot serve the new one: a caller of another compiler
+generation has it retire and starts the engine of its own generation, instead of failing.
+"""
+
+from std.environ import get_or
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from scratch import scratch_directory
+
+
+pub def test_a_caller_of_another_compiler_generation_retires_the_engine_and_starts_its_own() -> Result[None, str]:
+    """An engine started for compiler generation A gives way to a caller of generation B, which then reaches B's engine."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut first = service_identity(store)?
+    first.service_generation = service_generation(binary)?
+    first.compiler_generation = "compiler-generation-a"
+    mut old = connect_with(store, first, binary).map_err((refusal) => refusal.detail)?
+    _ = old.transport.close()
+    mut second = first
+    second.compiler_generation = "compiler-generation-b"
+    mut channel = connect_with(store, second, binary).map_err((refusal) => refusal.detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="generation test completed"))).map_err((refusal) => refusal.detail)?
+    stopped = channel.receive().map_err((refusal) => refusal.detail)?
+    match stopped.message:
+        Message.Event(value) => assert value.status == "Stopping", f"the engine answered {value.status}"
+        _ => return Err("the new generation's engine did not stop")
+    _ = channel.transport.close()
+    return Ok(None)
