@@ -397,16 +397,18 @@ pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, s
             path = audited_path(observed)
             if path.startswith("/") and path != installation.0 and not path.startswith(installation.0 + "/"):
                 return Err(f"nonportable toolchain JSON {document.0}: {observed}")
-    for builder in builder_paths:
-        if builder == "":
-            continue
-        for document in toolchain.rglob("*").map_err((error) => error.message())?:
-            if document.is_file() and not is_relocation_observation_cache(document):
-                match document.read_text("utf-8", "strict"):
-                    Ok(text) =>
+    # One walk and one read of each installed file serve every builder path.
+    builders = [builder for builder in builder_paths if builder != ""]
+    if len(builders) == 0:
+        return Ok(None)
+    for document in toolchain.rglob("*").map_err((error) => error.message())?:
+        if document.is_file() and not is_relocation_observation_cache(document):
+            match document.read_text("utf-8", "strict"):
+                Ok(text) =>
+                    for builder in builders:
                         if f"{builder}/" in text:
                             return Err(f"installed records name the builder: {builder}")
-                    Err(_) => pass
+                Err(_) => pass
     return Ok(None)
 
 
