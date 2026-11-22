@@ -364,7 +364,7 @@ fn a_loafs_canonical_type_remapping_is_the_one_its_install_record_lists() -> Tes
     record.canonical_types.retain(|row| row.public_name != "Unused");
     let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
     let mut consumer = checker("consumer", &loaves, &cache);
-    let remapping = consumer.public_library_canonical_type_remapping("shapes", manifest);
+    let remapping = consumer.public_library_canonical_type_remapping("shapes");
     assert!(
         remapping.contains_key("Outer"),
         "the record's types are bound: {remapping:?}"
@@ -398,14 +398,14 @@ fn a_loaf_registers_the_declarations_its_install_record_lists() -> TestResult {
     }
     let key = TypeChecker::declaration_type_key("shapes", &module_path, "Shape");
     let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
-    whole.cache_transitive_pub_export_semantics("shapes", &manifest);
+    whole.cache_transitive_pub_export_semantics("shapes");
     assert!(
         whole.transitive_pub_traits.contains_key(&key),
         "the whole record registers {key}"
     );
     let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
     let mut consumer = checker("consumer", &loaves, &cache);
-    consumer.cache_transitive_pub_export_semantics("shapes", &manifest);
+    consumer.cache_transitive_pub_export_semantics("shapes");
     assert!(
         consumer.transitive_pub_traits.contains_key("Shape"),
         "the root trait keeps its root name"
@@ -432,7 +432,7 @@ fn a_loaf_keys_the_root_exports_its_install_record_lists() -> TestResult {
     record.root_exports.models.retain(|name| name != "Unused");
     let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
     let mut consumer = checker("consumer", &loaves, &cache);
-    consumer.cache_transitive_pub_export_semantics("shapes", &manifest);
+    consumer.cache_transitive_pub_export_semantics("shapes");
     assert!(
         consumer.transitive_pub_types.contains_key("Outer"),
         "a listed root model is keyed"
@@ -468,7 +468,7 @@ fn a_loaf_lays_out_the_identity_exports_its_install_record_carries() -> TestResu
     let unused = canonical_public_library_type_name("shapes", "Unused");
     let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
     let mut consumer = checker("consumer", &loaves, &cache);
-    consumer.cache_transitive_pub_export_semantics("shapes", &manifest);
+    consumer.cache_transitive_pub_export_semantics("shapes");
     assert!(
         consumer.transitive_pub_types.contains_key(&outer),
         "a carried export is laid out"
@@ -493,16 +493,22 @@ fn a_loafs_foreign_preparation_starts_from_the_origins_its_install_record_lists(
     let mut record = producer.loaf_install_record("shapes", &manifest);
     assert!(!record.type_origins.is_empty(), "shapes names a base type");
     let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
+    let manifest_record = whole
+        .prepared_install_record("shapes")
+        .ok_or("missing shapes install record")?;
     assert!(
         !whole
-            .public_library_foreign_type_remapping("shapes", &manifest)
+            .public_library_foreign_type_remapping("shapes", &manifest_record)
             .is_empty(),
         "the whole record reaches base"
     );
     record.type_origins.clear();
     let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
     let mut consumer = checker("consumer", &loaves, &cache);
-    let remapping = consumer.public_library_foreign_type_remapping("shapes", &manifest);
+    let record = consumer
+        .prepared_install_record("shapes")
+        .ok_or("missing injected shapes install record")?;
+    let remapping = consumer.public_library_foreign_type_remapping("shapes", &record);
     assert!(remapping.is_empty(), "a record without origins reaches {remapping:?}");
     Ok(())
 }
@@ -516,7 +522,6 @@ fn a_reached_loaf_is_laid_out_from_the_identity_graph_its_install_record_carries
     let root = tempfile::tempdir()?;
     let loaves = shapes(root.path())?;
     let base = Arc::clone(&loaves.entry("base").ok_or("missing base")?.artifact.manifest);
-    let shapes_manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
     let mut producer = TypeChecker::new();
     producer.set_loaves(Arc::clone(&loaves));
     let mut record = producer.loaf_install_record("base", &base);
@@ -527,14 +532,14 @@ fn a_reached_loaf_is_laid_out_from_the_identity_graph_its_install_record_carries
     let inner = canonical_public_library_type_name("base", "Inner");
     let other = canonical_public_library_type_name("base", "Other");
     let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
-    whole.cache_transitive_pub_export_semantics("shapes", &shapes_manifest);
+    whole.cache_transitive_pub_export_semantics("shapes");
     assert!(
         whole.transitive_pub_types.contains_key(&other),
         "the whole record lays out {other}"
     );
     let cache = DependencyInterfacePreparationCache::default().with_install_record("base", record);
     let mut consumer = checker("consumer", &loaves, &cache);
-    consumer.cache_transitive_pub_export_semantics("shapes", &shapes_manifest);
+    consumer.cache_transitive_pub_export_semantics("shapes");
     assert!(
         consumer.transitive_pub_types.contains_key(&inner),
         "a carried type is laid out"
@@ -574,7 +579,7 @@ fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manife
     producer
         .check_program(&provider)
         .map_err(|errors| format!("{errors:?}"))?;
-    producer.cache_transitive_pub_export_semantics("specs", &specs.artifact.manifest);
+    producer.cache_transitive_pub_export_semantics("specs");
     let interface = producer.seal_current_module_dependency_interface(
         "provider",
         &provider,

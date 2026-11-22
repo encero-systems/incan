@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use super::{TraitInfo, TypeChecker, TypeInfo};
-use crate::library_manifest::LibraryManifest;
 use crate::symbols::SymbolKind;
 
 /// The compiled declaration a deferred layout is built from.
@@ -37,7 +36,8 @@ pub(in crate::typechecker) enum LayoutDeclaration {
 /// order, then the compiled class field provider.
 #[derive(Debug)]
 pub(in crate::typechecker) struct LayoutRecipe {
-    pub(in crate::typechecker) manifest: Arc<LibraryManifest>,
+    /// The admitted Loaf whose layout this recipe will read.
+    pub(in crate::typechecker) library: String,
     pub(in crate::typechecker) declaration: LayoutDeclaration,
     pub(in crate::typechecker) remappings: Vec<Arc<HashMap<String, String>>>,
     /// The Loaf a compiled class's fields are marked as provided by, when the install marks them.
@@ -109,7 +109,7 @@ impl<T: LayoutValue> TransitiveLayout<T> {
     }
 
     /// The layout, built by `checker` the first time it is read. `None` only for a recipe whose declaration is not of
-    /// this table's kind, which no install defers.
+    /// this table's kind or whose admitted layout input could not be read.
     pub fn get(&self, checker: &TypeChecker) -> Option<&T> {
         self.0
             .value

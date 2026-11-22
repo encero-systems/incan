@@ -251,7 +251,7 @@ impl TypeChecker {
     ) -> Option<TypeInfo> {
         let manifest = std::sync::Arc::clone(&self.loaves.entry(library)?.artifact.manifest);
         let mut kind = SymbolKind::Type(self.manifest_nominal_type_info(&manifest, source_name)?);
-        let remapping = self.public_library_canonical_type_remapping(library, &manifest);
+        let remapping = self.public_library_canonical_type_remapping(library);
         self.remap_symbol_kind_through_declaring_module(library, &manifest, canonical, &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         match kind {

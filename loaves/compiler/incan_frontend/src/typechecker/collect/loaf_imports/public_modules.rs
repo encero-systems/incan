@@ -170,7 +170,7 @@ impl TypeChecker {
                 else {
                     break;
                 };
-                let provider_remapping = self.public_library_canonical_type_remapping(&provider, &provider_manifest);
+                let provider_remapping = self.public_library_canonical_type_remapping(&provider);
                 self.remap_symbol_kind_through_declaring_module(
                     &provider,
                     &provider_manifest,
@@ -410,8 +410,8 @@ impl TypeChecker {
         manifest: &Arc<LibraryManifest>,
         owner_module_path: &[String],
     ) -> HashMap<String, String> {
-        let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
-        self.register_pub_library_declarations(library, manifest, &remapping);
+        let mut remapping = self.public_library_canonical_type_remapping(library);
+        self.register_pub_library_declarations(library, &remapping);
         remapping.extend(self.pub_library_declaration_scope(library, manifest, owner_module_path));
         remapping
     }

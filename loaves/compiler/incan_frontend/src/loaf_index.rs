@@ -72,7 +72,7 @@ use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use crate::library_manifest::executable_ranges::{HEAD, RANGE, RangeHead, RangeRecord};
 use crate::library_manifest::executable_surface::ExecutableSurface;
-use crate::library_manifest::{ExportIdentity, ExportIdentityKind, LibraryManifest};
+use crate::library_manifest::{ExportIdentity, LibraryManifest};
 
 /// The extension of a Loaf's library manifest, `<name>.incnlib`.
 pub const LIBRARY_MANIFEST_EXTENSION: &str = "incnlib";
@@ -926,9 +926,7 @@ impl LoafIndex {
                         .manifest
                         .contract_metadata
                         .identity_graph
-                        .exports
-                        .iter()
-                        .any(|export| export.canonical.as_ref().is_some_and(|id| id.represents(canonical)))
+                        .publishes(canonical)
             })?;
         Some(entry)
     }
@@ -941,24 +939,7 @@ impl LoafIndex {
             .manifest
             .contract_metadata
             .identity_graph
-            .exports
-            .iter()
-            .filter(|export| export.canonical.as_ref().is_some_and(|id| id.represents(canonical)))
-            .filter(|export| {
-                matches!(
-                    export.kind,
-                    ExportIdentityKind::Model
-                        | ExportIdentityKind::Class
-                        | ExportIdentityKind::Enum
-                        | ExportIdentityKind::Newtype
-                )
-            })
-            .min_by(|left, right| {
-                left.public_path
-                    .len()
-                    .cmp(&right.public_path.len())
-                    .then(left.public_path.cmp(&right.public_path))
-            })?;
+            .public_nominal(canonical)?;
         Some((entry, export))
     }
 

@@ -2,7 +2,9 @@
 
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
-use crate::library_manifest::install_record::{InstallExportKind, is_nominal_export};
+use crate::library_manifest::install_record::{
+    InstallExportKind, InstallNestedLayoutKind, LoafInstallRecord, is_nominal_export,
+};
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
@@ -10,10 +12,11 @@ use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 /// as the Loaf's install record gives them.
 #[derive(Clone, Copy)]
 struct ArtifactExport<'a> {
-    entry: &'a LoafEntry,
+    library: &'a str,
+    record: &'a LoafInstallRecord,
     export: &'a crate::library_manifest::ExportIdentity,
     kind: Option<InstallExportKind>,
-    graph: &'a crate::library_manifest::LibraryIdentityGraph,
+    nested: Option<&'a InstallNestedLayoutKind>,
 }
 
 impl TypeChecker {
@@ -47,7 +50,7 @@ impl TypeChecker {
             local_names.dedup();
         }
 
-        let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
+        let mut remapping = self.public_library_canonical_type_remapping(library);
         for (public_name, local_names) in local_names_by_public_export {
             if let Some(identity) = self.public_library_nominal_type_identity(library, manifest, &public_name) {
                 for local_name in &local_names {
@@ -69,16 +72,27 @@ impl TypeChecker {
     pub(in crate::typechecker) fn public_library_canonical_type_remapping(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
     ) -> HashMap<String, String> {
-        let prepared = self.prepared_canonical_type_remapping(library, manifest);
+        let Some(record) = self.prepared_install_record(library) else {
+            return HashMap::new();
+        };
+        self.replay_library_type_remapping(library, &record)
+    }
+
+    /// Install the canonical names and foreign nominal layouts carried by this Loaf's record.
+    pub(super) fn replay_library_type_remapping(
+        &mut self,
+        library: &str,
+        record: &Arc<LoafInstallRecord>,
+    ) -> HashMap<String, String> {
+        let prepared = self.prepared_canonical_type_remapping(library, record);
         let mut remapping = HashMap::with_capacity(prepared.len());
         for entry in prepared.iter() {
             self.public_library_type_identities
                 .insert(entry.canonical_name.clone(), entry.identity.clone());
             remapping.insert(entry.public_name.clone(), entry.canonical_name.clone());
         }
-        remapping.extend(self.public_library_foreign_type_remapping(library, manifest));
+        remapping.extend(self.public_library_foreign_type_remapping(library, record));
         remapping
     }
 
@@ -92,7 +106,7 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn prepared_canonical_type_remapping(
         &self,
         library: &str,
-        manifest: &LibraryManifest,
+        record: &LoafInstallRecord,
     ) -> Arc<[crate::typechecker::dependency_interface::CanonicalTypeEntry]> {
         let prepared = &self.dependency_interface_preparation_cache.canonical_remappings;
         if let Some(entries) = prepared
@@ -102,14 +116,13 @@ impl TypeChecker {
         {
             return Arc::clone(entries);
         }
-        let record = self.prepared_install_record(library, manifest);
         let entries: Arc<[_]> = record
             .canonical_types
             .iter()
             .map(|row| crate::typechecker::dependency_interface::CanonicalTypeEntry {
                 public_name: row.public_name.clone(),
                 canonical_name: canonical_public_library_type_name(library, &row.public_name),
-                identity: self.admitted_type_identity_at(
+                identity: self.replayed_type_identity(
                     library,
                     &row.source_path,
                     row.canonical
@@ -126,6 +139,24 @@ impl TypeChecker {
                 .entry(library.to_owned())
                 .or_insert(entries),
         )
+    }
+
+    /// Bind a recorded nominal row under its consumer key and the selected provider's admitted identity.
+    pub(in crate::typechecker::collect) fn replayed_type_identity(
+        &self,
+        library: &str,
+        source_path: &[String],
+        canonical: Option<CanonicalSymbolId>,
+    ) -> PublicLibraryTypeIdentity {
+        let provider = match canonical.as_ref() {
+            Some(canonical) => self.install_declaring_loaf(canonical).map(|(key, _)| key),
+            None => Some(library),
+        };
+        let mut identity = PublicLibraryTypeIdentity::new(library, source_path).with_canonical(canonical);
+        identity.selected_provider = provider
+            .and_then(|key| self.loaves.package_identity(key).ok().flatten())
+            .cloned();
+        identity
     }
 
     /// The nominal public types of the compiled library `library` as its manifest publishes them: each unique
@@ -171,18 +202,18 @@ impl TypeChecker {
     /// imported by source name.
     ///
     /// The work is three phases and their order is the correctness argument. Seeding finds the origins this
-    /// manifest can reach directly; the closure walks from those to every Loaf transitively required; only then
+    /// record can reach directly; the closure walks from those to every Loaf transitively required; only then
     /// can layouts be reconstructed, because a layout may reference a type discovered late, and remapping it
     /// against a partial map would bake in a name that never resolves.
     pub(in crate::typechecker::collect) fn public_library_foreign_type_remapping(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        record: &Arc<LoafInstallRecord>,
     ) -> HashMap<String, String> {
         if let Some(remapping) = self.foreign_pub_type_remappings.get(library) {
             return remapping.clone();
         }
-        let prepared = self.prepared_foreign_remapping(library, manifest);
+        let prepared = self.prepared_foreign_remapping(library, record);
         self.install_prepared_foreign_remapping(&prepared);
         let remapping = prepared.remapping.as_ref().clone();
         self.foreign_pub_type_remappings
@@ -195,7 +226,7 @@ impl TypeChecker {
     fn prepared_foreign_remapping(
         &self,
         library: &str,
-        manifest: &LibraryManifest,
+        record: &Arc<LoafInstallRecord>,
     ) -> Arc<crate::typechecker::dependency_interface::PreparedForeignRemapping> {
         let cached = match self.dependency_interface_preparation_cache.foreign_remappings.lock() {
             Ok(cache) => cache.get(library).cloned(),
@@ -216,7 +247,7 @@ impl TypeChecker {
         // The builder prepares for this build, so it shares the build's preparations of the Loaves it reaches.
         builder.set_dependency_interface_preparation_cache(self.dependency_interface_preparation_cache.clone());
         let (remapping, preserving_identity_keys, preserving_type_keys) =
-            builder.build_foreign_remapping(library, manifest);
+            builder.build_foreign_remapping(library, record);
         let mut replacing_identities = HashMap::new();
         let mut preserving_identities = HashMap::new();
         for (name, identity) in &builder.public_library_type_identities {
@@ -294,10 +325,9 @@ impl TypeChecker {
     fn build_foreign_remapping(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        record: &Arc<LoafInstallRecord>,
     ) -> (HashMap<String, String>, HashSet<String>, HashSet<String>) {
-        let seeds = self.recorded_type_origins(library, manifest);
-        let (remapping, loaves) = self.resolve_public_type_origins(library, seeds);
+        let (remapping, loaves) = self.resolve_public_type_origins(library, record);
         let (preserving_identity_keys, preserving_type_keys) =
             self.reconstruct_artifact_layouts(library, &remapping, &loaves);
         (remapping, preserving_identity_keys, preserving_type_keys)
@@ -305,62 +335,68 @@ impl TypeChecker {
 
     /// Walk from the seed origins to every Loaf transitively required, registering each type's spelling.
     ///
-    /// Resolving one origin can reveal a Loaf whose own manifest names further origins, so this is a worklist rather
+    /// Resolving one origin can reveal a Loaf whose own record names further origins, so this is a worklist rather
     /// than a pass. `seen` is keyed by binding key so a type reached by two routes is resolved once, which is what
     /// keeps mutual references from looping. An origin no indexed Loaf declares is reported and skipped rather than
     /// failing the whole map, so a single bad type does not cost every other import in the library.
     pub(in crate::typechecker::collect) fn resolve_public_type_origins(
         &mut self,
         library: &str,
-        seeds: Vec<NominalTypeOriginExport>,
-    ) -> (HashMap<String, String>, BTreeMap<String, LoafEntry>) {
-        let mut pending = std::collections::VecDeque::from_iter(seeds);
+        record: &Arc<LoafInstallRecord>,
+    ) -> (HashMap<String, String>, BTreeMap<String, Arc<LoafInstallRecord>>) {
+        let mut pending = std::collections::VecDeque::from([Arc::clone(record)]);
         let mut seen = HashSet::new();
         let mut loaves = BTreeMap::new();
         let mut remapping = HashMap::new();
 
-        while let Some(origin) = pending.pop_front() {
-            let key = origin.binding_key();
-            if !seen.insert(key.clone()) {
-                continue;
-            }
-            let Some(canonical) = origin.canonical.hydrate() else {
-                continue;
-            };
-            let Some((entry, export)) = self
-                .loaves
-                .public_nominal(&canonical)
-                .map(|(entry, export)| (entry.clone(), export.clone()))
-            else {
-                self.push_public_library_error(
-                    library,
-                    format!("names a public type no indexed Loaf declares: {canonical:?}"),
-                );
-                continue;
-            };
-            let qualified = canonical_public_library_type_name(&entry.key, &export.public_path[1..].join("::"));
-            let identity = PublicLibraryTypeIdentity {
-                dependency_key: library.to_string(),
-                source_path: export.source_path.clone(),
-                canonical: Some(canonical),
-                selected_provider: Some(entry.artifact.identity.clone()),
-            };
-            self.public_library_type_identities
-                .insert(key.clone(), identity.clone());
-            self.public_library_type_identities.insert(qualified.clone(), identity);
-            remapping.insert(key, qualified);
+        while let Some(reached) = pending.pop_front() {
+            for origin in &reached.type_origins {
+                let key = origin.binding_key();
+                if !seen.insert(key.clone()) {
+                    continue;
+                }
+                let Some(canonical) = origin.canonical.hydrate() else {
+                    continue;
+                };
+                let Some((provider, record, qualified, identity)) = self.replay_foreign_origin(library, &canonical)
+                else {
+                    self.push_public_library_error(
+                        library,
+                        format!("names a public type no indexed Loaf declares: {canonical:?}"),
+                    );
+                    continue;
+                };
+                self.public_library_type_identities
+                    .insert(key.clone(), identity.clone());
+                self.public_library_type_identities.insert(qualified.clone(), identity);
+                remapping.insert(key, qualified);
 
-            if let std::collections::btree_map::Entry::Vacant(vacant) = loaves.entry(entry.key.clone()) {
-                pending.extend(self.recorded_type_origins(&entry.key, &entry.artifact.manifest));
-                vacant.insert(entry);
+                if let std::collections::btree_map::Entry::Vacant(vacant) = loaves.entry(provider) {
+                    pending.push_back(Arc::clone(&record));
+                    vacant.insert(record);
+                }
             }
         }
         (remapping, loaves)
     }
 
-    /// The nominal type origins the install record of the Loaf indexed as `key` lists, in binding-key order.
-    fn recorded_type_origins(&self, key: &str, manifest: &LibraryManifest) -> Vec<NominalTypeOriginExport> {
-        self.prepared_install_record(key, manifest).type_origins.clone()
+    /// Resolve a foreign nominal through its declaring Loaf's record and exact admitted provider identity.
+    fn replay_foreign_origin(
+        &self,
+        library: &str,
+        canonical: &CanonicalSymbolId,
+    ) -> Option<(String, Arc<LoafInstallRecord>, String, PublicLibraryTypeIdentity)> {
+        let (provider, record) = self.install_declaring_loaf(canonical)?;
+        let export = record.identity_graph.public_nominal(canonical)?;
+        let provider_identity = self.loaves.package_identity(provider).ok()??;
+        let qualified = canonical_public_library_type_name(provider, &export_public_name(export));
+        let identity = PublicLibraryTypeIdentity {
+            dependency_key: library.to_owned(),
+            source_path: export.source_path.clone(),
+            canonical: Some(canonical.clone()),
+            selected_provider: Some(provider_identity.clone()),
+        };
+        Some((provider.to_owned(), record, qualified, identity))
     }
 
     /// The nominal type origins the manifest of the Loaf indexed as `key` references, keyed by binding key: a fact of
@@ -406,14 +442,15 @@ impl TypeChecker {
         &mut self,
         library: &str,
         remapping: &HashMap<String, String>,
-        loaves: &BTreeMap<String, LoafEntry>,
+        loaves: &BTreeMap<String, Arc<LoafInstallRecord>>,
     ) -> (HashSet<String>, HashSet<String>) {
         let mut preserving_identity_keys = HashSet::new();
         let mut preserving_type_keys = HashSet::new();
-        for entry in loaves.values() {
-            let (local_remapping, entry_preserving_keys) = self.register_artifact_type_names(library, entry, remapping);
+        for (key, record) in loaves {
+            let (local_remapping, entry_preserving_keys) =
+                self.register_artifact_type_names(library, key, record, remapping);
             preserving_identity_keys.extend(entry_preserving_keys);
-            preserving_type_keys.extend(self.rebuild_artifact_symbol_layouts(entry, local_remapping));
+            preserving_type_keys.extend(self.rebuild_artifact_symbol_layouts(key, record, local_remapping));
         }
         (preserving_identity_keys, preserving_type_keys)
     }
@@ -428,14 +465,18 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn register_artifact_type_names(
         &mut self,
         library: &str,
-        entry: &LoafEntry,
+        owner_route: &str,
+        record: &LoafInstallRecord,
         remapping: &HashMap<String, String>,
     ) -> (HashMap<String, String>, HashSet<String>) {
         let mut local_remapping = remapping.clone();
         let mut preserving_keys = HashSet::new();
-        let artifact = &entry.artifact;
-        let owner_route = entry.key.as_str();
-        let record = self.prepared_install_record(owner_route, &artifact.manifest);
+        let selected_provider = self.loaves.package_identity(owner_route).ok().flatten().cloned();
+        let canonical_names: HashSet<&str> = record
+            .canonical_types
+            .iter()
+            .map(|entry| entry.public_name.as_str())
+            .collect();
         let kinds = record.export_kinds_by_name();
         let graph = &record.identity_graph;
         for export in &graph.exports {
@@ -451,10 +492,7 @@ impl TypeChecker {
             let reexported = !declared
                 && top_level
                 && (is_nominal_export(kind)
-                    || kind == Some(InstallExportKind::Alias)
-                        && self
-                            .manifest_nominal_type_info(&artifact.manifest, &export.public_name)
-                            .is_some());
+                    || kind == Some(InstallExportKind::Alias) && canonical_names.contains(export.public_name.as_str()));
             if !declared && !reexported {
                 continue;
             }
@@ -474,7 +512,7 @@ impl TypeChecker {
                 dependency_key: library.to_string(),
                 source_path,
                 canonical,
-                selected_provider: Some(artifact.identity.clone()),
+                selected_provider: selected_provider.clone(),
             };
             if reexported {
                 if let std::collections::hash_map::Entry::Vacant(vacant) =
@@ -502,15 +540,17 @@ impl TypeChecker {
     /// same published layout even when no source import binds the type.
     pub(in crate::typechecker::collect) fn rebuild_artifact_symbol_layouts(
         &mut self,
-        entry: &LoafEntry,
+        owner_route: &str,
+        record: &LoafInstallRecord,
         local_remapping: HashMap<String, String>,
     ) -> HashSet<String> {
-        let artifact = &entry.artifact;
-        let manifest = &artifact.manifest;
-        let owner_route = entry.key.as_str();
         let local_remapping = Arc::new(local_remapping);
-        let record = self.prepared_install_record(owner_route, manifest);
         let kinds = record.export_kinds_by_name();
+        let nested: HashMap<_, _> = record
+            .nested_layouts
+            .iter()
+            .map(|layout| (layout.source_path.as_slice(), &layout.kind))
+            .collect();
         let mut scopes = DeclaringScopes::new();
         let mut preserving_type_keys = HashSet::new();
         for export in &record.identity_graph.exports {
@@ -519,10 +559,11 @@ impl TypeChecker {
             let declaration = export.canonical.as_ref().and_then(|identity| identity.hydrate());
             let kind = kinds.get(export.public_name.as_str()).copied().flatten();
             let source = ArtifactExport {
-                entry,
+                library: owner_route,
+                record,
                 export,
                 kind,
-                graph: &record.identity_graph,
+                nested: nested.get(export.source_path.as_slice()).copied(),
             };
             let Some(layout) =
                 self.artifact_export_layout(&source, declaration.as_ref(), &local_remapping, &mut scopes)
@@ -542,12 +583,11 @@ impl TypeChecker {
         preserving_type_keys
     }
 
-    /// One exported type's layout in `entry`, its members read in its declaring module's scope and then through
-    /// `local_remapping`. `None` for an export that names no type.
+    /// One exported type's layout in the Loaf's record, its members read in its declaring module's scope and then
+    /// through `local_remapping`. `None` for an export that names no type.
     ///
-    /// A top-level export is described by the manifest's own nominal info; a nested one has to be read back from its
-    /// declaration, because only the declaration records the members. A model, class, enum or newtype is deferred to
-    /// the first lookup that reads it; an alias reads the tables, so it is built now, as is a type alias.
+    /// The record chooses the layout input. A model, class, enum or newtype is deferred to the first lookup that
+    /// reads it. Alias projections can consult the current type tables, so they are resolved here.
     fn artifact_export_layout(
         &mut self,
         source: &ArtifactExport<'_>,
@@ -556,13 +596,12 @@ impl TypeChecker {
         scopes: &mut DeclaringScopes,
     ) -> Option<TransitiveLayout<TypeInfo>> {
         let ArtifactExport {
-            entry,
+            library,
+            record,
             export,
             kind,
-            graph,
+            nested,
         } = *source;
-        let manifest = &entry.artifact.manifest;
-        let owner_route = entry.key.as_str();
         let (deferred, built) = if export.public_path.len() == 2 {
             if is_nominal_export(kind) {
                 (Some(LayoutDeclaration::Export(export.public_name.clone())), None)
@@ -571,32 +610,30 @@ impl TypeChecker {
             } else {
                 (
                     None,
-                    Some(self.manifest_nominal_type_info(manifest, &export.public_name)?),
+                    Some(self.recorded_root_alias_layout(library, record, &export.public_name)?),
                 )
             }
         } else {
-            let api_declaration = Self::api_declaration_for_target_path(manifest, &export.source_path)?;
-            match api_declaration {
-                ApiDeclaration::Model(_)
-                | ApiDeclaration::Class(_)
-                | ApiDeclaration::Enum(_)
-                | ApiDeclaration::Newtype(_) => (Some(LayoutDeclaration::ApiPath(export.source_path.clone())), None),
-                _ => {
-                    let api = manifest.contract_metadata.api.as_ref();
-                    let SymbolKind::Type(info) = self.symbol_kind_from_api_declaration(api, api_declaration)? else {
+            match nested? {
+                InstallNestedLayoutKind::Nominal => {
+                    (Some(LayoutDeclaration::ApiPath(export.source_path.clone())), None)
+                }
+                InstallNestedLayoutKind::TypeAlias => (None, Some(TypeInfo::TypeAlias)),
+                InstallNestedLayoutKind::Forwarded(projected) => {
+                    let SymbolKind::Type(info) = self.symbol_kind_from_type_projection(Some(projected))? else {
                         return None;
                     };
                     (None, Some(info))
                 }
             }
         };
-        let scope = self.declaring_module_scope(owner_route, manifest, graph, declaration, scopes);
+        let scope = self.declaring_module_scope(library, record, declaration, scopes);
         if let Some(position) = deferred {
             return Some(self.deferred_layout(LayoutRecipe {
-                manifest: Arc::clone(manifest),
+                library: library.to_owned(),
                 declaration: position,
                 remappings: scope.into_iter().chain([Arc::clone(local_remapping)]).collect(),
-                field_provider: Some(owner_route.to_owned()),
+                field_provider: Some(library.to_owned()),
             }));
         }
         let mut kind = SymbolKind::Type(built?);
@@ -604,11 +641,31 @@ impl TypeChecker {
             self.remap_symbol_kind_with_import_aliases(&mut kind, scope.as_ref());
         }
         self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping.as_ref());
-        Self::mark_compiled_class_field_provider(&mut kind, owner_route);
+        Self::mark_compiled_class_field_provider(&mut kind, library);
         let SymbolKind::Type(info) = kind else {
             return None;
         };
         Some(TransitiveLayout::ready(info))
+    }
+
+    /// Resolve the recorded root alias to a nominal layout. Target layout reads still use the older manifest
+    /// representation, while the choice of alias comes only from the install record.
+    pub(super) fn recorded_root_alias_layout(
+        &self,
+        library: &str,
+        record: &LoafInstallRecord,
+        public_name: &str,
+    ) -> Option<TypeInfo> {
+        if !record
+            .canonical_types
+            .iter()
+            .any(|entry| entry.public_name == public_name)
+        {
+            return None;
+        }
+        let alias = record.aliases.iter().find(|alias| alias.name == public_name)?;
+        let manifest = self.loaves.manifest(library)?;
+        nominal_layout(self.symbol_kind_from_manifest_alias(manifest, alias, &mut HashSet::new())?)
     }
 
     /// Report a malformed compiled-library input without repeating the diagnostic's shape at each call.
@@ -678,12 +735,7 @@ impl TypeChecker {
             }
             _ => return None,
         };
-        match kind {
-            SymbolKind::Type(
-                info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_)),
-            ) => Some(info),
-            _ => None,
-        }
+        nominal_layout(kind)
     }
 
     /// Resolve one public nominal type spelling to its dependency-qualified provider source identity.
@@ -742,5 +794,15 @@ impl TypeChecker {
         alternatives.sort();
         alternatives.dedup();
         (!alternatives.is_empty()).then_some(alternatives)
+    }
+}
+
+/// Return the transitive layout of the four nominal kinds admitted by compiled Loaf install.
+fn nominal_layout(kind: SymbolKind) -> Option<TypeInfo> {
+    match kind {
+        SymbolKind::Type(
+            info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_)),
+        ) => Some(info),
+        _ => None,
     }
 }

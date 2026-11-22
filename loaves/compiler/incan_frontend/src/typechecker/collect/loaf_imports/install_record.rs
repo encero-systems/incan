@@ -5,33 +5,52 @@ use super::*;
 use crate::library_manifest::CanonicalIdentityExport;
 use crate::library_manifest::install_record::{
     INSTALL_RECORD_SCHEMA, InstallCanonicalType, InstallDeclaration, InstallDeclarationKind, InstallExportKind,
-    InstallModule, InstallNamedExport, InstallRootExports, LoafInstallRecord,
+    InstallModule, InstallNamedExport, InstallNestedLayout, InstallNestedLayoutKind, InstallRootExports,
+    InstallScopeTarget, LoafInstallRecord,
 };
 
 impl TypeChecker {
-    /// The install record of the compiled Loaf indexed as `library`, produced once for the checkers of one module
-    /// graph from its manifest `manifest`.
+    /// The compiled Loaf's install record, shared by the checkers of one module graph. Produce it for an older Loaf
+    /// when the graph has no record for it yet.
     pub(in crate::typechecker::collect) fn prepared_install_record(
         &self,
         library: &str,
-        manifest: &LibraryManifest,
-    ) -> Arc<LoafInstallRecord> {
+    ) -> Option<Arc<LoafInstallRecord>> {
         let prepared = &self.dependency_interface_preparation_cache.install_records;
         if let Some(record) = prepared
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(library)
         {
-            return Arc::clone(record);
+            return Some(Arc::clone(record));
         }
+        let manifest = self.loaves.manifest(library)?;
         let record = Arc::new(self.loaf_install_record(library, manifest));
-        Arc::clone(
+        Some(Arc::clone(
             prepared
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .entry(library.to_owned())
                 .or_insert(record),
-        )
+        ))
+    }
+
+    /// Find the admitted Loaf that publishes the package declaration, in index order. Its install record supplies
+    /// membership; callers take the selected provider identity from the same entry's admitted inventory.
+    pub(in crate::typechecker::collect) fn install_declaring_loaf(
+        &self,
+        canonical: &CanonicalSymbolId,
+    ) -> Option<(&str, Arc<LoafInstallRecord>)> {
+        let SymbolOrigin::Package { library, .. } = &canonical.origin else {
+            return None;
+        };
+        self.loaves
+            .package_names()
+            .filter(|(_, name)| *name == library.as_str())
+            .find_map(|(key, _)| {
+                let record = self.prepared_install_record(key)?;
+                record.identity_graph.publishes(canonical).then_some((key, record))
+            })
     }
 
     /// The install record of the compiled Loaf indexed as `library`, whose manifest is `manifest`: its nominal public
@@ -62,10 +81,11 @@ impl TypeChecker {
                 traits: exports.traits.iter().map(|item| item.name.clone()).collect(),
             },
             type_origins: self.loaf_type_origins(library, manifest).values().cloned().collect(),
-            modules: install_modules(manifest),
+            modules: install_modules(manifest, self.manifest_declaration_scopes(library, manifest)),
             identity_graph: manifest.contract_metadata.identity_graph.clone(),
             export_kinds: install_export_kinds(manifest),
             aliases: manifest.exports.aliases.clone(),
+            nested_layouts: install_nested_layouts(manifest),
         }
     }
 }
@@ -102,7 +122,10 @@ fn install_export_kinds(manifest: &LibraryManifest) -> Vec<InstallNamedExport> {
 
 /// Each checked API module of `manifest` with the models, classes, enums, newtypes, type aliases and traits install
 /// registers from it, each with the canonical identity the identity graph publishes at its public path.
-fn install_modules(manifest: &LibraryManifest) -> Vec<InstallModule> {
+fn install_modules(
+    manifest: &LibraryManifest,
+    mut scopes: HashMap<Vec<String>, BTreeMap<String, InstallScopeTarget>>,
+) -> Vec<InstallModule> {
     let Some(api) = manifest.contract_metadata.api.as_ref() else {
         return Vec::new();
     };
@@ -160,6 +183,37 @@ fn install_modules(manifest: &LibraryManifest) -> Vec<InstallModule> {
         .map(|module| InstallModule {
             module_path: module.module_path.clone(),
             declarations: module_declarations(module),
+            type_scope: scopes.remove(&module.module_path).unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// Record which nested export sources have a nominal layout, and retain checked alias projections that can be
+/// resolved from the loader's type tables. Declarations that yield no type have no layout recipe.
+fn install_nested_layouts(manifest: &LibraryManifest) -> Vec<InstallNestedLayout> {
+    let mut seen = HashSet::new();
+    manifest
+        .contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .filter(|export| export.public_path.len() > 2 && seen.insert(export.source_path.as_slice()))
+        .filter_map(|export| {
+            let kind = match TypeChecker::api_declaration_for_target_path(manifest, &export.source_path)? {
+                ApiDeclaration::Model(_)
+                | ApiDeclaration::Class(_)
+                | ApiDeclaration::Enum(_)
+                | ApiDeclaration::Newtype(_) => InstallNestedLayoutKind::Nominal,
+                ApiDeclaration::TypeAlias(_) => InstallNestedLayoutKind::TypeAlias,
+                ApiDeclaration::Alias(alias) if alias.projected_function.is_none() => {
+                    InstallNestedLayoutKind::Forwarded(alias.projected_type.clone()?)
+                }
+                _ => return None,
+            };
+            Some(InstallNestedLayout {
+                source_path: export.source_path.clone(),
+                kind,
+            })
         })
         .collect()
 }

@@ -22,7 +22,6 @@ use crate::library_manifest::{
     PartialExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ProviderFactKind, ReceiverExport,
     StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
-use crate::loaf_index::LoafEntry;
 use crate::symbols::*;
 use crate::testing_markers::testing_marker_semantics_from_manifest;
 use crate::typechecker::{

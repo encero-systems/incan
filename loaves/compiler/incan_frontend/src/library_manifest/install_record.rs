@@ -6,6 +6,8 @@
 //! declaration records so that installing reads it instead of decoding the whole manifest. The record is in the
 //! manifest's own published forms: names, paths, canonical identities and type origins.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -28,8 +30,7 @@ pub struct LoafInstallRecord {
     /// The foreign nominal type origins the Loaf's published signatures carry, in binding-key order.
     pub type_origins: Vec<NominalTypeOriginExport>,
     /// Each checked API module with its model, class, enum, newtype, type alias and trait declarations, in module
-    /// and declaration order. A consumer registers them under its declaration keys; the modules' type scopes are the
-    /// Loaf's type-scope records.
+    /// and declaration order. A consumer registers them under its declaration keys and replays their lexical scopes.
     pub modules: Vec<InstallModule>,
     /// The Loaf's identity graph, as its manifest publishes it. Install lays out each nominal export under its
     /// canonical spelling, and the foreign preparation of a Loaf that reaches this one reads it.
@@ -39,6 +40,8 @@ pub struct LoafInstallRecord {
     pub export_kinds: Vec<InstallNamedExport>,
     /// The Loaf's root alias exports, which install resolves when it lays them out.
     pub aliases: Vec<AliasExport>,
+    /// Nested identity-graph sources that describe a type layout or a type alias.
+    pub nested_layouts: Vec<InstallNestedLayout>,
 }
 
 impl LoafInstallRecord {
@@ -91,6 +94,37 @@ pub enum InstallExportKind {
 pub struct InstallModule {
     pub module_path: Vec<String>,
     pub declarations: Vec<InstallDeclaration>,
+    /// Spellings in this module that resolve through a declaration rather than a root export.
+    pub type_scope: BTreeMap<String, InstallScopeTarget>,
+}
+
+/// A declaration reached by a spelling in a checked module's type scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallScopeTarget {
+    /// The declaring module's authored path within the package.
+    pub module: Vec<String>,
+    /// The declaration's name in its module.
+    pub name: String,
+}
+
+/// The layout recipe available at one nested identity export's source path.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstallNestedLayout {
+    /// The checked declaration path named by the identity graph.
+    pub source_path: Vec<String>,
+    /// How this declaration yields a type layout.
+    pub kind: InstallNestedLayoutKind,
+}
+
+/// How a nested export describes a type.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum InstallNestedLayoutKind {
+    /// A model, class, enum or newtype whose fields and methods are read on demand.
+    Nominal,
+    /// A checked type alias.
+    TypeAlias,
+    /// A forwarded type whose projection identifies the type it names.
+    Forwarded(TypeRef),
 }
 
 /// One model, class, enum, newtype, type alias or trait of a checked API module.

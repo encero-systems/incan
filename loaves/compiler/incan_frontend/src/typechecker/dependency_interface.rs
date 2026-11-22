@@ -880,7 +880,7 @@ impl TypeChecker {
                 .extend(ready_layouts(values));
         }
         for library in interface.compiled_libraries.iter() {
-            self.install_compiled_library_semantics(library);
+            self.cache_transitive_pub_export_semantics(library);
         }
         self.public_library_type_identities.extend(
             interface
@@ -888,21 +888,6 @@ impl TypeChecker {
                 .iter()
                 .map(|(name, identity)| (name.clone(), identity.clone())),
         );
-    }
-
-    /// Rebuild one compiled Loaf's checker-local semantic cache from its already-indexed immutable manifest.
-    ///
-    /// Source dependency declarations are never recollected here. The library key list is retained by the shared
-    /// provider interface, and the checker's existing cache guard admits each compiled library at most once.
-    fn install_compiled_library_semantics(&mut self, library: &str) {
-        let Some(manifest) = self
-            .loaves
-            .entry(library)
-            .map(|entry| Arc::clone(&entry.artifact.manifest))
-        else {
-            return;
-        };
-        self.cache_transitive_pub_export_semantics(library, &manifest);
     }
 
     /// Install selected interfaces without collecting any provider declaration from source again.

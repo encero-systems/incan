@@ -3,7 +3,9 @@
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
 use crate::library_manifest::CanonicalIdentityExport;
-use crate::library_manifest::install_record::{InstallDeclarationKind, InstallExportKind, is_nominal_export};
+use crate::library_manifest::install_record::{
+    InstallDeclarationKind, InstallExportKind, LoafInstallRecord, is_nominal_export,
+};
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
@@ -54,8 +56,8 @@ impl TypeChecker {
         member: &str,
     ) -> Option<SymbolKind> {
         let manifest = std::sync::Arc::clone(&self.loaves.entry(library)?.artifact.manifest);
-        self.cache_transitive_pub_export_semantics(library, &manifest);
-        let remapping = self.public_library_canonical_type_remapping(library, &manifest);
+        self.cache_transitive_pub_export_semantics(library);
+        let remapping = self.public_library_canonical_type_remapping(library);
         let mut kind = if let Some(kind) = self.pub_library_function_symbol(&manifest, member) {
             kind
         } else {
@@ -215,22 +217,21 @@ impl TypeChecker {
     /// They do not change source-visible name resolution. Each declaration's layout is deferred (see
     /// [`crate::typechecker::TransitiveLayout`]) and built the first time a lookup reads it; identities, scopes and
     /// alias layouts are installed here, in the order the tables have always been filled.
-    pub(in crate::typechecker) fn cache_transitive_pub_export_semantics(
-        &mut self,
-        library: &str,
-        manifest: &Arc<LibraryManifest>,
-    ) {
-        if !self.cached_pub_libraries.insert(library.to_string()) {
+    pub(in crate::typechecker) fn cache_transitive_pub_export_semantics(&mut self, library: &str) {
+        if self.cached_pub_libraries.contains(library) {
             return;
         }
-        let canonical_remapping = Arc::new(self.public_library_canonical_type_remapping(library, manifest));
+        let Some(record) = self.prepared_install_record(library) else {
+            return;
+        };
+        self.cached_pub_libraries.insert(library.to_owned());
+        let canonical_remapping = Arc::new(self.replay_library_type_remapping(library, &record));
         let root_layout = |declaration, field_provider: Option<&str>| LayoutRecipe {
-            manifest: Arc::clone(manifest),
+            library: library.to_owned(),
             declaration,
             remappings: Vec::new(),
             field_provider: field_provider.map(str::to_owned),
         };
-        let record = self.prepared_install_record(library, manifest);
         let roots = &record.root_exports;
         for (index, model) in roots.models.iter().enumerate() {
             let layout = self.deferred_layout(root_layout(LayoutDeclaration::Model(index), None));
@@ -262,7 +263,7 @@ impl TypeChecker {
                 .push(layout);
         }
 
-        self.register_pub_library_declarations(library, manifest, &canonical_remapping);
+        self.register_recorded_declarations(library, &record, &canonical_remapping);
         for declared in record.modules.iter().flat_map(|module| &module.declarations) {
             if matches!(
                 declared.kind,
@@ -273,7 +274,7 @@ impl TypeChecker {
                 });
             }
         }
-        self.cache_canonical_type_layouts(library, manifest, &canonical_remapping);
+        self.cache_canonical_type_layouts(library, &record, &canonical_remapping);
     }
 
     /// Install each nominal public type of `library` under its canonical spelling and its retained carrier key, its
@@ -286,10 +287,9 @@ impl TypeChecker {
     fn cache_canonical_type_layouts(
         &mut self,
         library: &str,
-        manifest: &Arc<LibraryManifest>,
+        record: &LoafInstallRecord,
         canonical_remapping: &Arc<HashMap<String, String>>,
     ) {
-        let record = self.prepared_install_record(library, manifest);
         let identity_graph = &record.identity_graph;
         let kinds = record.export_kinds_by_name();
         let mut scopes = DeclaringScopes::new();
@@ -299,22 +299,23 @@ impl TypeChecker {
             let kind = kinds.get(public_name).copied().flatten();
             let (declaration, layout) = if is_nominal_export(kind) {
                 let declaration = identity_graph.canonical_for_public_name(public_name);
-                let scope =
-                    self.declaring_module_scope(library, manifest, identity_graph, declaration.as_ref(), &mut scopes);
+                let scope = self.declaring_module_scope(library, record, declaration.as_ref(), &mut scopes);
                 let layout = self.deferred_layout(LayoutRecipe {
-                    manifest: Arc::clone(manifest),
+                    library: library.to_owned(),
                     declaration: LayoutDeclaration::Export(public_name.to_owned()),
                     remappings: scope.into_iter().chain([Arc::clone(canonical_remapping)]).collect(),
                     field_provider: Some(library.to_owned()),
                 });
                 (declaration, layout)
             } else if kind == Some(InstallExportKind::Alias) {
-                let Some(info) = self.manifest_nominal_type_info(manifest, public_name) else {
+                let Some(info) = self.recorded_root_alias_layout(library, record, public_name) else {
                     continue;
                 };
                 let declaration = identity_graph.canonical_for_public_name(public_name);
                 let mut kind = SymbolKind::Type(info);
-                self.remap_symbol_kind_through_declaring_module(library, manifest, declaration.as_ref(), &mut kind);
+                if let Some(scope) = self.declaring_module_scope(library, record, declaration.as_ref(), &mut scopes) {
+                    self.remap_symbol_kind_with_import_aliases(&mut kind, scope.as_ref());
+                }
                 self.remap_symbol_kind_with_import_aliases(&mut kind, canonical_remapping.as_ref());
                 Self::mark_compiled_class_field_provider(&mut kind, library);
                 let SymbolKind::Type(info) = kind else {

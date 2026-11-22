@@ -2,6 +2,7 @@
 //! the build a lookup runs the first time it reads one.
 
 use super::*;
+use crate::library_manifest::install_record::LoafInstallRecord;
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe, LayoutValue};
 
@@ -23,10 +24,10 @@ impl TypeChecker {
     }
 
     /// Build one deferred layout's symbol kind exactly as its install would have: the declaration, each remapping in
-    /// order, then the compiled class field provider. `None` when the declaration is no longer where the recipe names
-    /// it, which an immutable manifest never allows.
+    /// order, then the compiled class field provider. The layout read is the first time this recipe needs the Loaf's
+    /// manifest. Missing or changed admitted inputs cannot yield a layout.
     pub(in crate::typechecker) fn build_deferred_layout(&self, recipe: &LayoutRecipe) -> Option<SymbolKind> {
-        let manifest = recipe.manifest.as_ref();
+        let manifest = self.loaves.manifest(&recipe.library)?;
         let exports = &manifest.exports;
         let mut kind = match &recipe.declaration {
             LayoutDeclaration::Model(index) => SymbolKind::Type(TypeInfo::Model(
@@ -68,19 +69,18 @@ impl TypeChecker {
     /// [`Self::remap_symbol_kind_through_declaring_module`] reads it, read once per declaring module into `scopes`.
     /// `None` when the identity graph names no declaring module, where that remap changes nothing.
     pub(in crate::typechecker::collect) fn declaring_module_scope(
-        &mut self,
+        &self,
         library: &str,
-        manifest: &LibraryManifest,
-        graph: &crate::library_manifest::LibraryIdentityGraph,
+        record: &LoafInstallRecord,
         canonical: Option<&CanonicalSymbolId>,
         scopes: &mut DeclaringScopes,
     ) -> Option<Arc<HashMap<String, String>>> {
-        let source_path = graph.declaration_source_path(canonical?)?;
+        let source_path = record.identity_graph.declaration_source_path(canonical?)?;
         let (_, module_path) = source_path.split_last()?;
         if let Some(scope) = scopes.get(module_path) {
             return Some(Arc::clone(scope));
         }
-        let scope = Arc::new(self.pub_library_declaration_scope(library, manifest, module_path));
+        let scope = Arc::new(self.recorded_declaration_scope(library, record, module_path));
         scopes.insert(module_path.to_vec(), Arc::clone(&scope));
         Some(scope)
     }

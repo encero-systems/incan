@@ -30,7 +30,7 @@ impl TypeChecker {
             self.push_loaf_module_not_found(library, &manifest, &import.module, span);
             return;
         }
-        self.cache_transitive_pub_export_semantics(library, &manifest);
+        self.cache_transitive_pub_export_semantics(library);
         let mut canonical_path = self.loaf_binding_root(library);
         canonical_path.extend(import.module.iter().cloned());
         let target_identity = self.loaf_module_identity(library, &import.module);
@@ -64,8 +64,8 @@ impl TypeChecker {
             if manifest.manifest_format == crate::library_manifest::OWNERSHIP_MANIFEST_FORMAT {
                 match crate::library_manifest::ownership::exported_contracts(&manifest) {
                     Ok(contracts) => {
-                        let root_remapping = self.public_library_canonical_type_remapping(library, &manifest);
-                        self.register_pub_library_declarations(library, &manifest, &root_remapping);
+                        let root_remapping = self.public_library_canonical_type_remapping(library);
+                        self.register_pub_library_declarations(library, &root_remapping);
                         for (identity, mut contract) in contracts {
                             let mut type_remapping = root_remapping.clone();
                             if let SymbolOrigin::Package { module_path, .. } = &identity.origin {
@@ -199,7 +199,7 @@ impl TypeChecker {
             self.push_loaf_module_not_found(library, &manifest, path, span);
             return;
         }
-        self.cache_transitive_pub_export_semantics(library, &manifest);
+        self.cache_transitive_pub_export_semantics(library);
         let available_exports = Self::loaf_module_member_names(&manifest, path);
         let root = self.loaf_binding_root(library);
         let mut source_module = root.clone();

@@ -8,13 +8,15 @@
 //! declaration. Each such spelling maps to the declaration's provider-qualified key, whose identity and members come
 //! from the declaration itself.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
-use crate::library_manifest::install_record::{InstallDeclaration, InstallDeclarationKind};
+use crate::library_manifest::install_record::{
+    InstallDeclaration, InstallDeclarationKind, InstallScopeTarget, LoafInstallRecord,
+};
 use crate::library_manifest::{CanonicalIdentityExport, LibraryManifest, resolved_type_from_manifest_type_ref};
 use crate::symbols::SymbolKind;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
@@ -94,17 +96,16 @@ impl TypeChecker {
         }
     }
 
-    /// Build, for every checked API module of `manifest`, the spellings whose declaration the package root's public
-    /// names do not carry, each mapped to its declaration's key.
+    /// Build the declaration scopes that installing this Loaf needs, without embedding the consumer's binding key.
     ///
     /// A spelling is left out when the root publishes the same declaration under it, so the root's existing mapping,
     /// including a consumer's own import of that name, keeps spelling it. A manifest without canonical identities
     /// gives no evidence that two paths name one declaration and yields no entries.
-    fn build_pub_library_declaration_scopes(
+    pub(super) fn manifest_declaration_scopes(
         &self,
         library: &str,
         manifest: &LibraryManifest,
-    ) -> HashMap<Vec<String>, HashMap<String, String>> {
+    ) -> HashMap<Vec<String>, BTreeMap<String, InstallScopeTarget>> {
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
             return HashMap::new();
         };
@@ -117,7 +118,7 @@ impl TypeChecker {
         };
         let mut scopes = HashMap::new();
         for module in &api.modules {
-            let mut scope = HashMap::new();
+            let mut scope = BTreeMap::new();
             for declaration in &module.declarations {
                 let name = Self::api_declaration_name(declaration);
                 let Some((declaring_module, declared_name)) =
@@ -137,7 +138,10 @@ impl TypeChecker {
                 }
                 scope.insert(
                     name.to_string(),
-                    Self::declaration_type_key(library, &declaring_module, &declared_name),
+                    InstallScopeTarget {
+                        module: declaring_module,
+                        name: declared_name,
+                    },
                 );
             }
             if !scope.is_empty() {
@@ -156,14 +160,33 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         module_path: &[String],
     ) -> HashMap<String, String> {
-        let standard = self
-            .loaves
-            .admitted(library)
-            .map(|admitted| admitted.binding_root == ["std"]);
-        if let Ok(Some(scope)) = self.loaves.type_scope(library, module_path)
-            && standard == Some(scope.standard)
-        {
-            return scope
+        if let Some(scope) = self.installed_declaration_scope(library, module_path) {
+            return scope;
+        }
+        if !self.pub_library_declaration_scopes.contains_key(library) {
+            let scopes = self
+                .manifest_declaration_scopes(library, manifest)
+                .into_iter()
+                .map(|(module, scope)| (module, Self::bind_declaration_scope(library, &scope)))
+                .collect();
+            self.pub_library_declaration_scopes.insert(library.to_string(), scopes);
+        }
+        self.pub_library_declaration_scopes
+            .get(library)
+            .and_then(|scopes| scopes.get(module_path))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Bind the module's authenticated type-scope record under this consumer's Loaf key when the namespace agrees.
+    fn installed_declaration_scope(&self, library: &str, module_path: &[String]) -> Option<HashMap<String, String>> {
+        let standard = self.loaves.admitted(library)?.binding_root == ["std"];
+        let scope = self.loaves.type_scope(library, module_path).ok()??;
+        if standard != scope.standard {
+            return None;
+        }
+        Some(
+            scope
                 .names
                 .into_iter()
                 .filter(|(_, declared)| declared.scoped)
@@ -171,16 +194,36 @@ impl TypeChecker {
                     let key = Self::declaration_type_key(library, &declared.module, &declared.name);
                     (spelling, key)
                 })
-                .collect();
-        }
-        if !self.pub_library_declaration_scopes.contains_key(library) {
-            let scopes = self.build_pub_library_declaration_scopes(library, manifest);
-            self.pub_library_declaration_scopes.insert(library.to_string(), scopes);
-        }
-        self.pub_library_declaration_scopes
-            .get(library)
-            .and_then(|scopes| scopes.get(module_path))
-            .cloned()
+                .collect(),
+        )
+    }
+
+    /// Bind a stored declaration scope to the key by which this consumer knows the Loaf.
+    fn bind_declaration_scope(library: &str, scope: &BTreeMap<String, InstallScopeTarget>) -> HashMap<String, String> {
+        scope
+            .iter()
+            .map(|(spelling, target)| {
+                let key = Self::declaration_type_key(library, &target.module, &target.name);
+                (spelling.clone(), key)
+            })
+            .collect()
+    }
+
+    /// Read the module's scope from its own record or the scope carried by the admitted install record.
+    pub(super) fn recorded_declaration_scope(
+        &self,
+        library: &str,
+        record: &LoafInstallRecord,
+        module_path: &[String],
+    ) -> HashMap<String, String> {
+        self.installed_declaration_scope(library, module_path)
+            .or_else(|| {
+                record
+                    .modules
+                    .iter()
+                    .find(|module| module.module_path == module_path)
+                    .map(|module| Self::bind_declaration_scope(library, &module.type_scope))
+            })
             .unwrap_or_default()
     }
 
@@ -263,10 +306,20 @@ impl TypeChecker {
     pub(super) fn register_pub_library_declarations(
         &mut self,
         library: &str,
-        manifest: &Arc<LibraryManifest>,
         root_remapping: &HashMap<String, String>,
     ) {
-        let record = self.prepared_install_record(library, manifest);
+        if let Some(record) = self.prepared_install_record(library) {
+            self.register_recorded_declarations(library, &record, root_remapping);
+        }
+    }
+
+    /// Replay the declaration identities, alias targets and deferred layouts from the admitted install record.
+    pub(super) fn register_recorded_declarations(
+        &mut self,
+        library: &str,
+        record: &LoafInstallRecord,
+        root_remapping: &HashMap<String, String>,
+    ) {
         for (module_index, module) in record.modules.iter().enumerate() {
             let mut scope = None;
             for declared in &module.declarations {
@@ -283,7 +336,11 @@ impl TypeChecker {
                     let mut source_path = module.module_path.clone();
                     source_path.push(declared.name.clone());
                     let canonical = declared.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate);
-                    let identity = self.admitted_public_type_identity(library, &source_path, canonical);
+                    let declaration_path = canonical
+                        .as_ref()
+                        .and_then(|canonical| record.identity_graph.declaration_source_path(canonical));
+                    let identity =
+                        self.replayed_type_identity(library, declaration_path.unwrap_or(&source_path), canonical);
                     self.public_library_type_identities.insert(key.clone(), identity);
                 }
                 if self.transitive_pub_types.contains_key(&key)
@@ -294,7 +351,7 @@ impl TypeChecker {
                 }
                 let scope = scope.get_or_insert_with(|| {
                     let mut module_scope = root_remapping.clone();
-                    module_scope.extend(self.pub_library_declaration_scope(library, manifest, &module.module_path));
+                    module_scope.extend(self.recorded_declaration_scope(library, record, &module.module_path));
                     Arc::new(module_scope)
                 });
                 let position = LayoutDeclaration::Api {
@@ -302,7 +359,7 @@ impl TypeChecker {
                     declaration: declared.position,
                 };
                 let scope = Arc::clone(scope);
-                self.cache_declared_library_type(library, manifest, key, declared, position, scope);
+                self.cache_declared_library_type(library, key, declared, position, scope);
             }
         }
     }
@@ -315,7 +372,6 @@ impl TypeChecker {
     fn cache_declared_library_type(
         &mut self,
         library: &str,
-        manifest: &Arc<LibraryManifest>,
         key: String,
         declared: &InstallDeclaration,
         position: LayoutDeclaration,
@@ -338,7 +394,7 @@ impl TypeChecker {
             return;
         }
         let recipe = LayoutRecipe {
-            manifest: Arc::clone(manifest),
+            library: library.to_owned(),
             declaration: position,
             remappings: vec![scope],
             field_provider: Some(library.to_owned()),
