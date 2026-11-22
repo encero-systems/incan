@@ -1,0 +1,85 @@
+"""
+Units the records producer cannot give per-declaration records are compiled whole by the engine, keyed by their full
+inputs: one canonical spelling of a request's unit options names one engine unit, and an unchanged rerun does no work.
+"""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from unit_options import parse_options
+from engine_unit_options import decode_unit_options, unit_options_text
+from engine_client import project_view_name
+from files import write
+from lowering_record_fixtures import command_proof, proof_count, stop_example_engine
+from scratch import scratch_directory
+
+
+pub def test_unit_options_name_one_unit_whichever_spelling() -> Result[None, str]:
+    """Features in another order or spelling name the same engine unit and view; an ordinary unit carries none."""
+    scratch = scratch_directory()?
+    entry = scratch.path().joinpath("second.incn")
+    first = parse_options(["src/main.incn", "--features", "b,a", "--program-entry", entry.0], ".")?
+    second = parse_options(["src/main.incn", "--features", "a", "--features", " b", "--program-entry", entry.0], ".")?
+    text = unit_options_text(first)?
+    assert text != ""
+    assert unit_options_text(second)? == text, f"{unit_options_text(second)?} != {text}"
+    assert unit_options_text(parse_options(["src/main.incn"], ".")?)? == ""
+    decoded = decode_unit_options(text)?
+    assert decoded.request.features == ["a", "b"], str(decoded.request.features)
+    assert decoded.program_entries == [entry.0], str(decoded.program_entries)
+    assert decode_unit_options("")?.request.default_features
+    plain = project_view_name("scope", "/project/src/main.incn", "debug", None)?
+    selected = project_view_name("scope", "/project/src/main.incn", "debug", None, text)?
+    assert selected != plain
+    assert project_view_name("scope", "/project/src/main.incn", "debug", None, unit_options_text(second)?)? == selected
+    assert project_view_name("scope", "/project/src/main.incn", "debug", None, "")? == plain
+    return Ok(None)
+
+
+pub def test_an_unchanged_whole_unit_rerun_does_no_work() -> Result[None, str]:
+    """
+    A program built with a second program entry is compiled whole by the records engine, and its report says so;
+    building it again unchanged evaluates and bakes nothing.
+    """
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("entries")
+    source = project.joinpath("src")
+    source.mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"entries\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(source.joinpath("main.incn"), "def main() -> None:\n    println(\"first\")\n")?
+    write(source.joinpath("second.incn"), "def main() -> None:\n    println(\"second\")\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = scratch.path().joinpath("store")
+    cold = whole_unit_build(binary, project, store)?
+    cold_text = cold.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "whole_unit_compiles")? == 1, cold_text
+    assert proof_count(cold, "native_bakes")? == 1, cold_text
+    warm = whole_unit_build(binary, project, store)?
+    warm_text = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(warm, "unit_evaluations")? == 0, warm_text
+    assert proof_count(warm, "native_bakes")? == 0, warm_text
+    return stop_example_engine(binary, store)
+
+
+def whole_unit_build(binary: str, project: Path, store: Path) -> Result[JsonValue, str]:
+    """Build the program with its second entry through the records engine and decode its report."""
+    outcome = Command
+        .new(binary)
+        .current_dir(project.0)
+        .arg("build")
+        .arg("src/main.incn")
+        .args(["--program-entry", "src/second.incn", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(f"whole-unit build: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
