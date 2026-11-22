@@ -190,13 +190,19 @@ impl RecordSet {
             .map(|(manifest, digest)| (Arc::clone(manifest), digest.clone()))
     }
 
-    /// Keep one authenticated group for the rest of the process: its values are content-named under a receipt that
-    /// cannot change while the process runs, so reading and hashing them again could only return the same bytes.
+    /// Keep one authenticated group for the rest of the request: its values are content-named under a receipt that
+    /// cannot change while the process runs, so reading and hashing them again inside the request could only return
+    /// the same bytes. [`release_admitted_groups`] drops it when the request ends.
     fn admit(&self, prefix: String, projection: Projection, group: &AdmittedGroup) {
         self.admitted
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert((prefix, projection), (Arc::clone(&group.0), group.1.clone()));
+    }
+
+    /// Drop every decoded group, keeping only the small named records, summaries and vocabularies already read.
+    fn release_groups(&self) {
+        self.admitted.lock().unwrap_or_else(PoisonError::into_inner).clear();
     }
 
     /// Records and payload bytes read from the payload directory so far.
@@ -647,6 +653,18 @@ fn decode_manifest(
         ));
     }
     Ok((manifest, metadata.manifest_digest))
+}
+
+/// Release the record groups the request that just ended decoded: a resident worker keeps no decoded copy of an
+/// installed Loaf between requests. A set this process never loaded stays unloaded.
+pub(super) fn release_admitted_groups() {
+    #[cfg(test)]
+    if let Some(set) = thread_selection::selected() {
+        set.release_groups();
+    }
+    if let Some(Ok(Some(set))) = INSTALLED.get() {
+        set.release_groups();
+    }
 }
 
 /// Return the process's one immutable installed set; the worker cannot select another root between requests.
