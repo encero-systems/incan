@@ -742,6 +742,7 @@ fn static_initial_operand(
         }
         StaticInitializer::Set(members) => static_hashed_initial(builder, ty, members, &[], span),
         StaticInitializer::Computed(_) => Err("invalid Body IR computed static as a literal initial value".into()),
+        StaticInitializer::Linked(_) => Err("invalid Body IR linked static as a local initial value".into()),
     }
 }
 

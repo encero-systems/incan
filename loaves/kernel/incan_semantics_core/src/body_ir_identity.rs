@@ -75,6 +75,7 @@ fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
 /// initializer is a closed body with no parameters that returns exactly the storage carrier.
 fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer) -> bool {
     match initial {
+        StaticInitializer::Linked(_) => false,
         StaticInitializer::Computed(body) => {
             body.params.is_empty()
                 && body.param_locals.is_empty()

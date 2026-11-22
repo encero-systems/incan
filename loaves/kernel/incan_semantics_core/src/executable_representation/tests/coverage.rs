@@ -25,11 +25,22 @@ fn linked_static_paths_follow_the_declaration_name() -> Result<(), Box<dyn std::
         LinkedStaticAccessors::for_declaration(&declaration),
         Some(accessors.clone())
     );
-    declaration.initial = StaticInitializer::Linked(accessors);
+    declaration.initial = StaticInitializer::Linked(Box::new(accessors));
     let linked = ExecutableDeclaration::Static(declaration);
     let encoded = postcard::to_allocvec(&linked)?;
     let decoded: ExecutableDeclaration = postcard::from_bytes(&encoded)?;
     assert_eq!(decoded, linked);
+    assert!(decoded.identity().is_some());
+
+    let mut invalid = decoded;
+    if let ExecutableDeclaration::Static(StaticDeclaration {
+        initial: StaticInitializer::Linked(paths),
+        ..
+    }) = &mut invalid
+    {
+        paths.load.clear();
+    }
+    assert!(invalid.identity().is_none());
 
     let seed: ExecutableDeclaration = postcard::from_bytes(&old)?;
     assert!(matches!(

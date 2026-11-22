@@ -34,6 +34,9 @@ impl BodyIrModule {
         else {
             return false;
         };
+        if let StaticInitializer::Linked(accessors) = &declaration.initial {
+            return accessors.valid_for(&declaration.canonical);
+        }
         if let StaticInitializer::Computed(body) = &declaration.initial
             && (body.canonical.as_ref() != Some(&declaration.canonical) || body.decl_id != declaration_id)
         {
