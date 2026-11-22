@@ -3,7 +3,7 @@
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
 use crate::library_manifest::CanonicalIdentityExport;
-use crate::library_manifest::install_record::InstallDeclarationKind;
+use crate::library_manifest::install_record::{InstallDeclarationKind, InstallExportKind};
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
@@ -279,8 +279,9 @@ impl TypeChecker {
     /// Install each nominal public type of `library` under its canonical spelling and its retained carrier key, its
     /// members read in its declaring module's scope and then through `canonical_remapping`.
     ///
-    /// A model, class, enum or newtype export is deferred; an alias export is built now, because it reads the tables,
-    /// and one that names no nominal type is not installed. Every layout is made before any is installed, so an alias
+    /// The exports and the kind of root export each name finds are the Loaf's install record's. A model, class, enum
+    /// or newtype export is deferred; an alias export is built now, because it reads the tables, and one that names no
+    /// nominal type is not installed. Every layout is made before any is installed, so an alias
     /// reads the tables as the install found them.
     fn cache_canonical_type_layouts(
         &mut self,
@@ -288,14 +289,31 @@ impl TypeChecker {
         manifest: &Arc<LibraryManifest>,
         canonical_remapping: &Arc<HashMap<String, String>>,
     ) {
-        let identity_graph = &manifest.contract_metadata.identity_graph;
+        let record = self.prepared_install_record(library, manifest);
+        let identity_graph = &record.identity_graph;
+        let kinds = record
+            .export_kinds
+            .iter()
+            .map(|named| (named.public_name.as_str(), named.kind))
+            .collect::<HashMap<_, _>>();
         let mut scopes = DeclaringScopes::new();
         let mut layouts = Vec::new();
         for identity in &identity_graph.exports {
             let public_name = identity.public_name.as_str();
-            let (declaration, layout) = if Self::export_layout_is_deferrable(manifest, public_name) {
+            let kind = kinds.get(public_name).copied().flatten();
+            let deferrable = matches!(
+                kind,
+                Some(
+                    InstallExportKind::Model
+                        | InstallExportKind::Class
+                        | InstallExportKind::Enum
+                        | InstallExportKind::Newtype
+                )
+            );
+            let (declaration, layout) = if deferrable {
                 let declaration = identity_graph.canonical_for_public_name(public_name);
-                let scope = self.declaring_module_scope(library, manifest, declaration.as_ref(), &mut scopes);
+                let scope =
+                    self.declaring_module_scope(library, manifest, identity_graph, declaration.as_ref(), &mut scopes);
                 let layout = self.deferred_layout(LayoutRecipe {
                     manifest: Arc::clone(manifest),
                     declaration: LayoutDeclaration::Export(public_name.to_owned()),
@@ -303,7 +321,7 @@ impl TypeChecker {
                     field_provider: Some(library.to_owned()),
                 });
                 (declaration, layout)
-            } else {
+            } else if kind == Some(InstallExportKind::Alias) {
                 let Some(info) = self.manifest_nominal_type_info(manifest, public_name) else {
                     continue;
                 };
@@ -316,6 +334,8 @@ impl TypeChecker {
                     continue;
                 };
                 (declaration, TransitiveLayout::ready(info))
+            } else {
+                continue;
             };
             layouts.push((
                 canonical_public_library_type_name(library, public_name),

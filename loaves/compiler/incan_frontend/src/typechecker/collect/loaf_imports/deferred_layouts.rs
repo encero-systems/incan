@@ -64,20 +64,18 @@ impl TypeChecker {
         Some(kind)
     }
 
-    /// The scope of the module that declares `canonical`, as [`Self::remap_symbol_kind_through_declaring_module`]
-    /// reads it, read once per declaring module into `scopes`. `None` when the identity graph names no declaring
-    /// module, where that remap changes nothing.
+    /// The scope of the module that declares `canonical` in the identity graph `graph` of `library`, as
+    /// [`Self::remap_symbol_kind_through_declaring_module`] reads it, read once per declaring module into `scopes`.
+    /// `None` when the identity graph names no declaring module, where that remap changes nothing.
     pub(in crate::typechecker::collect) fn declaring_module_scope(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
+        graph: &crate::library_manifest::LibraryIdentityGraph,
         canonical: Option<&CanonicalSymbolId>,
         scopes: &mut DeclaringScopes,
     ) -> Option<Arc<HashMap<String, String>>> {
-        let source_path = manifest
-            .contract_metadata
-            .identity_graph
-            .declaration_source_path(canonical?)?;
+        let source_path = graph.declaration_source_path(canonical?)?;
         let (_, module_path) = source_path.split_last()?;
         if let Some(scope) = scopes.get(module_path) {
             return Some(Arc::clone(scope));
