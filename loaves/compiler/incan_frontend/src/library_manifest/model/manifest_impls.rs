@@ -28,6 +28,16 @@ impl LibraryManifest {
     pub(crate) fn decode_retained(bytes: &[u8]) -> Result<Self, String> {
         super::retained::decode(bytes)
     }
+
+    /// Encode only a Loaf's producer vocabulary for a private generation-bound record, in its published wire shape.
+    pub(crate) fn encode_retained_vocabulary(vocab: Option<&VocabExports>) -> Result<Vec<u8>, String> {
+        super::retained::encode_value(&vocab.map(RawVocabExports::from_semantic))
+    }
+
+    /// Decode a private vocabulary record after its caller verifies the exact compiler and source-file generations.
+    pub(crate) fn decode_retained_vocabulary(bytes: &[u8]) -> Result<Option<VocabExports>, String> {
+        Ok(super::retained::decode_value::<Option<RawVocabExports>>(bytes)?.map(RawVocabExports::into_semantic))
+    }
     /// Create a new manifest seeded with the current compiler version and format version.
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {

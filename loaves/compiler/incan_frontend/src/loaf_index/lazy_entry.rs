@@ -13,17 +13,19 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
-use crate::library_manifest::VocabExports;
 use crate::library_manifest::capabilities::Contributions;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
 use crate::library_manifest::type_scope::ModuleTypeScope;
+use crate::library_manifest::{LibraryManifest, VocabExports};
 use crate::rust_abi_cache::RustAbiCache;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 /// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
 const MAX_INVENTORY_RECORD_BYTES: u64 = 4 * 1024 * 1024;
+/// Maximum encoded vocabulary record size; a larger vocabulary is read from its manifest.
+const MAX_VOCABULARY_RECORD_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Demand-independent inventory derived from an admitted manifest, including every global contributor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -513,22 +515,45 @@ impl IndexedLoaf {
         self.dir.join(format!("{}.incnbody", artifact_stem(&self.name)))
     }
 
-    /// Return only this parser vocabulary; a non-indexed producer retains normal manifest validation.
+    /// Return only this parser vocabulary; a non-indexed producer retains normal manifest validation. A Loaf admitted
+    /// by its inventory reads the vocabulary from the private record kept beside that inventory, so opening a session
+    /// does not decode the whole manifest of an unchanged Loaf.
     pub fn parser_vocabulary(&self) -> Result<Option<Arc<VocabExports>>, LoafIndexError> {
         self.vocabulary
             .get_or_init(|| {
-                if super::compiler_record_set::configured()
-                    && let Some((vocabulary, digest)) =
+                if super::compiler_record_set::configured() {
+                    if let Some((vocabulary, digest)) =
                         super::compiler_record_set::read_vocabulary(&self.dir, &self.name)?
-                {
-                    if digest != self.summary()?.identity.digest {
-                        return Err(self.inventory_mismatch("vocabulary differs from its admitted inventory"));
+                    {
+                        if digest != self.summary()?.identity.digest {
+                            return Err(self.inventory_mismatch("vocabulary differs from its admitted inventory"));
+                        }
+                        return Ok(Some(vocabulary));
                     }
-                    return Ok(Some(vocabulary));
+                    return Ok(self.demand()?.artifact.manifest.vocab.clone().map(Arc::new));
                 }
-                Ok(self.demand()?.artifact.manifest.vocab.clone().map(Arc::new))
+                let path = self.manifest_path();
+                let digest = self.initial_summary.as_ref().map(|summary| &summary.identity.digest);
+                if let Some(digest) = digest
+                    && let Some(vocabulary) = retained_vocabulary(&path, digest)
+                {
+                    return Ok(vocabulary.map(Arc::new));
+                }
+                let before = observation(&path);
+                let vocabulary = self.demand()?.artifact.manifest.vocab.clone();
+                if let (Some(digest), Some(before)) = (digest, before)
+                    && observation(&path).as_ref() == Some(&before)
+                {
+                    let _ = retain_vocabulary(&path, before, digest, vocabulary.as_ref());
+                }
+                Ok(vocabulary.map(Arc::new))
             })
             .clone()
+    }
+
+    /// The Loaf's manifest file, under the encoded name its producer published it at.
+    fn manifest_path(&self) -> PathBuf {
+        self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)))
     }
 
     /// Report a failed demand without opening an untouched manifest.
@@ -564,17 +589,47 @@ fn observation(path: &Path) -> Option<Observation> {
     })
 }
 
-/// Place the inventory beside existing optional identity proofs in the explicitly selected compiler home.
-fn record_path(path: &Path) -> Option<PathBuf> {
+/// Place an inventory or vocabulary record beside existing optional identity proofs in the explicitly selected
+/// compiler home.
+fn record_path(path: &Path, kind: &str) -> Option<PathBuf> {
     let canonical = path.canonicalize().ok()?;
     let key = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
-    Some(manifest_input::cache_path(&key)?.with_file_name(format!("{key}.inventory.crumb")))
+    Some(manifest_input::cache_path(&key)?.with_file_name(format!("{key}.{kind}.crumb")))
+}
+
+/// The parser vocabulary recorded for the manifest generation `digest` names; `None` when no current record exists,
+/// so the caller decodes the manifest.
+fn retained_vocabulary(path: &Path, digest: &str) -> Option<Option<VocabExports>> {
+    let observed = observation(path)?;
+    let cache = record_path(path, "vocabulary")?;
+    let guard = manifest_input::checked_guard(&observed.path, observed.source, &observed.compiler);
+    let (recorded, payload) = manifest_input::read_cache(&cache, "vocabulary", guard, MAX_VOCABULARY_RECORD_BYTES)?;
+    let vocabulary = LibraryManifest::decode_retained_vocabulary(&payload).ok()?;
+    if recorded != digest || observation(path).as_ref() != Some(&observed) {
+        return None;
+    }
+    Some(vocabulary)
+}
+
+/// Atomically publish an optional vocabulary record only after the manifest it came from has been admitted.
+fn retain_vocabulary(
+    path: &Path,
+    observation: Observation,
+    digest: &str,
+    vocabulary: Option<&VocabExports>,
+) -> std::io::Result<()> {
+    let Some(cache) = record_path(path, "vocabulary") else {
+        return Ok(());
+    };
+    let guard = manifest_input::checked_guard(&observation.path, observation.source, &observation.compiler);
+    let payload = LibraryManifest::encode_retained_vocabulary(vocabulary).map_err(std::io::Error::other)?;
+    manifest_input::write_cache(&cache, "vocabulary", guard, digest, payload)
 }
 
 /// Refuse stale, malformed, oversized or corrupted records and fall back to full public admission.
 fn retained(path: &Path) -> Option<Summary> {
     let observed = observation(path)?;
-    let cache = record_path(path)?;
+    let cache = record_path(path, "inventory")?;
     let guard = manifest_input::checked_guard(&observed.path, observed.source, &observed.compiler);
     let (digest, payload) = manifest_input::read_cache(&cache, "inventory", guard, MAX_INVENTORY_RECORD_BYTES)?;
     let row = internal_models::decode_manifest_inventory(&payload).ok()?;
@@ -600,7 +655,9 @@ fn retained(path: &Path) -> Option<Summary> {
 
 /// Atomically publish an optional inventory only after ordinary manifest admission has succeeded.
 fn retain(path: &Path, observation: Observation, summary: &Summary) -> std::io::Result<()> {
-    let Some(cache) = record_path(path) else { return Ok(()) };
+    let Some(cache) = record_path(path, "inventory") else {
+        return Ok(());
+    };
     let guard = manifest_input::checked_guard(&observation.path, observation.source, &observation.compiler);
     let row = internal_models::ManifestInventory {
         name: summary.identity.name.clone(),

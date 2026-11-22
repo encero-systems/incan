@@ -18,6 +18,7 @@ fn family(kind: &str) -> Result<(&'static [u8], i64), String> {
         "identity" => Ok((b"lfmdig\x00", 8192)),
         "inventory" => Ok((b"lfminv\x00", 4_194_304)),
         "facts" => Ok((b"lfmfct\x00", 134_217_728)),
+        "vocabulary" => Ok((b"lfmvoc\x00", 16_777_216)),
         _ => Err("unknown Loaf manifest cache family".into()),
     }
 }
