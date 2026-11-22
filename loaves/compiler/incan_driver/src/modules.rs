@@ -94,6 +94,22 @@ pub struct SourceGraphReads {
     pub read: Vec<PathBuf>,
     /// Each absent path an import looked for, in lookup order; repeated lookups are kept once.
     pub absent: Vec<PathBuf>,
+    /// What each file read contributed to the collection, in reading order.
+    pub surfaces: Vec<SourceFileSurface>,
+}
+
+/// What one source file contributes to its graph's collection: the module file each of its imports resolves to, in
+/// import order, and every path those lookups probed and found absent, in lookup order. Another generation of the file
+/// with the same surface (and the same Rust crate requests) collects the same graph, so a graph whose edited files kept
+/// their surfaces need not be collected again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceFileSurface {
+    /// The file, as the collection named it.
+    pub path: PathBuf,
+    /// The module file each of its imports resolves to, in import order.
+    pub modules: Vec<PathBuf>,
+    /// Each absent path its imports' lookups probed, in lookup order.
+    pub absent: Vec<PathBuf>,
 }
 
 /// Collect a command entry's source graph with what it reads and probes, keeping those when collection refuses: a
@@ -114,6 +130,29 @@ pub fn collect_source_graph_reads(
         &mut reads,
     );
     (reads, collected)
+}
+
+/// Collect one source file of a graph as that graph's collection would now: its surface and its parsed module. A file
+/// the collection would refuse (it cannot be read or parsed, it imports itself, or an import names no module) is
+/// refused here the same way.
+pub fn source_file_surface(
+    path: PathBuf,
+    session: &CompilationSession,
+) -> Result<(SourceFileSurface, ParsedModule), CliDiagnosticFailure> {
+    let path_segments = entry_module_segments(&session.source_root, &path);
+    let module_name = path_segments.join("_");
+    let file_path = path.to_string_lossy().to_string();
+    let base_dir = path.parent().unwrap_or(Path::new("."));
+    let collected = collect_file(
+        &file_path,
+        module_name,
+        path_segments,
+        session,
+        base_dir,
+        &HashMap::new(),
+        &mut SourceGraphReads::default(),
+    )?;
+    Ok((collected.surface, collected.module))
 }
 
 /// Collect every authored source module for library publication, including modules not imported by `src/lib.incn`.
@@ -264,105 +303,153 @@ fn collect_modules_detailed_from_seeds(
         dependency_edges.entry(file_key.clone()).or_default();
 
         reads.read.push(PathBuf::from(&file_path));
-        let source = match open_sources.get(Path::new(&file_path)) {
-            Some(source) => source.clone(),
-            None => read_source_for_diagnostics(&file_path)?,
-        };
-        let file_path_obj = Path::new(&file_path);
-        let (mut ast, gated_exports) =
-            match session
-                .parse_source_unprojected(file_path_obj, &source, true)
-                .and_then(|unprojected| {
-                    let gated = incan_frontend::library_exports::gated_public_exports(&unprojected, &path_segments);
-                    session.project_parsed_program(unprojected).map(|ast| (ast, gated))
-                }) {
-                Ok((a, gated)) => {
-                    // Surface non-fatal parser warnings immediately, so they reach the user whichever command ran. They
-                    // are collected for machine-readable reports later, off the retained AST, by the typecheck pass.
-                    render_module_warnings(&file_path, &source, &a.warnings);
-                    (a, gated)
-                }
-                Err(errs) => {
-                    return Err(CliDiagnosticFailure::from_errors(
-                        file_path,
-                        source,
-                        errs,
-                        diagnostics::DiagnosticPhase::Parse,
-                    ));
-                }
-            };
-
-        let current_base = file_path_obj.parent().unwrap_or(base_dir);
-        respell_project_library_imports(&mut ast, current_base, session);
-        let mut missing_modules = Vec::new();
-        for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
-            let span = resolved.span;
-            for absent in resolved.probed {
-                if !reads.absent.contains(&absent) {
-                    reads.absent.push(absent);
-                }
-            }
-            let module_ref = match resolved.resolution {
-                SourceModuleImportResolution::Stdlib { module_path } => {
-                    let Some(module_ref) = own_standard_module(session, &module_path) else {
-                        continue;
-                    };
-                    module_ref
-                }
-                SourceModuleImportResolution::Local(module_ref) => module_ref,
-                SourceModuleImportResolution::SelfImport {
-                    module_ref,
-                    import_path,
-                    can_use_root_import,
-                } => {
-                    return Err(CliDiagnosticFailure::single(
-                        file_path,
-                        source,
-                        diagnostics::CompileError::new(
-                            self_import_diagnostic_message(&module_ref, &import_path, can_use_root_import),
-                            span,
-                        ),
-                        diagnostics::DiagnosticPhase::Typecheck,
-                    ));
-                }
-                SourceModuleImportResolution::Missing(missing) => {
-                    missing_modules.push(missing_module_error(session, &missing, span));
-                    continue;
-                }
-                SourceModuleImportResolution::External => continue,
-            };
-            let dep_path_str = module_ref.file_path.to_string_lossy().to_string();
+        let collected = collect_file(
+            &file_path,
+            module_name,
+            path_segments,
+            session,
+            base_dir,
+            open_sources,
+            reads,
+        )?;
+        for (dep_path_str, dep_name, dep_segments) in collected.seeds {
             let dep_key = source_identity_key(&dep_path_str);
-            let module_segments = canonicalize_source_module_segments(&module_ref.path_segments);
-            let module_name = module_segments.join("_");
             if !processed.contains(&dep_key) {
-                to_process.push((dep_path_str, module_name, module_segments));
+                to_process.push((dep_path_str, dep_name, dep_segments));
             }
             dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
         }
-        // Every import of a module no file defines is refused here, each once, before checking binds its names.
-        if !missing_modules.is_empty() {
-            return Err(CliDiagnosticFailure::from_errors(
-                file_path,
-                source,
-                missing_modules,
-                diagnostics::DiagnosticPhase::Import,
-            ));
-        }
+        reads.surfaces.push(collected.surface);
+        modules.push(collected.module);
+    }
 
-        let source_positions = diagnostics::SourcePositionIndex::new(&source);
-        modules.push(ParsedModule {
+    Ok(topologically_sort_modules(modules, &dependency_edges)?)
+}
+
+/// One source file as module collection reads it: its parsed module, the collection seed of each module its imports
+/// resolve to (in import order) and its surface.
+struct CollectedFile {
+    module: ParsedModule,
+    seeds: Vec<(String, String, Vec<String>)>,
+    surface: SourceFileSurface,
+}
+
+/// Read, parse and project one source file, respell its project-library imports and resolve each import, adding every
+/// absent path a lookup probed to `reads` once. A file that cannot be read or parsed, a self-import and an import of a
+/// module no file defines are refused.
+fn collect_file(
+    file_path: &str,
+    module_name: String,
+    path_segments: Vec<String>,
+    session: &CompilationSession,
+    base_dir: &Path,
+    open_sources: &HashMap<PathBuf, String>,
+    reads: &mut SourceGraphReads,
+) -> Result<CollectedFile, CliDiagnosticFailure> {
+    let source = match open_sources.get(Path::new(&file_path)) {
+        Some(source) => source.clone(),
+        None => read_source_for_diagnostics(&file_path)?,
+    };
+    let file_path_obj = Path::new(&file_path);
+    let (mut ast, gated_exports) =
+        match session
+            .parse_source_unprojected(file_path_obj, &source, true)
+            .and_then(|unprojected| {
+                let gated = incan_frontend::library_exports::gated_public_exports(&unprojected, &path_segments);
+                session.project_parsed_program(unprojected).map(|ast| (ast, gated))
+            }) {
+            Ok((a, gated)) => {
+                // Surface non-fatal parser warnings immediately, so they reach the user whichever command ran. They
+                // are collected for machine-readable reports later, off the retained AST, by the typecheck pass.
+                render_module_warnings(&file_path, &source, &a.warnings);
+                (a, gated)
+            }
+            Err(errs) => {
+                return Err(CliDiagnosticFailure::from_errors(
+                    file_path,
+                    source,
+                    errs,
+                    diagnostics::DiagnosticPhase::Parse,
+                ));
+            }
+        };
+
+    let current_base = file_path_obj.parent().unwrap_or(base_dir);
+    respell_project_library_imports(&mut ast, current_base, session);
+    let mut surface = SourceFileSurface {
+        path: PathBuf::from(file_path),
+        modules: Vec::new(),
+        absent: Vec::new(),
+    };
+    let mut seeds = Vec::new();
+    let mut missing_modules = Vec::new();
+    for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
+        let span = resolved.span;
+        for absent in resolved.probed {
+            if !reads.absent.contains(&absent) {
+                reads.absent.push(absent.clone());
+            }
+            surface.absent.push(absent);
+        }
+        let module_ref = match resolved.resolution {
+            SourceModuleImportResolution::Stdlib { module_path } => {
+                let Some(module_ref) = own_standard_module(session, &module_path) else {
+                    continue;
+                };
+                module_ref
+            }
+            SourceModuleImportResolution::Local(module_ref) => module_ref,
+            SourceModuleImportResolution::SelfImport {
+                module_ref,
+                import_path,
+                can_use_root_import,
+            } => {
+                return Err(CliDiagnosticFailure::single(
+                    file_path,
+                    source,
+                    diagnostics::CompileError::new(
+                        self_import_diagnostic_message(&module_ref, &import_path, can_use_root_import),
+                        span,
+                    ),
+                    diagnostics::DiagnosticPhase::Typecheck,
+                ));
+            }
+            SourceModuleImportResolution::Missing(missing) => {
+                missing_modules.push(missing_module_error(session, &missing, span));
+                continue;
+            }
+            SourceModuleImportResolution::External => continue,
+        };
+        let dep_path_str = module_ref.file_path.to_string_lossy().to_string();
+        let dep_segments = canonicalize_source_module_segments(&module_ref.path_segments);
+        let dep_name = dep_segments.join("_");
+        surface.modules.push(module_ref.file_path.clone());
+        seeds.push((dep_path_str, dep_name, dep_segments));
+    }
+    // Every import of a module no file defines is refused here, each once, before checking binds its names.
+    if !missing_modules.is_empty() {
+        return Err(CliDiagnosticFailure::from_errors(
+            file_path,
+            source,
+            missing_modules,
+            diagnostics::DiagnosticPhase::Import,
+        ));
+    }
+
+    let source_positions = diagnostics::SourcePositionIndex::new(&source);
+    Ok(CollectedFile {
+        module: ParsedModule {
             name: module_name,
             path_segments,
-            file_path: PathBuf::from(&file_path),
+            file_path: PathBuf::from(file_path),
             source_positions,
             source,
             ast,
             gated_exports,
-        });
-    }
-
-    Ok(topologically_sort_modules(modules, &dependency_edges)?)
+        },
+        seeds,
+        surface,
+    })
 }
 
 /// Respell each project-local import of a module the project's shared library provides as an import of that
@@ -916,5 +1003,86 @@ mod retained_namespace_tests {
         let (closures, needed) = imports.checker_dependencies(&[true; 4]);
         assert!(closures.iter().all(|closure| closure.is_empty()));
         assert_eq!(needed, [false; 4]);
+    }
+}
+
+#[cfg(test)]
+mod source_surface_tests {
+    use std::fs;
+    use std::path::Path;
+
+    use super::{SourceFileSurface, collect_source_graph_reads, source_file_surface};
+    use crate::session::CompilationSession;
+    use crate::unit::UnitDescription;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// A program unit whose entry is `src/main.incn` under `project`, reaching no Loaf.
+    fn unit(project: &Path) -> Result<UnitDescription, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_value(serde_json::json!({
+            "schema": "incan.unit/1",
+            "source": project.join("src/main.incn"),
+            "project_root": project,
+            "source_root": project.join("src"),
+            "package": "app",
+            "version": "0.1.0",
+            "profile": "debug",
+            "declared_features": [],
+            "active_features": [],
+            "loaves": [],
+            "rust_crates": [],
+            "contract_models": [],
+            "c_headers": [],
+            "externs": [],
+            "search": [],
+            "rust_abi": [],
+        }))?)
+    }
+
+    /// The surface a collection recorded for the file named `name`.
+    fn recorded<'a>(surfaces: &'a [SourceFileSurface], name: &str) -> Result<&'a SourceFileSurface, String> {
+        surfaces
+            .iter()
+            .find(|surface| surface.path.ends_with(name))
+            .ok_or_else(|| format!("the collection recorded no surface for {name}"))
+    }
+
+    /// A file's surface is what its graph's collection found for it: the modules its imports resolved to and the paths
+    /// their lookups probed. Collecting the one file again finds the same surface, also after an edit that keeps its
+    /// imports, and a different one after an edit that changes them.
+    #[test]
+    fn a_file_s_surface_is_what_its_collection_found_and_survives_a_body_edit() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let sources = root.path().join("src");
+        fs::create_dir_all(&sources)?;
+        fs::write(
+            sources.join("main.incn"),
+            "from helper import value\n\ndef main() -> None:\n    println(\"one\")\n",
+        )?;
+        fs::write(sources.join("helper.incn"), "def value() -> int:\n    return 1\n")?;
+        fs::write(sources.join("other.incn"), "def thing() -> int:\n    return 0\n")?;
+        let unit = unit(root.path())?;
+        let session = CompilationSession::for_formatting(&unit).map_err(|error| error.message)?;
+        let (reads, collected) = collect_source_graph_reads(unit.source.clone(), &session);
+        collected.map_err(|failure| failure.render_human())?;
+        assert_eq!(reads.surfaces.len(), reads.read.len());
+        let helper = recorded(&reads.surfaces, "helper.incn")?.clone();
+        let entry = recorded(&reads.surfaces, "main.incn")?;
+        assert_eq!(entry.modules.len(), 1);
+        assert!(entry.modules[0].ends_with("helper.incn"));
+        assert!(helper.modules.is_empty());
+        let collect =
+            |path: &Path| source_file_surface(path.to_path_buf(), &session).map_err(|failure| failure.render_human());
+        assert_eq!(collect(&helper.path)?.0, helper);
+        fs::write(&helper.path, "def value() -> int:\n    return 2\n")?;
+        assert_eq!(collect(&helper.path)?.0, helper, "a body edit changed the surface");
+        fs::write(
+            &helper.path,
+            "from other import thing\n\ndef value() -> int:\n    return thing()\n",
+        )?;
+        let changed = collect(&helper.path)?.0;
+        assert_ne!(changed, helper, "a new import kept the surface");
+        assert!(changed.modules[0].ends_with("other.incn"));
+        Ok(())
     }
 }

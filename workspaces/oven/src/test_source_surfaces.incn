@@ -1,0 +1,73 @@
+"""A source edit that leaves a file's imports as they were keeps the unit's recorded source graph without collecting it."""
+
+from std.fs import Path
+from files import read
+from observation import load_ledger
+from scratch import scratch_directory
+from unit_sources import source_graph
+from freshness_fixtures import fixture, make_executable, write
+
+
+pub def test_an_edit_that_keeps_a_file_s_imports_keeps_its_source_graph() -> Result[None, str]:
+    """
+    A counted compiler collects a two-file graph once; an edit asks it only for the edited file's import surface.
+
+    1. The first request collects the graph, and an unchanged one asks nothing.
+    2. An edit whose file keeps its import surface asks for that one file's surface, and keeps the graph.
+    3. An edit that changes the surface collects the graph again, and so does a created absent path.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    setup = fixture(root)?
+    main = setup.unit.source
+    sources = Path(main).parent()
+    helper = sources.joinpath("helper.incn")
+    absent = sources.joinpath("absent.incn")
+    write(helper, "def value() -> int:\n    return 1\n")?
+    requests = root.joinpath("requests")
+    mode = root.joinpath("mode")
+    write(requests, "")?
+    write(mode, "h1")?
+    mut report = '{"read":["' + main + '","' + helper.0 + '"],"absent":["' + absent.0 + '"],"complete":true,"imports":[],'
+    report += '"surfaces":[{"path":"' + main + '","surface":"m1"},{"path":"' + helper.0 + '","surface":"h1"}]}'
+    mut script = "#!/bin/sh\n[ \"$1\" = --rust-imports ] || exit 2\ncase \"${3:-}\" in\n"
+    script += "--source-graph)\n  printf g >> '" + requests.0 + "'\n  printf '%s' '" + report + "'\n  ;;\n"
+    script += "--source-surfaces)\n  printf s >> '" + requests.0 + "'\n"
+    script += "  [ \"$4\" = '" + helper.0 + "' ] && [ \"$#\" -eq 4 ] || exit 3\n"
+    script += "  printf '{\"surfaces\":[{\"path\":\"" + helper.0 + "\",\"surface\":\"%s\"}]}' \"$(cat '" + mode.0 + "')\"\n"
+    script += "  ;;\n*) exit 2 ;;\nesac\n"
+    driver = Path(setup.toolchain.driver)
+    write(driver, script)?
+    make_executable(driver)?
+    mut project = load_ledger(root.joinpath("ledgers").joinpath("project.crumb"), 0)
+    scope = "compiler description"
+    # 1. The first request collects the graph, and an unchanged one asks nothing.
+    match source_graph(setup.unit, setup.toolchain, scope, project)?:
+        Some(graph) => assert graph.read == [main, helper.0]
+        None => return Err("the counted compiler's graph was not taken")
+    assert source_graph(setup.unit, setup.toolchain, scope, project)? is not None
+    mut seen = read(requests)?
+    assert seen == "g", f"requests: {seen}"
+    # 2. An edit whose file keeps its import surface asks for that one file's surface, and keeps the graph.
+    write(helper, "def value() -> int:\n    return 2\n")?
+    match source_graph(setup.unit, setup.toolchain, scope, project)?:
+        Some(graph) =>
+            assert graph.read == [main, helper.0]
+            assert graph.absent == [absent.0]
+        None => return Err("an edit that kept its imports lost the graph")
+    seen = read(requests)?
+    assert seen == "gs", f"requests: {seen}"
+    assert source_graph(setup.unit, setup.toolchain, scope, project)? is not None
+    seen = read(requests)?
+    assert seen == "gs", f"the kept graph was not recorded with the edited digest: {seen}"
+    # 3. An edit that changes the surface collects the graph again, and so does a created absent path.
+    write(mode, "h2")?
+    write(helper, "def value() -> int:\n    return 3\n")?
+    assert source_graph(setup.unit, setup.toolchain, scope, project)? is not None
+    seen = read(requests)?
+    assert seen == "gssg", f"requests: {seen}"
+    write(absent, "def other() -> None:\n    pass\n")?
+    assert source_graph(setup.unit, setup.toolchain, scope, project)? is not None
+    seen = read(requests)?
+    assert seen == "gssgg", f"requests: {seen}"
+    return Ok(None)
