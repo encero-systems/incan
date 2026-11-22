@@ -9,12 +9,14 @@
 //! from the declaration itself.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
 use crate::library_manifest::{LibraryManifest, resolved_type_from_manifest_type_ref};
-use crate::symbols::{SymbolKind, TypeInfo};
+use crate::symbols::SymbolKind;
+use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
 use incan_semantics_core::CanonicalSymbolId;
 
@@ -225,16 +227,16 @@ impl TypeChecker {
     pub(super) fn register_pub_library_declarations(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         root_remapping: &HashMap<String, String>,
     ) {
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
             return;
         };
         let graph = &manifest.contract_metadata.identity_graph;
-        for module in &api.modules {
+        for (module_index, module) in api.modules.iter().enumerate() {
             let mut scope = None;
-            for declaration in &module.declarations {
+            for (declaration_index, declaration) in module.declarations.iter().enumerate() {
                 if !matches!(
                     declaration,
                     ApiDeclaration::Model(_)
@@ -275,26 +277,35 @@ impl TypeChecker {
                 let scope = scope.get_or_insert_with(|| {
                     let mut module_scope = root_remapping.clone();
                     module_scope.extend(self.pub_library_declaration_scope(library, manifest, &module.module_path));
-                    module_scope
+                    Arc::new(module_scope)
                 });
-                self.cache_declared_library_type(library, manifest, key, declaration, scope);
+                let position = LayoutDeclaration::Api {
+                    module: module_index,
+                    declaration: declaration_index,
+                };
+                let scope = Arc::clone(scope);
+                self.cache_declared_library_type(library, manifest, key, declaration, position, scope);
             }
         }
     }
 
     /// Cache each type in its checked declaration scope, including transparent aliases referenced by signatures
     /// without an explicit consumer import. Source aliases resolve through the same scope as fields and methods.
+    ///
+    /// A model, class, enum, newtype or trait is deferred to the first lookup that reads it, built from the
+    /// declaration at `position`.
     fn cache_declared_library_type(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         key: String,
         declaration: &ApiDeclaration,
-        scope: &HashMap<String, String>,
+        position: LayoutDeclaration,
+        scope: Arc<HashMap<String, String>>,
     ) {
         if let ApiDeclaration::TypeAlias(item) = declaration {
             let mut target = resolved_type_from_manifest_type_ref(&item.type_alias.target);
-            Self::remap_resolved_type_with_import_aliases(&mut target, scope);
+            Self::remap_resolved_type_with_import_aliases(&mut target, scope.as_ref());
             self.type_aliases.insert(
                 key,
                 crate::typechecker::TypeAliasTarget {
@@ -310,25 +321,29 @@ impl TypeChecker {
             );
             return;
         }
-        let Some(mut kind) =
-            self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
-        else {
-            return;
+        let recipe = LayoutRecipe {
+            manifest: Arc::clone(manifest),
+            declaration: position,
+            remappings: vec![scope],
+            field_provider: Some(library.to_owned()),
         };
-        self.remap_symbol_kind_with_import_aliases(&mut kind, scope);
-        Self::mark_compiled_class_field_provider(&mut kind, library);
-        match kind {
-            SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
+        match declaration {
+            ApiDeclaration::Model(_)
+            | ApiDeclaration::Class(_)
+            | ApiDeclaration::Enum(_)
+            | ApiDeclaration::Newtype(_) => {
                 let declaration = self
                     .public_library_type_identities
                     .get(&key)
                     .and_then(|identity| identity.canonical.as_ref())
                     .cloned();
-                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
-                self.transitive_pub_types.entry(key).or_default().push(info);
+                let layout = self.deferred_layout(recipe);
+                self.cache_retained_nominal_layout(declaration.as_ref(), &layout);
+                self.transitive_pub_types.entry(key).or_default().push(layout);
             }
-            SymbolKind::Trait(info) => {
-                self.transitive_pub_traits.entry(key).or_default().push(info);
+            ApiDeclaration::Trait(_) => {
+                let layout = self.deferred_layout(recipe);
+                self.transitive_pub_traits.entry(key).or_default().push(layout);
             }
             _ => {}
         }

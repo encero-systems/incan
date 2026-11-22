@@ -57,7 +57,7 @@ pub(super) fn bind_transitive(
             continue;
         }
         if let Some(types) = checker.transitive_pub_types.get(binding) {
-            for info in types {
+            for info in types.iter().filter_map(|layout| layout.get(checker)) {
                 collect(owner, Nominal::Type(info), &mut members);
             }
         }

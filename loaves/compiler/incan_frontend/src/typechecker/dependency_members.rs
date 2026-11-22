@@ -205,7 +205,7 @@ impl TypeChecker {
                 retained_scope |= self.retain_declaration_nominal_scope(identity, kind, &scope);
                 self.remap_symbol_kind_with_import_aliases(kind, &remapping);
                 if let SymbolKind::Type(info) = kind {
-                    self.cache_retained_nominal_layout(Some(identity), info);
+                    self.cache_retained_nominal_layout(Some(identity), &TransitiveLayout::ready(info.clone()));
                 }
             }
         }
@@ -236,13 +236,13 @@ impl TypeChecker {
                     self.transitive_pub_types
                         .entry(name.clone())
                         .or_default()
-                        .push(info.clone());
+                        .push(TransitiveLayout::ready(info.clone()));
                 }
                 SymbolKind::Trait(info) => {
                     self.transitive_pub_traits
                         .entry(name.clone())
                         .or_default()
-                        .push(info.clone());
+                        .push(TransitiveLayout::ready(info.clone()));
                 }
                 _ => {}
             }
