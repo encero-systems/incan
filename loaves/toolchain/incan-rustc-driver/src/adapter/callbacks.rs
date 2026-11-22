@@ -323,18 +323,12 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 }
 
-/// Carry a complete record fingerprint in the definition's HIR owner, where overridden queries can track it.
+/// Carry a complete record fingerprint in the definition's HIR owner, where overridden queries can track it. The
+/// attribute has its tokens, so an attribute macro on the definition (a route, an async entry) passes it through.
 fn tracked_input_attribute(
     generator: &ast::attr::AttrIdGenerator,
     input: &super::active_plan::DefinitionInput,
     span: rustc_span::Span,
 ) -> ast::Attribute {
-    ast::attr::mk_attr_name_value_str(
-        generator,
-        ast::AttrStyle::Outer,
-        ast::Safety::Default,
-        rustc_span::Symbol::intern("doc"),
-        rustc_span::Symbol::intern(&format!("incan-native-input:{}", input.fingerprint())),
-        span,
-    )
+    crate::native_attributes::doc_attribute(generator, &format!("incan-native-input:{}", input.fingerprint()), span)
 }
