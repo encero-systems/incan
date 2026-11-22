@@ -181,7 +181,7 @@ pub def make_unit(
 
     A development request may share debug native inputs; ordinary builds and all libraries retain archive linkage.
 
-    1. Compile or reuse the project's shared library and reach it as one of the unit's Loaves.
+    1. Compile or reuse the project's shared library. If it refuses a program, compile the program's own source reach.
     2. Prepare the shared local graph and bind the exact native inputs.
     3. Compile a library, or reuse an executable whose inputs have not changed.
     """
@@ -189,10 +189,15 @@ pub def make_unit(
     mut described = unit
     if let Some(key) = unit.project_library:
         library_path = library_output(unit, key, native_crate_name(key))
-        library_code = compile_project_library(unit, shared_library(unit, key)?, toolchain, library_path)?
-        if library_code != 0:
+        program = unit.kind == "program"
+        library_code = compile_project_library(shared_library(unit, key)?, toolchain, library_path, program)?
+        if library_code == 0:
+            described.loaves.append(library_loaf(unit, key, library_path))
+        elif program:
+            described.project_library = None
+            described.excluded_sources = []
+        else:
             return Ok(Made(code=library_code, launch=output))
-        described.loaves.append(library_loaf(unit, key, library_path))
     # 2. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
     ready = prepare_native(described, toolchain)?
     # 3. Both libraries and executables reuse their complete, unchanged artifact sets.
@@ -202,31 +207,21 @@ pub def make_unit(
 
 
 def compile_project_library(
-    unit: UnitDescription,
     library: UnitDescription,
     toolchain: Toolchain,
     output: Path,
+    program: bool,
 ) -> Result[i32, str]:
-    """Compile the shared provider, reporting a refused build from the program's own source reach when it fails its check."""
-    if unit.kind != "program":
+    """Compile the shared provider. A program reports diagnostics from its own build if the provider is refused."""
+    if not program:
         return compile_unit(library, toolchain, output)
     scratch = scratch_directory()?
     mut capturing = toolchain
     library_console = scratch.path().joinpath("library").0
     capturing.console = library_console
     code = compile_unit(library, capturing, output)?
-    if code != 0:
-        # A library may see different import use sites and issue fewer vocabulary requests than the program.
-        mut whole = unit
-        whole.project_library = None
-        whole.excluded_sources = []
-        program_console = scratch.path().joinpath("program").0
-        capturing.console = program_console
-        checked = check_unit(whole, capturing, "text")?
-        if checked != 0:
-            relay_console(program_console)?
-            return Ok(checked)
-    relay_console(library_console)?
+    if code == 0:
+        relay_console(library_console)?
     return Ok(code)
 
 

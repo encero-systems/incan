@@ -38,6 +38,8 @@ Runtime dependency selection is demand-driven. An incomplete plan identifies its
 
 A project's shared library also publishes a package-internal section beside its public declarations, and only a unit of the same package opens it: one that links that library as its project library. The section names, by canonical identity, the parameters such a unit may omit although the public declarations leave them required, because their defaults are no values a public declaration can carry (the callee's own default frame computes them at the omitted call site), and the member partials of its classes and models, which are never public, each with the method it presets and the parameters it presets. No other Loaf publishes the section, so another package's view of every Loaf is unchanged.
 
+If a project's shared library is refused, a program builds from its own source reach and reports the result of that build. A test unit that selects the shared library requires it and reports its refusal.
+
 ## Consequences
 
 - The provider plan, the library-manifest index, the SDK inventory with its components, profiles and bootstrap grants, the standard source publication, and the generated-crate artifact record are replaced by the artifact and the index.
