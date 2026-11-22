@@ -12,6 +12,8 @@ from pub::incan_platform.store import Snapshot, begin, commit, put
 from pub::internal_models import CompiledNamespaceValue
 from pub::internal_models.records import RecordKey, encode_record_key
 from semantic_text import comment_free, documentation_free, split_documentation
+from jec import begin as begin_work, record as record_work, text_size
+from pub::incan_platform.trace import Operation
 
 from pub::internal_models.source_value_records import SOURCE_PROFILE, encode_documentation, encode_source_text
 
@@ -321,6 +323,18 @@ pub def project_source(
     if origin == "" or path == "":
         return Err("source projection requires an origin and logical path")
     return SourceProjector.open(origin, path, source).projection(declared, active)
+
+
+pub def project_source_file(
+    origin: str, path: str, file: Path, declared: list[str] = [], active: Option[list[str]] = None,
+) -> Result[SourceProjection, str]:
+    """Read and project one source file. An enabled engine trace records the physical work and source bytes."""
+    projecting = begin_work()
+    source = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+    projected = project_source(origin, path, source, declared, active)
+    if projecting is not None:
+        record_work(Operation.EngineGraphStaging, f"source-projection\t{origin}\t{path}", projecting, text_size(source, projecting))
+    return projected
 
 
 pub def owner_placement_key(origin: str, path: str, name: str) -> RecordKey:

@@ -270,6 +270,7 @@ pub def prepare_compiled_bodies(
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
     cutoff: EditCutoff = EditCutoff(),
     compiler: str = "",
+    mut captured_sources: Dict[str, SourceProjection] = {},
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -290,7 +291,7 @@ pub def prepare_compiled_bodies(
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     staging = begin_work()
-    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods, compiler)?
+    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods, compiler, captured_sources)?
     for positioned in captured_positions.keys():
         staged.source.add(positioned, captured_positions[positioned])
 
@@ -611,6 +612,7 @@ def stage_compiled_body_sources(
     outputs: CompiledBodyOutputs,
     methods: Borrowed[MethodReads],
     compiler: str,
+    mut captured_sources: Dict[str, SourceProjection],
 ) -> Result[StagedCompiledBodySources, str]:
     """
     Stage source, dependency, declaration and eligibility records that authenticate compiler output rows, and the
@@ -626,7 +628,7 @@ def stage_compiled_body_sources(
     for groups in methods.groups.values():
         for group in groups:
             lookup_modules.add(project_dependency_module(unit, group.module)?)
-    projections = projection_cache(unit, origin, outputs, lookup_modules)?
+    projections = projection_cache(unit, origin, outputs, lookup_modules, captured_sources)?
     rechecked = stage_compiled_projection_sources(prepared, source, projections, outputs, origin, unit)?
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     stage_compiled_dependency_sources(prepared, source, projections, outputs.values, editable_packages, origin, unit)?
