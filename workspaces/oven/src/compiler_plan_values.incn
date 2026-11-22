@@ -1,6 +1,7 @@
 """Select Bakery-admitted lowering products for one graph-record compiler activation."""
 
-from pub::incan_platform.store import Snapshot, get
+from pub::incan_platform.store import Snapshot, get, locate_value
+from std.fs import Path
 from pub::internal_models.records import ReadReceipt, ReadWitness, RecordKey, encode_record_key
 from compiler_source_projection import positioned_source_key
 from compiler_prepared_records import prepared_product_request
@@ -146,6 +147,34 @@ pub model PlanModuleSelection:
     pub covered: CoveredBodyOwners = CoveredBodyOwners()
 
 
+pub model ValueFrame:
+    """Where a stored value's bytes are: an immutable segment file and the value's range in it."""
+
+    pub segment: str
+    pub offset: int
+    pub length: int
+
+
+pub def value_frame(selected: Snapshot, key: RecordKey) -> Result[Option[ValueFrame], str]:
+    """
+    The segment range holding a selected value: the value's frame past its key prefix (the key's length and the key).
+    None for a store with no files, such as an in-memory one, or a value that is not a live frame.
+    """
+    if selected.root.placement.startswith("memory:"):
+        return Ok(None)
+    value_key = encode_record_key(key)?
+    match locate_value(selected, value_key).map_err((error) => error.message())?:
+        None => return Ok(None)
+        Some(location) =>
+            if location.tombstone:
+                return Ok(None)
+            segment = selected.root.joinpath("segments").joinpath(f"{location.segment}.seg").value
+            if not Path(segment).is_file():
+                return Ok(None)
+            prefix = 8 + len(value_key.encode("utf-8"))
+            return Ok(Some(ValueFrame(segment=segment, offset=location.offset + prefix, length=location.length - prefix)))
+
+
 pub def select_plan_modules(
     selected: Snapshot,
     origin: str,
@@ -184,10 +213,14 @@ pub def select_plan_modules(
         mut suffix = REPOSITION_MODULE_PAGE
         if bound and record.key.identity not in changed_positions:
             suffix = POSITIONED_MODULE_PAGE
-        # An earlier worker sees no qualified module page and keeps the ordinary keyed route.
-        selection.pages.append(
-            SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value, digest=record.value_digest),
-        )
+        # An earlier worker sees no qualified module page and keeps the ordinary keyed route. A page of an on-disk
+        # store is offered by the frame that holds it, which the request's lease keeps in place.
+        mut page = SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value, digest=record.value_digest)
+        if let Some(frame) = value_frame(selected, record.key)?:
+            page.segment = frame.segment
+            page.offset = frame.offset
+            page.length = frame.length
+        selection.pages.append(page)
         mut witnessed: set[str] = set()
         if record.key.identity in complete_namespaces:
             for witness in record.receipt.witnesses:

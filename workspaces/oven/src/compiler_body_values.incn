@@ -63,6 +63,11 @@ pub model SelectedBodyPage:
     # The SHA-256 digest of `value` the store verified it by, when known; staging names the page by it, so a
     # resident compiler that read this content before need not read or hash the page again.
     pub digest: str = ""
+    # The immutable store segment file holding `value`, and the value's offset and length in it, when the page is
+    # offered by its frame: staging names that range beside the digest instead of copying the bytes.
+    pub segment: str = ""
+    pub offset: int = 0
+    pub length: int = 0
 
 
 pub model NamespaceInventory:
