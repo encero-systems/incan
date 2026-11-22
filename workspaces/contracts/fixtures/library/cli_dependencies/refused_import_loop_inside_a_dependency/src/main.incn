@@ -1,0 +1,13 @@
+# behavior: a Loaf whose public re-exports loop among its own modules is refused when it is built, with the loop's stable code and each link, instead of publishing a name that has no declaration
+# expect-exit: 1
+# expect-stderr-contains:
+#   error[INCAN-I0104]
+#   `X` is imported in a loop: a.X -> b.X -> c.X -> a.X
+#   `c.X` is `a.X`, which closes the loop
+#   one of these must declare `X` instead of re-exporting it
+
+from pub::looped.a import X
+
+
+def main() -> None:
+    println(X)
