@@ -8,11 +8,11 @@
 //! fully determined by its key, so what it restores is exactly what a fresh read restores; the stores start over
 //! rather than grow past their bounds.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use incan_mir_plan_native::{ExternalFunction, Function, NominalReference, PlacedRecord, PlanModuleValue};
+use incan_mir_plan_native::{PlacedRecord, PlanModuleValue};
 use sha2::{Digest, Sha256};
 
 use crate::plan_modules::AdmittedPage;
@@ -78,13 +78,7 @@ pub struct ResidentPage {
     bytes: u64,
     /// Each restored product by the digest of its restore inputs, so a kept product holds no copy of them.
     restored: Mutex<HashMap<[u8; 32], Arc<AdmittedPayload>>>,
-    /// Each function restored from a product, by its restore inputs, the declaration positions it was restored at and
-    /// the crates it links.
-    functions: Mutex<HashMap<[u8; 32], Arc<RestoredFunction>>>,
 }
-
-/// A function restored from its product, with its runtime demand and its helper frames.
-pub type RestoredFunction = (Function, Vec<ExternalFunction>, Vec<Function>);
 
 impl Deref for ResidentPage {
     type Target = AdmittedPage;
@@ -101,7 +95,6 @@ impl ResidentPage {
             page,
             bytes: 0,
             restored: Mutex::new(HashMap::new()),
-            functions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -123,45 +116,6 @@ impl ResidentPage {
             guard.insert(key, payload.clone());
         }
         Ok(payload)
-    }
-}
-
-impl ResidentPage {
-    /// The function this page's product restored for `inputs` at the `resolved` declaration positions, linking
-    /// `linked`, made with `restore` the first time. A steady edit then rebuilds no unchanged function from its
-    /// product; a function `restore` refuses is not kept.
-    pub fn restored_function(
-        &self,
-        inputs: &RestoreInputs,
-        resolved: &[NominalReference],
-        linked: &BTreeSet<String>,
-        restore: impl FnOnce() -> Option<RestoredFunction>,
-    ) -> Option<Arc<RestoredFunction>> {
-        let mut hasher = Sha256::new();
-        hasher.update(inputs.digest());
-        for reference in resolved {
-            hasher.update(format!("{:?}/// The page this worker read for the same content, module and placement, or the one `read` makes now with the number
-{}/// The page this worker read for the same content, module and placement, or the one `read` makes now with the number
-{}/// The page this worker read for the same content, module and placement, or the one `read` makes now with the number
-", reference.kind, reference.index, reference.name).as_bytes());
-        }
-        hasher.update(b"\x01");
-        for name in linked {
-            hasher.update(name.as_bytes());
-            hasher.update(b"/// The page this worker read for the same content, module and placement, or the one `read` makes now with the number
-");
-        }
-        let key: [u8; 32] = hasher.finalize().into();
-        if let Ok(guard) = self.functions.lock()
-            && let Some(kept) = guard.get(&key)
-        {
-            return Some(kept.clone());
-        }
-        let restored = Arc::new(restore()?);
-        if let Ok(mut guard) = self.functions.lock() {
-            guard.insert(key, restored.clone());
-        }
-        Some(restored)
     }
 }
 
@@ -190,7 +144,6 @@ pub fn resident_page(
         page,
         bytes,
         restored: Mutex::new(HashMap::new()),
-        functions: Mutex::new(HashMap::new()),
     });
     if let Ok(mut guard) = PAGES.lock() {
         let pages = guard.get_or_insert_with(HashMap::new);

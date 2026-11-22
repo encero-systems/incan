@@ -548,12 +548,9 @@ fn restore_admitted(
             unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
         );
     };
-    let Some(view) = admission.page.restored_function(&inputs, &resolved, &keyed.linked, || {
-        admitted_function(placed, &resolved, &keyed.linked)
-    }) else {
+    let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
-    let (function, runtime, frames) = (*view).clone();
     let Some(requests) = restore_requests(encoded, context) else {
         return Admission::Missed("a generic instance it requests is gone");
     };

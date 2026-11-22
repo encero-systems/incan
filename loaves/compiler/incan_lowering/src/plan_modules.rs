@@ -503,14 +503,13 @@ pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     use incan_mir_plan_native::{
         AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, Function, Local, LoweringEvent,
-        NominalKind, NominalReference, PlanModuleFunction, PlanModuleValue, PlanType, TerminatorKind, block,
-        encode_plan_module, encode_product, source_span,
+        PlanModuleFunction, PlanModuleValue, PlanType, TerminatorKind, block, encode_plan_module, encode_product,
+        source_span,
     };
 
     use super::{
@@ -801,80 +800,6 @@ mod tests {
         assert_eq!(
             restores, 2,
             "a product restored at another line was read from the worker"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-        Ok(())
-    }
-
-    /// A worker keeps each function it restored from a page's product by the restore inputs and the declaration
-    /// positions it was restored at, so a steady edit restores no unchanged function from its product again; other
-    /// positions or another linked crate set restore it afresh.
-    #[test]
-    fn a_steady_edit_restores_no_unchanged_function_from_its_product() -> Result<(), String> {
-        let root = directory("restored-views");
-        let products = root.to_string_lossy().into_owned();
-        let page = PlanModuleValue {
-            module: "resident_omega".into(),
-            functions: vec![PlanModuleFunction {
-                identity: "pub::resident_omega::a".into(),
-                symbol: "pub::resident_omega::a".into(),
-                function: "a".into(),
-                key: "ef".repeat(32),
-                event: vec![4],
-            }],
-        };
-        let encoded = encode_plan_module(&page)?;
-        let path = root.join(format!("{}.incnmodule.positioned", hex::encode("resident_omega")));
-        std::fs::write(&path, &encoded).map_err(|error| error.to_string())?;
-        let admitted = admitted_page(Some(&products), "resident_omega", Some("profile"));
-        let inputs = RestoreInputs {
-            frame: "a".into(),
-            file: "omega.incn".into(),
-            line: 12,
-            overflow: true,
-            reads: "reads".into(),
-            generation: "profile".into(),
-            positions: None,
-        };
-        let at = |index: i64| {
-            vec![NominalReference {
-                kind: NominalKind::Model,
-                index,
-                name: "Point".into(),
-            }]
-        };
-        let linked: BTreeSet<String> = BTreeSet::new();
-        let mut restores = 0;
-        let mut restore = || {
-            restores += 1;
-            let span = source_span("omega.incn", 12, 1);
-            let exit = block(Vec::new(), TerminatorKind::Return, &span);
-            Some((
-                Function::new("a".into(), Vec::new(), PlanType::Unit, Vec::new(), vec![exit], span),
-                Vec::new(),
-                Vec::new(),
-            ))
-        };
-        let first = admitted
-            .restored_function(&inputs, &at(0), &linked, &mut restore)
-            .ok_or("not restored")?;
-        let again = admitted
-            .restored_function(&inputs, &at(0), &linked, &mut restore)
-            .ok_or("not restored")?;
-        assert!(
-            Arc::ptr_eq(&first, &again),
-            "an unchanged function was restored from its product again"
-        );
-        admitted
-            .restored_function(&inputs, &at(1), &linked, &mut restore)
-            .ok_or("not restored")?;
-        let other: BTreeSet<String> = ["incan_other".to_owned()].into_iter().collect();
-        admitted
-            .restored_function(&inputs, &at(0), &other, &mut restore)
-            .ok_or("not restored")?;
-        assert_eq!(
-            restores, 3,
-            "a function at other positions or linking other crates was taken from the worker"
         );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
