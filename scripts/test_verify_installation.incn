@@ -138,7 +138,8 @@ def test_the_census_runs_twice_the_jobs_and_one_for_graph_and_reserves_its_measu
 def test_the_oven_step_runs_twice_the_release_jobs_and_reserves_a_project_share_for_each() -> Result[None, str]:
     """
     The Oven step outlasts every other gate, the census included, and runs on alone after them, so like the census it
-    runs twice the release's jobs; the gate reserves one Oven project share for each invocation it may run.
+    runs twice the release's jobs. It reserves memory for those invocations and keeps only one private Oven project
+    per release job, so Loaf tests can use the other slots without additional copies of the Oven checkout.
     """
     assert oven_jobs(1) == 2
     assert oven_jobs(2) == 4
@@ -149,6 +150,7 @@ def test_the_oven_step_runs_twice_the_release_jobs_and_reserves_a_project_share_
     arguments = oven_test_arguments(Path("/oven"), Path("/checkout"), Path("/run"), 2)
     assert arguments[5] == "--jobs"
     assert arguments[6] == "4"
+    assert arguments[7:9] == ["--worker-projects", "2"]
     return Ok(None)
 
 
