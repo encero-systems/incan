@@ -2,7 +2,7 @@
 
 from core_process import Process, executable, spawn_detached
 from rust::std::thread import sleep, spawn
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
 from rust::std::string import String as RustString
 from std.environ import get_or
 from std.encoding.hex import hexlify
@@ -26,8 +26,9 @@ from store_path_conversion import compact, snapshot
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
-from pub::incan_platform.ipc import Connection, dial, listen
-from engine_endpoint import endpoint, handshake, owner_uid, connect_with
+from pub::incan_platform.ipc import Connection, Listener, dial, listen
+from engine_endpoint import HANDSHAKE_SECONDS, endpoint, handshake, owner_uid, connect_with
+from engine_service import greet
 from toolchain import load_toolchain, toolchain_directory
 from engine_channel import Channel
 from engine_messages import (
@@ -78,6 +79,49 @@ def read_split_frame(reader: Connection) -> Result[None, str]:
     frame = connection.read_part(64, 64)?
     assert len(frame) == 64 and frame[0] == 97u8 and frame[16] == 97u8
     assert frame[17] == 98u8 and frame[63] == 98u8
+    return Ok(None)
+
+
+pub def test_a_caller_waits_for_a_busy_engine_to_answer_hello() -> Result[None, str]:
+    """
+    An engine answers Hello between requests, so a caller that connects while another caller's build runs is greeted
+    only after that build: it waits past the handshake bound for its Welcome while the engine holds its lifetime lock.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    identity = Identity(
+        store_id="busy-store",
+        profile="profile",
+        service_generation="service",
+        compiler_generation="compiler",
+        uid=owner_uid(store).map_err(detail)?,
+    )
+    selected = endpoint(store, identity).map_err(detail)?
+    lifetime = Path(selected.lock).try_lock_exclusive().map_err((error) => error.message())?
+    assert lifetime is not None, "the test could not hold the engine's lifetime lock"
+    listener = listen(selected.socket, true)?
+    engine = spawn(() => greet_after_a_build(listener, identity, store))
+    started = Instant.now()
+    connected = connect_with(store, identity, executable()?)
+    waited = started.elapsed().as_secs()
+    match engine.join():
+        Ok(outcome) => outcome?
+        Err(_) => return Err("the busy engine thread panicked")
+    mut channel = connected.map_err(detail)?
+    _ = channel.transport.close()
+    assert waited >= HANDSHAKE_SECONDS, f"the caller was greeted after {waited} s, inside the handshake bound"
+    return Ok(None)
+
+
+def greet_after_a_build(listener: Listener, identity: Identity, store: Path) -> Result[None, str]:
+    """Accept one caller, stay busy past the handshake bound as a running build does, then greet it."""
+    mut accepting = listener
+    caller = accepting.accept()?
+    sleep(Duration.from_secs(HANDSHAKE_SECONDS))
+    sleep(Duration.from_millis(500))
+    state = ServiceState(identity=identity, store=store, last_active=0)
+    _ = greet(Channel(transport=caller), state).map_err(detail)?
     return Ok(None)
 
 
