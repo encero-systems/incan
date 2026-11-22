@@ -1,0 +1,8 @@
+pub def class_name[T]() -> str:
+    """Name the closed type through its generated metadata."""
+    return T.__class_name__()
+
+
+pub def described[T]() -> str:
+    """Name the closed type and count its reflection-visible fields."""
+    return f"{T.__class_name__()}:{len(T.__fields__())}"
