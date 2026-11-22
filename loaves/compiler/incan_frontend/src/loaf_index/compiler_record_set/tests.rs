@@ -660,3 +660,49 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
     assert_eq!(later.summary()?.identity, first.summary()?.identity);
     Ok(())
 }
+
+/// A record group decoded for one request is shared inside it and released when the request ends, as the Loaf manifests
+/// are: a resident worker keeps no decoded copy of an installed Loaf between requests, and the next request reads the
+/// group's records again.
+#[test]
+fn a_record_group_decoded_for_a_request_is_released_when_it_ends() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let metadata = LibraryManifest::encode_compiler_record_value(&Metadata {
+        name: "released_loaf".to_owned(),
+        version: "0.1.0".to_owned(),
+        incan_version: "0.6.0".to_owned(),
+        manifest_format: 1,
+        manifest_digest: content_name(b"released_loaf manifest"),
+        vocabulary: false,
+        provider_operations: false,
+        native_unions: false,
+        rust_paths: BTreeSet::new(),
+        rust_abi_cache_declared: false,
+        rust_abi_cache_digest: None,
+    })?;
+    let contract = LibraryManifest::encode_compiler_record_value(&LibraryContractMetadata::default())?;
+    let expected = RecordReads {
+        records: 2,
+        bytes: metadata.len() + contract.len(),
+    };
+    let selection = thread_selection::select(record_set(
+        root.path(),
+        "released_loaf",
+        &[("metadata", metadata), ("contract-metadata", contract)],
+    )?);
+    let dir = root.path().join("debug");
+    super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
+    super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
+    assert_eq!(selection.0.reads(), expected, "one request reads each record once");
+    crate::loaf_index::release_retained_loaves();
+    super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
+    assert_eq!(
+        selection.0.reads(),
+        RecordReads {
+            records: expected.records * 2,
+            bytes: expected.bytes * 2,
+        },
+        "a group decoded for an earlier request outlived it"
+    );
+    Ok(())
+}
