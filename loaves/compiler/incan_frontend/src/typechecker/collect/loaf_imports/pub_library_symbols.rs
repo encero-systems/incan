@@ -3,7 +3,7 @@
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
 use crate::library_manifest::CanonicalIdentityExport;
-use crate::library_manifest::install_record::{InstallDeclarationKind, InstallExportKind};
+use crate::library_manifest::install_record::{InstallDeclarationKind, InstallExportKind, is_nominal_export};
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
@@ -291,26 +291,13 @@ impl TypeChecker {
     ) {
         let record = self.prepared_install_record(library, manifest);
         let identity_graph = &record.identity_graph;
-        let kinds = record
-            .export_kinds
-            .iter()
-            .map(|named| (named.public_name.as_str(), named.kind))
-            .collect::<HashMap<_, _>>();
+        let kinds = record.export_kinds_by_name();
         let mut scopes = DeclaringScopes::new();
         let mut layouts = Vec::new();
         for identity in &identity_graph.exports {
             let public_name = identity.public_name.as_str();
             let kind = kinds.get(public_name).copied().flatten();
-            let deferrable = matches!(
-                kind,
-                Some(
-                    InstallExportKind::Model
-                        | InstallExportKind::Class
-                        | InstallExportKind::Enum
-                        | InstallExportKind::Newtype
-                )
-            );
-            let (declaration, layout) = if deferrable {
+            let (declaration, layout) = if is_nominal_export(kind) {
                 let declaration = identity_graph.canonical_for_public_name(public_name);
                 let scope =
                     self.declaring_module_scope(library, manifest, identity_graph, declaration.as_ref(), &mut scopes);

@@ -41,6 +41,26 @@ pub struct LoafInstallRecord {
     pub aliases: Vec<AliasExport>,
 }
 
+impl LoafInstallRecord {
+    /// The kind of root export each public name the identity graph publishes finds first, by name.
+    pub fn export_kinds_by_name(&self) -> std::collections::HashMap<&str, Option<InstallExportKind>> {
+        self.export_kinds
+            .iter()
+            .map(|named| (named.public_name.as_str(), named.kind))
+            .collect()
+    }
+}
+
+/// Whether a root export of this kind is a model, class, enum or newtype.
+pub fn is_nominal_export(kind: Option<InstallExportKind>) -> bool {
+    matches!(
+        kind,
+        Some(
+            InstallExportKind::Model | InstallExportKind::Class | InstallExportKind::Enum | InstallExportKind::Newtype
+        )
+    )
+}
+
 /// The kind of root export a public name finds first.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallNamedExport {

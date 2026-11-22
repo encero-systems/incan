@@ -84,22 +84,4 @@ impl TypeChecker {
         scopes.insert(module_path.to_vec(), Arc::clone(&scope));
         Some(scope)
     }
-
-    /// Whether `public_name`'s root export is a model, class, enum or newtype, whose layout
-    /// [`Self::manifest_nominal_type_info`] builds from the manifest alone. An alias export reads the tables, so its
-    /// layout is built when it is installed.
-    pub(in crate::typechecker::collect) fn export_layout_is_deferrable(
-        manifest: &LibraryManifest,
-        public_name: &str,
-    ) -> bool {
-        matches!(
-            Self::find_manifest_export(manifest, public_name),
-            Some(
-                ManifestExportRef::Model(_)
-                    | ManifestExportRef::Class(_)
-                    | ManifestExportRef::Enum(_)
-                    | ManifestExportRef::Newtype(_)
-            )
-        )
-    }
 }

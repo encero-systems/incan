@@ -2,8 +2,19 @@
 
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
+use crate::library_manifest::install_record::{InstallExportKind, is_nominal_export};
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
+
+/// One identity export of a reached Loaf, with the kind of root export its name finds and the Loaf's identity graph,
+/// as the Loaf's install record gives them.
+#[derive(Clone, Copy)]
+struct ArtifactExport<'a> {
+    entry: &'a LoafEntry,
+    export: &'a crate::library_manifest::ExportIdentity,
+    kind: Option<InstallExportKind>,
+    graph: &'a crate::library_manifest::LibraryIdentityGraph,
+}
 
 impl TypeChecker {
     /// Build the provider-aware type remapping shared by every import statement for one compiled library.
@@ -424,7 +435,9 @@ impl TypeChecker {
         let mut preserving_keys = HashSet::new();
         let artifact = &entry.artifact;
         let owner_route = entry.key.as_str();
-        let graph = &artifact.manifest.contract_metadata.identity_graph;
+        let record = self.prepared_install_record(owner_route, &artifact.manifest);
+        let kinds = record.export_kinds_by_name();
+        let graph = &record.identity_graph;
         for export in &graph.exports {
             let declared = matches!(
                 export.kind,
@@ -434,11 +447,14 @@ impl TypeChecker {
                     | crate::library_manifest::ExportIdentityKind::Newtype
             );
             let top_level = export.public_path.len() == 2;
+            let kind = kinds.get(export.public_name.as_str()).copied().flatten();
             let reexported = !declared
                 && top_level
-                && self
-                    .manifest_nominal_type_info(&artifact.manifest, &export.public_name)
-                    .is_some();
+                && (is_nominal_export(kind)
+                    || kind == Some(InstallExportKind::Alias)
+                        && self
+                            .manifest_nominal_type_info(&artifact.manifest, &export.public_name)
+                            .is_some());
             if !declared && !reexported {
                 continue;
             }
@@ -493,14 +509,23 @@ impl TypeChecker {
         let manifest = &artifact.manifest;
         let owner_route = entry.key.as_str();
         let local_remapping = Arc::new(local_remapping);
+        let record = self.prepared_install_record(owner_route, manifest);
+        let kinds = record.export_kinds_by_name();
         let mut scopes = DeclaringScopes::new();
         let mut preserving_type_keys = HashSet::new();
-        for export in &manifest.contract_metadata.identity_graph.exports {
+        for export in &record.identity_graph.exports {
             // A member type is spelled as the declaring module spells it; the names that module reaches through a
             // private import or a submodule the root does not republish resolve through its scope first.
             let declaration = export.canonical.as_ref().and_then(|identity| identity.hydrate());
+            let kind = kinds.get(export.public_name.as_str()).copied().flatten();
+            let source = ArtifactExport {
+                entry,
+                export,
+                kind,
+                graph: &record.identity_graph,
+            };
             let Some(layout) =
-                self.artifact_export_layout(entry, export, declaration.as_ref(), &local_remapping, &mut scopes)
+                self.artifact_export_layout(&source, declaration.as_ref(), &local_remapping, &mut scopes)
             else {
                 continue;
             };
@@ -525,17 +550,24 @@ impl TypeChecker {
     /// the first lookup that reads it; an alias reads the tables, so it is built now, as is a type alias.
     fn artifact_export_layout(
         &mut self,
-        entry: &LoafEntry,
-        export: &crate::library_manifest::ExportIdentity,
+        source: &ArtifactExport<'_>,
         declaration: Option<&CanonicalSymbolId>,
         local_remapping: &Arc<HashMap<String, String>>,
         scopes: &mut DeclaringScopes,
     ) -> Option<TransitiveLayout<TypeInfo>> {
+        let ArtifactExport {
+            entry,
+            export,
+            kind,
+            graph,
+        } = *source;
         let manifest = &entry.artifact.manifest;
         let owner_route = entry.key.as_str();
         let (deferred, built) = if export.public_path.len() == 2 {
-            if Self::export_layout_is_deferrable(manifest, &export.public_name) {
+            if is_nominal_export(kind) {
                 (Some(LayoutDeclaration::Export(export.public_name.clone())), None)
+            } else if kind != Some(InstallExportKind::Alias) {
+                return None;
             } else {
                 (
                     None,
@@ -558,7 +590,6 @@ impl TypeChecker {
                 }
             }
         };
-        let graph = &manifest.contract_metadata.identity_graph;
         let scope = self.declaring_module_scope(owner_route, manifest, graph, declaration, scopes);
         if let Some(position) = deferred {
             return Some(self.deferred_layout(LayoutRecipe {
