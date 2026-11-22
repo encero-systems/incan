@@ -3,7 +3,14 @@
 from std.tempfile import TemporaryDirectory
 from oven_tests import selected_builder_bakery
 from release_support import builder_bakery, check_baseline
-from verify_installation import LSP_CONTRACT_CASE, require_lsp_contract, verification_phase_names
+from std.fs import Path
+from verify_installation import (
+    LSP_CONTRACT_CASE,
+    require_lsp_contract,
+    verification_gate_width,
+    verification_phase_arguments,
+    verification_phase_names,
+)
 
 const BASELINE: str = "behavior/a/a\n"
 
@@ -67,4 +74,15 @@ def test_installed_release_tests_reuse_the_bakery_the_builder_compiled_into() ->
     home.joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
     assert selected_builder_bakery("", home.0) == home.joinpath("bakery").0
     assert selected_builder_bakery(selected.0, home.0) == selected.0
+    return Ok(None)
+
+
+def test_every_installed_gate_starts_at_once_and_keeps_the_release_jobs_for_its_own_children() -> Result[None, str]:
+    """
+    The gates are independent, so the pool admits all of them together and only their memory reservations bound it;
+    each gate still runs at most the release's jobs of its own children.
+    """
+    for jobs in [1, 2, 6]:
+        assert verification_gate_width(jobs) == len(verification_phase_names(jobs))
+    assert verification_phase_arguments("census", Path("/run"), Path("/runner"), 2, 900)[4] == "2"
     return Ok(None)
