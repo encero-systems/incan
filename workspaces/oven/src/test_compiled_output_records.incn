@@ -531,6 +531,65 @@ pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() ->
     return Ok(None)
 
 
+pub def test_overloads_of_one_spelling_share_one_declaration_slot() -> Result[None, str]:
+    """
+    Two overloads of one spelling are two checked declarations behind one project slot: the slot binds both, so a
+    signature edit to either invalidates its readers, and the publication refuses neither.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("program")
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("main.incn")
+    source
+        .write_text("from helper import cast\n\ndef main() -> None:\n    println(cast(1) + cast(\"2\"))\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    root
+        .joinpath("helper.incn")
+        .write_text("pub def cast(value: int) -> str:\n    return str(value)\n\npub def cast(value: str) -> str:\n    return value\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=source.0,
+        project_root=root.0,
+        source_root=root.0,
+        package="main",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    identity = "main|module:main|main|function|module|0|() -> unit"
+    signed = "function:helper::cast|incan.source-signature/2:sha256:"
+    first = signed + "2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
+    second = signed + "1afbf05e3e945151320b9294edf7fc24ac471db805ece1c9c010f3c3669ca4c5"
+    value = CompiledBodyValue(
+        module="main.incn",
+        name="main",
+        identity=identity,
+        declaration=empty_checker_record(identity, CheckedFamily.Declaration)?,
+        local=empty_checker_record(identity, CheckedFamily.Local)?,
+        final=empty_checker_record(identity, CheckedFamily.Final)?,
+        body_ir=b"owner-frame",
+        dependency_reads=[
+            CompiledBodyDependencyRead(package=None, module="helper", name="cast", identity=first, reference_subject="expr:main#60..67"),
+            CompiledBodyDependencyRead(package=None, module="helper", name="cast", identity=second, reference_subject="expr:main#70..79"),
+        ],
+    )
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_compiled_output(output, CompiledBodyOutputs(values=[value], fallbacks=[]))?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_compiled_bodies(empty, unit, output)?
+    assert published.bodies == 1
+    slot = encode_record_key(project_declaration_slot("main", "helper", "cast", first))?
+    assert slot == encode_record_key(project_declaration_slot("main", "helper", "cast", second))?
+    bound = read_binding(slot, required(published.snapshot, slot)?)?
+    assert first in bound and second in bound, bound
+    return Ok(None)
+
+
 def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None, str]:
     """
     Physical source paths must retain project and dependency identities through symlinked described roots, and a
