@@ -179,12 +179,13 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             ),
         )
     memory = shared_memory(host_memory())
-    # Independent gates can each start compiler processes. Honor the requested concurrency at this boundary too.
-    # A failing gate stops none of the others, so one run reports every failing gate.
+    # The gates are independent: all of them start at once, bounded by their memory reservations, and each honors the
+    # requested jobs for its own children. A failing gate stops none of the others, so one run reports every failing
+    # gate.
     failed = run_all_failures(
         verifier.0,
         invocations,
-        verification_workers(installation.jobs),
+        verification_gate_width(installation.jobs),
         memory,
         len(invocations),
     )?
@@ -242,6 +243,11 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
         VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
     ]
+
+
+pub def verification_gate_width(jobs: int) -> int:
+    """How many gates run at once: every planned gate, since each bounds its own children by `jobs`."""
+    return len(verification_phase_plans(jobs))
 
 
 pub def verification_phase_names(jobs: int) -> list[str]:
