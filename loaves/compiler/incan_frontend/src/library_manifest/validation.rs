@@ -63,4 +63,6 @@ pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), Libr
 }
 
 #[cfg(test)]
+mod dependency_hop_tests;
+#[cfg(test)]
 mod tests;
