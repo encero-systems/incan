@@ -19,11 +19,11 @@ from project_lock import toolchain_entry
 from scratch import scratch_directory
 from rust_registry import read_registry_units
 from rust_target import compiler_version, deployment_target
-from toolchain import Toolchain, load_toolchain, rust_compiler
+from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler
 from toolchain_archive import portable_registry_unit, source_archive_name, stage_driver
 from unit_publication import record_path, record_payload
 from unit_freshness import fingerprint, sdk_settings_identity, unit_compiler_identity
-from freshness_fixtures import compiler_fingerprint, fixture, reconcile, unit_key, write
+from freshness_fixtures import Fixture, compiler_fingerprint, fixture, reconcile, unit_key, write
 
 
 def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
@@ -132,6 +132,7 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     write(Path(setup.toolchain.externs[0].path), "runtime three, once more different")?
     record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime three"])?)?
     assert reconcile(scratch.path(), setup)?.key != before.key
+    check_native_generation_relocation(scratch.path(), setup)?
     # The compiler's own answers are part of its identity, and an unchanged compiler is not asked them again.
     check_compiler_probes(scratch.path(), setup.toolchain)?
     # What every project learns from the installation is learned once per home.
@@ -144,6 +145,31 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     assert legacy.digest == ""
     assert "unit identity refused:" in legacy.refusal
     assert "no recorded producer identity" in legacy.refusal
+    return Ok(None)
+
+
+def check_native_generation_relocation(root: Path, setup: Borrowed[Fixture]) -> Result[None, str]:
+    """Packing one native generation preserves compiler identity while a unit's exact link placement changes."""
+    identity = fingerprint(["native support producer"])?
+    built = root.joinpath("bakery/libraries/generation/libruntime.rlib")
+    carried = root.joinpath("toolchain/native/generation/libruntime.rlib")
+    for path in [built, carried]:
+        write(path, "same native support")?
+        record_payload(path, identity)?
+    mut building = setup.toolchain
+    building.externs = [NativeCrate(name="runtime", path=built.0, identity=identity)]
+    mut installed = building
+    installed.externs = [NativeCrate(name="runtime", path=carried.0, identity=identity)]
+    assert compiler_fingerprint(building)? == compiler_fingerprint(installed)?, "packing changed the compiler identity"
+    mut build_unit = setup.unit
+    build_unit.externs = building.externs
+    mut installed_unit = setup.unit
+    installed_unit.externs = installed.externs
+    build_key = unit_key(build_unit, building)?
+    installed_key = unit_key(installed_unit, installed)?
+    assert build_key.refusal == "", build_key.refusal
+    assert installed_key.refusal == "", installed_key.refusal
+    assert build_key.digest != installed_key.digest, "a unit reused a native closure at another placement"
     return Ok(None)
 
 
