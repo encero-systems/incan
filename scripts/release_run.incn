@@ -6,7 +6,16 @@ a child process: named, logged, timed and, where the phase needs it, required to
 from rust::std::time import Instant
 from std.fs import Path
 from native_build import NativeContext
-from release_support import TOOLCHAIN_DIRECTORY, ReleaseOptions, ReleaseTrace, Step, append_timing, log_tail, run_step
+from release_support import (
+    TOOLCHAIN_DIRECTORY,
+    BackgroundStep,
+    ReleaseOptions,
+    ReleaseTrace,
+    Step,
+    append_timing,
+    log_tail,
+    run_step,
+)
 
 
 pub model ReleasePaths:
@@ -35,11 +44,12 @@ pub model ReleaseRun:
 
 
 pub model Candidate:
-    """Candidate build context and its shipped Oven and language server."""
+    """Candidate build context, its shipped Oven and language server, and the Oven test library still building."""
 
     pub context: NativeContext
     pub oven: Path
     pub lsp: Path
+    pub library: Option[BackgroundStep] = None
 
 
 pub def release_paths(output: Path) -> ReleasePaths:

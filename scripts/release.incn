@@ -12,6 +12,8 @@ from native_build import (
     StandardGeneration,
     StandardProfile,
     build_shipped_tools,
+    oven_test_library_step,
+    refused_after,
     build_source_tools,
     build_standard_packages,
     publish_support,
@@ -38,6 +40,7 @@ from release_support import (
     check_baseline,
     counts_json,
     digest,
+    log_tail,
     parse_release_options,
     reference_worker_arguments,
     reclaim_paths,
@@ -109,6 +112,8 @@ const SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION: FrozenList[str] = [
 const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
 # The origin of a reused reference census, kept beside the release evidence and named in the receipt.
 const REFERENCE_ORIGIN: str = "reference-origin.json"
+# The Oven project the release compiles the Oven test library in, ahead of installed verification.
+const OVEN_TEST_LIBRARY: str = "oven-test-library"
 const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
 
@@ -172,6 +177,10 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     candidate = match produce_candidate(run):
         Ok(built) => built
         Err(message) => refuse_candidate_after_cancellation(reference, message)?
+    # 4. The Oven test library built ahead is joined before the source targets it reads are reclaimed.
+    match finish_oven_test_library(run, candidate):
+        Ok(_) => pass
+        Err(message) => _ = refuse_candidate_after_cancellation(reference, message)?
 
     if not run.options.prove_fixed_point and not signed:
         reclaim(run, "build-lane", [run.paths.lane])?
@@ -664,11 +673,23 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
     """Build the shipped tools, stamped for the workflow, copy the bundle tools, and pack the candidate toolchain."""
     _ = stamp_release_signer(run.paths.source, run.paths.toolchain, run.options.stamp_signer)?
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
-    oven, lsp = build_shipped_tools(candidate.context, helper, "candidate-")?
+    # The installed Oven tests start by compiling their project library; a release that verifies its installation
+    # builds it as soon as the debug providers it reads exist, and the installed step finds it by identity.
+    mut library: Option[Step] = None
+    if not run.options.stamp_signer:
+        library = Some(oven_test_library_step(candidate.context, run.paths.output.joinpath(OVEN_TEST_LIBRARY))?)
+    tools = build_shipped_tools(candidate.context, helper, "candidate-", library)?
+    match pack_bundle(run, tools.oven, tools.lsp):
+        Ok((bundle_oven, bundle_lsp)) =>
+            context = native_context(run, bundle_oven, run.paths.home)
+            return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp, library=tools.after_debug))
+        Err(message) => return Err(refused_after(tools.after_debug, message))
 
+
+def pack_bundle(run: ReleaseRun, oven: Path, lsp: Path) -> Result[tuple[Path, Path], str]:
+    """Copy the shipped tools into the bundle and pack the candidate toolchain beside them."""
     bundle_oven = run.paths.bundle.joinpath("incan")
     _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
-    context = native_context(run, bundle_oven, run.paths.home)
     bundle_lsp = run.paths.bundle.joinpath("incan-lsp")
     _ = lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
     require_release_step(
@@ -682,7 +703,20 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
             build_environment(run, run.paths.home, bundle_oven),
         ),
     )?
-    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp))
+    return Ok((bundle_oven, bundle_lsp))
+
+
+def finish_oven_test_library(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
+    """Join the Oven test library built ahead, then reclaim its project; its units stay in the builder's bakery."""
+    match candidate.library:
+        None => return Ok(None)
+        Some(running) =>
+            status, elapsed = finish_background_step(running, run.options.timeout_seconds)?
+            append_timing(run.paths.output.joinpath("timings.tsv"), "oven-test-library", elapsed)?
+            log = run.paths.output.joinpath("oven-test-library.log")
+            if status != 0:
+                return Err(f"oven-test-library failed with status {status}; log: {log.0}\n{log_tail(log)}")
+            return reclaim(run, "oven-test-library", [run.paths.output.joinpath(OVEN_TEST_LIBRARY)])
 
 
 def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:

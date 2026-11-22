@@ -260,7 +260,9 @@ pub def invocations(
 
     A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
     the release units the release already built under the same identities, as the Rust facet tests do. The Oven
-    sources keep the installation's bakery, because their nested commands inherit the environment.
+    sources ask it too: the release builds their shared project library ahead (`library_prebuild_arguments`), and the
+    bakery admits a unit only by its full identity, so anything that differs is built again. Their nested commands
+    inherit that bakery.
     """
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
@@ -270,16 +272,18 @@ pub def invocations(
     mut workers: list[str] = []
     for position in range(min([jobs, len(sources)])):
         workers.append(isolated_oven_project(root, evidence, position)?.0)
+    mut shared: Dict[str, str] = {}
+    if builder_bakery != "":
+        shared["INCAN_BAKERY"] = builder_bakery
     for source in sources:
         if not source.is_file():
             return Err("Oven test sources are absent")
         unit = ["test", f"src/{source.name()}"]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        planned.append(invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers))
+        mut planned_source = invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers)
+        planned_source.environment = shared
+        planned.append(planned_source)
     compiler = root.joinpath("loaves/compiler").0 + "/"
-    mut shared: Dict[str, str] = {}
-    if builder_bakery != "":
-        shared["INCAN_BAKERY"] = builder_bakery
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
@@ -347,6 +351,14 @@ pub def planned_outcome(
     return Ok(PlannedOutcome(started=[item for item in planned if item.log.0 in logs], succeeded=succeeded))
 
 
+pub def library_prebuild_arguments() -> list[str]:
+    """
+    The compile-only invocation the step starts with, in a worker project: the settled source's listing, which builds
+    the Oven sources' shared project library. A release runs it ahead in a project laid out the same way.
+    """
+    return ["test", f"src/{NEEDS_SETTLED_INSTALLATION[0]}", "--list"]
+
+
 pub def admission_order(pooled: list[Invocation]) -> list[int]:
     """
     The order the pool admits its invocations in. Invocations in worker projects link the project library that the
@@ -409,6 +421,14 @@ def isolated_oven_project(root: Path, evidence: Path, position: int) -> Result[P
     checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", ""))
         .joinpath(evidence.name())
         .joinpath(str(position))
+    return oven_worker_project(root, checkout)
+
+
+pub def oven_worker_project(root: Path, checkout: Path) -> Result[Path, str]:
+    """
+    Lay out an Oven project at `checkout` as a worker project is: its own copy of the Oven sources and tests and of the
+    workbench, beside links to the checkout's Loaves and examples. Return the Oven project.
+    """
     project = checkout.joinpath("workspaces/oven")
     project.mkdir(true, true).map_err((error) => error.message())?
     _ = root

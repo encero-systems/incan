@@ -6,6 +6,7 @@ from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from oven_tests import library_prebuild_arguments, oven_worker_project
 from release_support import (
     STANDARD_PACKAGES,
     TOOLCHAIN_DIRECTORY,
@@ -256,30 +257,54 @@ pub def shipped_tool_overlap(jobs: int, memory: int) -> ShippedToolOverlap:
             return ShippedToolOverlap.AllBeside
 
 
-pub def build_shipped_tools(context: NativeContext, helper: Path, phase_prefix: str) -> Result[tuple[Path, Path], str]:
+pub model ShippedTools:
+    """The built Oven and language server, and the step started once the debug providers were published, still running."""
+
+    pub oven: Path
+    pub lsp: Path
+    pub after_debug: Option[BackgroundStep] = None
+
+
+pub def build_shipped_tools(
+    context: NativeContext,
+    helper: Path,
+    phase_prefix: str,
+    after_debug: Option[Step] = None,
+) -> Result[ShippedTools, str]:
     """
     Build the shipped Oven and language server and publish the debug standard providers, after the release providers.
 
     1. Oven starts first whenever a second child fits, because it is the longest of the three.
-    2. The language server and the debug waves take the capacity Oven leaves: side by side, or in turn.
-    3. A refusal stops every tool child still running.
+    2. The language server and the debug waves take the capacity Oven leaves: side by side, or in turn. The step that
+       reads the debug providers, when one is given, starts as soon as they are published and is returned running.
+    3. A refusal stops every child still running.
     """
     oven = tool_build_plan(context, "oven", true, "oven-build")?
     lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
     overlap = shipped_tool_overlap(context.jobs, context.memory)
     if overlap == ShippedToolOverlap.Serial:
-        build_standard_packages(context, helper, phase_prefix, [StandardProfile.Debug])?
-        run_build_plans(context, [oven, lsp])?
-        return Ok((complete_build_plan(oven)?, complete_build_plan(lsp)?))
+        started = publish_debug_providers(context, helper, phase_prefix, after_debug)?
+        match serial_tools(context, oven, lsp):
+            Ok((built_oven, built_lsp)) => return Ok(ShippedTools(oven=built_oven, lsp=built_lsp, after_debug=started))
+            Err(message) => return Err(refused_after(started, message))
     # 1. Oven holds one child and one project allowance from here until it is joined.
     pending = PendingToolBuild(plan=oven, worker=start_background_step(oven.child)?)
-    beside = beside_project(context)
+    side_by_side = overlap == ShippedToolOverlap.AllBeside
     # 2. The rest share what Oven leaves, and 3. a refusal there stops Oven too.
-    match build_beside_oven(beside, helper, phase_prefix, lsp, overlap == ShippedToolOverlap.AllBeside):
-        Ok(built) => return Ok((finish_tool_build(context, pending)?, built))
+    match build_beside_oven(beside_project(context), helper, phase_prefix, lsp, side_by_side, after_debug):
+        Ok((built_lsp, started)) =>
+            match finish_tool_build(context, pending):
+                Ok(built_oven) => return Ok(ShippedTools(oven=built_oven, lsp=built_lsp, after_debug=started))
+                Err(message) => return Err(refused_after(started, message))
         Err(message) =>
             _ = cancel_tool_build(pending)
             return Err(message)
+
+
+def serial_tools(context: NativeContext, oven: NativeBuildPlan, lsp: NativeBuildPlan) -> Result[tuple[Path, Path], str]:
+    """Build Oven and the language server within the context's own capacity."""
+    run_build_plans(context, [oven, lsp])?
+    return Ok((complete_build_plan(oven)?, complete_build_plan(lsp)?))
 
 
 def build_beside_oven(
@@ -288,18 +313,72 @@ def build_beside_oven(
     phase_prefix: str,
     lsp: NativeBuildPlan,
     side_by_side: bool,
-) -> Result[Path, str]:
+    after_debug: Option[Step],
+) -> Result[tuple[Path, Option[BackgroundStep]], str]:
     """Publish the debug providers and build the language server in the capacity a running Oven build leaves."""
     if not side_by_side:
-        build_standard_packages(context, helper, phase_prefix, [StandardProfile.Debug])?
-        run_build_plans(context, [lsp])?
-        return complete_build_plan(lsp)
+        started = publish_debug_providers(context, helper, phase_prefix, after_debug)?
+        match lsp_alone(context, lsp):
+            Ok(built) => return Ok((built, started))
+            Err(message) => return Err(refused_after(started, message))
     pending = PendingToolBuild(plan=lsp, worker=start_background_step(lsp.child)?)
-    match build_standard_packages(beside_project(context), helper, phase_prefix, [StandardProfile.Debug]):
-        Ok(_) => return finish_tool_build(context, pending)
+    match publish_debug_providers(beside_project(context), helper, phase_prefix, after_debug):
+        Ok(started) =>
+            match finish_tool_build(context, pending):
+                Ok(built) => return Ok((built, started))
+                Err(message) => return Err(refused_after(started, message))
         Err(message) =>
             _ = cancel_tool_build(pending)
             return Err(message)
+
+
+def lsp_alone(context: NativeContext, lsp: NativeBuildPlan) -> Result[Path, str]:
+    """Build the language server in the context's capacity."""
+    run_build_plans(context, [lsp])?
+    return complete_build_plan(lsp)
+
+
+def publish_debug_providers(
+    context: NativeContext,
+    helper: Path,
+    phase_prefix: str,
+    after: Option[Step],
+) -> Result[Option[BackgroundStep], str]:
+    """Publish the debug standard providers, then start the step that reads them, when one is given."""
+    build_standard_packages(context, helper, phase_prefix, [StandardProfile.Debug])?
+    match after:
+        None => return Ok(None)
+        Some(follow_up) => return Ok(Some(start_background_step(follow_up)?))
+
+
+pub def refused_after(started: Option[BackgroundStep], message: str) -> str:
+    """A refusal, after stopping a started step that is still running; a failure to stop it is named too."""
+    match started:
+        None => return message
+        Some(running) =>
+            match cancel_background_step(running):
+                Ok(_) => return message
+                Err(reason) => return f"{message}; stopping the running step failed: {reason}"
+
+
+pub def oven_test_library_step(context: NativeContext, checkout: Path) -> Result[Step, str]:
+    """
+    The compile the installed Oven test step starts with, run ahead in an Oven project laid out at `checkout` as its
+    worker projects are. Its shared project library and first test unit are then in the builder's bakery, where the
+    installed step finds them by their full unit identity.
+    """
+    project = oven_worker_project(context.repo, checkout)?
+    return Ok(
+        step(
+            context,
+            "oven-test-library",
+            context.builder,
+            library_prebuild_arguments(),
+            common_environment(context),
+            project,
+            context.evidence.joinpath("oven-test-library.log"),
+        ),
+    )
 
 
 def beside_project(context: NativeContext) -> NativeContext:
