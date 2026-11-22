@@ -57,7 +57,45 @@ impl TypeChecker {
         library: &str,
         manifest: &LibraryManifest,
     ) -> HashMap<String, String> {
-        let mut remapping = HashMap::new();
+        let prepared = self.prepared_canonical_type_remapping(library, manifest);
+        let mut remapping = HashMap::with_capacity(prepared.len());
+        for entry in prepared.iter() {
+            self.public_library_type_identities
+                .insert(entry.canonical_name.clone(), entry.identity.clone());
+            remapping.insert(entry.public_name.clone(), entry.canonical_name.clone());
+        }
+        remapping.extend(self.public_library_foreign_type_remapping(library, manifest));
+        remapping
+    }
+
+    /// Evaluate one compiled library's nominal public types once for the fresh checkers of one module graph.
+    ///
+    /// Whether a public export names a nominal type, and the provider identity it is admitted under, are facts of the
+    /// library's manifest and the shared Loaf index, never of the asking checker's declarations or imports. Every
+    /// consumer replays the same entries, in identity-graph order, into its own identity table.
+    fn prepared_canonical_type_remapping(
+        &self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> Arc<[crate::typechecker::dependency_interface::CanonicalTypeEntry]> {
+        let prepared = &self.dependency_interface_preparation_cache.canonical_remappings;
+        if let Some(entries) = prepared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(library)
+        {
+            return Arc::clone(entries);
+        }
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache
+            .count_canonical_evaluation(library);
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::prepare_canonical_type_remapping",
+            library,
+        )
+        .entered();
+        let mut entries = Vec::new();
         let mut seen = HashSet::new();
         for entry in &manifest.contract_metadata.identity_graph.exports {
             let public_name = entry.public_name.as_str();
@@ -67,13 +105,20 @@ impl TypeChecker {
             let Some(identity) = self.public_library_nominal_type_identity(library, manifest, public_name) else {
                 continue;
             };
-            let canonical_name = canonical_public_library_type_name(library, public_name);
-            self.public_library_type_identities
-                .insert(canonical_name.clone(), identity);
-            remapping.insert(public_name.to_owned(), canonical_name);
+            entries.push(crate::typechecker::dependency_interface::CanonicalTypeEntry {
+                public_name: public_name.to_owned(),
+                canonical_name: canonical_public_library_type_name(library, public_name),
+                identity,
+            });
         }
-        remapping.extend(self.public_library_foreign_type_remapping(library, manifest));
-        remapping
+        let entries: Arc<[_]> = entries.into();
+        Arc::clone(
+            prepared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(library.to_owned())
+                .or_insert(entries),
+        )
     }
 
     /// Hydrate foreign signature types from the Loaves that declare them.
