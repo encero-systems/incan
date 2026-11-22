@@ -7,11 +7,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use incan_mir_plan_native::{
-    ADMITTED_DEFINITIONS, AdmittedDefinition, Function, INTERFACE_REPORT, LoweringEvent, NativeInterface, NominalKind,
-    NominalReference, Plan, PlanType, REPOSITION_MODULE_PAGE, carrier_position, decode_lowering_event,
-    decode_lowering_refusal, decode_plan_function_record, decode_plan_module, encode_admitted_definitions,
-    encode_entry_record, encode_lowering_event, encode_native_interface, encode_record_plan_products, is_carrier_index,
-    placed_admission, product_frame_names, verify_entry_record,
+    ADMITTED_DEFINITIONS, AdmittedDefinition, Function, INTERFACE_REPORT, LoweringEvent, NATIVE_DEFINITIONS,
+    NativeInterface, NominalKind, NominalReference, Plan, PlanType, REPOSITION_MODULE_PAGE, carrier_position,
+    decode_lowering_event, decode_lowering_refusal, decode_plan_function_record, decode_plan_module,
+    encode_admitted_definitions, encode_entry_record, encode_lowering_event, encode_native_interface,
+    encode_record_plan_products, is_carrier_index, placed_admission, product_frame_names, verify_entry_record,
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
@@ -27,7 +27,7 @@ const INTERFACE_IDENTITY: &str = "native-interface";
 pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result<(), String> {
     let report_path = Path::new(report);
     let mut events = scalar_events(report_path)?;
-    let restored_frames = append_admitted_events(&mut events, products, report_path)?;
+    let (restored_frames, restored_digests) = append_admitted_events(&mut events, products, report_path)?;
     // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface. Only a
     // unit whose every function has an event can publish one; otherwise no placed product is kept for it.
     let publishable = events.len() == plan.functions.len();
@@ -47,6 +47,7 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
         &mut references,
         &mut carried,
     )?;
+    publish_native_definitions(plan, report_path, &events, &restored_frames, &restored_digests)?;
     if !publishable {
         return refuse_interface(plan, report, &events, &carried);
     }
@@ -123,6 +124,77 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
         &report_path.join(INTERFACE_REPORT),
         &encode_native_interface(&interface)?,
     )
+}
+
+/// Name a native input for every plan function no event names, so native incremental reuse can track every definition
+/// in a unit that publishes no whole-unit interface: a helper frame by the key of the product that carries it, any
+/// other function by the digest of its own plan. Each also names the unit's external declarations, which a native body
+/// reads beside its own record. A unit whose every function has an event names none.
+fn publish_native_definitions(
+    plan: &Plan,
+    report: &Path,
+    events: &[LoweringEvent],
+    restored_frames: &HashMap<String, Vec<String>>,
+    restored_digests: &HashMap<String, String>,
+) -> Result<(), String> {
+    let named: HashSet<&str> = events.iter().map(|event| event.function.as_str()).collect();
+    // Each helper frame by the key and product digest of the function that carries it.
+    let mut carriers: HashMap<String, (String, String)> = HashMap::new();
+    for event in events {
+        let (frames, digest) = match (
+            restored_frames.get(&event.function),
+            restored_digests.get(&event.function),
+        ) {
+            (Some(frames), Some(digest)) if event.admitted => (frames.clone(), digest.clone()),
+            _ if event.role == "entry" => continue,
+            _ => {
+                let record = decode_plan_function_record(&event.product)?;
+                (product_frame_names(&record.function)?, record.digest)
+            }
+        };
+        for frame in frames {
+            carriers
+                .entry(frame)
+                .or_insert_with(|| (event.key.clone(), digest.clone()));
+        }
+    }
+    let externals = semantic_digest(&format!("{:?}", plan.externals)).map_err(|error| error.to_string())?;
+    let mut definitions = Vec::new();
+    for function in &plan.functions {
+        if named.contains(function.name.as_str()) {
+            continue;
+        }
+        let (key, content) = match carriers.get(&function.name) {
+            Some((carrier, digest)) => (
+                carrier.clone(),
+                vec![
+                    "carried-frame".to_owned(),
+                    carrier.clone(),
+                    digest.clone(),
+                    function.name.clone(),
+                ],
+            ),
+            None => (
+                "content".to_owned(),
+                vec!["plan-function".to_owned(), format!("{function:?}")],
+            ),
+        };
+        let digest =
+            semantic_digest(&[content, vec![externals.clone()]].concat()).map_err(|error| error.to_string())?;
+        definitions.push(AdmittedDefinition {
+            function: function.name.clone(),
+            identity: function.name.clone(),
+            key,
+            digest,
+        });
+    }
+    let listed = report.join(NATIVE_DEFINITIONS);
+    if !definitions.is_empty() {
+        write(&listed, &encode_admitted_definitions(&definitions)?)?;
+    } else if listed.is_file() {
+        std::fs::remove_file(&listed).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 /// Publish no whole-unit interface for a plan with functions no product witnesses, and say why.
@@ -405,9 +477,10 @@ fn append_admitted_events(
     events: &mut Vec<LoweringEvent>,
     products: &str,
     report: &Path,
-) -> Result<HashMap<String, Vec<String>>, String> {
+) -> Result<(HashMap<String, Vec<String>>, HashMap<String, String>), String> {
     let mut reported: HashSet<String> = events.iter().map(|event| event.function.clone()).collect();
     let mut definitions = Vec::new();
+    let mut digests = HashMap::new();
     let mut carried = HashMap::new();
     let admissions = Path::new(products).join("admissions");
     for note in read_admitted(&admissions)? {
@@ -441,8 +514,9 @@ fn append_admitted_events(
                 function: function.function.clone(),
                 identity: function.identity.clone(),
                 key: event.key.clone(),
-                digest: record.digest,
+                digest: record.digest.clone(),
             });
+            digests.insert(function.function.clone(), record.digest);
             events.push(event);
             reported.insert(function.function.clone());
             carried.insert(
@@ -457,7 +531,7 @@ fn append_admitted_events(
     } else if listed.is_file() {
         std::fs::remove_file(&listed).map_err(|error| error.to_string())?;
     }
-    Ok(carried)
+    Ok((carried, digests))
 }
 
 #[cfg(test)]
