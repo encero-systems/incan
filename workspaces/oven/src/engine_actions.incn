@@ -246,8 +246,13 @@ def prepare_initial_program(mut pending: BorrowedMut[Pending], console: str) -> 
         return Ok(None)
     if captured.epoch.roots[0].endswith("/lib.incn"):
         return Ok(None)
+    # The program graph covers its Incan sources. A path dependency or a Rust facet has
+    # its own source membership, which the ordinary capture must keep through publication.
+    for declaration in captured.epoch.declarations:
+        if len(declaration.dependencies) > 0 or declaration.rust_source_root != "":
+            return Ok(None)
     for item in captured.epoch.inputs:
-        if item.role == InputRole.ProjectMember:
+        if item.role == InputRole.ProjectMember or (item.role == InputRole.Member and not item.path.endswith(".incn")):
             return Ok(None)
     mut prepared = prepare_program(
         captured.epoch, pending.view, console, Some(captured.selected), pending.unit_options, pending.origin,
