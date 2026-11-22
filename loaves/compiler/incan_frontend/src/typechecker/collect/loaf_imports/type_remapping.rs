@@ -76,7 +76,7 @@ impl TypeChecker {
     /// Whether a public export names a nominal type, and the provider identity it is admitted under, are facts of the
     /// library's manifest and the shared Loaf index, never of the asking checker's declarations or imports. Every
     /// consumer replays the same entries, in identity-graph order, into its own identity table.
-    fn prepared_canonical_type_remapping(
+    pub(in crate::typechecker::collect) fn prepared_canonical_type_remapping(
         &self,
         library: &str,
         manifest: &LibraryManifest,

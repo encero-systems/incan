@@ -23,7 +23,7 @@ const PROVIDER: &str = "from pub::shapes import Outer\nfrom pub::base import Inn
 const CONSUMER: &str = "from provider import make\n\ndef main() -> int:\n    return make().inner.value\n";
 
 /// The installed `base` and `shapes` Loaves.
-fn shapes(root: &Path) -> TestResult<Arc<LoafIndex>> {
+pub(super) fn shapes(root: &Path) -> TestResult<Arc<LoafIndex>> {
     let base = installed(root, &published_root("base", BASE, LoafIndex::default())?)?;
     let shapes = installed(
         root,
@@ -127,5 +127,76 @@ fn a_loafs_type_origins_are_collected_once_per_module_graph() -> TestResult {
         collections.values().all(|&count| count == 1),
         "type origins collected more than once per Loaf: {collections:?}"
     );
+    Ok(())
+}
+
+/// A compiled Loaf's install record holds what installing it reads of its manifest, as that manifest gives it: the
+/// nominal public types with their declarations' source paths and identities, the root exports by kind and the type
+/// origins. It reads back as it was written.
+#[test]
+fn a_loafs_install_record_holds_what_install_reads_and_reads_back() -> TestResult {
+    use crate::library_manifest::CanonicalIdentityExport;
+    use crate::library_manifest::install_record::LoafInstallRecord;
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    for library in ["base", "shapes"] {
+        let manifest = loaves.manifest(library).ok_or("missing manifest")?;
+        let mut checker = TypeChecker::new();
+        checker.set_loaves(Arc::clone(&loaves));
+        let record = checker.loaf_install_record(library, manifest);
+        let expected = checker
+            .prepared_canonical_type_remapping(library, manifest)
+            .iter()
+            .map(|entry| {
+                (
+                    entry.public_name.clone(),
+                    entry.identity.source_path.clone(),
+                    entry.identity.canonical.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let recorded = record
+            .canonical_types
+            .iter()
+            .map(|row| {
+                (
+                    row.public_name.clone(),
+                    row.source_path.clone(),
+                    row.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(!expected.is_empty(), "{library} publishes no nominal type");
+        assert_eq!(recorded, expected, "{library}'s nominal public types");
+        let names = |names: Vec<&String>| names.into_iter().cloned().collect::<Vec<_>>();
+        let exports = &manifest.exports;
+        assert_eq!(
+            record.root_exports.models,
+            names(exports.models.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.classes,
+            names(exports.classes.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.enums,
+            names(exports.enums.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.newtypes,
+            names(exports.newtypes.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.traits,
+            names(exports.traits.iter().map(|item| &item.name).collect())
+        );
+        let origins = super::collect_nominal_type_origins(manifest)
+            .into_values()
+            .collect::<Vec<_>>();
+        assert_eq!(record.type_origins, origins, "{library}'s type origins");
+        let encoded = serde_json::to_vec(&record)?;
+        assert_eq!(serde_json::from_slice::<LoafInstallRecord>(&encoded)?, record);
+    }
     Ok(())
 }
