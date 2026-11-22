@@ -1205,6 +1205,43 @@ mod tests {
         Ok(())
     }
 
+    /// A member of a nominal of the body's own module that the restore positions do not bind is compiler generated,
+    /// such as a string enum's `from_value`; its identity is the nominal's own, and the restore keeps it.
+    #[test]
+    fn own_module_generated_member_restores_at_its_nominal() -> Result<(), Box<dyn std::error::Error>> {
+        let (program, checker, owner) = fixture("def view() -> int:\n    return 1\n", "view")?;
+        let mut positions = Positions::new(&checker, &program, owner, false)?;
+        let nominal = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: checker.symbols.declaration_origin(),
+            declaration_name: "GraphRecordKind".into(),
+            kind: SemanticSourceTargetKind::Enum,
+            scope_discriminant: None,
+            declaration_span: Span::new(40, 120).into(),
+        };
+        let generated = nominal.generated_member("from_value", SemanticSourceTargetKind::Method);
+        let nominal_key = StableDeclarationId::from_canonical(&nominal, None, None)
+            .ok_or("missing enum identity")?
+            .render_compact();
+        positions.type_identities.insert(nominal_key.clone(), nominal.clone());
+        let member_key = stable_member_identity(&generated, &nominal, 0)?;
+        let row = [
+            member_key.clone(),
+            nominal_key,
+            "0".into(),
+            "method".into(),
+            "from_value".into(),
+        ];
+        let mut local = BodyLocal {
+            owner,
+            ..Default::default()
+        };
+        let mut identities = BTreeMap::new();
+        restore_identity_context(&positions, &mut local, &mut identities, owner, &mut row.iter())?;
+        assert_eq!(identities.get(&member_key), Some(&generated));
+        Ok(())
+    }
+
     #[test]
     fn physical_inputs_ignore_duplicate_nominal_and_member_bindings() -> Result<(), Box<dyn std::error::Error>> {
         let (program, checker, owner) = fixture(
