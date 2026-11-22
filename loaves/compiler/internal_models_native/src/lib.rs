@@ -127,7 +127,9 @@ pub use namespace_order::{
     checking_completion_receipt, decode_namespace_order, encode_checking_basis, encode_checking_completion,
     encode_import_closures, ranked_output_suffix, read_checking_basis, read_import_closures,
 };
-pub use namespace_proof::{encode_namespace_proof, namespace_proof_output_suffix, read_namespace_proof};
+pub use namespace_proof::{
+    encode_namespace_proof, namespace_proof_identity, namespace_proof_output_suffix, read_namespace_proof,
+};
 pub use namespace_references::{
     NAMESPACE_IDENTITY_PROFILE, NamespaceReference, decode_namespace_references, encode_namespace_references,
     namespace_key, namespace_reference_filename,

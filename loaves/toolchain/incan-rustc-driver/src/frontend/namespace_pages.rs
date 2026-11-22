@@ -45,7 +45,7 @@ impl NamespaceDigest {
 struct SelectedBody {
     digest: NamespaceDigest,
     header: Arc<GraphNamespaceHeader>,
-    interface_digest: Option<[u8; 32]>,
+    interface_digest: Option<namespace_crumb::InterfaceDigest>,
     wire_bytes: usize,
     /// Exact authored bytes held only until the backend returns a reusable decoded body.
     authored: Option<Vec<u8>>,
@@ -291,8 +291,12 @@ impl NamespacePages {
         let Some(mut selected) = self.checked.lock().ok().and_then(|mut checked| checked.remove(source)) else {
             return;
         };
-        if let Some(digest) = selected.interface_digest {
-            let Some(interface) = namespace_crumb::resident_interface(&digest) else {
+        if let Some(digest) = &selected.interface_digest {
+            let Some(interface) = digest
+                .resolve()
+                .ok()
+                .and_then(|digest| namespace_crumb::resident_interface(&digest))
+            else {
                 return;
             };
             Arc::make_mut(&mut selected.header).interface = interface;
@@ -382,7 +386,7 @@ fn read_legacy_namespace(root: &Path, source: &str) -> Result<Option<GraphNamesp
 fn admit_namespace(
     source: &str,
     record: GraphNamespaceView,
-) -> Result<Option<(GraphNamespaceRecord, [u8; 32], usize)>, RecordAdapterFault> {
+) -> Result<Option<(GraphNamespaceRecord, namespace_crumb::InterfaceDigest, usize)>, RecordAdapterFault> {
     if record.module != source {
         return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
             "graph namespace page disagrees with its requested source".into(),
