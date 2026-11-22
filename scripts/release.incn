@@ -11,15 +11,20 @@ from native_build import (
     NativeContext,
     StandardGeneration,
     StandardProfile,
+    beside_project,
     build_shipped_tools,
+    finish_tool_build,
     oven_test_library_step,
+    overlapping_project_capacity,
     refused_after,
     build_source_tools,
+    build_support_tool,
     build_standard_packages,
     publish_support,
     readmit_build_home,
     require_unique_runtime_root,
     share_seed_generations,
+    start_conductor,
     standard_profiles,
 )
 from oven_tests import host_memory, shared_memory
@@ -480,16 +485,42 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
-    """Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed."""
+    """
+    Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed.
+
+    Only the driver build after this needs the conductor: the support helper, the support closure and the standard
+    providers run the helper and the seed's driver. So when a second child fits, the conductor builds in the background
+    from the start, they proceed beside it in the remaining capacity, and the conductor is joined last.
+    """
     seed_context = seed_tool_context(run)?
-    conductor, helper = build_source_tools(seed_context, run.seed_home)?
-    context = native_context(run, conductor, run.paths.home)
+    if overlapping_project_capacity(seed_context.jobs, seed_context.memory) is None:
+        conductor, helper = build_source_tools(seed_context, run.seed_home)?
+        context = native_context(run, conductor, run.paths.home)
+        source_providers(run, context, helper)?
+        return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
+    pending = start_conductor(seed_context)?
+    beside = beside_project(seed_context)
+    match source_providers_beside(run, beside, pending.plan.destination):
+        Ok(_) =>
+            conductor = finish_tool_build(seed_context, pending)?
+            return Ok(Candidate(context=native_context(run, conductor, run.paths.home), oven=conductor, lsp=Path("")))
+        Err(message) => return Err(refused_after(Some(pending.worker), message))
+
+
+def source_providers_beside(run: ReleaseRun, seed_context: NativeContext, conductor: Path) -> Result[None, str]:
+    """Build the support helper, then the source providers, in the capacity a running conductor build leaves."""
+    helper = build_support_tool(seed_context, run.seed_home)?
+    context = beside_project(native_context(run, conductor, run.paths.home))
+    return source_providers(run, context, helper)
+
+
+def source_providers(run: ReleaseRun, context: NativeContext, helper: Path) -> Result[None, str]:
+    """Replace the seed's providers in the candidate home with the support closure and the standard Loaves."""
     withdraw_seed_providers(run)?
     readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
     require_unique_runtime_root(context)?
-    build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
-    return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
+    return build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))
 
 
 def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:

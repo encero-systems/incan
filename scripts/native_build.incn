@@ -115,6 +115,12 @@ pub def build_source_tools(context: NativeContext, builder_home: Path) -> Result
     return Ok((complete_build_plan(conductor)?, complete_build_plan(helper)?))
 
 
+pub def start_conductor(context: NativeContext) -> Result[PendingToolBuild, str]:
+    """Start the seed's build of the conductor in the background, to be joined with `finish_tool_build`."""
+    plan = tool_build_plan(context, "oven", false, "conductor-build")?
+    return Ok(PendingToolBuild(plan=plan, worker=start_background_step(plan.child)?))
+
+
 pub def publish_support(context: NativeContext, helper: Path) -> Result[None, str]:
     """Publish the source-selected Rust support closure into the fresh candidate home."""
     require_native_step(
@@ -381,7 +387,7 @@ pub def oven_test_library_step(context: NativeContext, checkout: Path) -> Result
     )
 
 
-def beside_project(context: NativeContext) -> NativeContext:
+pub def beside_project(context: NativeContext) -> NativeContext:
     """The capacity left beside one running project child: a child and a project-scale memory allowance fewer."""
     return reserve_project_capacity(context, context.jobs - 1, context.memory - PROJECT_RESERVATION_BYTES)
 
