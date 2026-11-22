@@ -1,3 +1,23 @@
+/// Invocation-local source context retained for strictly growing runtime dependency requests. No attempt publishes
+/// its partial plan, and imported declaration spans never acquire the entry source's text.
+pub(super) struct RuntimeDependencyContext {
+    pub(super) loaves: std::sync::Arc<LoafIndex>,
+    pub(super) requested: BTreeSet<CanonicalSymbolId>,
+    /// Why each requested root is requested: checked source, a selected default or a runtime operation.
+    pub(super) origins: BTreeMap<CanonicalSymbolId, RootOrigin>,
+    pub(super) checked_local: BTreeSet<CanonicalSymbolId>,
+    /// Exact selected versions from the authenticated executable-resolution closure.
+    pub(super) package_versions: BTreeMap<String, String>,
+    /// Authenticated provider layouts shared by the checked request's dependency passes.
+    pub(super) layout_admissions: incan_frontend::executable_resolution::LinkedLayoutAdmissions,
+    pub(super) package: String,
+    /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
+    pub(super) layout_modules: Vec<BodyIrModule>,
+    pub(super) sources: Vec<String>,
+    pub(super) files: Vec<String>,
+    pub(super) entry: usize,
+}
+
 // Completing a checked program's dependency context: selected defaults and native layouts, runtime requirements bound
 // to their generations, prepared layouts merged and dependency modules installed. Included by `checked_program.rs`.
 
