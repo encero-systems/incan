@@ -671,6 +671,7 @@ fn root_export_layouts_match_their_declaration_facets() -> TestResult {
 
 /// Compare the exact symbol kinds the root manifest exports with the layouts of their restored declarations.
 fn compare_root_layouts(manifest: &crate::library_manifest::LibraryManifest, digest: &str) -> TestResult<usize> {
+    use crate::library_manifest::LibraryManifest;
     use crate::library_manifest::compiler_records::RecordFamily;
     use crate::library_manifest::declaration_records::{qualified_name, restored_nominal_declaration};
     use crate::symbols::{SymbolKind, TypeInfo};
@@ -727,7 +728,7 @@ fn compare_root_layouts(manifest: &crate::library_manifest::LibraryManifest, dig
                 .records
                 .iter()
                 .find(|record| record.name == key && record.family == family)
-                .map(|record| serde_json::from_slice::<serde_json::Value>(&record.value))
+                .map(|record| LibraryManifest::decode_compiler_record_value(&record.value))
                 .transpose()
         };
         let signature = read(RecordFamily::DeclarationSignature)?
