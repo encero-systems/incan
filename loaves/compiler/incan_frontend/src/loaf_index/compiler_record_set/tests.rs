@@ -644,8 +644,19 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
     let _selected = thread_selection::select(RecordSet::new(root.path().join("installed"), Vec::new()));
     let directory = root.path().join("dependency");
     fs::create_dir(&directory)?;
-    let manifest = LibraryManifest::new("dependency", "1.0.0");
-    fs::write(directory.join("dependency.incnlib"), manifest.to_json_string()?)?;
+    let project_record = crate::library_manifest::install_record::LoafInstallRecord {
+        schema: crate::library_manifest::install_record::INSTALL_RECORD_SCHEMA,
+        ..Default::default()
+    };
+    let mut manifest = LibraryManifest::new("dependency", "1.0.0");
+    let install = manifest.prepare_install_record(&project_record)?;
+    let manifest_path = directory.join("dependency.incnlib");
+    let encoded = manifest.to_json_string()?;
+    fs::write(&manifest_path, &encoded)?;
+    fs::write(
+        manifest_path.with_extension("incnfacts"),
+        manifest.encode_loaf_facts(&encoded, Some(install))?,
+    )?;
     let open = || {
         super::super::lazy_entry::IndexedLoaf::open(
             "dependency".to_owned(),
@@ -668,6 +679,30 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
     );
     assert!(!later.globals.vocabulary);
     assert_eq!(later.summary()?.identity, first.summary()?.identity);
+    let selected = later.install_record()?.ok_or("the local Loaf has an install record")?;
+    assert_eq!(selected.as_ref(), &project_record);
+    assert!(
+        !later.was_demanded(),
+        "the admitted install digest must avoid a whole local manifest decode"
+    );
+
+    let old_selection = open()?;
+    assert!(!old_selection.was_demanded());
+    let modified = fs::metadata(&manifest_path)?.modified()?;
+    let replacement = encoded.replacen("\"1.0.0\"", "\"1.0.1\"", 1);
+    assert_ne!(replacement, encoded);
+    assert_eq!(replacement.len(), encoded.len());
+    fs::write(&manifest_path, replacement)?;
+    fs::File::options()
+        .write(true)
+        .open(&manifest_path)?
+        .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+    assert!(
+        old_selection.install_record().is_err_and(|error| error
+            .to_string()
+            .contains("the manifest changed after its inventory was admitted")),
+        "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
+    );
     Ok(())
 }
 
