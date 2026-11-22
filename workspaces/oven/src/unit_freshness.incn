@@ -22,7 +22,7 @@ from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
-from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
+from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA, NativeAnchors, anchored_reference, native_anchors
 from unit import UnitDescription
 from unit_publication import (
     admitted_identity as admitted_payload_identity,
@@ -286,7 +286,8 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
         facts = [toolchain.compiler_facts[0]] + toolchain_cache_identities(toolchain)?
     else:
         facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
-    # 2. Native dependencies carry identities recorded by their producers, never inferred from payloads.
+    # 2. Native dependencies carry identities recorded by their producers. Packing can move them without changing
+    # the compiler that produced the standard Loaves.
     natives = native_identities(toolchain.externs)?
     # 3. Registry selection and search directories locate providers; the exact linked identities select them.
     #    The compiler's own answers are probed once per rustc installation and deployment selection.
@@ -342,20 +343,29 @@ def compiler_target(toolchain: Toolchain) -> Result[str, str]:
     return compiler_version(rust_compiler(toolchain))
 
 
-pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
+pub def native_identities(externs: list[NativeCrate], include_placement: bool = false) -> Result[list[str], str]:
     """
     Canonical native aliases and the content their producers published, without reading artifact bytes.
 
     A linked dependency is identified by the digest of the bytes its publication recorded, not by its producer
     identity, so a rebuild that produced the same native code, such as a documentation edit, rekeys none of its
-    consumers. A toolchain native keeps the identity it was admitted under.
+    consumers. A toolchain native keeps the identity it was admitted under. A native unit key also binds the
+    anchored path its closure will name, so it cannot reuse a closure whose generation lives at a different path.
     """
     mut inputs: list[str] = []
+    mut anchors = NativeAnchors(toolchain="", bakery="")
+    if include_placement:
+        for native in externs:
+            if native.identity != "":
+                anchors = native_anchors()?
+                break
     for native in externs:
         mut identity = native.identity
         if identity == "":
             _, content = publication(Path(native.path))?
             identity = f"content {content}"
+        elif include_placement:
+            identity = f"{identity} at {anchored_reference(native.path, anchors)}"
         inputs.append(f"{native.name} {identity}")
     return Ok(sorted(inputs))
 
@@ -507,7 +517,7 @@ pub def unit_key_with(
     # 2. A rebuilt library or native crate the unit links changes the key of the unit linking it. The selected
     # compiler identity already binds every admitted Rust ABI cache, so repeating those lookups here would reopen
     # frozen installation inputs after admission.
-    artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))?
+    artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit), include_placement=true)?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
     key = assembled(compiler, described, sources, artifacts)?
     mut replay = ""
