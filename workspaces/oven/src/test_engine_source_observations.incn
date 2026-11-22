@@ -10,6 +10,9 @@ from lowering_record_fixtures import stop_example_engine
 from scratch import scratch_directory
 
 
+const OUTCOME_HEADER: bytes = b"incan.oven.outcome/2\n"
+
+
 pub def test_an_edit_reads_and_hashes_its_source_once() -> Result[None, str]:
     """
     Count a normal one-file edit and the unchanged launch that follows it.
@@ -30,14 +33,14 @@ pub def test_an_edit_reads_and_hashes_its_source_once() -> Result[None, str]:
     # 1. The first run installs the unit and its launch payloads.
     write(source, "def main() -> None:\n    println(\"one\")\n")?
     first = run_source(binary, project, store, trace)?
-    before = observation_counts(trace, source)?
+    before = observation_counts(trace, source, store)?
     # 2. Change one input and compare only the operations of this edit.
     write(source, "def main() -> None:\n    println(\"two\")\n")?
     changed = run_source(binary, project, store, trace)?
-    edited = observation_counts(trace, source)?
+    edited = observation_counts(trace, source, store)?
     # 3. The selected view and immutable artifacts are current for this launch.
     repeated = run_source(binary, project, store, trace)?
-    unchanged = observation_counts(trace, source)?
+    unchanged = observation_counts(trace, source, store)?
     stop_example_engine(binary, store)?
     assert first == b"one\n" and changed == b"two\n" and repeated == changed
     reads = edited.reads - before.reads
@@ -46,7 +49,8 @@ pub def test_an_edit_reads_and_hashes_its_source_once() -> Result[None, str]:
     captured = edited.captured_reads - before.captured_reads
     assert captured == 2, f"the import request and unit opened one staged source {captured} times"
     assert unchanged.captured_reads == edited.captured_reads, "an unchanged run opened a captured source"
-    assert unchanged.all_hashes == edited.all_hashes, "an unchanged run hashed an executable or loader payload"
+    assert unchanged.other_hashes == edited.other_hashes, "an unchanged run hashed content outside compiler outcomes"
+    assert unchanged.outcome_hashes - edited.outcome_hashes <= 1, "an unchanged run rehashed a compiler outcome"
     return Ok(None)
 
 
@@ -64,15 +68,16 @@ def run_source(binary: str, project: Path, store: Path, trace: Path) -> Result[b
 
 
 model Counts:
-    """Operations on the authored source and its staged copy, plus hashes of all paths."""
+    """Operations on the source and its staged copy, plus hashes by payload kind."""
     reads: int = 0
     hashes: int = 0
-    all_hashes: int = 0
+    other_hashes: int = 0
+    outcome_hashes: int = 0
     captured_reads: int = 0
 
 
-def observation_counts(trace: Path, source: Path) -> Result[Counts, str]:
-    """Sum the process traces flushed before the command returned."""
+def observation_counts(trace: Path, source: Path, store: Path) -> Result[Counts, str]:
+    """Sum the flushed process traces and identify retained warning outcomes by their wire header."""
     mut found = Counts()
     for file in trace.iterdir().map_err((error) => error.message())?:
         if not file.name().endswith(".jsonl"):
@@ -101,14 +106,26 @@ def observation_counts(trace: Path, source: Path) -> Result[Counts, str]:
             if operation in ["file_read", "file_hash"]:
                 amount = event.require("calls").map_err((error) => error.message())?
                 calls = amount.expect_int().map_err((error) => error.message())?
-                selected = trace_text(event, "key")? == source.0
+                key = trace_text(event, "key")?
+                selected = key == source.0
                 if operation == "file_read" and selected:
                     found.reads += calls
                 if operation == "file_hash":
-                    found.all_hashes += calls
+                    if outcome_payload(key, store)?:
+                        found.outcome_hashes += calls
+                    else:
+                        found.other_hashes += calls
                     if selected:
                         found.hashes += calls
     return Ok(found)
+
+
+def outcome_payload(key: str, store: Path) -> Result[bool, str]:
+    """A launch can verify its checked warnings receipt alongside the existing binary."""
+    if not key.startswith(f"{store.0}/payloads/"):
+        return Ok(false)
+    content = Path(key).read_bytes().map_err((error) => error.message())?
+    return Ok(content[:len(OUTCOME_HEADER)] == OUTCOME_HEADER)
 
 
 def trace_text(row: JsonValue, key: str) -> Result[str, str]:
