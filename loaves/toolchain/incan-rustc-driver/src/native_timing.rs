@@ -3,9 +3,11 @@
 //! Timing records never reach the compiled program's console: they go to the `native_timing` category of the tracing
 //! channel (`INCAN_ENGINE_TRACE`), or, for one more release, where `OVEN_TRACE` sends Oven's own reasoning (appended
 //! to the file it names, or stderr for `-`), and nowhere when neither is set. rustc prints its phase records
-//! with `eprintln!`, so a timed rustc run redirects stderr and routes only the phase records; every other
-//! captured line still reaches stderr.
+//! with `eprintln!`, so a timed rustc run redirects stderr and routes rustc's own records to the trace; every other
+//! captured line still reaches stderr. rustc's incremental session statistics are printed only when the timing
+//! setting is `incremental`, never for an ordinary timing request.
 
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -14,6 +16,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The prefix rustc gives its JSON phase records.
 const RUSTC_RECORD: &[u8] = b"time: ";
+
+/// The prefix rustc gives its incremental session reports (`-Z incremental-info`).
+const RUSTC_INCREMENTAL: &[u8] = b"[incremental]";
+
+/// The timing setting that also asks rustc for its incremental session statistics.
+const INCREMENTAL_STATISTICS: &str = "incremental";
 
 /// Mark complete frontend work observation for one semantic request. Frontend-only routes execute no native
 /// lowering; compile routes observe it only when the existing native diagnostic policy enables its Incan sink.
@@ -97,6 +105,10 @@ impl Timing {
         if self.0.is_some() {
             config.opts.unstable_opts.time_passes = true;
             config.opts.unstable_opts.time_passes_format = rustc_data_structures::profiling::TimePassesFormat::Json;
+            // The statistics and the reused units are reported only when asked for by name; the option is untracked.
+            if incremental_statistics(std::env::var_os("INCAN_NATIVE_TIMING").as_deref()) {
+                config.opts.unstable_opts.incremental_info = true;
+            }
         }
     }
 
@@ -149,6 +161,12 @@ pub(crate) fn record_resident_stores(stores: &[(&'static str, usize, u64)]) {
 /// Whether this invocation asked for native phase timing.
 fn requested() -> bool {
     std::env::var_os("INCAN_NATIVE_TIMING").is_some()
+}
+
+/// Whether a timing setting also asks for rustc's incremental session statistics. An ordinary timing request does
+/// not: rustc prints them on stderr at the end of every incremental session.
+fn incremental_statistics(setting: Option<&OsStr>) -> bool {
+    setting.is_some_and(|value| value == INCREMENTAL_STATISTICS)
 }
 
 /// How often the heap sampler reads the process's memory.
@@ -250,16 +268,12 @@ impl Capture {
         if held.file.seek(SeekFrom::Start(0)).is_err() || held.file.read_to_end(&mut captured).is_err() {
             return;
         }
-        let mut records = Vec::new();
-        let mut console = Vec::new();
+        let (records, console) = split_captured(&captured);
         let mut link_seconds = None;
         let mut llvm_pass_seconds = None;
-        for line in captured.split_inclusive(|byte| *byte == b'\n') {
+        for line in records.split_inclusive(|byte| *byte == b'\n') {
             if line.starts_with(RUSTC_RECORD) {
-                records.extend_from_slice(line);
                 observe_rustc_phase(line, &mut link_seconds, &mut llvm_pass_seconds);
-            } else {
-                console.extend_from_slice(line);
             }
         }
         write_trace(&records);
@@ -268,6 +282,21 @@ impl Capture {
         let _ = stderr.write_all(&console);
         let _ = stderr.flush();
     }
+}
+
+/// Split one timed rustc run's stderr into rustc's own phase and incremental records, for the trace, and every other
+/// line, in order, for stderr.
+fn split_captured(captured: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut records = Vec::new();
+    let mut console = Vec::new();
+    for line in captured.split_inclusive(|byte| *byte == b'\n') {
+        if line.starts_with(RUSTC_RECORD) || line.starts_with(RUSTC_INCREMENTAL) {
+            records.extend_from_slice(line);
+        } else {
+            console.extend_from_slice(line);
+        }
+    }
+    (records, console)
 }
 
 /// Retain only the pinned phase values needed for the stable E6 split; malformed diagnostics remain raw records.
@@ -344,8 +373,36 @@ fn hold() -> std::io::Result<Held> {
 }
 
 impl Drop for Capture {
-    /// Restore stderr; rustc's phase records go to the trace and every other line, in order, to stderr.
+    /// Restore stderr; rustc's own records go to the trace and every other line, in order, to stderr.
     fn drop(&mut self) {
         self.route(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{incremental_statistics, split_captured};
+    use std::ffi::OsStr;
+
+    /// A timed build reports rustc's dependency-graph statistics only when the trace setting names them; an ordinary
+    /// timing request leaves rustc's incremental reporting off.
+    #[test]
+    fn incremental_statistics_need_their_own_trace_setting() {
+        assert!(!incremental_statistics(None));
+        assert!(!incremental_statistics(Some(OsStr::new("1"))));
+        assert!(!incremental_statistics(Some(OsStr::new("heap"))));
+        assert!(incremental_statistics(Some(OsStr::new("incremental"))));
+    }
+
+    /// rustc's own phase and incremental lines go to the trace, and only the program's other lines reach stderr.
+    #[test]
+    fn rustc_s_own_lines_never_reach_stderr() {
+        let captured = b"time: {\"pass\":\"link\"}\n[incremental] DepGraph Statistics\n[incremental]\nwarning: kept\n";
+        let (records, console) = split_captured(captured);
+        assert_eq!(console, b"warning: kept\n");
+        assert_eq!(
+            records,
+            b"time: {\"pass\":\"link\"}\n[incremental] DepGraph Statistics\n[incremental]\n"
+        );
     }
 }
