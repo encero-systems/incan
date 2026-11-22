@@ -154,6 +154,53 @@ pub def read_graph(unit: GraphUnit, toolchain: Toolchain, group: str, fields: st
     return output_text(result.stdout)
 
 
+pub def origin_reads(units: list[GraphUnit]) -> list[GraphUnit]:
+    """The graphs one origins reading covers: each existing graph once, in the order the request first names it."""
+    mut read: list[GraphUnit] = []
+    mut paths: list[str] = []
+    for unit in units:
+        if unit.path.0 in paths or not unit.path.is_file():
+            continue
+        paths.append(unit.path.0)
+        read.append(unit)
+    return read
+
+
+pub def origins_arguments(units: list[GraphUnit]) -> list[str]:
+    """The driver's one reading of the origins section of every graph given, each read once."""
+    return ["--read-codegraph-origins"] + [unit.path.0 for unit in units]
+
+
+pub def parse_origins(answer: str) -> Result[Dict[str, list[str]], str]:
+    """Each graph's origin records, one JSON text each, from the driver's one line per graph."""
+    mut origins: Dict[str, list[str]] = {}
+    for line in answer.split("\n"):
+        if line == "":
+            continue
+        document = parse(line).map_err((error) => f"graph origins answer: {error.message()}")?
+        graph = text(document, "graph")
+        mut records: list[str] = []
+        listed = document.get("origins").unwrap_or(JsonValue.array([]))
+        for record in listed.expect_array().map_err((error) => error.message())?:
+            records.append(record.to_json().map_err((error) => error.message())?)
+        origins[graph] = records
+    return Ok(origins)
+
+
+pub def read_origins_of(units: list[GraphUnit], toolchain: Toolchain) -> Result[Dict[str, list[str]], str]:
+    """The origins of every given graph through one driver process; no process when none of them exists."""
+    read = origin_reads(units)
+    if len(read) == 0:
+        return Ok({})
+    mut command = driver_command(toolchain)?
+    for argument in origins_arguments(read):
+        command.arg(argument)
+    result = command.output().map_err((error) => str(error))?
+    if not result.status.success():
+        return Err(output_text(result.stderr)?)
+    return parse_origins(output_text(result.stdout)?)
+
+
 pub def output_text(content: bytes) -> Result[str, str]:
     """Graph query output is a UTF-8 protocol; invalid bytes refuse instead of silently replacing characters."""
     match RustString.from_utf8(content):
