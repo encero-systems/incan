@@ -335,7 +335,7 @@ pub def obtain(
     mut asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
     verify_scheduled_origin(asked, scheduled_origin)?
     asked.unattended = is_editor_view(request_view)
-    files = epoch.source_files(asked.source_root)
+    files = epoch.project_sources(asked.source_root)
     planned = planned_program(asked, false, Some(files))?
     shared = planned.project_library is not None
     described, _ = prepare_project_library(planned, toolchain)?
@@ -891,12 +891,13 @@ def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str],
     for absent in epoch.absent:
         if Path(absent.path).name() != "loaf.toml":
             return Ok(None)
+    listed = {listing.path: true for listing in epoch.listings}
     for listing in epoch.listings:
         if not (listing.path == source.parent().0 or listing.path.startswith(prefix)):
             return Ok(None)
         names = [listing.path[len(source.parent().0):]]
         contents = names + [f"file:{name}" for name in listing.files if name.endswith(".incn")] + [
-            f"directory:{name}" for name in listing.directories
+            f"directory:{name}" for name in listing.directories if Path(listing.path).joinpath(name).0 in listed
         ]
         bindings.append(f"listing:{fingerprint(contents)?}")
     return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
