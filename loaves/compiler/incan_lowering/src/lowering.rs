@@ -176,6 +176,7 @@ pub struct UnitInputs<'a> {
     pub scalar_products: Option<String>,
     pub scalar_bodies: &'a [(CompilerNodeId, String)],
     pub record_report: Option<String>,
+    pub recorded_layouts: &'a Arc<crate::RecordedLayouts>,
 }
 
 /// Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here.
@@ -294,6 +295,7 @@ fn lowered_plan(
         trace,
         &mut inventories,
     )?;
+    program.recorded = Arc::clone(inputs.recorded_layouts);
     let mut emitted_frames = no_emitted_frames();
     // 2. Lower ordinary frames and static initializers exactly once.
     let instance_products = instance_transport(

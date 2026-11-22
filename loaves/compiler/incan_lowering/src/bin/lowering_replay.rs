@@ -189,6 +189,7 @@ fn prepass_names(corpus: &Corpus, case: &Case, scratch: &Path) -> Result<BTreeMa
     Ok(names)
 }
 
+/// Recreate one captured invocation with the replay's own product and report directories.
 fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result<SourceInputs, String> {
     let scalar_products = match &step.scalar_products {
         Some(_) => {
@@ -211,6 +212,7 @@ fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result
             .record_report
             .as_ref()
             .map(|_| directories.report.to_string_lossy().into_owned()),
+        recorded_layouts: Default::default(),
     })
 }
 

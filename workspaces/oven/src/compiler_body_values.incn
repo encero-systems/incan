@@ -8,12 +8,15 @@ from pub::internal_models.namespace_references import (
     NamespaceReference,
     encode_namespace_references,
     namespace_header_reference_filename,
+    namespace_layout_candidate_filename,
+    namespace_layout_reference_filename,
     namespace_reference_filename,
 )
 from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
 from pub::incan_mir_plan import LoweringEvent
 from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
 from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
+from compiler_namespace_layouts import select_layout_references
 from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
     EditCutoff,
@@ -84,6 +87,7 @@ pub def select_namespace_inventory_except(
     invalid: list[str],
     use_references: bool = false,
     cutoff: EditCutoff = EditCutoff(),
+    use_layouts: bool = false,
 ) -> Result[NamespaceInventory, str]:
     """Select namespace pages and certify which scoped checker peers may travel exclusively in a whole module."""
     mut inventory = NamespaceInventory()
@@ -138,6 +142,11 @@ pub def select_namespace_inventory_except(
             None => pass
     if len(headers) > 0:
         inventory.pages.append(SelectedBodyPage(key=namespace_header_reference_filename(), value=encode_namespace_references(headers)?))
+    if use_references and use_layouts:
+        layouts, previous = select_layout_references(selected, profile, origin, references, invalid)?
+        inventory.pages.append(SelectedBodyPage(key=namespace_layout_reference_filename(), value=encode_namespace_references(layouts)?))
+        if len(previous) > 0:
+            inventory.pages.append(SelectedBodyPage(key=namespace_layout_candidate_filename(), value=encode_namespace_references(previous)?))
     for module in modules.keys():
         certificate = modules[module]
         mut complete = true

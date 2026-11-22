@@ -38,6 +38,7 @@ from compiler_owner_records import encode_body_frame, encode_eligibility, read_b
 from store_selection_records import encode_binding
 from compiler_graph_records import EditCutoff, prepare_evaluation, reusable_evaluation
 from compiler_body_rows import compiled_namespace_order, compiled_method_reads, read_compiled_body_outputs
+from compiler_namespace_layouts import read_compiled_layouts, stage_namespace_layout
 from pub::internal_models.overload_members import MethodReads
 from compiler_method_lookups import method_inputs
 pub from compiler_captured_sources import (
@@ -148,6 +149,7 @@ model AuthenticatedCompiledBodies:
     """Decoded compiler rows and the measured fresh/reused owner counts they authenticate."""
 
     outputs: CompiledBodyOutputs
+    layouts: Dict[str, bytes]
     order: Dict[str, NamespaceOrder]
 
     methods: MethodReads
@@ -181,6 +183,7 @@ def authenticate_compiled_bodies(
     if not output.is_dir():
         return Err("successful graph-enabled compile did not publish body output rows")
     outputs = read_compiled_body_outputs(output)?
+    layouts = read_compiled_layouts(output, outputs.namespaces)?
     origin = source_origin(unit)
     order = compiled_namespace_order(output, origin, outputs.namespaces)?
 
@@ -222,6 +225,7 @@ def authenticate_compiled_bodies(
     return Ok(
         AuthenticatedCompiledBodies(
             outputs=outputs,
+            layouts=layouts,
             order=order,
 
             methods=methods,
@@ -308,7 +312,7 @@ pub def prepare_compiled_bodies(
     spans = module_spans(staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff)?
     for slot in spans.retained.keys():
         staged.source.add(slot, spans.retained[slot])
-    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules)?
+    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts)?
     published = stage_compiled_body_values(
         staged.transaction,
         staged.source,
@@ -477,6 +481,7 @@ def stage_compiled_namespaces(
     order: Borrowed[Dict[str, NamespaceOrder]],
     executable: Borrowed[ExecutableCallInputs],
     spans: Borrowed[Dict[str, list[RecordKey]]],
+    layouts: Borrowed[Dict[str, bytes]],
 ) -> Result[None, str]:
     """
     Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
@@ -526,6 +531,7 @@ def stage_compiled_namespaces(
             header_key = namespace_header_key(origin, namespace.module)
             header_receipt = source.receipt(scope, header_key, reads, position.evidence)?
             _ = prepare_evaluation(prepared, "compiled-namespace-header-" + namespace.module, rank, header, header_receipt)?
+        stage_namespace_layout(prepared, source, scope, layouts, origin, namespace.module, reads, rank, position.evidence)?
         # A member body's plan reads this row: it carries the member's Body IR, which has no owner record of its own.
         source.add(encode_record_key(key)?, value)
     return Ok(None)

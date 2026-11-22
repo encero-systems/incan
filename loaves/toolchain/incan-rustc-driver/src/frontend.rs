@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
@@ -19,8 +20,8 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
 use incan_lowering::{
-    RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
-    resume_unit_plan, unit_plan,
+    RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements,
+    program_refusals, resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
@@ -33,6 +34,7 @@ pub(crate) mod decoded_pages;
 mod graph_body_output;
 mod namespace_admission;
 mod namespace_crumb;
+mod namespace_layout_pages;
 pub(crate) mod namespace_pages;
 
 use checked_program::*;
@@ -183,6 +185,8 @@ pub(crate) struct Dependencies {
     shared_native: Option<PathBuf>,
     /// Separate graph-selected checker values supplied by the engine; these bytes never enter the unit description.
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    /// The same project namespaces used by the checker, available for layout publication after checking ends.
+    namespace_pages: Option<Arc<namespace_pages::NamespacePages>>,
     /// Optional invocation output for freshly produced checker values; it is not a compilation input.
     graph_body_output: Option<PathBuf>,
     /// Request-local directory for actual plan-function producer evaluations and reuses.
@@ -276,14 +280,17 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     if shared_native.is_some() && unit.toolchain_access.links_sysroot() {
         return Err("shared native linking cannot link the toolchain's own libraries".into());
     }
-    let graph_body_records = match graph_body_directory {
-        Some(path) => read_graph_body_records(
-            path,
-            anchors.bakery.clone(),
-            &unit.project_root,
-            graph_body_output.is_some() && plan_record_products.is_some() && unit.kind == UnitKind::Program,
-        )?,
-        None => incan_frontend::checker_records::GraphBodyRecords::default(),
+    let (graph_body_records, namespace_pages) = match graph_body_directory {
+        Some(path) => {
+            let (records, pages) = read_graph_body_records(
+                path,
+                anchors.bakery.clone(),
+                &unit.project_root,
+                graph_body_output.is_some() && plan_record_products.is_some() && unit.kind == UnitKind::Program,
+            )?;
+            (records, Some(pages))
+        }
+        None => (incan_frontend::checker_records::GraphBodyRecords::default(), None),
     };
     Ok(Dependencies {
         externs,
@@ -295,6 +302,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         rustc_args,
         shared_native,
         graph_body_records,
+        namespace_pages,
         graph_body_output,
         plan_record_report,
         plan_record_products,
@@ -307,7 +315,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
 struct GraphBodyRecordPages {
     root: PathBuf,
     bakery: Option<PathBuf>,
-    namespaces: namespace_pages::NamespacePages,
+    namespaces: Arc<namespace_pages::NamespacePages>,
     reopened: std::sync::OnceLock<Result<tempfile::TempDir, String>>,
 }
 
@@ -529,22 +537,29 @@ fn read_graph_body_records(
     bakery: Option<PathBuf>,
     project_root: &Path,
     retain_namespaces: bool,
-) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
+) -> Result<
+    (
+        incan_frontend::checker_records::GraphBodyRecords,
+        Arc<namespace_pages::NamespacePages>,
+    ),
+    String,
+> {
     if !path.is_dir() {
         return Err(format!(
             "graph body record pages are not a directory: {}",
             path.display()
         ));
     }
+    let namespaces = Arc::new(namespace_pages::NamespacePages::open(
+        path,
+        bakery.as_deref(),
+        project_root,
+        retain_namespaces,
+    )?);
     let records =
         incan_frontend::checker_records::GraphBodyRecords::from_source(std::sync::Arc::new(GraphBodyRecordPages {
             root: path.to_path_buf(),
-            namespaces: namespace_pages::NamespacePages::open(
-                path,
-                bakery.as_deref(),
-                project_root,
-                retain_namespaces,
-            )?,
+            namespaces: Arc::clone(&namespaces),
             bakery,
             reopened: std::sync::OnceLock::new(),
         }));
@@ -553,9 +568,9 @@ fn read_graph_body_records(
         .try_exists()
         .map_err(|e| e.to_string())?
     {
-        return bind_contextual_rank(path, records);
+        return bind_contextual_rank(path, records).map(|records| (records, namespaces));
     }
-    Ok(records)
+    Ok((records, namespaces))
 }
 
 /// Bind a body-only edit and the exact namespace order the engine selected for it.
@@ -731,6 +746,7 @@ fn compile_unit(
         unit.kind = UnitKind::Library;
     }
     let kind = unit.kind;
+    let project_root = unit.project_root.clone();
     let overflow_checks = unit.profile != "release";
     let loaves = unit.loaves.clone();
     // A library's closure publishes only the directories beyond the toolchain generation's search index.
@@ -759,6 +775,10 @@ fn compile_unit(
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(UnitCompiled::InProcess);
     }
+    let recorded_layouts = match (&dependencies.namespace_pages, &dependencies.graph_body_output) {
+        (Some(pages), Some(output)) => pages.prepare_layouts(&program, &project_root, output)?,
+        _ => Arc::default(),
+    };
     // Checking is done, and the Rust items it decoded are not lowering inputs. Lowering keeps the index for runtime
     // resolution, so release the items rather than carry them through lowering and rustc.
     program.dependencies.loaves.release_resolved_rust_items();
@@ -774,6 +794,7 @@ fn compile_unit(
         &receipt,
         &mut published_unions,
         native_products,
+        recorded_layouts,
         dependencies
             .plan_record_report
             .as_ref()
@@ -825,6 +846,7 @@ fn compile_unit(
     dependencies.graph_body_records.settle_namespace_retention();
     drop(program);
     drop(dependencies.graph_body_records);
+    drop(dependencies.namespace_pages);
     // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc runs
     // here or the footprint that decides a handoff is read, so neither counts the frontend's freed heap.
     incan_platform::release_free_heap();
@@ -907,6 +929,7 @@ fn lower_compilation_plan(
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
     native_products: Option<String>,
+    recorded_layouts: Arc<RecordedLayouts>,
     plan_record_report: Option<String>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
@@ -942,6 +965,7 @@ fn lower_compilation_plan(
                     package_versions: program.dependencies.package_versions.clone(),
                     overflow_checks,
                     record_report: plan_record_report.clone(),
+                    recorded_layouts: Arc::default(),
                 };
                 resume_unit_plan(
                     preserved,
@@ -963,6 +987,7 @@ fn lower_compilation_plan(
                     package_versions: program.dependencies.package_versions.clone(),
                     overflow_checks,
                     record_report: plan_record_report.clone(),
+                    recorded_layouts: Arc::clone(&recorded_layouts),
                 };
                 unit_plan(
                     &program.modules,
@@ -1091,6 +1116,7 @@ fn census_complete(
                 package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
                 record_report: None,
+                recorded_layouts: Arc::default(),
             },
             program.entry.try_into()?,
             false,
@@ -1117,6 +1143,7 @@ fn census_complete(
                 package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
                 record_report: None,
+                recorded_layouts: Arc::default(),
             },
             program.entry.try_into()?,
             true,

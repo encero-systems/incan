@@ -29,6 +29,7 @@ mod incan_debug;
 mod input_fields;
 pub mod manifest_cache;
 pub mod namespace_headers;
+pub mod namespace_layout_records;
 pub mod namespace_order;
 pub mod namespace_proof;
 pub mod namespace_references;
@@ -136,7 +137,9 @@ pub use namespace_proof::{
 };
 pub use namespace_references::{
     NAMESPACE_IDENTITY_PROFILE, NamespaceReference, decode_namespace_references, encode_namespace_references,
-    namespace_header_key, namespace_header_reference_filename, namespace_key, namespace_reference_filename,
+    namespace_header_key, namespace_header_reference_filename, namespace_key, namespace_layout_candidate_filename,
+    namespace_layout_key, namespace_layout_output_directory, namespace_layout_reference_filename,
+    namespace_reference_filename,
 };
 pub use namespace_rows::{
     NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader,

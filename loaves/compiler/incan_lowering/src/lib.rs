@@ -184,7 +184,9 @@ mod value_enums;
 
 pub use incan_mir_plan_native::{Plan, PlanType, SourceSpan};
 pub use lowering::{UnitContinuation, UnitPlanning};
+pub use nominal_records::RecordedLayouts;
 pub use runtime_requirements::{RefusalPlanning, RuntimeRequirement};
+pub use trace_channel::emit as emit_engine_trace;
 
 /// Source provenance, collected tests and the unit's integer overflow policy, aligned with the module list.
 #[derive(Clone, Debug, Default)]
@@ -200,9 +202,12 @@ pub struct SourceInputs {
     pub scalar_bodies: Vec<(CompilerNodeId, String)>,
     /// Request-local producer evidence; absence keeps ordinary lowering and emits no report files.
     pub record_report: Option<String>,
+    /// Checked layout witnesses selected for this request. Dependencies without records use ordinary lowering.
+    pub recorded_layouts: std::sync::Arc<RecordedLayouts>,
 }
 
 impl SourceInputs {
+    /// Borrow stable checked inputs for one lowering attempt and own its transport paths.
     fn unit<'a>(&'a self, entry: i64, kind: &'a str) -> lowering::UnitInputs<'a> {
         lowering::UnitInputs {
             sources: &self.sources,
@@ -215,6 +220,7 @@ impl SourceInputs {
             scalar_products: self.scalar_products.clone(),
             scalar_bodies: &self.scalar_bodies,
             record_report: self.record_report.clone(),
+            recorded_layouts: &self.recorded_layouts,
         }
     }
 }

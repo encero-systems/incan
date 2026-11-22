@@ -34,6 +34,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         &receipt,
         &mut Vec::new(),
         None,
+        Arc::default(),
         None,
     )?;
     let native_runtime = native_runtime_operations(&plan, &program.dependencies.origins);
