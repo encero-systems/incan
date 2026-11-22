@@ -1,7 +1,7 @@
 //! Process-local immutable artifact readings, guarded again for every request. Sessions, resolved source facts and
 //! checking outcomes never enter these stores. Replacements and restored-mtime edits invalidate through ctime;
-//! unsupported observations keep the ordinary reader. Each reading is bounded in size; a store holds every current
-//! reading and drops, one by one, the readings whose files have changed or gone.
+//! unsupported observations keep the ordinary reader. A path artifact pool also bounds the total inputs retained.
+//! Stores drop obsolete generations before admitting new values.
 
 use incan_loaf_names::artifact_stem;
 use std::collections::BTreeMap;
@@ -16,6 +16,10 @@ use super::{LoafArtifact, LoafIndexError};
 
 /// The largest reading retained, in bytes of the files it was read from; a larger one is read for each request.
 const MAX_READING_BYTES: u64 = 384 * 1024 * 1024;
+
+/// Bound the decoded path artifacts by the bytes of the manifest and optional ABI files that authorize them.
+const PATH_ARTIFACT_INPUT_BUDGET: u64 = 32 * 1024 * 1024;
+const PATH_ARTIFACT_COUNT_LIMIT: usize = 32;
 
 static ARTIFACTS: OnceLock<Mutex<Store<LoafArtifact>>> = OnceLock::new();
 static ABI: OnceLock<Mutex<Store<Arc<RustAbiCache>>>> = OnceLock::new();
@@ -41,8 +45,7 @@ struct Reading<T> {
     value: T,
 }
 
-/// A store of current readings: replacing a generation replaces its old reading, and a reading whose files changed
-/// is dropped; nothing caps how many readings the store holds.
+/// Current readings whose files still match their admitted generations.
 struct Store<T> {
     readings: BTreeMap<PathBuf, Reading<T>>,
 }
@@ -53,6 +56,13 @@ impl<T> Default for Store<T> {
         Self {
             readings: BTreeMap::new(),
         }
+    }
+}
+
+impl<T> Store<T> {
+    /// Count the source bytes supporting all retained values in this store.
+    fn input_bytes(&self) -> u64 {
+        self.readings.values().map(|reading| reading.inputs.bytes).sum()
     }
 }
 
@@ -67,10 +77,16 @@ impl<T: Clone> Store<T> {
 
     /// Keep one stable reading within the per-reading bound, after dropping each reading whose files changed;
     /// dropping changes performance only.
-    fn insert(&mut self, key: PathBuf, inputs: Inputs, value: T) {
+    fn insert(&mut self, key: PathBuf, inputs: Inputs, value: T, path_artifact_pool: bool) {
         self.readings.remove(&key);
         self.readings.retain(|_, reading| reading.inputs.current());
         if inputs.bytes > MAX_READING_BYTES {
+            return;
+        }
+        if path_artifact_pool
+            && (self.readings.len() >= PATH_ARTIFACT_COUNT_LIMIT
+                || self.input_bytes().saturating_add(inputs.bytes) > PATH_ARTIFACT_INPUT_BUDGET)
+        {
             return;
         }
         self.readings.insert(key, Reading { inputs, value });
@@ -104,18 +120,19 @@ pub(super) fn artifact(dir: &Path, name: &str) -> Result<LoafArtifact, LoafIndex
     let store = ARTIFACTS.get_or_init(Mutex::default);
     if let Some(inputs) = &before
         && let Some(mut value) = store.lock().ok().and_then(|store| store.get(&key, inputs))
+        && value.name == name
         && observe(&paths).as_ref() == Some(inputs)
     {
         value.dir = dir.to_owned();
         tracing::debug!(target: "incan::invocation", loaf = name, "retained immutable Loaf");
         return Ok(value);
     }
-    let value = LoafArtifact::read_current(dir, name)?;
+    let value = LoafArtifact::read_path_manifest(dir, name)?;
     if let Some(inputs) = before
         && observe(&paths).as_ref() == Some(&inputs)
         && let Ok(mut store) = store.lock()
     {
-        store.insert(key, inputs, value.clone());
+        store.insert(key, inputs, value.clone(), true);
     }
     Ok(value)
 }
@@ -143,7 +160,7 @@ pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
         && observe(&paths).as_ref() == Some(&inputs)
         && let Ok(mut store) = store.lock()
     {
-        store.insert(canonical, inputs, Arc::clone(&value));
+        store.insert(canonical, inputs, Arc::clone(&value), false);
     }
     Ok(value)
 }
@@ -164,10 +181,7 @@ fn stored<T>(store: &OnceLock<Mutex<Store<T>>>) -> (usize, u64) {
     store
         .get()
         .and_then(|store| store.lock().ok())
-        .map(|store| {
-            let bytes = store.readings.values().map(|reading| reading.inputs.bytes).sum();
-            (store.readings.len(), bytes)
-        })
+        .map(|store| (store.readings.len(), store.input_bytes()))
         .unwrap_or((0, 0))
 }
 
