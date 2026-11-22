@@ -44,11 +44,15 @@ pub fn terminator<'tcx>(
             func: call_operand(tcx, sources, callee)?,
             args: arguments
                 .iter()
-                .map(|value| {
-                    Ok(Spanned {
-                        node: operand(tcx, sources, value)?,
-                        span: sources.span(&value.span)?,
-                    })
+                .enumerate()
+                .map(|(position, value)| {
+                    let span = sources.span(&value.span)?;
+                    let node = if position == 0 && is_unit_keyed(callee) {
+                        crate::statics::unit_operand(tcx, span)
+                    } else {
+                        operand(tcx, sources, value)?
+                    };
+                    Ok(Spanned { node, span })
                 })
                 .chain(generator_producer(tcx, sources, callee)?.into_iter().map(Ok))
                 .collect::<Result<_, PlanError>>()?,
@@ -96,6 +100,11 @@ pub fn terminator<'tcx>(
         kind,
         attributes: ThinVec::new(),
     })
+}
+
+/// Whether the callee is a runtime call whose first argument is the unit, which this crate supplies.
+fn is_unit_keyed(callee: &crate::plan::Callee) -> bool {
+    matches!(&callee.kind, crate::plan::CalleeKind::External(path) if incan_lowering::is_unit_keyed_runtime_call(path))
 }
 
 /// Instantiate admitted runtime operations, clone calls and the retained lifetime binders of planned callees.
