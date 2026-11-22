@@ -262,11 +262,9 @@ pub def invocations(
     """
     Plan fixed-order invocations; each Oven source may run in any of one private worker project per job.
 
-    A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
-    the release units the release already built under the same identities, as the Rust facet tests do. The Oven
-    sources ask it too: the release builds their shared project library ahead (`library_prebuild_arguments`), and the
-    bakery admits a unit only by its full identity, so anything that differs is built again. Their nested commands
-    inherit that bakery.
+    A nonempty `builder_bakery` names the Bakery selected for installed verification. Oven sources, release-profile
+    Loaf tests, and their nested commands use it to find any unit whose full identity matches. The installed Oven
+    step's compile-ahead prepares the shared project library in that same Bakery.
     """
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
@@ -353,14 +351,6 @@ pub def planned_outcome(
             logs.append(settled[index].log.0)
         succeeded = succeeded and len(second.failed) == 0
     return Ok(PlannedOutcome(started=[item for item in planned if item.log.0 in logs], succeeded=succeeded))
-
-
-pub def library_prebuild_arguments() -> list[str]:
-    """
-    The compile-only invocation the step starts with, in a worker project: the settled source's listing, which builds
-    the Oven sources' shared project library. A release runs it ahead in a project laid out the same way.
-    """
-    return ["test", f"src/{NEEDS_SETTLED_INSTALLATION[0]}", "--list"]
 
 
 pub def admission_order(pooled: list[Invocation]) -> list[int]:

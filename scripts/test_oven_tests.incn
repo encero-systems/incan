@@ -165,8 +165,7 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
 
 def test_every_release_test_asks_the_builder_bakery_which_admits_units_by_identity() -> Result[None, str]:
     """
-    Oven sources and Loaf tests alike ask the release builder's bakery, which already holds the units the release
-    built, the Oven sources' shared project library among them, and admits one only by its full unit identity. Outside
+    Oven sources and Loaf tests alike ask the selected Bakery, which admits existing units by full identity. Outside
     a release every invocation keeps the installation's own bakery.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
