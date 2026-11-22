@@ -253,7 +253,6 @@ pub def finish_frame_reads() -> list[FrameRead]:
     return frame_measurement.finish()
 
 
-
 pub def store_identity(root: Path) -> Result[str, StoreError]:
     """Return the physical store's persistent identity, provisioning it once under the store lifecycle lock."""
     ensure_directory(root)?
@@ -846,7 +845,6 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     """Publish one view through the same atomic group boundary used by multi-view requests."""
     return commit_group([transaction])
 
-
 pub model Publication:
     """One atomic generation and its optional already-held execution pin."""
 
@@ -858,12 +856,10 @@ pub def commit_group(transactions: list[Transaction]) -> Result[Snapshot, StoreE
     """Publish all requested views in one durable generation without an execution pin."""
     return publish_group(transactions, "").map((published) => published.snapshot)
 
-
 pub def commit_pinned(transactions: list[Transaction], view: str) -> Result[Publication, StoreError]:
     """Publish a request's durable view under one switch, with its execution pin held before visibility."""
     check_view_key(view)?
     return publish_group(transactions, view)
-
 
 def publish_group(transactions: list[Transaction], execution_view: str) -> Result[Publication, StoreError]:
     """
@@ -884,7 +880,8 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     mut selected_view = transactions[0].view
     if execution_view != "":
         selected_view = execution_view
-    latest = snapshot(root, selected_view)?
+    mut admission = SnapshotAdmission.for_store(root)
+    latest = admission.open(selected_view)?
     staged = root.joinpath("staging").joinpath(transaction_id)
     if len(transactions) == 1 and transactions[0].fork != "":
         if execution_view != "":
@@ -906,15 +903,17 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
         writes[transaction.view].extend(transaction.writes)
         if let Some(revision) = transaction.compared:
             compared[transaction.view] = revision
-    mut changed: Dict[str, list[Write]] = {}
+    mut changed: Dict[str, tuple[Snapshot, list[Write]]] = {}
     for view in sorted([name for name in writes.keys()]):
-        current = view_snapshot(latest, view)?
+        current = match view == selected_view:
+            true => latest
+            false => admission.open(view)?
         remaining = pending_writes(current, writes[view])?
         if len(remaining) > 0:
             # A compared view that moved on since its transaction read it would lose the other publication's writes.
             if view in compared and compared[view] != current.index:
                 return Err(failure("conflict", view, "the view moved on since this transaction read it"))
-            changed[view] = remaining
+            changed[view] = (current, remaining)
     if len(changed) == 0:
         return pinned_publication(latest, execution_view)
 
@@ -926,7 +925,9 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     mut staged_roots: Dict[str, str] = {}
     for name in sorted([view for view in changed.keys()]):
         directory = staged.joinpath(hexlify(sha256.digest(name.encode("utf-8"))))
-        staged_roots[name] = stage_view(root, view_snapshot(latest, name)?, changed[name], directory, writer)?
+        change = changed[name]
+        current, remaining = change
+        staged_roots[name] = stage_view(root, current, remaining, directory, writer)?
     installing = begin_work()
     pages = staged.joinpath("pages")
     ensure_directory(page_directory(root))?
@@ -946,7 +947,6 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
 pub def durable_commits() -> int:
     """Successful durable generation switches in this process; no-op commits add zero."""
     return counted.get("durable_commits", 0)
-
 
 def stage_view(
     root: Path,
