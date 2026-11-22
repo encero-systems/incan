@@ -100,6 +100,9 @@ const PARTIAL_FALLBACK: &str = "a partial's generated function has no checked ow
 const ROWLESS_METHOD_FALLBACK: &str =
     "the module has no Body IR row for this method: it is abstract or lowered per implementation";
 
+/// Why overloads are one fallback owner when they share one stable identity.
+const SHARED_IDENTITY_FALLBACK: &str = "overloads share one source signature, so no stable identity separates them";
+
 /// Normalize an optional fallback owner before it crosses the Incan codec boundary.
 fn fallback_identity(identity: Option<String>) -> Option<String> {
     identity.filter(|value| !value.is_empty())
@@ -604,6 +607,7 @@ impl GraphBodyOutput {
             }
         }
         self.retire_rowless_methods();
+        self.retire_shared_identities();
         if let Some(value) = self.values.iter().find(|value| value.body_ir.is_empty()) {
             return Err(format!(
                 "compiled graph output has no Body IR row for {} in {}",
@@ -638,6 +642,37 @@ impl GraphBodyOutput {
                 reason: ROWLESS_METHOD_FALLBACK.into(),
                 artifact_refusals: Vec::new(),
             });
+        }
+    }
+
+    /// Publish overloads that share one stable identity, as two whose source signatures differ only in their bounds,
+    /// as one fallback owner of their spelling: no graph-body row can name either. The module's namespace record stays
+    /// their witness, and they are checked again from source on each request.
+    fn retire_shared_identities(&mut self) {
+        let mut counts = std::collections::HashMap::<(String, String), usize>::new();
+        for value in &self.values {
+            *counts
+                .entry((value.module.clone(), value.identity.clone()))
+                .or_default() += 1;
+        }
+        let shared = |value: &PendingBodyValue| {
+            counts
+                .get(&(value.module.clone(), value.identity.clone()))
+                .is_some_and(|count| *count > 1)
+        };
+        let (retired, values): (Vec<_>, Vec<_>) = std::mem::take(&mut self.values).into_iter().partition(shared);
+        self.values = values;
+        let mut published = std::collections::BTreeSet::new();
+        for value in retired {
+            if published.insert((value.module.clone(), value.identity.clone())) {
+                self.fallbacks.push(PendingBodyFallback {
+                    module: value.module,
+                    name: value.name,
+                    identity: fallback_identity(Some(value.identity)),
+                    reason: SHARED_IDENTITY_FALLBACK.into(),
+                    artifact_refusals: Vec::new(),
+                });
+            }
         }
     }
 
@@ -1135,18 +1170,12 @@ mod tests {
         assert_eq!(fallback_identity(Some("owner".to_owned())), Some("owner".to_owned()));
     }
 
-    /// A checked body the module's Body IR gives no row of its own, a trait's abstract method or a top-level partial's
-    /// generated function, is published as a fallback owner with its reason instead of refusing the whole output.
-    #[test]
-    fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
-        let source = concat!(
-            "trait Named:\n    def label(self) -> str:\n        \"\"\"Return the value label.\"\"\"\n        ...\n\n",
-            "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
-            "pub def route(method: str, path: str) -> str:\n    return method + path\n\n",
-            "pub get = partial route(method=\"GET\")\n\n",
-            "def main() -> None:\n    println(get(path=\"/\"))\n",
-        );
-        let scratch = std::env::temp_dir().join(format!("incan-graph-fallbacks-{}", std::process::id()));
+    /// Check one module `source`, lower its Body IR and attach it to a graph-body collector, as a compile does.
+    fn attached_output(
+        source: &str,
+        test: &str,
+    ) -> Result<(GraphBodyOutput, std::path::PathBuf), Box<dyn std::error::Error>> {
+        let scratch = std::env::temp_dir().join(format!("incan-graph-{test}-{}", std::process::id()));
         std::fs::create_dir_all(scratch.join("src"))?;
         let root = scratch.canonicalize()?;
         let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
@@ -1188,6 +1217,51 @@ mod tests {
             &std::collections::BTreeMap::new(),
             None,
         )?;
+        Ok((output, scratch))
+    }
+
+    /// Two overloads whose source signatures differ only in their bounds share one stable identity, so neither can
+    /// own a graph-body row: their spelling is one fallback owner, and the output keeps one row per identity.
+    #[test]
+    fn overloads_sharing_one_source_signature_are_one_fallback_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = concat!(
+            "model Left:\n    value: int\n\n",
+            "model Right:\n    value: int\n\n",
+            "def kind[T with Left]() -> str:\n    return \"left\"\n\n",
+            "def kind[T with Right]() -> str:\n    return \"right\"\n\n",
+            "def main() -> None:\n    println(kind[Right]())\n",
+        );
+        let (output, scratch) = attached_output(source, "shared-signature")?;
+        let mut identities = std::collections::BTreeSet::new();
+        assert!(
+            output
+                .values
+                .iter()
+                .all(|value| identities.insert((value.module.clone(), value.identity.clone()))),
+            "two graph-body values share one identity"
+        );
+        let kinds = output
+            .fallbacks
+            .iter()
+            .filter(|fallback| fallback.name == "kind")
+            .count();
+        assert_eq!(kinds, 1, "the shared spelling is not one fallback owner");
+        std::fs::remove_dir_all(&scratch)?;
+        Ok(())
+    }
+
+    /// A checked body the module's Body IR gives no row of its own, a trait's abstract method or a top-level partial's
+    /// generated function, is published as a fallback owner with its reason instead of refusing the whole output.
+    #[test]
+    fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let source = concat!(
+            "trait Named:\n    def label(self) -> str:\n        \"\"\"Return the value label.\"\"\"\n        ...\n\n",
+            "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
+            "pub def route(method: str, path: str) -> str:\n    return method + path\n\n",
+            "pub get = partial route(method=\"GET\")\n\n",
+            "def main() -> None:\n    println(get(path=\"/\"))\n",
+        );
+        let (output, scratch) = attached_output(source, "fallbacks")?;
         let fallbacks: Vec<(&str, &str)> = output
             .fallbacks
             .iter()
