@@ -6,7 +6,7 @@ from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
     compiled_owner_source,
-    project_source,
+    project_source_file,
     signature_record,
 )
 from unit import UnitDescription, dependency_source_roots
@@ -35,8 +35,7 @@ pub def projection_cache(
     mut projections: Dict[str, SourceProjection] = {}
     for module in modules:
         path = Path(unit.project_root).joinpath(module)
-        source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
-        projections[module] = project_source(origin, module, source, unit.declared_features, Some(unit.active_features))?
+        projections[module] = project_source_file(origin, module, path, unit.declared_features, Some(unit.active_features))?
     mut roots: Dict[str, str] = {}
     for dependency in dependency_source_roots(unit):
         roots[dependency[0]] = dependency[1]
@@ -90,8 +89,7 @@ def editable_dependency_projection(root: str, package: str, module: str) -> Resu
         candidates.append(base.joinpath("prelude.incn"))
     for candidate in candidates:
         if candidate.is_file():
-            source = candidate.read_text("utf-8", "strict").map_err((error) => error.message())?
-            return project_source(package, module, source)
+            return project_source_file(package, module, candidate)
     return Err(f"compiled body output dependency module is absent: {package}:{module}")
 
 

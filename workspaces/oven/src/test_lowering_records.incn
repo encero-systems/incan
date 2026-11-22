@@ -251,7 +251,10 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
     _ = traced_example_run(binary, source, store, observations, "12")?
     cold = observed_module_work(observations)?
+    projections = observed_source_projections(observations)?
     for name in ["lone_alpha", "lone_beta", "lone_gamma", "main"]:
+        count = projections.get(name + ".incn", 0)
+        assert count == 1, f"the cold build projected {name} {count} times"
         assert cold.get("lower:" + name, 0) > 0, f"the cold build traced no lowered body of {name}"
         assert cold.get("check:" + name + ".incn", 0) > 0, f"the cold build traced no checker entry for {name}"
         assert cold.get("body-ir:" + name + ".incn", 0) > 0, f"the cold build traced no Body IR entry for {name}"
@@ -470,6 +473,23 @@ def observed_module_work(trace: Path) -> Result[Dict[str, int], str]:
                 if len(parts) > 1:
                     key = "lower:" + parts[1].split(" ")[0]
                     counts[key] = counts.get(key, 0) + 1
+    return Ok(counts)
+
+
+def observed_source_projections(trace: Path) -> Result[Dict[str, int], str]:
+    """Count each module's physical source projection in this fixture's Oven trace."""
+    mut counts: Dict[str, int] = {}
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not entry.name().startswith("engine-oven-"):
+            continue
+        for line in entry.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if "source-projection" not in line:
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            key = required_text(event, "key")?
+            if key.startswith("source-projection\t"):
+                module = key.split("\t")[-1]
+                counts[module] = counts.get(module, 0) + 1
     return Ok(counts)
 
 
