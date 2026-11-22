@@ -62,6 +62,15 @@ pub struct GraphNamespaceHeader {
     pub lowering_inputs: Arc<[(incan_semantics_core::CompilerNodeId, String)]>,
 }
 
+/// One unchanged namespace admitted by its header: what checking reads of it, with no interface or Body IR decoded.
+#[derive(Debug, Clone)]
+pub struct GraphNamespaceAdmission {
+    /// Settled argument accesses imported by this namespace at publication.
+    pub call_reads: Arc<[SettledCallRead]>,
+    /// Authenticated declaration surface, materialized from the namespace frame only when a checker installs it.
+    pub interface: Arc<dyn GraphNamespaceInterface>,
+}
+
 /// A verified header with one movable, decoded Body IR contribution.
 #[derive(Debug)]
 pub struct GraphNamespaceRecord {
@@ -86,6 +95,13 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
 
     /// Read and authenticate one complete editable namespace page by its project-relative source projection.
     fn read_namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault>;
+
+    /// Admit one unchanged namespace by its header alone: the settled call reads it consumed and its declaration
+    /// surface, whose frame is opened only when a checker installs it. `None` when the request offers no header for
+    /// `source`; the caller then reads the complete namespace.
+    fn read_namespace_header(&self, _source: &str) -> Result<Option<GraphNamespaceAdmission>, RecordAdapterFault> {
+        Ok(None)
+    }
 
     /// Register a freshly published namespace's exact durable value and owned checked metadata.
     fn publish_namespace(&self, _header: Arc<GraphNamespaceHeader>, _value: String, _body_ir: Vec<u8>) {}
@@ -438,6 +454,25 @@ impl GraphBodyRecords {
                 .insert(source.to_owned(), Arc::clone(&row.header.call_reads));
         }
         Ok(record)
+    }
+
+    /// Admit one namespace by its header, remembering the settled call contracts it consumed, as [`Self::namespace`]
+    /// does; `None` when no header is offered for it, or when a changed call contract reopened its callers.
+    pub fn namespace_admission(&self, source: &str) -> Result<Option<GraphNamespaceAdmission>, RecordAdapterFault> {
+        if self.changed_callers.contains_key(source) {
+            return Ok(None);
+        }
+        let Some(records) = &self.source else {
+            return Ok(None);
+        };
+        let admission = records.read_namespace_header(source)?;
+        if let Some(admitted) = &admission {
+            self.call_reads
+                .lock()
+                .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
+                .insert(source.to_owned(), Arc::clone(&admitted.call_reads));
+        }
+        Ok(admission)
     }
 
     /// Return only the call contracts of a namespace actually restored by this attempt.
