@@ -24,9 +24,10 @@ fn frozen_carriers_named_by_rust_path_stay_native() {
 fn compiled_library_layout_paths_keep_their_source_declaration() {
     let key = "__incan_carrier_model_3_646570_5_56616c7565";
     let mut checker = TypeChecker::new();
-    checker
-        .transitive_pub_types
-        .insert(key.to_owned(), vec![crate::typechecker::TransitiveLayout::ready(TypeInfo::Builtin)]);
+    checker.transitive_pub_types.insert(
+        key.to_owned(),
+        vec![crate::typechecker::TransitiveLayout::ready(TypeInfo::Builtin)],
+    );
     let path = format!("dep_lib::__incan_layout_{key}::Value");
     let named = ResolvedType::Named(key.to_owned());
     assert_eq!(checker.resolved_type_from_rust_display(&path), named);
@@ -52,9 +53,10 @@ fn compiled_library_layout_paths_keep_their_source_declaration() {
 fn compiled_library_root_carriers_keep_their_source_declaration() {
     let key = "__incan_carrier_enum_3_646570_5_56616c7565";
     let mut checker = TypeChecker::new();
-    checker
-        .transitive_pub_types
-        .insert(key.to_owned(), vec![crate::typechecker::TransitiveLayout::ready(TypeInfo::Builtin)]);
+    checker.transitive_pub_types.insert(
+        key.to_owned(),
+        vec![crate::typechecker::TransitiveLayout::ready(TypeInfo::Builtin)],
+    );
     let path = format!("dep_lib::{key}");
     let named = ResolvedType::Named(key.to_owned());
     assert_eq!(checker.resolved_type_from_rust_display(&path), named);
