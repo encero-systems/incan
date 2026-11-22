@@ -25,6 +25,10 @@ fn graph_owner_coordinates_are_bounded_and_authenticated() -> Result<(), Box<dyn
     let owner = body("pick", 17);
     let module = owner.decl_id.clone();
     let stamped = super::encode_graph_owner(&module, "sample.incn", "pick", &owner, Some([17; 32]))?;
+    assert!(
+        stamped.starts_with(b"CRMB"),
+        "graph owner writer used the old inner format"
+    );
     assert!(decode_owner(&stamped)?.coordinates.is_empty());
     let mut encoded = stamped.clone();
     super::append_owner_coordinates(&mut encoded, &[(1, 7), (9, 12)]);
@@ -86,6 +90,10 @@ fn namespace_scopes_round_trip_and_restore_shared_bindings() -> Result<(), Box<d
     ))?);
     legacy_frame.extend(encode_module(&legacy_module)?);
     let frame = super::encode_namespace_module(&mut source)?;
+    assert!(
+        frame.starts_with(b"CRMB"),
+        "graph namespace writer used the old inner format"
+    );
     assert!(frame.len() < legacy_frame.len());
     assert_eq!(super::decode_namespace_module(&legacy_frame)?, source);
     assert_eq!(encode_module(&source)?, ordinary);
