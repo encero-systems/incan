@@ -7,8 +7,12 @@ from compiler_source_projection import positioned_source_key
 from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
-from compiler_graph_records import EditCutoff, OutputSlots, reusable_evaluation, reusable_family_records, readers_of
-from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleValue, decode_plan_module
+from compiler_graph_records import EditCutoff, OutputSlot, OutputSlots, decode_record_key, evaluation_revision, family_slots, reusable_evaluation, reusable_family_records, readers_of, select_slot_record, slot_output
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value as crumb_field
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as integer_field, items, number, text, tuple_items
+from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, decode_plan_module
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 
@@ -126,7 +130,11 @@ pub def canonical_digest(value: str) -> bool:
 
 
 pub model AdmittedPlanModule:
-    """A verified module plan and the receipt selecting it from the current graph view."""
+    """
+    A verified module plan selected from the current graph view, with the plan functions its receipt proves (each
+    output it read with that output's digest). A module taken from a recorded selection carries its functions'
+    identities but not their events (`events`); `admitted_plan` reads the events when a request needs them.
+    """
 
     pub key: RecordKey
     pub plan: PlanModuleValue
@@ -134,8 +142,171 @@ pub model AdmittedPlanModule:
     pub namespace: int
     pub certificate: str
     pub admitted_snapshot: str
-    pub receipt: ReadReceipt
     pub placement_current: bool
+    pub proofs: Dict[str, str] = {}
+    pub events: bool = true
+
+
+pub def admitted_plan(graph: Snapshot, module: Borrowed[AdmittedPlanModule]) -> Result[PlanModuleValue, str]:
+    """An admitted module's plan with its functions' events, read from the graph when its selection kept none."""
+    if module.events:
+        return Ok(module.plan.clone())
+    encoded = match get(graph, encode_record_key(module.key)?).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Err("an admitted plan module lost its selected value")
+    plan = decode_plan_module(encoded).map_err((error) => f"selected plan-module record refused: {error:?}")?
+    if plan.module != module.plan.module or len(plan.functions) != len(module.plan.functions):
+        return Err("an admitted plan module differs from its recorded selection")
+    return Ok(plan)
+
+
+# A request's plan-module selection is recorded with it, so the next request selects again only the slots whose
+# output-index entry or evaluation changed since, or that its edit's cutoff names.
+const PLAN_SELECTION_ROW: bytes = b"plnsel\x00"
+
+
+pub model SelectedPlanFunction:
+    """One function of a kept plan module, without its event: the identities a selection compares and keys by."""
+
+    pub identity: str
+    pub symbol: str
+    pub function: str
+    pub key: str
+
+
+pub model SelectedSlot:
+    """A slot selected afresh: what the selection keeps of it, and its plan with the events."""
+
+    pub entry: SelectedPlanModule
+    pub plan: PlanModuleValue
+
+
+pub model SelectedPlanModule:
+    """
+    What a plan-module selection keeps of one admitted slot: the revisions it was selected at (the slot's output-index
+    entry and its evaluation), the output, and what selecting it derived from its value and receipt.
+    """
+
+    pub indexed: str
+    pub slot: str
+    pub output: str
+    pub evaluation: str
+    pub module: str
+    pub value_digest: str
+    pub namespace: int
+    pub certificate: str
+    pub bound: bool
+    pub functions: list[SelectedPlanFunction] = []
+    pub witnessed: list[str] = []
+    pub proofs: Dict[str, str] = {}
+
+
+pub def plan_selection_key(origin: str) -> str:
+    """Where the latest plan-module selection of a program's origin is recorded."""
+    return "incan.engine.plan-selection/1\t" + origin
+
+
+def plan_selection_description() -> Description:
+    """Each kept slot in index order, under the origin it was selected for."""
+    return model_description(PLAN_SELECTION_ROW, "incan.engine.plan-selection/1", [
+        ModelField(identity=b"module", name="modules", storage="list<tuple<string,string,string,string,string,string,i64,string,boolean,list<tuple<string,string,string,string>>,list<string>,list<tuple<string,string>>>>"),
+        ModelField(identity=b"origin", name="origin", storage="string"),
+    ])
+
+
+pub def encode_plan_selection(origin: str, kept: list[SelectedPlanModule]) -> Result[bytes, str]:
+    """Encode a plan-module selection for its origin."""
+    mut modules: list[Value] = []
+    for entry in kept:
+        functions = Value.List([Value.Tuple([Value.Text(item.identity), Value.Text(item.symbol), Value.Text(item.function), Value.Text(item.key)]) for item in entry.functions])
+        witnessed = Value.List([Value.Text(output) for output in entry.witnessed])
+        proofs = Value.List([Value.Tuple([Value.Text(output), Value.Text(entry.proofs[output])]) for output in sorted([key for key in entry.proofs.keys()])])
+        modules.append(Value.Tuple([
+            Value.Text(entry.indexed), Value.Text(entry.slot), Value.Text(entry.output), Value.Text(entry.evaluation),
+            Value.Text(entry.module), Value.Text(entry.value_digest), integer_field(entry.namespace), Value.Text(entry.certificate),
+            Value.Boolean(entry.bound), functions, witnessed, proofs,
+        ]))
+    return encode_graph_row(PLAN_SELECTION_ROW, plan_selection_description(), [
+        crumb_field(b"module", Value.List(modules)),
+        crumb_field(b"origin", Value.Text(origin)),
+    ])
+
+
+pub def recorded_plan_selection(selected: Snapshot, origin: str) -> Result[Dict[str, SelectedPlanModule], str]:
+    """The kept slots of the origin's recorded plan-module selection, by output-index entry; none when unrecorded."""
+    mut kept: Dict[str, SelectedPlanModule] = {}
+    encoded = match get(selected, plan_selection_key(origin)).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Ok(kept)
+    fields = decode_graph_row(encoded, PLAN_SELECTION_ROW, plan_selection_description(), 2)?
+    if text(fields[1].value)? != origin:
+        return Err("a recorded plan-module selection names another origin")
+    for row in items(fields[0].value)?:
+        parts = tuple_items(row, 12)?
+        bound = match parts[8]:
+            Value.Boolean(flag) => flag
+            _ => return Err("invalid recorded plan-module selection")
+        mut functions: list[SelectedPlanFunction] = []
+        for item in items(parts[9])?:
+            named = tuple_items(item, 4)?
+            functions.append(SelectedPlanFunction(identity=text(named[0])?, symbol=text(named[1])?, function=text(named[2])?, key=text(named[3])?))
+        mut proofs: Dict[str, str] = {}
+        for item in items(parts[11])?:
+            pair = tuple_items(item, 2)?
+            proofs[text(pair[0])?] = text(pair[1])?
+        entry = SelectedPlanModule(
+            indexed=text(parts[0])?, slot=text(parts[1])?, output=text(parts[2])?, evaluation=text(parts[3])?,
+            module=text(parts[4])?, value_digest=text(parts[5])?, namespace=number(parts[6])?, certificate=text(parts[7])?,
+            bound=bound, functions=functions, witnessed=[text(item)? for item in items(parts[10])?], proofs=proofs,
+        )
+        if entry.indexed in kept:
+            return Err("a recorded plan-module selection names one slot twice")
+        kept[entry.indexed] = entry
+    return Ok(kept)
+
+
+def kept_slot(selected: Snapshot, slot: OutputSlot, recorded: Dict[str, SelectedPlanModule], cutoff: EditCutoff) -> Result[Option[SelectedPlanModule], str]:
+    """A recorded slot still valid: its entry and evaluation are as recorded and the edit's cutoff leaves it valid."""
+    if slot.indexed not in recorded:
+        return Ok(None)
+    entry = recorded[slot.indexed]
+    if entry.slot != slot.revision or cutoff.revalidates(entry.output):
+        return Ok(None)
+    if evaluation_revision(selected, LOWERING_PROFILE, entry.output)? != entry.evaluation:
+        return Ok(None)
+    return Ok(Some(entry))
+
+
+def selected_slot(
+    selected: Snapshot, origin: str, slot: OutputSlot, cutoff: EditCutoff,
+) -> Result[Option[SelectedSlot], str]:
+    """Select one slot afresh and keep what its value and receipt prove."""
+    output = slot_output(selected, LOWERING_PROFILE, slot)?
+    record = match select_slot_record(selected, output, LOWERING_PROFILE, cutoff)?:
+        Some(found) => found
+        None => return Ok(None)
+    value = decode_plan_module(record.value).map_err((error) => f"selected plan-module record refused: {error:?}")?
+    positioned = prepared_product_request(positioned_source_key(origin, record.key.identity))
+    mut bound = false
+    mut witnessed: list[str] = []
+    mut proofs: Dict[str, str] = {}
+    for witness in record.receipt.witnesses:
+        if let ReadWitness.Found(prior, chosen) = witness:
+            if prior.request == positioned:
+                bound = true
+            if prior.request.key.family == "plan-function":
+                written = encode_record_key(prior.request.key)?
+                witnessed.append(written)
+                if prior.request == prepared_product_request(prior.request.key) and prior.semantic_digest == prior.revision and chosen == prior.semantic_digest:
+                    proofs[written] = prior.semantic_digest
+    entry = SelectedPlanModule(
+        indexed=slot.indexed, slot=slot.revision, output=output, evaluation=evaluation_revision(selected, LOWERING_PROFILE, output)?,
+        module=value.module, value_digest=record.value_digest, namespace=record.namespace,
+        certificate=record.receipt.preparation.rank_certificate, bound=bound,
+        functions=[SelectedPlanFunction(identity=function.identity, symbol=function.symbol, function=function.function, key=function.key) for function in value.functions],
+        witnessed=witnessed, proofs=proofs,
+    )
+    return Ok(Some(SelectedSlot(entry=entry, plan=value)))
 
 
 pub model PlanModuleSelection:
@@ -145,6 +316,8 @@ pub model PlanModuleSelection:
     pub outputs: list[str] = []
     pub records: list[AdmittedPlanModule] = []
     pub covered: CoveredBodyOwners = CoveredBodyOwners()
+    # Every admitted slot as this selection keeps it, recorded with the request for the next one.
+    pub kept: list[SelectedPlanModule] = []
 
 
 pub model ValueFrame:
@@ -190,55 +363,77 @@ pub def select_plan_modules(
     functions is keyed by one of `invalid_owners`, the owners this request checks again or whose signature witnesses
     changed. The compiler restores an admitted module's functions from the record's page and lowers none of its
     bodies.
+
+    A slot the origin's recorded selection kept, whose output-index entry and evaluation are unchanged and which the
+    edit's cutoff leaves valid, is taken from that record: its evaluation, receipt and plan are not read.
     """
     mut refused: set[str] = set()
     for owner in invalid_owners:
         refused.add(owner)
     mut selection = PlanModuleSelection()
     slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules)
-    for record in reusable_family_records(selected, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(slots), cutoff=cutoff)?:
-        value = decode_plan_module(record.value).map_err((error) => f"selected plan-module record refused: {error:?}")?
+    mut recorded: Dict[str, SelectedPlanModule] = {}
+    if cutoff.active:
+        recorded = recorded_plan_selection(selected, origin)?
+    for slot in family_slots(selected, PLAN_MODULE_FAMILY, LOWERING_PROFILE, slots)?:
+        mut entry = SelectedPlanModule(indexed="", slot="", output="", evaluation="", module="", value_digest="", namespace=0, certificate="", bound=false)
+        no_functions: list[PlanModuleFunction] = []
+        mut plan = PlanModuleValue(module="", functions=no_functions)
+        mut events = false
+        match kept_slot(selected, slot, recorded, cutoff)?:
+            Some(found) =>
+                plan = PlanModuleValue(module=found.module, functions=[
+                    PlanModuleFunction(identity=item.identity, symbol=item.symbol, function=item.function, key=item.key, event=b"")
+                    for item in found.functions
+                ])
+                entry = found
+            None =>
+                match selected_slot(selected, origin, slot, cutoff)?:
+                    Some(fresh) =>
+                        entry = fresh.entry
+                        plan = fresh.plan
+                        events = true
+                    None => continue
+        selection.kept.append(entry)
+        key = decode_record_key(entry.output)?
         mut valid = true
-        for function in value.functions:
-            if function.identity in refused or not canonical_digest(function.key):
+        for item in entry.functions:
+            if item.identity in refused or not canonical_digest(item.key):
                 valid = false
         if not valid:
             continue
-        positioned = prepared_product_request(positioned_source_key(origin, record.key.identity))
-        mut bound = false
-        for witness in record.receipt.witnesses:
-            if let ReadWitness.Found(prior, _) = witness:
-                if prior.request == positioned:
-                    bound = true
         mut suffix = REPOSITION_MODULE_PAGE
-        if bound and record.key.identity not in changed_positions:
+        if entry.bound and key.identity not in changed_positions:
             suffix = POSITIONED_MODULE_PAGE
         # An earlier worker sees no qualified module page and keeps the ordinary keyed route. A page of an on-disk
-        # store is offered by the frame that holds it, which the request's lease keeps in place.
-        mut page = SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value, digest=record.value_digest)
-        if let Some(frame) = value_frame(selected, record.key)?:
-            page.segment = frame.segment
-            page.offset = frame.offset
-            page.length = frame.length
+        # store is offered by the frame that holds it, which the request's lease keeps in place; a page of a store
+        # with no files travels as a copy.
+        mut page = SelectedBodyPage(key=hexlify(entry.module.encode("utf-8")) + suffix, value=b"", digest=entry.value_digest)
+        match value_frame(selected, key)?:
+            Some(frame) =>
+                page.segment = frame.segment
+                page.offset = frame.offset
+                page.length = frame.length
+            None =>
+                page.value = match get(selected, entry.output).map_err((error) => error.message())?:
+                    Some(value) => value
+                    None => return Err("a selected plan module lost its value")
         selection.pages.append(page)
         mut witnessed: set[str] = set()
-        if record.key.identity in complete_namespaces:
-            for witness in record.receipt.witnesses:
-                if let ReadWitness.Found(prior, _) = witness:
-                    if prior.request.key.family == "plan-function":
-                        witnessed.add(encode_record_key(prior.request.key)?)
-        for function in value.functions:
-            key = body_key("plan-function", origin, function.identity, "body:" + function.function, function.key)
-            output = encode_record_key(key)?
+        if key.identity in complete_namespaces:
+            witnessed = set(entry.witnessed)
+        for item in entry.functions:
+            body = body_key("plan-function", origin, item.identity, "body:" + item.function, item.key)
+            output = encode_record_key(body)?
             selection.outputs.append(output)
             # Only the checker-backed branch of plan publication replaces the native event symbol with a
             # separate stable body owner. A fallback, runtime, or namespace-member event keeps its own symbol.
-            if output in witnessed and function.identity != function.symbol:
-                selection.covered.include(record.key.identity, function.identity, function.symbol)?
+            if output in witnessed and item.identity != item.symbol:
+                selection.covered.include(key.identity, item.identity, item.symbol)?
         selection.records.append(AdmittedPlanModule(
-            key=record.key, plan=value, value_digest=record.value_digest, namespace=record.namespace,
-            certificate=record.receipt.preparation.rank_certificate, receipt=record.receipt,
-            admitted_snapshot=selected.digest, placement_current=bound and record.key.identity not in changed_positions,
+            key=key, plan=plan, value_digest=entry.value_digest, namespace=entry.namespace,
+            certificate=entry.certificate, admitted_snapshot=selected.digest,
+            placement_current=entry.bound and key.identity not in changed_positions, proofs=entry.proofs, events=events,
         ))
 
     return Ok(selection)

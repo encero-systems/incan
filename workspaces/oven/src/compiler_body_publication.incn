@@ -1124,10 +1124,9 @@ def prepare_lowering_records(
                     continue
                 if module.admitted_snapshot != graph.digest or prepared.root.value != graph.root.value or prepared.root.placement != graph.root.placement or prepared.base != graph.generation or prepared.view != graph.view:
                     return Err("the carried entry function belongs to a different snapshot")
-                for witness in module.receipt.witnesses:
-                    if let ReadWitness.Found(prior, selection) = witness:
-                        if prior.request == request and prior.semantic_digest == prior.revision and selection == prior.semantic_digest:
-                            witnessed[written] = prior.semantic_digest
+                # The module's receipt proves this exact supplier when its selection derived a proof for it.
+                if written in module.proofs:
+                    witnessed[written] = module.proofs[written]
                 if written in witnessed:
                     position = orders.selected_order(graph, body.module, origin, module.namespace, module.certificate)?
                 break
