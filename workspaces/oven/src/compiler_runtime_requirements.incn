@@ -1,0 +1,9 @@
+"""Transport the compiler's opaque runtime demand page with the unit's successful plan records."""
+
+pub const RUNTIME_REQUIREMENTS: str = "runtime-requirements"
+pub const RUNTIME_REQUIREMENTS_REPORT: str = "runtime-requirements.report"
+
+
+pub def runtime_requirements_key(origin: str, source: str, profile: str) -> str:
+    """Select a prior successful plan for this exact program entry and profile in the request's view."""
+    return f"incan.engine.runtime-requirements/1\t{origin}\t{source}\t{profile}"

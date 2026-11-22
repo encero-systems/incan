@@ -103,6 +103,17 @@ pub(super) struct IndexedLoaf {
 type NamedRecords = HashMap<(&'static str, String), Option<Arc<Vec<serde_json::Value>>>>;
 
 impl IndexedLoaf {
+    /// Each pending lazy read keeps its outcome in the prefetch until the caller selects that context.
+    pub(super) fn isolate_pending_demands(&mut self) {
+        isolate_pending(&mut self.selected_summary);
+        isolate_pending(&mut self.entry);
+        isolate_pending(&mut self.execution);
+        isolate_pending(&mut self.surface);
+        isolate_pending(&mut self.vocabulary);
+        isolate_pending(&mut self.bindings);
+        isolate_pending(&mut self.rust_abi);
+    }
+
     fn new(
         key: String,
         namespace: LoafNamespace,
@@ -545,6 +556,13 @@ impl IndexedLoaf {
     /// Resolve namespace ownership from the index's declared binding, before reading manifest contents.
     pub fn owns(&self, module: &[String]) -> bool {
         super::owns(&self.namespace, module)
+    }
+}
+
+/// Reuse completed immutable reads while giving an unobserved slot its own outcome.
+fn isolate_pending<T>(value: &mut Arc<OnceLock<T>>) {
+    if value.get().is_none() {
+        *value = Arc::default();
     }
 }
 
