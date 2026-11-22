@@ -63,7 +63,11 @@ def check_warning_publication(binary: str, root: Path) -> Result[None, str]:
     trace = root.joinpath("warning-trace")
     make_directory(project)?
     make_directory(trace)?
-    write(project.joinpath("hello.incn"), "def main() -> None:\n    unused = 1\n    println(\"hello\")\n")?
+    write(
+        project.joinpath("hello.incn"),
+        "model Page:\n    title: str\n\ndef main() -> None:\n"
+        + "    page = Page(title=\"old\")\n    mut title = page.title\n    title = \"hello\"\n    println(title)\n",
+    )?
     mut interrupted = source_command(binary, project, store, trace)
     interrupted.env("INCAN_STORE_CRASH_AFTER", "pin-acquired")
     refused = interrupted.output().map_err((error) => str(error))?
@@ -79,8 +83,21 @@ def check_warning_publication(binary: str, root: Path) -> Result[None, str]:
     stop_example_engine(binary, store)?
     assert cold.status.success() and warm.status.success()
     assert cold.stdout == b"hello\n" and warm.stdout == cold.stdout
-    assert len(cold.stderr) > 0 and warm.stderr == cold.stderr, "warm warning bytes differ from the fresh check"
+    warning = from_utf8(cold.stderr).map_err((error) => str(error))?
+    assert "INCAN-T0125" in warning and warm.stderr == cold.stderr, "warm warning bytes differ from the fresh check"
     assert second.digest == first.digest, "warning replay published another generation"
+    legacy_store = root.joinpath("legacy-warning-bakery")
+    mut legacy = source_command(binary, project, legacy_store, trace)
+    legacy.env("INCAN_ENGINE", "legacy")
+    legacy_cold = legacy.output().map_err((error) => str(error))?
+    legacy_first = snapshot(legacy_store).map_err((error) => error.message())?
+    legacy_warm = legacy.output().map_err((error) => str(error))?
+    legacy_second = snapshot(legacy_store).map_err((error) => error.message())?
+    assert legacy_cold.status.success() and legacy_warm.status.success()
+    assert legacy_cold.stdout == cold.stdout and legacy_warm.stdout == cold.stdout
+    legacy_warning = from_utf8(legacy_cold.stderr).map_err((error) => str(error))?
+    assert "INCAN-T0125" in legacy_warning and legacy_warm.stderr == legacy_cold.stderr
+    assert legacy_second.digest == legacy_first.digest, "legacy warning replay published another generation"
     return Ok(None)
 
 
