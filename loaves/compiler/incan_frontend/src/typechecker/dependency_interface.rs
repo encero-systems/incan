@@ -28,10 +28,33 @@ pub struct DependencyInterfacePreparationCache {
     /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.
     #[cfg(test)]
     pub(super) canonical_evaluations: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
+    /// How often the checkers sharing this cache built each compiled declaration's layout, by declaration name.
+    #[cfg(test)]
+    pub(super) layout_builds: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
 }
 
 #[cfg(test)]
 impl DependencyInterfacePreparationCache {
+    /// A cache whose checkers build every compiled declaration's layout when they install it, as every install built
+    /// them before layouts were built on demand.
+    pub(crate) fn eager_layouts() -> Self {
+        Self::default()
+    }
+
+    /// Count one build of the compiled declaration `name`'s layout.
+    pub(super) fn count_layout_build(&self, name: &str) {
+        let mut counts = self.layout_builds.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *counts.entry(name.to_owned()).or_default() += 1;
+    }
+
+    /// The layout builds of each compiled declaration, by declaration name.
+    pub(crate) fn layout_build_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        self.layout_builds
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Count one evaluation of `library`'s canonical type remapping.
     pub(super) fn count_canonical_evaluation(&self, library: &str) {
         let mut counts = self

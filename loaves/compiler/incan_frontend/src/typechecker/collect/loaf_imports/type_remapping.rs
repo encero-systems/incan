@@ -170,6 +170,9 @@ impl TypeChecker {
         .entered();
         let mut builder = TypeChecker::new();
         builder.set_loaves(Arc::clone(&self.loaves));
+        // The builder's layouts are this build's, so the build's test counters see them.
+        #[cfg(test)]
+        builder.set_dependency_interface_preparation_cache(self.dependency_interface_preparation_cache.clone());
         let (remapping, preserving_identity_keys, preserving_type_keys) =
             builder.build_foreign_remapping(library, manifest);
         let mut replacing_identities = HashMap::new();

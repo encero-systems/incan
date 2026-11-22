@@ -96,7 +96,7 @@ fn published_module(
 
 /// Check `source` as the root module of `package` against `loaves` and publish its root exports as that package's
 /// manifest, as a Loaf whose `lib.incn` re-exports names publishes them.
-fn published_root(package: &str, source: &str, loaves: LoafIndex) -> TestResult<LibraryManifest> {
+pub(super) fn published_root(package: &str, source: &str, loaves: LoafIndex) -> TestResult<LibraryManifest> {
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let path = vec!["lib".to_owned()];
@@ -126,7 +126,7 @@ fn published_root(package: &str, source: &str, loaves: LoafIndex) -> TestResult<
 }
 
 /// Write `manifest` where the index reads a dependency's compiled artifact and admit it under its own name.
-fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
+pub(super) fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
     let directory = root.join(&manifest.name);
     std::fs::create_dir(&directory)?;
     std::fs::write(
