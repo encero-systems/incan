@@ -62,6 +62,7 @@ def exercise_provider_edit(binary: str, project: Path, bakery: Path, fresh: Path
     write(fresh.joinpath("src/extra.incn"), extra)?
     if run_program(binary, fresh, fresh_bakery)? != with_extra:
         return Err("the warm program differs from a fresh build of the same sources")
+    check_nested_membership(binary, project, bakery, witness, edited)?
     write(project.joinpath("src/extra.incn"), "pub def extra() -> int:\n    return \"invalid\"\n")?
     if run_program(binary, project, bakery)? != edited:
         return Err("a refused provider stopped a program outside the refusal's reach")
@@ -73,6 +74,40 @@ def exercise_provider_edit(binary: str, project: Path, bakery: Path, fresh: Path
     invalid_check = command(binary, project, bakery, "check")?
     if invalid_check[0]:
         return Err("checking the linked program missed a provider source error")
+    return Ok(None)
+
+
+def check_nested_membership(binary: str, project: Path, bakery: Path, witness: Path, expected: bytes) -> Result[None, str]:
+    """
+    1. Add a module in a subdirectory and record its provider's fact.
+    2. Create a manifest there, then remove it. The library's membership follows the nested project boundary.
+    """
+    # 1. The source is initially part of the enclosing provider.
+    nested = project.joinpath("src/tool")
+    manifest = nested.joinpath("loaf.toml")
+    make_directory(nested)?
+    write(nested.joinpath("lib.incn"), "pub def nested_marker() -> int:\n    return 11\n")?
+    if run_program(binary, project, bakery)? != expected:
+        return Err("adding a member changed the program output")
+    enclosing = witness.read_bytes().map_err((error) => error.message())?
+    # 2. The parent listing stays the same while its child's project boundary changes.
+    write(manifest, "[project]\nname = \"tool\"\nversion = \"0.1.0\"\n")?
+    if run_program(binary, project, bakery)? != expected:
+        return Err("adding a nested project changed the program output")
+    separated = witness.read_bytes().map_err((error) => error.message())?
+    if separated == enclosing:
+        return Err("the enclosing library kept a member that now belongs to a nested project")
+    write(nested.joinpath("lib.incn"), "pub def nested_marker() -> int:\n    return 13\n")?
+    untouched = run_program(binary, project, bakery)?
+    nested_only = witness.read_bytes().map_err((error) => error.message())?
+    if untouched != expected or nested_only != separated:
+        return Err("editing the nested project changed the enclosing provider")
+    manifest.unlink().map_err((error) => error.message())?
+    if run_program(binary, project, bakery)? != expected:
+        return Err("reopening a source directory changed the program output")
+    restored = witness.read_bytes().map_err((error) => error.message())?
+    if restored == enclosing or restored == separated:
+        return Err("reopening the source directory did not admit its edited module into the provider")
     return Ok(None)
 
 
