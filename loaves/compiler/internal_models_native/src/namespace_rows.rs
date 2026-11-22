@@ -37,6 +37,10 @@ pub enum NamespaceAtom {
     Flag(bool),
     Signed(i64),
     Unsigned(u64),
+    /// A signed logical integer outside the narrow checked declaration domain.
+    WideSigned(i128),
+    /// An unsigned logical integer outside the narrow checked declaration domain.
+    WideUnsigned(u128),
     Real(f64),
     Missing,
     Present(Vec<NamespaceAtom>),
@@ -76,6 +80,7 @@ fn fields(values: &[NamespaceField]) -> Result<Vec<ValueField>, String> {
         .collect()
 }
 
+/// Convert compiler cells into the logical values required by the declared Crumb shape.
 fn logical(cell: &NamespaceAtom) -> Result<Value, String> {
     Ok(match cell {
         NamespaceAtom::Text(s) => Value::Text(s.clone()),
@@ -83,6 +88,8 @@ fn logical(cell: &NamespaceAtom) -> Result<Value, String> {
         NamespaceAtom::Flag(flag) => Value::Boolean(*flag),
         NamespaceAtom::Signed(number) => Value::Integer(IntegerValue::Signed(i128::from(*number))),
         NamespaceAtom::Unsigned(number) => Value::Integer(IntegerValue::Unsigned(u128::from(*number))),
+        NamespaceAtom::WideSigned(number) => Value::Integer(IntegerValue::Signed(*number)),
+        NamespaceAtom::WideUnsigned(number) => Value::Integer(IntegerValue::Unsigned(*number)),
         NamespaceAtom::Real(number) => Value::Float(64, number.to_bits().to_be_bytes().to_vec()),
         NamespaceAtom::Missing => Value::NoneValue,
         NamespaceAtom::Present(items) => match items.as_slice() {
@@ -124,17 +131,24 @@ fn float_bits(data: &[u8]) -> Option<f64> {
     Some(f64::from_bits(u64::from_be_bytes(bytes)))
 }
 
+/// Keep the ordinary namespace ABI for narrow values and retain exact bits for full-width constants.
+fn signed(number: i128) -> NamespaceAtom {
+    i64::try_from(number).map_or(NamespaceAtom::WideSigned(number), NamespaceAtom::Signed)
+}
+
+/// Keep the ordinary namespace ABI for narrow values and retain exact bits for full-width constants.
+fn unsigned(number: u128) -> NamespaceAtom {
+    u64::try_from(number).map_or(NamespaceAtom::WideUnsigned(number), NamespaceAtom::Unsigned)
+}
+
+/// Reconstruct the compiler ABI from an admitted logical value, retaining full-width integers.
 fn atom(value: &Value) -> Result<NamespaceAtom, String> {
     Ok(match value {
         Value::Text(s) => NamespaceAtom::Text(s.clone()),
         Value::Binary(data) => NamespaceAtom::Binary(data.clone()),
         Value::Boolean(flag) => NamespaceAtom::Flag(*flag),
-        Value::Integer(IntegerValue::Signed(number)) => {
-            NamespaceAtom::Signed(i64::try_from(*number).map_err(|_| INVALID_CELL.to_owned())?)
-        }
-        Value::Integer(IntegerValue::Unsigned(number)) => {
-            NamespaceAtom::Unsigned(u64::try_from(*number).map_err(|_| INVALID_CELL.to_owned())?)
-        }
+        Value::Integer(IntegerValue::Signed(number)) => signed(*number),
+        Value::Integer(IntegerValue::Unsigned(number)) => unsigned(*number),
         Value::Float(64, data) => NamespaceAtom::Real(float_bits(data).ok_or_else(|| INVALID_CELL.to_owned())?),
         Value::NoneValue => NamespaceAtom::Missing,
         Value::Some(items) if items.len() == 1 => NamespaceAtom::Present(vec![atom(&items[0])?]),
@@ -184,8 +198,8 @@ fn read_atom(nodes: &mut RowRead) -> Result<NamespaceAtom, String> {
         0 => NamespaceAtom::Missing,
         1 => NamespaceAtom::Present(vec![read_atom(nodes)?]),
         2 => NamespaceAtom::Flag(nodes.flag()),
-        3 => NamespaceAtom::Signed(i64::try_from(nodes.signed()).map_err(|_| invalid())?),
-        4 => NamespaceAtom::Unsigned(u64::try_from(nodes.unsigned()).map_err(|_| invalid())?),
+        3 => signed(nodes.signed()),
+        4 => unsigned(nodes.unsigned()),
         5 => {
             let data = nodes.bytes();
             if nodes.number() != 64 {

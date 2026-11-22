@@ -6,7 +6,10 @@ use super::*;
 use crate::loaf_index::LoafIdentity;
 
 mod wire;
-pub use wire::{NamespaceCell, NamespaceCrumb, executable_scope_value, restore_executable_scope_value};
+pub use wire::{
+    NamespaceCell, NamespaceCrumb, executable_body_value, executable_module_value, executable_scope_value,
+    restore_executable_body_value, restore_executable_module_value, restore_executable_scope_value, to_atom, to_cell,
+};
 pub(crate) use wire::{Project as CheckedCellProjection, callable_fields as callable_projection};
 
 /// Durable checked surface of one editable source namespace.
@@ -1020,6 +1023,42 @@ mod tests {
         Arc::make_mut(&mut retained.nominal_scope).insert("PrivateState".into(), external.clone());
         let reopened_scope = restore_executable_scope_value(executable_scope_value(&retained.nominal_scope))?;
         assert_eq!(reopened_scope, retained.nominal_scope);
+        let providers = crate::body_ir::ProviderOperationCatalog::new();
+        let mut expected = crate::body_ir::build_body_ir_module(
+            &program,
+            &module_path,
+            checker.type_info(),
+            &crate::body_ir::BodyIrContext {
+                modules: crate::body_ir::ContextModules::default(),
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+                include_inline_tests: false,
+            },
+        );
+        let bytes = internal_models::encode_executable_module(&to_atom(executable_module_value(&expected)))?;
+        assert!(bytes.starts_with(b"CRMB"));
+        let reopened = restore_executable_module_value(to_cell(internal_models::decode_executable_module(&bytes)?)?)?;
+        expected.published_callables.clear();
+        assert_eq!(reopened, expected);
+        assert_eq!(
+            internal_models::encode_executable_module(&to_atom(executable_module_value(&reopened)))?,
+            bytes
+        );
+        assert!(internal_models::decode_executable_body(&bytes).is_err());
+        let body = expected
+            .bodies
+            .first()
+            .ok_or("missing checked body in executable codec fixture")?;
+        let owner = internal_models::encode_executable_body(&to_atom(executable_body_value(body)))?;
+        assert_eq!(
+            restore_executable_body_value(to_cell(internal_models::decode_executable_body(&owner)?)?)?,
+            *body
+        );
+        assert!(internal_models::decode_executable_module(&owner).is_err());
+        let package = incan_semantics_core::executable_representation::encode_module(&expected)
+            .map_err(|error| error.to_string())?;
+        assert!(internal_models::decode_executable_module(&package).is_err());
         let installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed

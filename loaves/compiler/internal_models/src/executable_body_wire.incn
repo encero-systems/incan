@@ -1,0 +1,39 @@
+"""Graph-only Crumb roots for checked executable bodies and modules."""
+
+from rust::internal_models_native import NamespaceAtom, decode_checked_projection, encode_checked_projection, executable_type_descriptions
+from std.primitives.crumb.descriptions import Description
+from std.primitives.text import copy_frozen_bytes
+from executable_body_shapes import descriptions as body_descriptions
+from executable_declaration_shapes import descriptions as declaration_descriptions
+
+const BODY: bytes = b"\x02\xff\x73\xc4\xb3\x17\x00"
+const MODULE: bytes = b"\x70\x27\x49\xa1\x72\x4a\x00"
+
+
+def shapes(include_declarations: bool) -> list[Description]:
+    """Select the closed executable dictionary and reuse the checker-owned identity and type descriptions."""
+    mut descriptions = executable_type_descriptions(include_declarations)
+    descriptions.extend(body_descriptions())
+    if include_declarations:
+        descriptions.extend(declaration_descriptions())
+    return descriptions
+
+
+pub def encode_executable_body(value: Borrowed[NamespaceAtom]) -> Result[bytes, str]:
+    """Write a single checked body under the graph shape closure."""
+    return encode_checked_projection(copy_frozen_bytes(BODY), shapes(false), value)
+
+
+pub def decode_executable_body(encoded: Borrowed[bytes]) -> Result[NamespaceAtom, str]:
+    """Admit the exact graph body shape before exposing its executable fields."""
+    return decode_checked_projection(copy_frozen_bytes(BODY), shapes(false), encoded)
+
+
+pub def encode_executable_module(value: Borrowed[NamespaceAtom]) -> Result[bytes, str]:
+    """Write the checked module's declarations and executable bodies as one typed graph value."""
+    return encode_checked_projection(copy_frozen_bytes(MODULE), shapes(true), value)
+
+
+pub def decode_executable_module(encoded: Borrowed[bytes]) -> Result[NamespaceAtom, str]:
+    """Admit the exact graph module shape before exposing its executable fields."""
+    return decode_checked_projection(copy_frozen_bytes(MODULE), shapes(true), encoded)

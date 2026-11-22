@@ -10,11 +10,13 @@ const HEADER: str = "// Generated from internal_models/namespace_schema.incn by 
 const PREFIX: str = "incan.compiler.checked-namespace/7/"
 
 
-def label_id(name: str) -> str:
+pub def label_id(name: str) -> str:
+    """Derive the stable six-byte member identity from its schema label."""
     return hexlify(sha256.digest(name.encode()))[:12]
 
 
-def hex_literal(source: str, width: int) -> Result[str, str]:
+pub def hex_literal(source: str, width: int) -> Result[str, str]:
+    """Read one fixed-width selector in the generator's literal byte spelling."""
     if len(source) != width * 4:
         return Err("unexpected namespace selector width: " + source)
     mut result = ""
@@ -37,7 +39,8 @@ def scoped_type(name: str) -> str:
     return name
 
 
-def fields(line: str) -> Result[list[str], str]:
+pub def fields(line: str) -> Result[list[str], str]:
+    """Validate each authored field selector and format its native projection member."""
     mut output: list[str] = []
     mut selected: set[str] = set()
     for part in line.split("ModelField(identity=b\"")[1:]:

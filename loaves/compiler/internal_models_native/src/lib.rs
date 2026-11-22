@@ -150,7 +150,7 @@ pub use namespace_rows::{
 };
 pub use namespace_schema::{
     NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, NAMESPACE_SCHEMA, canonical_symbol_descriptions,
-    namespace_descriptions, namespace_field_is_canonical, namespace_root,
+    executable_type_descriptions, namespace_descriptions, namespace_field_is_canonical, namespace_root,
 };
 pub use overload_members::{
     LOOKUP_FILE, MethodLookup, MethodReads, OVERLOAD_MEMBERS, contract_output_suffix, coordinate_output_suffix,

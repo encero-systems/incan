@@ -26,6 +26,24 @@ pub fn canonical_symbol_descriptions() -> Vec<Description> {
     ]
 }
 
+/// Share the complete symbol and checked-type closure with graph executable rows.
+pub fn executable_type_descriptions(include_declarations: bool) -> Vec<Description> {
+    let mut descriptions = canonical_symbol_descriptions();
+    descriptions.extend([
+        shape_incan_callable_param(),
+        shape_incan_callable_param_kind(),
+        shape_incan_input_access(),
+        shape_incan_primitive_type(),
+        shape_incan_type(),
+        shape_numeric_type_id(),
+        shape_runtime_builtin_type(),
+    ]);
+    if include_declarations {
+        descriptions.push(shape_lifecycle_metadata());
+    }
+    descriptions
+}
+
 pub fn namespace_descriptions() -> Vec<Description> {
     vec![
         shape_access_mode(),

@@ -1,0 +1,131 @@
+"""Reproduce the exhaustive native projections from the graph's authored executable schemas."""
+
+from std.environ import args
+from std.fs import Path
+from check_support import read, repository_root
+from generate_namespace_projection import fields, hex_literal, label_id
+
+const PREFIX: str = "incan.graph.executable/1/"
+const HEADER: str = "// Generated from the Incan executable shapes by scripts/generate_executable_projection.incn."
+
+
+def omitted_fields(name: str) -> str:
+    """Name the invocation-only fields explicitly initialized by each native projection."""
+    match name:
+        "Body" => return "nominal_instantiation, trait_default_instantiation, retired_rust_facade_wire, native_attributes"
+        "BodyIrModule" => return "runtime_callable_bindings, runtime_binding_scopes, program_entrypoints, published_callables"
+        "EnumDeclaration" => return "linked_layout_witness"
+        "LoafCallable" => return "declaration_frame"
+        "NominalDeclaration" => return "linked_layout_witness, owned_callable_fields"
+        "TraitAdoption" => return "fields"
+        _ => return ""
+
+
+def finish_model(name: str, members: list[str]) -> Result[list[str], str]:
+    """Bind every persisted model field and explicitly initialize excluded native state."""
+    if name in ["LocalId", "ScopeId"]:
+        if len(members) != 1 or not members[0].startswith("arg0: "):
+            return Err("executable tuple wrapper requires one field: " + name)
+        return Ok([f"tuple_record!({name}, {members[0][6:]});", ""])
+    defaults = omitted_fields(name)
+    mut prefix = "model! { "
+    mut suffix = "} }"
+    if defaults != "":
+        prefix = "model_with_omissions! { "
+        suffix = "} default [" + defaults + "] }"
+    mut result = [prefix + name + " {"]
+    for member in members:
+        result.append("    " + member + ",")
+    result.extend([suffix, ""])
+    return Ok(result)
+
+
+def variant(line: str) -> Result[str, str]:
+    """Validate the exact alternative selector and retain its tuple or named-field payload."""
+    parts = line.split("\"")
+    if not line.startswith("variant_schema(b\"") or len(parts) < 5:
+        return Err("invalid executable alternative: " + line)
+    name = parts[3]
+    key = hex_literal(parts[1], 6)?
+    if key != label_id(name):
+        return Err("invalid executable alternative selector: " + name)
+    payload = fields(line)?
+    mut suffix = ""
+    if len(payload) > 0:
+        if payload[0].startswith("arg0: "):
+            for index in range(len(payload)):
+                if not payload[index].startswith(f"arg{index}: "):
+                    return Err("executable alternative skips a tuple member: " + name)
+            suffix = " (" + ", ".join(payload) + ")"
+        else:
+            suffix = " { " + ", ".join(payload) + " }"
+    return Ok(f"    {name} = 0x{key}{suffix},")
+
+
+def projections(source: str) -> Result[Dict[str, list[str]], str]:
+    """Read explicit model and variant declarations and refuse duplicate or mismatched selectors."""
+    mut result: Dict[str, list[str]] = {}
+    mut owner = ""
+    mut is_model = false
+    mut members: list[str] = []
+    mut alternatives: list[str] = []
+    for raw in source.split("\n"):
+        line = raw.strip()
+        if line.startswith("return model_description(") or line.startswith("return enum_schema("):
+            parts = line.split("\"")
+            if owner != "" or len(parts) != 5 or not parts[3].startswith(PREFIX):
+                return Err("invalid executable shape: " + line)
+            owner = parts[3][len(PREFIX):]
+            key = hex_literal(parts[1], 7)?
+            if key != label_id(parts[3]) + "00" or owner in result:
+                return Err("invalid or duplicate executable root: " + owner)
+            is_model = line.startswith("return model_description(")
+            members = []
+            alternatives = []
+        elif owner != "":
+            if line == "])":
+                if owner == "CompilerNodeId":
+                    if members != ["kind: 0x0b27c158feb3", "path: 0xa0af9f865bf6"]:
+                        return Err("executable compiler node fields differ from the native adapter")
+                    result[owner] = []
+                elif is_model:
+                    result[owner] = finish_model(owner, members)?
+                else:
+                    result[owner] = ["sum! { " + owner + " {"] + alternatives + ["} }", ""]
+                owner = ""
+            elif is_model:
+                cell = fields(line)?
+                if len(cell) != 1 or cell[0] in members:
+                    return Err("invalid or duplicate executable member: " + line)
+                members.append(cell[0])
+            else:
+                item = variant(line)?
+                if item in alternatives:
+                    return Err("duplicate executable alternative: " + line)
+                alternatives.append(item)
+    if owner != "" or len(result) == 0:
+        return Err("incomplete executable schema closure")
+    return Ok(result)
+
+
+def run(root: Path, check: bool) -> Result[None, str]:
+    """Regenerate the Rust projections or check their complete bytes."""
+    schemas = root.joinpath("loaves/compiler/internal_models/src")
+    source = read(schemas.joinpath("executable_body_shapes.incn"))? + read(schemas.joinpath("executable_declaration_shapes.incn"))?
+    generated = projections(source)?
+    mut lines = [str(HEADER), ""]
+    for name in sorted([name for name in generated.keys()]):
+        lines.extend(generated[name])
+    expected = "\n".join(lines)
+    target = root.joinpath("loaves/compiler/incan_frontend/src/typechecker/dependency_interface/checked_namespace/wire/executable_projection.rs")
+    if target.is_file() and read(target)? == expected:
+        return Ok(None)
+    if check:
+        return Err("native checked executable projection is stale")
+    return target.write_text(expected, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def main() -> Result[None, str]:
+    """Run the graph executable projection generator for this checkout."""
+    options = args().map_err((error) => error.message())?
+    return run(repository_root()?, "--check" in options)

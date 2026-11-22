@@ -13,6 +13,10 @@ pub enum NamespaceCell {
     Boolean(bool),
     Signed(i64),
     Unsigned(u64),
+    /// The complete signed payload of a checked integer or decimal coefficient.
+    WideSigned(i128),
+    /// The complete payload of a checked unsigned integer.
+    WideUnsigned(u128),
     Float(f64),
     None,
     Some(Box<Self>),
@@ -64,6 +68,36 @@ scalar!(bool, Boolean);
 scalar!(i64, Signed);
 scalar!(u64, Unsigned);
 scalar!(f64, Float);
+impl Project for i128 {
+    /// Carry the exact checked bits into Crumb's signed logical integer domain.
+    fn project(&self) -> Cell {
+        Cell::WideSigned(*self)
+    }
+
+    /// Restore the same value whether the wire reader could hold it in a narrow cell or needed all 128 bits.
+    fn restore(value: Cell) -> Result<Self, String> {
+        match value {
+            Cell::Signed(number) => Ok(number.into()),
+            Cell::WideSigned(number) => Ok(number),
+            _ => Err("expected checked signed integer".into()),
+        }
+    }
+}
+impl Project for u128 {
+    /// Carry the exact checked bits into Crumb's unsigned logical integer domain.
+    fn project(&self) -> Cell {
+        Cell::WideUnsigned(*self)
+    }
+
+    /// Restore an unsigned integer in its complete domain.
+    fn restore(value: Cell) -> Result<Self, String> {
+        match value {
+            Cell::Unsigned(number) => Ok(number.into()),
+            Cell::WideUnsigned(number) => Ok(number),
+            _ => Err("expected checked unsigned integer".into()),
+        }
+    }
+}
 macro_rules! unsigned {
     ($ty:ty) => {
         impl Project for $ty {
@@ -174,7 +208,8 @@ impl<T: Project + Ord> Project for BTreeSet<T> {
         Ok(items.into_iter().collect())
     }
 }
-impl<T: Project> Project for BTreeMap<String, T> {
+impl<K: Project + Ord, T: Project> Project for BTreeMap<K, T> {
+    /// Project each key and its binding without substituting a text rendering of the key.
     fn project(&self) -> Cell {
         Cell::Map(
             self.iter()
@@ -182,13 +217,14 @@ impl<T: Project> Project for BTreeMap<String, T> {
                 .collect(),
         )
     }
+    /// Restore the typed map and refuse duplicate keys in their semantic domain.
     fn restore(value: Cell) -> Result<Self, String> {
         let Cell::Map(entries) = value else {
             return Err("expected namespace map".into());
         };
         let mut result = Self::new();
         for (key, value) in entries {
-            let key = String::restore(key)?;
+            let key = K::restore(key)?;
             if result.insert(key, T::restore(value)?).is_some() {
                 return Err("duplicate namespace map key".into());
             }
@@ -221,8 +257,14 @@ macro_rules! sum { ($ty:ty { $($v:ident = $tag:literal $( ( $($p:ident : $pid:li
     fn restore(value:Cell)->Result<Self,String>{let Cell::Variant(tag,fields)=value else{return Err(concat!("expected namespace sum ",stringify!($ty)).into())};match tag { $($tag=>{let [$($($p),*)? $($($f),*)?]=read_fields(fields,[$($($pid),*)? $($($fid),*)?])?;Ok(Self::$v $( ( $(Project::restore($p)?),* ) )? $( { $($f:Project::restore($f)?),* } )?)},)* _=>Err(concat!("unknown namespace alternative for ",stringify!($ty)).into())} }
 }}; }
 
+mod atoms;
 pub(crate) mod callable_fields;
 mod declarations;
+mod executable;
+pub use atoms::{to_atom, to_cell};
+pub use executable::{
+    executable_body_value, executable_module_value, restore_executable_body_value, restore_executable_module_value,
+};
 
 pub(super) fn project(value: &super::CheckedNamespaceInterface) -> NamespaceCell {
     value.project()
