@@ -3,8 +3,10 @@ The unit options a records request carries to the engine: the features, program 
 parsed, in one canonical spelling, so every spelling of one unit names one engine unit and one project view.
 """
 
+from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
+from clove_units import C_COMPILER_OVERRIDE
 from features import FeatureRequest
 from unit_options import Options
 
@@ -15,6 +17,8 @@ pub model UnitOptions:
     pub request: FeatureRequest = FeatureRequest()
     pub program_entries: list[str] = []
     pub interop_target: str = ""
+    # The caller's `INCAN_C_COMPILER`, which selects how a Clove is compiled; the engine's own environment never does.
+    pub c_compiler: str = ""
 
 
 pub def unit_options_text(options: Options) -> Result[str, str]:
@@ -27,17 +31,20 @@ pub def unit_options_text(options: Options) -> Result[str, str]:
     mut entries: list[str] = []
     for entry in options.program_entries:
         entries.append(Path(entry).absolute().map_err((error) => f"cannot {error.message()}")?.0)
+    c_compiler = get_or(str(C_COMPILER_OVERRIDE), "")
     if (
         len(features) == 0
         and request.default_features
         and not request.all_features
         and len(entries) == 0
         and options.interop_target == ""
+        and c_compiler == ""
     ):
         return Ok("")
     document = JsonValue.object(
         {
             "all_features": JsonValue.bool(request.all_features),
+            "c_compiler": JsonValue.string(c_compiler),
             "default_features": JsonValue.bool(request.default_features),
             "features": JsonValue.array([JsonValue.string(feature) for feature in features]),
             "interop_target": JsonValue.string(options.interop_target),
@@ -61,6 +68,9 @@ pub def decode_unit_options(text: str) -> Result[UnitOptions, str]:
             ),
             program_entries=texts(document, "program_entries")?,
             interop_target=document.require("interop_target").and_then((field) => field.expect_str()).map_err(
+                (error) => f"unit options: {error.message()}",
+            )?,
+            c_compiler=document.require("c_compiler").and_then((field) => field.expect_str()).map_err(
                 (error) => f"unit options: {error.message()}",
             )?,
         ),
