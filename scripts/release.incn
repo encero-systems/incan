@@ -488,10 +488,7 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
     require_unique_runtime_root(context)?
-    # The seed's own shipped standard Loaves stand in for any whose unit identity they carry; the candidate's standard
-    # build after the driver build still compiles every one of them.
-    seed_loaves = run.seed_home.joinpath(seed_toolchain_directory(run.seed_home)?).joinpath("loaves")
-    build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure), seed_loaves)?
+    build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
     return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
 
 

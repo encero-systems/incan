@@ -77,9 +77,6 @@ model PreparedStandardPackage:
     requested_graph: bool
     temporary: TemporaryDirectory
     child: Step
-    # The seed's shipped profile directory that stands in for the compile, when its payloads carry this identity.
-    reuse: Option[Path] = None
-    identity: str = ""
 
 
 pub enum StandardProfile(str):
@@ -156,22 +153,17 @@ pub def build_standard_packages(
     helper: Path,
     phase_prefix: str,
     profiles: list[StandardProfile],
-    seed_loaves: Path = Path(""),
 ) -> Result[None, str]:
-    """
-    Build each profile in dependency-ready waves while compiling independent standard packages concurrently. With
-    `seed_loaves`, a package whose computed unit identity every payload of the seed's shipped build names takes those
-    payloads instead of compiling, and the reuse is named in the timings; any other package is compiled.
-    """
+    """Build each profile in dependency-ready waves while compiling independent standard packages concurrently."""
     standards = context.evidence.joinpath(f"{phase_prefix}standards")
     standards.mkdir(true, true).map_err((error) => error.message())?
     for selected in profiles:
         profile = standard_profile_name(selected)
         admitted = standards.joinpath(f"{profile}-admitted.txt")
         admitted.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
-        build_standard_package(context, helper, STANDARD_PACKAGES[0], profile, admitted, phase_prefix, seed_loaves)?
+        build_standard_package(context, helper, STANDARD_PACKAGES[0], profile, admitted, phase_prefix)?
         for wave in standard_build_waves():
-            build_standard_wave(context, helper, wave, profile, admitted, phase_prefix, seed_loaves)?
+            build_standard_wave(context, helper, wave, profile, admitted, phase_prefix)?
     return Ok(None)
 
 
@@ -448,14 +440,10 @@ def build_standard_package(
     profile: str,
     admitted: Path,
     phase_prefix: str,
-    seed_loaves: Path = Path(""),
 ) -> Result[None, str]:
-    """Describe, compile or reuse, publish, and atomically select one standard package profile."""
-    prepared = prepare_standard_package(context, helper, package, profile, admitted, phase_prefix, seed_loaves)?
-    if prepared.reuse is None:
-        require_native_step(context, prepared.child)?
-    else:
-        take_seed_payloads(context, prepared)?
+    """Describe, compile, publish, and atomically select one standard package profile."""
+    prepared = prepare_standard_package(context, helper, package, profile, admitted, phase_prefix)?
+    require_native_step(context, prepared.child)?
     return complete_standard_package(context, helper, prepared, admitted)
 
 
@@ -466,12 +454,8 @@ def prepare_standard_package(
     profile: str,
     admitted: Path,
     phase_prefix: str,
-    seed_loaves: Path = Path(""),
 ) -> Result[PreparedStandardPackage, str]:
-    """
-    Describe and identify one standard unit in a private directory without publishing partial outputs, and find the
-    seed's shipped build of exactly that identity when `seed_loaves` names the seed's Loaves.
-    """
+    """Describe and identify one standard unit in a private directory without publishing partial outputs."""
     project = context.repo.joinpath(f"loaves/stdlib/{package}")
     if not project.joinpath("loaf.toml").is_file():
         return Err(f"unknown standard package: {package}")
@@ -496,7 +480,6 @@ def prepare_standard_package(
     )?
     write_json(unit, prepared)?
     identify(context, helper, unit, false, f"std-{package}-{profile}-identify")?
-    identity = Path(f"{unit.0}.identity").read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
     phase = f"{phase_prefix}std-{package}-{profile}"
     return Ok(
         PreparedStandardPackage(
@@ -509,55 +492,7 @@ def prepare_standard_package(
             requested_graph=requested_graph,
             temporary=temporary,
             child=compile_library_step(context, driver, sysroot, unit, name, staged, phase)?,
-            reuse=seed_reusable(seed_loaves, name, profile, identity)?,
-            identity=identity,
         ),
-    )
-
-
-pub def seed_reusable(loaves: Path, name: str, profile: str, identity: str) -> Result[Option[Path], str]:
-    """
-    The seed's shipped profile directory of standard Loaf `name`, when every payload in it carries a publication stamp
-    naming exactly `identity`, the unit identity this build computed; otherwise none, and the Loaf is compiled.
-    """
-    if loaves.0 == "" or identity == "":
-        return Ok(None)
-    directory = loaves.joinpath(name).joinpath(profile)
-    if directory.is_symlink() or not directory.is_dir():
-        return Ok(None)
-    mut payloads = 0
-    for entry in directory.iterdir().map_err((error) => error.message())?:
-        file = entry.name()
-        if file.endswith(".oven-unit"):
-            continue
-        stamp = directory.joinpath(f"{file}.oven-unit")
-        if entry.is_symlink() or not entry.is_file() or not stamp.is_file():
-            return Ok(None)
-        if manifest_text(read_json(stamp)?, "unit")? != identity:
-            return Ok(None)
-        payloads += 1
-    if payloads == 0:
-        return Ok(None)
-    return Ok(Some(directory))
-
-
-pub def seed_reuse_row(name: str, profile: str, identity: str) -> str:
-    """The timing row of one reused seed standard Loaf, naming the Loaf, its profile and its identity."""
-    return f"seed-std-reused/{name}/{profile}/{identity}"
-
-
-def take_seed_payloads(context: NativeContext, package: PreparedStandardPackage) -> Result[None, str]:
-    """Copy the seed's shipped payloads of this identity into the private build directory, in place of compiling."""
-    started = Instant.now()
-    match package.reuse:
-        None => return Err(f"no seed build of {package.name} to reuse")
-        Some(shipped) =>
-            for entry in shipped.iterdir().map_err((error) => error.message())?:
-                _ = entry.copy(package.staged.joinpath(entry.name()), true, true).map_err((error) => error.message())?
-    return append_timing(
-        context.timings,
-        seed_reuse_row(package.name, package.profile, package.identity),
-        started.elapsed().as_secs_f64(),
     )
 
 
@@ -586,28 +521,20 @@ def build_standard_wave(
     profile: str,
     admitted: Path,
     phase_prefix: str,
-    seed_loaves: Path = Path(""),
 ) -> Result[None, str]:
-    """Describe, compile or reuse, and publish one dependency-ready wave before dependent package descriptions begin."""
+    """Describe, compile, and publish one dependency-ready wave before dependent package descriptions begin."""
     mut prepared: list[PreparedStandardPackage] = []
     for package in packages:
-        prepared.append(prepare_standard_package(context, helper, package, profile, admitted, phase_prefix, seed_loaves)?)
+        prepared.append(prepare_standard_package(context, helper, package, profile, admitted, phase_prefix)?)
     run_standard_compiles(context, prepared)?
-    for package in prepared:
-        if package.reuse is not None:
-            take_seed_payloads(context, package)?
     for package in prepared:
         complete_standard_package(context, helper, package, admitted)?
     return Ok(None)
 
 
 def run_standard_compiles(context: NativeContext, packages: list[PreparedStandardPackage]) -> Result[None, str]:
-    """Compile independent standard units together under the release's count and memory reservations; a reused one is not."""
-    planned = [
-        ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES)
-        for package in packages
-        if package.reuse is None
-    ]
+    """Compile independent standard units together under the release's count and memory reservations."""
+    planned = [ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES) for package in packages]
     return require_reserved_success(context, planned)
 
 

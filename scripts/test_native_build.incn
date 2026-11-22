@@ -1,13 +1,9 @@
 """Verify how native release production schedules the shipped tools beside the debug standard providers."""
 
-from std.fs import Path
-from std.tempfile import TemporaryDirectory
 from native_build import (
     PROJECT_RESERVATION_BYTES,
     STANDARD_RESERVATION_BYTES,
     ShippedToolOverlap,
-    seed_reusable,
-    seed_reuse_row,
     shipped_tool_overlap,
 )
 
@@ -28,44 +24,4 @@ def test_oven_starts_first_and_never_waits_for_the_debug_providers_it_does_not_r
     assert shipped_tool_overlap(3, one_beside) == ShippedToolOverlap.OvenBeside
     assert shipped_tool_overlap(3, one_beside + PROJECT_RESERVATION_BYTES) == ShippedToolOverlap.AllBeside
     assert shipped_tool_overlap(4, one_beside - 1) == ShippedToolOverlap.Serial
-    return Ok(None)
-
-
-def stamp(directory: Path, name: str, identity: str) -> Result[None, str]:
-    """Write one shipped payload and its publication stamp naming `identity`."""
-    directory.mkdir(true, true).map_err((error) => error.message())?
-    directory.joinpath(name).write_text("payload", "utf-8", "strict", None).map_err((error) => error.message())?
-    stamp_text = f"{{\"schema\":\"incan.oven.unit-publication/1\",\"unit\":\"{identity}\",\"payload\":\"p\"}}"
-    return directory.joinpath(f"{name}.oven-unit").write_text(stamp_text, "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )
-
-
-def test_a_seed_standard_loaf_is_reused_only_when_every_shipped_payload_names_the_computed_identity() -> Result[None, str]:
-    """
-    The seed's shipped profile directory stands in for a build only when each of its payloads carries a publication
-    stamp naming exactly the identity this build computed; any other directory, or none, is built.
-    """
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    loaves = temporary.path().joinpath("loaves")
-    shipped = loaves.joinpath("incan_stdlib_testing/release")
-    identity = "sha256:aaaa"
-    stamp(shipped, "libincan_stdlib_testing.rlib", identity)?
-    stamp(shipped, "incan_stdlib_testing.incnlib", identity)?
-    match seed_reusable(loaves, "incan_stdlib_testing", "release", identity)?:
-        Some(found) => assert found.0 == shipped.0
-        None => return Err("a seed build carrying the computed identity was not reused")
-    assert seed_reusable(loaves, "incan_stdlib_testing", "release", "sha256:bbbb")? is None
-    assert seed_reusable(loaves, "incan_stdlib_testing", "debug", identity)? is None
-    assert seed_reusable(loaves, "incan_stdlib_web", "release", identity)? is None
-    assert seed_reusable(Path(""), "incan_stdlib_testing", "release", identity)? is None
-    stamp(shipped, "incan_stdlib_testing.rustabi", "sha256:other")?
-    assert seed_reusable(loaves, "incan_stdlib_testing", "release", identity)? is None
-    unstamped = loaves.joinpath("incan_stdlib_data/release")
-    stamp(unstamped, "libincan_stdlib_data.rlib", identity)?
-    unstamped.joinpath("incan_stdlib_data.incnlib").write_text("payload", "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
-    assert seed_reusable(loaves, "incan_stdlib_data", "release", identity)? is None
-    assert seed_reuse_row("incan_stdlib_testing", "release", identity) == f"seed-std-reused/incan_stdlib_testing/release/{identity}"
     return Ok(None)
