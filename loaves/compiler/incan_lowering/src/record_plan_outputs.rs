@@ -4,19 +4,22 @@
 //! declaration, an entry binding for the ordinary `main`, and the native interface Bakery admits the unit by.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use incan_mir_plan_native::{
-    ADMITTED_DEFINITIONS, AdmittedDefinition, Function, INTERFACE_REPORT, LoweringEvent, NATIVE_DEFINITIONS,
-    NativeInterface, NominalKind, NominalReference, Plan, PlanType, REPOSITION_MODULE_PAGE, carrier_position,
-    decode_lowering_event, decode_lowering_refusal, decode_plan_function_record, decode_plan_module,
-    encode_admitted_definitions, encode_entry_record, encode_lowering_event, encode_native_interface,
-    encode_record_plan_products, is_carrier_index, place_admitted_event, product_frame_names, verify_entry_record,
+    ADMITTED_DEFINITIONS, AdmittedDefinition, CompactAdmissionPin, Function, INTERFACE_REPORT, LoweringEvent,
+    NATIVE_DEFINITIONS, NativeInterface, NominalKind, NominalReference, Plan, PlanType, REPOSITION_MODULE_PAGE,
+    carrier_position, compact_admission_pin, decode_lowering_event, decode_lowering_refusal,
+    decode_plan_function_record, decode_plan_module, encode_admitted_definitions, encode_entry_record,
+    encode_lowering_event, encode_native_interface, encode_record_plan_products, is_carrier_index,
+    place_admitted_event, product_frame_names, verify_entry_record,
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
-use crate::plan_modules::{AdmittedProduct, PlanAdmissions, SettledModule, admitted_plan_page, module_page};
+use crate::plan_modules::{
+    AdmittedProduct, PlanAdmissions, SettledModule, admitted_plan_page, module_page, publish_settled_module_note,
+};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::positioned_product;
 use crate::scalar_store::{event_positions, event_references, finalized_plan_product, report_scalar_refusal};
@@ -30,22 +33,16 @@ pub fn publish_plan_records(
     products: &str,
     report: &str,
     admissions: &PlanAdmissions,
-) -> Result<(), String> {
+) -> Result<Option<CompactAdmissionPin>, String> {
     let report_path = Path::new(report);
     let mut events = scalar_events(report_path)?;
-    let restored = append_admitted_events(
-        &mut events,
-        products,
-        report_path,
-        plan.functions.len(),
-        admissions.modules(),
-    )?;
+    let publication = append_admitted_events(&mut events, products, report_path, plan.functions.len(), admissions)?;
     // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface. Only a
     // unit whose every function has an event can publish one; otherwise no placed product is kept for it.
     let publishable = events.len() == plan.functions.len();
     let admitted = AdmittedProducts {
         publishable,
-        restored: &restored,
+        restored: &publication.restored,
     };
     let mut references = Vec::new();
     let mut carried = Vec::new();
@@ -58,9 +55,10 @@ pub fn publish_plan_records(
         &mut references,
         &mut carried,
     )?;
-    publish_native_definitions(plan, report_path, &events, &restored)?;
+    publish_native_definitions(plan, report_path, &events, &publication.restored)?;
     if !publishable {
-        return refuse_interface(plan, report, &events, &carried);
+        refuse_interface(plan, report, &events, &carried)?;
+        return Ok(publication.compact);
     }
     if keyed.len() != plan.functions.len() {
         return Err("native-interface has an unwitnessed plan-function member".into());
@@ -70,14 +68,18 @@ pub fn publish_plan_records(
     // compiles exactly as it would have.
     let main = match ordinary_entry(plan) {
         Ok(main) => main,
-        Err(refusal) => return report_scalar_refusal(Some(report), INTERFACE_IDENTITY, "main", &refusal),
+        Err(refusal) => {
+            report_scalar_refusal(Some(report), INTERFACE_IDENTITY, "main", &refusal)?;
+            return Ok(publication.compact);
+        }
     };
     let interface_attempt = enter_producer("compiler", "native-interface", report, "encode");
     let encoded = match encode_record_plan_products(plan, keyed, references) {
         Ok(encoded) => encoded,
         Err(refusal) => {
             finish_producer(interface_attempt, "refused");
-            return report_scalar_refusal(Some(report), INTERFACE_IDENTITY, INTERFACE_IDENTITY, &refusal);
+            report_scalar_refusal(Some(report), INTERFACE_IDENTITY, INTERFACE_IDENTITY, &refusal)?;
+            return Ok(publication.compact);
         }
     };
     finish_producer(interface_attempt, "produced");
@@ -134,7 +136,8 @@ pub fn publish_plan_records(
     write(
         &report_path.join(INTERFACE_REPORT),
         &encode_native_interface(&interface)?,
-    )
+    )?;
+    Ok(publication.compact)
 }
 
 /// Name a native input for every plan function no event names, so native incremental reuse can track every definition
@@ -468,6 +471,12 @@ fn plan_positions(plan: &Plan, base: usize, references: &[NominalReference]) -> 
     Ok(placed)
 }
 
+/// The product evidence and independently hashed compact set from the same settled publication pass.
+struct AdmittedPublication<'a> {
+    restored: HashMap<&'a str, &'a AdmittedProduct>,
+    compact: Option<CompactAdmissionPin>,
+}
+
 /// Add settled definitions for functions restored through a module page. When the plan contains functions with no
 /// witnessed product, the native publisher needs only the already checked keys, digests and helper names. A possible
 /// complete interface still reads the authoritative products and applies their current positions.
@@ -476,21 +485,24 @@ fn append_admitted_events<'a>(
     products: &str,
     report: &Path,
     functions_in_plan: usize,
-    admissions: &'a BTreeMap<String, SettledModule>,
-) -> Result<HashMap<&'a str, &'a AdmittedProduct>, String> {
+    admissions: &'a PlanAdmissions,
+) -> Result<AdmittedPublication<'a>, String> {
     let mut reported: HashSet<String> = events.iter().map(|event| event.function.clone()).collect();
     let mut definitions = Vec::new();
     let mut restored = HashMap::new();
-    let candidates = admissions
+    let mut compact_notes = Vec::new();
+    let modules = admissions.modules();
+    let candidates = modules
         .values()
         .map(|module| module.note.functions.len())
         .sum::<usize>();
     let needs_products = functions_in_plan <= events.len() + candidates;
-    for SettledModule {
-        note,
-        products: settled,
-    } in admissions.values()
-    {
+    for module in modules.values() {
+        let SettledModule {
+            note,
+            products: settled,
+            ..
+        } = module;
         let path = module_page(products, &note.module);
         if path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE) && !note.inspected {
             return Err("inspected module lacks its placement report".into());
@@ -505,6 +517,10 @@ fn append_admitted_events<'a>(
                 .map(|function| (function.function.as_str(), function.event.as_slice()))
                 .collect::<HashMap<_, _>>()
         });
+        let compact = publish_settled_module_note(products, report, module, &reported)?;
+        if let Some(digest) = compact {
+            compact_notes.push((note.module.as_str(), digest));
+        }
         for (function, product) in note.functions.iter().zip(settled) {
             if reported.contains(&function.function) {
                 continue;
@@ -534,12 +550,14 @@ fn append_admitted_events<'a>(
             };
             event.reused = true;
             event.admitted = true;
-            definitions.push(AdmittedDefinition {
-                function: function.function.clone(),
-                identity: function.identity.clone(),
-                key: event.key.clone(),
-                digest: product.digest.clone(),
-            });
+            if compact.is_none() {
+                definitions.push(AdmittedDefinition {
+                    function: function.function.clone(),
+                    identity: function.identity.clone(),
+                    key: event.key.clone(),
+                    digest: product.digest.clone(),
+                });
+            }
             events.push(event);
             reported.insert(function.function.clone());
             restored.insert(function.function.as_str(), product);
@@ -554,11 +572,18 @@ fn append_admitted_events<'a>(
     if crate::trace_channel::tracing_products() {
         let counts = serde_json::json!({
             "admitted_functions": restored.len(),
-            "full_page_selections": if needs_products { admissions.len() } else { 0 },
+            "compact_modules": compact_notes.len(),
+            "full_page_selections": if needs_products { modules.len() } else { 0 },
         });
         crate::trace_channel::emit("admitted_plan_publication", "", &counts.to_string());
     }
-    Ok(restored)
+    Ok(AdmittedPublication {
+        restored,
+        compact: admissions
+            .selection()
+            .map(|_| compact_admission_pin(compact_notes))
+            .transpose()?,
+    })
 }
 
 #[cfg(test)]

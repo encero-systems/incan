@@ -322,7 +322,7 @@ pub fn publish_plan_records(
     products: &str,
     report: &str,
     admissions: &PlanAdmissions,
-) -> Result<(), String> {
+) -> Result<Option<incan_mir_plan_native::CompactAdmissionPin>, String> {
     record_plan_outputs::publish_plan_records(plan, products, report, admissions)
 }
 
