@@ -126,6 +126,16 @@ impl TypeChecker {
         }
     }
 
+    /// The first argument a call written inside `span` lends to a caller-visible `mut` parameter, with that
+    /// parameter's name. A task made from such a call holds the loan until it completes.
+    pub(in crate::typechecker) fn mut_argument_lent_inside(&self, span: Span) -> Option<(Span, String)> {
+        self.mutation
+            .pending
+            .iter()
+            .find(|argument| span.start <= argument.span.start && argument.span.end <= span.end)
+            .map(|argument| (argument.span, argument.param.clone()))
+    }
+
     /// Report whether a native field argument is projected through a shared native receiver.
     ///
     /// Its source-facing collection may be cloneable, but the retained native place is still a loan from the owner;

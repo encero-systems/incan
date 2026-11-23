@@ -364,3 +364,26 @@ pub fn argument_is_not_a_task(callee: &str, argument: TaskArgument<'_>, span: Sp
             "A task is a direct call of an `async def` written as the argument, a JoinHandle, or another awaitable value",
         )
 }
+
+/// Report a task whose call lends an argument to a caller-visible `mut` parameter, such as `spawn(fill(cart))` when
+/// `fill` declares `mut cart` (RFC 129).
+///
+/// `span` is the call given as the task and `argument` the lent argument. The task may still run after the caller's
+/// value is gone, so only a direct `await` of the call may hold that loan.
+pub fn task_lends_mut_argument(callee: &str, parameter: &str, span: Span, argument: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "'{callee}' cannot run this task: the call lends an argument to the `mut` parameter '{parameter}', and \
+             the task may outlive the value it changes"
+        ),
+        span,
+    )
+    .with_stable_code(TASK_ARGUMENT_CODE)
+    .with_primary_label("this call would change its argument from inside the task")
+    .with_related_span(argument, format!("lent to the `mut` parameter '{parameter}'"))
+    .with_hint("Await the call directly, or have the task build the value and return it")
+    .with_note(
+        "A call that changes its caller's value holds that value until it completes, so it is awaited where it is \
+         written",
+    )
+}

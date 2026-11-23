@@ -123,6 +123,9 @@ pub def lower_assignment(
                             return Ok(None)
                         None => pass
             _ => pass
+    match mut_parameter_slot(builder, destination):
+        Some(slot) => return mut_parameter_assignment(module, builder, slot, value, span)
+        None => pass
     target = assignment_place(builder, destination, span)?
     match value:
         RustRvalue.Match(scrutinee=scrutinee, arms=arms) =>
@@ -130,6 +133,52 @@ pub def lower_assignment(
         _ => pass
     lower_local_assignment(module, builder, target, value, span)?
     inherit_borrowed_item(builder, target, value)
+    return Ok(None)
+
+
+def mut_parameter_slot(builder: &Builder, destination: &RustPlace) -> Option[int]:
+    """The frame slot of the caller-visible `mut` parameter a whole assignment names: it holds an exclusive borrow."""
+    if len(destination.projection) != 0:
+        return None
+    match destination.local_id():
+        Some(local) =>
+            index = int(local.index()) + 1 + builder.local_offset
+            if index > builder.parameter_count or index in builder.reference_values:
+                return None
+            if is_exclusive_borrow(borrowed_at(builder.locals, index).ty):
+                return Some(index)
+        None => pass
+    return None
+
+
+def mut_parameter_assignment(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    slot: int,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Replace the caller's value through a `mut` parameter's exclusive borrow (RFC 129): the replacement is evaluated
+    first, then the value the caller owns is dropped and overwritten where it lives; the borrow itself stays.
+    """
+    referent, writable = reference_contract(borrowed_at(builder.locals, slot).ty)?
+    if not writable:
+        return Err("unsupported Body IR assignment through a shared parameter reference")
+    replacement = temporary(builder, referent, span)
+    lower_local_assignment(module, builder, replacement, value, span)?
+    argument = element_plan_operand(
+        builder,
+        read_place(replacement, replacement.local in builder.owned, span),
+        referent,
+        span,
+    )?
+    target = dereferenced_place(plan_place(slot, span), referent, span)?
+    operation = RvalueKind.Use(argument)
+    if referent == PlanType.String or is_owned_list(referent) or is_owned_collection(referent) or is_nominal_type(referent):
+        replace_owned_destination(builder, target, operation, span)
+    else:
+        builder.emit(plan_assign(target, operation, span))
     return Ok(None)
 
 

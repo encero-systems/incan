@@ -4,7 +4,6 @@ from pub::incan_mir_plan import carrier_position
 from rust::incan_semantics_core import (
     IncanType as RustType,
     IncanPrimitiveType as Primitive,
-    IncanCallableParamKind,
     IncanInputAccess,
     SemanticSourceTargetKind,
 )
@@ -45,6 +44,8 @@ from frame import (
 from models import place_type
 from table_views import borrowed_table, borrowed_at
 from explicit_arguments import direct_view_access
+from call_arguments import stored_parameter_type
+from closures import parameter_representation
 
 
 pub def is_future(ty: PlanType) -> bool:
@@ -99,21 +100,18 @@ def capture_types(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """
-    Retain owned captures, including declaration-owned rest packs, and at most one nominal loan. An explicit borrowed
-    input is captured as its loan, which the future holds until it completes.
+    Capture each parameter in the storage the coroutine's own frame gives it: owned values, including read-only
+    collections and declaration-owned rest packs, the exclusive borrow of a caller-visible `mut` parameter, and at most
+    one nominal loan. An explicit borrowed input is captured as its loan, which the future holds until it completes.
     """
     mut fields: list[PlanType] = []
     mut loans = 0
     nominals = borrowed_table(module.nominal_declarations)
     enums = borrowed_table(module.enum_declarations)
     for parameter in body.params:
-        mut ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
-        match parameter.input_access:
-            IncanInputAccess.Shared => ty = shared_receiver_type(ty)?
-            IncanInputAccess.InferredShared => ty = shared_receiver_type(ty)?
-            IncanInputAccess.Exclusive => ty = mutable_receiver_type(ty)?
-            _ => pass
-        validate_collection_capture(parameter.kind, ty)?
+        slot = int(parameter.local.index())
+        declared = frame_type(constructors, nominals, enums, body.locals[slot], intrinsics)?
+        ty = stored_parameter_type(body, parameter, parameter_representation(body, slot, declared)?)?
         match ty:
             PlanType.ModelRef(_owner, _name) => loans += 1
             PlanType.ModelMutRef(_owner, _name) => loans += 1
@@ -124,20 +122,6 @@ def capture_types(
     if loans > 1:
         return Err("unsupported Body IR async future with multiple borrowed captures")
     return Ok(fields)
-
-
-def validate_collection_capture(kind: IncanCallableParamKind, ty: PlanType) -> Result[None, str]:
-    """Rest parameters own their checked packs; ordinary collection parameters retain caller-owned borrows."""
-    match ty:
-        PlanType.List(_leaf, _depth) =>
-            if kind != IncanCallableParamKind.RestPositional:
-                return Err("unsupported Body IR async borrowed list capture")
-        PlanType.Dict(_key, _value) =>
-            if kind != IncanCallableParamKind.RestKeyword:
-                return Err("unsupported Body IR async borrowed dictionary capture")
-        PlanType.Set(_leaf) => return Err("unsupported Body IR async borrowed set capture")
-        _ => pass
-    return Ok(None)
 
 
 pub def validate_futures(

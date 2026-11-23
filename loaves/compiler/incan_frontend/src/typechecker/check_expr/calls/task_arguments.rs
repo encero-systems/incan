@@ -4,6 +4,8 @@
 //! a task from a value. A task argument is therefore admitted exactly when `await` would admit the same expression: a
 //! direct async call, a value whose type is awaitable (a `JoinHandle[T]`, a Rust-origin future), or a type parameter,
 //! which its own bounds govern. Anything else is refused with `INCAN-T0115`, naming the argument as written (#1772).
+//! A direct async call that lends an argument to a caller-visible `mut` parameter is refused with the same code: the
+//! task may outlive the value it would change.
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Spanned};
@@ -53,6 +55,14 @@ impl TypeChecker {
         expr: &Spanned<Expr>,
         arg_ty: &ResolvedType,
     ) -> bool {
+        // A task may outlive the call that starts it, so it cannot hold the loan a `mut` parameter takes (RFC 129).
+        if self.expr_is_async_call_realization(expr)
+            && let Some((argument, parameter)) = self.mut_argument_lent_inside(expr.span)
+        {
+            self.errors
+                .push(errors::task_lends_mut_argument(callee, &parameter, expr.span, argument));
+            return true;
+        }
         if self.task_argument_is_admitted(expr, arg_ty) {
             return false;
         }

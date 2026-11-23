@@ -464,18 +464,20 @@ pub(super) const ARGUMENT_IS_NOT_A_TASK: DiagnosticCatalogEntry = DiagnosticCata
     title: "Argument is not a task",
     severity: "error",
     phase: "typecheck",
-    summary: "A function value, or a value of a type that is not awaitable, is passed where a task is required.",
-    explanation: "`spawn`, `timeout`, `timeout_ms`, `race_timeout` and `arm` take a task: a direct call of an `async def` written as the argument, a `JoinHandle[T]`, or another awaitable value. An `async def` named without being called is the function, not the task; a name bound to a call's result is typed as that result, not as a task; a function that is not `async def`, or a value such as an `int`, is not awaitable at all.",
+    summary: "A function value, a value of a type that is not awaitable, or a call that lends an argument to a `mut` parameter is passed where a task is required.",
+    explanation: "`spawn`, `timeout`, `timeout_ms`, `race_timeout` and `arm` take a task: a direct call of an `async def` written as the argument, a `JoinHandle[T]`, or another awaitable value. An `async def` named without being called is the function, not the task; a name bound to a call's result is typed as that result, not as a task; a function that is not `async def`, or a value such as an `int`, is not awaitable at all. A direct call that passes an argument to a `mut` parameter the caller sees is refused too: the task may outlive the value it would change, so only a direct `await` holds that argument.",
     examples: &[
         "import std.async\nfrom std.async.task import spawn\n\nasync def work() -> int:\n    return 41\n\nasync def main() -> None:\n    handle = spawn(work)",
     ],
     common_causes: &[
         "Passing an async function by name instead of calling it.",
         "Passing the result of a function that is not `async def`.",
+        "Giving a task helper a call that changes its argument through a `mut` parameter.",
     ],
     fixes: &[
         "Call the async function where it is passed: `spawn(work())`.",
         "Declare the function with `async def`, or run blocking work with `spawn_blocking`.",
+        "Await a call that changes its argument directly, or have the task build the value and return it.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/stdlib/async/"),
 };

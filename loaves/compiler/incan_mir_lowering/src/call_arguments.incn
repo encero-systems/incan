@@ -78,10 +78,11 @@ pub def call_parameter_type(
 
 pub def stored_parameter_type(body: RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
     """
-    A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
+    A deferred producer and a coroutine own their value parameters; ordinary frames retain the shared collection ABI.
 
     Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
-    generator never captures a borrow of a caller's list snapshot. Explicit inputs select their checked access first;
+    generator or spawned future never captures a borrow of a caller's list snapshot. A coroutine's `mut` parameter stays
+    the exclusive borrow of the caller's value. Explicit inputs select their checked access first;
     deferred producers still refuse that contract until retained dependencies are represented. Inferred shared access
     arrives at a type with a shared executable form for a private callable, and at any read-only type for a published
     callable, as on the base; lowering lends both through the same carriers.
@@ -90,7 +91,7 @@ pub def stored_parameter_type(body: RustBody, parameter: &RustCallableParam, ty:
         if body.is_generator():
             return Err("unsupported Body IR explicit input access in a deferred producer")
         return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
-    if body.is_generator() and not parameter.mutable:
+    if (body.is_generator() or body.is_async) and not parameter.mutable:
         return Ok(ty)
     return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
 

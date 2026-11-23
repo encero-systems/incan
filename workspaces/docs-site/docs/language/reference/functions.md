@@ -128,6 +128,7 @@ def main() -> None:
 | Holding             | The body does not hold a marked parameter in another name or value. Each form in the table below is refused with `INCAN-T0001`. Passing the parameter as an argument to any other call is accepted, `rows.append(items)` included. |
 | Changing calls      | A call changes a marked parameter in the cases that [Changing calls](#changing-calls) lists. |
 | Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted, except one of those whose type cannot be copied, such as a `Generator`, which is refused with `INCAN-T0117`. |
+| Tasks               | A direct call of an `async def` holds each argument it passes to a marked parameter until the call completes, so the call is awaited where it is written. Given as a task to `spawn`, `timeout`, `timeout_ms`, `race_timeout` or `arm`, such a call is refused with `INCAN-T0115`. |
 | Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked. |
 | Closures            | A closure checked against a function type has each parameter that type marks marked in its own type. |
 

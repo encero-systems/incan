@@ -1,0 +1,18 @@
+# behavior: a task given to `spawn` cannot lend an argument to a caller-visible `mut` parameter of its async function: the task may outlive the value it would change, so only a direct `await` holds that loan (RFC 129, #1846).
+# expect-diagnostic: INCAN-T0115
+
+from std.async import spawn
+
+
+class Cart:
+    pub items: list[str]
+
+
+async def fill(mut cart: Cart, item: str) -> int:
+    cart.items.append(item)
+    return len(cart.items)
+
+
+async def start() -> None:
+    mut cart = Cart(items=["apple"])
+    spawn(fill(cart, "plum"))
