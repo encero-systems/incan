@@ -1,0 +1,6 @@
+[project]
+name = "programs_share_a_library_in_records"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

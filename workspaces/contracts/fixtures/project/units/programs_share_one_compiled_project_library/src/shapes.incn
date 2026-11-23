@@ -1,0 +1,15 @@
+"""A square and what the project's two programs read of it."""
+
+
+pub model Square:
+    pub side: int
+
+
+pub def area(square: Square) -> int:
+    """The square's area."""
+    return square.side * square.side
+
+
+pub def sides(square: Square) -> list[int]:
+    """The lengths of the square's four sides."""
+    return [square.side, square.side, square.side, square.side]
