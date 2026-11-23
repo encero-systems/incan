@@ -27,6 +27,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
     Projection,
 )
+from frozen_plan import frozen_handle_type
 from pub::incan_mir_plan import place as plan_place, block as plan_block
 from classes import function_name, frame_type, is_program_entry
 from layout_types import native_source_type, shared_receiver_type, mutable_receiver_type
@@ -274,7 +275,9 @@ pub def await_future(
         PlanType.List(_leaf, _depth) => builder.owned.append(destination.local)
         PlanType.Set(_leaf) => builder.owned.append(destination.local)
         PlanType.Dict(_key, _value) => builder.owned.append(destination.local)
-        _ => pass
+        _ =>
+            if frozen_handle_type(place_type(builder.locals, destination)):
+                builder.owned.append(destination.local)
     drop_unwind = Unwind.Cleanup(cleanup_exit(builder, span))
     builder.finish(TerminatorKind.Await(future, destination, after, cancelled, unwind, drop_unwind), span)
     builder.current = after

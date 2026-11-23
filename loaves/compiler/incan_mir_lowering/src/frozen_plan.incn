@@ -1,21 +1,62 @@
 """Static frozen literals preserve the legacy carrier's lifetime and checked storage types."""
 
 from rust::incan_semantics_core::body_ir import Constant as RustConstant
-from pub::incan_mir_plan import Operand, PlanType, RvalueKind, SourceSpan, FrozenValue, Constant
+from pub::incan_mir_plan import (
+    CalleeKind,
+    ExternalFunction,
+    Operand,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    FrozenValue,
+    Constant,
+)
 from models import model_type
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, text_literal
+from frame import Builder, temporary, place_type, read_place, text_literal, terminate_call
 
 
 pub def frozen_observation_type(ty: PlanType) -> bool:
-    """Recognize immutable static carriers whose read-only wrapper observations own no allocation."""
+    """Recognize borrowed static data whose observation owns no handle or allocation."""
     match ty:
         PlanType.StaticText => return true
         PlanType.StaticBytes => return true
+        _ => return false
+
+
+pub def frozen_handle_type(ty: PlanType) -> bool:
+    """Recognize immutable frozen values whose static-or-shared storage is owned by a cheap Clone handle."""
+    match ty:
         PlanType.FrozenStr => return true
         PlanType.FrozenBytes => return true
         PlanType.FrozenCollection(_name, _elements) => return true
         _ => return false
+
+
+pub def frozen_reference_type(ty: PlanType) -> Result[PlanType, str]:
+    """Return the shared-reference representation used to clone or observe one frozen handle."""
+    match ty:
+        PlanType.FrozenStr => return Ok(PlanType.ScalarRef([PlanType.FrozenStr]))
+        PlanType.FrozenBytes => return Ok(PlanType.ScalarRef([PlanType.FrozenBytes]))
+        PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
+        _ => return Err("unsupported Body IR frozen handle reference")
+
+
+pub def clone_frozen_handle(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Clone a frozen handle through its native Clone implementation without copying immutable contents."""
+    ty = place_type(builder.locals, source)
+    reference_type = frozen_reference_type(ty)?
+    reference = temporary(builder, reference_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
+    output = temporary(builder, ty, span)
+    path = "core::clone::Clone::clone"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=ty, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, [ty]), [read_place(reference, false, span)], output, span)
+    builder.owned.append(output.local)
+    return Ok(read_place(output, true, span))
 
 
 pub def frozen_collection_literal(mut builder: Builder, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
@@ -26,6 +67,7 @@ pub def frozen_collection_literal(mut builder: Builder, value: RustConstant, spa
             values = frozen_elements(builder, elements)?
             output = temporary(builder, storage, span)
             builder.emit(plan_assign(output, RvalueKind.FrozenCollection(storage, values), span))
+            builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
         _ => return Err("unsupported Body IR nonstatic frozen collection")
 
@@ -52,12 +94,13 @@ def frozen_elements(mut builder: Builder, elements: &list[RustConstant]) -> Resu
 
 
 pub def frozen_literal(mut builder: Builder, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
-    """Wrap checked static text only; dynamically allocated text cannot enter a FrozenStr carrier."""
+    """Wrap checked literal text in static frozen storage; runtime producers use the carrier's shared constructor."""
     match literal_text(value):
         Some(text) =>
             output = temporary(builder, PlanType.FrozenStr, span)
             builder.emit(plan_assign(output, RvalueKind.FrozenText(text_literal(text, span)), span))
-            return Ok(read_place(output, false, span))
+            builder.owned.append(output.local)
+            return Ok(read_place(output, true, span))
         None => return Err("unsupported Body IR nonstatic FrozenStr literal")
 
 
@@ -70,11 +113,12 @@ pub def literal_text(value: &RustConstant) -> Option[str]:
 
 
 pub def frozen_bytes_literal(mut builder: Builder, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
-    """Retain exact static byte data for the SDK's copyable frozen wrapper, without allocating an owned byte vector."""
+    """Retain exact static byte data in a frozen handle without allocating an owned byte vector."""
     values = frozen_byte_data(value)?
     output = temporary(builder, PlanType.FrozenBytes, span)
     builder.emit(plan_assign(output, RvalueKind.FrozenBytes(values), span))
-    return Ok(read_place(output, false, span))
+    builder.owned.append(output.local)
+    return Ok(read_place(output, true, span))
 
 
 def frozen_byte_data(value: &RustConstant) -> Result[list[int], str]:

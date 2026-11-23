@@ -210,11 +210,11 @@ fn native_constant<'tcx>(tcx: TyCtxt<'tcx>, def: DefId, actual: Ty<'tcx>) -> Res
     ))
 }
 
-/// Construct the dependency-owned frozen wrapper only after verifying its single static string field.
+/// Construct the dependency-owned frozen wrapper only after verifying its static storage variant.
 ///
 /// The literal allocation is static; its operand takes the field's exact lifetime rather than a body borrow.
 fn frozen_text<'tcx>(tcx: TyCtxt<'tcx>, sources: &Sources<'_>, text: &Operand) -> Result<mir::Rvalue<'tcx>, PlanError> {
-    // ---- Carrier: the dependency-owned static text layout ----
+    // ---- Carrier: the dependency-owned static text variant ----
     let ty = native_type(tcx, &PlanType::FrozenStr)?;
     let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
         return Err(PlanError::Invalid {
@@ -222,14 +222,19 @@ fn frozen_text<'tcx>(tcx: TyCtxt<'tcx>, sources: &Sources<'_>, text: &Operand) -
             reason: "frozen carrier is not an ADT".into(),
         });
     };
-    if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
+    let static_variant = rustc_abi::VariantIdx::from_usize(0);
+    if !definition.is_enum()
+        || definition.variants().len() != 2
+        || definition.variant(static_variant).name.as_str() != "Static"
+        || definition.variant(static_variant).fields.len() != 1
+    {
         return Err(PlanError::Invalid {
             function: "FrozenStr".into(),
-            reason: "frozen carrier must have one field".into(),
+            reason: "frozen carrier must have one static storage variant".into(),
         });
     }
     // The concrete frozen carrier has no parameters or associated-type projections to normalize.
-    let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)]
+    let field = definition.variant(static_variant).fields[FieldIdx::from_usize(0)]
         .ty(tcx, *args)
         .skip_normalization();
     if !matches!(field.kind(), rustc_middle::ty::Ref(region, pointee, rustc_hir::Mutability::Not)
@@ -256,11 +261,11 @@ fn frozen_text<'tcx>(tcx: TyCtxt<'tcx>, sources: &Sources<'_>, text: &Operand) -
     };
     literal.const_ = mir::Const::Val(value, field);
 
-    // ---- Construction: the admitted single-field carrier ----
+    // ---- Construction: the admitted static storage variant ----
     Ok(mir::Rvalue::Aggregate(
         Box::new(mir::AggregateKind::Adt(
             definition.did(),
-            rustc_abi::VariantIdx::from_usize(0),
+            static_variant,
             *args,
             None,
             None,
@@ -269,7 +274,7 @@ fn frozen_text<'tcx>(tcx: TyCtxt<'tcx>, sources: &Sources<'_>, text: &Operand) -
     ))
 }
 
-/// Build the dependency-owned frozen byte wrapper over a static allocation, validating its exact field shape and
+/// Build the dependency-owned frozen byte wrapper over a static allocation, validating its exact variant shape and
 /// every unsigned byte before any MIR is constructed. Empty literals keep a valid zero-length slice.
 fn frozen_bytes<'tcx>(tcx: TyCtxt<'tcx>, values: &[i64], span: Span) -> Result<mir::Rvalue<'tcx>, PlanError> {
     let invalid = |reason: &str| PlanError::Invalid {
@@ -280,10 +285,15 @@ fn frozen_bytes<'tcx>(tcx: TyCtxt<'tcx>, values: &[i64], span: Span) -> Result<m
     let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
         return Err(invalid("frozen byte carrier is not an ADT"));
     };
-    if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
-        return Err(invalid("frozen byte carrier must have one field"));
+    let static_variant = rustc_abi::VariantIdx::from_usize(0);
+    if !definition.is_enum()
+        || definition.variants().len() != 2
+        || definition.variant(static_variant).name.as_str() != "Static"
+        || definition.variant(static_variant).fields.len() != 1
+    {
+        return Err(invalid("frozen byte carrier must have one static storage variant"));
     }
-    let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)]
+    let field = definition.variant(static_variant).fields[FieldIdx::from_usize(0)]
         .ty(tcx, *args)
         .skip_normalization();
     if !matches!(field.kind(), rustc_middle::ty::Ref(region, pointee, rustc_hir::Mutability::Not)
@@ -307,7 +317,7 @@ fn frozen_bytes<'tcx>(tcx: TyCtxt<'tcx>, values: &[i64], span: Span) -> Result<m
     Ok(mir::Rvalue::Aggregate(
         Box::new(mir::AggregateKind::Adt(
             definition.did(),
-            rustc_abi::VariantIdx::from_usize(0),
+            static_variant,
             *args,
             None,
             None,

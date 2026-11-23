@@ -20,7 +20,13 @@ from newtype_constants import numeric_newtype_literal
 from layout_types import native_source_type
 from scalar_reads import scalar_storage_place
 from decimal_plan import decimal_literal, is_decimal_literal
-from frozen_plan import frozen_literal, frozen_collection_literal, frozen_observation_type
+from frozen_plan import (
+    clone_frozen_handle,
+    frozen_collection_literal,
+    frozen_handle_type,
+    frozen_literal,
+    frozen_observation_type,
+)
 from rust::std::string import String as RustString
 from rust::std::primitive import str as RustStr
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
@@ -307,12 +313,7 @@ def is_direct_tuple_field(place: Place) -> bool:
         _ => return false
 
 
-pub def target_read(
-    mut builder: Builder,
-    target: Place,
-    fact: OwnershipFact,
-    span: SourceSpan,
-) -> Result[Operand, str]:
+pub def target_read(mut builder: Builder, target: Place, fact: OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
     """Read callable storage or apply checked ownership to ordinary fields and payloads through their actual carrier."""
     # Only the binding remembers a partial's supplied flags, so a partial is called or moved into a binding, never
     # read.
@@ -382,9 +383,29 @@ def owned_target_read(
     fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Apply checked ownership to ordinary storage after callable and producer representations have been handled."""
+    """
+    Apply checked ownership after distinguishing source Copy semantics from native bitwise copying.
+
+    Frozen values and source Copy carriers built from them keep the language promise that the original remains
+    usable, but their native storage owns an atomic shared handle. Materialize those semantic copies through Clone;
+    only a carrier whose retained native declaration still derives Copy may use a native copy operand.
+    """
     match fact:
-        OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
+        OwnershipFact.Copy =>
+            ty = place_type(builder.locals, target)
+            if frozen_handle_type(ty):
+                return clone_frozen_handle(builder, target, span)
+            if is_tuple_type(ty) and tuple_has_owners(ty):
+                return clone_tuple_operand(builder, target, span)
+            match ty:
+                PlanType.Model(owner, _name) =>
+                    if owner >= 0 and owner < len(builder.nominals) and "Copy" not in builder.nominals[owner].derives:
+                        return clone_nominal_operand(builder, target, span)
+                PlanType.Enum(owner, _name) =>
+                    if owner >= 0 and owner < len(builder.enums) and "Copy" not in builder.enums[owner].derives:
+                        return clone_nominal_operand(builder, target, span)
+                _ => pass
+            return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
             holder = borrowed_at(builder.locals, target.local)
             transferred_tuple_field = is_tuple_type(holder.ty) and is_direct_tuple_field(target)
@@ -413,6 +434,8 @@ def owned_target_read(
                 )
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
+            if frozen_handle_type(place_type(builder.locals, target)):
+                return clone_frozen_handle(builder, target, span)
             if frozen_observation_type(place_type(builder.locals, target)):
                 return Ok(read_place(target, false, span))
             # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
@@ -429,6 +452,8 @@ def owned_target_read(
                 return Ok(read_place(cloned, true, span))
             return clone_nominal_operand(builder, target, span)
         OwnershipFact.Borrow =>
+            if frozen_handle_type(place_type(builder.locals, target)):
+                return clone_frozen_handle(builder, target, span)
             if frozen_observation_type(place_type(builder.locals, target)):
                 return Ok(read_place(target, false, span))
             if is_tuple_type(place_type(builder.locals, target)):

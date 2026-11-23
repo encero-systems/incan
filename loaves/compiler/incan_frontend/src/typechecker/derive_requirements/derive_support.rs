@@ -53,8 +53,8 @@ impl TypeChecker {
                     DeriveSupport::Supported
                 }
             }
-            // The baked `'static` string and bytes are `Copy` and ordered; whether they have a `Default` is not
-            // recorded.
+            // Frozen text and bytes keep source Copy semantics through a constant-time shared-handle clone. They are
+            // ordered by content; whether they have a `Default` is not recorded.
             ResolvedType::FrozenStr | ResolvedType::FrozenBytes => {
                 if derive == DeriveId::Default {
                     DeriveSupport::Unknown
@@ -77,18 +77,18 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Tuple(items) => self.all_derive_support(items, derive, assumed, visiting),
-            // The frozen collections are baked slices: `Clone`, `Debug`, `PartialEq` and `Eq` follow their contents;
-            // none hashes, and the rest is not recorded.
+            // Frozen collections clone their immutable storage handles in constant time. Equality and hashing follow
+            // their contents; other derives remain unrecorded.
             ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => match derive {
-                DeriveId::Hash => DeriveSupport::Missing(ty.clone()),
-                DeriveId::Clone | DeriveId::Debug | DeriveId::PartialEq | DeriveId::Eq => {
+                DeriveId::Clone | DeriveId::Copy => DeriveSupport::Supported,
+                DeriveId::Debug | DeriveId::PartialEq | DeriveId::Eq | DeriveId::Hash => {
                     self.derive_support_assuming(inner, derive, assumed, visiting)
                 }
                 _ => DeriveSupport::Unknown,
             },
             ResolvedType::FrozenDict(key, value) => match derive {
-                DeriveId::Hash => DeriveSupport::Missing(ty.clone()),
-                DeriveId::Clone | DeriveId::Debug | DeriveId::PartialEq | DeriveId::Eq => {
+                DeriveId::Clone | DeriveId::Copy => DeriveSupport::Supported,
+                DeriveId::Debug | DeriveId::PartialEq | DeriveId::Eq | DeriveId::Hash => {
                     let pair = [key.as_ref().clone(), value.as_ref().clone()];
                     self.all_derive_support(&pair, derive, assumed, visiting)
                 }

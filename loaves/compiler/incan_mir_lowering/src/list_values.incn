@@ -35,7 +35,7 @@ from tuples import is_tuple_type, tuple_fields
 from text_plan import clone_text, owned_literal
 from options import replace_owned_destination
 from numerics import numeric_carrier
-from frozen_plan import frozen_observation_type
+from frozen_plan import clone_frozen_handle, frozen_handle_type, frozen_observation_type
 from builtins import list_call
 from strings import emit_text_helper
 from frame import (
@@ -62,7 +62,13 @@ from model_construction import clone_nominal_operand
 from formatting import display_plan_operand
 from static_storage import read_static
 from list_methods import materialized_receiver
-from list_iteration import frozen_dictionary_element, frozen_list_snapshot, frozen_list_snapshot_type, list_root_place
+from list_iteration import (
+    frozen_dictionary_element,
+    frozen_list_element,
+    frozen_list_snapshot,
+    frozen_list_snapshot_type,
+    list_root_place,
+)
 from hashed_collections import (
     cloned_collection,
     collection_place_value,
@@ -370,9 +376,8 @@ def read_indexed_element(
         PlanType.FrozenCollection(name, _elements) =>
             if name == "FrozenDict":
                 return frozen_dictionary_element(builder, place, source, slot, span)
-            snapshot = frozen_list_snapshot(builder, read_place(place, false, span), span)?
             argument = list_index_operand(builder, source, slot, span)?
-            return read_list_element(builder, snapshot, argument, span)
+            return frozen_list_element(builder, place, argument, span)
         _ => pass
     if is_collection(place_type(builder.locals, place)):
         return read_dictionary_element(builder, place, source, slot, span)
@@ -591,7 +596,11 @@ def materialize_element_field(mut builder: Builder, field: Place, span: SourceSp
         match cloned_collection(builder, field, span)?.kind:
             OperandKind.Move(cloned) => return Ok(cloned)
             _ => return Err("invalid Body IR cloned collection element field")
-    # Static frozen handles copy only their shared backing pointer, never their elements or the containing record.
+    if frozen_handle_type(ty):
+        match clone_frozen_handle(builder, field, span)?.kind:
+            OperandKind.Move(cloned) => return Ok(cloned)
+            _ => return Err("invalid Body IR cloned frozen element field")
+    # Static observations carry no allocation and may be copied directly.
     if (
         not numeric_carrier(ty)
         and ty != PlanType.Bool
@@ -607,7 +616,13 @@ def materialize_element_field(mut builder: Builder, field: Place, span: SourceSp
 def element_field_is_owned(builder: Builder, field: Place) -> bool:
     """Whether a materialized field result transfers its independent storage to the consuming expression."""
     ty = place_type(builder.locals, field)
-    return ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
+    return (
+        ty == PlanType.String
+        or is_owned_list(ty)
+        or is_nominal_type(ty)
+        or is_owned_collection(ty)
+        or frozen_handle_type(ty)
+    )
 
 
 def slice_bound(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[list[Operand], str]:

@@ -27,6 +27,7 @@ from tuples import is_tuple_type
 from text_plan import clone_text
 from decls import library_enum_item
 from table_views import borrowed_at
+from frozen_plan import frozen_handle_type
 
 
 pub def is_derived_clone(target: MethodTarget) -> bool:
@@ -117,6 +118,8 @@ def clone_place(
             return clone_referent(builder, source, PlanType.ValidationError, destination, span)
         PlanType.ScalarRef(elements) =>
             if len(elements) == 1:
+                if frozen_handle_type(elements[0]):
+                    return clone_referent(builder, source, elements[0], destination, span)
                 mut copyable = numeric_carrier(elements[0]) or elements[0] == PlanType.Bool or elements[0] == PlanType.Unit
                 match elements[0]:
                     PlanType.FunctionPointer(_signature) => copyable = true
@@ -127,7 +130,7 @@ def clone_place(
                     pointer = Place(local=reference.local, projection=Projection.Deref(elements[0]), span=span)
                     return copy_clone_into(builder, pointer, elements[0], destination, span)
         _ => pass
-    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return copy_clone_into(builder, source, ty, destination, span)
     if ty == PlanType.String:
         return clone_string_into(builder, source, destination, span)
@@ -170,7 +173,7 @@ def copy_clone_into(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Copy an admitted scalar or frozen string without consuming the receiver; a discarded copy has no effect."""
+    """Copy an admitted scalar without consuming the receiver; a discarded copy has no effect."""
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?

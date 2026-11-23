@@ -61,6 +61,7 @@ from frame import Builder
 from type_parameters import Instance, instantiate, instantiate_parameter, request_instance, substitute
 from call_arguments import call_parameter_type
 from explicit_arguments import direct_view_access
+from frozen_plan import frozen_handle_type
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
@@ -379,8 +380,14 @@ def owned_nominal_result(ty: PlanType) -> bool:
 
 
 def closure_value_type(ty: PlanType) -> bool:
-    """Report whether a value crosses a boxed closure's call boundary by value: a scalar of any numeric carrier, or text."""
-    return numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String
+    """Report whether a scalar, text value, or immutable frozen handle crosses a boxed closure call by value."""
+    return (
+        numeric_carrier(ty)
+        or ty == PlanType.Bool
+        or ty == PlanType.Unit
+        or ty == PlanType.String
+        or frozen_handle_type(ty)
+    )
 
 
 pub def closure_capture_type(ty: PlanType, consumes_environment: bool) -> bool:
@@ -425,6 +432,9 @@ pub def owned_capture(ty: PlanType) -> bool:
     """
     match ty:
         PlanType.String => return true
+        PlanType.FrozenStr => return true
+        PlanType.FrozenBytes => return true
+        PlanType.FrozenCollection(_name, _elements) => return true
         PlanType.List(_leaf, _depth) => return true
         PlanType.Set(_leaf) => return true
         PlanType.Dict(_key, _value) => return true
@@ -506,9 +516,9 @@ pub def pointer_forwarder(name: str, signature: list[PlanType], span: SourceSpan
         parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
         place = plan_place(index + 2, span)
         mut kind = OperandKind.Copy(place)
-        # Owned text, an owned model or enum, and the exclusive borrow a `mut` input receives move on; every other
-        # input is copied.
-        if ty == PlanType.String or is_exclusive_borrow(ty) or owned_nominal_input(ty):
+        # Values with drop ownership and the exclusive borrow a `mut` input receives move on; every other input is
+        # copied.
+        if ty == PlanType.String or frozen_handle_type(ty) or is_exclusive_borrow(ty) or owned_nominal_input(ty):
             kind = OperandKind.Move(place)
         operands.append(Operand(kind=kind, span=span))
     pointer_value = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
@@ -550,7 +560,7 @@ pub def borrowed_callable_forwarder(
         parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
         place = plan_place(index + 2, span)
         mut kind = OperandKind.Copy(place)
-        if ty == PlanType.String or is_exclusive_borrow(ty) or owned_nominal_input(ty):
+        if ty == PlanType.String or frozen_handle_type(ty) or is_exclusive_borrow(ty) or owned_nominal_input(ty):
             kind = OperandKind.Move(place)
         operands.append(Operand(kind=kind, span=span))
     inputs = closure_arguments(signature)?
@@ -559,13 +569,7 @@ pub def borrowed_callable_forwarder(
     pack = plan_assign(plan_place(packed, span), RvalueKind.Tuple(operands), span)
     receiver = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
     arguments = [receiver, Operand(kind=OperandKind.Move(plan_place(packed, span)), span=span)]
-    call = TerminatorKind.Call(
-        Callee(kind=callee, span=span),
-        arguments,
-        plan_place(0, span),
-        1,
-        Unwind.Continue,
-    )
+    call = TerminatorKind.Call(Callee(kind=callee, span=span), arguments, plan_place(0, span), 1, Unwind.Continue)
     return Ok(
         Function(
             name=name,
@@ -922,13 +926,7 @@ def item_signature(
     if body.is_async:
         constructor = f"{name}__incan_future"
         builder.synthesized.append(
-            boxed_future_constructor(
-                constructor,
-                CalleeKind.Planned(name),
-                signature.clone(),
-                result,
-                span,
-            ),
+            boxed_future_constructor(constructor, CalleeKind.Planned(name), signature.clone(), result, span),
         )
         signature.append(PlanType.Future([result]))
         return Ok((constructor, PlanType.FunctionItem(constructor, signature)))

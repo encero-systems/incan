@@ -4,6 +4,16 @@ from rust::incan_std_primitives::frozen import FrozenStr as RuntimeFrozen, Froze
 from rust::std::convert import Into as RustInto
 
 
+pub def freeze_text(value: str) -> RuntimeFrozen:
+    """Freeze runtime-owned text behind a shared handle released with its final copy."""
+    return RuntimeFrozen.from_owned(value)
+
+
+pub def freeze_bytes(value: bytes) -> RuntimeFrozenBytes:
+    """Freeze runtime-owned bytes behind a shared handle released with its final copy."""
+    return RuntimeFrozenBytes.from_owned(value)
+
+
 pub def format_frozen(value: RuntimeFrozen) -> str:
     """Materialize owned text through the frozen carrier's canonical Display implementation."""
     return str(value)

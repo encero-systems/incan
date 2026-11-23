@@ -1,0 +1,85 @@
+"""Rebuild this lane's sole disposable home from the current source support closure."""
+
+from rust::std::fs import remove_dir_all
+from rust::std::process import exit
+from std.fs import Path
+from std.json import JsonValue
+from native_build import (
+    NativeContext,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    publish_support,
+    require_unique_runtime_root,
+)
+from release_support import STANDARD_PACKAGES, TOOLCHAIN_DIRECTORY
+
+
+const REPOSITORY: str = "/Volumes/Builds/incan-dev9-work/b4/lane/repo"
+const HOME: str = "/Volumes/Builds/incan-dev9-work/b4/home"
+const LANE: str = "/Volumes/Builds/incan-dev9-work/b4/lane"
+
+
+def main() -> None:
+    """Rebuild the source-selected native, runtime, and standard providers, reporting a failed stage."""
+    match rebuild():
+        Ok(_) => println("source closure rebuilt")
+        Err(message) =>
+            println(message)
+            exit(1)
+
+
+def rebuild() -> Result[None, str]:
+    """Retire generated providers, then publish one coherent source closure into the existing sole home."""
+    repository = Path(REPOSITORY)
+    home = Path(HOME)
+    lane = Path(LANE)
+    evidence = lane.joinpath("r28-frozen-closure")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    manifest = toolchain.joinpath("toolchain.json")
+    backup = lane.joinpath("r28-toolchain-before-frozen.json")
+    _ = manifest.copy(backup, true, true).map_err((error) => error.message())?
+
+    context = NativeContext(
+        repo=repository,
+        lane=lane,
+        home=home,
+        builder=f"{HOME}/bin/incan",
+        stdlib=f"{REPOSITORY}/loaves/stdlib",
+        evidence=evidence,
+        timings=evidence.joinpath("timings.tsv"),
+        timeout_seconds=1800,
+    )
+    helper = lane.joinpath("out/native-builds/toolchain-native")
+
+    for package in STANDARD_PACKAGES:
+        for profile in ["release", "debug"]:
+            generated = toolchain.joinpath("loaves").joinpath(f"incan_stdlib_{package}").joinpath(profile)
+            if generated.is_dir():
+                remove_dir_all(generated.0).map_err((error) => str(error))?
+    interfaces = home.joinpath("source-interfaces")
+    if interfaces.is_dir():
+        remove_dir_all(interfaces.0).map_err((error) => str(error))?
+
+    document = JsonValue.parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    mut fields = document.expect_object().map_err((error) => error.message())?
+    fields["externs"] = JsonValue.array([])
+    fields["search"] = JsonValue.array([])
+    manifest
+        .write_text(
+            JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())?,
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+
+    publish_support(context, helper)?
+    source_interfaces = build_source_interfaces(context, helper)?
+    _ = build_runtime(context, helper, Some(source_interfaces), true, "candidate-")?
+    require_unique_runtime_root(context)?
+    build_standard_packages(context, helper, "candidate-")?
+    return Ok(None)

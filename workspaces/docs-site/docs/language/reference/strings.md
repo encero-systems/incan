@@ -5,7 +5,7 @@
 | `str` | Unicode text |
 | `bytes` | A sequence of bytes |
 
-Both have frozen forms for constants, `FrozenStr` and `FrozenBytes`. `FrozenStr` has every `str` method and also `is_empty() -> bool`; `FrozenBytes` has `decode` and also `len() -> int` and `is_empty() -> bool`.
+Both have frozen forms for constants and immutable values produced by library operations, `FrozenStr` and `FrozenBytes`. Copying either frozen form takes constant time and leaves the original usable; equality and hashing use the contents. `FrozenStr` has every `str` method and also `is_empty() -> bool`; `FrozenBytes` has `decode` and also `len() -> int` and `is_empty() -> bool`.
 
 ## `str` and `FrozenStr` destinations
 

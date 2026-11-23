@@ -758,9 +758,6 @@ pub def enum_payload_read(
         OwnershipFact.Borrow => pass
         OwnershipFact.Move => pass
         _ => return Err("unsupported Body IR enum payload binding ownership")
-    # The canonical frozen wrapper's Clone is its Copy value; it owns no allocation or custom clone hook.
-    if place_type(builder.locals, place) == PlanType.FrozenStr:
-        return Ok(read_place(place, false, span))
     # A type parameter's payload binding is cloned by its checked fact, which is Rust's copy-valued Clone once the
     # instance makes the payload a concrete scalar.
     payload_type = place_type(builder.locals, place)
