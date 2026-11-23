@@ -21,6 +21,8 @@ const ROOT: str = "89c8c566218f4277ad6cb5751e29676bacaab7027f724bbf725a6a17740f2
 const FIXTURE_NOW: int = 1795392150
 const STALE_NOW: int = 1795996951
 const BASE: str = "https://audit-fixture.invalid"
+const PRODUCER_REGISTRY: str = "d8bf0d2a919381bc2b2cffc2cac9df0b0c611c794f798f80e582bef9c116a88e"
+const PRODUCER_NOW: int = 1795417576
 
 
 pub def test_the_complete_signed_log_controls_a_locked_version() -> Result[None, str]:
@@ -210,6 +212,73 @@ pub def test_a_delayed_audit_response_cannot_replace_the_durable_head() -> Resul
     assert final.checkpoint.head == withdrawn.checkpoint.head
     assert final.checkpoint.length == 3
     return Ok(None)
+
+
+pub def test_producer_signed_feed_retains_only_authenticated_advances() -> Result[None, str]:
+    """
+    1. Retain the real producer's signed prefix under its configured root.
+    2. Advance through the signer change and check which exact versions are affected.
+    3. Refuse rollback and each tampered response without replacing the durable checkpoint.
+    """
+    # 1. The earlier checkpoint covers one advisory and its original signing key.
+    temporary = scratch_directory()?
+    directory = temporary.path()
+    root = producer_root(directory)?
+    store = directory.joinpath("bakery")
+    earlier_text = fixture("loaves-pub/earlier/v1")?
+    earlier = retain_audit(store, root, earlier_text, PRODUCER_NOW).map_err(
+        (reason) => f"earlier producer checkpoint: {reason}",
+    )?
+    assert earlier.checkpoint.length == 3
+    assert earlier.checkpoint.timestamp == 1795417543
+    assert earlier.checkpoint.head == "8ff861557e19851081e06d5f8627ad70b915bba4b7d3f7bae871159931eae5f2"
+    assert [event.sequence for event in earlier.advisories] == [3]
+    assert audit_advisories("crates-io/widget", "1.0.0", earlier.advisories).is_err()
+    assert audit_advisories("crates-io/gadget", "2.0.0", earlier.advisories).is_ok()
+
+    # 2. Revoking the first signer leaves its already authenticated advisory in effect.
+    complete = fixture("loaves-pub/audit/v1")?
+    advanced = retain_audit(store, root, complete, PRODUCER_NOW).map_err(
+        (reason) => f"advanced producer checkpoint: {reason}",
+    )?
+    assert advanced.checkpoint.length == 7
+    assert advanced.checkpoint.timestamp == 1795417575
+    assert advanced.checkpoint.head == "5bf77e58c78efbfed105feb13686be47248ae93151e812f1e62aff57efbfa6a7"
+    assert [event.sequence for event in advanced.advisories] == [3, 7]
+    assert audit_advisories("crates-io/widget", "1.0.0", advanced.advisories).is_err()
+    assert audit_advisories("crates-io/gadget", "2.0.0", advanced.advisories).is_err()
+    assert audit_advisories("crates-io/widget", "1.0.1", advanced.advisories).is_ok()
+    assert audit_advisories("crates-io/gadget", "2.0.1", advanced.advisories).is_ok()
+
+    # 3. The changed-head fixture retains the original signature, so signature verification refuses it.
+    for response, expected in [
+        ("earlier/v1", "rolls back the observed log length"),
+        ("variants/payload-changed", "statement signature does not verify"),
+        ("variants/envelope-omitted", "do not match the signed log length"),
+        ("variants/head-changed", "statement signature does not verify"),
+        ("variants/revoked-key-signs", "event signing key is revoked"),
+    ]:
+        text = fixture(f"loaves-pub/{response}")?
+        refused(retain_audit(store, root, text, PRODUCER_NOW), expected).map_err((reason) => f"{response}: {reason}")?
+        retained = retained_audit(store, root, PRODUCER_NOW)?
+        assert retained.checkpoint.head == advanced.checkpoint.head, response
+        assert retained.checkpoint.length == advanced.checkpoint.length, response
+        assert retained.checkpoint.timestamp == advanced.checkpoint.timestamp, response
+    return Ok(None)
+
+
+def producer_root(directory: Path) -> Result[Root, str]:
+    """Read the producer's public pin through an operator configuration in private scratch."""
+    registration = read(Path("tests/fixtures/registry-audit/loaves-pub/registration.toml"))?
+    user = directory.joinpath("user.toml")
+    project = directory.joinpath("receiver")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    # The signed responses arrive as local bytes. The operator parser still requires an HTTPS endpoint.
+    write(user, registration + f"\nendpoints = [\"{BASE}\"]\n")?
+    registries = read_registries(user, None, project)?
+    assert len(registries) == 1
+    assert registries[0].root.registry == PRODUCER_REGISTRY
+    return Ok(registries[0].root)
 
 
 pub def test_lock_projection_uses_the_recorded_registry_and_discloses_uncovered_sources() -> Result[None, str]:
