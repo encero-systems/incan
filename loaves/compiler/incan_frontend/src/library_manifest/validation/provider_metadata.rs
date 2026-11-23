@@ -89,17 +89,19 @@ pub(super) fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(),
         .map_err(|error| LibraryManifestError::Invalid(error.to_string()))?;
 
     if let Some(api) = &raw.contract_metadata.api {
-        if api.schema_version != CHECKED_API_METADATA_SCHEMA_VERSION {
+        if !(MINIMUM_CHECKED_API_METADATA_SCHEMA_VERSION..=CHECKED_API_METADATA_SCHEMA_VERSION)
+            .contains(&api.schema_version)
+        {
             return Err(LibraryManifestError::Invalid(format!(
-                "contract_metadata.api.schema_version {} is unsupported (expected {})",
-                api.schema_version, CHECKED_API_METADATA_SCHEMA_VERSION
+                "contract_metadata.api.schema_version {} is unsupported (expected {} through {})",
+                api.schema_version, MINIMUM_CHECKED_API_METADATA_SCHEMA_VERSION, CHECKED_API_METADATA_SCHEMA_VERSION
             )));
         }
         for module in &api.modules {
-            if module.schema_version != CHECKED_API_METADATA_SCHEMA_VERSION {
+            if module.schema_version != api.schema_version {
                 return Err(LibraryManifestError::Invalid(format!(
-                    "contract_metadata.api.modules schema_version {} is unsupported (expected {})",
-                    module.schema_version, CHECKED_API_METADATA_SCHEMA_VERSION
+                    "contract_metadata.api.modules schema_version {} does not match package schema_version {}",
+                    module.schema_version, api.schema_version
                 )));
             }
         }

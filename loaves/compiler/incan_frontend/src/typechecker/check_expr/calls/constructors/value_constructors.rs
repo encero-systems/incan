@@ -199,6 +199,9 @@ impl TypeChecker {
             .registered_model_checks
             .get(name)
             .is_some_and(|checks| !checks.is_empty())
+            || self
+                .lookup_type_info(name)
+                .is_some_and(|info| matches!(info, TypeInfo::Model(model) if model.has_registered_validation))
         {
             result_ty(value, ResolvedType::Named("ValidationError".to_owned()))
         } else {

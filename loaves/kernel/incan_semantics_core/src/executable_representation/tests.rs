@@ -277,7 +277,8 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
 
 /// Validated construction retains exact generated and source identities through the executable representation.
 #[test]
-fn validated_constructor_round_trips_and_rejects_another_generated_owner() -> Result<(), Box<dyn std::error::Error>> {
+fn validated_constructor_round_trips_and_rejects_malformed_generated_contracts()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut owner = identity("Checked", 2);
     owner.origin = SymbolOrigin::Module(vec!["lib".into()]);
     owner.kind = SemanticSourceTargetKind::Model;
@@ -292,7 +293,7 @@ fn validated_constructor_round_trips_and_rejects_another_generated_owner() -> Re
     validator.namespace = SymbolNamespace::Member;
     validator.kind = SemanticSourceTargetKind::Method;
     validator.declaration_span = HirSourceSpan::new(300, 399);
-    let mut declaration = generic_holder_declaration(owner.clone(), field);
+    let mut declaration = generic_holder_declaration(owner.clone(), field.clone());
     declaration.name = "Checked".into();
     declaration.fields = vec!["value".into()];
     declaration.derives = vec![incan_lang::lang::derives::as_str(incan_lang::lang::derives::DeriveId::Validate).into()];
@@ -304,6 +305,12 @@ fn validated_constructor_round_trips_and_rejects_another_generated_owner() -> Re
         validator,
         required_fields: vec![0],
     });
+    declaration.registered_validation = vec![crate::body_ir::RegisteredValidation {
+        callable: validator.clone(),
+        target_field: Some(field),
+        error_type: IncanType::Primitive(IncanPrimitiveType::Str),
+        registration_span: HirSourceSpan::new(280, 299),
+    }];
     let mut module = module(Vec::new());
     module.nominal_declarations.push(declaration.clone());
     assert!(module.is_well_formed_nominal_declaration(&declaration));
@@ -314,6 +321,12 @@ fn validated_constructor_round_trips_and_rejects_another_generated_owner() -> Re
         .as_mut()
         .ok_or("missing validated constructor")?;
     contract.constructor.declaration_span = HirSourceSpan::new(500, 599);
+    assert!(!module.is_well_formed_nominal_declaration(&declaration));
+    contract.constructor = owner.generated_member(
+        incan_lang::lang::conventions::NEW_METHOD,
+        SemanticSourceTargetKind::Method,
+    );
+    declaration.registered_validation[0].target_field = Some(identity("other", 6));
     assert!(!module.is_well_formed_nominal_declaration(&declaration));
     Ok(())
 }

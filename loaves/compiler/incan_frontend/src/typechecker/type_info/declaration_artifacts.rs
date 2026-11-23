@@ -210,6 +210,8 @@ pub struct DeclarationArtifacts {
 pub struct RegisteredModelCheckInfo {
     /// Exact checked method body selected by the registration.
     pub callable: CanonicalSymbolId,
+    /// Full method declaration range that owns every checked operation in the callable body.
+    pub callable_span: crate::ast::Span,
     /// Exact checked field declaration for a field check; absent for a whole-model check.
     pub target_field: Option<CanonicalSymbolId>,
     /// Concrete typed failure retained by the check's `Result[None, E]`.

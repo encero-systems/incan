@@ -1912,6 +1912,63 @@ def overlap(mut cursor: Cursor) -> int:
     Ok(())
 }
 
+/// A registered field check borrows the completed field when its body only observes that value.
+#[test]
+fn registered_field_checks_infer_shared_final_value_access() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Profile:
+    name: str
+
+    @validate(name)
+    def name_present(value: str) -> Result[None, ValidationError]:
+        if value == "":
+            return Err(ValidationError(message="name is blank"))
+        return Ok(None)
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    let profile = module
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.name == "Profile")
+        .ok_or("missing Profile declaration")?;
+    assert_eq!(profile.registered_validation.len(), 1);
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "name_present")
+        .ok_or("missing registered field-check body")?;
+    let parameter = body.params.first().ok_or("missing registered field-check parameter")?;
+    assert_eq!(
+        parameter.input_access,
+        incan_semantics_core::IncanInputAccess::InferredShared,
+        "{body:#?}"
+    );
+
+    let unsafe_source = r#"
+def report(value: str) -> None:
+    println(value)
+
+model UnsafeProfile:
+    name: str
+
+    @validate(name)
+    def name_present(value: str) -> Result[None, ValidationError]:
+        report(value)
+        return Ok(None)
+"#;
+    let tokens = crate::lexer::lex(unsafe_source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_program(&program) {
+        Err(errors) => format!("{errors:?}"),
+        Ok(_) => return Err("construction-unsafe registered check was accepted".into()),
+    };
+    assert!(errors.contains("construction-safe verification reaches"), "{errors}");
+    assert!(errors.contains("name_present -> report"), "{errors}");
+    Ok(())
+}
+
 /// Copy projections remain reads inside value wrappers; a wrapper containing an owner still needs that owner.
 #[test]
 fn wrapped_scalar_projections_keep_inputs_shared() -> Result<(), Box<dyn std::error::Error>> {

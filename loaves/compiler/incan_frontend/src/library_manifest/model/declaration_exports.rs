@@ -170,6 +170,10 @@ pub struct ModelExport {
     /// `@derive(...)` names (empty for manifests predating this field).
     #[serde(default)]
     pub derives: Vec<String>,
+    /// Whether this model's canonical constructor returns `Result[Self, ValidationError]` because final checks are
+    /// registered. Older manifests are unregistered rather than implicitly trusted.
+    #[serde(default)]
+    pub has_registered_validation: bool,
     pub fields: Vec<FieldExport>,
     /// Public computed properties (empty for manifests predating this field).
     #[serde(default)]

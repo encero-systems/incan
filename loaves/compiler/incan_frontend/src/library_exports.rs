@@ -504,6 +504,8 @@ pub struct CheckedModelExport {
     pub trait_adoptions: Vec<CheckedTypeBound>,
     /// `@derive(...)` names that must remain available to `pub::` consumers.
     pub derives: Vec<String>,
+    /// Whether construction is fallible because the model carries registered final-validation obligations.
+    pub has_registered_validation: bool,
     pub fields: Vec<CheckedField>,
     pub properties: Vec<CheckedProperty>,
     pub methods: Vec<CheckedMethod>,

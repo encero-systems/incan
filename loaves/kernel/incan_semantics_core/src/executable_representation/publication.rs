@@ -369,6 +369,13 @@ pub(super) fn project_nominal(
         );
         audit.identity(&mut contract.validator, true)?;
     }
+    for check in &mut nominal.registered_validation {
+        audit.identity(&mut check.callable, true)?;
+        if let Some(field) = &mut check.target_field {
+            audit.identity(field, false)?;
+        }
+        audit.ty(&check.error_type)?;
+    }
     for ty in &nominal.field_types {
         audit.ty(ty)?;
     }

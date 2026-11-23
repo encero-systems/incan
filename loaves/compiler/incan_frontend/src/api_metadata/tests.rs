@@ -1168,6 +1168,114 @@ pub model Checked:
         .ok_or("manifest discarded the generated constructor")?;
     assert_eq!(constructor.canonical, method.canonical);
     assert_eq!(constructor.params, method.params);
+
+    let registered_source = r#"
+pub model Registered:
+    pub value: str
+
+    @validate(value)
+    def present(value: str) -> Result[None, ValidationError]:
+        if value == "":
+            return Err(ValidationError(message="blank"))
+        return Ok(None)
+"#;
+    let registered_tokens = lexer::lex(registered_source).map_err(|errors| format!("{errors:?}"))?;
+    let registered_program = parser::parse(&registered_tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut registered_checker = typechecker::TypeChecker::new();
+    registered_checker.set_current_package_identity(Some("example_registered".into()));
+    registered_checker.set_current_module_path(Some(vec!["registered".into()]));
+    registered_checker
+        .check_program(&registered_program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let registered_exports = collect_checked_public_exports(&registered_program, &registered_checker);
+    let registered_checked = registered_exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Model(model) if model.name == "Registered" => Some(model),
+            _ => None,
+        })
+        .ok_or("missing registered checked model")?;
+    assert!(registered_checked.has_registered_validation);
+    let registered_metadata =
+        collect_checked_api_metadata(&registered_program, &registered_checker, vec!["registered".into()]);
+    let registered_model = registered_metadata
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            ApiDeclaration::Model(model) if model.name == "Registered" => Some(model),
+            _ => None,
+        })
+        .ok_or("missing registered API model")?;
+    assert!(registered_model.has_registered_validation);
+    assert!(model_export_from_api(registered_model).has_registered_validation);
+    Ok(())
+}
+
+/// A registered check cannot cross a source-absent package call unless the provider published a safe summary.
+#[test]
+fn registered_validation_refuses_unsafe_imported_callable() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = r#"
+pub def reports_name(value: &str) -> bool:
+    println(value)
+    return value != ""
+"#;
+    let provider_tokens = lexer::lex(provider_source).map_err(|errors| format!("{errors:?}"))?;
+    let provider_program = parser::parse_with_module_path(&provider_tokens, Some("project/src/lib.incn"))
+        .map_err(|errors| format!("{errors:?}"))?;
+    let mut provider = TypeChecker::new();
+    provider.set_current_package_identity(Some("checks".into()));
+    provider.set_current_module_path(Some(vec!["lib".into()]));
+    provider
+        .check_program(&provider_program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let exports = collect_checked_public_exports(&provider_program, &provider);
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![collect_checked_api_metadata(
+            &provider_program,
+            &provider,
+            vec!["lib".into()],
+        )],
+        public_namespaces: Vec::new(),
+    };
+    materialize_checked_api_public_namespaces(&mut api)?;
+    let mut manifest = crate::library_manifest::LibraryManifest::from_checked_exports("checks", "0.1.0", &exports);
+    manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports("checks", &api, &[(vec!["lib".into()], exports)])?;
+    manifest.contract_metadata.api = Some(api);
+    let directory = tempfile::tempdir()?;
+    std::fs::write(directory.path().join("checks.incnlib"), manifest.to_json_string()?)?;
+    let entry = crate::loaf_index::LoafIndex::dependency("checks", "checks", directory.path())?;
+
+    let consumer_source = r#"
+from pub::checks import reports_name
+
+pub model Profile:
+    pub name: str
+
+    @validate(name)
+    def name_present(value: str) -> Result[None, ValidationError]:
+        if not reports_name(value):
+            return Err(ValidationError(message="blank"))
+        return Ok(None)
+"#;
+    let consumer_tokens = lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
+    let consumer_program = parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut consumer = TypeChecker::new();
+    consumer.set_loaves(std::sync::Arc::new(crate::loaf_index::LoafIndex::new([entry])?));
+    let errors = consumer
+        .check_program(&consumer_program)
+        .err()
+        .ok_or("unsafe imported validation callable was accepted")?;
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Registered final check 'Profile.name_present' is invalid")),
+        "{errors:?}"
+    );
     Ok(())
 }
 

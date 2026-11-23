@@ -94,6 +94,7 @@ pub(super) fn api_function(
         params: callable.params,
         return_type: callable.return_type,
         is_async: callable.is_async,
+        construction_safe: Some(checker.callable_is_construction_safe(&function.name, span)),
     }
 }
 
@@ -170,6 +171,7 @@ pub(super) fn api_model(
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         derives: export.derives.clone(),
+        has_registered_validation: export.has_registered_validation,
         fields: fields_in_source_order(&model.fields, &export.fields),
         properties: properties(&export.properties),
         methods: methods(

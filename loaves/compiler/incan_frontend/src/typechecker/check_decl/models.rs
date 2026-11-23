@@ -152,9 +152,7 @@ impl TypeChecker {
         let registrations = method
             .decorators
             .iter()
-            .filter(|decorator| {
-                decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::Validate)
-            })
+            .filter(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::Validate))
             .collect::<Vec<_>>();
         if registrations.is_empty() {
             return;
@@ -173,7 +171,10 @@ impl TypeChecker {
             return;
         }
         if !method.type_params.is_empty() || method.result_source.is_some() {
-            refuse(self, "a registered check cannot be generic or declare a borrowed result source");
+            refuse(
+                self,
+                "a registered check cannot be generic or declare a borrowed result source",
+            );
             return;
         }
         let Some(binding) = self
@@ -202,7 +203,10 @@ impl TypeChecker {
             return;
         };
         if ok != &ResolvedType::Unit {
-            refuse(self, "the successful result must be None and cannot replace the final value");
+            refuse(
+                self,
+                "the successful result must be None and cannot replace the final value",
+            );
             return;
         }
         let error_name = match error_type {
@@ -210,8 +214,7 @@ impl TypeChecker {
             _ => None,
         };
         if !error_name.is_some_and(|name| {
-            name == "ValidationError"
-                || self.type_implements_trait(name, builtin_traits::as_str(TraitId::Error))
+            name == "ValidationError" || self.type_implements_trait(name, builtin_traits::as_str(TraitId::Error))
         }) {
             refuse(self, "the failure type E must implement Error");
             return;
@@ -219,7 +222,10 @@ impl TypeChecker {
         let target_field = match registration.node.args.as_slice() {
             [] if !registration.node.is_call => {
                 if method.receiver != Some(Receiver::Immutable) || !binding.params.is_empty() {
-                    refuse(self, "a whole-model check must have the signature def check(self) -> Result[None, E]");
+                    refuse(
+                        self,
+                        "a whole-model check must have the signature def check(self) -> Result[None, E]",
+                    );
                     return;
                 }
                 None
@@ -230,7 +236,10 @@ impl TypeChecker {
                     return;
                 };
                 if method.receiver.is_some() || binding.params.len() != 1 {
-                    refuse(self, "a field check must receive exactly one explicitly typed field value and no self");
+                    refuse(
+                        self,
+                        "a field check must receive exactly one explicitly typed field value and no self",
+                    );
                     return;
                 }
                 let parameter = &binding.params[0];
@@ -248,19 +257,14 @@ impl TypeChecker {
                     };
                     Some((info.ty.clone(), info.identity.clone()?))
                 }) else {
-                    refuse(self, "the registered field target has no checked type and canonical identity");
+                    refuse(
+                        self,
+                        "the registered field target has no checked type and canonical identity",
+                    );
                     return;
                 };
                 if parameter.ty != field_type {
                     refuse(self, "the check parameter type must exactly match the final field type");
-                    return;
-                }
-                let access = crate::ownership_metadata::direct_input_access(
-                    self.type_info.declarations.ownership_contracts.get(&callable),
-                    0,
-                );
-                if access != Ok(incan_semantics_core::IncanInputAccess::Shared) {
-                    refuse(self, "the check parameter must use immutable shared access to the final field value");
                     return;
                 }
                 Some(identity)
@@ -277,10 +281,239 @@ impl TypeChecker {
             .or_default()
             .push(super::type_info::RegisteredModelCheckInfo {
                 callable,
+                callable_span: method_span,
                 target_field,
                 error_type: error_type.clone(),
                 registration_span: registration.span,
             });
+        if let Some(symbol_id) = self.symbols.lookup(&model.name)
+            && let Some(Symbol {
+                kind: SymbolKind::Type(TypeInfo::Model(info)),
+                ..
+            }) = self.symbols.get_mut(symbol_id)
+        {
+            info.has_registered_validation = true;
+        }
+    }
+
+    /// Validate provisional final-check registrations after every declaration body has contributed its call facts.
+    /// Signature checking retains candidates early so model-level conflicts remain deterministic, but only this late
+    /// pass grants lowering authority. Unsafe candidates are diagnosed and removed before Body IR can observe them.
+    pub(in crate::typechecker) fn validate_registered_model_check_safety(&mut self) {
+        let registrations = std::mem::take(&mut self.type_info.declarations.registered_model_checks);
+        for (model_name, checks) in registrations {
+            let mut accepted = Vec::new();
+            for check in checks {
+                if let Some(reason) = self.registered_check_construction_safety_refusal(
+                    &check.callable.declaration_name,
+                    check.callable_span,
+                ) {
+                    self.errors.push(errors::invalid_registered_validation(
+                        &model_name,
+                        &check.callable.declaration_name,
+                        &reason,
+                        check.registration_span,
+                    ));
+                } else {
+                    accepted.push(check);
+                }
+            }
+            let has_registered_validation = !accepted.is_empty();
+            if has_registered_validation {
+                self.type_info
+                    .declarations
+                    .registered_model_checks
+                    .insert(model_name.clone(), accepted);
+            }
+            if let Some(symbol_id) = self.symbols.lookup(&model_name)
+                && let Some(Symbol {
+                    kind: SymbolKind::Type(TypeInfo::Model(info)),
+                    ..
+                }) = self.symbols.get_mut(symbol_id)
+            {
+                info.has_registered_validation = has_registered_validation;
+            }
+        }
+    }
+
+    /// Conservatively verify one registered check's resolved local call closure before granting lowering authority.
+    /// Cycles are admitted as one active component; every edge leaving it must be a checked local function. Imported,
+    /// native, asynchronous, stateful and open-method boundaries remain unverified until package metadata or a
+    /// compiler-owned registry explicitly certifies them.
+    fn registered_check_construction_safety_refusal(&self, root: &str, span: Span) -> Option<String> {
+        let mut active = HashSet::new();
+        let mut accepted = HashSet::new();
+        let mut chain = vec![root.to_owned()];
+        self.callable_construction_safety_refusal(span, &mut active, &mut accepted, &mut chain)
+    }
+
+    /// Infer the versioned public construction-safety summary for one authored callable.
+    pub(crate) fn callable_is_construction_safe(&self, root: &str, span: Span) -> bool {
+        self.registered_check_construction_safety_refusal(root, span).is_none()
+    }
+
+    /// Walk exact checked function-call edges for one callable, refusing the first unsafe operation with its chain.
+    fn callable_construction_safety_refusal(
+        &self,
+        declaration: Span,
+        active: &mut HashSet<Span>,
+        accepted: &mut HashSet<Span>,
+        chain: &mut Vec<String>,
+    ) -> Option<String> {
+        if accepted.contains(&declaration) || !active.insert(declaration) {
+            return None;
+        }
+        let render = |operation: &str, chain: &[String]| {
+            format!(
+                "construction-safe verification reaches {operation}; call chain: {}",
+                chain.join(" -> ")
+            )
+        };
+        if self.type_info.c_abi.raw_calls.iter().any(|call| {
+            call.owner
+                .as_ref()
+                .is_some_and(|owner| owner.declaration_span == declaration)
+        }) {
+            active.remove(&declaration);
+            return Some(render("a C or host effect", chain));
+        }
+        if self
+            .type_info
+            .calls
+            .body_ir_async_call_targets
+            .keys()
+            .any(|span| Self::construction_span_contains(declaration, *span))
+        {
+            active.remove(&declaration);
+            return Some(render("asynchronous work", chain));
+        }
+        if self
+            .type_info
+            .calls
+            .resolved_builtin_calls
+            .keys()
+            .any(|span| Self::construction_span_contains(declaration, *span))
+        {
+            active.remove(&declaration);
+            return Some(render("an uncertified builtin operation", chain));
+        }
+        if self
+            .type_info
+            .calls
+            .resolved_method_calls
+            .keys()
+            .any(|span| Self::construction_span_contains(declaration, *span))
+        {
+            active.remove(&declaration);
+            return Some(render("an open or unverified method dispatch", chain));
+        }
+        if self
+            .type_info
+            .references
+            .resolved_identities
+            .iter()
+            .any(|(span, identity)| {
+                Self::construction_span_contains(declaration, *span)
+                    && (identity.kind == incan_semantics_core::SemanticSourceTargetKind::Static
+                        || matches!(identity.origin, incan_semantics_core::SymbolOrigin::RustCrate(_)))
+            })
+        {
+            active.remove(&declaration);
+            return Some(render("mutable static state or an uncertified native operation", chain));
+        }
+        let calls = self
+            .type_info
+            .references
+            .resolved_identities
+            .iter()
+            .filter(|(span, identity)| {
+                Self::construction_span_contains(declaration, **span)
+                    && identity.kind == incan_semantics_core::SemanticSourceTargetKind::Function
+                    && self.type_info.references.resolved_identities.iter().any(|(callee_span, callee)| {
+                        callee == *identity
+                            && callee_span != *span
+                            && Self::construction_span_contains(**span, *callee_span)
+                    })
+            })
+            .map(|(_, identity)| identity.clone())
+            .collect::<Vec<_>>();
+        for target in calls {
+            match &target.origin {
+                incan_semantics_core::SymbolOrigin::Module(_) => {
+                    if self
+                        .local_function_decls
+                        .get(&target.declaration_name)
+                        .is_some_and(FunctionDecl::is_async)
+                    {
+                        active.remove(&declaration);
+                        return Some(render("an asynchronous local helper", chain));
+                    }
+                    chain.push(target.declaration_name.clone());
+                    if let Some(reason) =
+                        self.callable_construction_safety_refusal(target.declaration_span, active, accepted, chain)
+                    {
+                        active.remove(&declaration);
+                        return Some(reason);
+                    }
+                    chain.pop();
+                }
+                incan_semantics_core::SymbolOrigin::Builtin => {}
+                incan_semantics_core::SymbolOrigin::Package { .. } => {
+                    if !self.imported_callable_is_construction_safe(&target) {
+                        chain.push(target.declaration_name.clone());
+                        let reason = render(
+                            "an imported callable without checked construction-safety metadata",
+                            chain,
+                        );
+                        chain.pop();
+                        active.remove(&declaration);
+                        return Some(reason);
+                    }
+                }
+                incan_semantics_core::SymbolOrigin::RustCrate(_) => {
+                    chain.push(target.declaration_name.clone());
+                    let reason = render("an uncertified Rust-backed callable", chain);
+                    chain.pop();
+                    active.remove(&declaration);
+                    return Some(reason);
+                }
+            }
+        }
+        active.remove(&declaration);
+        accepted.insert(declaration);
+        None
+    }
+
+    /// Test inclusive-exclusive containment while keeping generated expansions in their own identity domain.
+    fn construction_span_contains(owner: Span, nested: Span) -> bool {
+        owner.expansion == nested.expansion && owner.start <= nested.start && nested.end <= owner.end
+    }
+
+    /// Accept only a v3 checked API summary for the exact package module and free-function identity.
+    fn imported_callable_is_construction_safe(&self, identity: &incan_semantics_core::CanonicalSymbolId) -> bool {
+        let incan_semantics_core::SymbolOrigin::Package { library, module_path } = &identity.origin else {
+            return false;
+        };
+        let Some(api) = self
+            .loaves
+            .package_manifest(library)
+            .and_then(|manifest| manifest.contract_metadata.api.as_ref())
+            .filter(|api| api.schema_version >= crate::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION)
+        else {
+            return false;
+        };
+        api.modules
+            .iter()
+            .find(|module| &module.module_path == module_path)
+            .into_iter()
+            .flat_map(|module| &module.declarations)
+            .any(|declaration| {
+                matches!(
+                    declaration,
+                    crate::api_metadata::ApiDeclaration::Function(function)
+                        if function.name == identity.declaration_name && function.construction_safe == Some(true)
+                )
+            })
     }
 
     /// Complete declaration-only derive checks after model member validation, without revisiting its fields or

@@ -12,6 +12,7 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
+            has_registered_validation: export.has_registered_validation,
             fields: self.fields_from_manifest(&export.name, &export.fields, false),
             field_order: export.fields.iter().map(|field| field.name.clone()).collect(),
             properties: self.properties_from_manifest(&export.name, &export.properties),

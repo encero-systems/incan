@@ -28,13 +28,12 @@ from models import constructor_index
 from model_construction import model_field_operands, boxed_operand
 from defaults import model_default_arguments
 from options import assign_carrier, result_layout, variant_condition
-from typed_value_callbacks import borrow_argument, call_callback
+from typed_value_callbacks import borrow_argument, call_callback, error_message_body, error_message_callable, parameter_types
 from program_context import body_at
 from classes import frame_type
 from calls import instantiated_external_call
 from call_arguments import call_parameter_type
 from closures import return_representation
-from formatting import native_format_text
 from validation_errors import display_validation_error
 from text_plan import owned_literal
 
@@ -90,7 +89,7 @@ pub def collect_registered_validation(
     for check in checks:
         argument, location = registered_check_argument(builder, model_owner, value, check.target_field, span)?
         outcome = call_registered_check(module, builder, check.callable, argument, span)?
-        accumulator = collect_registered_failure(builder, outcome, accumulator, failed, location, span)?
+        accumulator = collect_registered_failure(module, builder, outcome, accumulator, failed, location, span)?
     return Ok((failed, accumulator))
 
 
@@ -242,6 +241,7 @@ def registered_callable(module: &BodyIrModule, identity: CanonicalSymbolId) -> R
 
 
 def collect_registered_failure(
+    module: &BodyIrModule,
     mut builder: Builder,
     outcome: Place,
     accumulator: Place,
@@ -271,7 +271,7 @@ def collect_registered_failure(
     builder.current = rejected
     builder.owned = owners
     payload = Place(local=outcome.local, projection=Projection.VariantField(1, 0, error_type), span=span)
-    message = registered_error_message(builder, payload, error_type, span)?
+    message = registered_error_message(module, builder, payload, error_type, span)?
     original = temporary(builder, error_type, span)
     builder.emit(plan_assign(original, RvalueKind.Use(read_place(payload, true, span)), span))
     forget_owned(builder, outcome.local)
@@ -299,24 +299,56 @@ def collect_registered_failure(
 
 
 def registered_error_message(
+    module: &BodyIrModule,
     mut builder: Builder,
     error: Place,
     error_type: PlanType,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Render Error's Display view before transferring the original payload into typed umbrella storage."""
+    """Read Error's checked message before transferring the original payload into typed umbrella storage."""
     if error_type == PlanType.ValidationError:
         return display_validation_error(builder, error, span)
-    mut shared = error
-    match error_type:
-        PlanType.Model(owner, name) =>
-            shared = temporary(builder, PlanType.ModelRef(owner, name), span)
-            builder.emit(plan_assign(shared, RvalueKind.Borrow(error), span))
-        PlanType.Enum(owner, name) =>
-            shared = temporary(builder, PlanType.EnumRef(owner, name), span)
-            builder.emit(plan_assign(shared, RvalueKind.Borrow(error), span))
-        _ => pass
-    return native_format_text(builder, read_place(shared, false, span), false, span)
+    match error_message_callable(module, builder, error_type)?:
+        Some(callable) => return call_compiled_error_message(builder, callable, error, span)
+        None => pass
+    message = error_message_body(module, builder, error_type)?
+    return call_callback(module, builder, message, [error], span)
+
+
+def call_compiled_error_message(
+    mut builder: Builder,
+    callable: LoafCallable,
+    error: Place,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Invoke one producer-compiled Error.message through its authenticated declaration frame and native item."""
+    match callable.declaration_frame():
+        None => return Err("invalid Body IR compiled Error.message without a declaration frame")
+        Some(frame) =>
+            if len(frame.params) != 1 or len(callable.type_parameters) != 0 or frame.is_async:
+                return Err("invalid Body IR compiled Error.message signature")
+            parameters = parameter_types(builder, frame.clone())?
+            if len(parameters) != 1:
+                return Err("invalid Body IR compiled Error.message parameter representation")
+            expected = parameters[0]
+            operand = borrow_argument(builder, error, expected, span)?
+            mut result = native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                callable.return_type,
+                builder.intrinsics,
+            )?
+            result = return_representation(frame, result)?
+            if result != PlanType.String:
+                return Err("invalid Body IR compiled Error.message result")
+            output = temporary(builder, result, span)
+            match callable.rust_path():
+                None => return Err("invalid Body IR compiled Error.message without a native identity")
+                Some(path) =>
+                    instantiated_external_call(builder, path, [], [expected], result, [operand], output, span)?
+                    return Ok(output)
 
 
 def finish_registered_result(

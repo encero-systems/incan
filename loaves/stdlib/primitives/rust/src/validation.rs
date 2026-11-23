@@ -91,11 +91,7 @@ impl ValidationError {
     }
 
     /// Capture one original concrete error at a structured field or model location.
-    pub fn from_located_original<T: Any>(
-        location: String,
-        message: String,
-        original: Box<T>,
-    ) -> Self {
+    pub fn from_located_original<T: Any>(location: String, message: String, original: Box<T>) -> Self {
         Self {
             message: message.clone(),
             code: None,
@@ -117,12 +113,7 @@ impl ValidationError {
     }
 
     /// Retain another located original failure after existing members, preserving aggregate order.
-    pub fn push_located_original<T: Any>(
-        &mut self,
-        location: String,
-        message: String,
-        original: Box<T>,
-    ) {
+    pub fn push_located_original<T: Any>(&mut self, location: String, message: String, original: Box<T>) {
         self.members.push(ValidationMember {
             location: Some(location),
             message,
@@ -134,12 +125,7 @@ impl ValidationError {
     ///
     /// This consuming form is the Incan-facing aggregate operation for #2472 while mutable native callable receivers
     /// are not yet representable by Body IR. It preserves member order without cloning any retained payload.
-    pub fn with_located_original<T: Any>(
-        mut self,
-        location: String,
-        message: String,
-        original: Box<T>,
-    ) -> Self {
+    pub fn with_located_original<T: Any>(mut self, location: String, message: String, original: Box<T>) -> Self {
         self.push_located_original(location, message, original);
         self
     }

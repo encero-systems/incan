@@ -487,7 +487,7 @@ impl TypeChecker {
             .symbols
             .member_declaration_identity(&method.name, SemanticSourceTargetKind::Method, span);
         self.record_ownership_signature(
-            identity.clone(),
+            identity,
             Signature {
                 parameters: &method.params,
                 parameter_types: parameters,
@@ -501,56 +501,6 @@ impl TypeChecker {
                 receiver_mode: method.receiver,
             },
         );
-        self.retain_registered_validation_input(method, identity, parameters);
-    }
-
-    /// Give a field-targeted registered check the shared final-value input that its declaration contract implies.
-    ///
-    /// RFC 087 deliberately spells the parameter as the field's value type rather than an ownership wrapper. The
-    /// check must nevertheless inspect the completed model without moving that field, because later checks observe
-    /// the same final state. An explicit source ownership mode remains authoritative here and is diagnosed by model
-    /// validation when it is not shared.
-    fn retain_registered_validation_input(
-        &mut self,
-        method: &MethodDecl,
-        identity: CanonicalSymbolId,
-        parameters: &[ResolvedType],
-    ) {
-        let field_check = method.decorators.iter().any(|decorator| {
-            decorator.node.is_call
-                && decorator.node.args.len() == 1
-                && incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
-                    == Some(incan_lang::lang::decorators::DecoratorId::Validate)
-        });
-        let [parameter] = parameters else { return };
-        if !field_check {
-            return;
-        }
-        let contract = self
-            .type_info
-            .declarations
-            .ownership_contracts
-            .entry(identity)
-            .or_insert_with(|| OwnershipContract {
-                schema_version: 1,
-                modes: Vec::new(),
-                result_source: None,
-            });
-        if contract
-            .modes
-            .iter()
-            .any(|mode| mode.component.parameter == Some(0) && mode.component.children.is_empty())
-        {
-            return;
-        }
-        contract.modes.push(AccessMode {
-            mode: ownership::OwnershipMode::Borrowed,
-            component: TypeComponent {
-                parameter: Some(0),
-                children: Vec::new(),
-            },
-            underlying: parameter.clone(),
-        });
     }
 
     /// Retain structurally checked metadata even when the body is refused, without inventing a source proof.

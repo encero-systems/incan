@@ -297,6 +297,7 @@ impl TypeChecker {
                     traits: Vec::new(),
                     trait_adoptions: Vec::new(),
                     derives: Vec::new(),
+                    has_registered_validation: false,
                     fields: HashMap::new(),
                     field_order: Vec::new(),
                     properties: HashMap::new(),

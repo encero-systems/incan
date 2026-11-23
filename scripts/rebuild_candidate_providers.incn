@@ -1,0 +1,44 @@
+"""Rebuild probe-only runtime and standard providers through the selected candidate driver."""
+
+from rust::std::process import exit
+from std.fs import Path
+from check_support import write_stderr
+from native_build import (
+    NativeContext,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    require_unique_runtime_root,
+)
+
+
+def main() -> None:
+    """Rebuild the candidate providers or report the exact failed release step."""
+    match rebuild():
+        Ok(_) => println("candidate providers rebuilt")
+        Err(message) =>
+            write_stderr(message + "\n")
+            exit(1)
+
+
+def rebuild() -> Result[None, str]:
+    """Build source interfaces, runtime, and standard packages in release order."""
+    root = Path("/Volumes/Builds/incan-b2-hooks-stack-20261110-lane")
+    repo = root.joinpath("integrated-source-70")
+    lane = root.joinpath("relink-integrated-70")
+    context = NativeContext(
+        repo=repo,
+        lane=lane,
+        home=lane.joinpath("dev8-home"),
+        builder=root.joinpath("release-integrated-62/lane/oven-bin/incan").0,
+        stdlib=repo.joinpath("loaves/stdlib").0,
+        evidence=root.joinpath("evidence/final-validation-1295/candidate-providers-70"),
+        timings=root.joinpath("evidence/final-validation-1295/candidate-providers-70/timings.tsv"),
+        timeout_seconds=600,
+    )
+    helper = root.joinpath("release-integrated-62/lane/out/native-builds/toolchain-native")
+    interfaces = build_source_interfaces(context, helper, "probe-candidate-")?
+    _ = build_runtime(context, helper, Some(interfaces), true, "probe-candidate-")?
+    require_unique_runtime_root(context)?
+    build_standard_packages(context, helper, "probe-candidate-")?
+    return Ok(None)
