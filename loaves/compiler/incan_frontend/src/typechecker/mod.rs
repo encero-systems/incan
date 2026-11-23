@@ -552,6 +552,8 @@ pub struct TypeChecker {
     local_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated local records selected for this source revision without counting them as evaluations.
     selected_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Callable owners whose statements this activation checked afresh, whether or not a record was selected for them.
+    freshly_checked_bodies: std::collections::BTreeSet<Span>,
     /// Codec-validated settled values restored through the ordinary checked-body assembly and retained for graph
     /// publication without pretending the settlement producer ran in this invocation.
     selected_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,

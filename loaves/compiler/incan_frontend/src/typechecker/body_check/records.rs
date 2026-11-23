@@ -79,9 +79,11 @@ impl TypeChecker {
         }
     }
 
-    /// Report whether this activation restored the selected local body instead of checking statements afresh.
+    /// Report whether this activation restored the selected local body instead of checking statements afresh. A
+    /// callable product retains its local record for an owner whose statements are then checked again, so a selected
+    /// record alone does not say its body was restored.
     pub fn restored_body_record(&self, owner: Span) -> bool {
-        self.selected_local_records.contains_key(&owner)
+        self.selected_local_records.contains_key(&owner) && !self.freshly_checked_bodies.contains(&owner)
     }
 
     /// Publish the local record emitted by one just-completed callable producer. The index is returned by that exact

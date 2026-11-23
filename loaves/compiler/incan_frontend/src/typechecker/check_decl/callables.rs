@@ -394,6 +394,7 @@ impl TypeChecker {
             None
         } else {
             self.check_work.function_bodies += 1;
+            self.freshly_checked_bodies.insert(span);
             self.check_callable_body(
                 &func.body,
                 func.is_async(),
