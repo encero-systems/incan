@@ -1,5 +1,4 @@
-# behavior: std.graph directed graphs, DAGs and multigraphs add nodes and edges, answer neighborhood and traversal queries, and refuse an edge that would close a cycle in a DAG (RFC 047)
-# Legacy GraphNode and GraphEdge values can still be imported, constructed, and read (#3144).
+# behavior: std.graph containers support traversal and refuse a DAG cycle (RFC 047). GraphNode and GraphEdge remain public, constructible records (#3144).
 # expect-stdout:
 #   successors 1
 #   bfs 2
