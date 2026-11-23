@@ -194,8 +194,8 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Verify the sysroot's compiler identity (`--identity`) and print its host target: the proof, without compiling,
-/// that this driver runs against that sysroot. Installers use it to check a relocated toolchain.
+/// Verify the sysroot's compiler identity and print its host target. An explicit installer query also returns the
+/// supported Plan admission profile. Both responses verify the relocated toolchain without compiling a unit.
 fn verify_sysroot(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let reply = identity_reply(arguments, |sysroot| {
         identity::verify(sysroot).map(|verified| verified.target)
@@ -209,11 +209,19 @@ fn identity_reply(
     arguments: &[String],
     verify: impl FnOnce(&Path) -> Result<String, identity::IdentityError>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let [sysroot] = arguments else {
-        return Err("usage: incan-rustc-driver --identity SYSROOT".into());
+    const PROTOCOL: &str = "incan.driver-capabilities/1";
+    const PROFILE: &str = "incan.plan-module-selection-sha256/1";
+    let (sysroot, capabilities) = match arguments {
+        [sysroot] => (sysroot, false),
+        [sysroot, option, protocol] if option == "--capabilities" && protocol == PROTOCOL => (sysroot, true),
+        _ => return Err("usage: incan-rustc-driver --identity SYSROOT".into()),
     };
     let target = verify(Path::new(sysroot))?;
-    Ok(format!("{target}\n"))
+    if capabilities {
+        Ok(format!("{PROTOCOL}\n{target}\n{PROFILE}\n"))
+    } else {
+        Ok(format!("{target}\n"))
+    }
 }
 
 #[cfg(test)]
