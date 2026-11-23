@@ -72,7 +72,7 @@ fn path_install_record_publication_and_compatibility() -> Result<(), Box<dyn std
             .iter()
             .any(|declaration| declaration.name == "Price")
     }));
-    let record = manifest.prepare_install_record(&checked)?;
+    let record = manifest.prepare_install_record(&checked, false)?;
     let value = record.record.value.clone();
     let key = record.record.key();
     let revision = sha256_hex(&value);

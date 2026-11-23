@@ -114,6 +114,8 @@ pub(super) fn encode_path_lookup(records: &[CompilerRecord]) -> Result<String, L
 #[derive(Debug)]
 pub(crate) struct PathInstallFacts {
     pub(crate) record: Arc<LoafInstallRecord>,
+    /// The producer's authenticated ABI index also answers explicit Rust re-exports.
+    pub(crate) indexed_rust_reexports: bool,
     lookup: Option<PathLookup>,
 }
 
@@ -130,6 +132,8 @@ impl PathInstallFacts {
             #[serde(flatten)]
             record: LoafInstallRecord,
             path_lookup_digest: Option<String>,
+            #[serde(default)]
+            indexed_rust_reexports: bool,
         }
         let (value, lookup) = read_facts(manifest_path, name, manifest_digest, expected_digest)?;
         let install: InstallValue = LibraryManifest::decode_compiler_record_value(&value.value)?;
@@ -148,6 +152,7 @@ impl PathInstallFacts {
             loaf = name, key = %value.key(), revision = expected_digest, bytes = value.value.len());
         Ok(Self {
             record: Arc::new(install.record),
+            indexed_rust_reexports: install.indexed_rust_reexports,
             lookup,
         })
     }

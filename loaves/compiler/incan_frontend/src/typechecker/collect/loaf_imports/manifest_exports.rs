@@ -1,6 +1,7 @@
 //! Manifest export lookup, symbol kinds for manifest and API targets, and public import symbols.
 
 use super::*;
+use incan_lang::interop::RustItemMetadata;
 
 impl TypeChecker {
     /// Return all exported names in a manifest for diagnostics.
@@ -368,14 +369,30 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         target_path: &[String],
     ) -> Option<SymbolKind> {
+        Self::rust_reexport_symbol(target_path, |path| {
+            manifest
+                .rust_abi
+                .as_ref()
+                .and_then(|abi| abi.get(path))
+                .map(|metadata| Arc::new(metadata.clone()))
+        })
+    }
+
+    /// Reconstruct a direct Rust re-export using the indexed ABI shipped by its selected Loaf.
+    pub(super) fn indexed_rust_reexport_symbol(&self, library: &str, target_path: &[String]) -> Option<SymbolKind> {
+        let kind = Self::rust_reexport_symbol(target_path, |path| self.loaves.indexed_rust_reexport(library, path))?;
+        matches!(&kind, SymbolKind::RustItem(info) if info.metadata.is_some()).then_some(kind)
+    }
+
+    /// Bind the same Rust item shape for either manifest or indexed ABI authority.
+    fn rust_reexport_symbol(
+        target_path: &[String],
+        lookup: impl FnOnce(&str) -> Option<Arc<RustItemMetadata>>,
+    ) -> Option<SymbolKind> {
         let (crate_name, path) = Self::rust_reexport_target(target_path)?;
         #[cfg(test)]
         RUST_REEXPORT_BUILDS.with(|builds| builds.set(builds.get() + 1));
-        let metadata = manifest
-            .rust_abi
-            .as_ref()
-            .and_then(|abi| abi.get(&path))
-            .map(|metadata| Arc::new(metadata.clone()));
+        let metadata = lookup(&path);
         Some(SymbolKind::RustItem(RustItemInfo {
             crate_name: crate_name.clone(),
             metadata,

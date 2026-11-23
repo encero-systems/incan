@@ -31,7 +31,7 @@ fn a_consumer_reads_one_public_namespace_record_alone() -> Result<(), Box<dyn st
         Vec::new(),
     ));
     let declared = crate::typechecker::TypeChecker::new().loaf_install_record("prices", &manifest);
-    let install = manifest.prepare_install_record(&declared)?;
+    let install = manifest.prepare_install_record(&declared, false)?;
     let content = manifest.to_json_string()?;
     std::fs::write(directory.join("prices.incnlib"), &content)?;
     std::fs::write(
@@ -136,7 +136,7 @@ fn check_path_rust_reexport_without_manifest() -> Result<(), Box<dyn std::error:
     abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&abi_cache)));
     manifest.rust_abi = Some(abi);
     let install = checker.loaf_install_record("probe", &manifest);
-    let publication = manifest.prepare_install_record(&install)?;
+    let publication = manifest.prepare_install_record(&install, true)?;
     let content = manifest.to_json_string()?;
     std::fs::write(root.path().join("probe.incnlib"), &content)?;
     std::fs::write(root.path().join("probe.rustabi"), abi_cache)?;

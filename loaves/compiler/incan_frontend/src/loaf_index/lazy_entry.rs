@@ -322,6 +322,21 @@ impl IndexedLoaf {
             .clone()
     }
 
+    /// Select the ABI index for explicit re-exports when the path producer's checked sidecar includes them.
+    /// Older artifacts still publish the authoritative item inline in their manifest.
+    pub(super) fn indexed_rust_reexports(&self) -> Result<Option<Arc<RustAbiCache>>, LoafIndexError> {
+        if self.path_generation.is_some()
+            && matches!(self.namespace, LoafNamespace::Dependency { .. })
+            && self.summary()?.rust_abi_cache_digest.is_some()
+            && self
+                .path_install_facts()?
+                .is_some_and(|facts| facts.indexed_rust_reexports)
+        {
+            return self.rust_abi_cache();
+        }
+        Ok(None)
+    }
+
     /// Read the record projection needed to admit executable declarations without demanding the complete manifest.
     pub fn execution_manifest(&self) -> Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError> {
         self.execution

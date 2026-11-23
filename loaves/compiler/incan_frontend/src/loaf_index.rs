@@ -1028,6 +1028,19 @@ impl LoafIndex {
         Some(resolved)
     }
 
+    /// Resolve the ABI item shipped by the exact Loaf defining this public Rust re-export.
+    pub(crate) fn indexed_rust_reexport(&self, key: &str, path: &str) -> Option<Arc<RustItemMetadata>> {
+        let entry = self.entries.get(key)?;
+        let cache = match entry.indexed_rust_reexports() {
+            Ok(cache) => cache?,
+            Err(error) => {
+                let _ = self.rust_abi_failure.set(error);
+                return None;
+            }
+        };
+        self.cache_fact(cache.get(path), || entry.dir.clone()).map(Arc::new)
+    }
+
     /// Release every Rust item decoded so far, for this index and the clones that share its store, when checking is
     /// done. A standard type's metadata carries every implementation it has, so the items a checker decoded can
     /// outweigh the checked program; a later lookup decodes its item again through the same lookup order.
@@ -1072,6 +1085,19 @@ impl LoafIndex {
         };
         // A Loaf whose demand fails is skipped here; `validate_demands` reports its retained failure.
         for entry in shipping().filter(|entry| entry.summary().is_ok_and(|s| s.rust_paths.contains(canonical_path))) {
+            match entry.indexed_rust_reexports() {
+                Ok(Some(cache)) => {
+                    if let Some(item) = self.cache_fact(read_cache(&cache, canonical_path), || entry.dir.clone()) {
+                        return Some(item);
+                    }
+                    continue;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = self.rust_abi_failure.set(error);
+                    continue;
+                }
+            }
             let Ok(entry) = entry.demand() else {
                 continue;
             };

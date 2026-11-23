@@ -1,6 +1,6 @@
 //! Imports from an installed Loaf settled from its own records (RFC 179): a public namespace by its path and a
-//! function, constant or static by its module-qualified name, so checking a program reads what it uses rather than the
-//! Loaf's whole checked API. Whatever these records cannot settle exactly is left to the Loaf's manifest, as before.
+//! member by its module-qualified name, so checking a program reads the declarations it uses. The manifest settles
+//! imports outside the named records' contract.
 
 use serde_json::Value;
 
@@ -81,7 +81,8 @@ impl TypeChecker {
             else {
                 return false;
             };
-            let marker_free = self.record_proves_no_testing_marker(library, source_module_path, &resolved.source_name);
+            let marker_free = matches!(&resolved.kind, SymbolKind::RustItem(_))
+                || self.record_proves_no_testing_marker(library, source_module_path, &resolved.source_name);
             members.push((
                 PublicModuleMember {
                     kind: resolved.kind,
@@ -195,11 +196,9 @@ impl TypeChecker {
         Some(namespace_members(&namespace, member).into_iter().cloned().collect())
     }
 
-    /// Resolve a function, constant or static published by a public namespace from the namespace's record and the
-    /// member's own declaration records; an overloaded function is resolved from each overload's records. `None` when
-    /// they cannot settle it exactly: no records, another kind of member, an alias, a bounded type parameter, a type
-    /// its declaring module's records do not settle (see [`Self::record_type_remapping`]), a default record that names
-    /// no overload, or no single declaration identity; the manifest then resolves the member.
+    /// Resolve a function, constant, static or Rust re-export from its named declaration records and the namespace's
+    /// checked identity. Each overload uses its own records. A Rust re-export binds the canonical Rust item through
+    /// the selected ABI metadata. Returns `None` when the records leave an unresolved identity, type or overload.
     pub(in crate::typechecker) fn record_module_member(
         &mut self,
         library: &str,
@@ -228,9 +227,26 @@ impl TypeChecker {
             .ok()??;
         let declarations = restored_declarations(&signatures, &defaults)?;
         let mut remapping = HashMap::new();
-        for declaration in &declarations {
-            let spellings = RecordSpellings::of_member(declaration)?;
-            remapping.extend(self.record_type_remapping(library, source_module, &spellings, &mut Vec::new())?);
+        let alias = match declarations.as_slice() {
+            [ApiDeclaration::Alias(alias)] => {
+                if alias.projected_function.is_some() || alias.projected_type.is_some() {
+                    return None;
+                }
+                let [root, rust_path @ ..] = alias.target_path.as_slice() else {
+                    return None;
+                };
+                if root != "rust" {
+                    return None;
+                }
+                Some((&alias.target_path, rust_path))
+            }
+            _ => None,
+        };
+        if alias.is_none() {
+            for declaration in &declarations {
+                let spellings = RecordSpellings::of_member(declaration)?;
+                remapping.extend(self.record_type_remapping(library, source_module, &spellings, &mut Vec::new())?);
+            }
         }
         let public_path = std::iter::once(admitted.name.clone())
             .chain(module_path.iter().cloned())
@@ -242,28 +258,43 @@ impl TypeChecker {
             [declaration] => {
                 let matching = exports
                     .iter()
-                    .filter(|identity| identity.public_path == public_path && identity.source_path == source_path)
+                    .filter(|identity| {
+                        identity.public_path == public_path
+                            && alias.map_or(identity.source_path == source_path, |(target, _)| {
+                                identity.target_path() == Some(target.as_slice())
+                            })
+                    })
                     .collect::<Vec<_>>();
                 let [identity] = matching.as_slice() else {
                     return None;
                 };
                 let canonical = identity.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate)?;
-                (
-                    self.symbol_kind_from_api_declaration(None, declaration)?,
-                    Some(canonical),
-                )
+                let kind = if let Some((target, rust_path)) = alias {
+                    if canonical.kind != SemanticSourceTargetKind::RustItem
+                        || !matches!(&canonical.origin, SymbolOrigin::RustCrate(path) if path == rust_path)
+                    {
+                        return None;
+                    }
+                    self.indexed_rust_reexport_symbol(library, target)?
+                } else {
+                    self.symbol_kind_from_api_declaration(None, declaration)?
+                };
+                (kind, Some(canonical))
             }
             overloads => self.record_overloads(overloads, exports, &public_path, &source_path)?,
         };
         self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         Self::mark_compiled_class_field_provider(&mut kind, library);
+        let (source_module, source_name) = alias
+            .and_then(|(target, _)| Self::normalized_api_declaration_target(target))
+            .unwrap_or_else(|| (source_module.to_vec(), source_name.clone()));
         let mut source_module_path = admitted.binding_root;
-        source_module_path.extend(source_module.iter().cloned());
+        source_module_path.extend(source_module);
         Some(ResolvedPublicModuleSymbol {
             kind,
             canonical,
             source_module_path,
-            source_name: source_name.clone(),
+            source_name,
         })
     }
 

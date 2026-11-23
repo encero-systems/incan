@@ -187,10 +187,12 @@ pub struct PreparedInstallRecord {
 }
 
 impl LibraryManifest {
-    /// Encode the checked install value, including its named API receipt, before binding its bytes to the manifest.
+    /// Bind the checked install value and named API receipt to the manifest. The ABI flag records that this
+    /// producer included its explicit Rust re-exports in the manifest-selected ABI index.
     pub fn prepare_install_record(
         &mut self,
         install: &LoafInstallRecord,
+        indexed_rust_reexports: bool,
     ) -> Result<PreparedInstallRecord, LibraryManifestError> {
         #[derive(Serialize)]
         struct InstallValue<'a> {
@@ -198,6 +200,8 @@ impl LibraryManifest {
             install: &'a LoafInstallRecord,
             #[serde(skip_serializing_if = "Option::is_none")]
             path_lookup_digest: Option<String>,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            indexed_rust_reexports: bool,
         }
 
         let named = api_records(&self.contract_metadata, &self.name)?;
@@ -205,6 +209,7 @@ impl LibraryManifest {
         let value = InstallValue {
             install,
             path_lookup_digest: lookup.as_ref().map(|records| sha256_hex(records.as_bytes())),
+            indexed_rust_reexports,
         };
         let record = record(RecordFamily::InstallRecord, 0, &self.name, &value)?;
         self.contract_metadata.install_record_digest = Some(sha256_hex(&record.value));
@@ -621,6 +626,7 @@ fn canonical_value(family: RecordFamily, value: &[u8]) -> Result<Vec<u8>, Librar
     {
         // The exact lookup-byte receipt includes source positions. Its semantic rows each carry their own hash.
         fields.remove("path_lookup_digest");
+        fields.remove("indexed_rust_reexports");
     }
     LibraryManifest::encode_compiler_record_value(&decoded)
 }

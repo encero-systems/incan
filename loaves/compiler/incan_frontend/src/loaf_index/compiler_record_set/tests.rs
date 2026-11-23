@@ -649,7 +649,7 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
         ..Default::default()
     };
     let mut manifest = LibraryManifest::new("dependency", "1.0.0");
-    let install = manifest.prepare_install_record(&project_record)?;
+    let install = manifest.prepare_install_record(&project_record, false)?;
     let manifest_path = directory.join("dependency.incnlib");
     let encoded = manifest.to_json_string()?;
     fs::write(&manifest_path, &encoded)?;
