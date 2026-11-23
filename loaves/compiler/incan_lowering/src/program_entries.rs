@@ -299,6 +299,7 @@ fn lower_ordinary_frame(
             witness,
             &keyed.nominals,
             &keyed.linked,
+            Some(context),
             Some(&current),
             positions,
         ) && let Some(requests) = restore_requests(&encoded, context)
@@ -325,6 +326,7 @@ fn lower_ordinary_frame(
                 witness,
                 &keyed.nominals,
                 &keyed.linked,
+                context,
                 Some(&current),
                 positions,
             );
@@ -548,7 +550,7 @@ fn restore_admitted(
             unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
         );
     };
-    let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked) else {
+    let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked, context) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
     let Some(requests) = restore_requests(encoded, context) else {
