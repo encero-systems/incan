@@ -1,8 +1,9 @@
-# behavior: reading a scalar field through a list still reports the canonical bounds failure (#2845).
+# behavior: reading a scalar field through a list reports the bounds failure at the authored index operation (#2845).
 # expect-exit: 101
 # expect-stderr-contains:
 #   IndexError
 #   index 1 out of range for list of length 1
+#   main.incn:15:
 
 model Entry:
     pub metadata: list[str]
