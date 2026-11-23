@@ -823,6 +823,61 @@ fn signature_block_classifies_enum_parameter_and_local_list_moves() -> Result<()
     require_checked(&mutable_final_value, "collect")
 }
 
+/// Compiler-selected builtin Clone calls retain an exact invocation even though their member has no source
+/// declaration. A same-spelled user method remains an ordinary source call and acquires no builtin copy authority.
+#[test]
+fn signature_block_retains_builtin_clone_invocation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Record:\n    text: str\ndef copy(value: Borrowed[str]) -> Owned[Record]:\n    return Record(text=value.clone())\n";
+    let checker = checked(source)?;
+    require_checked(&checker, "copy")?;
+    let (clone_span, operation) = checker
+        .type_info
+        .calls
+        .resolved_builtin_method_calls
+        .iter()
+        .find(|(_, operation)| {
+            **operation
+                == incan_lang::lang::builtins::BuiltinMethodId::Clone(
+                    incan_lang::lang::surface::clone_methods::CloneMethodId::Clone,
+                )
+        })
+        .ok_or("missing selected builtin Clone call")?;
+    assert_eq!(operation.owner(), "Clone");
+    let call = checker
+        .type_info
+        .protocols
+        .explicit_input_calls
+        .get(clone_span)
+        .ok_or("builtin Clone call has no retained input fact")?;
+    assert_eq!(call.kind, InputCallKind::Ordinary);
+    assert_eq!(call.receiver, Some(crate::ast::Receiver::Immutable));
+    assert!(call.parameters.is_empty());
+    let flow = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "copy")
+        .map(|(_, flow)| flow)
+        .ok_or("missing copy flow")?;
+    let InputFlow::Checked { graph, .. } = flow else {
+        return Err(format!("builtin Clone flow is unavailable: {flow:?}").into());
+    };
+    assert!(graph.invocations.contains_key(clone_span));
+
+    let user_source = "model Copier:\n    def clone(self) -> str:\n        return \"user\"\ndef copy(seed: Borrowed[int]) -> str:\n    copier = Copier()\n    return copier.clone()\n";
+    let user = checked(user_source)?;
+    require_checked(&user, "copy")?;
+    assert!(
+        user.type_info
+            .calls
+            .resolved_builtin_method_calls
+            .values()
+            .all(|operation| !matches!(operation, incan_lang::lang::builtins::BuiltinMethodId::Clone(_)))
+    );
+    Ok(())
+}
+
 /// A selected dependency-free `Result` call may provide an exact constructor field through `?`. Stored carriers,
 /// carrier constructors and returned views remain materialization refusals.
 #[test]
