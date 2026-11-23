@@ -35,6 +35,7 @@ fmt:
 
 .PHONY: docs
 docs:
+	@$(INCAN) run scripts/check_reference_contract.incn -- --all
 	@INCAN_BIN="$${INCAN_BIN:-$(INCAN)}" $(INCAN) run scripts/check_docs_examples.incn
 	@$(MAKE) -C workspaces/docs-site docs-build
 
@@ -46,5 +47,5 @@ pre-commit:
 	@$(INCAN) run scripts/check_changed_rustdocs.incn
 	@$(INCAN) run scripts/check_agents_doc_sync.incn
 	@$(INCAN) run scripts/check_doc_paths.incn
-	@$(INCAN) run scripts/check_reference_contract.incn
+	@$(INCAN) run scripts/check_reference_contract.incn -- --all
 	@$(INCAN) run scripts/check_std_reexports.incn

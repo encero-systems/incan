@@ -17,6 +17,10 @@ Run check mode after formatting. Formatting preserves parseable literal spelling
 
 The [code style reference](../../language/reference/code_style.md) defines source rules. Repository Rust uses `make fmt`; Incan uses `incan fmt`.
 
+For a long method chain, leave the receiver on its own line and start each wrapped call on an indented line with a leading `.`. Python often wraps a multiline chain in parentheses. Incan accepts the leading dot as the continuation marker directly.
+
+One blank line inside a statement block can separate groups of work without losing that structure during formatting. Run `incan run -c "import this"` to print the Zen of Incan, which describes the language's readability principles.
+
 ## Format a source with dependencies
 
 Formatting describes each file's unit with the `debug` profile and default features, and parses it with the vocabularies its dependencies publish. When an active local dependency declares a vocabulary entry, Oven prepares the dependency graph before parsing so its registered syntax is available on a first format. Formatting uses those descriptors without expanding consumer syntax through a desugarer. When no active local dependency declares a vocabulary entry, formatting does not build dependencies. A file whose unit cannot be described or whose dependency preparation fails is reported, and the remaining files are still formatted.

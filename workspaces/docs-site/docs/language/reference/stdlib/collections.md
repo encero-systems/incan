@@ -23,15 +23,11 @@ The module is imported explicitly and has no feature gate.
 | `PriorityQueue[T]` | Heap-shaped queue for priority ordering. |
 | `OrdinalMap[K]` | Immutable deterministic key-to-ordinal lookup for stable scalar keys. |
 
-Builtin collections remain the default for ordinary data. Reach for `std.collections` when the named behavior matters: front-of-queue work, counted membership, missing-key defaulting, insertion-order stability, sorted traversal, layered configuration, or priority scheduling.
-
 For task-oriented guidance, see [Choosing collection types](../../how-to/choosing_collections.md).
 
 ## OrdinalMap
 
-`OrdinalMap[K]` maps each unique key to a non-negative integer ordinal. Use it when a stable key domain needs stable integer positions: schema field indexes, column catalogs, generated metadata, dictionary-encoded values, or cached lookup tables whose bytes must be reproducible.
-
-`OrdinalMap` is immutable after construction. It is not a replacement for mutable `dict`, insertion-ordered `OrderedDict`, or general-purpose `FrozenDict`. Its public contract is deterministic construction, exact safe lookup, deterministic serialization, and compact ordinal storage.
+`OrdinalMap[K]` is an immutable mapping from unique keys to non-negative integer ordinals. It supports exact lookup and deterministic serialization.
 
 Keys must implement the `OrdinalKey` trait. `OrdinalKey` provides deterministic canonical bytes for each key value and a stable key-encoding identifier for serialized maps. For task-oriented examples, see [Choosing collection types](../../how-to/choosing_collections.md). For the design model, see [Why `OrdinalMap` exists](../../explanation/ordinal_map.md).
 
@@ -43,7 +39,7 @@ Keys must implement the `OrdinalKey` trait. `OrdinalKey` provides deterministic 
 | `OrdinalMap.from_pairs(entries: list[tuple[K, int]])` | `Result[OrdinalMap[K], OrdinalMapError]` | Construct a map from explicit ordinals. Rejects duplicate keys, negative ordinals, and duplicate ordinals. |
 | `map.get(key)` | `Option[int]` | Exact safe lookup; returns `None` when the key is absent. |
 | `map.require(key)` | `Result[int, OrdinalMapError]` | Exact safe lookup; returns an error when the key is absent. |
-| `map[key]` | `int` | Exact indexing lookup using Incan's ordinary missing-key behavior. Prefer `get` or `require` when absence is part of normal control flow. |
+| `map[key]` | `int` | Exact lookup. Raises `KeyError` when the key is absent. |
 | `key in map` | `bool` | Exact membership check. |
 | `map.get_many(keys: list[K])` | `list[Option[int]]` | Batch exact lookup that preserves input order. |
 | `map.require_many(keys: list[K])` | `Result[list[int], OrdinalMapError]` | Batch exact lookup that fails if any key is absent. |
@@ -67,7 +63,7 @@ Keys must implement the `OrdinalKey` trait. `OrdinalKey` provides deterministic 
 
 Safe lookup is exact. `get`, `require`, membership, indexing, `get_many`, and `require_many` verify that the queried key's canonical bytes match the stored key before returning an ordinal.
 
-Unchecked lookup skips exact key-byte verification after the hash probe. It is for hot paths where key presence has already been established by a planner, schema validator, or prior exact lookup. Missing-key behavior is implementation-specific.
+Unchecked lookup skips exact key-byte verification after the hash probe. It requires that the key be present. Missing-key behavior is implementation-specific.
 
 ### Supported key types
 
@@ -75,14 +71,12 @@ Unchecked lookup skips exact key-byte verification after the hash probe. It is f
 | --- | --- | --- |
 | Text and bytes | `str`, `bytes` | Strings use UTF-8 canonical bytes; bytes use the byte payload directly. |
 | Booleans | `bool` | Encoded as a stable one-byte domain. |
-| Integers | `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64`, `u128`, and exact-width aliases | Ordinary `int` uses Incan's stable `i64` encoding. Pointer-sized `isize` and `usize` are not accepted because their width is target-dependent. |
+| Integers | `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64`, `u128`, and exact-width aliases | Ordinary `int` uses the `i64` encoding. Pointer-sized `isize` and `usize` are refused. |
 | Decimals | `decimal[p, s]`, `numeric[p, s]`, `decimal128[p, s]` | Encoded through the deterministic `Decimal128` runtime representation: little-endian signed coefficient plus stored scale. Binary floating-point types are not accepted. |
 | UUIDs | `std.uuid.UUID` | Uses the UUID's stable 128-bit value encoding. |
-| Civil temporal values | `Date`, `Time`, `DateTime`, `DateTimeOffset` | Date/time values are precise and deterministic, so users do not need to convert them to strings. |
+| Civil temporal values | `Date`, `Time`, `DateTime`, `DateTimeOffset` | Each value uses its type's canonical bytes. |
 | Value enums | `enum Status(str): ...` or `enum Code(int): ...` | Stable scalar value enums are accepted. Payload enums are not accepted as ordinal keys. |
 | User-defined keys | `model Key with OrdinalKey: ...` | Implement `ordinal_encoding`, `from_ordinal_bytes`, and `ordinal_bytes`. |
-
-Floats are outside the `OrdinalKey` surface. Use a deterministic domain model, integer-scaled value, decimal value, or explicit string representation when a floating-point-like concept needs indexing.
 
 ### OrdinalKey
 
@@ -103,11 +97,9 @@ pub trait OrdinalKey:
 
 `ordinal_bytes(self)` returns canonical bytes for a key value. `ordinal_encoding()` returns the stable type-level encoding identifier stored in serialized maps. `from_ordinal_bytes(data)` decodes one stored key record for `OrdinalMap[K].from_bytes(data)`.
 
-The `ordinal_encoding()` string is part of the serialized type contract. Change it when the byte layout changes so old payloads fail clearly instead of decoding with the wrong shape.
+Incompatible byte layouts require distinct encoding identifiers. `from_bytes` rejects any identifier that differs from the requested key type's identifier.
 
-User-defined keys usually implement only `ordinal_encoding`, `from_ordinal_bytes`, and `ordinal_bytes`. The default `ordinal_hash` and `ordinal_bytes_equal` methods derive from `ordinal_bytes`; builtin key implementations override them so hot lookups can hash and compare without materializing a fresh byte vector.
-
-User-defined key implementations should keep `ordinal_encoding()` stable for a given byte layout and should change it when stored bytes are no longer compatible.
+The default `ordinal_hash` and `ordinal_bytes_equal` methods derive their results from `ordinal_bytes`. A type only needs to supply `ordinal_encoding`, `from_ordinal_bytes`, and `ordinal_bytes`.
 
 ### Serialization and size
 
@@ -117,7 +109,7 @@ The serialized container uses the `INCAN_ORDMAP` magic value and records the for
 
 Compact ordinal width is selected from the maximum ordinal. Maps whose maximum ordinal fits in `u8`, `u16`, `u32`, or `u64` use that width internally and in the serialized payload. Public lookup still returns ordinary `int`.
 
-`nbytes()` and `storage_bytes()` report compact payload sections: key bytes, key offsets, ordinal cells, lookup slots, and metadata. They do not report total process heap, ordinary object/header overhead, or runtime lookup caches used by the implementation. Use `serialized_size()` when comparing persisted payload size.
+`nbytes()` and `storage_bytes()` total the compact key bytes, key offsets, ordinal cells, lookup slots, and metadata. Object overhead and runtime lookup caches are outside both totals. `serialized_size()` returns the serialized payload length in bytes.
 
 ### OrdinalMapError
 
@@ -129,8 +121,6 @@ Compact ordinal width is selected from the maximum ordinal. Maps whose maximum o
 | `err.kind_name()` | Stable category string for diagnostics and text compatibility. |
 | `err.message()` | Human-readable explanation. |
 | `err.index()` | Input or batch position when there is a meaningful position, otherwise `-1`. |
-
-Use `err.kind()` when branching in new code and `err.kind_name()` when a stable string is needed.
 
 Common construction and lookup error kinds:
 
@@ -154,7 +144,7 @@ Common decoding error kinds:
 
 ## Deque
 
-`Deque[T]` stores values in front-to-back order and supports both Python-style and Rust-style method names for the same end operations.
+`Deque[T]` stores values in front-to-back order. Paired operation names in the table are aliases.
 
 | API | Returns | Description |
 | --- | --- | --- |

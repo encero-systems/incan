@@ -251,7 +251,9 @@ def demo(p: Point) -> int:
     return p.area
 ```
 
-See: [Computed properties](../../reference/computed_properties.md).
+Use `property` for an argument-free projection that reads like an attribute. Use `def` when the caller supplies arguments or when the call should make options, external effects, or expensive computation visible. Each property read runs its body, so store or cache a value explicitly if it should be reused. The compiler implements the read as a zero-argument call.
+
+See [Computed properties](../../reference/computed_properties.md).
 
 Models also support `@staticmethod` for methods that belong to the type rather than an instance:
 
