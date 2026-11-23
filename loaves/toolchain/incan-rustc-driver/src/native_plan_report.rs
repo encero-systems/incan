@@ -33,33 +33,53 @@ pub(crate) fn write(plan: &Plan, tcx: TyCtxt<'_>) -> Result<(), String> {
 
 /// Hash every ordered input to the adapter without allocating a second encoded native plan.
 fn whole_plan_digest(plan: &Plan) -> Result<(usize, [u8; 32]), String> {
-    let writer = postcard::to_io(plan, BufWriter::with_capacity(64 * 1024, PlanDigest::default()))
+    let writer = postcard::to_io(plan, BufWriter::with_capacity(64 * 1024, PlanDigest::new(io::sink())))
         .map_err(|error| error.to_string())?;
     let digest = writer.into_inner().map_err(|error| error.to_string())?;
-    Ok((digest.bytes, digest.sha256.finalize().into()))
+    Ok(digest.finish())
 }
 
-#[derive(Default)]
-struct PlanDigest {
+/// Count and fingerprint the bytes an existing serialization feeds to its writer.
+pub(crate) struct PlanDigest<W> {
+    writer: W,
     bytes: usize,
     sha256: Sha256,
 }
 
-impl io::Write for PlanDigest {
+impl<W> PlanDigest<W> {
+    /// Observe a new byte stream forwarded to `writer`.
+    pub(crate) fn new(writer: W) -> Self {
+        Self {
+            writer,
+            bytes: 0,
+            sha256: Sha256::new(),
+        }
+    }
+
+    /// Consume a completed observation and return its byte count and SHA-256.
+    pub(crate) fn finish(self) -> (usize, [u8; 32]) {
+        (self.bytes, self.sha256.finalize().into())
+    }
+}
+
+impl<W: io::Write> io::Write for PlanDigest<W> {
+    /// Forward the offered bytes and include them in the stream fingerprint.
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.sha256.update(bytes);
         self.bytes += bytes.len();
-        Ok(bytes.len())
+        self.writer.write(bytes)
     }
 
+    /// Flush the underlying stream before its caller releases the digest.
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        self.writer.flush()
     }
 }
 
 #[cfg(test)]
 mod digest_tests {
-    use super::{Digest, Plan, Sha256, whole_plan_digest};
+    use super::{Digest, Plan, PlanDigest, Sha256, whole_plan_digest};
+    use std::io::Write;
 
     /// The report covers the exact serialized plan, including the buffered tail and entry order.
     #[test]
@@ -72,6 +92,21 @@ mod digest_tests {
         assert_eq!(whole_plan_digest(&plan)?, (bytes.len(), expected));
         plan.programs.swap(0, 1);
         assert_ne!(whole_plan_digest(&plan)?, (bytes.len(), expected));
+        Ok(())
+    }
+
+    /// A short write covers only the prefix accepted by the destination.
+    #[test]
+    fn plan_digest_counts_only_bytes_accepted_by_a_partial_writer() -> std::io::Result<()> {
+        let mut output = [0; 2];
+        let mut digest = PlanDigest::new(&mut output[..]);
+        assert_eq!(digest.write(b"abcdef")?, 2);
+        digest.flush()?;
+        let (count, hash) = digest.finish();
+        assert_eq!(output, *b"ab");
+        assert_eq!(count, 2, "the digest counted {count} bytes but the writer accepted 2");
+        let expected: [u8; 32] = Sha256::digest(b"ab").into();
+        assert_eq!(hash, expected);
         Ok(())
     }
 }
