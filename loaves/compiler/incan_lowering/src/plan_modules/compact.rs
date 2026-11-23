@@ -1,10 +1,18 @@
 //! Request-local admission of complete positioned module notes for native compilation.
 
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use incan_mir_plan_native::{AdmittedDefinition, WholeModuleAdmission};
+use incan_mir_plan_native::{
+    ADMITTED_MODULE_NOTE, AdmittedDefinition, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
+    POSITIONED_MODULE_PAGE, PlanSelectedModule, RequestModuleNote, WholeModuleAdmission, decode_request_module_note,
+    read_positioned_plan_members,
+};
+use internal_models_bindings::{complete_view, mapped_bytes};
+use sha2::{Digest, Sha256};
 
-use super::PlanModuleSelection;
+use super::{FRAME_LIST, ListedFrame, PlanModuleSelection, framed_bytes, parse_frame_list, read_selection_file};
 
 /// The exact emitted whole-module note and the member fingerprints it authorized under the staged selection.
 pub struct AuthenticatedWholeAdmission {
@@ -15,10 +23,180 @@ pub struct AuthenticatedWholeAdmission {
 
 /// Read all exact compact admissions for the current activation in canonical module-name order.
 pub fn read_plan_module_admissions(
-    _products: &Path,
-    _selection: Option<&PlanModuleSelection>,
+    products: &Path,
+    selection: Option<&PlanModuleSelection>,
 ) -> Result<Vec<AuthenticatedWholeAdmission>, String> {
-    Ok(Vec::new())
+    let directory = products.join("admissions");
+    let paths = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if selection.is_none() || error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("cannot read compact module admissions: {error}")),
+    };
+    let expected = selection.map(|selection| hex::encode(selection.digest()));
+    let mut compact = BTreeMap::new();
+    let mut scalar = BTreeSet::new();
+    let frames = OnceCell::new();
+    for entry in paths {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(suffix) = [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE]
+            .into_iter()
+            .find(|suffix| name.ends_with(suffix))
+        else {
+            continue;
+        };
+        let path = entry.path();
+        let (note, encoded) = match read_note(&entry) {
+            Ok(decoded) => decoded,
+            // Older native readers never consumed scalar diagnostics from this directory.
+            Err(_) if selection.is_none() => continue,
+            Err(error) => return Err(error),
+        };
+        match note {
+            RequestModuleNote::Scalar { module, complete } => {
+                if selection.is_some() {
+                    check_note_name(name, suffix, &module, complete)?;
+                }
+                scalar.insert(module);
+            }
+            RequestModuleNote::Whole(note) => {
+                let Some((selection, expected)) = selection.zip(expected.as_deref()) else {
+                    return Err("whole-module admission has no independently accepted selection".into());
+                };
+                check_note_name(name, suffix, &note.module, true)?;
+                let selected = selected_positioned_module(selection, expected, &note)?;
+                no_sparse_placement(&path)?;
+                let definitions = selected_module_definitions(products, selected, &frames)?;
+                let module = note.module.clone();
+                let replaced = compact.insert(
+                    module,
+                    AuthenticatedWholeAdmission {
+                        note,
+                        note_sha256: Sha256::digest(&encoded).into(),
+                        definitions,
+                    },
+                );
+                if replaced.is_some() {
+                    return Err("module has more than one compact admission".into());
+                }
+            }
+        }
+    }
+    if compact.keys().any(|module| scalar.contains(module)) {
+        return Err("module has overlapping scalar and compact admissions".into());
+    }
+    Ok(compact.into_values().collect())
+}
+
+/// Decode one bounded note and retain exactly the bytes its settled fingerprint names.
+fn read_note(entry: &std::fs::DirEntry) -> Result<(RequestModuleNote, Vec<u8>), String> {
+    if !entry.file_type().map_err(|error| error.to_string())?.is_file() {
+        return Err("module admission is not an ordinary staged file".into());
+    }
+    let encoded = read_selection_file(&entry.path(), MAX_PLAN_MODULE_SELECTION_BYTES)?;
+    Ok((decode_request_module_note(&encoded)?, encoded))
+}
+
+/// Bind the actual suffix and basename to the admitted module and completeness status.
+fn check_note_name(name: &str, suffix: &str, module: &str, complete: bool) -> Result<(), String> {
+    if complete != (suffix == ADMITTED_MODULE_NOTE) || name != format!("{}{suffix}", hex::encode(module)) {
+        return Err("module admission note disagrees with its filename".into());
+    }
+    Ok(())
+}
+
+/// Require the complete current selection and all its matching positioned page identity fields.
+fn selected_positioned_module<'a>(
+    selection: &'a PlanModuleSelection,
+    expected: &str,
+    note: &WholeModuleAdmission,
+) -> Result<&'a PlanSelectedModule, String> {
+    if note.selection != expected {
+        return Err("whole-module admission names a different selected graph".into());
+    }
+    let selected = selection
+        .module(&note.module)
+        .ok_or("whole-module admission has no selected module")?;
+    if !selected.positioned
+        || selected.output != note.output
+        || selected.digest != note.digest
+        || selected.count != note.count
+    {
+        return Err("whole-module admission differs from its selected positioned page".into());
+    }
+    Ok(selected)
+}
+
+/// A compact note cannot carry or coexist with a sparse placement companion.
+fn no_sparse_placement(note: &Path) -> Result<(), String> {
+    let mut path = note.as_os_str().to_os_string();
+    path.push(".placement");
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cannot check compact module placement: {error}")),
+        Ok(_) => Err("whole-module admission has a stale placement companion".into()),
+    }
+}
+
+/// Read the exact named positioned copy or immutable store frame as one bounded input.
+fn selected_module_definitions(
+    products: &Path,
+    selected: &PlanSelectedModule,
+    frames: &OnceCell<Result<HashMap<String, ListedFrame>, String>>,
+) -> Result<Vec<AdmittedDefinition>, String> {
+    let basename = format!("{}{POSITIONED_MODULE_PAGE}", hex::encode(&selected.module));
+    let path = products.join(&basename);
+    let bytes = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {
+            let named = read_selection_file(&products.join(format!("{basename}.digest")), 64)?;
+            if named != selected.digest.as_bytes() {
+                return Err("positioned Plan copy does not name the selected page digest".into());
+            }
+            read_selection_file(&path, MAX_PLAN_MODULE_SELECTION_BYTES)?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let offered = frames
+                .get_or_init(|| current_frame_list(products))
+                .as_ref()
+                .map_err(Clone::clone)?;
+            let frame = offered
+                .get(&basename)
+                .ok_or("selected positioned module has no staged page")?;
+            if hex::encode(frame.content) != selected.digest || frame.length as u64 > MAX_PLAN_MODULE_SELECTION_BYTES {
+                return Err("positioned Plan frame does not name a bounded selected page".into());
+            }
+            let segment = std::fs::metadata(&frame.segment).map_err(|error| error.to_string())?;
+            if !segment.is_file()
+                || frame
+                    .offset
+                    .checked_add(frame.length as u64)
+                    .is_none_or(|end| end > segment.len())
+            {
+                return Err("selected positioned Plan frame is outside its segment".into());
+            }
+            framed_bytes(frame).ok_or("cannot read the selected positioned Plan frame")?
+        }
+        Ok(_) => return Err("selected positioned Plan copy was not a regular file".into()),
+        Err(error) => {
+            return Err(format!("cannot inspect staged positioned Plan copy: {error}"));
+        }
+    };
+    let owner = mapped_bytes(&bytes)?;
+    drop(bytes);
+    let view = complete_view(&owner).ok_or("cannot retain the selected positioned Plan view")?;
+    read_positioned_plan_members(&view, selected)
+}
+
+/// Admit this request's actual frame inventory once before reading any offered positioned ranges.
+fn current_frame_list(products: &Path) -> Result<HashMap<String, ListedFrame>, String> {
+    let bytes = read_selection_file(&products.join(FRAME_LIST), MAX_PLAN_MODULE_SELECTION_BYTES)?;
+    let text = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
+    let frames = parse_frame_list(text).ok_or("malformed selected Plan frame list")?;
+    if frames.len() != text.lines().count() {
+        return Err("selected Plan frame list repeats a page name".into());
+    }
+    Ok(frames)
 }
 
 #[cfg(test)]

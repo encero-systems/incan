@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 
 use crate::records::lowering_events::{AdmittedDefinition, projected_definition};
 use crate::wire::{
-    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, admit_root_view, boolean_value, decode_graph_row,
-    encode_graph_row, field, items, number, required, text, tuple_items,
+    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, boolean_value,
+    decode_graph_row, encode_graph_row, field, items, number, required, text, tuple_items,
 };
 
 /// The family of a module's plan record.
@@ -352,8 +352,8 @@ pub fn decode_plan_module_selection(encoded: &[u8]) -> Result<PlanModuleSelectio
     Ok(PlanModuleSelectionRecord { scope, modules })
 }
 
-const WHOLE_ADMISSION_SELECTOR: &[u8] = b"admwhl\x00";
-static WHOLE_ADMISSION: Shape = Shape {
+pub(crate) const WHOLE_ADMISSION_SELECTOR: &[u8] = b"admwhl\x00";
+pub(crate) static WHOLE_ADMISSION: Shape = Shape {
     selector: WHOLE_ADMISSION_SELECTOR,
     path: "incan.module-admission-whole/1",
     body: ShapeBody::Record(&[
@@ -410,12 +410,20 @@ pub fn encode_whole_module_admission(note: &WholeModuleAdmission) -> Result<Vec<
 /// Decode the exact whole-admission row. A caller must still bind its selection and positioned module page.
 pub fn decode_whole_module_admission(encoded: &[u8]) -> Result<WholeModuleAdmission, String> {
     let fields = decode_graph_row(encoded, WHOLE_ADMISSION_SELECTOR, &WHOLE_ADMISSION_SCHEMA, 5)?;
+    whole_admission_fields(&fields)
+}
+
+/// Interpret the shared whole-admission fields once the exact versioned root has been admitted.
+pub(crate) fn whole_admission_fields(fields: &[WireField]) -> Result<WholeModuleAdmission, String> {
+    let [count, digest, module, output, selection] = fields else {
+        return Err("whole-module Plan admission has the wrong field count".into());
+    };
     let note = WholeModuleAdmission {
-        count: number(&fields[0].value)?,
-        digest: text(&fields[1].value)?,
-        module: text(&fields[2].value)?,
-        output: text(&fields[3].value)?,
-        selection: text(&fields[4].value)?,
+        count: number(&count.value)?,
+        digest: text(&digest.value)?,
+        module: text(&module.value)?,
+        output: text(&output.value)?,
+        selection: text(&selection.value)?,
     };
     note.validate()?;
     Ok(note)

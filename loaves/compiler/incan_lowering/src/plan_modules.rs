@@ -77,6 +77,11 @@ fn listed_frame(path: &Path) -> Option<ListedFrame> {
 /// Every page a frame list names; none when any line is malformed.
 fn read_frame_list(list: &Path) -> Option<HashMap<String, ListedFrame>> {
     let text = std::fs::read_to_string(list).ok()?;
+    parse_frame_list(&text)
+}
+
+/// Interpret the canonical staged frame columns without reading their payloads.
+fn parse_frame_list(text: &str) -> Option<HashMap<String, ListedFrame>> {
     let mut frames = HashMap::new();
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();

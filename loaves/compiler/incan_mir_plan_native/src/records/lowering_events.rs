@@ -7,9 +7,12 @@ use std::path::Path;
 use internal_models_bindings::MappedView;
 
 use crate::records::plan_function::projected_product_digest;
+use crate::records::plan_module::{
+    WHOLE_ADMISSION, WHOLE_ADMISSION_SELECTOR, WholeModuleAdmission, whole_admission_fields,
+};
 use crate::wire::{
-    Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, boolean_value, decode_graph_row,
-    encode_graph_row, items, number, required, text, tuple_items,
+    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, admit_row, boolean_value,
+    decode_graph_row, encode_graph_row, items, number, required, text, tuple_items,
 };
 
 const EVENT: &[u8] = b"lowevt\x00";
@@ -99,6 +102,7 @@ static NOTE_SHAPE: Shape = Shape {
     ]),
 };
 static NOTE_SCHEMA: Schema = Schema::new(&[&NOTE_SHAPE]);
+static REQUEST_NOTE_SCHEMA: Schema = Schema::new(&[&NOTE_SHAPE, &WHOLE_ADMISSION]);
 
 static PLACEMENT_SHAPE: Shape = Shape {
     selector: PLACEMENT,
@@ -193,6 +197,12 @@ pub struct AdmittedModule {
     pub complete: bool,
     pub functions: Vec<AdmittedFunction>,
     pub inspected: bool,
+}
+
+/// The exact request note class. Native readers only need a legacy note's module and completeness status.
+pub enum RequestModuleNote {
+    Scalar { module: String, complete: bool },
+    Whole(WholeModuleAdmission),
 }
 
 // Oven prints these records in the reference models' `Name(field=value, ...)` text, and keys sets by them.
@@ -527,6 +537,32 @@ pub fn decode_module_note(encoded: &[u8]) -> Result<AdmittedModule, String> {
         functions,
         inspected: false,
     })
+}
+
+/// Admit one existing request note shape and materialize only the compact fields or the scalar envelope's owner.
+pub fn decode_request_module_note(encoded: &[u8]) -> Result<RequestModuleNote, String> {
+    let (mut row, dictionary) = admit_row(encoded, &REQUEST_NOTE_SCHEMA, MAX_RECORD_BYTES)?;
+    if row.records() != 1 || dictionary.entries != 1 || dictionary.inline {
+        return Err("request module note must contain one exact described row".into());
+    }
+    match row.root_key().as_slice() {
+        NOTE => {
+            let module = text(&row.read_field(b"module")?)?;
+            let complete = boolean_value(&row.read_field(b"all___")?)?;
+            if module.is_empty() {
+                return Err("scalar module admission lacks a module name".into());
+            }
+            Ok(RequestModuleNote::Scalar { module, complete })
+        }
+        WHOLE_ADMISSION_SELECTOR => {
+            let (_, value) = row.read_root()?;
+            let Wire::Record(fields) = value else {
+                return Err("expected a whole-module admission record".into());
+            };
+            Ok(RequestModuleNote::Whole(whole_admission_fields(&fields)?))
+        }
+        _ => Err("request module note has an unsupported selector".into()),
+    }
 }
 
 /// Store only changed placements at the companion path `path`, given as text as an Incan caller passes it. Refuse a
