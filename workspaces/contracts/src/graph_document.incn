@@ -19,7 +19,13 @@ pub model GraphDocument:
     pub stderr: str = ""
 
 
-pub def document(incan: str, project: Path, format: str, risk: bool = false) -> Result[GraphDocument, str]:
+pub def document(
+    incan: str,
+    project: Path,
+    format: str,
+    risk: bool = false,
+    allow_errors: bool = false,
+) -> Result[GraphDocument, str]:
     """
     Read an export without capturing its text or building a JSON tree for the whole answer.
 
@@ -35,6 +41,8 @@ pub def document(incan: str, project: Path, format: str, risk: bool = false) -> 
     mut arguments = ["inspect", "codegraph", ".", "--format", format]
     if risk:
         arguments.append("--risk")
+    if allow_errors:
+        arguments.append("--allow-errors")
     outcome = invoke_to_file(incan, arguments, project, path)?
     if outcome.code != Some(0):
         remove(path)?

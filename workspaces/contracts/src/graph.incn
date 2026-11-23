@@ -169,7 +169,7 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     snapshot = string_field(original_records[0], "snapshot_id")
     if not snapshot.startswith("snapshot:"):
         return Err("an export has no content-addressed snapshot identity")
-    fresh = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    fresh = invoke(incan, snapshot_status_command(original_records[0], snapshot), project)?
     if fresh.code != Some(0) or snapshot_stale(fresh.stdout)?:
         return Err("an unchanged snapshot is stale")
     check_identity_queries(incan, project, original)?
@@ -207,7 +207,7 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
     check_comment_freshness(incan, project, source, before)?
     write(source, f"{prefix_comment(source)} source positions are provenance\n{before}")?
     moved = document(incan, project, "jsonl")?
-    stale = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    stale = invoke(incan, snapshot_status_command(original.records[0], snapshot), project)?
     if stale.code != Some(0) or not snapshot_stale(stale.stdout)?:
         return Err("changed source did not invalidate the snapshot")
     if original.digest == moved.digest:
@@ -228,7 +228,7 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
         if declaration_identities(original)? == declaration_identities(changed)?:
             failures.append("a real source signature change retained every declaration identity")
     write(source, "this is invalid in both languages {")?
-    invalid = document(incan, project, "jsonl")?
+    invalid = document(incan, project, "jsonl", allow_errors=true)?
     refused = invoke(incan, ["inspect", "codegraph", ".", "--strict"], project)?
     write(source, before)?
     if refused.code == Some(0):
@@ -286,11 +286,19 @@ def check_comment_freshness(incan: str, project: Path, source: Path, before: str
     records = document(incan, project, "jsonl")?.records
     snapshot = string_field(records[0], "snapshot_id")
     replace_with_time_preserved(source, f"{before}\n{prefix} snapshot b\n")?
-    status = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    status = invoke(incan, snapshot_status_command(records[0], snapshot), project)?
     write(source, before)?
     if status.code != Some(0) or not snapshot_stale(status.stdout)?:
         return Err("an equal-size comment edit left the source snapshot fresh")
     return Ok(None)
+
+
+def snapshot_status_command(header: JsonValue, snapshot: str) -> list[str]:
+    """Ask for the matching explicit mode of a previously exported snapshot."""
+    command = ["inspect", "codegraph", ".", "--stale", snapshot]
+    if string_field(header, "mode") == "strict":
+        return command + ["--strict"]
+    return command + ["--allow-errors"]
 
 
 def snapshot_stale(document: str) -> Result[bool, str]:
@@ -317,11 +325,15 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
     2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
     3. The failing unit's own facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
     4. Raw JSONL names the author of the source quoted by the diagnostic, separately from its provenance.
+    5. Bare raw export agrees with explicit strict export for healthy and broken source.
     """
     source = project.joinpath("context").joinpath("src").joinpath("lib.incn")
     if not source.is_file():
         return Ok(None)
     # 1. The bad return gives the diagnostic a workspace-authored spelling to quote.
+    export = ["inspect", "codegraph", "context"]
+    clean_default = invoke(incan, export, project)?
+    clean_strict = invoke(incan, export + ["--strict"], project)?
     before = read(source)?
     prefix = before + "\n\npub def refused() -> int:\n"
     line = len(prefix.split("\n"))
@@ -331,7 +343,9 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
     broken = invoke(incan, query + ["contextual_helper"], project)?
     repeated = invoke(incan, query + ["contextual_helper"], project)?
     strict = invoke(incan, query + ["contextual_helper", "--strict"], project)?
-    raw = invoke(incan, ["inspect", "codegraph", "context", "--allow-errors", "--format", "jsonl"], project)?
+    raw = invoke(incan, export + ["--allow-errors", "--format", "jsonl"], project)?
+    broken_default = invoke(incan, export, project)?
+    broken_strict = invoke(incan, export + ["--strict"], project)?
     write(source, before)?
     # 2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
     warnings = [line for line in sibling.stderr.split("\n") if line.startswith("warning:")]
@@ -349,7 +363,20 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
     if strict.code == Some(0) or "graph_context" not in strict.stderr:
         return Err(f"strict export accepted a unit that fails checking: {strict.stderr}")
     # 4. The raw record retains the compiler's evidence and attributes the quoted source to the workspace.
-    return check_diagnostic_author(raw, source, line)
+    check_diagnostic_author(raw, source, line)?
+    # 5. The bare export refuses the same error as explicit strict, even after a tolerant export warmed the inputs.
+    if broken_strict.code != Some(1) or broken_strict.stdout != "" or "missing_context_fact" not in broken_strict.stderr:
+        return Err("explicit strict raw export failed to refuse the authored type error")
+    if (
+        broken_default.code != broken_strict.code
+        or broken_default.stdout != ""
+        or broken_default.stderr != broken_strict.stderr
+    ):
+        code = broken_default.code.unwrap_or(-1)
+        return Err(f"bare raw export differed from strict on broken source, exit {code}")
+    if clean_default.code != Some(0) or clean_strict.code != Some(0) or clean_default.stdout != clean_strict.stdout:
+        return Err("bare raw export differed from strict on healthy source")
+    return Ok(None)
 
 
 def check_diagnostic_author(raw: Outcome, source: Path, line: int) -> Result[None, str]:
