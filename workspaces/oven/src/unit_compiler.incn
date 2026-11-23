@@ -3,7 +3,12 @@
 from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
-from pub::incan_mir_plan import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
+from pub::incan_mir_plan import (
+    INTERFACE_REPORT,
+    PLAN_MODULE_SELECTION_PAGE,
+    decode_lowering_event,
+    decode_native_interface,
+)
 pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
@@ -50,7 +55,6 @@ pub const DIGEST_COMPANION: str = ".digest"
 # The file naming every page offered by its store frame instead of a copy, one line per page: its name, the segment,
 # the value's offset and length, and its digest, separated by tabs. A request stages it once.
 pub const FRAME_LIST: str = "frames.list"
-pub const PLAN_MODULE_SELECTION_PAGE: str = "plan-module-selection.crumb"
 
 
 pub def compile_prepared_unit(

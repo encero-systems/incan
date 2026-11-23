@@ -4,6 +4,7 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.primitives.text import copy_frozen_bytes
+from pub::incan_mir_plan import PLAN_MODULE_SELECTION_PAGE
 from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT
 from scratch import scratch_directory
 from compiler_body_values import SelectedBodyPage
@@ -12,7 +13,6 @@ from unit import UnitDescription
 from unit_compiler import (
     DIGEST_COMPANION,
     FRAME_LIST,
-    PLAN_MODULE_SELECTION_PAGE,
     compile_prepared_unit,
     selected_plan_module_digest,
     write_selected_records,
