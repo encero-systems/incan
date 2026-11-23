@@ -9,7 +9,14 @@ from scratch import scratch_directory
 from compiler_body_values import SelectedBodyPage
 from files import write
 from unit import UnitDescription
-from unit_compiler import DIGEST_COMPANION, FRAME_LIST, compile_prepared_unit, write_selected_records
+from unit_compiler import (
+    DIGEST_COMPANION,
+    FRAME_LIST,
+    PLAN_MODULE_SELECTION_PAGE,
+    compile_prepared_unit,
+    selected_plan_module_digest,
+    write_selected_records,
+)
 from toolchain import Toolchain, load_toolchain
 from unit_freshness import Key, fingerprint
 
@@ -44,15 +51,23 @@ pub def test_a_staged_page_with_a_known_digest_is_named_by_it() -> Result[None, 
     """
     scratch = scratch_directory()?
     directory = scratch.path().joinpath("records")
-    pages = [
+    mut pages = [
         SelectedBodyPage(key=NAMED, value=b"module page", digest=DIGEST),
         SelectedBodyPage(key="namespace-page", value=b"namespace page"),
     ]
+    assert selected_plan_module_digest(pages)? is None
+    selection = b"selected request payload"
+    digest = hexlify(sha256.digest(selection))
+    pages.append(SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=selection, digest=digest))
+    assert selected_plan_module_digest(pages)? == Some(digest)
     write_selected_records(directory, staged_unit(), pages)?
     named = directory.joinpath(NAMED + DIGEST_COMPANION).read_text("utf-8", "strict").map_err((error) => error.message())?
     assert named == DIGEST
     assert directory.joinpath(NAMED).read_bytes().map_err((error) => error.message())? == b"module page"
     assert not directory.joinpath("namespace-page" + DIGEST_COMPANION).exists()
+    selection_digest = directory.joinpath(PLAN_MODULE_SELECTION_PAGE + DIGEST_COMPANION)
+    assert selection_digest.read_bytes().map_err((error) => error.message())? == digest.encode("utf-8")
+    assert directory.joinpath(PLAN_MODULE_SELECTION_PAGE).read_bytes().map_err((error) => error.message())? == selection
     return Ok(None)
 
 
@@ -103,8 +118,8 @@ pub def test_compact_plan_selection_refuses_before_replacing_products() -> Resul
     # 2. Each rejected activation must leave its exact previous products in place.
     value = b"selected"
     digest = hexlify(sha256.digest(value))
-    selected = SelectedBodyPage(key="plan-module-selection.crumb", value=value, digest=digest)
-    malformed = SelectedBodyPage(key="plan-module-selection.crumb", value=b"selected", digest="bad digest")
+    selected = SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=value, digest=digest)
+    malformed = SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=value, digest="bad digest")
     assert_unstaged_plan_selection(unit, toolchain, root.joinpath("duplicate"), [marker, selected, selected])?
     assert_unstaged_plan_selection(unit, toolchain, root.joinpath("malformed"), [marker, malformed])?
     return Ok(None)
