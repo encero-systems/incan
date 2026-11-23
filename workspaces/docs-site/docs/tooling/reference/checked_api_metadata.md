@@ -19,7 +19,7 @@ Each declaration has a `kind`, a `name` and an `anchor`. The anchor has `id: str
 
 | `kind` | API data |
 | --- | --- |
-| `function` | Type parameters, parameters, return type, async marker, decorators, documentation and optional `native_attribute` path. |
+| `function` | Type parameters, parameters, return type, async marker, `decorators` and documentation. |
 | `model` | Type parameters, traits and trait adoptions, derives, fields, properties, methods and documentation. |
 | `class` | The model fields above and optional `extends` base class. |
 | `trait` | Type parameters, supertraits, required fields, methods and documentation. |
@@ -32,6 +32,8 @@ Each declaration has a `kind`, a `name` and an `anchor`. The anchor has `id: str
 | `partial` | Target path and kind, presets, type parameters, parameters, return type and async marker. |
 
 Callables retain parameter names, types, default values and `is_mut`; function types retain mutable parameter markers. Methods also retain their receiver, canonical identity when available, alias target when applicable, whether they have a body, and `visibility`, which is present only as `private`, for a method that consumers cannot call. Documentation-bearing declarations retain both `docstring` and parsed `docstring_sections`, each nullable.
+
+A function's `decorators` array includes imported native macros used as decorators. Each entry gives its written `source_name`, checked `path`, and `args`.
 
 ## Editor preview
 
