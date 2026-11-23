@@ -1,4 +1,4 @@
-# behavior: a value returned from every match arm, cloned across arms when used after the match, or returned from a guarded arm is delivered intact
+# behavior: a value returned from every match arm, captured directly from a propagated temporary (#2800), cloned across arms when used after the match, or returned from a guarded arm is delivered intact
 # expect-stdout:
 #   first
 #   second
@@ -8,6 +8,9 @@
 #   fallback
 #   2
 #   0
+#   direct
+#   control
+#   outer-inner
 
 pub def select[T](value: T, choose_first: bool) -> T:
     match choose_first:
@@ -17,27 +20,55 @@ pub def select[T](value: T, choose_first: bool) -> T:
 
 pub def preserve[T](value: T, choose_first: bool) -> T:
     match choose_first:
-        true =>
-            first = value
-        false =>
-            second = value
+        true => first = value
+        false => second = value
     return value
 
 
 pub def guarded[T](value: T, choose_first: bool, admit_first: bool) -> T:
     match choose_first:
-        case true if admit_first: return value
-        case _: return value
+        true if admit_first => return value
+        _ => return value
 
 
 def admits(value: list[str]) -> bool:
     return len(value) > 0
 
 
+def label(value: str) -> Result[str, str]:
+    """Return one owned label through a propagated carrier."""
+    return Ok(value)
+
+
+def select_propagated() -> Result[str, str]:
+    """Capture a propagated temporary directly in a match arm."""
+    match label("direct")?:
+        "known" => return Ok("known")
+        other => return Ok(other)
+
+
+def select_propagated_control() -> Result[str, str]:
+    """Capture the same propagated value after binding it to a local."""
+    value = label("control")?
+    match value:
+        "known" => return Ok("known")
+        other => return Ok(other)
+
+
+def select_nested_propagated() -> Result[str, str]:
+    """Capture another propagated temporary inside a propagated match arm."""
+    match label("outer")?:
+        "known" => return Ok("known")
+        outer =>
+            match label(f"{outer}-inner")?:
+                "known" => return Ok("known")
+                inner => return Ok(inner)
+
+
 pub def guarded_list(value: list[str], choose_first: bool) -> list[str]:
     match choose_first:
-        case true if admits(value): return value
-        case _: return value
+        true if admits(value) => return value
+        _ => return value
 
 
 def main() -> None:
@@ -49,3 +80,6 @@ def main() -> None:
     println(guarded("fallback", true, false))
     println(len(guarded_list(["a", "b"], true)))
     println(len(guarded_list([], true)))
+    println(select_propagated().unwrap_or("error"))
+    println(select_propagated_control().unwrap_or("error"))
+    println(select_nested_propagated().unwrap_or("error"))

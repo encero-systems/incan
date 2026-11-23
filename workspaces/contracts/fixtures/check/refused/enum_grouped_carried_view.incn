@@ -1,0 +1,15 @@
+# behavior: grouped carrier payloads need dependency projection, not a fresh local owner (#2834).
+# expect-diagnostic: INCAN-T0123
+
+
+def view(source: Borrowed[str]) -> Option[Borrowed[str]] from source:
+    return Some(source)
+
+
+def invalid(mut source: BorrowedMut[str]) -> int:
+    match view(source):
+        Some((text)) =>
+            source = "changed"
+            return len(text)
+        None => return 0
+    return 0

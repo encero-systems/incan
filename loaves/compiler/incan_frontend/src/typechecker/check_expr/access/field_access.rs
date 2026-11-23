@@ -612,6 +612,7 @@ impl TypeChecker {
             || !owner.type_params.is_empty()
             || !method.impl_type_params.is_empty()
             || !method.signature.type_params.is_empty()
+            || !Self::rust_signature_const_parameters(&method.signature).is_empty()
         {
             return None;
         }

@@ -45,8 +45,8 @@ class Dog with Named:
 
 # Class implementing trait with methods
 class Rectangle with Shape:
-    width: float
-    height: float
+    pub width: float
+    pub height: float
 
     def area(self) -> float:
         return self.width * self.height
@@ -57,7 +57,7 @@ class Rectangle with Shape:
 
 # Class implementing trait with draw method
 class Circle with Drawable:
-    radius: float
+    pub radius: float
 
     def draw(self) -> str:
         return f"Circle with radius {self.radius}"
@@ -65,7 +65,7 @@ class Circle with Drawable:
 
 # Class implementing multiple traits
 class Square with Shape, Drawable:
-    side: float
+    pub side: float
 
     def area(self) -> float:
         return self.side * self.side
@@ -84,9 +84,9 @@ trait Resizable:
 
 # Class with mutable trait implementation
 class Carton with Resizable:
-    width: float
-    height: float
-    depth: float
+    pub width: float
+    pub height: float
+    pub depth: float
 
     def resize(mut self, factor: float) -> None:
         self.width *= factor
@@ -107,8 +107,8 @@ trait Serializable:
 
 
 class Document with Printable, Serializable:
-    title: str
-    content: str
+    pub title: str
+    pub content: str
 
     def to_string(self) -> str:
         return f"{self.title}: {self.content}"

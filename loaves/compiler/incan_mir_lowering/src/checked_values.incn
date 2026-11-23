@@ -141,6 +141,7 @@ pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
                         builder.unions,
                         ty,
                         builder.intrinsics,
+                        builder.file,
                     )?
                     return Ok(literal(Constant.RustItem(str(path), carrier), span))
                 RustConstant.TypeToken(represented) => return type_token_literal(builder, represented, span)
@@ -152,6 +153,7 @@ pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
                         builder.unions,
                         ty,
                         builder.intrinsics,
+                        builder.file,
                     )?
                     if is_tuple_type(layout):
                         return retained_tuple_constant(builder, layout, elements, span)
@@ -175,6 +177,7 @@ def type_token_literal(mut builder: Builder, represented: &RustType, span: Sourc
         builder.unions,
         represented,
         builder.intrinsics,
+        builder.file,
     )?
     return Ok(literal(Constant.TypeToken([argument]), span))
 

@@ -158,14 +158,11 @@ pub(super) fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), Plan
         });
     }
     if let PlanType::Trait(identity) = ty
-        && (identity.kind != incan_semantics_core::SemanticSourceTargetKind::Trait
-            || identity.namespace != incan_semantics_core::SymbolNamespace::OrdinaryLexical
+        && (identity.kind != DeclarationKind::Trait
+            || identity.namespace != SymbolNamespace::OrdinaryLexical
             || identity.scope_discriminant.is_some()
             || identity.declaration_name.is_empty()
-            || !matches!(
-                &identity.origin,
-                incan_semantics_core::SymbolOrigin::Module(_) | incan_semantics_core::SymbolOrigin::Package { .. }
-            ))
+            || !matches!(&identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package(_, _)))
     {
         return Err(PlanError::Invalid {
             function: "trait token".into(),

@@ -1,8 +1,42 @@
-# behavior: bounded static methods retain Result types, and package aliases retain the public fields of error results
+# behavior: bounded static methods retain Result types, package aliases retain the public fields of error results, and Self in a generic trait default satisfies that same trait bound (#2774)
 # expect-accepted:
 
 from std.traits.convert import TryFrom
 from std.fs import Path
+
+
+trait CheckWalk:
+    def walk[E, W with CheckWalker[E]](self, mut walker: W) -> Result[None, E]
+
+
+trait CheckWalker[E]:
+    def field[V with CheckWalk](mut self, value: V) -> Result[None, E]:
+        return value.walk(self)
+
+
+trait CheckSource[E]:
+    def integer(mut self) -> Result[int, E]
+
+
+trait CheckReconstruct:
+    @staticmethod
+    def __reconstruct__[E, S with CheckSource[E]](mut source: S) -> Result[Self, E]
+
+    @staticmethod
+    def through_default[E, S with CheckSource[E]](mut source: S) -> Result[Self, E]:
+        return Self.__reconstruct__(source)
+
+
+model CheckItem with CheckReconstruct:
+    value: int
+
+    @staticmethod
+    def __reconstruct__[E, S with CheckSource[E]](mut source: S) -> Result[CheckItem, E]:
+        return Ok(CheckItem(value=source.integer()?))
+
+    @staticmethod
+    def through_owner[E, S with CheckSource[E]](mut source: S) -> Result[CheckItem, E]:
+        return Self.__reconstruct__(source)
 
 
 def parse[T with TryFrom[str]](text: str) -> Option[T]:

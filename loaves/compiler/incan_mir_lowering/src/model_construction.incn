@@ -211,44 +211,50 @@ def model_field_operands(
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Materialize canonical fields with their checked concrete types, preserving string and model ownership facts."""
-    declaration = builder.nominals[index]
     mut operands: list[Operand] = []
     for slot in range(len(elements)):
         match elements[slot].as_one():
-            Some(value) =>
-                field_type = stored_field_type(
-                    builder.constructors,
-                    builder.nominals,
-                    builder.enums,
-                    builder.unions,
-                    declaration,
-                    slot,
-                    builder.intrinsics,
-                )?
-                # A generic carrier selected as this body's returned view stores the authenticated source loan in its
-                # reference-shaped field, just as a tuple or builtin result carrier stores its selected payload.
-                if builder.carries_view:
-                    match reference_contract(field_type):
-                        Ok(_contract) =>
-                            operands.append(authenticated_component_operand(builder, value, field_type, span)?)
-                            continue
-                        Err(_reason) => pass
-                if field_type == PlanType.String:
-                    text = display_operand(builder, value, span)?
-                    operands.append(read_place(text, true, span))
-                else:
-                    match field_type:
-                        PlanType.Boxed(referent) =>
-                            operand = boundary_operand(builder, value, referent[0], span)?
-                            stored = coerce_numeric_operand(builder, operand, referent[0], span)?
-                            operands.append(boxed_operand(builder, stored, referent[0], span))
-                        _ =>
-                            operand = model_field_boundary(builder, value, declaration, slot, field_type, span)?
-                            # Generic inference has already selected this field's carrier; retain its widening just
-                            # as a call slot does.
-                            operands.append(coerce_numeric_operand(builder, operand, field_type, span)?)
+            Some(value) => operands.append(model_field_operand(builder, index, slot, value, span)?)
             None => return Err("unsupported Body IR spread model field")
     return Ok(operands)
+
+
+pub def model_field_operand(
+    mut builder: Builder,
+    index: int,
+    slot: int,
+    value: &RustOperand,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize one checked source operand into its exact canonical model field slot."""
+    declaration = builder.nominals[index]
+    field_type = stored_field_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        declaration,
+        slot,
+        builder.intrinsics,
+    )?
+    # A generic carrier selected as this body's returned view stores the authenticated source loan in its
+    # reference-shaped field, just as a tuple or builtin result carrier stores its selected payload.
+    if builder.carries_view:
+        match reference_contract(field_type):
+            Ok(_contract) => return authenticated_component_operand(builder, value, field_type, span)
+            Err(_reason) => pass
+    if field_type == PlanType.String:
+        text = display_operand(builder, value, span)?
+        return Ok(read_place(text, true, span))
+    match field_type:
+        PlanType.Boxed(referent) =>
+            operand = boundary_operand(builder, value, referent[0], span)?
+            stored = coerce_numeric_operand(builder, operand, referent[0], span)?
+            return Ok(boxed_operand(builder, stored, referent[0], span))
+        _ =>
+            operand = model_field_boundary(builder, value, declaration, slot, field_type, span)?
+            # Generic inference has already selected this field's carrier; retain its widening just as a call slot does.
+            return coerce_numeric_operand(builder, operand, field_type, span)
 
 
 def model_field_boundary(

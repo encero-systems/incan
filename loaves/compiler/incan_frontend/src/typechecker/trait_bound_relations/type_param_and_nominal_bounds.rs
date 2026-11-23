@@ -158,7 +158,7 @@ impl TypeChecker {
     }
 
     /// Return whether two bound records identify the same trait, accounting for import aliases.
-    pub(super) fn type_bound_names_match(&self, left: &TypeBoundInfo, right: &TypeBoundInfo) -> bool {
+    pub(in crate::typechecker) fn type_bound_names_match(&self, left: &TypeBoundInfo, right: &TypeBoundInfo) -> bool {
         match (self.type_bound_identity(left), self.type_bound_identity(right)) {
             (Some(left), Some(right)) => left == right,
             (Some(_), None) | (None, Some(_)) => false,

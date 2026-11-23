@@ -146,6 +146,8 @@ pub(super) fn checked_modules(
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    let mut package_versions = resolved.package_versions;
+    package_versions.insert(unit.package.clone(), unit.version.clone());
     let reached_loaves = resolved.entries;
     let mut bodies = resolved.modules;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
@@ -187,6 +189,7 @@ pub(super) fn checked_modules(
                     .map(|identity| (identity.clone(), RootOrigin::Source))
                     .collect(),
                 checked_local: checked_local.clone(),
+                package_versions,
                 package: package_identity.to_owned(),
                 authored: bodies[loaf_modules..].to_vec(),
                 sources: sources[loaf_modules..].to_vec(),
@@ -307,6 +310,7 @@ pub(super) fn complete_dependency_context_in_place(
             }
         }
         let resolved = load_loaf_modules(loaves, &requested, checked_local)?;
+        program.dependencies.package_versions.extend(resolved.package_versions);
         program.reached_loaves = resolved.entries;
         let mut expanded = resolved.modules;
         let own = program.modules.split_off(program.own);
@@ -411,6 +415,7 @@ pub(super) fn satisfy_runtime_requirements(
             .join(", ");
         format!("{error}; selected runtime operations: {sites}")
     })?;
+    context.package_versions.extend(resolved.package_versions);
     let mut modules = resolved.modules;
     let own = modules.len();
     let mut files = modules

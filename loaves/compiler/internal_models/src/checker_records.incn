@@ -539,6 +539,11 @@ class InputFields:
     offset: int = 0
     strict_indices: bool = true
 
+    @staticmethod
+    pub def read(values: list[str]) -> InputFields:
+        """Create a reader while keeping its cursor and index policy private to the class."""
+        return InputFields(values=values)
+
     pub def position(self) -> int:
         return self.offset
 
@@ -794,7 +799,7 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
     """Versioned ownership grammar: invocation contracts, local modes and complete anchored control-flow facts."""
     if field.node == "":
         return Err(CodecFault.Malformed)
-    mut reader = InputFields(values=field.values)
+    mut reader = InputFields.read(field.values)
     # Every explicit ownership field starts with its grammar version.
     version = reader.tag(["1", "2"])?
     input_flow = field.family == "input-flow" and field.selector == "graph"

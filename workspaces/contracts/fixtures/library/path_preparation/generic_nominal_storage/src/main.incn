@@ -1,8 +1,8 @@
 # behavior: generic libraries retain source fields, native frozen storage and unimported records (#2256); a native frozen text result closed by a written type argument keeps its owned elements through a local and as an argument (#2447)
 # expect-stdout:
-#   Parcel { value = 7 }
+#   Parcel(value=7)
 #   ok
-#   Marker { label = "hidden" }
+#   Marker(label="hidden")
 #   visible
 #   ["visible"]
 #   2

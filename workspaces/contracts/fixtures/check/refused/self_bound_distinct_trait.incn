@@ -1,0 +1,18 @@
+# behavior: self in a trait's default method does not satisfy a bound naming a different trait (#2774)
+# expect-diagnostic: INCAN-T0001
+
+trait Other:
+    def ping(self) -> None
+
+
+trait Visit:
+    def visit[O with Other](self, other: O) -> None
+
+
+trait Walker:
+    def go[V with Visit](self, value: V) -> None:
+        value.visit(self)
+
+
+def main() -> None:
+    println("unreachable")

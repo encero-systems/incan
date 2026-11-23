@@ -135,6 +135,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                         .cloned()
                 })
                 .collect::<Option<Vec<_>>>()?;
+            let validated_constructor = validated_constructor(&declaration.node, &canonical, type_info);
             let retained = bir::NominalDeclaration {
                 trait_adoptions: checked_trait_adoptions(name, &type_parameters, type_info),
                 native_item: String::new(),
@@ -188,6 +189,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
+                validated_constructor,
                 method_partial_defaults: Vec::new(),
                 display_method: checked_display_method(&declaration.node, type_info),
                 derives: nominal_derives(name, class_layout.is_some(), type_info)?,
@@ -201,6 +203,56 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
             retain_inherited_layout(retained, type_info)
         })
         .collect()
+}
+
+/// Retain the exact generated constructor and source validator selected by a checked `Validate` model.
+///
+/// The constructor has no source declaration of its own, so its identity must derive from the model owner. A
+/// user-authored `new` suppresses the fact entirely, preserving the documented override rather than asking lowering
+/// to distinguish two same-named members.
+fn validated_constructor(
+    declaration: &ast::Declaration,
+    owner: &CanonicalSymbolId,
+    type_info: &TypeCheckInfo,
+) -> Option<bir::ValidatedConstructor> {
+    let ast::Declaration::Model(model) = declaration else {
+        return None;
+    };
+    let derives_validate = type_info
+        .declarations
+        .body_ir_model_derives
+        .get(&model.name)?
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Validate));
+    if !derives_validate
+        || model
+            .methods
+            .iter()
+            .any(|method| method.node.name == incan_lang::lang::conventions::NEW_METHOD)
+    {
+        return None;
+    }
+    let validator = model
+        .methods
+        .iter()
+        .find(|method| method.node.name == incan_lang::lang::conventions::VALIDATE_METHOD)?;
+    Some(bir::ValidatedConstructor {
+        constructor: owner.generated_member(
+            incan_lang::lang::conventions::NEW_METHOD,
+            SemanticSourceTargetKind::Method,
+        ),
+        validator: type_info
+            .declarations
+            .member_declaration_identities
+            .get(&validator.span)?
+            .clone(),
+        required_fields: model
+            .fields
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, field)| field.node.default.is_none().then_some(slot))
+            .collect(),
+    })
 }
 
 /// Retain source field order while resolving types from the checked class layout or span-keyed model facts. A field
@@ -435,6 +487,7 @@ pub(super) fn collect_plain_newtype(
         public: newtype.visibility == ast::Visibility::Public,
         has_field_defaults: false,
         field_default_body: None,
+        validated_constructor: None,
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize,

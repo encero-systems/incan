@@ -86,6 +86,7 @@ impl TypeChecker {
             Self::rust_owner_display(&storage, call.rust_path)
         };
         let signature = Self::specialize_rust_signature(original, &substitutions, &inference_owner);
+        variables.extend(Self::rust_signature_const_parameters(&signature));
         let inferred = self.infer_rust_signature_bindings(
             &signature,
             call.rust_path,

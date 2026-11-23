@@ -23,12 +23,16 @@ pub model ConstructorIndex:
     Declaration positions for one nominal inventory, without copied declaration facts.
 
     `owners` and `generic_owners` keep the first match by carrier key. `named` keeps every position by declaration
-    name in table order, since a carrier key can differ from the name. `count` is the inventory length indexed so far.
+    name in table order, since a carrier key can differ from the name. `source_files` and `package_versions` retain the
+    authenticated project inputs needed when a checked trait identity becomes an authored Plan fact. `count` is the
+    inventory length indexed so far.
     """
 
     pub owners: dict[str, int]
     pub generic_owners: dict[str, int]
     pub named: BTreeMap[str, list[int]]
+    pub source_files: BTreeMap[str, str]
+    pub package_versions: BTreeMap[str, str]
     pub count: int
 
 
@@ -36,9 +40,32 @@ pub def constructor_index(declarations: list[NominalDeclaration]) -> Constructor
     """Index each retained constructor once, preserving independent all-row and generic-row first-match order."""
     named: BTreeMap[str, list[int]] = BTreeMap.new()
     # The new index is built through the same mutable borrow that extends a shared one, so one path indexes rows.
-    mut constructors = Arc.new(ConstructorIndex(owners={}, generic_owners={}, named=named, count=0))
+    versions: BTreeMap[str, str] = BTreeMap.new()
+    files: BTreeMap[str, str] = BTreeMap.new()
+    mut constructors = Arc.new(
+        ConstructorIndex(
+            owners={},
+            generic_owners={},
+            named=named,
+            source_files=files,
+            package_versions=versions,
+            count=0,
+        ),
+    )
     extend_constructor_index(Arc.make_mut(constructors), declarations)
     return Arc.unwrap_or_clone(constructors)
+
+
+pub def constructor_index_with_packages(
+    declarations: list[NominalDeclaration],
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> ConstructorIndex:
+    """Index retained constructors and copy authenticated module files and package selections once for Plan facts."""
+    mut constructors = constructor_index(declarations)
+    constructors.source_files = source_files.clone()
+    constructors.package_versions = package_versions.clone()
+    return constructors
 
 
 pub def extend_constructor_index(

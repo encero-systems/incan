@@ -1,0 +1,14 @@
+# behavior: a same-spelled declaration from another module cannot satisfy the selected nominal parameter (#2519)
+# expect-diagnostic: INCAN-T0001
+
+from left import Invoice as LeftInvoice
+from right import Invoice as RightInvoice
+
+
+def selected(invoice: LeftInvoice) -> str:
+    """Accept only the declaration owned by the left module."""
+    return invoice.name
+
+
+def main() -> None:
+    println(selected(RightInvoice(name="archive")))

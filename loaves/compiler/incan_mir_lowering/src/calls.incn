@@ -173,6 +173,7 @@ def lower_delegated_call(
                 builder.unions,
                 instantiated,
                 builder.intrinsics,
+                builder.file,
             )?,
         )
     match delegation.declaration_frame():
@@ -191,6 +192,7 @@ def lower_delegated_call(
         builder.unions,
         returned,
         builder.intrinsics,
+        builder.file,
     )?
     match delegation.declaration_frame():
         Some(frame) => result = return_representation(frame, result)?
@@ -208,6 +210,7 @@ def lower_delegated_call(
                 builder.unions,
                 argument,
                 builder.intrinsics,
+                builder.file,
             )?,
         )
     if checked_rust:

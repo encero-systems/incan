@@ -1,0 +1,36 @@
+# behavior: Rust callable const parameters take exact fixed-array lengths from receiving parameters and results, including nested arrays and a second generic function (#2810)
+# expect-stdout:
+#   true
+#   224
+#   64
+
+"""Infer native fixed-array lengths from exact Rust call boundaries."""
+
+from rust::array_probe import identity_array, nested_twos, sum_32, sum_nested
+from rust::std::array import from_fn as rust_array_from_fn
+from rust::std::primitive import u128 as RustU128
+
+
+def decoded_16(values: list[u8]) -> u128:
+    """Pass a generic array directly to Rust's exact 16-byte integer boundary."""
+    return RustU128.from_be_bytes(rust_array_from_fn((index) => values[int(index)]))
+
+
+def identity_32() -> u64:
+    """Take 32 from the receiving parameter through a second const-generic Rust function."""
+    return sum_32(identity_array(rust_array_from_fn((_index) => 7u8)))
+
+
+def nested_arrays() -> u64:
+    """Infer a fixed-array element and outer length without flattening the nested relation."""
+    return sum_nested(identity_array(nested_twos()))
+
+
+def main() -> None:
+    mut values: list[u8] = []
+    for index in range(16):
+        byte: u8 = (index + 1).wrapping_resize()
+        values.append(byte)
+    println(decoded_16(values) > 0u128)
+    println(identity_32())
+    println(nested_arrays())

@@ -1,0 +1,4 @@
+pub model Invoice:
+    """An independent declaration whose spelling must not collapse into the selected owner."""
+
+    pub name: str

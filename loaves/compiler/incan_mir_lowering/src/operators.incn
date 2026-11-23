@@ -31,7 +31,6 @@ from rust::incan_semantics_core::body_ir import (
 )
 from rust::incan_semantics_core import SemanticSourceTargetKind
 from frozen_equality import compare_frozen
-from decls import library_enum_item
 from element_places import is_element_place
 from enums import unit_variant, validate_unit_comparison, validate_unit_ordering
 from enum_display import native_enum_owner
@@ -136,8 +135,12 @@ pub def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span:
     return Ok(operand)
 
 
-def external_enum_equality_kind(mut builder: Builder, owner: int) -> Result[Option[bool], str]:
-    """Select external equality for exact Option/Result carriers or published enums; true preserves Rust's own ne."""
+def external_enum_comparison_kind(
+    mut builder: Builder,
+    owner: int,
+    operator: &BinOp,
+) -> Result[Option[bool], str]:
+    """Select structural comparison for payload enums and exact native carriers; true preserves Rust's own ne."""
     if owner < 0:
         return Err("invalid Body IR enum comparison owner")
     if owner >= len(builder.enums):
@@ -145,32 +148,41 @@ def external_enum_equality_kind(mut builder: Builder, owner: int) -> Result[Opti
         if index >= len(builder.intrinsics):
             return Err("invalid Body IR intrinsic enum comparison owner")
         carrier = builder.intrinsics[index].carrier
-        if carrier != Carrier.Declared:
+        if carrier != Carrier.Declared and (operator == BinOp.Eq or operator == BinOp.Ne):
             return Ok(Some(true))
         return Ok(None)
     declaration = builder.enums[owner]
-    if library_enum_item(declaration) == "":
-        return Ok(None)
     native = native_enum_owner(builder, owner)
     if native:
-        return Ok(Some(true))
-    if "PartialEq" not in declaration.derives:
-        return Err("standard library enum comparison requires a checked PartialEq implementation")
+        if operator == BinOp.Eq or operator == BinOp.Ne:
+            return Ok(Some(true))
+        return Ok(None)
+    mut payload = false
     for variant in declaration.variants:
         if len(variant.fields) != 0:
-            return Ok(Some(false))
+            payload = true
+    if not payload:
+        return Ok(None)
+    if operator == BinOp.Eq or operator == BinOp.Ne:
+        if "PartialEq" not in declaration.derives:
+            return Err("payload enum comparison requires a checked PartialEq implementation")
+        return Ok(Some(false))
+    if is_ordering(operator):
+        if "PartialOrd" not in declaration.derives and "Ord" not in declaration.derives:
+            return Err("payload enum ordering requires a checked PartialOrd implementation")
+        return Ok(Some(false))
     return Ok(None)
 
 
-def native_enum_equality(
+def native_enum_comparison(
     mut builder: Builder,
     operator: &BinOp,
     left: Place,
     right: Place,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Borrow native enums and Option/Result for their Rust equality implementation; published source enums retain their checked derives."""
-    if operator != BinOp.Eq and operator != BinOp.Ne:
+    """Borrow payload enums and native carriers for the structural comparison selected by their checked derives."""
+    if operator != BinOp.Eq and operator != BinOp.Ne and not is_ordering(operator):
         return Ok(None)
     ty = place_type(builder.locals, left)
     if ty != place_type(builder.locals, right):
@@ -183,7 +195,7 @@ def native_enum_equality(
             reference = PlanType.EnumRef(index, name)
         _ => return Ok(None)
     mut native = false
-    match external_enum_equality_kind(builder, owner)?:
+    match external_enum_comparison_kind(builder, owner, operator)?:
         Some(preserve_ne) => native = preserve_ne
         None => return Ok(None)
     mut operands: list[Operand] = []
@@ -194,6 +206,14 @@ def native_enum_equality(
     mut path = "core::cmp::PartialEq::eq"
     if native and operator == BinOp.Ne:
         path = "core::cmp::PartialEq::ne"
+    elif operator == BinOp.Lt:
+        path = "core::cmp::PartialOrd::lt"
+    elif operator == BinOp.Le:
+        path = "core::cmp::PartialOrd::le"
+    elif operator == BinOp.Gt:
+        path = "core::cmp::PartialOrd::gt"
+    elif operator == BinOp.Ge:
+        path = "core::cmp::PartialOrd::ge"
     builder.externals.append(
         ExternalFunction(
             path=path,
@@ -220,15 +240,15 @@ def unit_enum_comparison(
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
     """
-    Compare native payload carriers through PartialEq, or checked fieldless source tags without consuming either receiver.
+    Compare payload carriers through their checked structural trait, or fieldless source tags without consuming either receiver.
 
-    Ordering compares the tags too, which is the derived order: native discriminants are the source variant indices.
+    Fieldless ordering compares the tags, whose source variant indices define the derived order.
     """
     if operator != BinOp.Eq and operator != BinOp.Ne and not is_ordering(operator):
         return Err("unsupported Body IR enum BinaryOp")
     left_place = enum_comparison_place(builder, left, span)?
     right_place = enum_comparison_place(builder, right, span)?
-    match native_enum_equality(builder, operator, left_place, right_place, span)?:
+    match native_enum_comparison(builder, operator, left_place, right_place, span)?:
         Some(result) => return Ok(RvalueKind.Use(result))
         None => pass
     validate_unit_comparison(
@@ -376,7 +396,7 @@ pub def scalar_rvalue(
                 match collection_equality(builder, operator, left, right, span)?:
                     Some(result) => return Ok(RvalueKind.Use(result))
                     None => pass
-                match tuple_equality(builder, operator, left, right, span)?:
+                match tuple_comparison(builder, operator, left, right, span)?:
                     Some(result) => return Ok(RvalueKind.Use(result))
                     None => pass
                 match newtype_equality(builder, operator, left, right, span)?:
@@ -385,6 +405,10 @@ pub def scalar_rvalue(
             match text_comparison(builder, operator, left, right, span)?:
                 Some(result) => return Ok(RvalueKind.Use(result))
                 None => pass
+            if is_ordering(operator):
+                match tuple_comparison(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
             if operator == BinOp.Div:
                 mut frame_locals = builder.locals[builder.local_offset:]
                 if (
@@ -509,7 +533,7 @@ def collection_equality(
         None => return Ok(None)
 
 
-def tuple_equality(
+def tuple_comparison(
     mut builder: Builder,
     operator: &BinOp,
     left: &RustOperand,
@@ -517,11 +541,11 @@ def tuple_equality(
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """
-    Compare matching structural tuples through their native PartialEq implementation without consuming fields.
+    Compare matching structural tuples through their native comparison traits without consuming fields.
 
     1. Require the same checked tuple layout on both sides.
     2. Borrow each operand once, retaining model-field and parameter storage.
-    3. Call native equality and negate its result for inequality.
+    3. Call native equality or ordering and negate equality for inequality.
     """
     # 1. Scalars and other aggregate kinds keep their own comparison paths.
     if not local_comparison_operand(left) or not local_comparison_operand(right):
@@ -534,17 +558,26 @@ def tuple_equality(
             reference = borrowed
         None => return Ok(None)
     if tuple_comparison_layout(source_operand_type(builder, right, span)?) != Some((owned, reference)):
-        return Err("unsupported Body IR tuple equality across different layouts")
+        return Err("unsupported Body IR tuple comparison across different layouts")
     # 2. The shared argument boundary preserves existing references and borrows owned tuple fields.
     operands = [
         shared_nominal_argument(builder, left, reference, span)?,
         shared_nominal_argument(builder, right, reference, span)?,
     ]
-    # 3. Aggregate equality is a trait call, never a primitive MIR binary operation.
+    # 3. Aggregate comparison is a trait call, never a primitive MIR binary operation.
     output = temporary(builder, PlanType.Bool, span)
+    mut path = "core::cmp::PartialEq::eq"
+    if operator == BinOp.Lt:
+        path = "core::cmp::PartialOrd::lt"
+    elif operator == BinOp.Le:
+        path = "core::cmp::PartialOrd::le"
+    elif operator == BinOp.Gt:
+        path = "core::cmp::PartialOrd::gt"
+    elif operator == BinOp.Ge:
+        path = "core::cmp::PartialOrd::ge"
     instantiated_external_call(
         builder,
-        "core::cmp::PartialEq::eq",
+        path,
         [owned, owned],
         [reference, reference],
         PlanType.Bool,

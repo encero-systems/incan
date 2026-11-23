@@ -394,6 +394,45 @@ impl TypeCheckInfo {
         self.calls.resolved_method_calls.get(&span)
     }
 
+    /// Return the exact trait slot selected through a concrete adopter's synthetic default member.
+    ///
+    /// A concrete adopter can expose a trait default under an adopter-shaped synthetic member identity for tooling.
+    /// Execution still belongs to the checked trait slot, whose provider identity is the dependency requirement and
+    /// callable target consumed by Body IR. Ordinary trait dispatch already carries its checked target; this narrow
+    /// reconciliation exists for receiver-free defaults, which retain no resolved receiver dispatch.
+    pub fn resolved_adopted_default_identity(&self, span: Span) -> Option<&CanonicalSymbolId> {
+        let selected = self.resolved_identity(span)?;
+        let owner = self
+            .calls
+            .compiler_generated_member_identities
+            .get(selected)
+            .or_else(|| {
+                self.declarations.named_type_identities.values().find(|owner| {
+                    owner.origin == selected.origin
+                        && owner.scope_discriminant == selected.scope_discriminant
+                        && owner.declaration_span == selected.declaration_span
+                })
+            })?;
+        let owner_name = self
+            .declarations
+            .named_type_identities
+            .iter()
+            .find_map(|(name, identity)| (identity == owner).then_some(name))?;
+        let mut matches = self
+            .declarations
+            .body_ir_trait_adoptions
+            .get(owner_name)?
+            .iter()
+            .filter_map(|adoption| adoption.methods.as_ref())
+            .flatten()
+            .filter(|identity| {
+                identity.declaration_name == selected.declaration_name
+                    && self.traits.default_method_identities.contains(identity)
+            });
+        let selected = matches.next()?;
+        matches.all(|identity| identity == selected).then_some(selected)
+    }
+
     /// Return custom iteration protocol metadata for `span`, if any.
     pub fn protocol_iteration(&self, span: Span) -> Option<&ProtocolIterationInfo> {
         self.protocols.iterations.get(&span)

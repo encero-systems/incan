@@ -1,0 +1,300 @@
+"""Incan-owned checked type facts, preserving every semantic type component without display-text reconstruction."""
+
+from compiler_records import CanonicalSymbolId, same_canonical_symbol_id, valid_canonical_symbol_id
+
+
+@derive(Eq)
+pub enum CheckedNumericType:
+    """Every numeric registry identity carried by a checked primitive type."""
+
+    I8
+    I16
+    I32
+    I64
+    I128
+    U8
+    U16
+    U32
+    U64
+    U128
+    F32
+    F64
+    ISize
+    USize
+    Bool
+
+
+@derive(Eq)
+pub enum CheckedPrimitiveType:
+    """Primitive and primitive-like checked types with compiler-owned semantics."""
+
+    Int
+    Float
+    Numeric(CheckedNumericType)
+    Bool
+    Str
+    Bytes
+    FrozenStr
+    FrozenBytes
+    Unit
+
+
+@derive(Eq)
+pub enum CheckedInputAccess:
+    """Checked callable input access, separate from binding mutability and native ownership."""
+
+    Inferred
+    Shared
+    Exclusive
+    Owned
+    InferredShared
+
+
+@derive(Eq)
+pub enum CheckedCallableParamKind:
+    """The source-level position shape of one semantic callable parameter."""
+
+    Normal
+    RestPositional
+    RestKeyword
+
+
+@derive(Eq)
+pub enum CheckedRuntimeBuiltin:
+    """Dependency-owned builtin runtime storage admitted by checked identity proof."""
+
+    ValidationError
+
+
+@derive(Eq)
+pub model CheckedCallableParam:
+    """Every callable-parameter fact retained in a semantic function type."""
+
+    pub name: Option[str]
+    pub ty: CheckedType
+    pub kind: CheckedCallableParamKind
+    pub has_default: bool
+    pub is_partial_preset: bool
+    pub is_mut: bool
+    pub native_owned: bool
+    pub input_access: CheckedInputAccess
+
+
+@derive(Eq)
+pub enum CheckedType:
+    """
+    The complete checked `IncanType` universe at executable representation 53.
+
+    Rust `Box` indirection becomes a one-element list so the authored recursive enum has finite storage. Validators
+    require exactly one child. Explicit comparison remains payload-safe while #2806 is open.
+    """
+
+    Never
+    Primitive(CheckedPrimitiveType)
+    Named(str)
+    Generic(str, list[CheckedType])
+    Decimal(u8, u8)
+    Function(list[CheckedCallableParam], list[CheckedType])
+    TypeToken(list[CheckedType])
+    Tuple(list[CheckedType])
+    TypeVar(str)
+    SelfType
+    Ref(list[CheckedType])
+    RefMut(list[CheckedType])
+    RustInteropPath(str)
+    NativeBuiltin(CheckedRuntimeBuiltin)
+    Unsupported(str)
+    Infer
+    Unknown
+    NativeArray(list[CheckedType], u64)
+    NativeTraitObject(str, bool, bool)
+    NativePointer(bool, list[CheckedType])
+    NativeCChar
+    Trait(CanonicalSymbolId)
+
+
+pub def valid_checked_type(ty: CheckedType) -> bool:
+    """Validate every recursive child and each one-element projection of a native boxed type."""
+    match ty:
+        CheckedType.Generic(base, arguments) => return base != "" and valid_types(arguments)
+        CheckedType.Function(parameters, result) => return valid_parameters(parameters) and valid_single_type(result)
+        CheckedType.TypeToken(represented) => return valid_single_type(represented)
+        CheckedType.Tuple(elements) => return valid_types(elements)
+        CheckedType.Ref(referent) | CheckedType.RefMut(referent) => return valid_single_type(referent)
+        CheckedType.NativeArray(element, _length) => return valid_single_type(element)
+        CheckedType.NativePointer(_mutable, pointee) => return valid_single_type(pointee)
+        CheckedType.Named(name) => return name != ""
+        CheckedType.TypeVar(name) => return name != ""
+        CheckedType.RustInteropPath(name) => return name != ""
+        CheckedType.Unsupported(name) => return name != ""
+        CheckedType.NativeTraitObject(path, _send, _sync) => return path != ""
+        CheckedType.Trait(identity) => return valid_canonical_symbol_id(identity)
+        _ => return true
+
+
+pub def same_checked_type(left: CheckedType, right: CheckedType) -> bool:
+    """Compare complete checked facts structurally without payload-enum equality lowering affected by #2806."""
+    match left:
+        CheckedType.Primitive(value) =>
+            match right:
+                CheckedType.Primitive(other) => return same_primitive_type(value, other)
+                _ => return false
+        CheckedType.Named(value) => return same_text_variant("named", value, right)
+        CheckedType.Generic(base, arguments) =>
+            match right:
+                CheckedType.Generic(other_base, other_arguments) =>
+                    return base == other_base and same_checked_types(arguments, other_arguments)
+                _ => return false
+        CheckedType.Decimal(precision, scale) =>
+            match right:
+                CheckedType.Decimal(other_precision, other_scale) =>
+                    return precision == other_precision and scale == other_scale
+                _ => return false
+        CheckedType.Function(parameters, result) =>
+            match right:
+                CheckedType.Function(other_parameters, other_result) =>
+                    return same_parameters(parameters, other_parameters) and same_checked_types(result, other_result)
+                _ => return false
+        CheckedType.TypeToken(value) => return same_list_variant("type_token", value, right)
+        CheckedType.Tuple(value) => return same_list_variant("tuple", value, right)
+        CheckedType.TypeVar(value) => return same_text_variant("type_var", value, right)
+        CheckedType.Ref(value) => return same_list_variant("ref", value, right)
+        CheckedType.RefMut(value) => return same_list_variant("ref_mut", value, right)
+        CheckedType.RustInteropPath(value) => return same_text_variant("rust_path", value, right)
+        CheckedType.NativeBuiltin(value) =>
+            match right:
+                CheckedType.NativeBuiltin(other) => return value == other
+                _ => return false
+        CheckedType.Unsupported(value) => return same_text_variant("unsupported", value, right)
+        CheckedType.NativeArray(element, length) =>
+            match right:
+                CheckedType.NativeArray(other_element, other_length) =>
+                    return length == other_length and same_checked_types(element, other_element)
+                _ => return false
+        CheckedType.NativeTraitObject(path, send, sync) =>
+            match right:
+                CheckedType.NativeTraitObject(other_path, other_send, other_sync) =>
+                    return path == other_path and send == other_send and sync == other_sync
+                _ => return false
+        CheckedType.NativePointer(mutable, pointee) =>
+            match right:
+                CheckedType.NativePointer(other_mutable, other_pointee) =>
+                    return mutable == other_mutable and same_checked_types(pointee, other_pointee)
+                _ => return false
+        CheckedType.Trait(identity) =>
+            match right:
+                CheckedType.Trait(other) => return same_canonical_symbol_id(identity, other)
+                _ => return false
+        _ => return checked_type_tag(left) == checked_type_tag(right)
+
+
+pub def same_checked_types(left: list[CheckedType], right: list[CheckedType]) -> bool:
+    """Compare an ordered checked-type sequence without collapsing nested structure into display text."""
+    if len(left) != len(right):
+        return false
+    for index in range(len(left)):
+        if not same_checked_type(left[index], right[index]):
+            return false
+    return true
+
+
+def same_text_variant(tag: str, value: str, right: CheckedType) -> bool:
+    """Compare one text-carrying alternative after retaining its closed variant tag."""
+    match right:
+        CheckedType.Named(other) => return tag == "named" and value == other
+        CheckedType.TypeVar(other) => return tag == "type_var" and value == other
+        CheckedType.RustInteropPath(other) => return tag == "rust_path" and value == other
+        CheckedType.Unsupported(other) => return tag == "unsupported" and value == other
+        _ => return false
+
+
+def same_list_variant(tag: str, value: list[CheckedType], right: CheckedType) -> bool:
+    """Compare one recursive-list alternative without allowing equal children to erase the outer type constructor."""
+    match right:
+        CheckedType.TypeToken(other) => return tag == "type_token" and same_checked_types(value, other)
+        CheckedType.Tuple(other) => return tag == "tuple" and same_checked_types(value, other)
+        CheckedType.Ref(other) => return tag == "ref" and same_checked_types(value, other)
+        CheckedType.RefMut(other) => return tag == "ref_mut" and same_checked_types(value, other)
+        _ => return false
+
+
+def same_parameters(left: list[CheckedCallableParam], right: list[CheckedCallableParam]) -> bool:
+    """Compare every callable parameter fact, including independent mutability, native ownership and access mode."""
+    if len(left) != len(right):
+        return false
+    for index in range(len(left)):
+        if not (
+            left[index].name == right[index].name
+            and same_checked_type(left[index].ty, right[index].ty)
+            and left[index].kind == right[index].kind
+            and left[index].has_default == right[index].has_default
+            and left[index].is_partial_preset == right[index].is_partial_preset
+            and left[index].is_mut == right[index].is_mut
+            and left[index].native_owned == right[index].native_owned
+            and left[index].input_access == right[index].input_access
+        ):
+            return false
+    return true
+
+
+def same_primitive_type(left: CheckedPrimitiveType, right: CheckedPrimitiveType) -> bool:
+    """Compare primitive facts explicitly so the numeric payload remains safe while #2806 is open."""
+    match left:
+        CheckedPrimitiveType.Numeric(value) =>
+            match right:
+                CheckedPrimitiveType.Numeric(other) => return value == other
+                _ => return false
+        CheckedPrimitiveType.Int => return primitive_type_tag(right) == "int"
+        CheckedPrimitiveType.Float => return primitive_type_tag(right) == "float"
+        CheckedPrimitiveType.Bool => return primitive_type_tag(right) == "bool"
+        CheckedPrimitiveType.Str => return primitive_type_tag(right) == "str"
+        CheckedPrimitiveType.Bytes => return primitive_type_tag(right) == "bytes"
+        CheckedPrimitiveType.FrozenStr => return primitive_type_tag(right) == "frozen_str"
+        CheckedPrimitiveType.FrozenBytes => return primitive_type_tag(right) == "frozen_bytes"
+        CheckedPrimitiveType.Unit => return primitive_type_tag(right) == "unit"
+
+
+def primitive_type_tag(ty: CheckedPrimitiveType) -> str:
+    """Tag every payload-free primitive alternative without invoking payload-enum equality lowering."""
+    match ty:
+        CheckedPrimitiveType.Int => return "int"
+        CheckedPrimitiveType.Float => return "float"
+        CheckedPrimitiveType.Bool => return "bool"
+        CheckedPrimitiveType.Str => return "str"
+        CheckedPrimitiveType.Bytes => return "bytes"
+        CheckedPrimitiveType.FrozenStr => return "frozen_str"
+        CheckedPrimitiveType.FrozenBytes => return "frozen_bytes"
+        CheckedPrimitiveType.Unit => return "unit"
+        CheckedPrimitiveType.Numeric(_value) => return "numeric"
+
+
+def valid_types(types: list[CheckedType]) -> bool:
+    """Validate every child in an ordered recursive type sequence."""
+    for ty in types:
+        if not valid_checked_type(ty):
+            return false
+    return true
+
+
+def valid_single_type(types: list[CheckedType]) -> bool:
+    """Validate a Rust `Box` projection as exactly one complete authored child."""
+    return len(types) == 1 and valid_checked_type(types[0])
+
+
+def valid_parameters(parameters: list[CheckedCallableParam]) -> bool:
+    """Validate every callable parameter type without imposing source-level default ordering here."""
+    for parameter in parameters:
+        if not valid_checked_type(parameter.ty):
+            return false
+    return true
+
+
+def checked_type_tag(ty: CheckedType) -> str:
+    """Tag every payload-free checked type alternative for #2806-safe equality."""
+    match ty:
+        CheckedType.Never => return "never"
+        CheckedType.SelfType => return "self"
+        CheckedType.Infer => return "infer"
+        CheckedType.Unknown => return "unknown"
+        CheckedType.NativeCChar => return "native_c_char"
+        _ => return "payload"

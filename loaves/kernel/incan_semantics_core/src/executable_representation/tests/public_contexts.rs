@@ -93,6 +93,7 @@ fn public_default_trait_body_requires_its_declaring_context() -> Result<(), Box<
     let mut default = body("touch", 3);
     default.canonical = Some(slot.clone());
     default.span = slot.declaration_span;
+    default.return_type = IncanType::SelfType;
     let mut source = module(vec![default]);
     source.trait_declarations.push(owner.clone());
     let bytes = publish(&source, &BTreeSet::from([owner.clone(), slot.clone()]))?;
@@ -331,6 +332,7 @@ fn public_type_context_retains_private_fields_and_requires_checked_layouts() -> 
         public: false,
         has_field_defaults: false,
         field_default_body: None,
+        validated_constructor: None,
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
@@ -476,6 +478,7 @@ fn result_type_identities_are_rebased_and_private_identity_payloads_are_not_publ
         public: false,
         has_field_defaults: false,
         field_default_body: None,
+        validated_constructor: None,
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,

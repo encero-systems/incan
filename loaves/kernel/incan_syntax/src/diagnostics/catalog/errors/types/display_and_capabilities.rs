@@ -424,27 +424,6 @@ pub fn type_parameter_method_not_declared(type_param: &str, method: &str, span: 
     ))
 }
 
-/// Refuse an adopter that relies on a default method of a trait another compiled package declares (#1561).
-///
-/// A package's manifest publishes its traits' method signatures, and its generated crate declares each trait method
-/// without a body (defaults are expanded into each adopter's impl), so no default body reaches an adopter built in
-/// another package.
-pub fn package_trait_default_not_available(
-    trait_name: &str,
-    type_name: &str,
-    method: &str,
-    span: Span,
-) -> CompileError {
-    CompileError::type_error(
-        format!("'{type_name}' adopts '{trait_name}' from another package and does not define its default method '{method}'"),
-        span,
-    )
-    .with_hint(format!("Define '{method}' in '{type_name}'"))
-    .with_note(
-        "A compiled package publishes the signatures of its traits' methods, not their default bodies, so a type in another package defines each method the trait gives a default",
-    )
-}
-
 /// Refuse an RFC 088 iterator adapter or terminal called on a value that is iterable but is not an iterator (#1561).
 ///
 /// A list, set, frozen collection or `Iterable[T]` provides `iter()`; the adapters and terminals are methods of the

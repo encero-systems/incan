@@ -1,4 +1,4 @@
-# behavior: each ordering dunder called on a type that derives Ord, a model, an enum, a generic model and a newtype, on a value and on self, is the operator it defines
+# behavior: each comparison dunder called on a type that derives Eq or Ord, including payload and nested-payload enums (#2806), a model, an enum, a generic model and a newtype, on a value and on self, is the operator it defines
 # expect-stdout:
 #   false
 #   true
@@ -27,6 +27,18 @@ enum Level:
 
 
 @derive(Eq, Ord)
+enum Origin:
+    Module
+    Package(str)
+    Nested(Origin)
+
+
+@derive(Eq)
+model Source:
+    origin: Origin
+
+
+@derive(Eq, Ord)
 model Pair[T]:
     left: T
     right: T
@@ -37,6 +49,12 @@ type Rank = newtype int
 
 
 def main() -> None:
+    origin = Origin.Module
+    assert origin == Origin.Module
+    assert Source(origin=Origin.Package("std")) == Source(origin=Origin.Package("std"))
+    assert Origin.Nested(Origin.Package("std")) != Origin.Nested(Origin.Package("app"))
+    assert Origin.Package("app") < Origin.Package("std")
+    assert Origin.Nested(Origin.Module) >= Origin.Package("std")
     a = Score(points=2)
     b = Score(points=3)
     println(a.__ge__(b))

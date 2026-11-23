@@ -1,10 +1,10 @@
-//! Access projection for builtin carriers and statement `match` arms. A stored scrutinee is consumed under its
-//! checked Copy or move semantics; guards evaluate after their arm's bindings and before its body.
+//! Access projection for builtin carriers, checked enum payloads and statement `match` arms. A stored scrutinee is
+//! consumed under its checked Copy or move semantics; guards evaluate after their arm's bindings and before its body.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
-use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::{Builder, Event, Path, Place, Root, Unavailable};
 use crate::ast::{
@@ -162,10 +162,8 @@ impl Builder<'_> {
             let (evaluated, loans) = self.evaluate_native_result(scrutinee, &relation, incoming)?;
             native = Some((loans, payload));
             (evaluated, None)
-        } else if fresh_scrutinee(scrutinee) {
-            (self.expression(scrutinee, incoming, false)?, None)
         } else {
-            (self.expression(scrutinee, incoming, true)?, None)
+            (self.owned_match_scrutinee(scrutinee, incoming)?, None)
         };
         let mut outgoing = Vec::new();
         let mut remaining = evaluated;
@@ -180,7 +178,10 @@ impl Builder<'_> {
             match binding {
                 Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
                 None => {
-                    self.arm_binding(&arm.node.pattern)?;
+                    self.arm_binding(
+                        &arm.node.pattern,
+                        view.is_none() && aggregate.is_none() && native.is_none(),
+                    )?;
                     if let Some((path, payload)) = &aggregate
                         && let Some((name, span)) =
                             super::super::builtins::carried_view_binding(&arm.node.pattern, *payload)
@@ -621,37 +622,113 @@ impl Builder<'_> {
             .is_some()
     }
 
-    /// Register the one fresh owner a carrier pattern binds, as a loop item is registered: a root, no write event.
-    fn arm_binding(&mut self, pattern: &Spanned<Pattern>) -> Result<(), Unavailable> {
+    /// Evaluate an ordinary match subject under its existing transfer rules. Tuple subjects evaluate their elements
+    /// in order: creating a tuple must not hide a move from a borrowed input. Carried views are handled separately
+    /// by `match_statement`; this path never turns a dependent payload into an independent owner.
+    fn owned_match_scrutinee(
+        &mut self,
+        scrutinee: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        match &scrutinee.node {
+            Expr::Paren(inner) => self.owned_match_scrutinee(inner, incoming),
+            Expr::Tuple(elements) => {
+                let mut incoming = incoming;
+                for element in elements {
+                    incoming = self.tuple_match_element(element, incoming)?;
+                }
+                Ok(incoming)
+            }
+            _ => self.expression(scrutinee, incoming, !fresh_scrutinee(scrutinee)),
+        }
+    }
+
+    /// Project only independent stored tuple elements. Dependent carriers and fresh calls need component-wise loan
+    /// propagation before their nested bindings can be admitted; treating those bindings as fresh owners would
+    /// erase the source dependency. Ordinary borrowed places still undergo the usual move/Copy check.
+    fn tuple_match_element(
+        &mut self,
+        element: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let unsupported = || Unavailable {
+            span: element.span,
+            reason: "tuple match element needs independent storage or checked component dependencies".into(),
+        };
+        match &element.node {
+            Expr::Paren(inner) => self.tuple_match_element(inner, incoming),
+            Expr::Tuple(_) | Expr::Literal(_) => self.owned_match_scrutinee(element, incoming),
+            Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
+                let path = self.place(element)?;
+                if self.bound_carrier(element).is_some()
+                    || matches!(&path.place.root, Root::Binding(root)
+                        if self.graph.dependent_locals.contains_key(root))
+                {
+                    return Err(unsupported());
+                }
+                self.expression(element, incoming, true)
+            }
+            _ => Err(unsupported()),
+        }
+    }
+
+    /// Register checked pattern locals as fresh owners after the subject's transfer has been checked. Source enum
+    /// constructors use their canonical variant identity, including through imports and aliases; their spelling
+    /// grants no authority. Binding identities and permissions still come from pattern checking. Carrier views
+    /// retain their separate alias/dependency path and flat payload patterns until nested dependency projection is
+    /// available; unsupported patterns never receive guessed access facts.
+    fn arm_binding(&mut self, pattern: &Spanned<Pattern>, independent: bool) -> Result<(), Unavailable> {
         let unsupported = || Unavailable {
             span: pattern.span,
             reason: "match pattern needs checked binding access".into(),
         };
-        let arguments = match &pattern.node {
-            Pattern::Wildcard | Pattern::Literal(_) => return Ok(()),
-            Pattern::Constructor(name, arguments) => match constructors::from_str(&name.node) {
-                Some(ConstructorId::None) if arguments.is_empty() => return Ok(()),
-                Some(ConstructorId::Ok | ConstructorId::Err | ConstructorId::Some) => arguments,
-                _ => return Err(unsupported()),
-            },
-            _ => return Err(unsupported()),
-        };
-        let [PatternArg::Positional(payload)] = arguments.as_slice() else {
-            return Err(unsupported());
-        };
-        match &payload.node {
-            Pattern::Wildcard => Ok(()),
-            Pattern::Binding(name) => {
+        match &pattern.node {
+            Pattern::Wildcard | Pattern::Literal(_) => Ok(()),
+            Pattern::Binding(name) if independent => {
                 let identity = self
                     .checker
                     .type_info
-                    .resolved_write_identity(payload.span, name)
+                    .resolved_write_identity(pattern.span, name)
                     .cloned()
                     .ok_or(Unavailable {
-                        span: payload.span,
+                        span: pattern.span,
                         reason: "missing checked match binding".into(),
                     })?;
-                self.root(&identity, payload.span).map(|_| ())
+                self.root(&identity, pattern.span).map(|_| ())
+            }
+            Pattern::Group(inner) if independent => self.arm_binding(inner, true),
+            Pattern::Tuple(elements) if independent => {
+                for element in elements {
+                    self.arm_binding(element, true)?;
+                }
+                Ok(())
+            }
+            Pattern::Constructor(name, arguments) => {
+                let checked_variant = self
+                    .checker
+                    .type_info
+                    .resolved_identity(name.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant);
+                if checked_variant && !independent {
+                    return Err(unsupported());
+                }
+                if !checked_variant {
+                    match constructors::from_str(&name.node) {
+                        Some(ConstructorId::None) if arguments.is_empty() => return Ok(()),
+                        Some(ConstructorId::Ok | ConstructorId::Err | ConstructorId::Some) if arguments.len() == 1 => {}
+                        _ => return Err(unsupported()),
+                    }
+                }
+                for argument in arguments {
+                    let PatternArg::Positional(payload) = argument else {
+                        return Err(unsupported());
+                    };
+                    if !independent && !matches!(payload.node, Pattern::Binding(_) | Pattern::Wildcard) {
+                        return Err(unsupported());
+                    }
+                    self.arm_binding(payload, true)?;
+                }
+                Ok(())
             }
             _ => Err(unsupported()),
         }

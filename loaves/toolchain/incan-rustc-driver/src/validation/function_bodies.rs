@@ -468,7 +468,10 @@ pub(super) fn operand(plan: &Plan, function: &Function, value: &Operand) -> Resu
                         | Scalar::DictMutRef(_, _)
                 )
             {
-                return Err(invalid(function, "owned formatting values cannot be copied"));
+                return Err(invalid(
+                    function,
+                    format!("non-Copy value {ty:?} at {value:?} cannot be copied"),
+                ));
             }
             Ok(ty)
         }

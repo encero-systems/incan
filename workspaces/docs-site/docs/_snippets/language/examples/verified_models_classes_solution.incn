@@ -4,7 +4,7 @@ model Product:
 
 
 class Cart:
-    items: list[Product]
+    pub items: list[Product]
 
     pub def total(self) -> float:
         mut total = 0.0

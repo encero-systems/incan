@@ -8,7 +8,7 @@ trait Callable1[A, R]:
 
 
 class Adder with Callable1[int, int]:
-    amount: int
+    pub amount: int
 
     def apply(self, arg: int) -> int:
         return arg + self.amount

@@ -3,6 +3,173 @@
 use super::*;
 
 impl TypeChecker {
+    /// Return every callable-local Rust inference binder without treating a const value as a type argument.
+    pub(in crate::typechecker::check_expr) fn rust_signature_inference_parameters(
+        sig: &RustFunctionSig,
+    ) -> Vec<String> {
+        sig.type_params
+            .iter()
+            .cloned()
+            .chain(Self::rust_signature_const_parameters(sig))
+            .collect()
+    }
+
+    /// Recover callable const binders from rustc's normalized array displays without adding them to type arguments.
+    ///
+    /// rustc evaluates named constants before rendering a signature type; a remaining single-segment path in an
+    /// array length is therefore a const parameter. The walk covers nested arrays and arrays inside ordinary wrapper
+    /// shapes so the inference relation stays structural instead of naming a particular function.
+    pub(in crate::typechecker::check_expr) fn rust_signature_const_parameters(sig: &RustFunctionSig) -> Vec<String> {
+        let mut parameters = Vec::new();
+        for display in sig
+            .params
+            .iter()
+            .map(|parameter| parameter.type_display.as_str())
+            .chain(std::iter::once(sig.return_type.as_str()))
+        {
+            for parameter in Self::rust_display_const_parameters(display) {
+                if !parameters.contains(&parameter) {
+                    parameters.push(parameter);
+                }
+            }
+        }
+        parameters
+    }
+
+    /// Recover the single-name fixed-array length binders present in one normalized Rust type display.
+    pub(in crate::typechecker::check_expr) fn rust_display_const_parameters(display: &str) -> Vec<String> {
+        let display = display.trim().strip_prefix("rust::").unwrap_or(display.trim());
+        let mut parameters = Vec::new();
+        if let Ok(ty) = syn::parse_str::<syn::Type>(display) {
+            Self::collect_rust_array_const_parameters(&ty, &mut parameters);
+        }
+        parameters
+    }
+
+    /// Return whether every callable const binder has an exact inferred value suitable for retained call metadata.
+    pub(super) fn rust_signature_const_parameters_are_bound(
+        sig: &RustFunctionSig,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> bool {
+        Self::rust_signature_const_parameters(sig).iter().all(|parameter| {
+            bindings
+                .get(parameter)
+                .is_some_and(|value| !matches!(value, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+        })
+    }
+
+    /// Walk one parsed Rust type and retain declaration-ordered single-name fixed-array length parameters.
+    fn collect_rust_array_const_parameters(ty: &syn::Type, parameters: &mut Vec<String>) {
+        match ty {
+            syn::Type::Array(array) => {
+                Self::collect_rust_array_const_parameters(&array.elem, parameters);
+                if let syn::Expr::Path(length) = &array.len
+                    && let Some(name) = length.path.get_ident().map(ToString::to_string)
+                    && !parameters.contains(&name)
+                {
+                    parameters.push(name);
+                }
+            }
+            syn::Type::BareFn(function) => {
+                for input in &function.inputs {
+                    Self::collect_rust_array_const_parameters(&input.ty, parameters);
+                }
+                if let syn::ReturnType::Type(_, result) = &function.output {
+                    Self::collect_rust_array_const_parameters(result, parameters);
+                }
+            }
+            syn::Type::Group(group) => Self::collect_rust_array_const_parameters(&group.elem, parameters),
+            syn::Type::Paren(parenthesized) => {
+                Self::collect_rust_array_const_parameters(&parenthesized.elem, parameters)
+            }
+            syn::Type::Path(path) => {
+                for segment in &path.path.segments {
+                    let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+                        continue;
+                    };
+                    for argument in &arguments.args {
+                        if let syn::GenericArgument::Type(ty) = argument {
+                            Self::collect_rust_array_const_parameters(ty, parameters);
+                        }
+                    }
+                }
+            }
+            syn::Type::Ptr(pointer) => Self::collect_rust_array_const_parameters(&pointer.elem, parameters),
+            syn::Type::Reference(reference) => Self::collect_rust_array_const_parameters(&reference.elem, parameters),
+            syn::Type::Slice(slice) => Self::collect_rust_array_const_parameters(&slice.elem, parameters),
+            syn::Type::Tuple(tuple) => {
+                for element in &tuple.elems {
+                    Self::collect_rust_array_const_parameters(element, parameters);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Return whether a provisional native value still carries a Rust binder that a surrounding call must not treat
+    /// as concrete evidence. This includes ordinary structured type variables and binders embedded in opaque Rust
+    /// displays such as `[T; N]`, whose element and length cannot be represented independently in `ResolvedType`.
+    fn rust_inference_value_has_open_native_binder(&self, ty: &ResolvedType) -> bool {
+        if Self::mentions_foreign_type_variable(ty, &self.native_call_type_parameters()) {
+            return true;
+        }
+        let open = std::cell::Cell::new(false);
+        map_resolved_type_leaves(ty, &|leaf| {
+            match leaf {
+                ResolvedType::Unknown | ResolvedType::CallSiteInfer => open.set(true),
+                ResolvedType::RustPath(display) => {
+                    if syn::parse_str::<syn::Type>(display)
+                        .is_ok_and(|parsed| Self::rust_type_has_open_native_binder(&parsed))
+                    {
+                        open.set(true);
+                    }
+                }
+                _ => {}
+            }
+            None
+        });
+        open.get()
+    }
+
+    /// Inspect one parsed Rust type for an unevaluated array length or a generic-looking single-name type.
+    fn rust_type_has_open_native_binder(ty: &syn::Type) -> bool {
+        match ty {
+            syn::Type::Array(array) => {
+                !matches!(array.len, syn::Expr::Lit(_)) || Self::rust_type_has_open_native_binder(&array.elem)
+            }
+            syn::Type::BareFn(function) => {
+                function
+                    .inputs
+                    .iter()
+                    .any(|input| Self::rust_type_has_open_native_binder(&input.ty))
+                    || matches!(&function.output, syn::ReturnType::Type(_, result) if Self::rust_type_has_open_native_binder(result))
+            }
+            syn::Type::Group(group) => Self::rust_type_has_open_native_binder(&group.elem),
+            syn::Type::Paren(parenthesized) => Self::rust_type_has_open_native_binder(&parenthesized.elem),
+            syn::Type::Path(path) => {
+                (path.qself.is_none()
+                    && path.path.segments.len() == 1
+                    && path
+                        .path
+                        .get_ident()
+                        .is_some_and(|name| Self::is_rust_generic_type_param_display(&name.to_string())))
+                    || path.path.segments.iter().any(|segment| {
+                        let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+                            return false;
+                        };
+                        arguments.args.iter().any(|argument| {
+                            matches!(argument, syn::GenericArgument::Type(ty) if Self::rust_type_has_open_native_binder(ty))
+                        })
+                    })
+            }
+            syn::Type::Ptr(pointer) => Self::rust_type_has_open_native_binder(&pointer.elem),
+            syn::Type::Reference(reference) => Self::rust_type_has_open_native_binder(&reference.elem),
+            syn::Type::Slice(slice) => Self::rust_type_has_open_native_binder(&slice.elem),
+            syn::Type::Tuple(tuple) => tuple.elems.iter().any(Self::rust_type_has_open_native_binder),
+            _ => false,
+        }
+    }
+
     /// Select the native argument carrier after an already approved boundary conversion, preserving the checked borrow
     /// or numeric conversion when a call is retained. A source range keeps ordinary storage; a half-open literal
     /// constructs Rust's public Range only at this boundary.
@@ -223,6 +390,12 @@ impl TypeChecker {
         expected: Option<&ResolvedType>,
     ) -> HashMap<String, ResolvedType> {
         let mut bound = HashMap::new();
+        let const_parameters = Self::rust_signature_const_parameters(sig);
+        let type_parameters = parameters
+            .iter()
+            .filter(|parameter| !const_parameters.contains(parameter))
+            .cloned()
+            .collect::<Vec<_>>();
         let params = if Self::rust_signature_has_receiver(sig) {
             &sig.params[1..]
         } else {
@@ -241,13 +414,13 @@ impl TypeChecker {
                 parameter.type_display.as_str(),
                 owner_path,
             );
-            let target = self.rust_inference_type(&target, parameters);
+            let target = self.rust_inference_type(&target, &type_parameters);
             let native_actual = self.rust_argument_native_type(Self::call_arg_expr(argument));
             let native_actual = native_actual.map(|native| {
                 self.rust_range_bound_destination(sig, &parameter.type_display, Self::call_arg_expr(argument), &native)
                     .unwrap_or(native)
             });
-            let actual = self.rust_inference_type(native_actual.as_ref().unwrap_or(actual), parameters);
+            let actual = self.rust_inference_type(native_actual.as_ref().unwrap_or(actual), &type_parameters);
             // Frozen text crosses into Rust in the owned-string form a `str` value has: the frozen carrier implements
             // no Rust trait, so a generic parameter bound to it could never satisfy its callee's bounds (#2590).
             let actual = if actual == ResolvedType::FrozenStr {
@@ -263,21 +436,129 @@ impl TypeChecker {
                 _ => (&target, &actual),
             };
             self.infer_type_param_bindings(target, actual, &mut bound);
-            if let Some(callable) = self.rust_bound_callable_type(sig, &parameter.type_display) {
-                self.infer_type_param_bindings(&self.rust_inference_type(&callable, parameters), actual, &mut bound);
+            self.infer_rust_array_display_bindings(
+                parameter.type_display.as_str(),
+                &render_resolved_type_as_rust_arg(actual),
+                owner_path,
+                &type_parameters,
+                &const_parameters,
+                &mut bound,
+            );
+            if let Some(callable) = self.rust_bound_callable_type(sig, &parameter.type_display)
+                && !self.rust_inference_value_has_open_native_binder(actual)
+            {
+                self.infer_type_param_bindings(
+                    &self.rust_inference_type(&callable, &type_parameters),
+                    actual,
+                    &mut bound,
+                );
             }
         }
         if let Some(expected) = expected {
             let result = self.resolved_rust_return_type_from_sig(sig, owner_path);
             self.infer_type_param_bindings(
-                &self.rust_inference_type(&result, parameters),
-                &self.rust_inference_type(expected, parameters),
+                &self.rust_inference_type(&result, &type_parameters),
+                &self.rust_inference_type(expected, &type_parameters),
+                &mut bound,
+            );
+            self.infer_rust_array_display_bindings(
+                sig.return_type.as_str(),
+                &render_resolved_type_as_rust_arg(expected),
+                owner_path,
+                &type_parameters,
+                &const_parameters,
                 &mut bound,
             );
         }
-        self.infer_rust_predicate_bindings(sig, parameters, &mut bound);
-        self.prefer_borrowed_bindings(sig, parameters, &mut bound);
+        self.infer_rust_predicate_bindings(sig, &type_parameters, &mut bound);
+        self.prefer_borrowed_bindings(sig, &type_parameters, &mut bound);
         bound
+    }
+
+    /// Infer type and const binders inside a Rust fixed-array display from an exact concrete array display.
+    ///
+    /// Array lengths bind only from integer literals. Another open expression contributes no fact, and a conflicting
+    /// literal marks the binder unknown so ordinary call inference refuses it. Nested arrays recurse through the same
+    /// relation; non-array elements use the existing structural type-parameter unifier.
+    pub(super) fn infer_rust_array_display_bindings(
+        &self,
+        template: &str,
+        actual: &str,
+        owner: &str,
+        type_parameters: &[String],
+        const_parameters: &[String],
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        if !Self::rust_display_const_parameters(template)
+            .iter()
+            .any(|parameter| const_parameters.contains(parameter))
+        {
+            return;
+        }
+        let template = template.trim().strip_prefix("rust::").unwrap_or(template.trim());
+        let actual = actual.trim().strip_prefix("rust::").unwrap_or(actual.trim());
+        let (Ok(template), Ok(actual)) = (
+            syn::parse_str::<syn::Type>(template),
+            syn::parse_str::<syn::Type>(actual),
+        ) else {
+            return;
+        };
+        self.infer_rust_array_type_bindings(&template, &actual, owner, type_parameters, const_parameters, bindings);
+    }
+
+    /// Recurse through one parsed fixed-array relation and retain only exact literal length evidence.
+    pub(super) fn infer_rust_array_type_bindings(
+        &self,
+        template: &syn::Type,
+        actual: &syn::Type,
+        owner: &str,
+        type_parameters: &[String],
+        const_parameters: &[String],
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        let (syn::Type::Array(template), syn::Type::Array(actual)) = (template, actual) else {
+            let template = self.native_rust_signature_type(&template.to_token_stream().to_string(), owner);
+            let actual = self.native_rust_signature_type(&actual.to_token_stream().to_string(), owner);
+            self.infer_type_param_bindings(
+                &self.rust_inference_type(&template, type_parameters),
+                &self.rust_inference_type(&actual, type_parameters),
+                bindings,
+            );
+            return;
+        };
+        self.infer_rust_array_type_bindings(
+            &template.elem,
+            &actual.elem,
+            owner,
+            type_parameters,
+            const_parameters,
+            bindings,
+        );
+        let syn::Expr::Path(parameter) = &template.len else {
+            return;
+        };
+        let Some(name) = parameter.path.get_ident().map(ToString::to_string) else {
+            return;
+        };
+        if !const_parameters.contains(&name) {
+            return;
+        }
+        let syn::Expr::Lit(actual) = &actual.len else {
+            return;
+        };
+        let syn::Lit::Int(length) = &actual.lit else {
+            return;
+        };
+        let length = ResolvedType::RustPath(length.base10_digits().to_owned());
+        match bindings.get(&name) {
+            None => {
+                bindings.insert(name, length);
+            }
+            Some(previous) if previous == &length => {}
+            Some(_) => {
+                bindings.insert(name, ResolvedType::Unknown);
+            }
+        }
     }
 
     /// Instantiate signature displays from inferred types before recording boundary and result facts.
@@ -446,20 +727,31 @@ impl TypeChecker {
     pub(super) fn record_inferred_rust_arguments(
         &mut self,
         path: &str,
-        parameters: &[String],
+        signature: &RustFunctionSig,
         bindings: &HashMap<String, ResolvedType>,
         span: Span,
     ) {
-        for parameter in parameters {
+        for parameter in &signature.type_params {
             if bindings.get(parameter) == Some(&ResolvedType::Unknown) {
                 self.errors
                     .push(errors::call_site_type_inference_unresolved(path, parameter, span));
             }
         }
-        if parameters.is_empty() {
+        for parameter in Self::rust_signature_const_parameters(signature) {
+            if bindings
+                .get(&parameter)
+                .is_none_or(|value| matches!(value, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                && self.call_argument_depth == 0
+            {
+                self.errors
+                    .push(errors::call_site_const_inference_unresolved(path, &parameter, span));
+            }
+        }
+        if signature.type_params.is_empty() {
             return;
         }
-        let arguments = parameters
+        let arguments = signature
+            .type_params
             .iter()
             .map(|parameter| bindings.get(parameter).cloned())
             .collect::<Option<Vec<_>>>();
@@ -484,6 +776,17 @@ impl TypeChecker {
             return;
         }
         self.retain_native_callback_parameters(path, signature, &signature.type_params);
+        let const_parameters = Self::rust_signature_const_parameters(signature);
+        let const_substitutions = const_parameters
+            .iter()
+            .filter_map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .map(|value| (parameter.as_str(), render_resolved_type_as_rust_arg(value)))
+            })
+            .collect();
+        let const_closed = Self::specialize_rust_signature(signature, &const_substitutions, path);
+        let fully_closed = self.specialize_inferred_rust_signature(signature, path, bindings);
         let arguments = signature
             .type_params
             .iter()
@@ -493,15 +796,34 @@ impl TypeChecker {
             return;
         };
         let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
-        for (parameter, declared) in parameters.iter_mut().zip(&signature.params) {
-            let template = self.native_rust_signature_type(&declared.type_display, path);
-            parameter.ty = self.instantiate_rust_signature_type(&template, &signature.type_params, bindings);
+        for (((parameter, declared), const_declared), fully_declared) in parameters
+            .iter_mut()
+            .zip(&signature.params)
+            .zip(&const_closed.params)
+            .zip(&fully_closed.params)
+        {
+            if Self::rust_display_const_parameters(&declared.type_display)
+                .iter()
+                .any(|parameter| const_parameters.contains(parameter))
+            {
+                parameter.ty = self.native_rust_signature_type(&fully_declared.type_display, path);
+            } else {
+                let template = self.native_rust_signature_type(&const_declared.type_display, path);
+                parameter.ty = self.instantiate_rust_signature_type(&template, &signature.type_params, bindings);
+            }
         }
-        let result = self.instantiate_rust_signature_type(
-            &self.native_rust_signature_type(&signature.return_type, path),
-            &signature.type_params,
-            bindings,
-        );
+        let result = if Self::rust_display_const_parameters(&signature.return_type)
+            .iter()
+            .any(|parameter| const_parameters.contains(parameter))
+        {
+            self.native_rust_signature_type(&fully_closed.return_type, path)
+        } else {
+            self.instantiate_rust_signature_type(
+                &self.native_rust_signature_type(&const_closed.return_type, path),
+                &signature.type_params,
+                bindings,
+            )
+        };
         let result = if signature.return_type.contains(" as ") {
             let selected = self.specialize_inferred_rust_signature(signature, path, bindings);
             self.native_rust_signature_type(&selected.return_type, path)
@@ -524,7 +846,7 @@ impl TypeChecker {
                 type_arguments: arguments,
                 parameters,
                 return_type: result,
-                result_item_path: self.rust_result_item_path(&signature.return_type, path),
+                result_item_path: self.rust_result_item_path(&const_closed.return_type, path),
                 has_receiver: false,
             },
         );
@@ -537,7 +859,11 @@ impl TypeChecker {
         signature: &RustFunctionSig,
         span: Span,
     ) -> Option<ResolvedType> {
-        if signature.is_async || signature.is_unsafe || !signature.type_params.is_empty() {
+        if signature.is_async
+            || signature.is_unsafe
+            || !signature.type_params.is_empty()
+            || !Self::rust_signature_const_parameters(signature).is_empty()
+        {
             return None;
         }
         self.record_rust_call_site_params(span, &signature.params, path);

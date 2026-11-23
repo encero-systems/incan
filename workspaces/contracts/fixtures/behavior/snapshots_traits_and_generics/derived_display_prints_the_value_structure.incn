@@ -1,21 +1,21 @@
-# behavior: structural Debug uses Incan field separators for ordinary, nested, empty and generic models while a Rust-defined field keeps its own text, and Display delegates to that structure
+# behavior: structural Debug uses Incan call form for ordinary, nested, empty and generic models while a Rust-defined field keeps its own text, and Display delegates to that structure
 # expect-stdout:
-#   Point { x = 1, y = 2 }
-#   Point { x = 1, y = 2 }
-#   Point { x = 1, y = 2 } and Empty
-#   Account { owner = "Ada", balance = 3 }
+#   Point(x=1, y=2)
+#   Point(x=1, y=2)
+#   Point(x=1, y=2) and Empty
+#   Account(owner="Ada", balance=3)
 #   Circle(1.5)
 #   UserId(5)
-#   Box { value = "x" }
-#   <Point { x = 1, y = 2 }>
+#   Box(value="x")
+#   <Point(x=1, y=2)>
 #   <UserId(6)>
-#   Box { value = 7 }
-#   [Box { value = 7 }] Box { value = 7 }
-#   Point { x = 10, y = 20 }
-#   Nested { point = Point { x = 10, y = 20 } }
-#   Marker
-#   Box { value = 7 }
-#   NativeHolder { duration = 2s }
+#   Box(value=7)
+#   [Box(value=7)] Box(value=7)
+#   Point(x=10, y=20)
+#   Nested(point=Point(x=10, y=20))
+#   Marker()
+#   Box(value=7)
+#   NativeHolder(duration=2s)
 
 from rust::std::time import Duration
 

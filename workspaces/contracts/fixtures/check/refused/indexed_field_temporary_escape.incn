@@ -1,0 +1,10 @@
+# behavior: a view of an element field cannot escape its temporary list owner (#2845).
+# expect-diagnostic: INCAN-T0124
+
+model Entry:
+    pub label: str
+
+
+def invalid(source: Borrowed[list[Entry]]) -> Borrowed[str] from source:
+    temporary = [Entry(label="temporary")]
+    return temporary[0].label

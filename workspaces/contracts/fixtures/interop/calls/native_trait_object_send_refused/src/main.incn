@@ -15,8 +15,12 @@ class Shared with Callbacks:
 
     retained: Rc[int]
 
+    @staticmethod
+    pub def create(retained: Rc[int]) -> Shared:
+        return Shared(retained=retained)
+
 
 def main() -> None:
     """Never runs: the program is refused."""
-    mut hooks = Shared(retained=Rc.new(1))
+    mut hooks = Shared.create(Rc.new(1))
     run_compiler(["shared"], hooks)

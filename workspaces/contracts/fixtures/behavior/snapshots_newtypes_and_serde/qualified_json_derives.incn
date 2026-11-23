@@ -17,7 +17,7 @@ model Payload:
 
 @derive(json.Serialize)
 class Record:
-    value: int
+    pub value: int
 
 
 @derive(json.Serialize)

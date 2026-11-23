@@ -100,6 +100,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// the checker's applied type for the whole receiver, so an associated call closes the owner's type parameters at
     /// exactly those arguments; an application the checker did not type as that nominal is a value receiver.
     /// Qualified generic heads must agree with the receiver's checked declaration identity, not its source spelling.
+    /// Expression-form `Self` retains the checker's open or concrete owning type without inventing a lexical binding.
     /// A checked factory's retained owner closes a bare receiver even when its return value wraps Self in a Result.
     pub(in crate::body_ir) fn static_receiver_type(
         &self,
@@ -115,6 +116,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         match &recv.node {
             ast::Expr::Ident(name) => {
+                if name == "Self"
+                    && matches!(self.type_info.ident_kind(recv.span), Some(IdentKind::TypeName))
+                    && let Some(ty) = self.type_info.expr_type(recv.span)
+                {
+                    return Some(self.type_info.qualify_semantic_type(self.checked_type(ty)));
+                }
                 let identity = self.type_info.resolved_identity(recv.span)?;
                 let checked = named_static_receiver_type(name, identity)?;
                 if let Some(factory_owner) = self

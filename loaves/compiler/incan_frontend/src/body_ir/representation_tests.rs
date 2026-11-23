@@ -99,6 +99,8 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_equality_contract()?;
     assert_builtin_method_identities()?;
     assert_generic_view_carrier_storage()?;
+    assert_nested_generic_static_call_arguments()?;
+    assert_nested_generic_static_call_bound_mismatch()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -109,6 +111,62 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         .err()
         .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
+    Ok(())
+}
+
+/// Prove a nested generic static call carries the enclosing symbolic bound arguments into Body IR.
+fn assert_nested_generic_static_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Source[E]:\n    def integer(mut self) -> Result[int, E]\ntrait Reconstruct:\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Self, E]\nmodel Inner with Reconstruct:\n    value: int\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Inner, E]:\n        return Ok(Inner(value=source.integer()?))\nmodel Outer with Reconstruct:\n    inner: Inner\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Outer, E]:\n        return Ok(Outer(inner=Inner.reconstruct(source)?))\n";
+    let (_, facts, module) = checked_seed(source)?;
+    let checked_arguments = vec![
+        crate::symbols::ResolvedType::Named("E".to_owned()),
+        crate::symbols::ResolvedType::Named("S".to_owned()),
+    ];
+    let (call_span, arguments) = facts
+        .calls
+        .body_ir_call_type_arguments
+        .iter()
+        .find(|(_, arguments)| *arguments == &checked_arguments)
+        .ok_or("missing checked nested static call arguments")?;
+    assert_eq!(
+        facts.calls.call_site_monomorph_type_args.get(call_span),
+        Some(arguments),
+    );
+    assert!(matches!(
+        facts.calls.body_ir_call_result_types.get(call_span),
+        Some(crate::symbols::ResolvedType::Generic(base, sides))
+            if base == "Result"
+                && matches!(sides.as_slice(), [_, crate::symbols::ResolvedType::Named(error)] if error == "E")
+    ));
+
+    let body_arguments = vec![
+        super::IncanType::TypeVar("E".to_owned()),
+        super::IncanType::TypeVar("S".to_owned()),
+    ];
+    let retained = module
+        .bodies
+        .iter()
+        .flat_map(|body| &body.block.stmts)
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } if target.type_args == body_arguments => Some(target),
+            _ => None,
+        })
+        .ok_or("nested static call omitted its Body IR type arguments")?;
+    assert!(retained.canonical.is_some());
+    assert!(retained.direct_call_id.is_some());
+    Ok(())
+}
+
+/// Prove an enclosing placeholder bound cannot satisfy a nested static call requiring other trait arguments.
+fn assert_nested_generic_static_call_bound_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Source[E]:\n    def integer(mut self) -> Result[int, E]\nmodel Inner:\n    value: int\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Inner, E]:\n        return Ok(Inner(value=source.integer()?))\nmodel Outer:\n    inner: Inner\n    @staticmethod\n    def reconstruct[S with Source[str]](mut source: S) -> Result[Outer, str]:\n        return Ok(Outer(inner=Inner.reconstruct[int, S](source)?))\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    assert!(checker.check_program(&program).is_err());
     Ok(())
 }
 
@@ -1054,4 +1112,241 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     };
     let module = super::build_module_seed(&program, &[], &facts, &context);
     Ok((facts, module))
+}
+
+/// A match's payload ownership constrains its subject, not an unrelated model read inside the same arm. Moving a
+/// payload out must keep the subject owned while the independently observed dictionary can still be borrowed.
+#[test]
+fn enum_match_keeps_unrelated_inputs_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Dictionary:
+    values: list[str]
+enum Node:
+    Scalar(str)
+    Other
+
+def inspect(node: Node, dictionary: Dictionary) -> int:
+    match node:
+        Node.Scalar(name) => return len(name) + len(dictionary.values)
+        Node.Other => return len(dictionary.values)
+    return 0
+
+def take(node: Node, dictionary: Dictionary) -> str:
+    match node:
+        Node.Scalar(name) =>
+            assert len(dictionary.values) >= 0
+            return name
+        Node.Other => return ""
+    return ""
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for name in ["inspect", "take"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing enum match body")?;
+        assert_eq!(
+            body.params[1].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
+            "{name}: {body:#?}"
+        );
+        if name == "take" {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::Inferred,
+                "moving a payload must retain the owned subject: {body:#?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// An immediate error callback borrows the input it only observes, without turning a stored closure into an alias.
+#[test]
+fn immediate_error_callbacks_borrow_read_only_captures() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+class Cursor:
+    items: list[int]
+    index: int = 0
+    pub def peek(self) -> int:
+        return self.items[self.index]
+    pub def take(mut self) -> int:
+        value = self.items[self.index]
+        self.index += 1
+        return value
+model Shape:
+    identity: str
+    metadata: list[str]
+model Field:
+    shape: Shape
+
+def parser(mut cursor: Cursor, outcome: Result[int, str]) -> Result[int, str]:
+    outcome.map_err((_) => f"at {cursor.peek()}")?
+    return Ok(cursor.take())
+
+def read_field(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((error) => f"{field.shape.identity}: {error}")
+
+def retained(field: Field) -> int:
+    callback = () => len(field.shape.metadata)
+    return callback()
+
+def take_field(field: Field) -> Field:
+    return field
+
+def through_owned(field: Field) -> str:
+    return take_field(field).shape.identity
+
+def dependent(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((_) => through_owned(field))
+
+def returned(field: Field, outcome: Result[int, str]) -> Result[int, Field]:
+    return outcome.map_err((_) => field)
+
+def store_text(text: str) -> list[str]:
+    return [text]
+
+def text_message(error: str, text: str) -> str:
+    stored = store_text(text)
+    return error + str(len(stored))
+
+def field_dependent(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((error) => text_message(error, field.shape.identity))
+
+def invoke(callback: Callable[str, str]) -> str:
+    return callback("invalid")
+
+class Runner:
+    pub def map_err(self, callback: Callable[str, str]) -> str:
+        return callback("invalid")
+
+def direct(field: Field) -> str:
+    return invoke((error) => f"{field.shape.identity}: {error}")
+
+def method(field: Field, runner: Runner) -> str:
+    return runner.map_err((error) => f"{field.shape.identity}: {error}")
+
+def advance(mut cursor: Cursor, callback: Callable[(), int]) -> int:
+    cursor.take()
+    return callback()
+
+def overlap(mut cursor: Cursor) -> int:
+    return advance(cursor, () => cursor.peek())
+
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for name in [
+        "parser",
+        "read_field",
+        "direct",
+        "method",
+        "overlap",
+        "retained",
+        "dependent",
+        "returned",
+        "field_dependent",
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing callback body")?;
+        let captures = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Closure { captured_operands, .. },
+                    ..
+                } => Some(captured_operands),
+                _ => None,
+            })
+            .ok_or("missing closure capture")?;
+        let Some(bir::Operand::Place(capture)) = captures.first() else {
+            return Err("missing captured source place".into());
+        };
+        if matches!(name, "parser" | "read_field" | "direct" | "method") {
+            assert_eq!(capture.fact, bir::OwnershipFact::Borrow, "{name}: {body:#?}");
+            assert!(!capture.last_use);
+        } else {
+            assert_ne!(
+                capture.fact,
+                bir::OwnershipFact::Borrow,
+                "stored or consuming closure changed: {body:#?}"
+            );
+        }
+        if matches!(name, "read_field" | "direct" | "method") {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::InferredShared,
+                "{body:#?}"
+            );
+        } else if name != "parser" {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::Inferred,
+                "{name}: {body:#?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Copy projections remain reads inside value wrappers; a wrapper containing an owner still needs that owner.
+#[test]
+fn wrapped_scalar_projections_keep_inputs_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Packet:
+    value: int
+    slots: dict[str, int]
+    metadata: list[str]
+
+def ok_field(packet: Packet) -> Result[int, str]:
+    return Ok(packet.value)
+def err_field(packet: Packet) -> Result[int, int]:
+    return Err(packet.value)
+def some_field(packet: Packet) -> Option[int]:
+    return Some(packet.value)
+def ok_index(packet: Packet) -> Result[int, str]:
+    return Ok(packet.slots["key"])
+def plain_field(packet: Packet) -> int:
+    return packet.value
+
+def whole_ok(packet: Packet) -> Result[Packet, str]:
+    return Ok(packet)
+def whole_some(packet: Packet) -> Option[Packet]:
+    return Some(packet)
+def owned_ok(packet: Packet) -> Result[list[str], str]:
+    return Ok(packet.metadata)
+def owned_err(packet: Packet) -> Result[int, list[str]]:
+    return Err(packet.metadata)
+def owned_some(packet: Packet) -> Option[list[str]]:
+    return Some(packet.metadata)
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for (name, expected) in [
+        ("ok_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("err_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("some_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("ok_index", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("plain_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("whole_ok", incan_semantics_core::IncanInputAccess::Inferred),
+        ("whole_some", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_ok", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_err", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_some", incan_semantics_core::IncanInputAccess::Inferred),
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing wrapper body")?;
+        assert_eq!(body.params[0].input_access, expected, "{name}: {body:#?}");
+    }
+    Ok(())
 }

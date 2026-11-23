@@ -297,10 +297,17 @@ impl TypeChecker {
     /// arrives as the bare owner `std::boxed::Box` while the parameter reads `Box<T>`. Re-checking that one
     /// argument against its parameter lets the receiver reconcile — the same contextual path literals and closures
     /// already take. Projected source collections also carry their parameter expectation into the nested constructor.
-    /// Native owners are compared in the ancestral namespace so every re-export spelling matches.
+    /// An open fixed array similarly needs its parent's exact array before callable const binders can close. Native
+    /// owners are compared in the ancestral namespace so every re-export spelling matches.
     pub(super) fn rust_call_arg_wants_owner_expectation(arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
+        if arg_ty == target_ty {
+            return false;
+        }
         if let (ResolvedType::Generic(actual, _), ResolvedType::Generic(expected, _)) = (arg_ty, target_ty) {
             return actual == expected;
+        }
+        if Self::rust_call_arg_wants_fixed_array_expectation(arg_ty, target_ty) {
+            return true;
         }
         // The uncontextual type may already carry the owner's own unresolved parameters (`RefCell<T>` from a
         // `RefCell<T>`-returning `new`), so compare owners by base, not whole display.
@@ -315,6 +322,18 @@ impl TypeChecker {
             return false;
         };
         incan_lang::interop::ancestral_rust_path(base) == incan_lang::interop::ancestral_rust_path(arg_owner)
+    }
+
+    /// Return whether an open fixed-array call result needs the enclosing Rust parameter's exact array expectation.
+    pub(super) fn rust_call_arg_wants_fixed_array_expectation(arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
+        let (ResolvedType::RustPath(actual), ResolvedType::RustPath(expected)) = (arg_ty, target_ty) else {
+            return false;
+        };
+        let fixed_array = |display: &str| {
+            let display = display.trim().strip_prefix("rust::").unwrap_or(display.trim());
+            syn::parse_str::<syn::Type>(display).is_ok_and(|ty| matches!(ty, syn::Type::Array(_)))
+        };
+        fixed_array(actual) && fixed_array(expected) && actual != expected
     }
 
     /// Validate a Rust method call (`receiver.method(...)`) against metadata and record required arg coercions.
@@ -421,17 +440,17 @@ impl TypeChecker {
             return self.resolved_rust_call_type_from_sig(sig, path, span);
         }
 
+        let inference_parameters = Self::rust_signature_inference_parameters(sig);
         let mut callable_returns =
-            self.infer_rust_signature_bindings(sig, path, &sig.type_params, args, &arg_types, expected_return_ty);
+            self.infer_rust_signature_bindings(sig, path, &inference_parameters, args, &arg_types, expected_return_ty);
         callable_returns.extend(explicit_bindings);
         self.validate_rust_scalar_predicates(sig, &callable_returns, span);
-        self.record_inferred_rust_arguments(path, &sig.type_params, &callable_returns, span);
+        self.record_inferred_rust_arguments(path, sig, &callable_returns, span);
         let effective_sig = self.specialize_inferred_rust_signature(sig, path, &callable_returns);
         self.record_rust_call_site_params(span, &effective_sig.params, path);
         let bindings = self.bind_rust_call_args(path, &effective_sig.params, args, &arg_types, span);
         for binding in bindings {
             let arg_expr = Self::call_arg_expr(binding.arg);
-            let arg_ty = binding.arg_ty;
             let param = binding.param;
             if let Some(declared) = sig.params.get(binding.parameter_index)
                 && self.validate_rust_bound_callable_argument(
@@ -439,15 +458,28 @@ impl TypeChecker {
                     &declared.type_display,
                     &callable_returns,
                     arg_expr,
-                    arg_ty,
+                    binding.arg_ty,
                 )
             {
                 continue;
             }
+            let target_ty =
+                self.resolved_rust_boundary_target_from_param_display_for_owner_path(param.type_display.as_str(), path);
+            // This path had no general second-pass argument check before const-array inference. Limit the new
+            // contextual pass to the open array relation that requires it: rechecking arbitrary nested calls can
+            // consume their retained native selection twice.
+            let contextual_arg_ty = if matches!(arg_expr.node, Expr::Call(..) | Expr::MethodCall(..))
+                && Self::rust_call_arg_wants_fixed_array_expectation(binding.arg_ty, &target_ty)
+            {
+                Some(self.check_expr_with_expected(arg_expr, Some(&target_ty)))
+            } else {
+                None
+            };
+            let arg_ty = contextual_arg_ty.as_ref().unwrap_or(binding.arg_ty);
             let instantiated = sig.params.get(binding.parameter_index).map(|declared| {
                 self.instantiate_rust_signature_type(
                     &self.native_rust_signature_type(&declared.type_display, path),
-                    &sig.type_params,
+                    &inference_parameters,
                     &callable_returns,
                 )
             });
@@ -462,9 +494,10 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(&effective_sig, path, span);
-        let ret = self.instantiate_rust_signature_type(&ret, &sig.type_params, &callable_returns);
+        let ret = self.instantiate_rust_signature_type(&ret, &inference_parameters, &callable_returns);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
-        if self.errors.len() == errors_before {
+        if self.errors.len() == errors_before && Self::rust_signature_const_parameters_are_bound(sig, &callable_returns)
+        {
             self.retain_checked_rust_function(path, sig, &callable_returns, span);
         }
         self.native_borrowed_source_result(span, ret)

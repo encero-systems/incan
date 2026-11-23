@@ -19,6 +19,10 @@ class Holder:
 
     stream: Rc[RefCell[Option[UnixStream]]]
 
+    @staticmethod
+    pub def create(stream: Rc[RefCell[Option[UnixStream]]]) -> Holder:
+        return Holder(stream=stream)
+
     def lend(self) -> Result[UnixStream, str]:
         match self.stream.replace(None):
             None => return Err("the socket is lent out")
@@ -62,7 +66,7 @@ def main() -> None:
     match UnixStream.pair():
         Ok(pair) =>
             left, _right = pair
-            holder = Holder(stream=Rc.new(RefCell.new(Some(left))))
+            holder = Holder.create(Rc.new(RefCell.new(Some(left))))
             for early in [false, true, false]:
                 match holder.poll(early):
                     Ok(outcome) => println(outcome)

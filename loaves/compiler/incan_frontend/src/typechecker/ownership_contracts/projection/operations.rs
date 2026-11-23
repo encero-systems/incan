@@ -566,8 +566,9 @@ impl CheckedInputBody<'_> {
         Ok(())
     }
 
-    /// Resolve stored aliases and declared borrowed parameters through canonical identities. Fresh expression
-    /// results retain no upstream storage dependency after their own operation completes.
+    /// Resolve stored aliases and declared borrowed parameters through canonical identities, preserving field and
+    /// indexed projections. Fresh expression results retain no upstream storage dependency after their own operation
+    /// completes.
     fn operation_borrowed_place(
         &self,
         expression: &Spanned<Expr>,
@@ -593,6 +594,13 @@ impl CheckedInputBody<'_> {
                 }))
             }
             Expr::Paren(inner) => self.operation_borrowed_place(inner, parameters),
+            Expr::Index(base, index) => {
+                let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
+                    return Ok(None);
+                };
+                place.projection.push(flow::Projection::Element(index.span));
+                Ok(Some((place, loan)))
+            }
             Expr::Field(base, _) => {
                 let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
                     return Ok(None);

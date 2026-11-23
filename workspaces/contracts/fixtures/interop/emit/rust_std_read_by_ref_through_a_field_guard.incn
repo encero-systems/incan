@@ -12,6 +12,10 @@ from rust::std::rc import Rc
 class Buffer:
     handle: Rc[RefCell[Cursor[bytes]]]
 
+    @staticmethod
+    pub def create(handle: Rc[RefCell[Cursor[bytes]]]) -> Buffer:
+        return Buffer(handle=handle)
+
     pub def read(self, size: u64) -> bytes:
         mut out: bytes = b""
         mut cursor = self.handle.borrow_mut()
@@ -29,8 +33,8 @@ class Buffer:
 
 
 def main() -> None:
-    buffer = Buffer(handle=Rc.new(RefCell.new(Cursor.new(b"abcdef"))))
+    buffer = Buffer.create(Rc.new(RefCell.new(Cursor.new(b"abcdef"))))
     println(len(buffer.read(4)))
     println(len(buffer.read(4)))
-    other = Buffer(handle=Rc.new(RefCell.new(Cursor.new(b"xyz"))))
+    other = Buffer.create(Rc.new(RefCell.new(Cursor.new(b"xyz"))))
     println(len(other.read_buffered()))

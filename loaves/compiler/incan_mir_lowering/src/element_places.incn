@@ -1,8 +1,9 @@
 """
 Recognize and type checked places that select a collection element or a copied text slice.
 
-No native place projection can name such an element: the runtime reaches it through a call. A read of one therefore
-materializes a copy, and code that only needs its type must compute it here instead of projecting the place.
+No native place projection can name such an element directly: the runtime reaches it through a checked accessor.
+Shared list access preserves intermediate elements for a field read; owned element reads materialize a copy.
+Code that only needs the selected type computes it here without emitting either operation.
 """
 
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem

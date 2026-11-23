@@ -1,0 +1,17 @@
+# behavior: equal declaration spellings keep their module owners and the selected owner reaches the matching callable (#2519)
+# expect-stdout:
+#   left:invoice
+
+from left import Invoice as LeftInvoice
+from right import Invoice as RightInvoice
+
+
+def selected(invoice: LeftInvoice) -> str:
+    """Accept only the exact nominal declaration selected by the annotation."""
+    return f"left:{invoice.name}"
+
+
+def main() -> None:
+    left = LeftInvoice(name="invoice")
+    _unused = RightInvoice(name="archive")
+    println(selected(left))
