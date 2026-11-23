@@ -128,6 +128,7 @@ fn lower_declaration_statements(
             let owner_return_type = builder.owner_return_type.clone();
             return_trailing_value(&owner_return_type, &mut stmts);
             builder.insert_scope_drops(&mut stmts, root_scope);
+            builder.transfer_at_last_reads(&mut stmts);
         }
     }
     stmts

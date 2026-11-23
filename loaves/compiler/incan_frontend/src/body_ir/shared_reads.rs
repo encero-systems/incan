@@ -13,6 +13,7 @@ mod closure_reads;
 mod consumed_reads;
 mod cursor_reads;
 mod derived_reads;
+mod ended_loans;
 mod loop_reads;
 mod match_reads;
 mod published_reads;
@@ -409,6 +410,7 @@ fn retain_body_calls(
         retain_function_item_adapter(statement, signatures, candidates);
         retain_call_loans(statement, locals, signatures, field_types, candidates);
     });
+    ended_loans::drop_after_last_loans(&mut body.block.stmts, &body.locals);
 }
 
 /// Keep a named function's declared by-value callable shape by lowering its forwarding closure as an adapter when
@@ -1060,8 +1062,9 @@ fn retain_call_loans(
                 actual == *owner || matches!(actual, IncanType::Ref(referent) if referent.as_ref() == owner)
             })
         {
+            let ended = ended_loans::replaces_last_transfer(read, locals, owner);
             read.fact = bir::OwnershipFact::Borrow;
-            read.last_use = false;
+            read.last_use = ended;
         }
     }
     for (index, argument) in args.iter_mut().enumerate() {
