@@ -1,0 +1,35 @@
+diff --git a/workspaces/oven/src/graph_cache.incn b/workspaces/oven/src/graph_cache.incn
+index 8e40b8ea9..571755e84 100644
+--- a/workspaces/oven/src/graph_cache.incn
++++ b/workspaces/oven/src/graph_cache.incn
+@@ -27,7 +27,7 @@ const HEX_DIGITS: FrozenList[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8"
+ pub enum AuthorKind(str):
+     """Who wrote a piece of authored text: the toolchain, the requesting workspace, or one of its dependencies."""
+ 
+-    Toolchain = "toolchain"
++    Shipped = "toolchain"
+     Workspace = "workspace"
+     Dependency = "dependency"
+ 
+@@ -67,7 +67,7 @@ pub model GraphUnit:
+         """
+         # 1. The toolchain ships the standard packages.
+         if self.root.0.startswith("@std/"):
+-            return Author(kind=AuthorKind.Toolchain)
++            return Author(kind=AuthorKind.Shipped)
+         # 2. A virtual root other than the standard one is a registry Loaf's.
+         if self.root.0.startswith("@"):
+             return Author(kind=AuthorKind.Dependency, identity=self.root.0[1:])
+diff --git a/workspaces/oven/src/test_graph_cache.incn b/workspaces/oven/src/test_graph_cache.incn
+index ce80e207e..0755cb78e 100644
+--- a/workspaces/oven/src/test_graph_cache.incn
++++ b/workspaces/oven/src/test_graph_cache.incn
+@@ -56,7 +56,7 @@ pub def test_authored_text_carries_its_author_into_a_context_item() -> Result[No
+     graph = Path("/work/app/target/app.incngraph")
+     # 1. Who wrote what, as the project under /work/app sees it.
+     standard = GraphUnit(path=graph, root=Path("@std/json"), package="json").author("/work/app")
+-    assert standard.kind == AuthorKind.Toolchain and standard.identity == ""
++    assert standard.kind == AuthorKind.Shipped and standard.identity == ""
+     member = GraphUnit(path=graph, root=Path("/work/app/members/core"), package="core").author("/work/app")
+     assert member.kind == AuthorKind.Workspace and member.identity == ""
+     registry = GraphUnit(path=graph, root=Path("@acme/words")).author("/work/app")
