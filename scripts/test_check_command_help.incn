@@ -1,0 +1,35 @@
+"""Verify the public invocation printed by the repository's Incan checks."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from check_support import repository_root
+from check_test_support import Outcome
+
+
+def test_checker_help_and_refusals_name_the_current_command() -> Result[None, str]:
+    """Help and malformed-option output tell the reader how to run each checker."""
+    root = repository_root()?
+    mut mismatches: list[str] = []
+    for name in ["check_changed_rustdocs", "check_doc_paths", "check_reference_contract", "check_us_english"]:
+        invocation = f"usage: incan run scripts/{name}.incn --"
+        help = invoke(root, name, "--help")?
+        if help.code != 0 or invocation not in help.stdout:
+            mismatches.append(f"{name} help exited {help.code} or did not name the current invocation")
+        refused = invoke(root, name, "--unknown-option")?
+        expected_error = f"{name}: error: unrecognized arguments: --unknown-option"
+        if refused.code != 2 or invocation not in refused.stderr or expected_error not in refused.stderr:
+            mismatches.append(f"{name} did not report the invalid option with its current invocation")
+    assert mismatches == [], "\n".join(mismatches)
+    return Ok(None)
+
+
+def invoke(root: Path, name: str, flag: str) -> Result[Outcome, str]:
+    """Capture the checker's exit status and streams through its normal source entry point."""
+    mut command = Command.new(get_or("INCAN", "incan"))
+    command.current_dir(root.0).arg("run").arg(f"scripts/{name}.incn").arg("--").arg(flag)
+    output = command.output().map_err((error) => f"cannot run {name}: {error}")?
+    stdout = RustString.from_utf8(output.stdout).map_err((error) => f"invalid {name} stdout: {error}")?
+    stderr = RustString.from_utf8(output.stderr).map_err((error) => f"invalid {name} stderr: {error}")?
+    return Ok(Outcome(code=output.status.code().unwrap_or(-1), stdout=stdout, stderr=stderr))
