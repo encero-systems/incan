@@ -318,6 +318,7 @@ pub model PlanModuleSelection:
     pub pages: list[SelectedBodyPage] = []
     pub outputs: list[str] = []
     pub records: list[AdmittedPlanModule] = []
+    pub authority: Option[SelectedBodyPage] = None
     pub covered: CoveredBodyOwners = CoveredBodyOwners()
     # Every admitted slot as this selection keeps it, recorded with the request for the next one.
     pub kept: list[SelectedPlanModule] = []
@@ -360,6 +361,7 @@ pub def select_plan_modules(
     changed_positions: set[str] = set(),
     cutoff: EditCutoff = EditCutoff(),
     reachable_modules: Option[list[str]] = None,
+    compact_authority: bool = false,
 ) -> Result[PlanModuleSelection, str]:
     """
     Admit whole every module whose plan record still validates in the selected graph and that this request leaves
@@ -374,6 +376,7 @@ pub def select_plan_modules(
     mut refused: set[str] = set()
     for owner in invalid_owners:
         refused.add(owner)
+    _ = compact_authority
     mut selection = PlanModuleSelection()
     slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules,
         included=reachable_modules)
