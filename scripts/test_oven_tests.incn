@@ -9,6 +9,7 @@ from oven_tests import (
     PROJECT_RESERVATION_BYTES,
     Invocation,
     admitted,
+    admitted_exclusive,
     default_jobs,
     file_lines,
     invocations,
@@ -92,6 +93,17 @@ def test_an_oversized_reservation_runs_alone_and_zero_memory_bounds_nothing() ->
     assert admitted(reservations, [1, 2], [6 * GIB], 4, 4 * GIB) == []
     assert admitted(reservations, [0, 1, 2], [], 2, 0) == [0, 1]
     assert admitted(reservations, [0, 1, 2], [], 1, 64 * GIB) == [0]
+    return Ok(None)
+
+
+def test_exclusive_groups_serialize_within_the_same_count_and_memory_budgets() -> Result[None, str]:
+    """One command per non-empty group is admitted, while unrelated work still fills the available budget."""
+    reservations = [4 * GIB, 4 * GIB, 4 * GIB, 6 * GIB]
+    groups = ["oven-0", "oven-0", "oven-1", ""]
+    assert admitted_exclusive(reservations, groups, [0, 1, 2, 3], [], 4, 12 * GIB) == [0, 2]
+    assert admitted_exclusive(reservations, groups, [1, 2, 3], [0], 4, 16 * GIB) == [2, 3]
+    assert admitted_exclusive(reservations, groups, [1], [0], 4, 0) == []
+    assert admitted_exclusive(reservations, groups, [1, 2], [], 1, 0) == [1]
     return Ok(None)
 
 
@@ -207,15 +219,16 @@ def test_log_names_sort_in_invocation_order() -> Result[None, str]:
 
 
 def test_invocations_follow_the_declared_order_and_package_ownership() -> Result[None, str]:
-    """Private Oven projects run first, then every Loaf test from its owner, with compiler-scale reservations."""
+    """Oven worker shards run first, then concurrent Loaf files from their owners, with compiler-scale reservations."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     fixture(root)?
     evidence = root.joinpath("evidence")
     logs = evidence.joinpath("oven-tests")
-    planned = invocations(root, evidence, logs)?
-    oven_a = root.joinpath(".agents/state/release-oven-tests/evidence/0/workspaces/oven")
-    oven_b = root.joinpath(".agents/state/release-oven-tests/evidence/1/workspaces/oven")
+    planned = invocations(root, evidence, logs, 2)?
+    oven_a = root.joinpath(".agents/state/release-oven-tests/evidence/worker-0/workspaces/oven")
+    oven_b = root.joinpath(".agents/state/release-oven-tests/evidence/worker-1/workspaces/oven")
+    settled = root.joinpath(".agents/state/release-oven-tests/evidence/settled/workspaces/oven")
     models = root.joinpath("loaves/compiler/internal_models")
     lowering = root.joinpath("loaves/compiler/lowering")
     loaf_a = root.joinpath("loaves/group_b/loaf_a")
@@ -223,6 +236,7 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     assert [item.arguments for item in planned] == [
         ["test", oven_a.joinpath("src/test_alpha.incn").0],
         ["test", oven_b.joinpath("src/test_beta.incn").0],
+        ["test", settled.joinpath("src/test_engine_protocol.incn").0],
         ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
         ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
         ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
@@ -232,23 +246,43 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     assert [item.directory for item in planned] == [
         oven_a.0,
         oven_b.0,
+        settled.0,
+        "",
+        "",
+        "",
+        "",
+        "",
+    ]
+    assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
+    assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
+    assert [item.reservation for item in planned] == [
+        4 * GIB,
+        4 * GIB,
+        4 * GIB,
+        6 * GIB,
+        6 * GIB,
+        4 * GIB,
+        4 * GIB,
+        4 * GIB,
+    ]
+    assert [item.alone for item in planned] == [false, false, true, false, false, false, false, false]
+    assert [item.scratch is not None for item in planned] == [true, true, true, false, false, false, false, false]
+    assert [item.exclusive_group for item in planned] == [
+        oven_a.0,
+        oven_b.0,
+        settled.0,
         models.0,
         lowering.0,
         loaf_b.0,
         loaf_a.0,
         loaf_a.0,
     ]
-    assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
-    assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
-    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
-    assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
-    assert [item.scratch is not None for item in planned] == [true, true, false, false, false, false, false]
     assert oven_a.joinpath("src/test_beta.incn").is_file()
     assert oven_b.joinpath("src/test_alpha.incn").is_file()
     assert oven_a.joinpath("tests/fixture.txt").is_file()
     assert oven_a.parent().parent().joinpath("workbench/app/loaf.toml").is_file()
     assert oven_a.parent().parent().joinpath("loaves").is_symlink()
-    assert planned[2].log.0 == logs.joinpath("002-test_record_scope.log").0
+    assert planned[3].log.0 == logs.joinpath("003-test_record_scope.log").0
     return Ok(None)
 
 
@@ -258,7 +292,7 @@ def test_missing_oven_sources_fail_the_step() -> Result[None, str]:
     root = temporary.path()
     write(root, "workspaces/oven/src/main.incn", "")?
     evidence = root.joinpath("evidence")
-    assert refusal(invocations(root, evidence, evidence)) == "Oven test sources are absent"
+    assert refusal(invocations(root, evidence, evidence, 2)) == "Oven test sources are absent"
     return Ok(None)
 
 
@@ -293,6 +327,28 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     )
     assert run_all("/usr/bin/printenv", [environment], 1, 0)?
     assert environment_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "visible\n"
+    shared = root.joinpath("shared-shard")
+    shared.mkdir(true, true).map_err((error) => error.message())?
+    shared_invocations = [
+        Invocation(
+            arguments=[],
+            directory=shared.0,
+            reservation=GIB,
+            log=logs.joinpath("shared-0.log"),
+            exclusive_group="shared",
+            scratch=Some(shared),
+        ),
+        Invocation(
+            arguments=[],
+            directory=shared.0,
+            reservation=GIB,
+            log=logs.joinpath("shared-1.log"),
+            exclusive_group="shared",
+            scratch=Some(shared),
+        ),
+    ]
+    assert run_all("/bin/pwd", shared_invocations, 2, 0)?
+    assert not shared.exists()
     return Ok(None)
 
 
@@ -301,6 +357,7 @@ def fixture(root: Path) -> Result[None, str]:
     write(root, "workspaces/oven/loaf.toml", "[project]\nname = \"oven\"\nversion = \"0.1.0\"\n")?
     write(root, "workspaces/oven/src/test_beta.incn", "")?
     write(root, "workspaces/oven/src/test_alpha.incn", "")?
+    write(root, "workspaces/oven/src/test_engine_protocol.incn", "")?
     write(root, "workspaces/oven/src/main.incn", "")?
     write(root, "workspaces/oven/tests/fixture.txt", "fixture")?
     write(root, "workbench/app/loaf.toml", "[project]\nname = \"workbench\"\nversion = \"0.1.0\"\n")?

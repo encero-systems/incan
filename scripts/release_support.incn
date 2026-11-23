@@ -434,19 +434,39 @@ pub def reference_cache_identity(
     seed_manifest: Path,
     contracts_tree: str,
     stdlib_tree: str,
+    census_settings: str,
 ) -> Result[str, str]:
-    """Hash every seed component and committed source tree that determine reference outcomes."""
+    """Hash every seed component, source tree and command setting that determine reference outcomes."""
     mut hasher = sha256.new()
-    for value in [digest(seed_oven)?, digest(seed_lsp)?, digest(seed_manifest)?, contracts_tree, stdlib_tree]:
+    for value in [digest(seed_oven)?, digest(seed_lsp)?, digest(seed_manifest)?, contracts_tree, stdlib_tree, census_settings]:
         encoded = value.encode("utf-8")
         hasher.update(f"{len(encoded)}:".encode("utf-8"))
         hasher.update(encoded)
     return Ok(hexlify(hasher.finalize_bytes()))
 
 
+pub def reference_census_settings(jobs: int, timeout_seconds: int) -> str:
+    """Identify the outcome-visible reference command independently of its scratch and installation paths."""
+    return f"jobs={jobs};timeout={timeout_seconds};serial-families;families={",".join([family for family in FAMILIES])}"
+
+
 pub def reference_cache_root(seed_home: Path) -> Path:
     """Keep reusable reference evidence inside the caller-owned seed home cache boundary."""
     return seed_home.joinpath("cache/release-reference")
+
+
+pub def candidate_reference_cache_root(home: Path) -> Path:
+    """Keep the installed candidate's next-round reference evidence inside its portable toolchain."""
+    return home.joinpath(TOOLCHAIN_DIRECTORY).joinpath("cache/release-reference")
+
+
+pub def select_candidate_reference(log: Path, home: Path, identity: str) -> Result[Path, str]:
+    """Record one complete candidate census and select only its exact key for the next packed toolchain."""
+    cached = candidate_reference_cache_root(home).joinpath(identity).joinpath("contracts.log")
+    store_reference_log(log, cached)?
+    marker = candidate_reference_cache_root(home).joinpath("selected.txt")
+    marker.write_text(identity + "\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(cached)
 
 
 pub def store_reference_log(log: Path, cached: Path) -> Result[None, str]:

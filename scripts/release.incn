@@ -41,12 +41,14 @@ from release_support import (
     append_timing_file,
     cancel_background_step,
     check_baseline,
+    candidate_reference_cache_root,
     counts_json,
     digest,
     log_tail,
     parse_release_options,
     reference_cache_identity,
     reference_cache_root,
+    reference_census_settings,
     reference_worker_arguments,
     reclaim_paths,
     record_tree_sample,
@@ -58,6 +60,7 @@ from release_support import (
     start_background_step,
     finish_background_step,
     shared_relocated_sysroot,
+    select_candidate_reference,
     store_reference_log,
     tree_bytes,
     verification_program,
@@ -578,16 +581,21 @@ def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
         run.seed_home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"),
         contracts_tree,
         stdlib_tree,
+        reference_census_settings(run.options.jobs, run.options.timeout_seconds),
     )?
-    cached = reference_cache_root(run.seed_home).joinpath(identity).joinpath("contracts.log")
-    if cached.is_file():
-        cache_started = Instant.now()
-        match census_results(cached):
-            Ok(_) =>
-                reuse_reference_log(cached, log)?
-                append_timing(timings, "reference-cache-hit", cache_started.elapsed().as_secs_f64())?
-                return Ok(log)
-            Err(_) => pass
+    cached_candidates = [
+        reference_cache_root(run.seed_home).joinpath(identity).joinpath("contracts.log"),
+        candidate_reference_cache_root(run.seed_home).joinpath(identity).joinpath("contracts.log"),
+    ]
+    for cached in cached_candidates:
+        if cached.is_file():
+            cache_started = Instant.now()
+            match census_results(cached):
+                Ok(_) =>
+                    reuse_reference_log(cached, log)?
+                    append_timing(timings, "reference-cache-hit", cache_started.elapsed().as_secs_f64())?
+                    return Ok(log)
+                Err(_) => pass
     require_release_step_at(
         run,
         timings,
@@ -714,6 +722,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     if len(runs) != 1 or not runs[0].joinpath("contracts.log").is_file():
         return Err("expected one installed census")
     log = runs[0].joinpath("contracts.log")
+    record_candidate_reference(run, verification, home, log)?
     _ = record_tree_sample(
         run.paths.output,
         run.paths.output.joinpath("tree-samples.tsv"),
@@ -725,6 +734,56 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
         [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch"), runs[0].joinpath("lsp-scratch")],
     )?
     return Ok(log)
+
+
+def record_candidate_reference(run: ReleaseRun, source: Path, home: Path, log: Path) -> Result[None, str]:
+    """Key the accepted installed census by its exact toolchain and trees, then repack it for the next round."""
+    _ = census_results(log)?
+    contracts_tree = command_text("git", ["-C", source.0, "rev-parse", "HEAD:workspaces/contracts"])?.strip()
+    stdlib_tree = command_text("git", ["-C", source.0, "rev-parse", "HEAD:loaves/stdlib"])?.strip()
+    identity = reference_cache_identity(
+        home.joinpath("bin/incan"),
+        home.joinpath("bin/incan-lsp"),
+        home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"),
+        contracts_tree,
+        stdlib_tree,
+        reference_census_settings(run.options.jobs, run.options.timeout_seconds),
+    )?
+    _ = select_candidate_reference(log, home, identity)?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "candidate-reference-pack",
+            home.joinpath("bin/incan").0,
+            ["toolchain", "pack", run.paths.bundle.joinpath("toolchain.tar.zst").0],
+            source,
+            build_environment(run, home, home.joinpath("bin/incan")),
+        ),
+    )?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "candidate-reference-install",
+            home.joinpath("bin/incan").0,
+            ["toolchain", "install", run.paths.bundle.joinpath("toolchain.tar.zst").0],
+            source,
+            build_environment(run, home, home.joinpath("bin/incan")),
+        ),
+    )?
+    installed_identity = reference_cache_identity(
+        home.joinpath("bin/incan"),
+        home.joinpath("bin/incan-lsp"),
+        home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"),
+        contracts_tree,
+        stdlib_tree,
+        reference_census_settings(run.options.jobs, run.options.timeout_seconds),
+    )?
+    if installed_identity != identity:
+        return Err("repacked candidate reference changed the next seed identity")
+    _ = census_results(candidate_reference_cache_root(home).joinpath(identity).joinpath("contracts.log"))?
+    return Ok(None)
 
 
 def compare_reference(run: ReleaseRun, reference: Path, candidate: &BaselineReport) -> Result[None, str]:
@@ -770,6 +829,7 @@ def census_step(
     ]
     if isolated:
         arguments.append("--isolated")
+    arguments.append("--serial-families")
     arguments += [family for family in FAMILIES]
     return Step(
         name=name,

@@ -11,7 +11,7 @@ from std.json import JsonValue, parse
 from pub::incan_platform.trace import flush as flush_trace
 from std.environ import get_or
 from installation_check import verify_runtime
-from toolchain_archive import admit_archive_member, require_rust_components, stage_loaves
+from toolchain_archive import admit_archive_member, require_rust_components, stage_loaves, stage_reference_cache
 from installation_page import recall as recall_installation, begin_command, end_command
 from home_paths import installation_catalog
 from installation_codec import decode as decode_installation, encode as encode_installation
@@ -1065,6 +1065,20 @@ def verify_archive_members(scratch: Path) -> Result[None, str]:
         assert read(prior)? == "unchanged"
         for entry in home.joinpath("toolchains").iterdir().map_err((error) => error.message())?:
             assert not entry.name().startswith(".install-"), entry.0
+    # 4. A packed toolchain carries only the exact candidate census selected for the next round.
+    identity = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    stale_identity = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    toolchain = scratch.joinpath("reference-toolchain")
+    reference = toolchain.joinpath("cache/release-reference")
+    write(reference.joinpath("selected.txt"), identity + "\n")?
+    write(reference.joinpath(identity).joinpath("contracts.log"), "PASS behavior/a/a\n")?
+    write(reference.joinpath(stale_identity).joinpath("contracts.log"), "stale\n")?
+    stage = scratch.joinpath("reference-stage")
+    stage_reference_cache(toolchain, stage)?
+    packed = stage.joinpath("cache/release-reference")
+    assert read(packed.joinpath(identity).joinpath("contracts.log"))? == "PASS behavior/a/a\n"
+    assert read(packed.joinpath("selected.txt"))? == identity + "\n"
+    assert not packed.joinpath(stale_identity).exists()
     return Ok(None)
 
 

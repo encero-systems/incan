@@ -128,6 +128,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     search = stage_search([path for path in toolchain.search if ships_search(path, shipped)], stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
     stage_standard_sources(stage)?
+    stage_reference_cache(directory, stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
     for key, relative in c_tools:
@@ -141,6 +142,37 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     write_json(stage.joinpath("toolchain.json"), description)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)
+
+
+pub def stage_reference_cache(directory: Path, stage: Path) -> Result[None, str]:
+    """Pack only the candidate census selected for the next exact-key reference lookup."""
+    source = directory.joinpath("cache/release-reference")
+    marker = source.joinpath("selected.txt")
+    if not marker.is_file():
+        return Ok(None)
+    identity = marker.read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
+    if not valid_reference_identity(identity):
+        return Err("invalid selected release reference identity")
+    log = source.joinpath(identity).joinpath("contracts.log")
+    if not log.is_file():
+        return Err("selected release reference census is absent")
+    destination = stage.joinpath("cache/release-reference")
+    destination.mkdir(true, true).map_err((error) => error.message())?
+    _ = log
+        .copy(destination.joinpath(identity).joinpath("contracts.log"), true, true)
+        .map_err((error) => error.message())?
+    _ = marker.copy(destination.joinpath("selected.txt"), true, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def valid_reference_identity(identity: str) -> bool:
+    """Accept one lowercase SHA-256 cache directory without permitting path syntax."""
+    if len(identity) != 64:
+        return false
+    for character in identity:
+        if character not in "0123456789abcdef":
+            return false
+    return true
 
 
 def stage_c_toolchain(toolchain: Toolchain, stage: Path) -> Result[list[Tuple[str, str]], str]:
