@@ -177,7 +177,14 @@ impl TypeChecker {
         let resolved_param_types =
             self.inherited_method_parameter_types(method, method_span, resolved_param_types, owner_params, &self_ty);
         let return_type = self.resolve_callable_return_annotation(&method.return_type, method.result_source.is_some());
-        self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
+        self.record_method_ownership(
+            method,
+            method_span,
+            &resolved_param_types,
+            &return_type,
+            &self_ty,
+            owner_params,
+        );
 
         // Define the source receiver with its exact declaration token. Classmethod `cls` remains absent from the
         // legacy receiver enum because it emits as an associated function, but it is still a source binding with a
@@ -211,12 +218,15 @@ impl TypeChecker {
             &resolved_param_types,
         );
         for (slot, (param, resolved_ty)) in method.params.iter().zip(resolved_param_types).enumerate() {
-            checked_params.push(CallableParam::named_with_default(
-                param.node.name.clone(),
-                resolved_ty.clone(),
-                param.node.kind,
-                param.node.default.is_some(),
-            ));
+            checked_params.push(
+                CallableParam::named_with_default(
+                    param.node.name.clone(),
+                    resolved_ty.clone(),
+                    param.node.kind,
+                    param.node.default.is_some(),
+                )
+                .with_mut(self.def_param_shows_changes_to_caller(&param.node, &resolved_ty)),
+            );
             self.bind_checked_callable_parameter(param, resolved_ty, slot);
         }
 

@@ -378,6 +378,15 @@ impl Builder<'_> {
         incoming: Vec<usize>,
         consume: bool,
     ) -> Result<Vec<usize>, Unavailable> {
+        if matches!(expression.node, Expr::Field(..))
+            && self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            return Ok(incoming);
+        }
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
         }
@@ -506,6 +515,7 @@ impl Builder<'_> {
                     if view_fields.iter().any(|field| *field) {
                         return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
                     }
+                    return self.enum_value_construction(arguments, expression.span, incoming);
                 }
                 let enum_view_fields = self.enum_view_method_constructor_fields(receiver, method, expression.span);
                 if let Some(view_fields) = &enum_view_fields {
@@ -516,6 +526,7 @@ impl Builder<'_> {
                     if view_fields.iter().any(|field| *field) {
                         return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
                     }
+                    return self.enum_value_construction(arguments, expression.span, incoming);
                 }
                 match super::builtins::list_method_writes(&self.checker.type_info, expression.span) {
                     Some(writes) => self.list_method(receiver, writes, arguments, expression.span, incoming),

@@ -397,6 +397,14 @@ impl TypeChecker {
         let identity =
             self.symbols
                 .module_declaration_identity(&function.name, SemanticSourceTargetKind::Function, span);
+        self.type_info.declarations.callable_type_params.insert(
+            identity.clone(),
+            function
+                .type_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect(),
+        );
         self.record_ownership_signature(
             identity,
             Signature {
@@ -419,10 +427,19 @@ impl TypeChecker {
         parameters: &[ResolvedType],
         result: &ResolvedType,
         receiver_type: &ResolvedType,
+        owner_params: &[crate::ast::TypeParam],
     ) {
         let identity = self
             .symbols
             .member_declaration_identity(&method.name, SemanticSourceTargetKind::Method, span);
+        self.type_info.declarations.callable_type_params.insert(
+            identity.clone(),
+            owner_params
+                .iter()
+                .chain(&method.type_params)
+                .map(|parameter| parameter.name.clone())
+                .collect(),
+        );
         self.record_ownership_signature(
             identity,
             Signature {

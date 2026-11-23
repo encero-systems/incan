@@ -351,6 +351,15 @@ impl SourceAccesses<'_, '_> {
     /// Visit source expressions according to the producer's actual evaluation policy. Borrowing a stored place
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        if matches!(expression.node, Expr::Field(..))
+            && self
+                .proof
+                .facts
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            return Ok(());
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 self.stored_place_access(expression, consume)?
@@ -455,7 +464,7 @@ impl SourceAccesses<'_, '_> {
                 let CallArg::Positional(value) = argument else {
                     return Err("source access needs positional list method arguments");
                 };
-                self.expression(value, false)?;
+                self.expression(value, true)?;
             }
             let access = if writes {
                 flow::Access::Write
@@ -484,7 +493,14 @@ impl SourceAccesses<'_, '_> {
             .invocations
             .get(&expression.span)
             .ok_or("source access method call has no checked invocation")?;
-        if self.proof.facts.native_associated_call(expression.span) {
+        if self
+            .proof
+            .facts
+            .protocols
+            .explicit_input_calls
+            .get(&expression.span)
+            .is_some_and(|call| call.receiver.is_none())
+        {
             return self.invocation_arguments(invocation, arguments);
         }
         if invocation.receiver_owned {

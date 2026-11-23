@@ -575,6 +575,12 @@ impl TypeChecker {
                     .iter()
                     .map(|(key, value)| (key.clone(), value.clone())),
             );
+            self.type_info.declarations.callable_type_params.extend(
+                interface
+                    .declaration_callables
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.type_params.clone())),
+            );
             self.dependency_member_reexports
                 .insert(name.clone(), interface.member_reexports.as_ref().clone());
             self.body_ir_dependency_pub_reexports

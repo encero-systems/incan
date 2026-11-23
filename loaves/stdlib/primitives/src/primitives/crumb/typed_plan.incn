@@ -1,0 +1,524 @@
+"""Compact admitted traversal plans shared by typed Crumb walkers and sources."""
+
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.descriptions import StoredDescription, StoredField
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
+from crate.primitives.reflection import FieldInfo, ShapeInfo
+from crate.primitives.text import copy_frozen_bytes
+from rust::incan_std_primitives::collections import list_get
+
+
+pub enum TypedCellKind(str):
+    """One allocation-free dispatch choice in an admitted typed cell plan."""
+
+    Boolean = "boolean"
+    Signed8 = "signed8"
+    Signed16 = "signed16"
+    Signed32 = "signed32"
+    Signed64 = "signed64"
+    Signed128 = "signed128"
+    Unsigned8 = "unsigned8"
+    Unsigned16 = "unsigned16"
+    Unsigned32 = "unsigned32"
+    Unsigned64 = "unsigned64"
+    Unsigned128 = "unsigned128"
+    Float32 = "float32"
+    Float64 = "float64"
+    String = "string"
+    Binary = "binary"
+    Decimal = "decimal"
+    Option = "option"
+    List = "list"
+    Set = "set"
+    Tuple = "tuple"
+    Map = "map"
+    Record = "record"
+
+
+model TypedPlanNode:
+    """One compact cell writer/reader dispatch and its flattened child range."""
+
+    kind: TypedCellKind
+    first_child: int = 0
+    child_count: int = 0
+    precision: int = 0
+    scale: int = 0
+
+
+model TypedPlanField:
+    """One identity-ordered root field with its direct cell plan and physical positions."""
+
+    identity: bytes
+    canonical: bool
+    absent: AbsentPolicy
+    node: int
+    required_before: int
+    eligible_before: int
+
+
+model TypedPlanRoot:
+    """One admitted record root and its declaration-to-storage slot mapping."""
+
+    key: bytes
+    node: int
+    first_field: int
+    field_count: int
+    required_count: int
+    eligible_count: int
+    declaration_slots: list[int]
+
+
+model TypedPlanGraph:
+    """Flattened immutable plan storage built once for one admitted envelope dictionary."""
+
+    roots: list[TypedPlanRoot]
+    nodes: list[TypedPlanNode]
+    children: list[int]
+    fields: list[TypedPlanField]
+
+
+pub trait TypedPlan:
+    """Expose Copy plan facts while retaining all non-Copy plan storage behind shared access."""
+
+    def root_node(self, description: int) -> int:
+        """Return the root cell-plan index for one admitted description slot."""
+        pass
+
+    def cell_kind(self, node: int) -> TypedCellKind:
+        """Return one node's allocation-free dispatch choice."""
+        pass
+
+    def child_count(self, node: int) -> int:
+        """Return the number of child plan indices owned by one node."""
+        pass
+
+    def child(self, node: int, position: int) -> Result[int, CrumbError]:
+        """Return one checked child plan index."""
+        pass
+
+    def precision(self, node: int) -> int:
+        """Return one decimal node's admitted precision."""
+        pass
+
+    def scale(self, node: int) -> int:
+        """Return one decimal node's admitted scale."""
+        pass
+
+    def field_count(self, description: int) -> int:
+        """Return one record root's admitted field count."""
+        pass
+
+    def required_count(self, description: int) -> int:
+        """Return one root's total required-field count."""
+        pass
+
+    def eligible_count(self, description: int) -> int:
+        """Return one root's total optional-field count."""
+        pass
+
+    def field_slot(self, description: int, info: FieldInfo) -> Result[int, CrumbError]:
+        """Map a declaration position to its identity-ordered storage slot and verify its contract."""
+        pass
+
+    def field_node(self, description: int, slot: int) -> int:
+        """Return one root field's direct cell-plan index."""
+        pass
+
+    def field_absent(self, description: int, slot: int) -> AbsentPolicy:
+        """Return one root field's admitted absence policy."""
+        pass
+
+    def field_required_before(self, description: int, slot: int) -> int:
+        """Return the required-field count before one identity-ordered slot."""
+        pass
+
+    def field_eligible_before(self, description: int, slot: int) -> int:
+        """Return the optional-field count before one identity-ordered slot."""
+        pass
+
+
+pub class TypedEncoderPlan with TypedPlan:
+    """Own the compact immutable writer plan for every description in one envelope."""
+
+    graph: TypedPlanGraph
+
+    @staticmethod
+    pub def create(dictionary: Dictionary) -> Result[Self, CrumbError]:
+        """Build the complete writer plan once from the admitted description dictionary."""
+        return Ok(TypedEncoderPlan(graph=build_graph(dictionary)?))
+
+    pub def select(self, shape: ShapeInfo) -> Result[int, CrumbError]:
+        """Resolve a root shape once before a homogeneous typed batch starts."""
+        return select_root(self.graph, shape)
+
+    def root_node(self, description: int) -> int:
+        """Return the selected writer root node."""
+        return graph_root_node(self.graph, description)
+
+    def cell_kind(self, node: int) -> TypedCellKind:
+        """Return one writer node's cell kind."""
+        return graph_cell_kind(self.graph, node)
+
+    def child_count(self, node: int) -> int:
+        """Return one writer node's child count."""
+        return graph_child_count(self.graph, node)
+
+    def child(self, node: int, position: int) -> Result[int, CrumbError]:
+        """Return one writer child node."""
+        return graph_child(self.graph, node, position)
+
+    def precision(self, node: int) -> int:
+        """Return one writer decimal precision."""
+        return graph_precision(self.graph, node)
+
+    def scale(self, node: int) -> int:
+        """Return one writer decimal scale."""
+        return graph_scale(self.graph, node)
+
+    def field_count(self, description: int) -> int:
+        """Return one writer root's field count."""
+        return graph_field_count(self.graph, description)
+
+    def required_count(self, description: int) -> int:
+        """Return one writer root's required-field count."""
+        return graph_required_count(self.graph, description)
+
+    def eligible_count(self, description: int) -> int:
+        """Return one writer root's optional-field count."""
+        return graph_eligible_count(self.graph, description)
+
+    def field_slot(self, description: int, info: FieldInfo) -> Result[int, CrumbError]:
+        """Resolve one walked field through its precomputed declaration slot."""
+        return graph_field_slot(self.graph, description, info)
+
+    def field_node(self, description: int, slot: int) -> int:
+        """Return one writer field's cell node."""
+        return graph_field_node(self.graph, description, slot)
+
+    def field_absent(self, description: int, slot: int) -> AbsentPolicy:
+        """Return one writer field's absence policy."""
+        return graph_field_absent(self.graph, description, slot)
+
+    def field_required_before(self, description: int, slot: int) -> int:
+        """Return one writer field's required prefix."""
+        return graph_field_required_before(self.graph, description, slot)
+
+    def field_eligible_before(self, description: int, slot: int) -> int:
+        """Return one writer field's optional prefix."""
+        return graph_field_eligible_before(self.graph, description, slot)
+
+
+pub class TypedDecoderPlan with TypedPlan:
+    """Own the compact immutable source plan for every description in one envelope."""
+
+    graph: TypedPlanGraph
+
+    @staticmethod
+    pub def create(dictionary: Dictionary) -> Result[Self, CrumbError]:
+        """Build the complete source plan once from the admitted description dictionary."""
+        return Ok(TypedDecoderPlan(graph=build_graph(dictionary)?))
+
+    pub def select(self, shape: ShapeInfo) -> Result[int, CrumbError]:
+        """Resolve a reconstruction root once before a homogeneous typed batch starts."""
+        return select_root(self.graph, shape)
+
+    def root_node(self, description: int) -> int:
+        """Return the selected source root node."""
+        return graph_root_node(self.graph, description)
+
+    def cell_kind(self, node: int) -> TypedCellKind:
+        """Return one source node's cell kind."""
+        return graph_cell_kind(self.graph, node)
+
+    def child_count(self, node: int) -> int:
+        """Return one source node's child count."""
+        return graph_child_count(self.graph, node)
+
+    def child(self, node: int, position: int) -> Result[int, CrumbError]:
+        """Return one source child node."""
+        return graph_child(self.graph, node, position)
+
+    def precision(self, node: int) -> int:
+        """Return one source decimal precision."""
+        return graph_precision(self.graph, node)
+
+    def scale(self, node: int) -> int:
+        """Return one source decimal scale."""
+        return graph_scale(self.graph, node)
+
+    def field_count(self, description: int) -> int:
+        """Return one source root's field count."""
+        return graph_field_count(self.graph, description)
+
+    def required_count(self, description: int) -> int:
+        """Return one source root's required-field count."""
+        return graph_required_count(self.graph, description)
+
+    def eligible_count(self, description: int) -> int:
+        """Return one source root's optional-field count."""
+        return graph_eligible_count(self.graph, description)
+
+    def field_slot(self, description: int, info: FieldInfo) -> Result[int, CrumbError]:
+        """Resolve one requested field through its precomputed declaration slot."""
+        return graph_field_slot(self.graph, description, info)
+
+    def field_node(self, description: int, slot: int) -> int:
+        """Return one source field's cell node."""
+        return graph_field_node(self.graph, description, slot)
+
+    def field_absent(self, description: int, slot: int) -> AbsentPolicy:
+        """Return one source field's absence policy."""
+        return graph_field_absent(self.graph, description, slot)
+
+    def field_required_before(self, description: int, slot: int) -> int:
+        """Return one source field's required prefix."""
+        return graph_field_required_before(self.graph, description, slot)
+
+    def field_eligible_before(self, description: int, slot: int) -> int:
+        """Return one source field's optional prefix."""
+        return graph_field_eligible_before(self.graph, description, slot)
+
+
+class TypedPlanBuilder:
+    """Accumulate one flattened plan graph while description admission is still cold work."""
+
+    roots: list[TypedPlanRoot]
+    nodes: list[TypedPlanNode]
+    children: list[int]
+    fields: list[TypedPlanField]
+
+    @staticmethod
+    pub def create() -> Self:
+        """Create an empty plan builder."""
+        return TypedPlanBuilder(roots=[], nodes=[], children=[], fields=[])
+
+    pub def finish(self) -> TypedPlanGraph:
+        """Transfer the completed immutable graph into its envelope owner."""
+        return TypedPlanGraph(roots=self.roots, nodes=self.nodes, children=self.children, fields=self.fields)
+
+    pub def add_description(mut self, description: StoredDescription) -> Result[None, CrumbError]:
+        """Add one record description and its declaration-to-storage field map."""
+        if description.kind != NominalKind.Record:
+            return Err(CrumbError.invalid_input("typed root kind"))
+        first_field = len(self.fields)
+        mut required_count = 0
+        mut eligible_count = 0
+        mut declaration_slots: list[int] = []
+        for _ in range(len(description.fields)):
+            declaration_slots.append(-1)
+        for slot in range(len(description.fields)):
+            field: &StoredField = list_get(description.fields, slot)
+            node = self.add_node(field.shape.storage_type)?
+            self.fields.append(
+                TypedPlanField(
+                    identity=field.shape.identity,
+                    canonical=field.shape.canonical,
+                    absent=field.shape.absent,
+                    node=node,
+                    required_before=field.required_before,
+                    eligible_before=field.eligible_before,
+                ),
+            )
+            declaration_slots[field.position] = slot
+            if field.shape.absent == AbsentPolicy.Required:
+                required_count += 1
+            else:
+                eligible_count += 1
+        root_node = len(self.nodes)
+        self.nodes.append(TypedPlanNode(kind=TypedCellKind.Record))
+        self.roots.append(
+            TypedPlanRoot(
+                key=description.key,
+                node=root_node,
+                first_field=first_field,
+                field_count=len(description.fields),
+                required_count=required_count,
+                eligible_count=eligible_count,
+                declaration_slots=declaration_slots,
+            ),
+        )
+        return Ok(None)
+
+    def add_node(mut self, node: TypeNode) -> Result[int, CrumbError]:
+        """Flatten one supported stored type and all of its nested cell plans."""
+        match node:
+            TypeNode.Scalar(kind) =>
+                index = len(self.nodes)
+                self.nodes.append(TypedPlanNode(kind=scalar_kind(kind)?))
+                return Ok(index)
+            TypeNode.Decimal(precision, scale) =>
+                index = len(self.nodes)
+                self.nodes.append(TypedPlanNode(kind=TypedCellKind.Decimal, precision=precision, scale=scale))
+                return Ok(index)
+            TypeNode.Container(kind, arguments) =>
+                mut nested: list[int] = []
+                for argument in arguments:
+                    nested.append(self.add_node(argument)?)
+                nested_count = len(nested)
+                first_child = len(self.children)
+                for child in nested:
+                    self.children.append(child)
+                index = len(self.nodes)
+                self.nodes.append(
+                    TypedPlanNode(
+                        kind=container_kind(kind)?,
+                        first_child=first_child,
+                        child_count=nested_count,
+                    ),
+                )
+                return Ok(index)
+            _ => return Err(CrumbError.invalid_input("unsupported typed cell plan"))
+
+
+def build_graph(dictionary: Dictionary) -> Result[TypedPlanGraph, CrumbError]:
+    """Build one compact graph without copying admitted descriptions through indexed reads."""
+    mut builder = TypedPlanBuilder.create()
+    for index in range(len(dictionary.entries)):
+        description: &StoredDescription = list_get(dictionary.entries, index)
+        builder.add_description(description)?
+    return Ok(builder.finish())
+
+
+def scalar_kind(kind: ScalarKind) -> Result[TypedCellKind, CrumbError]:
+    """Translate one admitted scalar into its closed typed dispatch choice."""
+    match kind:
+        ScalarKind.Boolean => return Ok(TypedCellKind.Boolean)
+        ScalarKind.I8 => return Ok(TypedCellKind.Signed8)
+        ScalarKind.I16 => return Ok(TypedCellKind.Signed16)
+        ScalarKind.I32 => return Ok(TypedCellKind.Signed32)
+        ScalarKind.I64 => return Ok(TypedCellKind.Signed64)
+        ScalarKind.I128 => return Ok(TypedCellKind.Signed128)
+        ScalarKind.U8 => return Ok(TypedCellKind.Unsigned8)
+        ScalarKind.U16 => return Ok(TypedCellKind.Unsigned16)
+        ScalarKind.U32 => return Ok(TypedCellKind.Unsigned32)
+        ScalarKind.U64 => return Ok(TypedCellKind.Unsigned64)
+        ScalarKind.U128 => return Ok(TypedCellKind.Unsigned128)
+        ScalarKind.Fp32 => return Ok(TypedCellKind.Float32)
+        ScalarKind.Fp64 => return Ok(TypedCellKind.Float64)
+        ScalarKind.String => return Ok(TypedCellKind.String)
+        ScalarKind.Binary => return Ok(TypedCellKind.Binary)
+        _ => return Err(CrumbError.invalid_input("unsupported typed scalar plan"))
+
+
+def container_kind(kind: ContainerKind) -> Result[TypedCellKind, CrumbError]:
+    """Translate one admitted container into its closed typed dispatch choice."""
+    match kind:
+        ContainerKind.Option => return Ok(TypedCellKind.Option)
+        ContainerKind.List => return Ok(TypedCellKind.List)
+        ContainerKind.Set => return Ok(TypedCellKind.Set)
+        ContainerKind.Tuple => return Ok(TypedCellKind.Tuple)
+        ContainerKind.Map => return Ok(TypedCellKind.Map)
+        _ => return Err(CrumbError.invalid_input("unsupported typed container plan"))
+
+
+def select_root(graph: TypedPlanGraph, shape: ShapeInfo) -> Result[int, CrumbError]:
+    """Resolve one root selector during batch setup without constructing dictionary lookup text."""
+    key = copy_frozen_bytes(shape.identity)
+    for index in range(len(graph.roots)):
+        root: &TypedPlanRoot = list_get(graph.roots, index)
+        if root.key == key:
+            return Ok(index)
+    return Err(CrumbError.invalid_input("missing typed root plan"))
+
+
+def graph_root_node(graph: TypedPlanGraph, description: int) -> int:
+    """Read a root node index from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    return root.node
+
+
+def graph_cell_kind(graph: TypedPlanGraph, node: int) -> TypedCellKind:
+    """Read a cell kind from borrowed plan storage."""
+    selected: &TypedPlanNode = list_get(graph.nodes, node)
+    return selected.kind
+
+
+def graph_child_count(graph: TypedPlanGraph, node: int) -> int:
+    """Read a child count from borrowed plan storage."""
+    selected: &TypedPlanNode = list_get(graph.nodes, node)
+    return selected.child_count
+
+
+def graph_child(graph: TypedPlanGraph, node: int, position: int) -> Result[int, CrumbError]:
+    """Read one checked flattened child index from borrowed plan storage."""
+    selected: &TypedPlanNode = list_get(graph.nodes, node)
+    if position < 0 or position >= selected.child_count:
+        return Err(CrumbError.invalid_input("typed plan child"))
+    return Ok(graph.children[selected.first_child + position])
+
+
+def graph_precision(graph: TypedPlanGraph, node: int) -> int:
+    """Read a decimal precision from borrowed plan storage."""
+    selected: &TypedPlanNode = list_get(graph.nodes, node)
+    return selected.precision
+
+
+def graph_scale(graph: TypedPlanGraph, node: int) -> int:
+    """Read a decimal scale from borrowed plan storage."""
+    selected: &TypedPlanNode = list_get(graph.nodes, node)
+    return selected.scale
+
+
+def graph_field_count(graph: TypedPlanGraph, description: int) -> int:
+    """Read a root field count from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    return root.field_count
+
+
+def graph_required_count(graph: TypedPlanGraph, description: int) -> int:
+    """Read a root required-field count from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    return root.required_count
+
+
+def graph_eligible_count(graph: TypedPlanGraph, description: int) -> int:
+    """Read a root optional-field count from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    return root.eligible_count
+
+
+def graph_field_slot(
+    graph: TypedPlanGraph,
+    description: int,
+    info: FieldInfo,
+) -> Result[int, CrumbError]:
+    """Resolve and verify one field without scanning or copying the identity-ordered field table."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    if info.position < 0 or info.position >= len(root.declaration_slots):
+        return Err(CrumbError.invalid_input("typed root field position"))
+    selected = root.declaration_slots[info.position]
+    if selected < 0 or selected >= root.field_count:
+        return Err(CrumbError.invalid_input("typed root field slot"))
+    field: &TypedPlanField = list_get(graph.fields, root.first_field + selected)
+    if info.canonical != field.canonical:
+        return Err(CrumbError.invalid_input("typed root field contract"))
+    return Ok(selected)
+
+
+def graph_field_node(graph: TypedPlanGraph, description: int, slot: int) -> int:
+    """Read one field's node index from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    field: &TypedPlanField = list_get(graph.fields, root.first_field + slot)
+    return field.node
+
+
+def graph_field_absent(graph: TypedPlanGraph, description: int, slot: int) -> AbsentPolicy:
+    """Read one field's absence policy from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    field: &TypedPlanField = list_get(graph.fields, root.first_field + slot)
+    return field.absent
+
+
+def graph_field_required_before(graph: TypedPlanGraph, description: int, slot: int) -> int:
+    """Read one field's required prefix from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    field: &TypedPlanField = list_get(graph.fields, root.first_field + slot)
+    return field.required_before
+
+
+def graph_field_eligible_before(graph: TypedPlanGraph, description: int, slot: int) -> int:
+    """Read one field's optional prefix from borrowed plan storage."""
+    root: &TypedPlanRoot = list_get(graph.roots, description)
+    field: &TypedPlanField = list_get(graph.fields, root.first_field + slot)
+    return field.eligible_before

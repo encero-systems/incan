@@ -81,6 +81,16 @@ impl Builder<'_> {
             .get(written_variant)
             .map(String::as_str)
             .unwrap_or(written_variant);
+        if info.variants.iter().any(|candidate| candidate == variant) && !info.variant_fields.contains_key(variant) {
+            return Some(Vec::new());
+        }
+        if info
+            .value_enum
+            .as_ref()
+            .is_some_and(|value_enum| value_enum.values.contains_key(variant))
+        {
+            return Some(Vec::new());
+        }
         let substitution = type_param_subst_map(&info.type_params, arguments);
         Some(
             info.variant_fields
@@ -363,6 +373,35 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
+    /// Evaluate a source enum variant whose payload is wholly owned. Every non-Copy payload must itself be fresh so
+    /// the variant cannot turn an ordinary place read into an untracked ownership transfer.
+    pub(super) fn enum_value_construction(
+        &mut self,
+        arguments: &[CallArg],
+        span: Span,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        for argument in arguments {
+            let value = match argument {
+                CallArg::Positional(value) => value,
+                _ => {
+                    return Err(Unavailable {
+                        span,
+                        reason: "enum construction expansion lacks one checked payload".into(),
+                    });
+                }
+            };
+            if !self.fresh_or_copy_field(value) {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "non-Copy enum payload needs checked ownership transfer materialization".into(),
+                });
+            }
+            incoming = self.expression(value, incoming, false)?;
+        }
+        Ok(incoming)
+    }
+
     /// Identify source-bearing enum arguments from checked input and dependent-local facts when no field binding is
     /// published for the variant constructor. Ordinary owned payloads stay independent even beside a view payload.
     pub(super) fn enum_argument_view_sources(&mut self, arguments: &[CallArg]) -> Result<Vec<bool>, Unavailable> {
@@ -439,9 +478,10 @@ impl Builder<'_> {
         }
     }
 
-    /// Copy values need no transfer; literal, formatted, list-literal, explicitly cloned and nested constructed
-    /// values own their fresh storage (a list literal's elements are Copy scalars, which its own evaluation checks).
-    /// A source place with a non-Copy type is never reclassified as fresh merely because its last use is here.
+    /// Copy values need no transfer; literal, formatted, list-literal, explicitly cloned, model-constructed and
+    /// borrow-free enum-constructed values own their fresh storage (a list literal's elements are checked by its own
+    /// evaluation). A source place with a non-Copy type is never reclassified as fresh merely because its last use is
+    /// here.
     pub(super) fn fresh_or_copy_field(&self, value: &Spanned<Expr>) -> bool {
         if self
             .checker
@@ -453,9 +493,32 @@ impl Builder<'_> {
         }
         match &value.node {
             Expr::Literal(_) | Expr::FString(_) | Expr::List(_) => true,
+            Expr::Field(base, variant) => {
+                self.checker
+                    .type_info
+                    .resolved_identity(value.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                    || self
+                        .enum_view_method_constructor_fields(base, variant, value.span)
+                        .is_some_and(|fields| fields.is_empty())
+            }
             Expr::Paren(inner) => self.fresh_or_copy_field(inner),
             Expr::Call(_, _, _) => {
-                self.checker.type_info.constructor_field_binding(value.span).is_some()
+                self.checker
+                    .type_info
+                    .expr_type(value.span)
+                    .is_some_and(super::calls::plain_result)
+                    || self.checker.type_info.constructor_field_binding(value.span).is_some()
+                    || (self
+                        .checker
+                        .type_info
+                        .resolved_identity(value.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                        && self
+                            .checker
+                            .type_info
+                            .expr_type(value.span)
+                            .is_some_and(|ty| !self.checker.type_holds_borrow(ty)))
                     || self
                         .checker
                         .type_info
@@ -468,7 +531,23 @@ impl Builder<'_> {
                                 && contract.is_some_and(|contract| contract.result_source.is_none())
                         })
             }
-            Expr::MethodCall(..) => self.checked_clone_call(value.span),
+            Expr::MethodCall(..) => {
+                self.checker
+                    .type_info
+                    .expr_type(value.span)
+                    .is_some_and(super::calls::plain_result)
+                    || self.checked_clone_call(value.span)
+                    || (self
+                        .checker
+                        .type_info
+                        .resolved_identity(value.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                        && self
+                            .checker
+                            .type_info
+                            .expr_type(value.span)
+                            .is_some_and(|ty| !self.checker.type_holds_borrow(ty)))
+            }
             _ => false,
         }
     }

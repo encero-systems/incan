@@ -17,7 +17,7 @@ use incan_lang::lang::surface::{
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::IncanInputAccess;
+use incan_semantics_core::{IncanInputAccess, SemanticSourceTargetKind};
 
 impl Builder<'_> {
     /// Apply a selected free-function contract without inspecting its body. Borrowed arguments remain live until
@@ -52,6 +52,7 @@ impl Builder<'_> {
             if view_fields.iter().any(|field| *field) {
                 return self.enum_view_construction(arguments, &view_fields, span, incoming);
             }
+            return self.enum_value_construction(arguments, span, incoming);
         }
         if self
             .checker
@@ -141,13 +142,25 @@ impl Builder<'_> {
                     reason: "list method needs positional arguments".into(),
                 });
             };
-            if !self.fresh_or_copy_field(value) && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            let transfer = self.optional_place(value)?.is_some_and(|path| {
+                path.place.projection.is_empty()
+                    && self.constrained.contains(&path.place.root)
+                    && self
+                        .graph
+                        .permissions
+                        .get(&path.place.root)
+                        .is_some_and(|permission| permission.transferable)
+            });
+            if !transfer
+                && !self.fresh_or_copy_field(value)
+                && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
+            {
                 return Err(Unavailable {
                     span: value.span,
                     reason: "a non-Copy list element needs checked ownership transfer materialization".into(),
                 });
             }
-            incoming = self.expression(value, incoming, false)?;
+            incoming = self.expression(value, incoming, transfer)?;
         }
         let access = if writes { Access::Write } else { Access::Read };
         Ok(self.event(
@@ -305,13 +318,9 @@ impl Builder<'_> {
                 reason: "call facts belong to a different callable".into(),
             });
         }
-        // A native associated function written on its type, as in `HashMap.new()`, names the type, not a receiver
-        // value.
-        let receiver = if self.checker.type_info.native_associated_call(span) {
-            None
-        } else {
-            receiver
-        };
+        // An associated function written on its type, as in `Budget.create()` or `HashMap.new()`, names the type,
+        // not a receiver value. Its selected source or native header has no receiver slot.
+        let receiver = if call.receiver.is_none() { None } else { receiver };
         if call.receiver.is_some() != receiver.is_some() {
             return Err(Unavailable {
                 span,
@@ -383,6 +392,18 @@ impl Builder<'_> {
             })?
             .is_some();
         let clone_result = self.checked_clone_call(span);
+        // An ordinary associated function has no receiver storage to retain. Once its selected source header is
+        // authenticated, a result whose complete concrete layout holds no borrow is independent of caller storage.
+        // Free functions remain conservative because their aggregate result provenance has no associated owner.
+        let independent_associated_result = call.kind == super::super::InputCallKind::Ordinary
+            && call.receiver.is_none()
+            && call.callee.kind == SemanticSourceTargetKind::Method
+            && !self.checker.type_holds_borrow(result);
+        // A concrete builtin carrier is independent when neither payload layout can retain caller storage. This does
+        // not admit a direct nominal aggregate whose provenance still needs an explicit owned-result contract.
+        let independent_closed_carrier = (result.is_result() || result.is_option())
+            && !self.checker.type_holds_borrow(result)
+            && TypeChecker::is_settled_type_argument(result);
         // A native call that lends nothing returns a value that cannot keep a borrow of the caller's storage.
         let lends_nothing = call.kind == super::super::InputCallKind::Native
             && (call.receiver.is_none() || self.checker.type_info.native_value_receiver(span))
@@ -396,7 +417,16 @@ impl Builder<'_> {
             && contract.is_some_and(|contract| {
                 contract.result_source.is_none() && contract.modes.iter().all(|mode| mode.component.parameter.is_some())
             })
-            && conditional_result(result))
+            && conditional_result(
+                result,
+                self.checker
+                    .type_info
+                    .declarations
+                    .callable_type_params
+                    .get(call.owner.as_ref().unwrap_or(&call.callee))
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+            ))
         .then(|| result.clone());
         if view.is_none()
             && native_dependencies.is_none()
@@ -405,6 +435,8 @@ impl Builder<'_> {
             && !owned_dependent_result
             && !retained_receiver_result
             && !clone_result
+            && !independent_associated_result
+            && !independent_closed_carrier
             && !plain_result(result)
             && result_requirement.is_none()
             && !lends_nothing
@@ -523,12 +555,7 @@ impl Builder<'_> {
             let source = self.optional_place(expression)?.map(|path| path.place);
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
-            let explicit = matches!(
-                call.kind,
-                super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
-            );
-            let (outgoing, loan) =
-                self.call_argument(expression, &call.parameters[slot], mode, explicit, span, incoming)?;
+            let (outgoing, loan) = self.call_argument(expression, &call.parameters[slot], mode, span, incoming)?;
             incoming = outgoing;
             let source_node = if source.is_some() || loan.is_some() {
                 Some(*incoming.first().filter(|_| incoming.len() == 1).ok_or(Unavailable {
@@ -551,6 +578,8 @@ impl Builder<'_> {
                     Some(OwnershipMode::Borrowed) => IncanInputAccess::Shared,
                     Some(OwnershipMode::BorrowedMut) => IncanInputAccess::Exclusive,
                     Some(OwnershipMode::Owned) => IncanInputAccess::Owned,
+                    None if call.parameters[slot].is_mut => IncanInputAccess::Exclusive,
+                    None if loan.is_some() => IncanInputAccess::Shared,
                     None => IncanInputAccess::Inferred,
                     Some(OwnershipMode::Reference) => {
                         return Err(Unavailable {
@@ -622,14 +651,13 @@ impl Builder<'_> {
     }
 
     /// Evaluate one argument according to its selected slot. A borrowed place is evaluated once before taking its
-    /// loan; an explicit ownership request constrains even an otherwise ordinary source binding. Unresolved
-    /// duckborrow or ordinary mutable adapters refuse rather than cloning or guessing an access mode.
+    /// loan; an explicit ownership request constrains even an otherwise ordinary source binding. Ordinary non-Copy
+    /// inputs use RFC 129's shared call-scoped duckborrow; Copy values retain inferred value passing.
     fn call_argument(
         &mut self,
         expression: &Spanned<Expr>,
         parameter: &CallableParam,
         mode: Option<OwnershipMode>,
-        explicit_callee: bool,
         invocation: Span,
         incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, Option<LoanId>), Unavailable> {
@@ -651,22 +679,21 @@ impl Builder<'_> {
                 self.expression(expression, incoming, true)
                     .map(|outgoing| (outgoing, None))
             }
+            None if parameter.is_mut => {
+                let (source, incoming) = self.borrowed_input_source(expression, invocation, incoming)?;
+                let loan = self.call_loan(source, true, true, expression.span);
+                Ok((self.event(incoming, Event::Borrow(loan), expression.span), Some(loan)))
+            }
             None if self.copy_value(&parameter.ty) && !parameter.is_mut => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
-            // A fresh closed value given to an explicit callee has no source to conflict with, so the parameter's
-            // inferred passing applies. Ordinary helpers keep the Copy-only profile.
-            None if explicit_callee
-                && !parameter.is_mut
-                && self.optional_place(expression)?.is_none()
-                && self
-                    .checker
-                    .type_info
-                    .expr_type(expression.span)
-                    .is_some_and(plain_result) =>
-            {
-                self.expression(expression, incoming, true)
-                    .map(|outgoing| (outgoing, None))
+            None if !parameter.is_mut && self.optional_place(expression)?.is_none() => self
+                .expression(expression, incoming, true)
+                .map(|outgoing| (outgoing, None)),
+            None if !parameter.is_mut => {
+                let (source, incoming) = self.borrowed_input_source(expression, invocation, incoming)?;
+                let loan = self.call_loan(source, false, false, expression.span);
+                Ok((self.event(incoming, Event::Borrow(loan), expression.span), Some(loan)))
             }
             _ => Err(Unavailable {
                 span: expression.span,
@@ -1202,7 +1229,7 @@ pub(super) enum ViewSource {
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`
 /// carriers of them, with no possible retained source dependency. Other aggregates, references, native and generic
 /// results await their checked dependency representation.
-fn plain_result(ty: &ResolvedType) -> bool {
+pub(super) fn plain_result(ty: &ResolvedType) -> bool {
     match ty {
         ResolvedType::Unit
         | ResolvedType::Int
@@ -1223,22 +1250,25 @@ fn plain_result(ty: &ResolvedType) -> bool {
 /// Retain an unresolved scalar-carrier obligation without declaring any named leaf independent. Legacy checking
 /// can represent an enclosing binder as Named; Body IR classifies it using the exact declaration's binder inventory.
 /// A real nominal leaf stays nominal and refuses closed admission until its dependency proof is supported.
-pub(in crate::typechecker::ownership_contracts) fn conditional_result(ty: &ResolvedType) -> bool {
+pub(in crate::typechecker::ownership_contracts) fn conditional_result(
+    ty: &ResolvedType,
+    type_params: &[String],
+) -> bool {
     /// Check carrier leaves while retaining whether any unresolved binder prevents a final independence proof.
-    fn leaves(ty: &ResolvedType, generic: &mut bool) -> bool {
+    fn leaves(ty: &ResolvedType, type_params: &[String], generic: &mut bool) -> bool {
         match ty {
-            ResolvedType::TypeVar(_) | ResolvedType::Named(_) => {
+            ResolvedType::TypeVar(name) | ResolvedType::Named(name) if type_params.iter().any(|item| item == name) => {
                 *generic = true;
                 true
             }
             ResolvedType::Generic(_, arguments) if ty.is_result() || ty.is_option() => {
-                !arguments.is_empty() && arguments.iter().all(|item| leaves(item, generic))
+                !arguments.is_empty() && arguments.iter().all(|item| leaves(item, type_params, generic))
             }
             _ => plain_result(ty),
         }
     }
     let mut generic = false;
-    (ty.is_result() || ty.is_option()) && leaves(ty, &mut generic) && generic
+    (ty.is_result() || ty.is_option()) && leaves(ty, type_params, &mut generic) && generic
 }
 
 /// Printing reaches no nominal display hook for primitive values and for lists whose items print the same way.

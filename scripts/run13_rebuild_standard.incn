@@ -1,0 +1,31 @@
+"""Rebuild the standard package closure from the current Run 13 tree."""
+
+from std.fs import Path
+from native_build import NativeContext, build_standard_packages
+
+
+def rebuild(repo: Path, lane: Path, evidence: Path, timings: Path, helper: Path) -> Result[None, str]:
+    """Construct the native build context and publish the standard packages."""
+    context = NativeContext(
+        repo=repo,
+        lane=lane,
+        home=Path("/Volumes/Builds/incan-dev9-work/crumbfix/home"),
+        builder="/Volumes/Builds/incan-dev9-work/crumbfix/home/bin/incan",
+        stdlib=repo.joinpath("loaves/stdlib").0,
+        evidence=evidence,
+        timings=timings,
+        timeout_seconds=1800,
+    )
+    return build_standard_packages(context, helper, "run13-")
+
+
+def main() -> Result[None, str]:
+    """Publish release and debug standard packages from the current Run 13 source."""
+    repo = Path("/Volumes/Builds/incan-dev9-work/crumbfix/lane/repo")
+    lane = Path("/Volumes/Builds/incan-dev9-work/crumbfix/lane/run13-native")
+    evidence = lane.joinpath("evidence")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    timings = evidence.joinpath("timings.tsv")
+    timings.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    helper = repo.joinpath("workspaces/oven/target/incan/release/bin/oven")
+    return rebuild(repo, lane, evidence, timings, helper)

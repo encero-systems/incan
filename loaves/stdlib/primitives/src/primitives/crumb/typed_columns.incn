@@ -6,7 +6,7 @@ from crate.primitives.crumb.column_data_write import block_count
 from crate.primitives.crumb.column_directory import group_index, prefix_at, read_table
 from crate.primitives.crumb.column_errors import ColumnError
 from crate.primitives.crumb.column_types import BlockEncoding
-from crate.primitives.crumb.description_dictionary import Dictionary, admit_dictionary, slot
+from crate.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
 from crate.primitives.crumb.description_read import read_dictionary
 from crate.primitives.crumb.descriptions import Description, StoredDescription, encode_entry
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed, offset_table_length, offset_width
@@ -15,19 +15,12 @@ from crate.primitives.crumb.encoding_errors import BinaryError
 from crate.primitives.crumb.encoding_index import CellIndex, bit, rank, read_index, selected
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.typed_cells import TypedCellSource, TypedCellWriter
+from crate.primitives.crumb.typed_cells import TypedCellSource, TypedRootCell, TypedRootPlan, TypedRootSlot
+from crate.primitives.crumb.typed_plan import TypedCellKind, TypedDecoderPlan, TypedEncoderPlan, TypedPlan
 from crate.primitives.crumb.types import AbsentPolicy, NominalKind
-from crate.primitives.reflection import ShapeInfo
-from crate.primitives.text import copy_frozen_bytes
+from crate.primitives.reflection import FieldInfo, ShapeInfo
 from crate.primitives.views import MappedView
-
-
-model TypedColumnRow:
-    """One completed typed root split into its already encoded stored fields."""
-
-    description: int
-    cells: list[bytes]
-    present: list[bool]
+from rust::incan_std_primitives::collections import list_get
 
 
 model TypedColumnBlock:
@@ -38,6 +31,14 @@ model TypedColumnBlock:
     bitmap: MappedView
     bitmap_origin: int
     cells: CellIndex
+
+
+model TypedSelectedCell:
+    """One directly selected column cell and its admitted presence state."""
+
+    view: MappedView
+    origin: int
+    present: bool
 
 
 model TypedColumnField:
@@ -59,7 +60,8 @@ pub class TypedColumnWriter:
     """Collect completed root walkers and emit the ordinary unsealed indexed column envelope."""
 
     dictionary: Dictionary
-    rows: list[TypedColumnRow]
+    plan: TypedEncoderPlan
+    rows: list[TypedRootCell]
     budget: Budget
 
     @staticmethod
@@ -74,22 +76,37 @@ pub class TypedColumnWriter:
             return Err(CrumbError.invalid_input("typed column seals are not available"))
         mut owned_budget = budget.snapshot()
         dictionary = admit_dictionary(descriptions, registry, owned_budget)?
-        return Ok(TypedColumnWriter(dictionary=dictionary, rows=[], budget=owned_budget.snapshot()))
+        plan = TypedEncoderPlan.create(dictionary)?
+        return Ok(TypedColumnWriter(dictionary=dictionary, plan=plan, rows=[], budget=owned_budget.snapshot()))
 
-    pub def root(self, shape: ShapeInfo) -> Result[TypedCellWriter, CrumbError]:
-        """Return a Walker bound to one exact caller-supplied root description."""
-        mut budget = self.budget.snapshot()
-        description = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
-        return Ok(TypedCellWriter.create_root(self.dictionary.entries[description], budget.snapshot()))
+    pub def root_slot(self, shape: Borrowed[ShapeInfo]) -> Result[TypedRootSlot, CrumbError]:
+        """Resolve one homogeneous batch's root shape before its hot value loop."""
+        return Ok(TypedRootSlot(description=self.plan.select(shape)?, identity=shape.identity))
 
-    pub def append(mut self, writer: TypedCellWriter) -> Result[None, CrumbError]:
-        """Retain one completed root's typed cells without constructing a schema-less record."""
-        completed = writer.finish_root_cell()?
-        description = slot(self.dictionary, completed.key, self.budget)?
-        expected = len(self.dictionary.entries[description].fields)
-        if len(completed.cells) != expected or len(completed.present) != expected:
+    pub def root(self, selected: Borrowed[TypedRootSlot]) -> TypedRootPlan[Borrowed[TypedEncoderPlan]] from self.plan:
+        """Return a selected root carrier borrowing the envelope plan."""
+        return TypedRootPlan[Borrowed[TypedEncoderPlan]](
+            plan=self.plan,
+            description=selected.description,
+            identity=selected.identity,
+        )
+
+    pub def walker_budget(self) -> Budget:
+        """Return an independent allowance for one selected root walker."""
+        return self.budget.snapshot()
+
+    pub def append(mut self, completed: Owned[TypedRootCell]) -> Result[None, CrumbError]:
+        """Retain detached field bytes after their plan borrow has ended."""
+        if completed.description < 0:
+            return Err(CrumbError.invalid_input("typed column description"))
+        if completed.description >= len(self.dictionary.entries):
+            return Err(CrumbError.invalid_input("typed column description"))
+        expected = self.plan.field_count(completed.description)
+        if len(completed.cells) != expected:
             return Err(CrumbError.invalid_input("typed column field count"))
-        self.rows.append(TypedColumnRow(description=description, cells=completed.cells, present=completed.present))
+        if len(completed.present) != expected:
+            return Err(CrumbError.invalid_input("typed column field count"))
+        self.rows.append(completed)
         return Ok(None)
 
     pub def finish(self) -> Result[bytes, CrumbError]:
@@ -107,7 +124,9 @@ pub class TypedColumnWriter:
             while end < len(self.rows) and self.rows[end].description == self.rows[start].description:
                 budget.charge_elements(1)?
                 end += 1
-            groups.append(write_typed_group(self.rows[start].description, self.dictionary, self.rows, start, end, budget)?)
+            groups.append(
+                write_typed_group(self.rows[start].description, self.dictionary, self.rows, start, end, budget)?,
+            )
             prefixes.append(end)
             start = end
         body.count(len(self.rows), budget)?
@@ -128,6 +147,7 @@ pub class TypedColumnReader:
     """Admit an indexed column envelope and vend Source objects without schema-less Value nodes."""
 
     dictionary: Dictionary
+    plan: TypedDecoderPlan
     groups: list[TypedColumnGroup]
     rows: int
     backing: MappedView
@@ -157,6 +177,7 @@ pub class TypedColumnReader:
         cursor.finished().map_err(binary_error)?
         mut body = EncodingCursor.create(payload, origin).map_err(binary_error)?
         dictionary = read_dictionary(body, supplied, registry, owned_budget).map_err(binary_error)?
+        plan = TypedDecoderPlan.create(dictionary)?
         rows = body.length(owned_budget).map_err(binary_error)?
         count = body.length(owned_budget).map_err(binary_error)?
         if (rows == 0 and count != 0) or (rows != 0 and count == 0) or count > rows:
@@ -179,6 +200,7 @@ pub class TypedColumnReader:
         return Ok(
             TypedColumnReader(
                 dictionary=dictionary,
+                plan=plan,
                 groups=groups,
                 rows=rows,
                 backing=view,
@@ -190,57 +212,86 @@ pub class TypedColumnReader:
         """Return the admitted logical row count."""
         return self.rows
 
-    pub def source(self, index: int, shape: ShapeInfo) -> Result[TypedCellSource, CrumbError]:
-        """Select one row's typed field cells and return a caller-reconstructable root Source."""
+    pub def root_slot(self, shape: Borrowed[ShapeInfo]) -> Result[TypedRootSlot, CrumbError]:
+        """Resolve one homogeneous reconstruction shape before its hot value loop."""
+        return Ok(TypedRootSlot(description=self.plan.select(shape)?, identity=shape.identity))
+
+    def validate_selection(self, index: int, description: int) -> Result[None, CrumbError]:
+        """Find one ordinary row's column group and check its already-copied description selector."""
         if index < 0 or index >= self.rows:
             return Err(CrumbError.invalid_input("typed column row index"))
-        mut budget = self.budget.snapshot()
-        expected = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
         mut selected_group = -1
         for position in range(len(self.groups)):
-            if index >= self.groups[position].start and index < self.groups[position].end:
+            group: &TypedColumnGroup = list_get(self.groups, position)
+            if index >= group.start and index < group.end:
                 selected_group = position
-        if selected_group < 0 or self.groups[selected_group].description != expected:
+        if selected_group < 0:
             return Err(CrumbError.invalid_input("typed column description"))
-        group = self.groups[selected_group]
-        logical = index - group.start
+        group: &TypedColumnGroup = list_get(self.groups, selected_group)
+        if group.description != description:
+            return Err(CrumbError.invalid_input("typed column description"))
+        return Ok(None)
+
+    pub def source(self, index: int, selected: TypedRootSlot) -> Result[TypedCellSource, CrumbError]:
+        """Preselect one row's field cells and create a direct reconstruction source."""
+        self.validate_selection(index, selected.description)?
         mut views: list[MappedView] = []
         mut origins: list[int] = []
-        mut presence: list[bool] = []
-        description = self.dictionary.entries[expected]
-        for field_index in range(len(description.fields)):
-            field = description.fields[field_index]
-            block = group.fields[field_index].blocks[logical // 256]
-            within = logical % 256
-            mut present = true
-            mut stored = within
-            if field.shape.absent != AbsentPolicy.Required:
-                present = bit(block.bitmap, within, block.bitmap_origin).map_err(binary_error)?
-                stored = rank(block.bitmap, within, block.bitmap_origin, budget).map_err(binary_error)?
-            if present:
-                raw, raw_origin = selected(block.cells, stored, budget).map_err(binary_error)?
-                views.append(raw)
-                origins.append(raw_origin)
-            else:
-                views.append(block.bitmap)
-                origins.append(block.bitmap_origin)
-            presence.append(present)
+        mut present: list[bool] = []
+        mut budget = self.budget.snapshot()
+        for field in range(self.plan.field_count(selected.description)):
+            cell = self.field_cell(index, selected.description, field, budget)?
+            views.append(cell.view)
+            origins.append(cell.origin)
+            present.append(cell.present)
         return Ok(
             TypedCellSource.create_column_root(
-                description,
+                self.dictionary.entries[selected.description],
                 self.backing,
                 views,
                 origins,
-                presence,
+                present,
                 self.dictionary,
                 budget.snapshot(),
             ),
         )
 
+    def field_cell(
+        self,
+        row: int,
+        description: int,
+        field: int,
+        mut budget: Budget,
+    ) -> Result[TypedSelectedCell, CrumbError]:
+        """Select one field cell through borrowed group, field and block entries."""
+        mut selected_group = -1
+        for position in range(len(self.groups)):
+            group: &TypedColumnGroup = list_get(self.groups, position)
+            if row >= group.start and row < group.end:
+                selected_group = position
+        if selected_group < 0:
+            return Err(CrumbError.invalid_input("typed column row index"))
+        group: &TypedColumnGroup = list_get(self.groups, selected_group)
+        if group.description != description or field < 0 or field >= len(group.fields):
+            return Err(CrumbError.invalid_input("typed column description"))
+        logical = row - group.start
+        selected_field: &TypedColumnField = list_get(group.fields, field)
+        block: &TypedColumnBlock = list_get(selected_field.blocks, logical // 256)
+        within = logical % 256
+        mut present = true
+        mut stored = within
+        if self.plan.field_absent(description, field) != AbsentPolicy.Required:
+            present = bit(block.bitmap, within, block.bitmap_origin).map_err(binary_error)?
+            stored = rank(block.bitmap, within, block.bitmap_origin, budget).map_err(binary_error)?
+        if not present:
+            return Ok(TypedSelectedCell(view=block.bitmap, origin=block.bitmap_origin, present=false))
+        raw, raw_origin = selected(block.cells, stored, budget).map_err(binary_error)?
+        return Ok(TypedSelectedCell(view=raw, origin=raw_origin, present=true))
+
 def write_typed_group(
     description_index: int,
     dictionary: Dictionary,
-    rows: &list[TypedColumnRow],
+    rows: &list[TypedRootCell],
     start: int,
     end: int,
     mut budget: Budget,
@@ -260,7 +311,7 @@ def write_typed_group(
 
 def write_typed_column(
     description: StoredDescription,
-    rows: &list[TypedColumnRow],
+    rows: &list[TypedRootCell],
     start: int,
     end: int,
     field_index: int,
@@ -281,7 +332,7 @@ def write_typed_column(
 
 def write_typed_block(
     description: StoredDescription,
-    rows: &list[TypedColumnRow],
+    rows: &list[TypedRootCell],
     start: int,
     end: int,
     field_index: int,
@@ -368,6 +419,7 @@ def read_typed_field(
         cells = match block.cells:
             Some(value) => value
             None => return Err(CrumbError.invalid_input("typed column cell index"))
+
         blocks.append(
             TypedColumnBlock(
                 rows=block.rows,

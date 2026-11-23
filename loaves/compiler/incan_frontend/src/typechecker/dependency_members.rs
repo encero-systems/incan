@@ -322,9 +322,15 @@ impl TypeChecker {
             self.declaration_callables
                 .entry(identity.clone())
                 .or_insert_with(|| DeclarationCallableTypes {
+                    type_params: function.type_params.clone(),
                     params: function.params.clone(),
                     return_type: function.return_type.clone(),
                 });
+            self.type_info
+                .declarations
+                .callable_type_params
+                .entry(identity.clone())
+                .or_insert_with(|| function.type_params.clone());
         }
         let fields = match kind {
             SymbolKind::Type(TypeInfo::Model(info)) => Some(&info.fields),
@@ -340,26 +346,37 @@ impl TypeChecker {
                 }
             }
         }
-        let methods = match kind {
-            SymbolKind::Type(TypeInfo::Model(info)) => &info.methods,
-            SymbolKind::Type(TypeInfo::Class(info)) => &info.methods,
-            SymbolKind::Type(TypeInfo::Newtype(info)) => &info.methods,
-            SymbolKind::Type(TypeInfo::Enum(info)) => &info.methods,
-            SymbolKind::Trait(info) => &info.methods,
+        let (owner_type_params, methods) = match kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => (&info.type_params, &info.methods),
+            SymbolKind::Type(TypeInfo::Class(info)) => (&info.type_params, &info.methods),
+            SymbolKind::Type(TypeInfo::Newtype(info)) => (&info.type_params, &info.methods),
+            SymbolKind::Type(TypeInfo::Enum(info)) => (&info.type_params, &info.methods),
+            SymbolKind::Trait(info) => (&info.type_params, &info.methods),
             _ => return newly_retained,
         };
         for method in methods.values() {
             let Some(member) = &method.identity else { continue };
             if member.origin == identity.origin {
+                let type_params = owner_type_params
+                    .iter()
+                    .chain(&method.type_params)
+                    .cloned()
+                    .collect::<Vec<_>>();
                 self.declaration_nominal_scopes
                     .entry(member.clone())
                     .or_insert_with(|| Arc::clone(&scope));
                 self.declaration_callables
                     .entry(member.clone())
                     .or_insert_with(|| DeclarationCallableTypes {
+                        type_params: type_params.clone(),
                         params: method.params.clone(),
                         return_type: method.return_type.clone(),
                     });
+                self.type_info
+                    .declarations
+                    .callable_type_params
+                    .entry(member.clone())
+                    .or_insert(type_params);
             }
         }
         newly_retained

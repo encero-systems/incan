@@ -397,7 +397,13 @@ impl CheckedInputBody<'_> {
         {
             return Ok(());
         }
-        if !self.facts.native_associated_call(expression.span) {
+        if self
+            .facts
+            .protocols
+            .explicit_input_calls
+            .get(&expression.span)
+            .is_none_or(|call| call.receiver.is_some())
+        {
             self.authenticate_method_receiver(expression, receiver)?;
         }
         self.record_invocation(expression.span, arguments, seen)

@@ -127,12 +127,30 @@ impl TypeCheckInfo {
                         }
                         binding.ok_or("ordinary invocation has no canonical source header")?
                     }
-                    SemanticSourceTargetKind::Method if call.receiver.is_some() => self
-                        .declarations
-                        .method_bindings_by_span
-                        .get(&call.callee.declaration_span)
-                        .filter(|binding| binding.identity.as_ref() == Some(&call.callee))
-                        .ok_or("ordinary method invocation has no canonical source header")?,
+                    SemanticSourceTargetKind::Method => {
+                        let mut binding = None;
+                        for candidate in self.declarations.method_bindings_by_span.values().filter(|candidate| {
+                            candidate.identity.as_ref().is_some_and(|identity| {
+                                identity.namespace == call.callee.namespace
+                                    && identity.declaration_name == call.callee.declaration_name
+                                    && identity.origin == call.callee.origin
+                                    && identity.kind == call.callee.kind
+                                    && identity.declaration_span == call.callee.declaration_span
+                            })
+                        }) {
+                            if binding.is_some_and(|previous| previous != candidate) {
+                                return Err("ordinary method invocation has conflicting canonical headers");
+                            }
+                            binding = Some(candidate);
+                        }
+                        let Some(binding) = binding else {
+                            // Imported method resolution already selected this canonical identity and concrete
+                            // parameter header. Its provider declaration is not duplicated in the consumer's local
+                            // binding table, so the selected call-site header remains the replay authority.
+                            return Ok(None);
+                        };
+                        binding
+                    }
                     _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
                 };
                 if binding.is_async || binding.params != call.parameters {
@@ -338,7 +356,14 @@ impl TypeCheckInfo {
                     contract.result_source.is_none()
                         && contract.modes.iter().all(|mode| mode.component.parameter.is_some())
                 })
-                && super::source::calls::conditional_result(result);
+                && super::source::calls::conditional_result(
+                    result,
+                    self.declarations
+                        .callable_type_params
+                        .get(call.owner.as_ref().unwrap_or(&call.callee))
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                );
             if invocation.result_requirement.as_ref() != required.then_some(result) {
                 return Err("invocation has missing or mismatched generic result requirement");
             }
@@ -359,16 +384,11 @@ impl TypeCheckInfo {
             let contract = self.selected_input_contract(call)?;
             if matches!(call.kind, InputCallKind::Ordinary | InputCallKind::Indirect) {
                 for (slot, parameter) in call.parameters.iter().enumerate() {
-                    // A closure local passed to a function-typed parameter: checking admits a capturing closure only
-                    // where its callee calls it and keeps it no longer.
-                    let closure = matches!(parameter.ty, crate::symbols::ResolvedType::Function(..))
-                        && invocation
-                            .arguments
-                            .iter()
-                            .find(|argument| argument.slot == slot)
-                            .is_some_and(|argument| closure_argument(graph, argument));
-                    if parameter.is_mut || !(closure || self.checked_input_copy_value(owner, &parameter.ty)?) {
-                        return Err("ordinary invocation needs checked immutable Copy inputs");
+                    let Some(argument) = invocation.arguments.iter().find(|argument| argument.slot == slot) else {
+                        continue;
+                    };
+                    if parameter.is_mut && argument.access != incan_semantics_core::IncanInputAccess::Exclusive {
+                        return Err("ordinary mutable invocation needs checked exclusive input access");
                     }
                 }
             }
@@ -399,7 +419,12 @@ impl TypeCheckInfo {
                 call.kind != InputCallKind::Indirect && call.receiver.is_none(),
             )?;
             for argument in &invocation.arguments {
-                let access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
+                let mut access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
+                if access == incan_semantics_core::IncanInputAccess::Inferred && call.parameters[argument.slot].is_mut {
+                    access = incan_semantics_core::IncanInputAccess::Exclusive;
+                } else if access == incan_semantics_core::IncanInputAccess::Inferred && argument.loan.is_some() {
+                    access = incan_semantics_core::IncanInputAccess::Shared;
+                }
                 if argument.access != access {
                     return Err("invocation argument access differs from the selected parameter");
                 }

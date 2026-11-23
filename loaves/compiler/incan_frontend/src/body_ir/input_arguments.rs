@@ -22,6 +22,16 @@ impl BodyBuilder<'_, '_> {
         if !self.type_info.has_explicit_input_invocation(span, target) {
             return None;
         }
+        if let Some(target) = target
+            && self
+                .input_body
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .is_some_and(|proof| proof.is_carrier_call(hir_span(span), target))
+        {
+            return None;
+        }
         Some((|| {
             let target = target.ok_or("explicit input call has no canonical target")?;
             let proof = self
@@ -50,6 +60,16 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<Result<(bir::Operand, Vec<bir::ArgumentElement>, bir::ArgumentBinding), String>> {
         if !self.type_info.has_explicit_input_invocation(span, target) {
+            return None;
+        }
+        if let Some(target) = target
+            && self
+                .input_body
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .is_some_and(|proof| proof.is_carrier_call(hir_span(span), target))
+        {
             return None;
         }
         Some((|| {

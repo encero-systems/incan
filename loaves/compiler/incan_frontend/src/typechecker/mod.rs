@@ -483,6 +483,8 @@ struct AnnotationOwner {
 /// them. Type-parameter positions never grant a declaration-owned nominal identity to a caller's substitution.
 #[derive(Clone, Debug)]
 struct DeclarationCallableTypes {
+    /// Type parameters declared by the callable and its nominal owner, in source scope order.
+    type_params: Vec<String>,
     /// Parameter templates in declaration order, including their source binding labels.
     params: Vec<CallableParam>,
     /// Original return template before call-site substitution.

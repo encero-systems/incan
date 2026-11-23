@@ -307,6 +307,13 @@ impl CheckedInputBody<'_> {
             }
             Expr::Paren(inner) => self.call_place(inner),
             Expr::Field(base, _) => {
+                if self
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                {
+                    return Ok(None);
+                }
                 let (mut place, through) = self.call_place(base)?.ok_or("input field has no stored owner")?;
                 let field = self
                     .facts
