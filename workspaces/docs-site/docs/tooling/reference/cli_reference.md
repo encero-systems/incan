@@ -416,7 +416,7 @@ A duration is a nonnegative integer of at most twelve digits followed by `s`, `m
 
 ## `incan inspect codegraph`
 
-Graph options, schemas, queries, context packs and snapshot checks are specified in [Agent context CLI and MCP](agent_context_cli.md). `--profile NAME` selects the artifact profile as specified under [Unit options](#unit-options). `--strict` refuses a graph containing unchecked units. The default returns available facts and warns about unchecked units.
+Graph options, schemas, queries, context packs and snapshot checks are specified in [Agent context CLI and MCP](agent_context_cli.md). `--profile NAME` selects the artifact profile as specified under [Unit options](#unit-options). A plain raw export requires each selected unit to pass checking by default. `--strict` selects the same checked mode explicitly. `--allow-errors` returns available facts and warns about unchecked units.
 
 ## `incan inspect bindings`
 

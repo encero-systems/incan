@@ -8,7 +8,7 @@ This page specifies `incan inspect codegraph` retrieval, context packing and sna
 incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict | --allow-errors] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan inspect codegraph PATH --query KIND TERM [--profile NAME] [--limit N] [--format json|jsonl] [--strict] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan inspect codegraph PATH --task TASK [--profile NAME] [--budget N] [--format compact|json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
-incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict | --allow-errors] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan mcp PATH [--profile NAME]
 ```
 
@@ -22,8 +22,8 @@ incan mcp PATH [--profile NAME]
 | `--task TASK` | Nonempty string | Declaration ID, name, qualified name or free task text. Cannot be combined with `--query` or `--stale`. |
 | `--budget N` | Integer, default `8000`, range `128..1000000` | Conservative token upper bound: the complete UTF-8 response, including its final newline, must fit in this many bytes. The MCP JSON-RPC envelope is outside this bound. |
 | `--stale SNAPSHOT` | String beginning `snapshot:` | Returns a JSON object with `record: "snapshot_status"`, `expected`, the current `snapshot_id` and Boolean `stale`. A stale snapshot is a successful status response. It takes precedence over a simultaneous query. |
-| `--strict` | Boolean, default `false` | Refuses the export if any selected unit fails checking; reports its diagnostics. The default exports available facts and warns about unchecked units on stderr. |
-| `--allow-errors` | Boolean, default `false` | 0.5.1's spelling of the default export, which keeps the facts of units that fail checking. Combined with `--strict` it exits `1` with `--allow-errors cannot be combined with --strict`. |
+| `--strict` | Boolean flag | Refuses if any selected unit fails checking and reports its diagnostics. A plain raw export uses this mode by default. |
+| `--allow-errors` | Boolean flag | Selects a tolerant raw export that keeps available facts and warns about unchecked units on stderr. Combined with `--strict` it exits `1` with `--allow-errors cannot be combined with --strict`. |
 | `--risk` | Boolean, default `false` | Adds optional local git observations. Missing git history contributes no risk records. |
 | `--substitute NAME=DIR` | Repeatable dependency mapping | Replaces the local dependency of package `NAME` with the project at `DIR` wherever the dependency graph reaches it. |
 | `--features A,B`, `--no-default-features`, `--all-features` | Root-package feature selection, as for [unit commands](cli_reference.md#unit-options); default features | The inspected unit and its dependencies are checked with this selection. A source outside any project refuses it. Each selection has its own export. |
@@ -37,6 +37,8 @@ The graph stream begins with its header. `schema_version` is `9`; the additional
 `declaration_digests` maps each proved declaration key to its exported `semantic_digest`, or JSON `null` when unavailable. Identity and meaning remain separate. A missing digest authorizes no semantic reuse; this includes Rust declarations for which the producer has no checked digest.
 
 `snapshot_id` is content-addressed over the selected graph artifacts, source-backed input trees, selection and mode. Source byte changes, including equal-size comment edits, invalidate source-backed snapshots. A published dependency graph is bound to its publication; editing unbuilt source behind that publication does not silently replace its facts. Snapshots do not assert that every selected unit checked.
+
+The plain `incan inspect codegraph PATH --stale SNAPSHOT` command recognizes an exact match to either current export mode's snapshot ID. On a miss, it reports the current tolerant snapshot ID and sets `stale` to `true`. `--strict --stale SNAPSHOT` and `--allow-errors --stale SNAPSHOT` compare only the selected mode. If a selected unit fails checking, the plain command reports a previously checked snapshot as stale and warns about the unchecked unit.
 
 An answer is kept in the bakery as a page, a file under `pages/` named by the identity of the request: the running Oven program, the installed compiler, the resolved path and every graph option. The page holds the snapshot the answer computed, if any, the status metadata of every file and directory its preparation observed, and, for a Rust project, an observation of each environment variable rustc's dependency information names, which records no value. A repeat of the request whose inputs all have the same metadata and whose variables are unchanged is answered from the page: it prepares no unit, runs no compiler and reads or hashes no source. A changed, added, removed or recently changed input, a changed variable, another compiler or another Oven prepares the request again and replaces the page. A page is a cache, replaced by rename without a durable sync. `incan mcp` requests for the same selection read the same pages. A `--risk` answer and an answer with an unchecked unit are not paged. Inputs rustc does not report in its dependency information, such as a file or variable a procedural macro reads, are not observed; checked Rust exports have the same limit.
 
