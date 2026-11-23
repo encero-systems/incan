@@ -57,6 +57,13 @@ pub const DIGEST_COMPANION: str = ".digest"
 pub const FRAME_LIST: str = "frames.list"
 
 
+pub model PreparedUnitCompletion:
+    """The compiler exit and the exact selection digest of a successful prepared request."""
+
+    pub code: i32
+    pub plan_module_selection_digest: Option[str] = None
+
+
 pub def compile_prepared_unit(
     unit: UnitDescription,
     toolchain: Toolchain,
@@ -68,6 +75,24 @@ pub def compile_prepared_unit(
     records_directory: Option[Path] = None,
     checked_warnings: Option[Path] = None,
 ) -> Result[i32, str]:
+    """Compile one prepared unit and return its status to callers that only need the exit code."""
+    completed = compile_prepared_unit_completion(
+        unit, toolchain, output, known_key, reason, development, graph_body_records, records_directory, checked_warnings,
+    )?
+    return Ok(completed.code)
+
+
+pub def compile_prepared_unit_completion(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    known_key: Option[Key] = None,
+    reason: str = "no stored build",
+    development: bool = false,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
+    records_directory: Option[Path] = None,
+    checked_warnings: Option[Path] = None,
+) -> Result[PreparedUnitCompletion, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
 
@@ -129,9 +154,11 @@ pub def compile_prepared_unit(
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
     code = compile_or_replay(unit, toolchain, invocation, native, bakery()?, key, reason, checked_warnings)?
-    if code == 0 and executable:
+    if code != 0:
+        return Ok(PreparedUnitCompletion(code=code))
+    if executable:
         normalize_release_executable(output, unit.profile)?
-    return Ok(code)
+    return Ok(PreparedUnitCompletion(code=0, plan_module_selection_digest=plan_selection_digest))
 
 
 pub def selected_plan_module_digest(records: Borrowed[list[SelectedBodyPage]]) -> Result[Option[str], str]:
