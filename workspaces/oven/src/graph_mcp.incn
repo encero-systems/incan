@@ -176,11 +176,8 @@ model GraphServer:
     def record_feedback(mut self, arguments: JsonValue) -> Result[str, str]:
         """Accept explicit feedback only for a declaration proved in the client's still-current graph snapshot."""
         prepared = prepare_inspection(graph_options(self.graph_command() + ["--format", "json"])?)?
-        snapshot = prepared.snapshot()?
-        if text(arguments, "snapshot") != snapshot:
-            return Err("feedback snapshot is stale; read the current graph summary")
-        document = prepared.respond()?
-        records = parse_records(document)?
+        answer = prepared.feedback_answer(text(arguments, "snapshot"))?
+        records = parse_records(answer.text)?
         mut keys: list[str] = []
         wanted = text(arguments, "declaration")
         for record in records:
@@ -192,7 +189,7 @@ model GraphServer:
         if len(keys) != 1:
             return Err("feedback requires a unique proved declaration ID, stable_key or qualified label")
         ttl = nested(arguments, "ttl_seconds").expect_int().map_err((_) => "ttl_seconds must be an integer")?
-        retained = self.memory.record(text(arguments, "task"), keys[0], snapshot, ttl)?
+        retained = self.memory.record(text(arguments, "task"), keys[0], answer.snapshot, ttl)?
         return retained.to_json().map_err((error) => error.message())
 
     def summary(self) -> Result[str, str]:

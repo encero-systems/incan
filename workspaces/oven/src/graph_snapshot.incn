@@ -20,11 +20,23 @@ pub def current_status_snapshot(
     checked_available: bool,
 ) -> Result[str, str]:
     """Match either available export mode for bare CLI status, using one authenticated graph inventory."""
-    parts = snapshot_parts(units, root)?
-    tolerant = snapshot_digest(root, false, parts)?
-    if tolerant != expected and checked_available and snapshot_digest(root, true, parts)? == expected:
+    tolerant, matched = current_snapshot_match(units, root, expected, checked_available)?
+    if matched:
         return Ok(expected)
     return Ok(tolerant)
+
+
+pub def current_snapshot_match(
+    units: list[GraphUnit],
+    root: str,
+    expected: str,
+    checked_available: bool,
+) -> Result[tuple[str, bool], str]:
+    """Return the tolerant snapshot and whether either available export mode matches the claimed identity."""
+    parts = snapshot_parts(units, root)?
+    tolerant = snapshot_digest(root, false, parts)?
+    matched = tolerant == expected or (checked_available and snapshot_digest(root, true, parts)? == expected)
+    return Ok((tolerant, matched))
 
 
 def snapshot_digest(root: str, strict: bool, parts: list[str]) -> Result[str, str]:
