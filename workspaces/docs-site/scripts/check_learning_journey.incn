@@ -126,8 +126,11 @@ def check_readme_installation(site: Path, docs: Path, mut errors: list[str]) -> 
     """Keep the README's archive and Rust prerequisites aligned with the canonical install snippet."""
     readme = read(site.parent().parent().joinpath("README.md"))?
     snippet = read(docs.joinpath("_snippets/learning/install_toolchain.md"))?
-    command = "incan toolchain install "
-    require(errors, command in readme and command in snippet, "README and install guide must both install an archive")
+    archive_command = "(?m)^(incan toolchain install [^\r\n]+)$"
+    readme_commands = captures(archive_command, readme)?
+    guide_commands = captures(archive_command, snippet)?
+    require(errors, len(guide_commands) == 1 and readme_commands == guide_commands,
+        "README and install guide must use the same archive installation command")
     pins = captures("(?m)^rustup toolchain install ([0-9.]+) --profile minimal --component rustc-dev$", snippet)?
     require(errors, len(pins) == 1, "install guide must name one pinned Rust release with rustc-dev")
     for pin in pins:
