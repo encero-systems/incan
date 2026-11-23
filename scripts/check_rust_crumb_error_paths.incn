@@ -1,0 +1,64 @@
+"""Count direct Rust panic helpers in the four Crumb codec sources under review."""
+
+from std.regex import Regex
+from check_support import read, repository_root, write_stderr
+
+const CRUMB: str = "loaves/stdlib/primitives/rust/src/crumb"
+
+
+def main() -> Result[None, str]:
+    """Require the scanner controls to pass before checking the audited Crumb sources."""
+    scan = rust_scan()?
+    verify_call_shapes(scan)?
+    root = repository_root()?
+    files = ["semantic.rs", "semantic_row_entry.rs", "semantic_row_request.rs", "semantic_row_set.rs"]
+    mut found: list[str] = []
+    for name in files:
+        path = f"{CRUMB}/{name}"
+        found.extend(call_sites(path, read(root.joinpath(path))?, scan)?)
+    if len(found) != 0:
+        write_stderr("\n".join(found) + "\n")
+        return Err(f"{len(found)} direct Rust panic-helper calls")
+    println("0 direct Rust panic-helper calls in four Crumb sources")
+    return Ok(None)
+
+
+def rust_scan() -> Result[Regex, str]:
+    """Recognize call sites along with the comment and literal forms used by these codec sources."""
+    quoted = "\"(?:\\\\.|[^\"\\\\])*\""
+    raw = "r(?:#\".*?\"#|\"[^\"]*\")"
+    character = "'(?:\\\\.|[^'\\\\])'"
+    comments = "//[^\\n]*|/\\*.*?\\*/"
+    calls = f"\\.\\s*(?:unwrap\\s*\\(\\s*\\)|expect\\s*\\(\\s*{quoted})"
+    return Regex(f"(?s){comments}|{raw}|{quoted}|{character}|{calls}").map_err((error) => error.message())
+
+
+def call_sites(path: str, source: str, scan: Borrowed[Regex]) -> Result[list[str], str]:
+    """Return each matched method call's source location, including multiple calls on one line."""
+    encoded = source.encode("utf-8")
+    mut sites: list[str] = []
+    for lexeme in scan.find_iter(source):
+        token = lexeme.as_str()
+        if not token.startswith("."):
+            continue
+        prefix = encoded[:lexeme.start()].decode("utf-8", "strict").map_err((_) => f"invalid UTF-8 before a call in {path}")?
+        preceding = prefix.split("\n")
+        line = len(preceding)
+        column = len(preceding[-1]) + 1
+        method = token.split("(")[0].strip()
+        sites.append(f"{path}:{line}:{column} {method}")
+    return Ok(sites)
+
+
+def verify_call_shapes(scan: Borrowed[Regex]) -> Result[None, str]:
+    """Exercise a continued call, two separate calls on one line, and literal or comment controls."""
+    control = """value
+    .expect("continued")
+value.expect("one").expect("two");
+// value.unwrap()
+/* value.expect("comment") */
+let text = r#".expect("raw")"#;
+"""
+    expected = ["control:2:5 .expect", "control:3:6 .expect", "control:3:20 .expect"]
+    assert call_sites("control", control, scan)? == expected
+    return Ok(None)
