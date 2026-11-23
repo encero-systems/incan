@@ -1,6 +1,6 @@
 """Ranked compiler graph records publish their value, receipt and both edge directions atomically."""
 
-from compiler_graph_record_fixtures import family_key, key, request, required
+from compiler_graph_record_fixtures import count_prefix, family_key, key, record_request, request, required
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 import compiler_source_projection
@@ -1185,11 +1185,6 @@ def publish_owner_pair(
     return Ok(final.snapshot)
 
 
-def record_request(key: RecordKey) -> RecordRequest:
-    """Read one complete logical record through its canonical field selection."""
-    return RecordRequest(key=key, selection=RecordSelection.Field("value"))
-
-
 def projected_owner(
     projection: compiler_source_projection.SourceProjection,
     owner: str,
@@ -1250,15 +1245,6 @@ def witnessed_receipt() -> ReadReceipt:
         operations=4,
         response_bytes=2,
     )
-
-
-def count_prefix(values: list[str], prefix: str) -> int:
-    """Count selected store keys in one engine-owned graph family."""
-    mut count = 0
-    for value in values:
-        if value.startswith(prefix):
-            count += 1
-    return count
 
 
 def verify_documentation_changes_no_record(
