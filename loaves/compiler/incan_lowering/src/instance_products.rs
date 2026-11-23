@@ -11,12 +11,17 @@ use incan_mir_plan_native::{
     ExternalFunction, Function, UnitNominals, decode_instance_request, encode_instance_request,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule, CallableParamDefault};
+use incan_semantics_core::semantic_digest::semantic_digest;
 use incan_semantics_core::stable_identity::StableDeclarationId;
 use incan_semantics_core::stable_identity::source_signature::SourceSignatureContext;
-use incan_semantics_core::{CompilerNodeId, IncanCallableParam, SymbolOrigin, encode_incan_symbol_identity};
+use incan_semantics_core::{
+    CanonicalSymbolId, CompilerNodeId, IncanCallableParam, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+    decode_incan_symbol_identity, encode_incan_symbol_identity,
+};
 use internal_models_native::compiler_records::RUNTIME_INSTANCE_IDENTITY;
 use sha2::{Digest, Sha256};
 
+use crate::body_index::BodyIndex;
 use crate::checked_values::location;
 use crate::compiler_record_adapters::{checked_type, checked_type_matches_native, native_checked_type};
 use crate::nominal_records::retain_named_scalar;
@@ -27,6 +32,8 @@ use crate::type_parameters::{Instance, request_instance};
 
 /// Separates a closed instance's request identity from its generic body's checked witness in the product key.
 const INSTANCE_FUNCTION: &str = "incan.instance-function/2";
+/// A direct member request uses the checked physical method identity and its concrete receiver frame.
+const MEMBER_REQUEST: &str = "incan.member-instance-request/1:";
 /// The toolchain Loaf whose generics lowering instantiates for list and copy operations.
 const RUNTIME_LIBRARY: &str = "incan_native_runtime";
 /// Stands in for a checker witness in a runtime generic's instance key; its checked meaning is keyed beside it.
@@ -64,19 +71,58 @@ pub type LoweredInstance<'a> = (&'a Function, &'a [ExternalFunction], &'a [Funct
 /// A closed instance's product key inputs, generic positions and event identity.
 type InstanceKey = (Vec<String>, Vec<(i64, i64)>, String);
 
-/// Name one request without source positions; a generic or argument only a position names is refused.
-///
-/// A member's request is refused too. Its instance is named for the receiver it was requested on, such as each model
-/// that adopts one trait default method, and this identity names no receiver, so a restored request could select
-/// another receiver's instance.
+/// Encode one generic request using the declaration and frame selected by lowering.
 pub fn request_identity(request: &Instance) -> Result<Vec<u8>, String> {
-    if !graph_owner(&request.body) {
-        return Err("generic instance of a member is named for its receiver".into());
+    let declaration = request_declaration(&request.body)?;
+    encode_named_request(request, &declaration)
+}
+
+/// Free declarations keep their signed stable identities. A member's native symbol includes its declaration
+/// coordinates, and its closed receiver can distinguish several frames of that one method.
+fn request_declaration(body: &Body) -> Result<String, String> {
+    if graph_owner(body) {
+        return signed_template(body)
+            .map(|stable| stable.render_compact())
+            .ok_or_else(|| "generic instance has no checked declaration signature".to_owned());
     }
-    let Some(stable) = signed_template(&request.body) else {
-        return Err("generic instance has no checked declaration signature".into());
+    let Some((canonical, frame)) = member_request_frame(body) else {
+        return Err("generic instance of a member is named for its receiver".into());
     };
-    let declaration = stable.render_compact();
+    let symbol = encode_incan_symbol_identity(canonical);
+    Ok(format!("{MEMBER_REQUEST}{symbol}|{frame}"))
+}
+
+/// Distinguish concrete frames without inspecting or copying their statements. Adopter-specific and generated
+/// templates require additional authority and keep their explicit refusal.
+fn member_request_frame(body: &Body) -> Option<(&CanonicalSymbolId, String)> {
+    let canonical = body.canonical.as_ref()?;
+    if canonical.namespace != SymbolNamespace::Member
+        || canonical.kind != SemanticSourceTargetKind::Method
+        || canonical.declaration_span.expansion.is_some()
+        || body.trait_default_instantiation.is_some()
+        || !matches!(
+            &canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
+    {
+        return None;
+    }
+    let frame = semantic_digest(&(
+        &body.nominal_instantiation,
+        &body.type_parameters,
+        &body.params,
+        &body.return_type,
+        &body.locals,
+        &body.checked_input_profile,
+        &body.returned_view,
+        body.is_async,
+    ))
+    .ok()?;
+    Some((canonical, frame))
+}
+
+/// Encode the selected template with its closed type arguments, callable storage and execution role.
+fn encode_named_request(request: &Instance, declaration: &str) -> Result<Vec<u8>, String> {
     let mut arguments = Vec::with_capacity(request.arguments.len());
     for native in &request.arguments {
         let argument = checked_type(native, "", "");
@@ -86,31 +132,70 @@ pub fn request_identity(request: &Instance) -> Result<Vec<u8>, String> {
         arguments.push(argument);
     }
     encode_instance_request(
-        &declaration,
+        declaration,
         &arguments,
         &request.owned_callable_slots,
         request.original_callable,
     )
 }
 
-/// Encode the requests a lowering made, in request order, for the product that carries them.
-pub fn encode_requests(requests: &[Instance]) -> Result<Vec<Vec<u8>>, String> {
-    requests.iter().map(request_identity).collect()
+/// Encode the requests a lowering made, retaining only member frames that can be identified uniquely again.
+pub fn encode_requests(
+    requests: &[Instance],
+    context: &BodyIrModule,
+    body_indices: &BodyIndex,
+) -> Result<Vec<Vec<u8>>, String> {
+    requests
+        .iter()
+        .map(|request| {
+            let declaration = request_declaration(&request.body)?;
+            if let Some(member) = declaration.strip_prefix(MEMBER_REQUEST) {
+                let selected = member_position(member, context, body_indices)
+                    .ok_or("generic member has no unique checked receiver frame")?;
+                if context.bodies[selected] != request.body {
+                    return Err("generic member request selected a different receiver frame".into());
+                }
+            }
+            encode_named_request(request, &declaration)
+        })
+        .collect()
 }
 
-/// Rebuild a product's requests against this unit's generic templates; a generic no longer present is a miss.
-pub fn restore_requests(encoded: &[Vec<u8>], context: &BodyIrModule) -> Option<Vec<Instance>> {
+/// Rebuild a product's requests against this unit's checked generic templates. A missing or ambiguous frame misses.
+pub fn restore_requests(
+    encoded: &[Vec<u8>],
+    context: &BodyIrModule,
+    body_indices: &BodyIndex,
+) -> Option<Vec<Instance>> {
     let mut restored = Vec::new();
     for row in encoded {
         let (declaration, authored, slots, original) = decode_instance_request(row).ok()?;
+        let position = match declaration.strip_prefix(MEMBER_REQUEST) {
+            Some(member) => member_position(member, context, body_indices)?,
+            None => template_position(context, &declaration)?,
+        };
         let mut arguments = Vec::with_capacity(authored.len());
         for ty in &authored {
             arguments.push(native_checked_type(ty).ok()?);
         }
-        let position = template_position(context, &declaration)?;
         request_instance(&mut restored, &context.bodies[position], arguments, slots, original);
     }
     Some(restored)
+}
+
+/// Resolve only the checked candidates of the encoded source declaration, with one exact receiver match.
+fn member_position(member: &str, context: &BodyIrModule, body_indices: &BodyIndex) -> Option<usize> {
+    let (symbol, frame) = member.split_once('|')?;
+    let canonical = decode_incan_symbol_identity(symbol).ok()??;
+    let mut matching = body_indices.positions(&canonical).iter().copied().filter(|position| {
+        context
+            .bodies
+            .get(*position)
+            .and_then(member_request_frame)
+            .is_some_and(|(current, identity)| *current == canonical && identity == frame)
+    });
+    let position = matching.next()?;
+    matching.next().is_none().then_some(position)
 }
 
 /// Read a closed instance's product when its generic body and request identity are unchanged.
@@ -121,6 +206,7 @@ pub fn restore_requests(encoded: &[Vec<u8>], context: &BodyIrModule) -> Option<V
 pub fn reused_instance(
     products: &InstanceProducts,
     context: &BodyIrModule,
+    body_indices: &BodyIndex,
     request: &Instance,
     body: &Body,
     frame: &InstanceSource<'_>,
@@ -146,7 +232,7 @@ pub fn reused_instance(
     ) else {
         return Ok(None);
     };
-    let Some(requests) = restore_requests(&encoded, context) else {
+    let Some(requests) = restore_requests(&encoded, context, body_indices) else {
         return Ok(None);
     };
     // 3. Only the first pass that reads the product counts it.
@@ -179,6 +265,7 @@ pub fn reused_instance(
 pub fn retain_instance_product(
     products: &InstanceProducts,
     context: &BodyIrModule,
+    body_indices: &BodyIndex,
     request: &Instance,
     (function, runtime, frames, pending): LoweredInstance<'_>,
     frame: &InstanceSource<'_>,
@@ -194,7 +281,7 @@ pub fn retain_instance_product(
         );
     };
     frame_product("lowered", "instance", &function.name);
-    let encoded = match encode_requests(pending) {
+    let encoded = match encode_requests(pending, context, body_indices) {
         Ok(encoded) => encoded,
         Err(reason) => return report_scalar_refusal(report, &identity, &function.name, &reason),
     };

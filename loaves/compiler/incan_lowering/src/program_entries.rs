@@ -305,7 +305,7 @@ fn lower_ordinary_frame(
             Some(context),
             Some(&current),
             positions,
-        ) && let Some(requests) = restore_requests(&encoded, context)
+        ) && let Some(requests) = restore_requests(&encoded, context, &program.body_indices)
         {
             report_scalar(
                 keyed.report,
@@ -355,48 +355,43 @@ fn lower_ordinary_frame(
     )?;
     finish_producer(attempt, "produced");
     let (function, runtime, pending, synthesized) = &lowered;
-    let mut kept = false;
-    match encode_requests(pending) {
-        Ok(requests) => {
-            if let (Some(directory), Some((witness, positions))) = (keyed.directory, &inputs) {
-                sync_carriers(&mut keyed.nominals, intrinsics);
-                // The ordinary compiler already has its complete lowered function. Record the optional product's
-                // refusal without changing that ordinary verdict.
-                match retain_named_scalar(
-                    directory,
-                    witness,
-                    function,
-                    runtime,
-                    &keyed.nominals,
-                    positions,
-                    synthesized,
-                    &requests,
-                ) {
-                    Ok(references) => {
-                        kept = true;
-                        let event = owner.event(
-                            directory,
-                            witness,
-                            &function.name,
-                            false,
-                            runtime.len(),
-                            &references,
-                            positions,
-                        );
-                        report_scalar(keyed.report, &event)?;
-                    }
-                    Err(reason) => report_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason)?,
-                }
+    if let (Some(directory), Some((witness, positions))) = (keyed.directory, &inputs) {
+        let retained = encode_requests(pending, context, &program.body_indices).and_then(|requests| {
+            sync_carriers(&mut keyed.nominals, intrinsics);
+            // A product refusal leaves the already complete ordinary plan available to the compiler.
+            retain_named_scalar(
+                directory,
+                witness,
+                function,
+                runtime,
+                &keyed.nominals,
+                positions,
+                synthesized,
+                &requests,
+            )
+        });
+        let outcome = match retained {
+            Ok(references) => {
+                report_scalar(
+                    keyed.report,
+                    &owner.event(
+                        directory,
+                        witness,
+                        &function.name,
+                        false,
+                        runtime.len(),
+                        &references,
+                        positions,
+                    ),
+                )?;
+                "lowered"
             }
-        }
-        Err(reason) => {
-            if inputs.is_some() {
+            Err(reason) => {
                 report_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason)?;
+                "unkept"
             }
-        }
-    }
-    if inputs.is_some() {
-        frame_product(if kept { "lowered" } else { "unkept" }, "ordinary", &frame_label(body));
+        };
+        frame_product(outcome, "ordinary", &frame_label(body));
     }
     Ok(lowered)
 }
@@ -556,7 +551,7 @@ fn restore_admitted(
     let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked, context) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
-    let Some(requests) = restore_requests(encoded, context) else {
+    let Some(requests) = restore_requests(encoded, context, &program.body_indices) else {
         return Admission::Missed("a generic instance it requests is gone");
     };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();
