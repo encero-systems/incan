@@ -85,7 +85,7 @@ def test_make_checks_every_reference_page() -> Result[None, str]:
 
 def invokes_full_reference_scan(commands: str) -> bool:
     """Identify the executable full-scan command in a Make dry-run transcript."""
-    return FULL_REFERENCE_SCAN in commands
+    return FULL_REFERENCE_SCAN in [line.strip() for line in commands.split("\n")]
 
 
 def findings(text: str, page: str = "language/reference/sample.md") -> Result[list[str], str]:

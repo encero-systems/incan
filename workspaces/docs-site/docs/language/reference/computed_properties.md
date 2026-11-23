@@ -32,7 +32,7 @@ Ordinary dot access evaluates the property body on every read. Call syntax is a 
 
 ```incan
 value = account.dollars    # accepted
-value = account.dollars()  # refused: property is read with dot access
+value = account.dollars()  # refused: property is read with dot access (INCAN-T0001)
 ```
 
 ## Traits
