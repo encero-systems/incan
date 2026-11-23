@@ -28,20 +28,18 @@ pub from crate.graph._read import (
 )
 
 
-@made_private(since="0.6", message="Graph storage records are private; use node ids and graph operations", replacement=NodeId)
-model GraphNode[T]:
-    """Former public node-storage record retained only as a migration tombstone."""
+pub model GraphNode[T]:
+    """Standalone node record with a graph-local identifier, payload, and active flag."""
 
-    id: NodeId
-    payload: T
-    active: bool
+    pub id: NodeId
+    pub payload: T
+    pub active: bool
 
 
-@made_private(since="0.6", message="Graph storage records are private; use edge ids and graph operations", replacement=EdgeId)
-model GraphEdge:
-    """Former public edge-storage record retained only as a migration tombstone."""
+pub model GraphEdge:
+    """Standalone directed edge record with graph-local identifiers and an active flag."""
 
-    id: EdgeId
-    from_: NodeId
-    to: NodeId
-    active: bool
+    pub id: EdgeId
+    pub from_: NodeId
+    pub to: NodeId
+    pub active: bool

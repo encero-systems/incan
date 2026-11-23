@@ -20,6 +20,8 @@ from std.graph import Dag, DiGraph, GraphPageBudget, GraphRead, MultiDiGraph, Re
 | `RelationGraph[N, E]` | Mutable directed graph with typed node and edge payloads, parallel edges, and scoped identities. |
 | `NodeId` | Opaque node handle scoped to the graph instance that created it. |
 | `EdgeId` | Opaque edge handle scoped to the multigraph instance that created it. |
+| `GraphNode[T]` | Standalone node record with a graph-local identifier, payload, and active flag. |
+| `GraphEdge` | Standalone directed edge record with graph-local identifiers and an active flag. |
 | `ScopedNodeId` | Unforgeable node identity carrying the graph instance that issued it. |
 | `ScopedEdgeId` | Unforgeable edge identity carrying the graph instance that issued it. |
 | `GraphError` | Error value returned when graph operations encounter unknown ids, duplicate edges, cycles, or missing edges. |
@@ -45,6 +47,15 @@ from std.graph import Dag, DiGraph, GraphPageBudget, GraphRead, MultiDiGraph, Re
 | `id.to_int()` | `int` | Runtime numeric representation for diagnostics, storage, or display. |
 
 `NodeId` and `EdgeId` values are graph-local handles. Do not reuse ids across graph instances unless the surrounding data model explicitly tracks the graph they came from.
+
+## `GraphNode[T]` and `GraphEdge`
+
+| Constructor | Public fields |
+| --- | --- |
+| `GraphNode(id: NodeId, payload: T, active: bool) -> GraphNode[T]` | `id: NodeId`, `payload: T`, `active: bool` |
+| `GraphEdge(id: EdgeId, from_: NodeId, to: NodeId, active: bool) -> GraphEdge` | `id: EdgeId`, `from_: NodeId`, `to: NodeId`, `active: bool` |
+
+All fields are required. `from_` is the source node and `to` is the target node. Constructing or changing these values does not add, remove, or modify members of a graph.
 
 ## Scoped identities
 
@@ -220,23 +231,6 @@ Construct a directed multigraph with `MultiDiGraph[T]()`.
 | `g.topological_order()` | `Result[list[NodeId], GraphError]` | Return a topological order, or `Err(GraphError)` when the graph contains a cycle. |
 
 Parallel edges are distinct when their `EdgeId` values differ, even when they connect the same source and target node ids. `edges_between` returns live edge ids in edge-insertion order. `successors` and `predecessors` deduplicate parallel relationships and return distinct neighbors in ascending `NodeId` order.
-
-## Sealed storage migration
-
-Graph containers own indexed storage whose physical representation is private. Code that previously inspected that representation must use the supported operations below.
-
-| Private surface | Replacement |
-| --- | --- |
-| `DiGraph.next_node_id`, `DiGraph.nodes` | `active_node_ids()` |
-| `DiGraph.next_edge_id`, `DiGraph.edges` | `active_edge_ids()` |
-| `Dag.graph` | `Dag` methods, including `contains_edge()` and `active_node_ids()` |
-| `MultiDiGraph.graph` | `MultiDiGraph` methods, including `active_edge_ids()` |
-| `GraphNode`, `GraphEdge` | `NodeId`, `EdgeId`, and graph lookup methods |
-| `DiGraph.insert_edge()` | `add_edge()` or `MultiDiGraph.add_edge()` |
-| `DiGraph.node_index()` | `contains_node()` and `node_payload()` |
-| `DiGraph.edge_index()` | `active_edge_ids()` |
-
-The migration diagnostics name these replacements. They are refusals, not deprecation warnings: direct access could bypass acyclicity, parallel-edge, lifetime, or compaction invariants.
 
 ## Error cases
 
