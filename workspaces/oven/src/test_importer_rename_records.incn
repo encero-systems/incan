@@ -1,6 +1,8 @@
 """An importer rename re-checks only its direct signature reader: ranked errors, checked values, frontier order, ranked
 completions and statement checks of the real Oven run."""
 
+from rust::std::process import Command
+from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
 from std.json import parse
@@ -88,6 +90,99 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     rank_diagnostic = f"misranked importer records: warm {warm_ranks:?}, fresh {cold_ranks:?}"
     assert len(warm_ranks) == 0 and len(cold_ranks) == 0, rank_diagnostic
     return Ok(None)
+
+
+pub def test_importer_rename_rebuilds_after_a_nominal_reader_declines_ranked_checking() -> Result[None, str]:
+    """A renamed parameter with an existing method caller rebuilds the importer and preserves its behavior."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("importer")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    fixture = Path("../../examples/pro/codegraph_importer")
+    fixture.joinpath("src").copy(project.joinpath("src"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("tests").copy(project.joinpath("tests"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("loaf.toml").copy(project.joinpath("loaf.toml"), false, false).map_err((error) => error.message())?
+    importer = project.joinpath("src/importer.incn")
+    seed = importer_nominal_reader_source(project, importer)?
+    input = root.joinpath("snapshot.jsonl")
+    write(input, '{"record":"header","schema_version":1,"mode":"strict","degraded":false}\n{"record":"file","degraded":false}\n')?
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    store = root.joinpath("store")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    cold = report_fixture_build(binary, project, store, Some(trace))?
+    assert proof_count(cold, "native_bakes")? == 1
+    executable = project.joinpath("target/incan/release/bin/codegraph_importer_experiment")
+    expected = importer_summary(executable, input)?
+    summary = parse(expected).map_err((error) => error.message())?
+    assert proof_count(summary, "schema_version")? == 1
+    assert proof_count(summary, "file_count")? == 1 and proof_count(summary, "fact_count")? == 1
+    assert importer_nominal_declines(trace)? == 0
+
+    edited = seed.replace("supported_schema(version: int)", "supported_schema(schema_version: int)").replace(
+        "return version >= 1 and version <= 9", "return schema_version >= 1 and schema_version <= 9",
+    )
+    assert edited != seed
+    write(importer, edited)?
+    warm_result = report_fixture_build(binary, project, store, Some(trace))
+    stopped = stop_example_engine(binary, store)
+    warm = warm_result?
+    stopped?
+    assert importer_nominal_declines(trace)? == 1, "the edited signature did not reach the prior GraphSummary method"
+    assert proof_count(warm, "native_bakes")? == 1
+    assert proof_count(warm, "plan_function_evaluations")? == proof_count(cold, "plan_function_evaluations")?
+    assert proof_count(warm, "plan_module_reuses")? == 0
+    assert importer_summary(executable, input)? == expected, "the importer output changed after the signature rename"
+    return Ok(None)
+
+
+def importer_nominal_reader_source(project: Path, importer: Path) -> Result[str, str]:
+    """Add a prior method caller and an unchanged independent module to the ordinary importer fixture."""
+    original = importer.read_text("utf-8", "strict").map_err((error) => error.message())?
+    increment = "        self.fact_count += 1\n"
+    assert len(original.split(increment)) == 2
+    seed = original.replace(increment, "        if not supported_schema(1):\n            return\n" + increment)
+    write(importer, seed)?
+    main = project.joinpath("src/main.incn")
+    text = main.read_text("utf-8", "strict").map_err((error) => error.message())?
+    imports = "from importer import GraphSummary, import_jsonl\n"
+    summary = "    println(json_stringify(summary))\n"
+    assert len(text.split(imports)) == 2 and len(text.split(summary)) == 2
+    write(main, text.replace(imports, imports + "from lone_gamma import lone_gamma_one, lone_gamma_two\n").replace(
+        summary, '    if lone_gamma_one(1) + lone_gamma_two(1) != 4:\n        return Err("independent fixture changed")\n' + summary,
+    ))?
+    write(project.joinpath("src/lone_gamma.incn"),
+        "pub def lone_gamma_one(value: int) -> int:\n    return value + 1\n\n\n" +
+        "pub def lone_gamma_two(value: int) -> int:\n    return value * 2\n",
+    )?
+    return Ok(seed)
+
+
+def importer_summary(executable: Path, input: Path) -> Result[str, str]:
+    """Execute the built importer against the exact same input on both requests."""
+    outcome = Command.new(executable.0).arg(input.0).output().map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"importer execution: status={outcome.status.code()} stderr={errors}")
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    return Ok(str(output))
+
+
+def importer_nominal_declines(trace: Path) -> Result[int, str]:
+    """Count the ordinary rank reader outcome for GraphSummary.add_fact."""
+    reader = "ranked-declined\tnominal-reader\tmember/method:importer::add_fact#in(model:importer::GraphSummary)[0]"
+    mut declines = 0
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-oven-"):
+            continue
+        contents = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in contents.split("\n"):
+            if "ranked-declined" not in line:
+                continue
+            key = parse(line).and_then((record) => record.require("key")).and_then((field) => field.expect_str()).map_err((error) => error.message())?
+            if key == reader:
+                declines += 1
+    return Ok(declines)
 
 
 def importer_rank_errors(store: Path) -> Result[list[str], str]:
