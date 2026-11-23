@@ -28,7 +28,7 @@ from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import matches, query, query_group, selection_keys, text
 from graph_identity import keyed, link_keys, declaration_digests
-from graph_snapshot import artifact_observations, snapshot_identity, snapshot_status
+from graph_snapshot import artifact_observations, current_status_snapshot, snapshot_identity, snapshot_status
 from graph_context import pack
 from graph_context_index import ContextIndex
 from graph_context_items import anchor_root
@@ -74,6 +74,8 @@ pub model GraphOptions:
     pub allow_errors: bool = false
     pub substitutes: Dict[str, str] = {}
     pub stale: str = ""
+    # A bare CLI status can match either current raw export mode.
+    pub match_export_modes: bool = false
     pub task: str = ""
     pub budget: int = 8000
     pub risk: bool = false
@@ -241,11 +243,15 @@ def budget_of(item: str) -> Result[int, str]:
     return Ok(budget)
 
 
-pub def inspect_codegraph(mut selected: GraphOptions) -> Result[i32, str]:
+pub def inspect_codegraph(selected: GraphOptions) -> Result[i32, str]:
     """Check ordinary exports by default and leave an empty query answer silent."""
-    if raw_export(selected) and not selected.risk and not selected.allow_errors:
-        selected.strict = true
-    rendered = selected_response(selected)?
+    mut request = selected
+    if not request.risk and not request.allow_errors:
+        if raw_export(request):
+            request.strict = true
+        elif request.stale != "" and request.query == "" and not request.strict:
+            request.match_export_modes = true
+    rendered = selected_response(request)?
     if rendered != "":
         println(rendered)
     return Ok(0)
@@ -375,6 +381,8 @@ def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result
     mut parts = [presentation_domain(selected), path.0, source.0, selected.profile, selected.format, selected.query]
     parts = parts + [selected.term]
     parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
+    if selected.match_export_modes:
+        parts.append("status:export-modes/1")
     parts = parts + [selected.task, str(selected.budget), ",".join(selected.request.features)]
     parts = parts + [str(selected.request.default_features), str(selected.request.all_features)]
     for name in sorted([name for name in selected.substitutes.keys()]):
@@ -488,7 +496,9 @@ def response(
     degraded = len(notes) > 0
     # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
     mut snapshot = ""
-    if needs_snapshot(selected):
+    if selected.match_export_modes:
+        snapshot = current_status_snapshot(paths, root, selected.stale, not degraded)?
+    elif needs_snapshot(selected):
         snapshot = snapshot_identity(paths, root, selected.strict)?
     trace(f"graph snapshot: {started.elapsed().as_millis()} ms")
     lookup = Instant.now()
