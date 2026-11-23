@@ -47,11 +47,14 @@ pub(crate) struct RustcHandoff {
     /// resolve against these texts, and the checking process's record of them ends with that process. Filled when
     /// the handoff is written; a compile in the checking process reads its own record.
     pub(crate) checked_sources: Vec<(PathBuf, String)>,
+    /// The request's captured authored bytes stay live until this native handoff completes.
+    pub(crate) captured_sources: Option<PathBuf>,
 }
 
 impl RustcHandoff {
     /// Run rustc, then write the test report and publish the Loaf; native-boundary failures remain retryable.
     pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
+        let _captured = crate::spans::captured_source_scope(self.captured_sources)?;
         crate::adapter::compile(
             self.plan,
             &self.crate_name,

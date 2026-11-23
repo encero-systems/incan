@@ -35,7 +35,7 @@ pub from home_paths import bakery
 from pub::incan_platform.trace import Operation
 from jec import begin as begin_work, record as record_work
 from json_fields import required_text
-from observation import SETTLE_SECONDS, file_metadata, observe, settled_since, trace
+from observation import file_metadata, observe, trace
 from publication import publish_binary
 from unit_publication import record_path, record_verified_payload, source_origins
 from storage_admission import extend, release, reserve, tree_bytes
@@ -141,29 +141,30 @@ def payload_current(store: Path, file: FactFile) -> bool:
     does; any write changes the metadata, and the payload is hashed again.
     """
     path = payload_path(store, file.digest)
-    match metadata(path.0):
-        Err(_) => return false
-        Ok(info) =>
-            if int(info.len()) != file.size:
-                return false
-    observed = match observe(path):
-        Ok(value) => value
-        Err(_) => return false
+    observed = match file_metadata(path):
+        Ok(Some(found)) => found
+        _ => return false
+    if not observed.is_file() or observed.size != file.size:
+        return false
 
-    if verified.get(file.digest, "") == observed.stamp:
-        return true
+    stamp = observed.stamp()
+    settled = observed.settled_for_capture(0)
     receipt = verified_receipt(store, file.digest)
-    if receipt.read_text("utf-8", "strict").unwrap_or("") == observed.stamp:
-        verified[file.digest] = observed.stamp
-        return true
+    if settled:
+        if verified.get(file.digest, "") == stamp:
+            return true
+        if receipt.read_text("utf-8", "strict").unwrap_or("") == stamp:
+            verified[file.digest] = stamp
+            return true
     hashing = begin_work()
     intact = payload_intact(store, file.digest)
     record_work(Operation.FileHash, path.0, hashing, file.size)
-    if not intact:
+    if not intact or file_metadata(path) != Ok(Some(observed)):
         return false
-    verified[file.digest] = observed.stamp
-    if settled_since(observed.newest, SETTLE_SECONDS) and receipt.parent().mkdir(true, true).is_ok():
-        _ = publish_binary(receipt, observed.stamp.encode("utf-8"))
+    if settled:
+        verified[file.digest] = stamp
+        if receipt.parent().mkdir(true, true).is_ok():
+            _ = publish_binary(receipt, stamp.encode("utf-8"))
     return true
 
 
@@ -400,10 +401,16 @@ def view_file(store: Path, file: FactFile, destination: Path) -> Result[None, st
     source = payload_path(store, file.digest)
     if same_file(source, destination, file.digest):
         return Ok(None)
+    # A first view can follow native publication directly, before any reader has looked up the sealed fact.
+    if not payload_current(store, file):
+        return Err(f"{source.0}: cannot view an unverified payload generation")
     make_directory(destination.parent())?
     staged = Path(f"{destination.0}.view-{id()}")
     clone(source, staged, file.program)?
     rename(staged.0, destination.0).map_err((error) => f"{destination.0}: {error}")?
+    # Certify the bytes and metadata at the published path once, while making the changed view.
+    if not same_file(source, destination, file.digest):
+        return Err(f"{destination.0}: executable view changed during publication")
     return Ok(None)
 
 
@@ -510,7 +517,7 @@ def same_file(source: Path, view: Path, digest: str) -> bool:
         return false
     if original.device == copied.device and original.inode == copied.inode:
         return true
-    settled = copied.settled(SETTLE_SECONDS)
+    settled = copied.settled_for_capture(0)
     stamp = copied.stamp()
     if settled:
         if let Ok(Some(known)) = observed_file_digest(view, stamp):

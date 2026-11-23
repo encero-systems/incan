@@ -327,10 +327,13 @@ pub def project_source(
 
 pub def project_source_file(
     origin: str, path: str, file: Path, declared: list[str] = [], active: Option[list[str]] = None,
+    captured: Option[str] = None,
 ) -> Result[SourceProjection, str]:
-    """Read and project one source file. An enabled engine trace records the physical work and source bytes."""
+    """Project one source file and measure the work, using its captured reading when supplied."""
     projecting = begin_work()
-    source = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+    source = match captured:
+        Some(text) => text
+        None => file.read_text("utf-8", "strict").map_err((error) => error.message())?
     projected = project_source(origin, path, source, declared, active)
     if projecting is not None:
         record_work(Operation.EngineGraphStaging, f"source-projection\t{origin}\t{path}", projecting, text_size(source, projecting))
