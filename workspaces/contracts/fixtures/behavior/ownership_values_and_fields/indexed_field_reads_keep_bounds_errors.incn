@@ -3,7 +3,7 @@
 # expect-stderr-contains:
 #   IndexError
 #   index 1 out of range for list of length 1
-#   main.incn:15:
+#   .incn:15:13
 
 model Entry:
     pub metadata: list[str]
