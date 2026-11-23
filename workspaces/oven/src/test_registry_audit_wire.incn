@@ -6,7 +6,7 @@ from std.fs import Path
 from std.json import JsonValue, parse
 from files import read, write
 from json_fields import required_items, required_text
-from lock_format import LockLoaf, LockToolchain, OvenLock, graph_identity, read_lock, write_lock
+from lock_format import LockDependency, LockLoaf, LockToolchain, OvenLock, graph_identity, read_lock, write_lock
 from registry_advisory import audit_advisories
 from registry_audit_selection import LockedRegistryAudit, NO_REGISTRY_ORIGIN, audit_json, audit_locked_registries, audit_text
 from registry_audit_wire import VerifiedAudit, verify_audit_document
@@ -228,7 +228,7 @@ pub def test_lock_projection_uses_the_recorded_registry_and_discloses_uncovered_
     # 1. The same package/version under another origin has a different source.
     blocked = verify_audit_document(root, fixture("published")?, None, FIXTURE_NOW)?
     report = audit_locked_registries(lock, [blocked])
-    assert len([row for row in report.coverage if row.covered]) == 1
+    assert len([row for row in report.coverage if row.covered]) == 1, "the pinned registry entry had no authenticated coverage"
     assert len([row for row in report.coverage if row.reason == NO_REGISTRY_ORIGIN]) == 2
     assert len(report.advisories) == 1
     assert report.advisories[0].identifier == "INCAN-2026-0010"
@@ -257,16 +257,21 @@ pub def test_package_audit_output_names_all_uncovered_origin_providers() -> Resu
 
 def fixture_lock() -> Result[OvenLock, str]:
     """Build a graph-sealed lock with the same version under four distinct source identities."""
-    pin = f"sha256:{REGISTRY}"
+    leaves = [
+        LockLoaf(name="example/loaf", version="1.2.3", origin="registry", registry=f"sha256:{REGISTRY}",
+            protocol="https", entry="registry-fixture"),
+        LockLoaf(name="example/loaf", version="1.2.3", origin="registry",
+            registry="sha256:0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67", entry="registry-other"),
+        LockLoaf(name="example/loaf", version="1.2.3", origin="toolchain", entry="compiled-toolchain"),
+        LockLoaf(name="example/loaf", version="1.2.3", origin="path", path="deps/loaf", entry="path-fixture"),
+    ]
+    root = LockLoaf(
+        name="app", version="1.0.0", origin="root",
+        dependencies=[LockDependency(key=leaf.entry, loaf=leaf.name, version=leaf.version, entry=leaf.entry) for leaf in leaves],
+    )
     mut lock = OvenLock(
         format=1, mode="lowest", graph="", toolchain=LockToolchain(version="0.6.0"),
-        loaves=[
-            LockLoaf(name="app", version="1.0.0", origin="root"),
-            LockLoaf(name="example/loaf", version="1.2.3", origin="registry", registry=pin, protocol="https"),
-            LockLoaf(name="example/loaf", version="1.2.3", origin="registry", registry="sha256:0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67"),
-            LockLoaf(name="example/loaf", version="1.2.3", origin="toolchain", entry="compiled-toolchain"),
-            LockLoaf(name="example/loaf", version="1.2.3", origin="path", path="deps/loaf"),
-        ],
+        loaves=[root] + leaves,
     )
     lock.graph = graph_identity(lock)?
     return Ok(lock)
