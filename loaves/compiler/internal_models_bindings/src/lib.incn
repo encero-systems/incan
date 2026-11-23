@@ -20,6 +20,8 @@ pub from std.primitives.crumb.metadata_values import encode as encode_metadata
 pub from std.primitives.crumb.values import Projection
 pub from std.primitives.crumb.encoding_errors import BinaryError
 from std.primitives.crumb.encoding_errors import BinaryFailure, failure
+from std.primitives.crumb.encoding_cursor import EncodingCursor
+from std.primitives.crumb.encoding_index import read_index, selected
 pub from std.primitives.crumb.errors import CrumbError
 pub from std.fs import Path
 pub from std.json import JsonValue
@@ -119,11 +121,23 @@ pub def binary_list_field_views(
     native: Borrowed[RowAdmission], backing: Borrowed[MappedView], identity: bytes, expected: int, mut budget: Budget,
 ) -> Result[list[MappedView], BinaryError]:
     """Return mapped payloads of one admitted binary-list field under the caller's count and budget."""
-    _ = native.admitted()
-    _ = backing.len()
-    _ = (identity, expected)
-    _ = budget.codec_allowance()
-    return Err(failure(BinaryFailure.InvalidCell, 0))
+    rows = RowSet.create(native.clone(), [], backing.clone())
+    cell = match rows.field_view(0, identity, budget)?:
+        Some(view) => view
+        None => return Err(failure(BinaryFailure.InvalidCell, 0))
+    mut sequence = EncodingCursor.create(cell)?
+    count = sequence.length(budget)?
+    if count != expected:
+        return Err(failure(BinaryFailure.ArityMismatch, 0))
+    index = read_index(sequence, count, budget)?
+    mut result: list[MappedView] = []
+    for position in range(count):
+        cell_view, origin = selected(index, position, budget)?
+        mut binary = EncodingCursor.create(cell_view, origin)?
+        value = binary.frame(budget)?
+        binary.finished()?
+        result.append(value)
+    return Ok(result)
 
 
 pub def crumb_message(error: CrumbError) -> str:
