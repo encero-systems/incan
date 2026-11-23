@@ -167,6 +167,9 @@ impl TypeChecker {
             return;
         }
 
+        // ---- Bounds on types declared after their callable (#1033) ----
+        self.record_forward_type_bounds(declarations, &forward);
+
         // ---- Collected symbols of this module ----
         let mut resolved_symbols = HashSet::new();
         for declaration in declarations {

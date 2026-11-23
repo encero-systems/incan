@@ -183,17 +183,8 @@ impl TypeChecker {
                         .map(|bound| {
                             let name = self.resolve_generic_bound_name(&bound.name, Span::default());
                             // A bound that names a type records that type's declaration for its callers (#1033).
-                            let named_type = match bound.type_args.is_empty() {
-                                true => self.type_bound_declaration(&bound.name),
-                                false => None,
-                            };
-                            let (source_name, module_path) = match named_type {
-                                Some((source_name, module_path)) => (Some(source_name), module_path),
-                                None => (
-                                    self.trait_bound_source_name(&bound.name),
-                                    self.trait_bound_module_path(&bound.name),
-                                ),
-                            };
+                            let (source_name, module_path) =
+                                self.bound_provenance(&bound.name, !bound.type_args.is_empty());
                             TypeBoundInfo {
                                 name,
                                 source_name,

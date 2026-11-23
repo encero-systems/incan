@@ -197,6 +197,13 @@ impl TypeChecker {
         required: &TypeBoundInfo,
         bindings: &HashMap<String, ResolvedType>,
     ) -> bool {
+        // Two bounds that name one type are one bound under any spelling: a caller's `T with Count` carries a
+        // callee's `T with Whole` when both alias one type (#1033).
+        if let Some(required_type) = Self::declared_bound_type(required)
+            && Self::declared_bound_type(active).as_ref() == Some(&required_type)
+        {
+            return true;
+        }
         if self.type_bound_names_match(active, required) && self.type_bound_args_match(active, required, bindings) {
             return true;
         }

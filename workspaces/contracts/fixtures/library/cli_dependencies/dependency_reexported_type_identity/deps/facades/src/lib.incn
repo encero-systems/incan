@@ -86,3 +86,21 @@ pub def typed_target(value: int, target: Type[TargetKind]) -> TraitTarget:
 
 
 pub safe_typed_target = alias typed_target
+
+
+pub type WholeTarget = int
+
+
+pub def keyed_target[T with WholeTarget](value: int) -> IntegerTarget:
+    return IntegerTarget(value=value)
+
+
+pub def keyed_target[T with float](value: int) -> FloatTarget:
+    return FloatTarget(value=float(value))
+
+
+pub def keyed_target[T with TraitTarget](value: int) -> TraitTarget:
+    return TraitTarget(value=f"keyed {value}")
+
+
+pub safe_keyed_target = alias keyed_target

@@ -231,13 +231,16 @@ impl TypeChecker {
                     .bounds
                     .iter()
                     .filter(|bound| bound.type_args.is_empty())
-                    .map(|bound| TypeBoundInfo {
-                        name: self.resolve_trait_bound_name(&bound.name, Span::default()),
-                        source_name: self.trait_bound_source_name(&bound.name),
-                        type_args: Vec::new(),
-                        module_path: self.trait_bound_module_path(&bound.name),
-                        implementation_type_params: Vec::new(),
-                        inferred: false,
+                    .map(|bound| {
+                        let (source_name, module_path) = self.bound_provenance(&bound.name, false);
+                        TypeBoundInfo {
+                            name: self.resolve_trait_bound_name(&bound.name, Span::default()),
+                            source_name,
+                            type_args: Vec::new(),
+                            module_path,
+                            implementation_type_params: Vec::new(),
+                            inferred: false,
+                        }
                     })
                     .collect();
                 (param.name.clone(), bounds)
@@ -389,17 +392,21 @@ impl TypeChecker {
                 let bounds = param
                     .bounds
                     .iter()
-                    .map(|bound| TypeBoundInfo {
-                        name: self.resolve_trait_bound_name(&bound.name, Span::default()),
-                        source_name: self.trait_bound_source_name(&bound.name),
-                        type_args: bound
-                            .type_args
-                            .iter()
-                            .map(|arg| resolve_type(&arg.node, &self.symbols))
-                            .collect(),
-                        module_path: self.trait_bound_module_path(&bound.name),
-                        implementation_type_params: Vec::new(),
-                        inferred: false,
+                    .map(|bound| {
+                        let (source_name, module_path) =
+                            self.bound_provenance(&bound.name, !bound.type_args.is_empty());
+                        TypeBoundInfo {
+                            name: self.resolve_trait_bound_name(&bound.name, Span::default()),
+                            source_name,
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(|arg| resolve_type(&arg.node, &self.symbols))
+                                .collect(),
+                            module_path,
+                            implementation_type_params: Vec::new(),
+                            inferred: false,
+                        }
                     })
                     .collect();
                 (param.name.clone(), bounds)

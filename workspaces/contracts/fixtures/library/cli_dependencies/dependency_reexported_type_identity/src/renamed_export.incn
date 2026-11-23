@@ -3,6 +3,7 @@
 from facade import b_calculate, relayed_scalar, measure, echo, typed_target, safe_typed_target, TargetKind as FacadeTargetKind
 from pub::facades import format_scalar, WrappedValue as ProviderValue
 from relay import scalar_again
+from facade import keyed_target, safe_keyed_target, TraitTarget as FacadeTraitTarget
 
 
 model WrappedValue:
@@ -43,4 +44,7 @@ pub def run_renamed_export() -> None:
     assert int(safe_typed_target(7, float).value) == 7
     assert typed_target(8, FacadeTargetKind).value == "trait 8"
     assert safe_typed_target(9, FacadeTargetKind).value == "trait 9"
+    assert keyed_target[int](10).value == 10
+    assert int(safe_keyed_target[float](11).value) == 11
+    assert safe_keyed_target[FacadeTraitTarget](12).value == "keyed 12"
     assert apply_scalar(double) == 8

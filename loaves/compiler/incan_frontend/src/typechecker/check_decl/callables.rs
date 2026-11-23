@@ -698,10 +698,11 @@ impl TypeChecker {
                         .iter()
                         .map(|bound| {
                             let name = self.resolve_generic_bound_name(&bound.name, Span::default());
-                            let module_path = self.trait_bound_module_path(&bound.name);
+                            let (source_name, module_path) =
+                                self.bound_provenance(&bound.name, !bound.type_args.is_empty());
                             TypeBoundInfo {
                                 name,
-                                source_name: self.trait_bound_source_name(&bound.name),
+                                source_name,
                                 type_args: bound
                                     .type_args
                                     .iter()

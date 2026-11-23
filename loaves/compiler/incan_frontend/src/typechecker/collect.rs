@@ -21,6 +21,7 @@ mod decl_helpers;
 mod declaration_scopes;
 pub(super) mod decorators;
 mod forward_references;
+mod forward_type_bounds;
 mod functions;
 mod imports;
 pub(in crate::typechecker) mod loaf_imports;

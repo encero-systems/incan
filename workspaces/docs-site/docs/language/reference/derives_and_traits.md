@@ -256,6 +256,9 @@ A trait the standard prelude exports, such as `Add`, bounds a type parameter wit
 
 - A `with` bound may name a type instead of a trait: a builtin type in either spelling (`int` or `Int`), or a model, class, enum, newtype or type alias, declared or imported. Only that type satisfies the bound; an alias of a type satisfies a bound on its target. Any other type argument is refused (`INCAN-T0001`).
 - Overloads that differ only in such a bound are selected by the explicit type argument, directly or through an alias of the function.
+- A bound names the type its own module's names resolve it to, wherever its declaration is used. This holds for a bound on a function, on a method, and on a type parameter of a model, class, enum or newtype, and for a type declared before or after the declaration that carries the bound. A calling module needs no import of an alias the bound spells, a type imported under another name satisfies a bound on that type, and a calling module's own type of the same name does not (`INCAN-T0001`).
+- A function or method passes its own type parameter to a bound that names a type when its parameter carries a bound on the same type, under any alias of it.
+- Two overloads of one function whose bounds name the same type, through aliases of it or through both spellings of a builtin, are refused where the second is declared (`INCAN-T0001`), also when the type or alias is declared after them. A newtype is a type of its own, so overloads bound to two newtypes of one type are distinct.
 - A name that is a trait keeps its trait meaning, so a type never stands in for a trait of the same name.
 
 ```incan

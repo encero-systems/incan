@@ -83,7 +83,7 @@ impl TypeChecker {
             return false;
         }
         // A bound that names a type is satisfied by the type its declaring module recorded and by no other (#1033).
-        // The caller's own type parameter satisfies it by carrying the same bound.
+        // The caller's own type parameter satisfies it by carrying a bound on the same type, under any spelling.
         if let Some(bound_type) = Self::declared_bound_type(bound) {
             return self
                 .active_type_param_name(ty)

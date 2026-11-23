@@ -220,19 +220,30 @@ fn method_info_from_decl(
                 tp.name.clone(),
                 tp.bounds
                     .iter()
-                    .map(|bound| TypeBoundInfo {
-                        name: checker.resolve_generic_bound_name(&bound.name, method.span),
-                        source_name: checker.trait_bound_source_name(&bound.name),
-                        type_args: bound
-                            .type_args
-                            .iter()
-                            .map(|type_arg| {
-                                resolve_declared_type(checker, type_arg, &active_type_params, owner_name, owner_self_ty)
-                            })
-                            .collect(),
-                        module_path: checker.trait_bound_module_path(&bound.name),
-                        implementation_type_params: Vec::new(),
-                        inferred: false,
+                    .map(|bound| {
+                        // A method bound that names a type records that type's declaration, as a function's does.
+                        let (source_name, module_path) =
+                            checker.bound_provenance(&bound.name, !bound.type_args.is_empty());
+                        TypeBoundInfo {
+                            name: checker.resolve_generic_bound_name(&bound.name, method.span),
+                            source_name,
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(|type_arg| {
+                                    resolve_declared_type(
+                                        checker,
+                                        type_arg,
+                                        &active_type_params,
+                                        owner_name,
+                                        owner_self_ty,
+                                    )
+                                })
+                                .collect(),
+                            module_path,
+                            implementation_type_params: Vec::new(),
+                            inferred: false,
+                        }
                     })
                     .collect(),
             )

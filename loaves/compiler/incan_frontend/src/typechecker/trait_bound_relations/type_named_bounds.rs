@@ -36,6 +36,26 @@ impl TypeChecker {
         }
     }
 
+    /// The `source_name` and `module_path` one declared bound records: the type it names when it names one
+    /// ([`Self::type_bound_declaration`]), or else its trait's source name and module.
+    ///
+    /// Every declaration that carries bounds records them here: a function, a method, a model, class, enum or newtype,
+    /// and the frame of active bounds a body is checked under, so the two sides of a bound comparison always agree.
+    pub(in crate::typechecker) fn bound_provenance(
+        &self,
+        bound: &str,
+        has_type_args: bool,
+    ) -> (Option<String>, Option<Vec<String>>) {
+        let named_type = match has_type_args {
+            true => None,
+            false => self.type_bound_declaration(bound),
+        };
+        match named_type {
+            Some((source_name, module_path)) => (Some(source_name), module_path),
+            None => (self.trait_bound_source_name(bound), self.trait_bound_module_path(bound)),
+        }
+    }
+
     /// The type a checked bound names, as its declaring module recorded it with [`Self::type_bound_declaration`].
     ///
     /// `None` for a trait bound, and for a type bound whose declaring module recorded no declaration.
