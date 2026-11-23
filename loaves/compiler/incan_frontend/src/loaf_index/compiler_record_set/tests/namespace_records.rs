@@ -147,9 +147,7 @@ fn check_path_rust_reexport_without_manifest() -> Result<(), Box<dyn std::error:
     let open = || LoafIndex::deferred([("probe".into(), "probe".into(), root.path().to_owned(), false)]);
     let cold = open()?;
     assert_eq!(cold.demanded_fixture_manifests(), ["probe"]);
-    let mut index = open()?;
-    supply_native(&mut index);
-    let loaves = Arc::new(index);
+    let loaves = Arc::new(open()?);
     let mut checker = TypeChecker::new();
     checker.set_loaves(Arc::clone(&loaves));
     let program = parse("from pub::probe.keys import answer\n\ndef main() -> int:\n    return answer()\n")?;
