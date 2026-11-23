@@ -736,25 +736,25 @@ fn lower_compilation_plan(
                 )
             }
             None => {
+                let entry = program.entry.try_into()?;
+                // SourceInputs owns its buffers. Lend those already in the checked program for this call.
                 let inputs = SourceInputs {
                     scalar_products: native_products.clone(),
                     scalar_bodies: std::mem::take(&mut program.cacheable_bodies),
-                    sources: program.sources.clone(),
-                    files: program.files.clone(),
+                    sources: std::mem::take(&mut program.sources),
+                    files: std::mem::take(&mut program.files),
                     tests: program.tests.iter().map(|test| test.entry.clone()).collect(),
-                    package_versions: program.dependencies.package_versions.clone(),
+                    package_versions: std::mem::take(&mut program.dependencies.package_versions),
                     overflow_checks,
                     record_report: plan_record_report.clone(),
                     linked_static_exports: Arc::clone(linked_static_exports),
                     recorded_layouts: Arc::clone(&recorded_layouts),
                 };
-                unit_plan(
-                    &program.modules,
-                    &inputs,
-                    program.entry.try_into()?,
-                    &kind_name,
-                    &mut attempt_unions,
-                )
+                let planned = unit_plan(&program.modules, &inputs, entry, &kind_name, &mut attempt_unions);
+                program.sources = inputs.sources;
+                program.files = inputs.files;
+                program.dependencies.package_versions = inputs.package_versions;
+                planned
             }
         }
         .inspect_err(|_| receipt.deterministic())?;

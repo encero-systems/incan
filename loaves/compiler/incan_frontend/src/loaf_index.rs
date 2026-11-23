@@ -37,10 +37,17 @@ pub fn retained_inventory() -> [(&'static str, usize, u64); 2] {
     retained::inventory()
 }
 
-/// Release the Loaf manifests and installed record groups this process decoded for the request that just ended: a
-/// resident worker keeps no owned copy of its dependency closure between requests.
+/// Release the decoded Loaf artifacts and installed record groups held by this process.
 pub fn release_retained_loaves() {
-    retained::release_artifacts();
+    settle_retained_loaves(false);
+}
+
+/// Release request-owned installed record groups. A continuing worker can keep bounded, generation-guarded path
+/// manifests for its next request.
+pub fn settle_retained_loaves(keep_path_artifacts: bool) {
+    if !keep_path_artifacts {
+        retained::release_artifacts();
+    }
     compiler_record_set::release_admitted_groups();
 }
 
@@ -121,8 +128,10 @@ pub struct LoafArtifact {
 impl LoafArtifact {
     /// Read and validate the Loaf `name`, deriving its identity from the exact bytes decoded into the manifest.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        if compiler_record_set::configured() {
-            return Self::read_current(dir, name);
+        if compiler_record_set::configured()
+            && let Some((manifest, digest)) = compiler_record_set::read(dir, name)?
+        {
+            return Self::from_records(dir, name, manifest, digest);
         }
         retained::artifact(dir, name)
     }
@@ -162,11 +171,8 @@ impl LoafArtifact {
         })
     }
 
-    /// Read and validate one current generation; process-local reuse must observe every dependent file around it.
-    fn read_current(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        if let Some((manifest, digest)) = compiler_record_set::read(dir, name)? {
-            return Self::from_records(dir, name, manifest, digest);
-        }
+    /// Read and validate an artifact's current filesystem generation on a path cache miss.
+    fn read_path_manifest(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)
                 .entered();
