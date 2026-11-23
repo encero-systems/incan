@@ -95,6 +95,9 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
     let mut pass = CarrierPass::new(&constructors, &module, &mut layouts, "src/main.incn", Some(&signatures));
     let started = std::time::Instant::now();
     pass.retain_call(&target)?;
+    let mut same_target = target.clone();
+    same_target.name = "another_local_alias".into();
+    pass.retain_call(&same_target)?;
     let work = (pass.body_candidates, pass.loaf_candidates, pass.borrowed_position_bytes);
     println!(
         "source candidates={}, linked candidates={}, borrowed position bytes={}, borrowed parameter slot bytes={}, ns={}",
