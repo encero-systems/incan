@@ -134,7 +134,7 @@ def completed(toolchain: Toolchain, arguments: list[str]) -> Result[Completion, 
 
 def reported(report: Completion) -> bool:
     """Whether a check exited normally with a report's own status: zero for a pass, one for a refusal."""
-    return report.exited and (report.code == 0 or report.code == 1)
+    return report.exited and report.code in [0, 1]
 
 
 def check_reason(store: Path, name: str) -> str:
