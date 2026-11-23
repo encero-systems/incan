@@ -154,6 +154,8 @@ pub model Made:
     # nothing.
     pub evaluations: int = 0
     pub native_bakes: int = 0
+    # The compact Plan selection of this successful compiler dispatch, if it used one.
+    pub plan_module_selection_digest: Option[str] = None
     # The executable's fact. A deferred bake also carries its unpublished record transaction and the producer claim,
     # held until the caller commits.
     pub fact: Option[Fact] = None
