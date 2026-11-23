@@ -105,14 +105,24 @@ def require_late_import_inventory() -> Result[None, str]:
     fixture += "    \"\"\"An example in the function docstring.\npub from crate.example import StillDocOnly\n"
     fixture += "    \"\"\"\n    pass\npub from crate.example import Late\nfrom std.fs import File\n"
     write(root, "sample.incn", fixture)?
+    assert late_imports(root, ["sample.incn"])? == [
+        "lateimport\tsample.incn:11:pub from crate.example import Late",
+        "lateimport\tsample.incn:12:from std.fs import File",
+    ]
+
+    primitives = repository.joinpath("loaves/stdlib/primitives/src/primitives")
+    late = late_imports(root, [primitives.joinpath("async.incn").0, primitives.joinpath("io.incn").0])?
+    assert late == [], "\n".join(late)
+    return Ok(None)
+
+
+def late_imports(root: Path, files: list[str]) -> Result[list[str], str]:
+    """Run the inventory matcher and keep the exact source positions of late imports."""
     mut command = Command.new("/usr/bin/awk")
-    command.current_dir(root.0).arg("-f").arg("incan_structure.awk").arg("sample.incn")
+    command.current_dir(root.0).arg("-f").arg("incan_structure.awk")
+    for file in files:
+        command.arg(file)
     result = command.output().map_err((error) => f"cannot run the inventory matcher: {error}")?
     assert result.status.success()
     output = RustString.from_utf8(result.stdout).map_err((error) => f"invalid inventory output: {error}")?
-    late = [line for line in output.split("\n") if line.startswith("lateimport\t")]
-    assert late == [
-        "lateimport\tsample.incn:11:pub from crate.example import Late",
-        "lateimport\tsample.incn:12:from std.fs import File",
-    ], output
-    return Ok(None)
+    return Ok([line for line in output.split("\n") if line.startswith("lateimport\t")])
