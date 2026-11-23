@@ -45,7 +45,7 @@ from unit_compiler import (
     plan_record_counts,
     plan_record_report_path,
 )
-from unit_rust import prepare_native
+from unit_rust import prepare_native, prepare_native_with_work
 from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
 from shared_link import carriers_present, development_link, linkage_key, library_witness
@@ -318,7 +318,11 @@ pub def obtain(
         or len(described.cloves) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    ready = prepared_for(program_view(handle)?, described, toolchain)?
+    request_view = program_view(handle)?
+    prepared = prepare_native_with_work(described, toolchain, is_editor_view(request_view))?
+    ready = prepared.unit
+    if ready.trust_stop != "":
+        return Err(ready.trust_stop)
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
@@ -332,7 +336,6 @@ pub def obtain(
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit. An editor's overlay reads and
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
-    request_view = program_view(handle)?
     editor = is_editor_view(request_view)
     selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals)?
     graph = selection.graph
@@ -362,7 +365,8 @@ pub def obtain(
             ProgramOutcome(
                 code=produced.code,
                 evaluations=produced.evaluations,
-                body_evaluations=len(invalid),
+                body_evaluations=len(invalid) + prepared.dependency_body_evaluations,
+                body_ir_evaluations=prepared.dependency_body_evaluations,
                 body_page_writes=len(retained_bodies),
                 console=console,
                 epoch_reads=epoch_reads,
@@ -386,9 +390,9 @@ pub def obtain(
     if not editor:
         request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
         native = None
-    mut body_evaluations = 0
+    mut body_evaluations = prepared.dependency_body_evaluations
     mut body_reuses = 0
-    mut body_ir_evaluations = 0
+    mut body_ir_evaluations = prepared.dependency_body_evaluations
     mut checker_counts = CheckerRecordCounts()
     if produced.native_bakes == 1:
         # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
@@ -409,9 +413,9 @@ pub def obtain(
             checker_counts.restored,
         )?
         request_transaction = bodies.transaction
-        body_evaluations = bodies.checking_evaluations
+        body_evaluations += bodies.checking_evaluations
         body_reuses = bodies.body_reuses
-        body_ir_evaluations = bodies.body_ir_evaluations
+        body_ir_evaluations += bodies.body_ir_evaluations
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
     supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?

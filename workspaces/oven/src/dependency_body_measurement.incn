@@ -1,0 +1,78 @@
+"""Measure Incan path-dependency checker work without changing compilation or artifact identity."""
+
+from rust::std::process import Stdio
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.primitives.hash import sha256
+from bakery import bakery
+from driver_command import driver_command
+from files import discard_file, read
+from project_library import source_modules
+from publication import publish
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_compiler import checked_body_counts, crate_name, described_by, write_unit
+from unit_freshness import fingerprint, unit_key
+from unit_sidecars import unit_sidecar_directory
+
+
+pub model DependencyBodyMeasurement:
+    """One dependency check's fresh bodies and the context to retain only after its library compiles."""
+
+    pub checked: int
+    pub context: str
+    pub receipt: Path
+
+
+pub def measure_dependency_bodies(unit: UnitDescription, toolchain: Toolchain) -> Result[DependencyBodyMeasurement, str]:
+    """Check a changed provider with no selected pages, unless its checked context already compiled successfully."""
+    compiler_context = match unit.checked_context:
+        Some(value) => value
+        None => return Err("dependency body measurement requires the complete compiler context")
+    _, provided = source_modules(Path(unit.source_root))?
+    root = unit.source_root + "/"
+    mut source_context = [compiler_context]
+    for source in sorted([unit.source] + provided):
+        mut name = source
+        if source.startswith(root):
+            name = source[len(root):]
+        source_context.extend([name, read(Path(source))?])
+    context = fingerprint(source_context)?
+
+    slot = f"{unit.package}\n{unit.profile}\n{','.join(unit.active_features)}"
+    name = hexlify(sha256.digest(slot.encode("utf-8")))[:24]
+    receipt = unit_sidecar_directory(Path(unit.project_root), bakery()?).joinpath(f"dependency-body-context-{name}")
+    if receipt.is_file():
+        previous = receipt.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if previous == context:
+            return Ok(DependencyBodyMeasurement(checked=0, context=context, receipt=receipt))
+
+    mut measured = unit
+    measured.checked_products = None
+    measured.program_checks = true
+    key = unit_key(measured, toolchain)?
+    description = write_unit(measured, crate_name(measured), None, described_by(key), true)?
+    report = Path(f"{description.0}.dependency-checked-bodies")
+    discard_file(report)
+    mut command = driver_command(toolchain)?
+    for argument in [
+        "--check",
+        description.0,
+        toolchain.sysroot,
+        "--format",
+        "json",
+        "--checked-bodies",
+        report.0,
+    ]:
+        command.arg(argument)
+    command.stdout(Stdio.null()).stderr(Stdio.null())
+    status = command.status().map_err((error) => f"cannot measure dependency bodies: {error}")?
+    if not status.success():
+        return Err(f"dependency body measurement exited with status {status.code()}")
+    counts = checked_body_counts(report)?
+    return Ok(DependencyBodyMeasurement(checked=counts.checked, context=context, receipt=receipt))
+
+
+pub def retain_dependency_body_context(measurement: DependencyBodyMeasurement) -> Result[None, str]:
+    """Retain a checked context only after the library compilation it measured succeeded."""
+    return publish(measurement.receipt, measurement.context)

@@ -1209,6 +1209,7 @@ def compile_incan_library(
     loaves = incan_artifacts(providers)
     # 2. The graph already prepared every dependency; the source compiler only binds these selected artifacts.
     mut code: i32 = 1
+    mut body_evaluations = 0
     mut readings = NativeClosureInput()
     match request.incan_compiler:
         Some(compile) =>
@@ -1216,7 +1217,7 @@ def compile_incan_library(
             selected = [(binding.name, binding.path) for binding in bindings]
             toolchain = selected_toolchain(request)?
             readings = toolchain.native_closures
-            code = compile(
+            code, body_evaluations = compile(
                 source.0,
                 request.profile,
                 facet.features,
@@ -1227,6 +1228,7 @@ def compile_incan_library(
                 toolchain,
                 request.compiler,
                 request.manifests,
+                request.measure_body_evaluations,
                 request.unattended,
             )?
         None => return Err(f"no Incan unit compiler was supplied for {declared.package}")
@@ -1241,6 +1243,7 @@ def compile_incan_library(
             directory=stored.0,
             search=native_search(stored.joinpath(f"{artifact_stem(declared.package)}.native.json"), readings)? + dependency_search,
             loaf=declared.package,
+            body_evaluations=body_evaluations,
         ),
     )
 

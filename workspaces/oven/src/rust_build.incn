@@ -35,6 +35,8 @@ pub model BuiltUnit:
     pub loaf: str = ""
     # Authority that covered this Loaf's compile-time code for the request, empty when it carries none.
     pub covered_by: str = ""
+    # Request-local checking work observed while compiling an Incan provider; never artifact identity.
+    pub body_evaluations: int = 0
 
 
 pub def facet_slot(facet: LocalFacet, profile: str) -> str:
@@ -103,7 +105,7 @@ pub model RustBuild:
     # Loaves to use in place of the Loaf of a package name, wherever the graph reaches it.
     pub substitutes: Dict[str, str] = {}
     # The Incan unit orchestrator supplies its compiler without a reverse module dependency.
-    pub incan_compiler: Option[(str, str, list[str], str, list[Tuple[str, str]], list[Tuple[str, str]], list[str], Toolchain, str, ManifestReader, bool) -> Result[i32, str]] = None
+    pub incan_compiler: Option[(str, str, list[str], str, list[Tuple[str, str]], list[Tuple[str, str]], list[str], Toolchain, str, ManifestReader, bool, bool) -> Result[Tuple[i32, int], str]] = None
     # The toolchain's own search directories. An Incan provider's native closure leaves them to the search index, so a
     # Rust facet, which rustc links directly, searches them beside the registry's.
     pub toolchain_search: list[str] = []
@@ -122,6 +124,9 @@ pub model RustBuild:
     pub schedule_rust_units: bool = false
     # Unasked inspection and editor preparation may execute compile-time code only when trust evidence covers it.
     pub unattended: bool = false
+    # Ask Incan providers for checked-body counts to aggregate into an engine report. This request observation is not
+    # serialized into a unit, facet or artifact identity.
+    pub measure_body_evaluations: bool = false
     # Stable trust evidence keyed by selected Loaf package identity.
     pub covered_by: Dict[str, str] = {}
     # A lint checks and links nothing it compiles from edited prebuilt sources: their consumers keep the installed

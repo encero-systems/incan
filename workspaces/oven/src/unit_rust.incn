@@ -40,6 +40,11 @@ from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from native_references import closure_reference, native_anchors
 from unit_compiler import compile_prepared_unit
+from dependency_body_measurement import (
+    DependencyBodyMeasurement,
+    measure_dependency_bodies,
+    retain_dependency_body_context,
+)
 from callable_products import retain_callable_products
 from unit_freshness import Key, artifact_files, unit_key
 from unit_publication import record_payload
@@ -47,6 +52,27 @@ from compiler_facts import admit_fact
 from frozen_inputs import observation as frozen_observation
 from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
 from compile_time_trust import MissingTrust, combine as combine_trust, decide, decide_registry
+
+
+pub model LibraryCompilation:
+    """One library compile's status and request-local checked-body work; the count is never compilation identity."""
+
+    pub code: i32
+    pub body_evaluations: int = 0
+
+
+pub model PreparedNative:
+    """A prepared unit and request-local dependency checking work, kept outside the unit's serialized identity."""
+
+    pub unit: UnitDescription
+    pub dependency_body_evaluations: int = 0
+
+
+model ResolvedDependencies:
+    """The local graph's prepared root and freshly checked Incan-provider bodies."""
+
+    unit: UnitDescription
+    body_evaluations: int = 0
 
 
 pub def describe_native(
@@ -79,8 +105,9 @@ pub def compile_incan_library(
     toolchain: Toolchain,
     compiler: str,
     reader: ManifestReader,
+    measure_body_evaluations: bool,
     unattended: bool,
-) -> Result[i32, str]:
+) -> Result[Tuple[i32, int], str]:
     """
     Prepare one activated Incan provider after the shared graph prepared all its dependencies.
 
@@ -107,7 +134,8 @@ pub def compile_incan_library(
     unit.search = search
     ready = prepare_linked(unit, toolchain)?
     # 3. The ordinary library stamp preserves a current artifact for either language's consumer.
-    return compile_library_unit(ready, toolchain, Path(output), compiler)
+    compiled = compile_library_unit_with_work(ready, toolchain, Path(output), compiler, measure_body_evaluations)?
+    return Ok((compiled.code, compiled.body_evaluations))
 
 
 def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) -> list[UnitLoaf]:
@@ -139,8 +167,19 @@ pub def compile_library_unit(
     compiler: str = "",
 ) -> Result[i32, str]:
     """Prepare private callable products for ordinary libraries, then publish through the complete native key."""
+    return Ok(compile_library_unit_with_work(library, toolchain, output, compiler, false)?.code)
+
+
+pub def compile_library_unit_with_work(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    compiler: str = "",
+    measure_body_evaluations: bool = true,
+) -> Result[LibraryCompilation, str]:
+    """Compile one library and return fresh body work without adding that observation to its artifact identity."""
     ready = with_callable_products(library, toolchain)
-    return compile_retained_library(ready, toolchain, output, compiler)
+    return compile_retained_library(ready, toolchain, output, compiler, measure_body_evaluations)
 
 
 def compile_retained_library(
@@ -148,7 +187,8 @@ def compile_retained_library(
     toolchain: Toolchain,
     output: Path,
     compiler: str,
-) -> Result[i32, str]:
+    measure_body_evaluations: bool,
+) -> Result[LibraryCompilation, str]:
     """
     Obtain a prepared library from the home bakery; its artifact directory becomes a disposable view of the fact.
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
@@ -165,7 +205,7 @@ def compile_retained_library(
     directory = output.parent()
     key = unit_key(library, toolchain, compiler)?
     if key.refusal != "":
-        return compile_unbaked(library, toolchain, output, key)
+        return compile_unbaked(library, toolchain, output, key, measure_body_evaluations)
     store = bakery()?
     identity = unit_identity(key)
     register_root(store, library.project_root, f"library\t{library.package}", [identity])?
@@ -173,16 +213,19 @@ def compile_retained_library(
     if let Some(fact) = find(store, identity)?:
         view_directory(store, fact, directory)?
         trace(f"{label}: reused")
-        return Ok(0)
+        return Ok(LibraryCompilation(code=0, body_evaluations=measure_cached_library(library, toolchain, measure_body_evaluations)?))
     # 2. A concurrent bake of the same identity is waited for, not repeated.
     held = claim(store, identity)?
     if let Some(fact) = find(store, identity)?:
         view_directory(store, fact, directory)?
         trace(f"{label}: reused (built meanwhile by another command)")
-        return Ok(0)
+        return Ok(LibraryCompilation(code=0, body_evaluations=measure_cached_library(library, toolchain, measure_body_evaluations)?))
     # 3. A failed compilation publishes nothing.
     staged = staging(store, identity, prior_size(store, unit_name(library)))?
     stage_vocabulary(library, staged)?
+    mut measurement: Option[DependencyBodyMeasurement] = None
+    if measure_body_evaluations:
+        measurement = Some(measure_dependency_bodies(library, toolchain)?)
     compiled = compile_prepared_unit(
         library,
         toolchain,
@@ -192,7 +235,7 @@ def compile_retained_library(
     )?
     if compiled != 0:
         _ = staged.remove_tree()
-        return Ok(compiled)
+        return Ok(LibraryCompilation(code=compiled))
     # 4. Publication can add an indexed Rust ABI cache, and the new manifest decides whether a vocabulary worker
     #    belongs to the completed set; a partial set is never sealed.
     for artifact in artifact_files(staged, library.package)?:
@@ -207,24 +250,57 @@ def compile_retained_library(
     reaches = reached(store, [loaf.dir for loaf in library.loaves])?
     fact = seal(store, identity, staged, "library", unit_name(library), reaches, f"incan library {library.profile}")?
     view_directory(store, fact, directory)?
-    return Ok(0)
+    mut body_evaluations = 0
+    if let Some(observed) = measurement:
+        body_evaluations = observed.checked
+        retain_dependency_body_context(observed)?
+    return Ok(LibraryCompilation(code=0, body_evaluations=body_evaluations))
 
 
-def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
+def measure_cached_library(library: UnitDescription, toolchain: Toolchain, measure: bool) -> Result[int, str]:
+    """Measure a provider the engine's earlier capture phase already compiled, then retain its successful context."""
+    if not measure:
+        return Ok(0)
+    observed = measure_dependency_bodies(library, toolchain)?
+    checked = observed.checked
+    retain_dependency_body_context(observed)?
+    return Ok(checked)
+
+
+def compile_unbaked(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    key: Key,
+    measure_body_evaluations: bool,
+) -> Result[LibraryCompilation, str]:
     """Compile a library whose inputs cannot be named portably in place; nothing is baked or reused."""
     directory = output.parent()
     forget_view(directory)?
     stage_vocabulary(library, directory)?
-    compiled = compile_prepared_unit(library, toolchain, output, Some(key), key.refusal)?
+    mut measurement: Option[DependencyBodyMeasurement] = None
+    if measure_body_evaluations:
+        measurement = Some(measure_dependency_bodies(library, toolchain)?)
+    compiled = compile_prepared_unit(
+        library,
+        toolchain,
+        output,
+        Some(key),
+        key.refusal,
+    )?
     if compiled != 0:
-        return Ok(compiled)
+        return Ok(LibraryCompilation(code=compiled))
     borrowed = [worker.0 for worker in published_workers(library, directory)?]
     for artifact in artifact_files(directory, library.package)?:
         if not artifact.is_file():
             return Err(f"compiler did not publish {artifact.0}")
         if artifact.0 not in borrowed:
             record_payload(artifact, "", key.provenance, key.refusal)?
-    return Ok(0)
+    mut body_evaluations = 0
+    if let Some(observed) = measurement:
+        body_evaluations = observed.checked
+        retain_dependency_body_context(observed)?
+    return Ok(LibraryCompilation(code=0, body_evaluations=body_evaluations))
 
 
 def library_reason(store: Path, library: UnitDescription) -> str:
@@ -242,6 +318,16 @@ pub def prepare_native(
     toolchain: Toolchain,
     unattended: bool = false,
 ) -> Result[UnitDescription, str]:
+    """Prepare exact native inputs without requesting proof counters."""
+    return Ok(prepare_native_with_work(described, toolchain, unattended, false)?.unit)
+
+
+pub def prepare_native_with_work(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    unattended: bool = false,
+    measure_body_evaluations: bool = true,
+) -> Result[PreparedNative, str]:
     """
     Prepare exact artifacts for one selected unit, preserving its kind and activated root features.
 
@@ -254,18 +340,26 @@ pub def prepare_native(
     """
     # 1. Incan and Rust consumers share one activation graph and one artifact per source provider.
     mut unit = described
+    mut dependency_body_evaluations = 0
     unit.unattended = unattended or unit.unattended
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
-        unit = resolve_dependencies(unit, toolchain)?
+        resolved = resolve_dependencies(unit, toolchain, measure_body_evaluations)?
+        unit = resolved.unit
+        dependency_body_evaluations = resolved.body_evaluations
     else:
         linked = prepare_linked(unit, toolchain)?
         natives = standalone_crates(unit, toolchain, Some(linked))?
         if len(natives) == 0:
-            return Ok(linked)
+            return Ok(PreparedNative(unit=linked))
         for native in natives:
             unit = add_rust_root(unit, native)?
     # 2. No source graph is selected again while the prepared unit is linked.
-    return prepare_linked(unit, toolchain)
+    return Ok(
+        PreparedNative(
+            unit=prepare_linked(unit, toolchain)?,
+            dependency_body_evaluations=dependency_body_evaluations,
+        ),
+    )
 
 
 pub def prepare_linked(
@@ -413,7 +507,11 @@ def link_loaf(
     return Ok((exposed, [loaf.dir] + closure_search(closure, document)?))
 
 
-def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+def resolve_dependencies(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    measure_body_evaluations: bool,
+) -> Result[ResolvedDependencies, str]:
     """
     Activate the complete local graph once, compile each provider, and bind the selected direct aliases.
 
@@ -426,7 +524,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     # 1. A project with no local source or Rust inputs needs no dependency preparation.
     declared = rust_facet(unit.project_root, false, unit.manifests)?
     if not needs_local_preparation(unit, declared.kind):
-        return Ok(unit)
+        return Ok(ResolvedDependencies(unit=unit))
     # 2. The edges are activated for the features the unit already has, against the toolchain's compiled registry.
     rustc = rust_compiler(toolchain)
     configuration = target_configuration(rustc)?
@@ -445,7 +543,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     unit.covered_by = decision.covered_by
     unit.trust_stop = decision.stop()
     if len(decision.missing) > 0:
-        return Ok(with_prepared_loaves(unit, decision.missing))
+        return Ok(ResolvedDependencies(unit=with_prepared_loaves(unit, decision.missing)))
     # 3. The local units the edges reach are compiled, each once, before the unit that links them.
     request = RustBuild(
         project=unit.project_root,
@@ -460,8 +558,12 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         manifests=unit.manifests,
         unattended=unit.unattended,
         covered_by=unit.covered_by,
+        measure_body_evaluations=measure_body_evaluations,
     )
     built = build_dependencies(request, facets)?
+    mut body_evaluations = 0
+    for key in built.keys():
+        body_evaluations += built[key].body_evaluations
     # 4. The unit searches what was built, names its own crate, and binds each edge under the alias it is written by.
     #    The registry's directories are in the toolchain's search index.
     mut result = unit
@@ -475,7 +577,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     for facet in facets:
         if facet.project == unit.project_root and facet.domain == DependencyDomain.Target:
             result = bind_edges(result, facet, built, registry)?
-    return Ok(result)
+    return Ok(ResolvedDependencies(unit=result, body_evaluations=body_evaluations))
 
 
 def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> UnitDescription:
