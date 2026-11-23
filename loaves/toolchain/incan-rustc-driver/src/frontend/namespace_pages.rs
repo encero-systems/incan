@@ -9,7 +9,7 @@ use incan_frontend::typechecker::executable_frames::restore_graph_executable_nam
 use incan_semantics_core::SymbolOrigin;
 use incan_semantics_core::body_ir::BodyIrModule;
 use internal_models::{GraphNamespaceView, NamespaceReference};
-use internal_models_native::{MappedView, PreparedWireReader};
+use internal_models_native::{MappedView, PreparedWireReader, decode_prepared_checked_projection};
 use sha2::{Digest, Sha256};
 
 use super::CheckedProgram;
@@ -237,7 +237,10 @@ impl NamespacePages {
                     )
                     .entered();
                     let body = if self.typed_executable {
-                        let value = internal_models::decode_executable_namespace_frame(&bytes)
+                        let reader = EXECUTABLE_NAMESPACE
+                            .as_ref()
+                            .map_err(|error| RecordAdapterFault::InvalidField(error.clone()))?;
+                        let value = decode_prepared_checked_projection(reader, &bytes)
                             .map_err(RecordAdapterFault::InvalidField)?;
                         self.restore_typed_body(value, source, &mut retained.selected.executable_scopes)?
                     } else {

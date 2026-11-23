@@ -37,18 +37,9 @@ pub(crate) fn write_wire_with_budget(
 
 /// Authenticate every reachable schema and the sole root selector before interpreting the native payload.
 pub fn read_wire(encoded: &[u8], key: &[u8], supplied: &Vec<Description>) -> Result<Value, String> {
-    read_wire_with_budget(encoded, key, supplied, &mut graph_read_budget()?)
-}
-
-/// Open a compiler record using the depth and work limits selected by its format.
-pub(crate) fn read_wire_with_budget(
-    encoded: &[u8],
-    key: &[u8],
-    supplied: &Vec<Description>,
-    budget: &mut Budget,
-) -> Result<Value, String> {
-    let rows = admit_wire(encoded, supplied, budget)?;
-    let row = read_record_at(&rows, 0, budget).map_err(|error| binary_message(&error))?;
+    let mut budget = graph_read_budget()?;
+    let rows = admit_wire(encoded, supplied, &mut budget)?;
+    let row = read_record_at(&rows, 0, &mut budget).map_err(|error| binary_message(&error))?;
     if row.key != key {
         return Err("unexpected native plan root selector".into());
     }

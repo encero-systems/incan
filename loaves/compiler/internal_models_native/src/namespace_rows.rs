@@ -8,11 +8,11 @@ use crate::namespace_schema::{
     namespace_field_is_canonical, namespace_root,
 };
 use crate::plan_wire_rows::{
-    PreparedWireReader, admit_wire, read_wire, read_wire_with_budget, wire_field, write_wire, write_wire_with_budget,
+    PreparedWireReader, admit_wire, read_wire, wire_field, write_wire, write_wire_with_budget,
 };
 use internal_models_bindings::{
     Budget, IntegerValue, MapEntry, MappedView, Projection, RowAdmission, RowRead, Value, ValueField, binary_message,
-    codec_allowance, crumb_message, depth_allowance, read_field_at, settle, value_hash,
+    codec_allowance, crumb_message, depth_allowance, read_field_at, refusal, settle, value_hash,
 };
 
 /// One identity-addressed field of a namespace record or alternative.
@@ -296,8 +296,13 @@ impl PreparedNamespaceReader {
 /// Project the admitted namespace into the frontend's cells under the remaining allowance.
 fn decode_admitted(row: &RowAdmission, budget: &mut Budget) -> Result<NamespaceAtom, String> {
     let (remaining_bytes, remaining_elements) = codec_allowance(budget);
-    let mut decoded = row.read_record(0, remaining_bytes, remaining_elements, depth_allowance(budget));
+    let decoded = row.read_record(0, remaining_bytes, remaining_elements, depth_allowance(budget));
     settle(&decoded, budget).map_err(|error| binary_message(&error))?;
+    restore_admitted_atoms(decoded)
+}
+
+/// Materialize a validated row from its preorder cursor.
+fn restore_admitted_atoms(mut decoded: RowRead) -> Result<NamespaceAtom, String> {
     let root = read_atom(&mut decoded)?;
     if decoded.next() != -1 {
         return Err("checked namespace row has trailing logical cells".into());
@@ -395,12 +400,33 @@ pub fn decode_checked_projection(
     descriptions: &Vec<internal_models_bindings::Description>,
     encoded: &[u8],
 ) -> Result<NamespaceAtom, String> {
-    atom(&read_wire_with_budget(
-        encoded,
-        root,
-        descriptions,
-        &mut graph_read_budget_at_depth(EXECUTABLE_DEPTH)?,
-    )?)
+    let reader = PreparedWireReader::create(root, descriptions, "checked executable")?;
+    decode_prepared_checked_projection(&reader, encoded)
+}
+
+/// Authenticate owned executable bytes using a dictionary already prepared by the compiler process.
+pub fn decode_prepared_checked_projection(
+    reader: &PreparedWireReader,
+    encoded: &[u8],
+) -> Result<NamespaceAtom, String> {
+    let mut budget = graph_read_budget_at_depth(EXECUTABLE_DEPTH)?;
+    let row = reader.admit(encoded, &mut budget, &mut Vec::new())?;
+    decode_admitted_executable(&row)
+}
+
+/// Reuse the admitted tree under the work already charged for this envelope.
+fn decode_admitted_executable(row: &RowAdmission) -> Result<NamespaceAtom, String> {
+    let decoded = row.read_record(0, row.bytes_charged, row.elements_charged, EXECUTABLE_DEPTH);
+    if !decoded.succeeded() {
+        return Err(binary_message(&refusal(
+            decoded.category,
+            decoded.offset,
+            decoded.field,
+            decoded.variant,
+            decoded.cause,
+        )));
+    }
+    restore_admitted_atoms(decoded)
 }
 
 /// Authenticate a mapped compiler root and materialize only the requested named fields.
@@ -421,7 +447,7 @@ pub fn checked_projection_fields(
 pub fn decode_checked_projection_view(reader: &PreparedWireReader, view: &MappedView) -> Result<NamespaceAtom, String> {
     let mut budget = graph_read_budget_at_depth(EXECUTABLE_DEPTH)?;
     let row = reader.admit_view(view, &mut budget)?;
-    decode_admitted(&row, &mut budget)
+    decode_admitted_executable(&row)
 }
 
 /// The module name and path a checked namespace advertises.
@@ -507,7 +533,7 @@ pub fn decode_callable_inventory(encoded: &[u8]) -> Result<NamespaceAtom, String
 mod executable_depth_tests {
     use super::*;
     use crate::crumb_rows::{ModelField, model_description};
-    use internal_models_bindings::{complete_view, mapped_bytes};
+    use internal_models_bindings::{complete_view, create_budget, mapped_bytes};
 
     const ROOT: &[u8] = b"nestd_\0";
     const CHILDREN: &[u8] = b"child_";
@@ -557,6 +583,15 @@ mod executable_depth_tests {
             [NamespaceAtom::Unsigned(7)]
         );
         assert_eq!(decode_checked_projection_view(&reader, &view)?, expected);
+
+        let admitted = reader.admit_view(&view, &mut graph_read_budget_at_depth(EXECUTABLE_DEPTH)?)?;
+        let mut exact = create_budget(admitted.bytes_charged, admitted.elements_charged, EXECUTABLE_DEPTH)
+            .map_err(|error| crumb_message(&error))?;
+        let paid = reader.admit_view(&view, &mut exact)?;
+        assert_eq!(codec_allowance(&exact), (0, 0));
+        assert!(decode_admitted(&paid, &mut exact).is_err());
+        assert_eq!(decode_admitted_executable(&paid)?, expected);
+
         assert!(write_wire(ROOT, &descriptions, logical(&expected)?).is_err());
         let refused = encode_checked_projection(ROOT, &descriptions, &nested_value(176)?)
             .err()
