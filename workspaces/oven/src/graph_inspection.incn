@@ -70,7 +70,7 @@ pub model GraphOptions:
     pub term: str = ""
     pub limit: int = 20
     pub strict: bool = false
-    # 0.5.1's `--allow-errors`: the tolerant export, which is the default; it only refuses `--strict` beside it.
+    # An explicit tolerant selection. The CLI resolves its raw export default separately.
     pub allow_errors: bool = false
     pub substitutes: Dict[str, str] = {}
     pub stale: str = ""
@@ -170,8 +170,8 @@ pub def help_text() -> str:
             "  --task TASK                 Select a context pack; excludes --query and --stale.",
             "  --budget N                  Context byte bound (default 8000; 128..1000000).",
             "  --stale SNAPSHOT            Check an exported snapshot: identity.",
-            "  --strict                    Refuse unchecked units.",
-            "  --allow-errors              Export unchecked units' parseable facts (the default).",
+            "  --strict                    Refuse unchecked units. Plain exports check by default.",
+            "  --allow-errors              Export unchecked units' parseable facts.",
             "  --risk                      Include optional local git observations.",
             "  --substitute NAME=DIR       Select a local dependency source; repeatable.",
             "  --features A,B              Add public root-package features.",
@@ -241,8 +241,10 @@ def budget_of(item: str) -> Result[int, str]:
     return Ok(budget)
 
 
-pub def inspect_codegraph(selected: GraphOptions) -> Result[i32, str]:
-    """Print a public export or query, leaving an empty query answer silent."""
+pub def inspect_codegraph(mut selected: GraphOptions) -> Result[i32, str]:
+    """Check ordinary exports by default and leave an empty query answer silent."""
+    if raw_export(selected) and not selected.risk and not selected.allow_errors:
+        selected.strict = true
     rendered = selected_response(selected)?
     if rendered != "":
         println(rendered)
@@ -382,9 +384,14 @@ def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result
 
 def presentation_domain(selected: GraphOptions) -> str:
     """Version raw export bytes independently of query, task and snapshot answers."""
-    if selected.query == "" and selected.task == "" and selected.stale == "":
+    if raw_export(selected):
         return EXPORT_PRESENTATION_DOMAIN
     return PRESENTATION_DOMAIN
+
+
+def raw_export(selected: GraphOptions) -> bool:
+    """Whether this request returns the graph records themselves."""
+    return selected.query == "" and selected.task == "" and selected.stale == ""
 
 
 def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answered: Answered) -> None:
