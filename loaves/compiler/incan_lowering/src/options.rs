@@ -185,6 +185,7 @@ struct CarrierPass<'a> {
     file: &'a str,
     signatures: Option<&'a CarrierSignatures<'a>>,
     retained: HashSet<IncanType>,
+    retained_calls: HashSet<(&'a CanonicalSymbolId, &'a [IncanType])>,
     body_candidates: usize,
     loaf_candidates: usize,
     borrowed_position_bytes: usize,
@@ -208,6 +209,7 @@ impl<'a> CarrierPass<'a> {
             file,
             signatures,
             retained: HashSet::new(),
+            retained_calls: HashSet::new(),
             body_candidates: 0,
             loaf_candidates: 0,
             borrowed_position_bytes: 0,
@@ -226,7 +228,7 @@ impl<'a> CarrierPass<'a> {
     }
 
     /// Retain a frame's return, local and consuming-iteration carriers; a refusal names the frame and its position.
-    fn retain_body(&mut self, body: &Body) -> Result<(), String> {
+    fn retain_body(&mut self, body: &'a Body) -> Result<(), String> {
         self.retain(&body.return_type)
             .map_err(|reason| format!("{reason} in {} return carrier", body.name))?;
         for (index, local) in body.locals.iter().enumerate() {
@@ -239,7 +241,7 @@ impl<'a> CarrierPass<'a> {
     }
 
     /// Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering.
-    fn retain_iteration_polls(&mut self, body: &Body, block: &Block, taking: &[i64]) -> Result<(), String> {
+    fn retain_iteration_polls(&mut self, body: &'a Body, block: &'a Block, taking: &[i64]) -> Result<(), String> {
         for statement in &block.stmts {
             self.retain_poll_statement(body, &statement.kind, taking)?;
         }
@@ -247,7 +249,7 @@ impl<'a> CarrierPass<'a> {
     }
 
     /// Retain the carriers one statement's calls and consuming iterations need, descending into nested blocks.
-    fn retain_poll_statement(&mut self, body: &Body, kind: &StatementKind, taking: &[i64]) -> Result<(), String> {
+    fn retain_poll_statement(&mut self, body: &'a Body, kind: &'a StatementKind, taking: &[i64]) -> Result<(), String> {
         match kind {
             StatementKind::Call {
                 callee: Callee::Function(CallableTarget::Named(target)),
@@ -302,7 +304,7 @@ impl<'a> CarrierPass<'a> {
     }
 
     /// Retain the carriers of a match arm's guard and body statements.
-    fn retain_poll_arm(&mut self, body: &Body, arm: &MatchArm, taking: &[i64]) -> Result<(), String> {
+    fn retain_poll_arm(&mut self, body: &'a Body, arm: &'a MatchArm, taking: &[i64]) -> Result<(), String> {
         for statement in arm.guard_stmts.iter().chain(&arm.body_stmts) {
             self.retain_poll_statement(body, &statement.kind, taking)?;
         }
@@ -310,7 +312,7 @@ impl<'a> CarrierPass<'a> {
     }
 
     /// Retain closed source and published free-function signatures, including carriers absent from locals.
-    fn retain_call(&mut self, target: &NamedCallableTarget) -> Result<(), String> {
+    fn retain_call(&mut self, target: &'a NamedCallableTarget) -> Result<(), String> {
         let Some(identity) = target
             .canonical
             .as_ref()
@@ -321,20 +323,28 @@ impl<'a> CarrierPass<'a> {
         if !closed_arguments(&target.type_args) {
             return Ok(());
         }
+        // Local spellings can name the same closed target. This pass holds one immutable candidate table.
+        let demand = (identity, target.type_args.as_slice());
+        if self.retained_calls.contains(&demand) {
+            return Ok(());
+        }
         let module = self.module;
         if let Some(signatures) = self.signatures {
             let positions = signatures.bodies.positions(identity);
             self.borrowed_position_bytes += std::mem::size_of_val(positions);
             let bodies = positions.iter().map(|position| &module.bodies[*position]);
             let loaves = signatures.loaves.get(identity).into_iter().flatten().copied();
-            return self.retain_signatures(identity, &target.type_args, bodies, loaves);
+            self.retain_signatures(identity, &target.type_args, bodies, loaves)?;
+        } else {
+            self.retain_signatures(
+                identity,
+                &target.type_args,
+                module.bodies.iter(),
+                module.loaf_callables.iter(),
+            )?;
         }
-        self.retain_signatures(
-            identity,
-            &target.type_args,
-            module.bodies.iter(),
-            module.loaf_callables.iter(),
-        )
+        self.retained_calls.insert(demand);
+        Ok(())
     }
 
     /// Close matching source signatures before linked signatures, preserving checked arity and refusal rules.
