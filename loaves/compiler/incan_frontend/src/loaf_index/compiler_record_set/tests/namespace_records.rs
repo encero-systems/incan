@@ -70,8 +70,10 @@ fn check_path_rust_reexport_without_manifest() -> Result<(), Box<dyn std::error:
     };
     use crate::library_manifest::{LibraryManifest, LibraryRustAbi};
     use crate::loaf_index::LoafIndex;
+    use crate::rust_abi_cache::encode_rust_abi_cache;
     use crate::typechecker::TypeChecker;
     use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustVisibility};
+    use sha2::{Digest, Sha256};
 
     let root = tempfile::tempdir()?;
     let private = tempfile::tempdir()?;
@@ -129,11 +131,15 @@ fn check_path_rust_reexport_without_manifest() -> Result<(), Box<dyn std::error:
         .identity_graph
         .extend_checked_api_exports("probe", &api, &[(path, exports)])?;
     manifest.contract_metadata.api = Some(api);
-    manifest.rust_abi = LibraryRustAbi::from_items(vec![item.clone()]);
+    let abi_cache = encode_rust_abi_cache(&BTreeMap::from([(item.canonical_path.clone(), item.clone())]))?;
+    let mut abi = LibraryRustAbi::from_items(vec![item]).ok_or("producer lost its explicit Rust item")?;
+    abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&abi_cache)));
+    manifest.rust_abi = Some(abi);
     let install = checker.loaf_install_record("probe", &manifest);
     let publication = manifest.prepare_install_record(&install)?;
     let content = manifest.to_json_string()?;
     std::fs::write(root.path().join("probe.incnlib"), &content)?;
+    std::fs::write(root.path().join("probe.rustabi"), abi_cache)?;
     std::fs::write(
         root.path().join("probe.incnfacts"),
         manifest.encode_loaf_facts(&content, Some(publication))?,
