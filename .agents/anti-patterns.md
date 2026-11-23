@@ -151,7 +151,7 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 - Source: `readable-incan.md`, "The shape of a module" ("Imports come first").
 - Search: the `lateimport` findings of [`incan_structure.awk`](#incan_structureawk).
 - The earlier matcher counted only private imports. Count public re-exports as top-level imports too.
-- Remaining verified hits: five statements in `loaves/compiler/incan_mir_plan/src/lib.incn` at lines 169–221. The primitive async and I/O imports precede declarations.
+- Remaining verified hits: five statements in `loaves/compiler/incan_mir_plan/src/lib.incn` at lines 169–228. The primitive async and I/O imports precede declarations. The scanner skips both multiline string delimiters, including the fixture text in `scripts/test_check_doc_paths.incn`.
 
 ### IN5 Long lines
 
@@ -271,16 +271,34 @@ Over `*.incn` outside `fixtures`. It skips string bodies, so docstring examples 
 # Prints `<rule>\t<file>:<line>:<text>`: nested (a def inside a function body), lateimport (a top-level import after
 # the first declaration) and nodoc (a def, model, class, enum, trait or newtype whose body does not open with a string).
 function indent(s) { match(s, /^[ ]*/); return RLENGTH }
-FNR == 1 { depth = 0; seen = 0; in_str = 0; pending = 0 }
+function multiline_quote(text, active,    i, char, ordinary, triple) {
+  for (i = 1; i <= length(text); i++) {
+    char = substr(text, i, 1)
+    if (char == "\\" && (active != "" || ordinary != "")) { i++; continue }
+    if (active != "") {
+      if (substr(text, i, 3) == active) { active = ""; i += 2 }
+    } else if (ordinary != "") {
+      if (char == ordinary) ordinary = ""
+    } else if (char == "#") {
+      break
+    } else if (char == "\"" || char == "\047") {
+      triple = char char char
+      if (substr(text, i, 3) == triple) { active = triple; i += 2 }
+      else ordinary = char
+    }
+  }
+  return active
+}
+FNR == 1 { depth = 0; seen = 0; multiline = ""; pending = 0 }
 {
   line = $0
-  if (in_str) { if (gsub(/"""/, "&", line) % 2 == 1) in_str = 0; next }
+  if (multiline != "") { multiline = multiline_quote(line, multiline); next }
   if (line ~ /^[ ]*$/ || line ~ /^[ ]*#/) next
+  multiline = multiline_quote(line, "")
   ind = indent(line)
   if (pending == 2) { if (line !~ /^[ ]*(r|f)?"/) print "nodoc\t" at; pending = 0 }
   if (pending == 1) {
     if (line ~ /:[ ]*(#.*)?$/) pending = 2
-    if (gsub(/"""/, "&", line) % 2 == 1) in_str = 1
     next
   }
   while (depth > 0 && ind <= sind[depth]) depth--
@@ -298,7 +316,6 @@ FNR == 1 { depth = 0; seen = 0; in_str = 0; pending = 0 }
     next
   }
   if (line ~ /^[ ]*module [A-Za-z_]+:/) { depth++; sind[depth] = ind; kind[depth] = "module"; next }
-  if (gsub(/"""/, "&", line) % 2 == 1) in_str = 1
 }
 ```
 
