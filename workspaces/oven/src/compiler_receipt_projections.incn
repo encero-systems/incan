@@ -1,6 +1,6 @@
 """Authenticate receipt frames and reuse their verified namespace metadata across leased selections."""
 
-from pub::incan_platform.store import Lookup, Snapshot, locate_value, read_frame, read_store_identity
+from pub::incan_platform.store import Lookup, Snapshot, locate_value, read_frame
 from pub::incan_platform.store.index import Location
 from pub::incan_platform.trace import Operation
 from pub::internal_models import decode_read_receipt_view
@@ -60,10 +60,9 @@ model ReceiptProjection:
 
 
 pub class ReceiptProjectionCache:
-    """A bounded memo of verified metadata for one physical store and view."""
+    """A bounded memo scoped to one store path and view, with backing identity checked at each segment."""
 
     view: tuple[str, str, str] = ("", "", "")
-    store: str = ""
     entries: Dict[str, ReceiptProjection] = {}
     retained_bytes: int = 0
     observed: Dict[str, Option[str]] = {}
@@ -77,16 +76,10 @@ pub class ReceiptProjectionCache:
     pub def select_view(mut self, selected: Snapshot) -> None:
         """Select the store and view for this inventory and renew its backing observations."""
         view = (selected.root.value, selected.root.placement, selected.view)
-        mut store = selected.root.placement
-        if not store.startswith("memory:"):
-            store = match read_store_identity(selected.root):
-                Ok(identity) => identity
-                Err(_) => ""
-        if view != self.view or store != self.store or store == "":
+        if view != self.view:
             self.entries = {}
             self.retained_bytes = 0
         self.view = view
-        self.store = store
         self.observed = {}
         self.observations = 0
 
@@ -99,7 +92,7 @@ pub class ReceiptProjectionCache:
         key = "incan.engine.receipt\t" + evaluation.receipt_root
         location = receipt_location(selected, key)?
         mut generation: Option[str] = None
-        if self.store != "" and self.view == (selected.root.value, selected.root.placement, selected.view):
+        if self.view == (selected.root.value, selected.root.placement, selected.view):
             generation = self.observe_segment(selected, location.segment)
         if let Some(stamp) = generation:
             if let Some(prior) = self.entries.get(evaluation.receipt_root):
