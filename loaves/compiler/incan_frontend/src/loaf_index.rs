@@ -33,17 +33,17 @@ use lazy_entry::IndexedLoaf;
 pub use native_reference::{NATIVE_CLOSURE_SCHEMA, NativeAnchors, PublishedNativeClosure};
 
 /// What this process keeps of the Loaves it read: each store, how many readings it holds and their files' bytes.
-pub fn retained_inventory() -> [(&'static str, usize, u64); 2] {
+pub fn retained_inventory() -> [(&'static str, usize, u64); 3] {
     retained::inventory()
 }
 
-/// Release the decoded Loaf artifacts and installed record groups held by this process.
+/// Release the decoded Loaf artifacts, their executable surfaces, and installed record groups held by this process.
 pub fn release_retained_loaves() {
     settle_retained_loaves(false);
 }
 
 /// Release request-owned installed record groups. A continuing worker can keep bounded, generation-guarded path
-/// manifests for its next request.
+/// manifest and executable surface views for its next request.
 pub fn settle_retained_loaves(keep_path_artifacts: bool) {
     if !keep_path_artifacts {
         retained::release_artifacts();

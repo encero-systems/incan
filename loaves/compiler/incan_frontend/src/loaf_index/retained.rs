@@ -9,19 +9,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::library_manifest::executable_surface::ExecutableSurface;
 use crate::rust_abi_cache::RustAbiCache;
 
 use super::manifest_input::{Generation, generation};
-use super::{LoafArtifact, LoafIndexError};
+use super::{LoafArtifact, LoafIdentity, LoafIndexError};
 
 /// The largest reading retained, in bytes of the files it was read from; a larger one is read for each request.
 const MAX_READING_BYTES: u64 = 384 * 1024 * 1024;
 
 /// Bound the decoded path artifacts by the bytes of the manifest and optional ABI files that authorize them.
 const PATH_ARTIFACT_INPUT_BUDGET: u64 = 32 * 1024 * 1024;
-const PATH_ARTIFACT_COUNT_LIMIT: usize = 32;
+const PATH_READING_COUNT_LIMIT: usize = 32;
+/// Charge the authorizing files against the surface pool. Each surface retains the executable descriptor and
+/// public identities without holding the manifest tables or ABI payload.
+const PATH_SURFACE_INPUT_BUDGET: u64 = MAX_READING_BYTES;
 
 static ARTIFACTS: OnceLock<Mutex<Store<LoafArtifact>>> = OnceLock::new();
+type SurfaceReading = (LoafIdentity, Arc<ExecutableSurface>);
+static SURFACES: OnceLock<Mutex<Store<SurfaceReading>>> = OnceLock::new();
 static ABI: OnceLock<Mutex<Store<Arc<RustAbiCache>>>> = OnceLock::new();
 
 /// The current generations of all files a decoded value depends on, including optional assets' absence.
@@ -77,15 +83,15 @@ impl<T: Clone> Store<T> {
 
     /// Keep one stable reading within the per-reading bound, after dropping each reading whose files changed;
     /// dropping changes performance only.
-    fn insert(&mut self, key: PathBuf, inputs: Inputs, value: T, path_artifact_pool: bool) {
+    fn insert(&mut self, key: PathBuf, inputs: Inputs, value: T, pool_budget: Option<u64>) {
         self.readings.remove(&key);
         self.readings.retain(|_, reading| reading.inputs.current());
         if inputs.bytes > MAX_READING_BYTES {
             return;
         }
-        if path_artifact_pool
-            && (self.readings.len() >= PATH_ARTIFACT_COUNT_LIMIT
-                || self.input_bytes().saturating_add(inputs.bytes) > PATH_ARTIFACT_INPUT_BUDGET)
+        if let Some(budget) = pool_budget
+            && (self.readings.len() >= PATH_READING_COUNT_LIMIT
+                || self.input_bytes().saturating_add(inputs.bytes) > budget)
         {
             return;
         }
@@ -132,9 +138,44 @@ pub(super) fn artifact(dir: &Path, name: &str) -> Result<LoafArtifact, LoafIndex
         && observe(&paths).as_ref() == Some(&inputs)
         && let Ok(mut store) = store.lock()
     {
-        store.insert(key, inputs, value.clone(), true);
+        store.insert(key, inputs, value.clone(), Some(PATH_ARTIFACT_INPUT_BUDGET));
     }
     Ok(value)
+}
+
+/// Reuse the surface derived from the admitted manifest only while the current file selects the same identity and
+/// generation. A reader who has observed a replacement must admit it before using its surface.
+pub(super) fn executable_surface(
+    path: &Path,
+    identity: &LoafIdentity,
+    read: impl FnOnce() -> Result<Arc<ExecutableSurface>, LoafIndexError>,
+) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
+    let Ok(key) = fs::canonicalize(path) else { return read() };
+    let paths = [path.to_owned(), path.with_extension("rustabi")];
+    let before = observe(&paths);
+    let store = SURFACES.get_or_init(Mutex::default);
+    if let Some(inputs) = &before
+        && let Some((selected, surface)) = store.lock().ok().and_then(|store| store.get(&key, inputs))
+        && &selected == identity
+        && observe(&paths).as_ref() == Some(inputs)
+    {
+        tracing::debug!(target: "incan::invocation", loaf = identity.name, "retained immutable Loaf executable surface");
+        return Ok(surface);
+    }
+    let surface = read()?;
+    if let Some(inputs) = before
+        && inputs.bytes != 0
+        && observe(&paths).as_ref() == Some(&inputs)
+        && let Ok(mut store) = store.lock()
+    {
+        store.insert(
+            key,
+            inputs,
+            (identity.clone(), Arc::clone(&surface)),
+            Some(PATH_SURFACE_INPUT_BUDGET),
+        );
+    }
+    Ok(surface)
 }
 
 /// Open the file-backed toolchain or unit ABI index once per unchanged generation; malformed inputs are never retained,
@@ -160,18 +201,19 @@ pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
         && observe(&paths).as_ref() == Some(&inputs)
         && let Ok(mut store) = store.lock()
     {
-        store.insert(canonical, inputs, Arc::clone(&value), false);
+        store.insert(canonical, inputs, Arc::clone(&value), None);
     }
     Ok(value)
 }
 
-/// The readings this process keeps, store by store: Loaf artifacts (each a decoded manifest) and Rust ABI indexes,
-/// with the bytes of the files each was read from.
-pub(super) fn inventory() -> [(&'static str, usize, u64); 2] {
+/// The artifact, executable surface and ABI readings held by the worker, with the bytes of their authorizing files.
+pub(super) fn inventory() -> [(&'static str, usize, u64); 3] {
     let (artifacts, artifact_bytes) = stored(&ARTIFACTS);
+    let (surfaces, surface_bytes) = stored(&SURFACES);
     let (indexes, index_bytes) = stored(&ABI);
     [
         ("Loaf artifacts", artifacts, artifact_bytes),
+        ("Loaf executable surfaces", surfaces, surface_bytes),
         ("Rust ABI indexes", indexes, index_bytes),
     ]
 }
@@ -185,10 +227,14 @@ fn stored<T>(store: &OnceLock<Mutex<Store<T>>>) -> (usize, u64) {
         .unwrap_or((0, 0))
 }
 
-/// Drop every retained Loaf artifact reading, so no decoded manifest outlives the request that read it. Rust ABI
-/// indexes stay: they are file-backed and read their items lazily.
+/// Drop retained Loaf artifacts and projected surfaces. File-backed Rust ABI indexes stay and read their items lazily.
 pub(super) fn release_artifacts() {
     if let Some(store) = ARTIFACTS.get()
+        && let Ok(mut store) = store.lock()
+    {
+        store.readings.clear();
+    }
+    if let Some(store) = SURFACES.get()
         && let Ok(mut store) = store.lock()
     {
         store.readings.clear();

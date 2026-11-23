@@ -265,7 +265,7 @@ impl IndexedLoaf {
         }
         let before = observation(&path);
         let artifact = LoafArtifact::read(&dir, name)?;
-        let indexed = Self::admitted(LoafEntry {
+        let mut indexed = Self::admitted(LoafEntry {
             key,
             namespace,
             artifact,
@@ -273,7 +273,8 @@ impl IndexedLoaf {
         if let Some(before) = before
             && observation(&path).as_ref() == Some(&before)
         {
-            let _ = retain(&path, before, indexed.summary()?);
+            let _ = retain(&path, &before, indexed.summary()?);
+            indexed.path_generation = Some(before);
         }
         Ok(indexed)
     }
@@ -347,8 +348,8 @@ impl IndexedLoaf {
             .map_err(Clone::clone)
     }
 
-    /// What executable resolution reads of this Loaf: from its own records when the installed set publishes them,
-    /// otherwise derived from the executable projection.
+    /// What executable resolution reads of this Loaf. Installed records supply the surface directly. Path artifacts
+    /// share the projection of their exact admitted manifest across requests.
     pub fn executable_surface(&self) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
         self.surface
             .get_or_init(|| {
@@ -363,8 +364,18 @@ impl IndexedLoaf {
                     }
                     return Ok(surface);
                 }
-                let manifest = self.execution_manifest()?;
-                Ok(Arc::new(ExecutableSurface::of(&manifest)))
+                let build = || {
+                    let manifest = self.execution_manifest()?;
+                    Ok(Arc::new(ExecutableSurface::of(&manifest)))
+                };
+                if self.path_generation.is_none() || !matches!(self.namespace, LoafNamespace::Dependency { .. }) {
+                    return build();
+                }
+                let path = self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)));
+                self.validate_path_generation(&path)?;
+                let surface = super::retained::executable_surface(&path, &self.summary()?.identity, build)?;
+                self.validate_path_generation(&path)?;
+                Ok(surface)
             })
             .as_ref()
             .map(Arc::clone)
@@ -516,16 +527,8 @@ impl IndexedLoaf {
     /// Reuse the install descriptor in the guarded inventory without materializing its manifest's other facts.
     fn path_install_record(&self) -> Result<Option<LoafInstallRecord>, LoafIndexError> {
         let path = self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)));
-        let guard = || {
-            if let Some(expected) = self.path_generation.as_ref()
-                && observation(&path).as_ref() != Some(expected)
-            {
-                return Err(self.inventory_mismatch("the manifest changed after its inventory was admitted"));
-            }
-            Ok(())
-        };
         let (manifest_digest, install_digest) = if self.path_generation.is_some() {
-            guard()?;
+            self.validate_path_generation(&path)?;
             let summary = self.summary()?;
             (&summary.identity.digest, summary.install_record_digest.as_deref())
         } else {
@@ -542,10 +545,20 @@ impl IndexedLoaf {
             .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
         let record = super::LibraryManifest::decode_compiler_record_value(&value.value)
             .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
-        guard()?;
+        self.validate_path_generation(&path)?;
         tracing::trace!(target: "incan::invocation", phase = "path_install_record",
             loaf = %self.name, key = %value.key(), revision = expected, bytes = value.value.len());
         Ok(Some(record))
+    }
+
+    /// Refuse a path selection that changed after its inventory was admitted.
+    fn validate_path_generation(&self, path: &Path) -> Result<(), LoafIndexError> {
+        if let Some(expected) = self.path_generation.as_ref()
+            && observation(path).as_ref() != Some(expected)
+        {
+            return Err(self.inventory_mismatch("the manifest changed after its inventory was admitted"));
+        }
+        Ok(())
     }
 
     /// Validate every record selected under this path, including aliases, before exposing its canonical identity.
@@ -631,6 +644,7 @@ impl IndexedLoaf {
             .and_then(|result| result.as_ref().err())
             .or_else(|| self.selected_summary.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.vocabulary.get().and_then(|result| result.as_ref().err()))
+            .or_else(|| self.surface.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.install.get().and_then(|result| result.as_ref().err()))
     }
 
@@ -704,7 +718,7 @@ fn retained(path: &Path) -> Option<(Summary, Observation)> {
 }
 
 /// Atomically publish an optional inventory only after ordinary manifest admission has succeeded.
-fn retain(path: &Path, observation: Observation, summary: &Summary) -> std::io::Result<()> {
+fn retain(path: &Path, observation: &Observation, summary: &Summary) -> std::io::Result<()> {
     let Some(cache) = record_path(path) else { return Ok(()) };
     let guard = manifest_input::checked_guard(&observation.path, observation.source, &observation.compiler);
     let row = internal_models::ManifestInventory {
