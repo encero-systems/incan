@@ -35,7 +35,8 @@ pub fn length_list<T>(values: &Vec<T>) -> i64 {
     values.len() as i64
 }
 
-/// Read a copy of an element with Python indices and the legacy IndexError.
+/// Read a copy of an element with signed indices and report a bounds failure at the authored read.
+#[track_caller]
 pub fn get_list<T: Clone>(values: &Vec<T>, index: i64) -> T {
     list_get(values, index).clone()
 }

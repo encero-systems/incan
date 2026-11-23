@@ -1,25 +1,23 @@
-//! Payload-only panic reporting through the standard native hook.
+//! Canonical language panic reporting through the standard native hook.
 
 use std::io::Write;
+use std::panic::{self, PanicHookInfo};
 
-/// Install canonical reporting: print a text payload without location decoration, preserving unwinding and status.
+/// Install canonical reporting before native entry execution, preserving unwinding and exit status.
 pub(crate) fn initialize_panic_hook() {
-    std::panic::set_hook(Box::new(|info| report_panic(info.payload_as_str())));
+    panic::set_hook(Box::new(report_panic));
 }
 
-/// Print a text payload, or the fallback line for any other payload.
-fn report_panic(message: Option<&str>) {
-    match message {
-        Some(message) => write_panic_line(message),
-        None => write_panic_line("generated program panicked"),
-    }
-}
-
-/// Write one complete diagnostic line with the standard stderr I/O failure behavior.
-fn write_panic_line(value: &str) {
-    let mut bytes = value.as_bytes().to_vec();
-    bytes.push(b'\n');
-    if let Err(error) = std::io::stderr().write_all(&bytes) {
-        std::panic::panic_any(format!("failed printing to stderr: {error}"));
+/// Report the payload and an available authored Incan call site in one stderr lock.
+fn report_panic(info: &PanicHookInfo<'_>) {
+    let message = info.payload_as_str().unwrap_or("generated program panicked");
+    let location = info.location().filter(|location| location.file().ends_with(".incn"));
+    let mut stderr = std::io::stderr().lock();
+    let result = match location {
+        Some(location) => writeln!(stderr, "{message}\n  --> {location}"),
+        None => writeln!(stderr, "{message}"),
+    };
+    if let Err(error) = result {
+        panic::panic_any(format!("failed printing to stderr: {error}"));
     }
 }

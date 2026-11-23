@@ -17,8 +17,10 @@ use incan_lang::indexing::normalize_slice_bounds;
 ///
 /// Native cursor adapters reuse this internal boundary to retain list-like negative indices and diagnostics without
 /// materializing an intermediate list. The caller must retain the same collection length until the indexed read.
+/// Caller tracking forwards the authored index operation when the access path has a source location.
 #[doc(hidden)]
 #[inline]
+#[track_caller]
 pub fn normalize_list_index(len: usize, index: i64) -> usize {
     let len_i = len as i64;
     let mut i = index;
@@ -31,11 +33,12 @@ pub fn normalize_list_index(len: usize, index: i64) -> usize {
     i as usize
 }
 
-/// Get a list element by Python-style index (supports negative indices).
+/// Get a list element by a signed index and forward the caller's location on a bounds failure.
 ///
 /// ## Panics
 /// - `IndexError: index {index} out of range for list of length {len}` if out of range.
 #[inline]
+#[track_caller]
 pub fn list_get<T>(list: &[T], index: i64) -> &T {
     &list[normalize_list_index(list.len(), index)]
 }
