@@ -336,7 +336,7 @@ def select(left: Borrowed[Reader], right: Borrowed[Reader]) -> Selection from le
 
 ## Closures
 
-A closure retains every dependency it captures. A captured Copy value can be read when the closure is built and held by value. Any other captured place, including the receiver, is borrowed: shared when the closure only reads it, and exclusive when the closure writes it. That place stays borrowed until the closure's last call, and changing it before then is refused with `INCAN-T0126`. Passing a closure to a callee lends its captures for that call.
+In a body with explicit ownership contracts, a closure retains every dependency it captures. A captured Copy value can be read when the closure is built and held by value. Any other captured place, including the receiver, is borrowed: shared when the closure only reads it, and exclusive when the closure writes it. That place stays borrowed until the closure's last call, and changing it before then is refused with `INCAN-T0126`. Passing a closure to a callee lends its captures for that call.
 
 ```incan
 def total(amount: Borrowed[int], extra: int) -> int:
@@ -384,7 +384,7 @@ A native result that borrows its receiver or an input is expressed with the same
 
 ## Async bodies
 
-An async function or method checks its explicit inputs as a synchronous one does. An awaited call borrows its inputs until the await completes, and the caller's source is usable again afterward. A borrow the body holds stays live across each suspension, so awaiting a call that changes the borrowed place before the borrow's last use is refused with `INCAN-T0126`. An async body can return a view; the call keeps its source borrowed until the awaited result's last use.
+An async function or method checks its explicit inputs as a synchronous one does. An awaited call borrows its inputs until the await completes, and the caller's source is usable again afterward. Under an explicit ownership contract, a borrow the body holds stays live across each suspension, so awaiting a call that changes the borrowed place before the borrow's last use is refused with `INCAN-T0126`. An async body with an explicit result source can return a view. The call keeps its source borrowed until the awaited result's last use.
 
 ```incan
 import std.async
@@ -445,7 +445,7 @@ def main() -> None:
     title = "new"
 ```
 
-`INCAN-T0125` is emitted for a new local initialized from an existing local, parameter, stored field or known list/dictionary element whose meaning changes when ordinary bindings borrow their initializer place. Bare, `let` and `mut` declarations are included. Ordinary value-type annotations such as `int` do not suppress the warning. An explicit ownership annotation states its own access request and does not receive this warning. Calls, constructor results, computed properties and explicit clone results do not receive this warning. The warning does not alter runtime behavior. An explicit clone states an independent value.
+`INCAN-T0125` warns about recognized copies of existing locals, parameters, stored fields and list or dictionary elements in bare, `let` and `mut` declarations. An ordinary local initialized from `self.field` can still receive an independent value without this warning. Ordinary value-type annotations such as `int` do not suppress the warning. An explicit ownership annotation states its own access request and does not receive this warning. Calls, constructor results, computed properties and explicit clone results do not receive this warning. The warning does not alter runtime behavior. An explicit clone states an independent value.
 
 ## Related explanation
 
