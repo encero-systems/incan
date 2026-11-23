@@ -25,7 +25,7 @@ use crate::generators::append_generator_constructor;
 use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
-use crate::plan_modules::{ModulePage, admitted_page, report_admitted};
+use crate::plan_modules::{AdmittedProduct, ModulePage, admitted_page, report_admitted};
 use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, producer_generation};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
@@ -130,7 +130,7 @@ pub fn lower_ordinary_bodies(
             page: &page,
             placement_lines: &placement_lines,
             restored: Vec::new(),
-            frames: Vec::new(),
+            products: Vec::new(),
         };
         let mut ordinary = 0;
         for &position in positions {
@@ -209,7 +209,7 @@ pub fn lower_ordinary_bodies(
             keyed.report,
             owner,
             &admission.restored,
-            &admission.frames,
+            &admission.products,
             ordinary,
             page.inspect_placement,
             keyed.directory,
@@ -237,12 +237,12 @@ pub struct FrameSource<'a> {
 }
 
 /// One module's admitted plan record as its ordinary frames read it: the page, the line index an inspected placement
-/// borrows, the functions restored from the page so far and the helper frames each restored product carries.
+/// borrows, and the functions and exact product evidence restored from the page so far.
 pub struct ModuleAdmission<'a> {
     pub page: &'a ModulePage,
     pub placement_lines: &'a [i64],
     pub restored: Vec<AdmittedFunction>,
-    pub frames: Vec<Vec<String>>,
+    pub(crate) products: Vec<AdmittedProduct>,
 }
 
 /// Read only producer-admitted products, or lower normally and retain an exact witnessed result.
@@ -544,7 +544,7 @@ fn restore_admitted(
         Ok(admitted) => admitted,
         Err(reason) => return Admission::Missed(reason),
     };
-    let (placed, encoded, previous) = (&payload.0, &payload.1, &payload.2);
+    let (placed, encoded, previous) = (&payload.function, &payload.requests, &payload.event);
     if previous.key != selected.key || previous.function != selected.function || previous.identity != selected.symbol {
         return Admission::Missed("its page entry names another event");
     }
@@ -560,7 +560,8 @@ fn restore_admitted(
         return Admission::Missed("a generic instance it requests is gone");
     };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();
-    let moved = current_identity != previous.identity || references != previous.references || !payload.3;
+    let moved =
+        current_identity != previous.identity || references != previous.references || !payload.coordinates_match;
     // A moved function's note names its nodes: the body's current ones, or those its page event recorded.
     let placement = if moved {
         let nodes = match &current {
@@ -577,9 +578,11 @@ fn restore_admitted(
     } else {
         None
     };
-    admission
-        .frames
-        .push(frames.iter().map(|frame| frame.name.clone()).collect());
+    admission.products.push(AdmittedProduct {
+        key: previous.key.clone(),
+        digest: payload.digest.clone(),
+        helpers: frames.iter().map(|frame| frame.name.clone()).collect(),
+    });
     admission.restored.push(AdmittedFunction {
         function: function.name.clone(),
         identity: current_identity,

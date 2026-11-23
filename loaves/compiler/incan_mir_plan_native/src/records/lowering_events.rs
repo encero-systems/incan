@@ -567,6 +567,16 @@ pub fn placed_admission(
     function: &AdmittedFunction,
 ) -> Result<LoweringEvent, String> {
     let mut event = original.clone();
+    place_admitted_event(&mut event, module, function)?;
+    Ok(event)
+}
+
+/// Apply the current positions to an owned event without copying its admitted product bytes.
+pub fn place_admitted_event(
+    event: &mut LoweringEvent,
+    module: &str,
+    function: &AdmittedFunction,
+) -> Result<(), String> {
     if event.function != function.function || event.module != module {
         return Err("admitted lowering event names a different function or module".into());
     }
@@ -578,5 +588,5 @@ pub fn placed_admission(
     }
     event.identity = function.identity.clone();
     event.references = function.references.clone();
-    Ok(event)
+    Ok(())
 }

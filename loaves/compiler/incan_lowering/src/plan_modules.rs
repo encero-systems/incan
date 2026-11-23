@@ -365,15 +365,21 @@ fn note_suffix(complete: bool) -> &'static str {
     }
 }
 
+/// The exact product identity and helper inventory established while admitting one native function.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct AdmittedProduct {
+    pub key: String,
+    pub digest: String,
+    pub helpers: Vec<String>,
+}
+
 /// Report each restored function; only a request that restored all ordinary bodies records a whole module.
-///
-/// `frames` names, aligned with `functions`, the helper frames each restored product carries. They go only to the
-/// request-private note directory, where plan publication reads them instead of decoding every admitted product again.
-pub fn report_admitted(
+/// Product evidence stays in the existing private companion, aligned with the functions it authenticates.
+pub(crate) fn report_admitted(
     report: Option<&str>,
     module: &str,
     functions: &[AdmittedFunction],
-    frames: &[Vec<String>],
+    evidence: &[AdmittedProduct],
     ordinary: usize,
     inspected: bool,
     products: Option<&str>,
@@ -381,8 +387,8 @@ pub fn report_admitted(
     let (Some(root), Some(directory)) = (report, products) else {
         return Ok(());
     };
-    if frames.len() != functions.len() {
-        return Err("admitted helper frames are not aligned with the restored functions".into());
+    if evidence.len() != functions.len() {
+        return Err("admitted products are not aligned with the restored functions".into());
     }
     let basename = hex::encode(module.as_bytes());
     let selected = note_suffix(functions.len() == ordinary);
@@ -397,7 +403,7 @@ pub fn report_admitted(
                 functions: functions.to_vec(),
                 inspected,
             };
-            write_admitted_note(&path, &diagnostic, &note, frames)?;
+            write_admitted_note(&path, &diagnostic, &note, evidence)?;
             continue;
         }
         for stale in [frames_path(&path), path, diagnostic] {
@@ -409,13 +415,12 @@ pub fn report_admitted(
     Ok(())
 }
 
-/// Publish the restored function positions used to assemble the current native plan, with the private list of the
-/// helper frames each restored product carries.
+/// Publish the current plan positions and the evidence already established by native reuse.
 fn write_admitted_note(
     path: &Path,
     diagnostic: &Path,
     note: &AdmittedModule,
-    frames: &[Vec<String>],
+    evidence: &[AdmittedProduct],
 ) -> Result<(), String> {
     let encoded = encode_module_note(note)?;
     if let Some(parent) = path.parent() {
@@ -423,9 +428,13 @@ fn write_admitted_note(
     }
     write_module_placement(&format!("{}.placement", path.display()), note)?;
     let mut listed = String::new();
-    for (function, carried) in note.functions.iter().zip(frames) {
+    for (function, product) in note.functions.iter().zip(evidence) {
         listed.push_str(&function.function);
-        for frame in carried {
+        listed.push('\t');
+        listed.push_str(&product.key);
+        listed.push('\t');
+        listed.push_str(&product.digest);
+        for frame in &product.helpers {
             listed.push('\t');
             listed.push_str(frame);
         }
@@ -437,14 +446,16 @@ fn write_admitted_note(
     std::fs::write(diagnostic, &encoded).map_err(|error| error.to_string())
 }
 
-/// The private list of helper frames beside a module note: one line per restored function, its native name then
-/// the frames its product carries, separated by tabs.
+/// The private evidence beside a module note contains each restored function, its product key, digest and helpers.
 fn frames_path(note: &Path) -> PathBuf {
     PathBuf::from(format!("{}.frames", note.display()))
 }
 
-/// Read the helper frames each restored function of a module note carries, by native function name.
-pub fn admitted_frames(directory: &Path, note: &AdmittedModule) -> Result<HashMap<String, Vec<String>>, String> {
+/// Read the private proof of each product once so the native publisher can reuse the settled definition.
+pub(crate) fn admitted_products(
+    directory: &Path,
+    note: &AdmittedModule,
+) -> Result<HashMap<String, AdmittedProduct>, String> {
     let path = frames_path(&directory.join(format!(
         "{}{}",
         hex::encode(note.module.as_bytes()),
@@ -452,26 +463,43 @@ pub fn admitted_frames(directory: &Path, note: &AdmittedModule) -> Result<HashMa
     )));
     let listed =
         std::fs::read_to_string(&path).map_err(|error| format!("cannot read admitted helper frames {error}"))?;
-    let mut frames = HashMap::new();
+    let refuse = || format!("admitted products of {} disagree with its note", note.module);
+    let mut products = HashMap::with_capacity(note.functions.len());
     for line in listed.lines() {
-        let mut names = line.split('\t');
-        let Some(function) = names.next() else {
-            continue;
+        let mut fields = line.split('\t');
+        let (Some(function), Some(key), Some(digest)) = (fields.next(), fields.next(), fields.next()) else {
+            return Err(refuse());
         };
-        frames.insert(function.to_owned(), names.map(str::to_owned).collect());
+        if function.is_empty() || !product_hex(key) || !digest.strip_prefix("sha256:").is_some_and(product_hex) {
+            return Err(refuse());
+        }
+        let product = AdmittedProduct {
+            key: key.to_owned(),
+            digest: digest.to_owned(),
+            helpers: fields.map(str::to_owned).collect(),
+        };
+        if products.insert(function.to_owned(), product).is_some() {
+            return Err(refuse());
+        }
     }
-    if frames.len() != note.functions.len()
-        || note
-            .functions
-            .iter()
-            .any(|function| !frames.contains_key(&function.function))
+    if products.len() != note.functions.len()
+        || note.functions.iter().any(|function| {
+            products.get(&function.function).is_none_or(|product| {
+                function
+                    .placement
+                    .as_ref()
+                    .is_some_and(|placement| placement.key != product.key)
+            })
+        })
     {
-        return Err(format!(
-            "admitted helper frames of {} disagree with its note",
-            note.module
-        ));
+        return Err(refuse());
     }
-    Ok(frames)
+    Ok(products)
+}
+
+/// Match a complete lowercase SHA-256 representation used by native product keys and digests.
+fn product_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Read every module note of a plan report, in name order.
@@ -513,8 +541,8 @@ mod tests {
     };
 
     use super::{
-        FRAME_LIST, admitted_frames, admitted_page, admitted_plan_page, read_admitted, report_admitted, staged_page,
-        staged_page_reads,
+        AdmittedProduct, FRAME_LIST, admitted_page, admitted_plan_page, admitted_products, read_admitted,
+        report_admitted, staged_page, staged_page_reads,
     };
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
@@ -567,6 +595,15 @@ mod tests {
         }
     }
 
+    /// Give a test restore the product evidence it would establish when admitting its exact page.
+    fn evidence(helpers: &[&str]) -> AdmittedProduct {
+        AdmittedProduct {
+            key: "ab".repeat(32),
+            digest: format!("sha256:{}", "cd".repeat(32)),
+            helpers: helpers.iter().map(|helper| (*helper).to_owned()).collect(),
+        }
+    }
+
     fn names(directory: &Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(directory)
             .map(|entries| {
@@ -593,14 +630,14 @@ mod tests {
             Some(&report_text),
             module,
             &partial,
-            &[Vec::new()],
+            &[evidence(&[])],
             2,
             false,
             Some(&products_text),
         )?;
         assert_eq!(names(&report), [format!("{basename}.partially-admitted")]);
         let whole = [restored("a", false), restored("b", true)];
-        let carried = [Vec::new(), vec!["helper".to_owned()]];
+        let carried = [evidence(&[]), evidence(&["helper"])];
         report_admitted(
             Some(&report_text),
             module,
@@ -624,9 +661,9 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert!(notes[0].complete && notes[0].inspected);
         assert_eq!(notes[0].functions, whole);
-        let frames = admitted_frames(&admissions, &notes[0])?;
-        assert_eq!(frames.get("a"), Some(&Vec::new()));
-        assert_eq!(frames.get("b"), Some(&vec!["helper".to_owned()]));
+        let products = admitted_products(&admissions, &notes[0])?;
+        assert_eq!(products.get("a"), Some(&carried[0]));
+        assert_eq!(products.get("b"), Some(&carried[1]));
         assert!(report_admitted(Some(&report_text), module, &whole, &[], 2, true, Some(&products_text)).is_err());
         report_admitted(Some(&report_text), module, &[], &[], 2, true, Some(&products_text))?;
         assert!(names(&report).is_empty());
@@ -645,7 +682,7 @@ mod tests {
             Some(&report_text),
             "lone_alpha",
             &[restored("a", false)],
-            &[Vec::new()],
+            &[evidence(&[])],
             1,
             false,
             Some(&products_text),
@@ -723,7 +760,13 @@ mod tests {
             references: Vec::new(),
             positions: Vec::new(),
         };
-        Ok((placed, Vec::new(), event, true))
+        Ok(AdmittedPayload {
+            function: placed,
+            requests: Vec::new(),
+            event,
+            coordinates_match: true,
+            digest: evidence(&[]).digest,
+        })
     }
 
     /// A resident worker reads an unchanged page once and restores each of its products once per restore inputs.
