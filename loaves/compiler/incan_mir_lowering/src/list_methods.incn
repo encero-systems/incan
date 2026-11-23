@@ -49,6 +49,7 @@ from calls import instantiated_external_call
 from call_arguments import call_argument_operand
 from operand_borrows import borrow_slice_operand, list_slice_view, lower_text_helper
 from static_storage import persist_static_value, read_static
+from static_readers import call_static_reader, guarded_static_receiver, static_length, static_reader
 from list_values import (
     checked_list_argument,
     element_read,
@@ -528,6 +529,12 @@ pub def lower_list_builtin(
                 return Ok(None)
     if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
+    # A guarded static list, set or dictionary is measured where it is stored.
+    match guarded_static_receiver(builder, arguments, span)?:
+        Some((slot, stored)) =>
+            length = call_destination(builder, destination, PlanType.Int, span)?
+            return static_length(builder, slot, stored, length, span)
+        None => pass
     receiver = shared_receiver_place(builder, arguments, 0, span)?
     if is_collection(place_type(builder.locals, receiver)):
         return collection_length(builder, receiver, destination, span)
@@ -591,8 +598,16 @@ pub def lower_list_helper(
     """
     if len(arguments) != 2:
         return Err("unsupported Body IR list membership arity")
-    receiver = shared_sequence_receiver(builder, arguments, span, true)?
-    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR membership on non-list")?
+    # A guarded static list is searched where it is stored; any other receiver is read into this frame.
+    guarded = guarded_static_receiver(builder, arguments, span)?
+    mut receiver = plan_place(0, span)
+    mut ty = PlanType.Unit
+    match guarded:
+        Some((_slot, stored)) => ty = stored
+        None =>
+            receiver = shared_sequence_receiver(builder, arguments, span, true)?
+            ty = place_type(builder.locals, receiver)
+    leaf, depth = require_list_shape(ty, "unsupported Body IR membership on non-list")?
     admit_membership_equality(builder, leaf)?
     element = list_element(leaf, depth)
     mut needle_type = PlanType.Unit
@@ -603,23 +618,41 @@ pub def lower_list_helper(
     match arguments[1].as_one():
         Some(value) => argument = call_argument_operand(builder, value, needle_type, span, false)?
         None => return Err("unsupported Body IR list membership needle spread")
-    reference = list_borrow(builder, receiver, false, span)?
-    slice_type = PlanType.SliceRef([element])
-    slice_reference = list_slice_view(builder, reference, [element], false, span)?
     output = call_destination(builder, destination, PlanType.Bool, span)?
-    instantiated_external_call(
-        builder,
-        "incan_std_primitives::collections::list_contains",
-        [element],
-        [slice_type, needle_type],
-        PlanType.Bool,
-        [slice_reference, argument],
-        output,
-        span,
-    )?
+    match guarded:
+        Some((slot, _stored)) =>
+            mut reader = static_reader(builder, PlanType.ListRef(leaf, depth), [needle_type], PlanType.Bool, span)
+            needle = read_place(plan_place(2, span), false, span)
+            list_contains_call(reader, plan_place(1, span), needle, element, needle_type, plan_place(0, span), span)?
+            call_static_reader(builder, reader, slot, plan_place(0, span), [argument], output, span)
+        None => list_contains_call(builder, receiver, argument, element, needle_type, output, span)?
     if negated:
         builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
     return Ok(None)
+
+
+def list_contains_call(
+    mut builder: Builder,
+    receiver: Place,
+    needle: Operand,
+    element: PlanType,
+    needle_type: PlanType,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Search a list, borrowed where `receiver` holds or lends it, through its elements' native PartialEq."""
+    reference = list_borrow(builder, receiver, false, span)?
+    slice_reference = list_slice_view(builder, reference, [element], false, span)?
+    return instantiated_external_call(
+        builder,
+        "incan_std_primitives::collections::list_contains",
+        [element],
+        [PlanType.SliceRef([element]), needle_type],
+        PlanType.Bool,
+        [slice_reference, needle],
+        output,
+        span,
+    )
 
 
 def admit_membership_equality(builder: &Builder, leaf: ListLeaf) -> Result[None, str]:

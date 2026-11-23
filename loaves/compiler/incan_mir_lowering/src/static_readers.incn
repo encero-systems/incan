@@ -1,0 +1,364 @@
+"""
+Read a guarded static collection where it is stored, without copying it into the reading frame.
+
+A whole-collection read such as `len(D)`, `k in D` or `L[i]` becomes one synthesized reader function whose first
+parameter borrows the stored collection. The caller evaluates every other argument first and calls the reader through
+`CalleeKind.StaticMethod`, whose accessor holds the storage's shared guard for the whole call. The reader returns only
+values that own their storage, so nothing borrowed outlives the guard.
+"""
+
+from pub::incan_mir_plan import (
+    CalleeKind,
+    Function,
+    ListLeaf,
+    Local,
+    Operand,
+    Parameter,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    TupleElement,
+    assign as plan_assign,
+    place as plan_place,
+)
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    PlaceElem,
+)
+from layout_types import native_source_type
+from decls import static_slot
+from numerics import numeric_carrier
+from frame import place_type, Builder, temporary, forget_owned, drop_all_owned, terminate_call, read_place
+from collections import (
+    borrow_collection,
+    collection_arguments,
+    collection_call,
+    collection_reference,
+    is_collection,
+    is_owned_collection,
+    owned_runtime_operand,
+)
+from lists import require_list_shape, list_element, is_owned_list
+from builtins import list_call
+from statements import is_nominal_type
+from computed_statics import initialize_module_statics, is_computed_static, has_native_static_cell, static_owner
+from checked_values import scalar_operand
+from operators import operand_type
+from list_values import list_borrow, read_list_element
+from static_storage import snapshot_owns
+
+
+pub def guarded_static_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[Option[tuple[int, PlanType]], str]:
+    """
+    The storage slot and stored type when argument 0 is a whole guarded static collection that the call only reads.
+
+    None keeps the caller's ordinary route, which reads a snapshot of any other static.
+    """
+    if len(arguments) == 0:
+        return Ok(None)
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            if read.fact != OwnershipFact.Borrow and read.fact != OwnershipFact.Clone:
+                return Ok(None)
+            return guarded_static_collection(builder, read.place)
+        _ => return Ok(None)
+
+
+pub def guarded_static_collection(mut builder: Builder, value: &RustPlace) -> Result[Option[tuple[int, PlanType]], str]:
+    """
+    The storage slot and stored type of a place rooted in a guarded static list, dictionary or set.
+
+    A dictionary or set qualifies with text, numeric or boolean keys, whose hashing and equality run no source code
+    under the guard.
+    """
+    match value.global():
+        Some(global) =>
+            slot = static_slot(builder.program.statics.as_ref(), global)?
+            if not has_native_static_cell(builder.program.statics.as_ref()[slot]):
+                return Ok(None)
+            ty = native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                global.ty,
+                builder.intrinsics,
+            )?
+            if is_owned_list(ty):
+                return Ok(Some((slot, ty)))
+            if not is_owned_collection(ty):
+                return Ok(None)
+            types = collection_arguments(ty)
+            if len(types) == 0:
+                return Ok(None)
+            if types[0] != PlanType.String and types[0] != PlanType.Bool and not numeric_carrier(types[0]):
+                return Ok(None)
+            return Ok(Some((slot, ty)))
+        None => return Ok(None)
+
+
+pub def static_reader(
+    mut builder: Builder,
+    receiver: PlanType,
+    parameters: list[PlanType],
+    result: PlanType,
+    span: SourceSpan,
+) -> Builder:
+    """
+    Start a reader's frame: slot 0 is its result, slot 1 borrows the stored collection, and each later slot is one
+    argument the caller evaluated. An argument that owns storage is dropped when the reader returns, unless the
+    reader's body moves it on.
+    """
+    mut locals = [Local(ty=result, span=span), Local(ty=receiver, span=span)]
+    mut owned: list[int] = []
+    for parameter in parameters:
+        if parameter_owns(parameter):
+            owned.append(len(locals))
+        locals.append(Local(ty=parameter, span=span))
+    mut reader = Builder(
+        program=builder.program,
+        locals=locals,
+        parameter_count=len(parameters) + 1,
+        blocks=[],
+        current=0,
+        source=builder.source,
+        file=builder.file,
+        line_starts=builder.line_starts,
+        module_identity=builder.module_identity,
+        callable_identity=None,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=owned,
+        closed=[],
+        iterators=[],
+        borrowed_items=[],
+        in_place_items=[],
+        partial_callables=[],
+        scalar_closures=[],
+        unproven_closures=[],
+        intrinsics=builder.intrinsics,
+        local_offset=0,
+        consuming_closure_frame=false,
+        generator_handle=-1,
+        unions=builder.unions,
+        instances=[],
+        type_parameters=[],
+        type_arguments=[],
+        function_pointer_locals=[],
+        name=builder.name,
+        synthesized=[],
+        moved_tuple_fields=[],
+    )
+    _ = reader.new_block(span)
+    return reader
+
+
+def parameter_owns(ty: PlanType) -> bool:
+    """Whether a reader's argument holds storage its frame must drop: owned text, a collection or a nominal value."""
+    return ty == PlanType.String or is_owned_list(ty) or is_owned_collection(ty) or is_nominal_type(ty)
+
+
+pub def call_static_reader(
+    mut builder: Builder,
+    mut reader: Builder,
+    slot: int,
+    result: Place,
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> None:
+    """
+    Close the reader, whose body left its value in `result`, and call it under storage slot `slot`'s shared guard.
+
+    Only a computed static enters its module's initialization before the call, as a snapshot load does.
+    """
+    if result.local != 0:
+        moved = snapshot_owns(place_type(reader.locals, result))
+        reader.emit(plan_assign(plan_place(0, span), RvalueKind.Use(read_place(result, moved, span)), span))
+        forget_owned(reader, result.local)
+    # The result is the caller's from here on.
+    forget_owned(reader, 0)
+    drop_all_owned(reader, span)
+    reader.finish(TerminatorKind.Return, span)
+    name = f"{builder.name}__incan_static_reader_{slot}_{len(builder.synthesized)}"
+    mut parameters = [Parameter(name="__incan_receiver", ty=reader.locals[1].ty, span=span)]
+    for index in range(2, reader.parameter_count + 1):
+        parameters.append(Parameter(name=f"__incan_argument_{index - 2}", ty=reader.locals[index].ty, span=span))
+    for external in reader.externals:
+        builder.externals.append(external)
+    builder.synthesized.append(
+        Function(
+            name=name,
+            parameters=parameters,
+            return_type=reader.locals[0].ty,
+            locals=reader.locals,
+            blocks=reader.blocks,
+            span=span,
+        ),
+    )
+    if is_computed_static(builder.program.statics.as_ref()[slot]):
+        initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
+    terminate_call(builder, CalleeKind.StaticMethod(slot, name), operands, output, span)
+
+
+pub def plainly_owned(ty: PlanType) -> bool:
+    """
+    Whether a value of this type owns all of its storage by its type alone: scalars, text, and lists, sets,
+    dictionaries and tuples of them. A reader may return such a value past the guard without a look at any declaration.
+    """
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String:
+        return true
+    match ty:
+        PlanType.List(leaf, _depth) => return plain_leaf(leaf)
+        PlanType.Set(leaf) => return plain_leaf(leaf)
+        PlanType.Dict(key, value) => return plain_leaf(key) and plain_leaf(value)
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                if not plain_element(element):
+                    return false
+            return true
+        _ => return false
+
+
+def plain_leaf(leaf: ListLeaf) -> bool:
+    """Whether one stored element owns all of its storage by its type alone."""
+    match leaf:
+        (ListLeaf.Int | ListLeaf.Float | ListLeaf.Bool | ListLeaf.Str | ListLeaf.U8 | ListLeaf.USize) => return true
+        (ListLeaf.Unit | ListLeaf.Decimal) => return true
+        ListLeaf.Numeric(_kind) => return true
+        ListLeaf.Tuple(elements) =>
+            for element in elements:
+                if not plain_element(element):
+                    return false
+            return true
+        ListLeaf.List(elements, _depth) => return len(elements) == 1 and plain_leaf(elements[0])
+        ListLeaf.Set(elements) => return len(elements) == 1 and plain_leaf(elements[0])
+        ListLeaf.Dict(elements) => return len(elements) == 2 and plain_leaf(elements[0]) and plain_leaf(elements[1])
+        _ => return false
+
+
+def plain_element(element: TupleElement) -> bool:
+    """Whether one tuple element owns all of its storage by its type alone."""
+    match element:
+        (TupleElement.Int | TupleElement.Float | TupleElement.Bool | TupleElement.Unit | TupleElement.String) =>
+            return true
+        TupleElement.Numeric(_kind) => return true
+        TupleElement.List(leaf, _depth) => return plain_leaf(leaf)
+        TupleElement.Set(leaf) => return plain_leaf(leaf)
+        TupleElement.Dict(key, value) => return plain_leaf(key) and plain_leaf(value)
+        TupleElement.Tuple(elements) =>
+            for nested in elements:
+                if not plain_element(nested):
+                    return false
+            return true
+        _ => return false
+
+
+pub def read_guarded_list_element(
+    mut builder: Builder,
+    value: &RustPlace,
+    slot: int,
+    owner: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """
+    Clone the one element an index selects in a guarded list, without copying the list.
+
+    The index is evaluated before the reader takes the shared storage guard, and only the selected element is cloned
+    under it, with the list's own bounds check. A slice keeps the snapshot read.
+    """
+    mut receiver = PlanType.Unit
+    mut element = PlanType.Unit
+    match owner:
+        PlanType.List(leaf, depth) =>
+            match leaf:
+                # A stored reference is not a value a guarded read can hand out.
+                ListLeaf.Reference(_referent) => return Ok(None)
+                _ => pass
+            receiver = PlanType.ListRef(leaf, depth)
+            element = list_element(leaf, depth)
+        _ => return Ok(None)
+    mut index = read_place(plan_place(0, span), false, span)
+    match value.projection[0]:
+        PlaceElem.Index(written) => index = scalar_operand(builder, written, span)?
+        _ => return Ok(None)
+    if operand_type(builder, index)? != PlanType.Int:
+        return Err("unsupported Body IR non-int index into a static list")
+    mut reader = static_reader(builder, receiver, [PlanType.Int], element, span)
+    selected = read_list_element(reader, plan_place(1, span), read_place(plan_place(2, span), false, span), span)?
+    output = temporary(builder, element, span)
+    call_static_reader(builder, reader, slot, selected, [index], output, span)
+    # The cloned element is a new owner, as the value a guarded dictionary read clones is.
+    if parameter_owns(element):
+        builder.owned.append(output.local)
+    return Ok(Some(output))
+
+
+pub def static_collection_call(
+    mut builder: Builder,
+    slot: int,
+    ty: PlanType,
+    operation: str,
+    parameters: list[PlanType],
+    result: PlanType,
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Run one read-only runtime operation on a guarded static set or dictionary where it is stored.
+
+    `parameters` and `operands` are the operation's inputs after its receiver, already evaluated in the caller.
+    """
+    if len(parameters) != len(operands):
+        return Err("unsupported Body IR collection runtime arity")
+    mut admitted: list[Operand] = []
+    for index in range(len(operands)):
+        match owned_runtime_operand(builder, operands[index], parameters[index], span)?:
+            Some(operand) => admitted.append(operand)
+            None => return Err("unsupported Body IR collection runtime argument coercion")
+    mut reader = static_reader(builder, collection_reference(ty, false), parameters, result, span)
+    reference = borrow_collection(reader, plan_place(1, span), false, span)?
+    mut all_parameters = [collection_reference(ty, false)]
+    all_parameters.extend(parameters)
+    mut all_operands = [reference]
+    for index in range(len(parameters)):
+        all_operands.append(read_place(plan_place(index + 2, span), snapshot_owns(parameters[index]), span))
+    collection_call(reader, ty, operation, all_parameters, result, all_operands, plan_place(0, span), span)?
+    call_static_reader(builder, reader, slot, plan_place(0, span), admitted, output, span)
+    if result == PlanType.String or is_owned_collection(result):
+        builder.owned.append(output.local)
+    return Ok(None)
+
+
+pub def static_length(mut builder: Builder, slot: int, ty: PlanType, output: Place, span: SourceSpan) -> Result[None, str]:
+    """Measure a guarded static list, set or dictionary where it is stored."""
+    if is_collection(ty):
+        return static_collection_call(builder, slot, ty, "length", [], PlanType.Int, [], output, span)
+    leaf, depth = require_list_shape(ty, "unsupported Body IR len on non-list")?
+    mut reader = static_reader(builder, PlanType.ListRef(leaf, depth), [], PlanType.Int, span)
+    reference = list_borrow(reader, plan_place(1, span), false, span)?
+    list_call(
+        reader,
+        "length_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth)],
+        PlanType.Int,
+        [reference],
+        plan_place(0, span),
+        span,
+    )
+    call_static_reader(builder, reader, slot, plan_place(0, span), [], output, span)
+    return Ok(None)

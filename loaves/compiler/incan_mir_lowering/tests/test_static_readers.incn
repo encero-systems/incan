@@ -1,0 +1,126 @@
+"""A read of a guarded static dictionary borrows the stored dictionary: its frame loads no snapshot of it."""
+
+from rust::std::sync import Arc
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    HirSourceSpan as RustHirSourceSpan,
+    IncanPrimitiveType as Primitive,
+    IncanType as RustType,
+    SemanticSourceTargetKind as RustDeclarationKind,
+)
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement,
+    BodyIrModule,
+    Constant as CheckedConstant,
+    GlobalPlace,
+    GlobalWritePolicy,
+    Operand as CheckedOperand,
+    OwnershipFact,
+    Place as CheckedPlace,
+    PlaceElem,
+    StaticDeclaration,
+    StaticInitializer,
+)
+from pub::incan_mir_plan import CalleeKind, Local, PlanType, SourceSpan, TerminatorKind, source_span
+from frame import Builder
+from program_context import synthetic_program_context
+from native_type_identity import constructor_index
+from checked_values import place_read
+from hashed_collections import collection_contains
+from list_methods import lower_list_builtin
+
+
+def counts() -> GlobalPlace:
+    """Name the static `COUNTS: Dict[str, int]` of module `static_reads`."""
+    return GlobalPlace(
+        identity=RustCanonicalSymbolId.module_declaration(
+            ["static_reads"],
+            "COUNTS",
+            RustDeclarationKind.Function,
+            RustHirSourceSpan.new(0, 0),
+        ),
+        ty=RustType.Generic(base="Dict", args=[RustType.Primitive(Primitive.Str), RustType.Primitive(Primitive.Int)]),
+        write_policy=GlobalWritePolicy.Rebindable,
+    )
+
+
+def static_frame(span: SourceSpan) -> Builder:
+    """Build an empty frame in a module that declares `COUNTS` as a literal dictionary; slot zero is the result."""
+    mut module = BodyIrModule.declarations_only("static_reads")
+    global = counts()
+    module.static_declarations.append(
+        StaticDeclaration(canonical=global.identity, ty=global.ty, initial=StaticInitializer.Dict([])),
+    )
+    mut builder = Builder(
+        program=synthetic_program_context(module, Arc.new(constructor_index(module.nominal_declarations))),
+        locals=[Local(ty=PlanType.Int, span=span)],
+        parameter_count=0,
+        blocks=[],
+        current=0,
+        source="",
+        file="static_reads.incn",
+        module_identity="static_reads",
+        callable_identity=None,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[],
+        closed=[],
+        iterators=[],
+        borrowed_items=[],
+        in_place_items=[],
+        partial_callables=[],
+        scalar_closures=[],
+        unproven_closures=[],
+        unions=[],
+        local_offset=0,
+        consuming_closure_frame=false,
+        intrinsics=[],
+        generator_handle=-1,
+        instances=[],
+        type_parameters=[],
+        type_arguments=[],
+        function_pointer_locals=[],
+        name="reader",
+        synthesized=[],
+        moved_tuple_fields=[],
+    )
+    _ = builder.new_block(span)
+    return builder
+
+
+def static_calls(builder: &Builder) -> tuple[int, int]:
+    """Count the frame's snapshot loads and its guarded calls on the stored value."""
+    mut loads = 0
+    mut guarded = 0
+    for block in builder.blocks:
+        match block.terminator.kind:
+            TerminatorKind.Call(callee, _arguments, _output, _next, _unwind) =>
+                match callee.kind:
+                    CalleeKind.StaticLoad(_slot) => loads += 1
+                    CalleeKind.StaticMethod(_slot, _name) => guarded += 1
+                    _ => pass
+            _ => pass
+    return (loads, guarded)
+
+
+pub def test_static_dictionary_reads_hold_no_snapshot() -> Result[None, str]:
+    """A keyed read, a membership test and `len` each call one guarded reader and never load the dictionary."""
+    span = source_span(file="static_reads.incn", line=1, column=1)
+    key = CheckedOperand.Constant(CheckedConstant.Str("a"))
+
+    mut keyed = static_frame(span)
+    mut entry = CheckedPlace.from_global(counts())
+    entry.projection.push(PlaceElem.Index(key.clone()))
+    _ = place_read(keyed, entry, OwnershipFact.Copy, span)?
+    assert static_calls(keyed) == (0, 1), "a keyed read of a static dictionary loaded a snapshot"
+
+    receiver = ArgumentElement.One(CheckedOperand.place(CheckedPlace.from_global(counts()), OwnershipFact.Borrow, false))
+    mut membership = static_frame(span)
+    collection_contains(membership, false, [receiver.clone(), ArgumentElement.One(key)], None, span)?
+    assert static_calls(membership) == (0, 1), "a membership test of a static dictionary loaded a snapshot"
+
+    mut length = static_frame(span)
+    lower_list_builtin(length, [receiver], None, span)?
+    assert static_calls(length) == (0, 1), "len of a static dictionary loaded a snapshot"
+    return Ok(None)

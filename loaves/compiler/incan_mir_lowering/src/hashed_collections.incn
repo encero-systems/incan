@@ -58,6 +58,7 @@ from list_methods import (
     static_collection_receiver,
 )
 from list_iteration import frozen_dictionary_contains, list_root_place, set_constructor_source
+from static_readers import guarded_static_receiver, plainly_owned, static_collection_call
 from carrier_operands import element_operand, element_plan_operand
 from sequence_builtins import argument_type
 
@@ -205,6 +206,17 @@ pub def collection_contains(
                 return frozen_dictionary_contains(builder, arguments, destination, negated, span)
             return lower_list_helper(builder, negated, arguments, destination, span)
         _ => pass
+    match guarded_static_receiver(builder, arguments, span)?:
+        Some((slot, stored)) =>
+            if is_collection(stored):
+                key = collection_arguments(stored)[0]
+                needle = argument_value(builder, arguments, 1, span)?
+                found = call_destination(builder, destination, PlanType.Bool, span)?
+                static_collection_call(builder, slot, stored, "contains", [key], PlanType.Bool, [needle], found, span)?
+                if negated:
+                    builder.emit(plan_assign(found, RvalueKind.Unary(UnaryOp.Not, read_place(found, false, span)), span))
+                return Ok(None)
+        None => pass
     receiver = shared_receiver_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
@@ -347,10 +359,15 @@ pub def dictionary_method(
         return collection_contains(builder, false, arguments, destination, span)
     if method == RustDictMethodId.Insert:
         return collection_insert_method(builder, "Dict.insert", arguments, destination, span)
+    match guarded_static_receiver(builder, arguments, span)?:
+        Some((cell, stored)) =>
+            if static_dictionary_method(builder, cell, stored, method, arguments, destination, span)?:
+                return Ok(None)
+        None => pass
     receiver = shared_receiver_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
     if method == RustDictMethodId.Get and len(arguments) == 2:
-        return optional_dictionary_get(builder, receiver, arguments, destination, span)
+        return optional_dictionary_get(builder, ty, Some(receiver), -1, arguments, destination, span)
     operation, parameters, result = dictionary_method_signature(ty, method, len(arguments))?
     mut operands: list[Operand] = []
     for slot in range(len(parameters)):
@@ -362,6 +379,38 @@ pub def dictionary_method(
     mut all_operands = [reference]
     all_operands.extend(operands)
     return collection_call(builder, ty, operation, all_parameters, result, all_operands, output, span)
+
+
+def static_dictionary_method(
+    mut builder: Builder,
+    slot: int,
+    ty: PlanType,
+    method: RustDictMethodId,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Run a read-only dictionary method on a guarded static dictionary where it is stored, or report false to keep
+    the snapshot read: a result that holds a model or an enum is still read from a snapshot.
+    """
+    types = collection_arguments(ty)
+    if len(types) != 2:
+        return Ok(false)
+    if method == RustDictMethodId.Get and len(arguments) == 2:
+        if not plainly_owned(types[1]):
+            return Ok(false)
+        optional_dictionary_get(builder, ty, None, slot, arguments, destination, span)?
+        return Ok(true)
+    operation, parameters, result = dictionary_method_signature(ty, method, len(arguments))?
+    if not plainly_owned(result):
+        return Ok(false)
+    mut operands: list[Operand] = []
+    for position in range(len(parameters)):
+        operands.append(argument_value(builder, arguments, position + 1, span)?)
+    output = call_destination(builder, destination, result, span)?
+    static_collection_call(builder, slot, ty, operation, parameters, result, operands, output, span)?
+    return Ok(true)
 
 
 def collection_insert_method(
@@ -401,35 +450,42 @@ def collection_insert_method(
 
 def optional_dictionary_get(
     mut builder: Builder,
-    receiver: Place,
+    ty: PlanType,
+    receiver: Option[Place],
+    slot: int,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Copy a present value into the checked Option destination, replacing that destination's earlier value."""
+    """
+    Copy a present value into the checked Option destination, replacing that destination's earlier value. Without a
+    receiver place the dictionary is the guarded static in storage slot `slot`, read where it is stored.
+    """
     mut output = plan_place(0, span)
     match destination:
         Some(place) => output = list_root_place(builder, place, span)?
         None => return Err("unsupported Body IR discarded optional dictionary get")
-    ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
     result = borrowed_at(builder.locals, output.local).ty
     _owner, declaration = carrier_layout(builder, result)?
     if declaration.carrier != Carrier.Option or declaration.variants[1].fields != [types[1]]:
         return Err("unsupported Body IR optional dictionary get carrier")
     key = argument_value(builder, arguments, 1, span)?
-    reference = borrow_collection(builder, receiver, false, span)?
     found = temporary(builder, result, span)
-    collection_call(
-        builder,
-        ty,
-        "optional",
-        [collection_reference(ty, false), types[0]],
-        result,
-        [reference, key],
-        found,
-        span,
-    )?
+    match receiver:
+        Some(place) =>
+            reference = borrow_collection(builder, place, false, span)?
+            collection_call(
+                builder,
+                ty,
+                "optional",
+                [collection_reference(ty, false), types[0]],
+                result,
+                [reference, key],
+                found,
+                span,
+            )?
+        None => static_collection_call(builder, slot, ty, "optional", [types[0]], result, [key], found, span)?
     drop_owned(builder, output.local, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(found, true, span)), span))
     builder.owned.append(output.local)

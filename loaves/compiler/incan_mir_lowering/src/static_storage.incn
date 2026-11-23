@@ -83,6 +83,7 @@ from list_values import list_assignment, list_base_place, projected_element_read
 from hashed_collections import dictionary_value_read
 from matches import read_generic_decorator
 from carrier_operands import element_operand
+from static_readers import read_guarded_list_element
 
 
 pub def lower_computed_statics(
@@ -365,6 +366,10 @@ def read_computed_static(
         match read_guarded_dictionary_entry(builder, value, slot, ty, span)?:
             Some(entry) => return projected_element_read(builder, value, entry, 1, span)
             None => pass
+        # An indexed read borrows the stored list the same way.
+        match read_guarded_list_element(builder, value, slot, ty, span)?:
+            Some(element) => return projected_element_read(builder, value, element, 1, span)
+            None => pass
     snapshot = load_computed_static(builder, slot, ty, span)
     if len(value.projection) == 0:
         return Ok(read_place(snapshot, snapshot_owns(ty), span))
@@ -604,6 +609,14 @@ pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: Sour
                 match read_guarded_dictionary_entry(builder, value, slot, ty, span)?:
                     Some(entry) =>
                         selected = projected_element_read(builder, value, entry, 1, span)?
+                        match selected.kind:
+                            OperandKind.Copy(place) => return Ok(Some(place))
+                            OperandKind.Move(place) => return Ok(Some(place))
+                            _ => return Err("unsupported Body IR computed static element without a place")
+                    None => pass
+                match read_guarded_list_element(builder, value, slot, ty, span)?:
+                    Some(element) =>
+                        selected = projected_element_read(builder, value, element, 1, span)?
                         match selected.kind:
                             OperandKind.Copy(place) => return Ok(Some(place))
                             OperandKind.Move(place) => return Ok(Some(place))

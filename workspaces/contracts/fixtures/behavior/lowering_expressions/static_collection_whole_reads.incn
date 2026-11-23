@@ -1,0 +1,67 @@
+# behavior: a membership test, a length and a read-only method of a static dictionary, set or list read the stored collection, and each read sees the writes before it
+# expect-stdout:
+#   true false true
+#   2 2 3
+#   7 0 9
+#   7 missing
+#   a,b
+#   16
+#   20 text-1 2
+#   true false true false
+#   3 2
+#   60
+#   4 40
+
+model Page:
+    title: str
+    spans: list[int]
+
+
+static COUNTS: Dict[str, int] = {}
+static SEEN: Set[int] = Set()
+static ITEMS: list[int] = []
+static NAMES: list[str] = []
+static PAGES: list[Page] = []
+static ROWS: list[list[int]] = []
+
+
+def key(name: str) -> str:
+    return name
+
+
+def describe(name: str) -> str:
+    match COUNTS.get(name):
+        Some(count) => return f"{count}"
+        None => return "missing"
+
+
+def main() -> None:
+    COUNTS["a"] = 7
+    COUNTS["b"] = 9
+    SEEN.add(3)
+    SEEN.add(4)
+    for index in range(3):
+        ITEMS.append((index + 1) * 10)
+        NAMES.append(f"text-{index}")
+    PAGES.append(Page(title="front", spans=[1, 2]))
+    ROWS.append([1, 2, 3])
+    println(f"{key("a") in COUNTS} {"c" in COUNTS} {"c" not in COUNTS}")
+    println(f"{len(COUNTS)} {len(SEEN)} {len(ITEMS)}")
+    println(f"{COUNTS.get("a", 0)} {COUNTS.get("c", 0)} {COUNTS.get(key("b"), 1)}")
+    println(f"{describe("a")} {describe("c")}")
+    mut names = COUNTS.keys()
+    names.sort()
+    println(",".join(names))
+    mut total = 0
+    for count in COUNTS.values():
+        total += count
+    println(total)
+    println(f"{ITEMS[1]} {NAMES[1]} {len(PAGES[0].spans)}")
+    println(f"{3 in SEEN} {5 in SEEN} {20 in ITEMS} {"text-9" in NAMES}")
+    println(f"{len(ROWS[0])} {ROWS[0][1]}")
+    mut walked = 0
+    for item in ITEMS:
+        walked += item
+    println(walked)
+    ITEMS.append(40)
+    println(f"{len(ITEMS)} {ITEMS[len(ITEMS) - 1]}")

@@ -23,8 +23,9 @@ pub(crate) fn method_name(slot: i64, method: &str) -> String {
     format!("__incan_static_method_{slot}_{method}")
 }
 
-/// Require the selected method's receiver to borrow exactly this cell's carrier, a model or a dictionary, and its
-/// result to outlive the storage guard. The same signature controls adapter declaration and plan validation.
+/// Require the selected method's receiver to borrow exactly this cell's carrier, a model, a dictionary, a set or a
+/// list, and its result to outlive the storage guard. The same signature controls adapter declaration and plan
+/// validation.
 pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> Result<&'plan Function, PlanError> {
     let cell = cell(plan, slot)?;
     let method = plan
@@ -39,6 +40,8 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
     let carrier = match &receiver.ty {
         PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => PlanType::Model(*owner, name.clone()),
         PlanType::DictRef(key, value) => PlanType::Dict(key.clone(), value.clone()),
+        PlanType::SetRef(element) => PlanType::Set(element.clone()),
+        PlanType::ListRef(leaf, depth) => PlanType::List(leaf.clone(), *depth),
         _ => {
             return Err(PlanError::Invalid {
                 function: method.name.clone(),
@@ -55,12 +58,17 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
     Ok(method)
 }
 
-/// Whether a guarded method's result borrows nothing from the storage its guard protects. A dictionary reader
-/// returns a clone of the value type the cell itself stores, which a static can only hold when it is owned.
+/// Whether a guarded method's result borrows nothing from the storage its guard protects. A dictionary reader may
+/// return a clone of the value type, and a list reader a clone of the element type, that the cell itself stores,
+/// which a static can only hold when it is owned.
 fn result_outlives_guard(plan: &Plan, method: &Function, tcx: Option<TyCtxt<'_>>) -> bool {
-    if let Some(PlanType::DictRef(_, value)) = method.parameters.first().map(|receiver| &receiver.ty)
-        && crate::plan::list_leaf_type(value.clone()) == method.return_type
-    {
+    let stored = match method.parameters.first().map(|receiver| &receiver.ty) {
+        Some(PlanType::DictRef(_, value)) => Some(crate::plan::list_leaf_type(value.clone())),
+        Some(PlanType::ListRef(leaf, depth)) if *depth > 1 => Some(PlanType::List(leaf.clone(), *depth - 1)),
+        Some(PlanType::ListRef(leaf, _)) => Some(crate::plan::list_leaf_type(leaf.clone())),
+        _ => None,
+    };
+    if stored.is_some_and(|stored| stored == method.return_type) {
         return true;
     }
     guard_owned_result(plan, &method.return_type, &mut BTreeSet::new(), tcx)
