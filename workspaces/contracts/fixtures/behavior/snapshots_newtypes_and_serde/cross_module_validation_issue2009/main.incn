@@ -1,5 +1,7 @@
-# behavior: explicit newtype construction outside its module calls from_underlying exactly once (#2009)
+# behavior: explicit newtype construction through a direct or renamed import calls from_underlying once per value (#2009)
 # expect-stdout:
+#   validated
+#   0.5
 #   validated
 #   0.5
 
