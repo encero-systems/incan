@@ -21,11 +21,13 @@ from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
     EditCutoff,
     InputReaders,
+    NamespaceRecord,
     NamespaceRecordSelection,
     OutputSlots,
     PlanImportReach,
     PublishedEvaluation,
     ReusableRecord,
+    ReceiptProjectionCache,
     publish_evaluation,
     readers_of,
     select_edit_readers,
@@ -88,6 +90,7 @@ pub def select_namespace_inventory_except(
     profile: str,
     origin: str,
     invalid: list[str],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
     use_references: bool = false,
     cutoff: EditCutoff = EditCutoff(),
     use_layouts: bool = false,
@@ -102,9 +105,15 @@ pub def select_namespace_inventory_except(
     mut references: list[NamespaceReference] = []
     mut selection = NamespaceRecordSelection()
     if use_references:
-        selection = reusable_namespace_records(selected, profile, slots, true, cutoff)?
+        receipts.select_view(selected)
+        selection = reusable_namespace_records(selected, profile, slots, cutoff, receipts)?
     else:
-        selection.frames = reusable_family_records(selected, "namespace", profile, Some(slots), false, cutoff)?
+        legacy = reusable_family_records(selected, "namespace", profile, Some(slots), false, cutoff)?
+        selection.frames = [
+            NamespaceRecord(key=record.key, value=record.value, value_digest=record.value_digest,
+                rank_certificate=record.receipt.preparation.rank_certificate, location=record.location)
+            for record in legacy
+        ]
     for record in selection.frames:
         module = record.key.identity
         match record.location:
@@ -116,7 +125,7 @@ pub def select_namespace_inventory_except(
             None =>
                 key = "namespace-" + hexlify(sha256.digest(module.encode("utf-8")))
                 inventory.pages.append(SelectedBodyPage(key=key, value=record.value))
-        certificate = record.receipt.preparation.rank_certificate
+        certificate = record.rank_certificate
         if certificate == "compiled-check":
             continue
         if certificate not in orders:
@@ -148,7 +157,7 @@ pub def select_namespace_inventory_except(
     if len(headers) > 0:
         inventory.pages.append(SelectedBodyPage(key=namespace_header_reference_filename(), value=encode_namespace_references(headers)?))
     if use_references and use_layouts:
-        layouts, previous = select_layout_references(selected, profile, origin, references, invalid)?
+        layouts, previous = select_layout_references(selected, profile, origin, references, invalid, receipts)?
         inventory.pages.append(SelectedBodyPage(key=namespace_layout_reference_filename(), value=encode_namespace_references(layouts)?))
         if len(previous) > 0:
             inventory.pages.append(SelectedBodyPage(key=namespace_layout_candidate_filename(), value=encode_namespace_references(previous)?))

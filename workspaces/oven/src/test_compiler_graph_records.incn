@@ -45,12 +45,19 @@ from pub::internal_models import (
     decode_demand_page,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
-from pub::internal_models.namespace_references import decode_namespace_references, namespace_header_reference_filename, namespace_reference_filename
+from pub::internal_models.namespace_references import (
+    decode_namespace_references,
+    namespace_header_reference_filename,
+    namespace_layout_key,
+    namespace_layout_reference_filename,
+    namespace_reference_filename,
+)
 from compiler_graph_records import (
     EditCutoff,
     authenticated_bytes,
     OutputSlots,
     PublishedEvaluation,
+    ReceiptProjectionCache,
     edit_cutoff,
     publish_evaluation,
     reusable_evaluation,
@@ -81,8 +88,10 @@ from compiler_projection_cache import cached_editable_dependency_signature_recor
 
 
 pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Result[None, str]:
-    """A request is offered the header of every namespace it is offered by frame, on a page of its own, so the
-    compiler admits an unchanged namespace by its header; a namespace that is not selected offers no header."""
+    """
+    Offer only the selected namespace and its header and layout. Across generations, preserve their exact pages
+    and authenticate every receipt without reopening unchanged witnesses. A cached receipt cannot mask damage.
+    """
     origin = "coverage"
     left = "src/left.incn"
     right = "src/right.incn"
@@ -103,42 +112,58 @@ pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Re
         published = publish_evaluation(graph, file, rank, b"selected namespace page", receipt)?
         header = source.receipt(scope, namespace_header_key(origin, file), [dependency], order[file].evidence)?
         published_header = publish_evaluation(published.snapshot, "header-" + file, rank, b"selected namespace header", header)?
-        if file == left:
-            selected_receipts = [published.receipt_key, published_header.receipt_key]
         graph = published_header.snapshot
-    offered = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true)?
+        if file == left:
+            layout = source.receipt(scope, namespace_layout_key(origin, file), [dependency], order[file].evidence)?
+            published_layout = publish_evaluation(graph, "layout-" + file, rank, b"selected namespace layout", layout)?
+            selected_receipts = [published.receipt_key, published_header.receipt_key, published_layout.receipt_key]
+            graph = published_layout.snapshot
+    mut projections = ReceiptProjectionCache.empty()
+    unchanged = EditCutoff(active=true)
+    offered = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true)?
     pages = {page.key: page.value for page in offered.pages}
-    assert namespace_reference_filename() in pages and namespace_header_reference_filename() in pages
+    assert len(pages) == 3, "the selected namespace must offer one page for each product"
     frames = decode_namespace_references(pages[namespace_reference_filename()].clone())?
     headers = decode_namespace_references(pages[namespace_header_reference_filename()].clone())?
+    layouts = decode_namespace_references(pages[namespace_layout_reference_filename()].clone())?
     assert len(frames) == 1 and frames[0].key.identity == left
     assert len(headers) == 1 and headers[0].key == namespace_header_key(origin, left)
+    assert len(layouts) == 1 and layouts[0].key == namespace_layout_key(origin, left), "the left namespace requires its layout"
 
+    later = commit(put(begin(graph), "unrelated-generation", b"new")).map_err((error) => error.message())?
+    assert later.generation > graph.generation, "the unrelated commit must publish a new generation"
     measure_frame_reads(true)
     decoded = read_counts().decoded
-    warm = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true, EditCutoff(active=true))
+    warm = select_namespace_inventory_except(later, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true)
     copied = read_counts().decoded - decoded
     observed = finish_frame_reads()
-    assert warm?.complete == set([left]), "the compact selection must retain the certified cycle"
+    inventory = warm?
+    assert inventory.complete == set([left]), "the compact selection must retain the certified cycle"
+    assert len(inventory.pages) == len(pages), "unchanged receipts must preserve the page inventory"
+    for page in inventory.pages:
+        assert page.value == pages[page.key], f"unchanged receipt altered {page.key}"
+    mut authenticated: set[str] = set()
     mut other_values = 0
     for read in observed:
         assert read.key != input_key, "an unchanged namespace reopened its witness"
-        if read.key not in selected_receipts:
+        if read.key in selected_receipts:
+            assert read.reads == 1 and read.frame_bytes > read.value_bytes, f"expected one complete receipt frame for {read.key}"
+            authenticated.add(read.key)
+        else:
             other_values += read.reads * read.value_bytes
+    assert authenticated == set(selected_receipts), "the warm selection must authenticate all three receipts"
 
-    changed = commit(put(begin(graph), input_key, b"after")).map_err((error) => error.message())?
+    changed = commit(put(begin(later), input_key, b"after")).map_err((error) => error.message())?
     cutoff = edit_cutoff(changed, [dependency.key], [CHECKER_PROFILE])?
     assert cutoff.revalidates(encode_record_key(namespace_key(origin, left))?)
-    assert len(select_namespace_inventory_except(changed, CHECKER_PROFILE, origin, [right], true, cutoff)?.complete) == 0
-    unchanged = EditCutoff(active=true)
-    assert reusable_evaluation(graph, namespace_key(origin, "missing.incn"), CHECKER_PROFILE, unchanged)? is None
-    assert len(selected_receipts) == 2
-    incomplete = commit(delete(begin(graph), selected_receipts[0])).map_err((error) => error.message())?
-    match select_namespace_inventory_except(incomplete, CHECKER_PROFILE, origin, [right], true, unchanged):
+    assert len(select_namespace_inventory_except(changed, CHECKER_PROFILE, origin, [right], projections, true, cutoff, true)?.complete) == 0
+    assert reusable_evaluation(later, namespace_key(origin, "missing.incn"), CHECKER_PROFILE, unchanged)? is None
+    incomplete = commit(delete(begin(changed), selected_receipts[0])).map_err((error) => error.message())?
+    match select_namespace_inventory_except(incomplete, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true):
         Ok(_) => return Err("unchanged namespace selection accepted a missing receipt")
         Err(reason) => assert reason == "selected compiler evaluation is incomplete", reason
-    damage_graph_frame(graph, selected_receipts[0])?
-    match select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true, unchanged):
+    damage_graph_frame(later, selected_receipts[0])?
+    match select_namespace_inventory_except(later, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true):
         Ok(_) => return Err("unchanged namespace selection accepted a damaged receipt")
         Err(reason) => assert "digest" in reason or "integrity" in reason, reason
     assert copied <= other_values, f"unchanged namespace selection copied {copied - other_values} receipt payload bytes"
@@ -159,12 +184,13 @@ pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, 
         source = PreparedBodyRecordSource.open(scope)
         receipt = source.receipt(scope, namespace_key(origin, file), [], order[file].evidence)?
         graph = publish_evaluation(graph, file, rank, b"selected namespace page", receipt)?.snapshot
-    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    mut projections = ReceiptProjectionCache.empty()
+    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [], projections)?
     assert len(namespaces.pages) == 2 and namespaces.complete == set([left, right])
-    incomplete = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right])?
+    incomplete = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], projections)?
     assert len(incomplete.pages) == 1 and len(incomplete.complete) == 0
     measure_frame_reads(true)
-    reference_selection = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true)
+    reference_selection = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], projections, true)
     reference_reads = finish_frame_reads()
     offered = reference_selection?
     assert len(offered.pages) == 1 and len(offered.complete) == 0
