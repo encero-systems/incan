@@ -1,6 +1,6 @@
 //! Checked callable frames that contribute nominal layouts without adding executable bodies.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use incan_semantics_core::body_ir::{
     ArgumentElement, Block, Body, BodyIrModule, CallableTarget, Callee, Constant, MatchArm, MethodTarget, Operand,
@@ -124,56 +124,72 @@ fn selected_operand_type(body: &Body, value: &Operand) -> Option<IncanType> {
 }
 
 /// One canonical source callable and the checked arguments closing its frame, with its call ancestry.
-struct ScheduledFrame {
-    body: Body,
+struct ScheduledFrame<'a> {
+    body: &'a Body,
     arguments: Vec<IncanType>,
     ancestors: Vec<String>,
 }
 
 /// Drain layout requests in discovery order while retaining only exact checked keys after processing.
 #[derive(Default)]
-struct ScheduledFrames {
-    pending: VecDeque<ScheduledFrame>,
+struct ScheduledFrames<'a> {
+    pending: VecDeque<ScheduledFrame<'a>>,
     seen: BTreeSet<(CanonicalSymbolId, Vec<IncanType>)>,
+    declarations: Option<HashMap<&'a CanonicalSymbolId, Option<&'a Body>>>,
 }
 
-/// Checked return, parameter and local types from retained declarations, without copying their bodies.
-pub fn declaration_storage(module: &BodyIrModule) -> Vec<IncanType> {
-    let mut types = Vec::new();
-    for callable in &module.loaf_callables {
-        if let Some(body) = callable.declaration_frame() {
-            types.push(body.return_type.clone());
-            types.extend(body.params.iter().map(|parameter| parameter.ty.clone()));
-            types.extend(body.locals.iter().map(|local| local.ty.clone()));
-        }
-    }
-    types
+/// Visit checked return, parameter and local types at their owning declarations in published order.
+pub fn declaration_storage(module: &BodyIrModule) -> impl Iterator<Item = &IncanType> {
+    module
+        .loaf_callables
+        .iter()
+        .filter_map(|callable| callable.declaration_frame())
+        .flat_map(|body| {
+            std::iter::once(&body.return_type)
+                .chain(body.params.iter().map(|parameter| &parameter.ty))
+                .chain(body.locals.iter().map(|local| &local.ty))
+        })
 }
 
-/// Collect source, static and closed callable frames for layout discovery without granting execution.
-pub fn nominal_frames(constructors: &ConstructorIndex, module: &BodyIrModule) -> Result<Vec<Body>, String> {
+/// Borrow the source and computed static frames in the order nominal layout discovery consumes them.
+pub fn authored_nominal_frames(module: &BodyIrModule) -> impl Iterator<Item = &Body> {
+    module.bodies.iter().chain(computed_static_frames(module))
+}
+
+/// Borrow the executable bodies of computed statics in declaration order.
+fn computed_static_frames(module: &BodyIrModule) -> impl Iterator<Item = &Body> {
+    module
+        .static_declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.initial {
+            StaticInitializer::Computed(body) => Some(body.as_ref()),
+            _ => None,
+        })
+}
+
+/// Prepare only newly closed callable frames. Complete scheduling before the caller consumes the layout inputs.
+pub fn instantiated_nominal_frames(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+) -> Result<Vec<Body>, String> {
     let mut frames = Vec::new();
     let mut pending = ScheduledFrames::default();
     for body in &module.bodies {
-        frames.push(body.clone());
         if body.type_parameters.is_empty() {
             schedule_block(constructors, module, &body.block, &[], &[], &mut pending, &[])?;
         }
     }
-    for declaration in &module.static_declarations {
-        if let StaticInitializer::Computed(body) = &declaration.initial {
-            frames.push((**body).clone());
-            schedule_block(constructors, module, &body.block, &[], &[], &mut pending, &[])?;
-        }
+    for body in computed_static_frames(module) {
+        schedule_block(constructors, module, &body.block, &[], &[], &mut pending, &[])?;
     }
     while let Some(request) = pending.pending.pop_front() {
         // This inventory closes layout types only; executable callable ownership is selected by call lowering. A
         // method or property whose owner placeholders the recorded arguments leave open grants no layout; every other
         // instantiation failure is refused.
-        match instantiate(&request.body, &request.arguments, &[]) {
+        match instantiate(request.body, &request.arguments, &[]) {
             Ok(frame) => frames.push(frame),
             Err(error) => {
-                if owner_dependent(&request.body) && error.starts_with(UNBOUND_TYPE_PARAMETER) {
+                if owner_dependent(request.body) && error.starts_with(UNBOUND_TYPE_PARAMETER) {
                     continue;
                 }
                 return Err(error);
@@ -204,13 +220,13 @@ fn owner_dependent(body: &Body) -> bool {
         .is_some_and(|identity| identity.kind != SemanticSourceTargetKind::Function)
 }
 
-fn schedule_block(
+fn schedule_block<'a>(
     constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    module: &'a BodyIrModule,
     block: &Block,
     names: &[String],
     arguments: &[IncanType],
-    pending: &mut ScheduledFrames,
+    pending: &mut ScheduledFrames<'a>,
     ancestors: &[String],
 ) -> Result<(), String> {
     for statement in &block.stmts {
@@ -227,13 +243,13 @@ fn schedule_block(
     Ok(())
 }
 
-fn schedule_statement(
+fn schedule_statement<'a>(
     constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    module: &'a BodyIrModule,
     kind: &StatementKind,
     names: &[String],
     arguments: &[IncanType],
-    pending: &mut ScheduledFrames,
+    pending: &mut ScheduledFrames<'a>,
     ancestors: &[String],
 ) -> Result<(), String> {
     match kind {
@@ -306,13 +322,13 @@ fn schedule_statement(
 }
 
 /// Queue a unique closed source call; unresolved binders and recursive ancestry contribute no layout.
-fn schedule_call(
-    module: &BodyIrModule,
+fn schedule_call<'a>(
+    module: &'a BodyIrModule,
     canonical: &Option<CanonicalSymbolId>,
     type_args: &[IncanType],
     names: &[String],
     arguments: &[IncanType],
-    pending: &mut ScheduledFrames,
+    pending: &mut ScheduledFrames<'a>,
     ancestors: &[String],
 ) -> Result<(), String> {
     if type_args.is_empty() {
@@ -330,7 +346,7 @@ fn schedule_call(
     if ancestors.contains(&identity.render_compact()) {
         return Ok(());
     }
-    let Some(body) = checked_callable_body(module, identity)? else {
+    let Some(body) = pending.checked_callable_body(module, identity)? else {
         return Ok(());
     };
     if body.type_parameters.is_empty() || body.type_parameters.len() != type_args.len() {
@@ -347,10 +363,9 @@ fn schedule_call(
         return Ok(());
     }
     let key = (identity.clone(), closed.clone());
-    if pending.seen.contains(&key) {
+    if !pending.seen.insert(key) {
         return Ok(());
     }
-    pending.seen.insert(key);
     pending.pending.push_back(ScheduledFrame {
         body,
         arguments: closed,
@@ -379,20 +394,31 @@ pub fn closed_type(ty: &IncanType) -> bool {
     }
 }
 
-/// Resolve a unique checked body; ambiguous owner-dependent method frames grant no nominal layout.
-fn checked_callable_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> Result<Option<Body>, String> {
-    let mut selected: Option<Body> = None;
-    for body in &module.bodies {
-        if body.canonical.as_ref() != Some(identity) {
-            continue;
-        }
-        if selected.is_some() {
-            if identity.kind == SemanticSourceTargetKind::Function {
-                return Err("unsupported Body IR ambiguous canonical nominal frame".into());
+impl<'a> ScheduledFrames<'a> {
+    /// Index borrowed declarations on the first generic call and preserve the existing ambiguity rules.
+    fn checked_callable_body(
+        &mut self,
+        module: &'a BodyIrModule,
+        identity: &CanonicalSymbolId,
+    ) -> Result<Option<&'a Body>, String> {
+        let declarations = self.declarations.get_or_insert_with(|| {
+            let mut declarations = HashMap::new();
+            for body in &module.bodies {
+                if let Some(canonical) = &body.canonical {
+                    declarations
+                        .entry(canonical)
+                        .and_modify(|candidate| *candidate = None)
+                        .or_insert(Some(body));
+                }
             }
-            return Ok(None);
+            declarations
+        });
+        match declarations.get(identity) {
+            Some(Some(body)) => Ok(Some(body)),
+            Some(None) if identity.kind == SemanticSourceTargetKind::Function => {
+                Err("unsupported Body IR ambiguous canonical nominal frame".into())
+            }
+            _ => Ok(None),
         }
-        selected = Some(body.clone());
     }
-    Ok(selected)
 }

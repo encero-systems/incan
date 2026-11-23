@@ -65,8 +65,8 @@ pub fn intrinsic_declarations(
     let mut pass = CarrierPass::new(constructors, module, &mut declarations, file, Some(&signatures));
     let mut bodies = Vec::new();
     for ty in declaration_storage(module) {
-        if closed_type(&ty) {
-            pass.retain(&ty)?;
+        if closed_type(ty) {
+            pass.retain(ty)?;
         }
     }
     for delegation in &module.loaf_callables {

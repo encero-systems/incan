@@ -21,7 +21,7 @@ pub fn specialized_enum_layouts(module: &BodyIrModule) -> Result<Vec<EnumDeclara
     let generics = generic_carriers(module);
     let mut instances: Vec<EnumInstance> = Vec::new();
     for ty in declaration_storage(module) {
-        collect_type(module, &generics, &ty, &mut instances, &[])?;
+        collect_type(module, &generics, ty, &mut instances, &[])?;
     }
     for body in &module.bodies {
         for local in &body.locals {
