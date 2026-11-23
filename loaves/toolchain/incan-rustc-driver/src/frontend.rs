@@ -352,6 +352,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         plan_record_products: plan_record_products.map(|root| PlanRecordProducts {
             root,
             selection: plan_module_selection,
+            compact_notes: None,
         }),
         anchors,
     })
