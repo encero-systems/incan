@@ -245,9 +245,13 @@ impl GraphBodyOutput {
         Ok(())
     }
 
-    /// Encode every eligible triple and explicit fallback through the shared schema, then atomically publish it.
+    /// Frame every namespace, eligible triple and explicit fallback through the shared schema, then atomically
+    /// publish them.
+    ///
+    /// Each output is framed on its own. An owner value the codec refuses joins the explicit fallbacks with that
+    /// refusal, so it cannot refuse another owner's successful build; a refused namespace or fallback is named.
     pub(super) fn publish(mut self) -> Result<(), String> {
-        let Some(path) = self.path else {
+        let Some(path) = self.path.take() else {
             return Ok(());
         };
         let _invocation = tracing::trace_span!(
@@ -255,16 +259,167 @@ impl GraphBodyOutput {
             "incan_rustc_driver::publish_graph_body_output"
         )
         .entered();
-        if let Some(error) = self.error {
+        if let Some(error) = self.error.take() {
             return Err(error);
         }
-        self.values
-            .sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
+        let (value_frames, restored, framed) = self.value_frames()?;
+        let namespace_frames = self.namespace_frames()?;
+        let fallback_frames = self.fallback_frames(&framed)?;
+        let report = self.reuse_report(value_frames.len(), restored)?;
+        let mut frames = namespace_frames;
+        frames.extend(value_frames);
+        frames.extend(fallback_frames);
+        publish(&path, frames)?;
+        publish(&checker_report_path(&path), vec![report])
+    }
+
+    /// Frame each eligible owner in canonical order, returning the frames, the restored owners among them, and each
+    /// framed owner's module and identity in that order.
+    ///
+    /// A refused owner becomes a fallback that names the codec's refusal and is counted under [`VALUE_FRAME_REFUSAL`].
+    fn value_frames(&mut self) -> Result<(Vec<Vec<u8>>, Vec<String>, Vec<(String, String)>), String> {
+        let mut values = std::mem::take(&mut self.values);
+        values.sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
+        let mut frames = Vec::with_capacity(values.len());
+        let mut framed = Vec::with_capacity(values.len());
+        let mut restored = Vec::new();
+        let mut previous: Option<(String, String)> = None;
+        for value in values {
+            let owner = (value.module.clone(), value.identity.clone());
+            if previous.as_ref() == Some(&owner) {
+                return Err(format!(
+                    "compiled graph output has two owner values for {} in {}",
+                    owner.1, owner.0
+                ));
+            }
+            let name = value.name.clone();
+            let was_restored = value.restored;
+            let framed = internal_models::encode_compiled_body_outputs(internal_models::CompiledBodyOutputs {
+                namespaces: Vec::new(),
+                values: vec![internal_models::CompiledBodyValue {
+                    module: value.module,
+                    name: value.name,
+                    identity: value.identity,
+                    declaration: value.declaration,
+                    local: value.local,
+                    r#final: value.final_value,
+                    body_ir: value.body_ir,
+                    dependency_reads: value.dependency_reads,
+                }],
+                fallbacks: Vec::new(),
+            });
+            match framed {
+                Ok(encoded) => {
+                    frames.extend(encoded);
+                    if was_restored {
+                        restored.push(owner.1.clone());
+                    }
+                    framed.push(owner.clone());
+                }
+                Err(error) => self.fallbacks.push(PendingBodyFallback {
+                    module: owner.0.clone(),
+                    name,
+                    identity: fallback_identity(Some(owner.1.clone())),
+                    reason: format!("owner value frame output refused: {error:?}"),
+                    artifact_refusals: vec![VALUE_FRAME_REFUSAL.to_owned()],
+                }),
+            }
+            previous = Some(owner);
+        }
+        Ok((frames, restored, framed))
+    }
+
+    /// Frame each complete namespace value in module order, naming the module whose frame the codec refuses.
+    fn namespace_frames(&mut self) -> Result<Vec<Vec<u8>>, String> {
+        let mut namespaces = std::mem::take(&mut self.namespaces);
+        namespaces.sort_by(|left, right| left.module.cmp(&right.module));
+        let mut frames = Vec::with_capacity(namespaces.len());
+        let mut previous: Option<String> = None;
+        for value in namespaces {
+            let module = value.module.clone();
+            if previous.as_ref() == Some(&module) {
+                return Err(format!("compiled graph output has two namespace values for {module}"));
+            }
+            let body_ir_bytes = value.body_ir.len();
+            let framed = internal_models::encode_compiled_body_outputs(internal_models::CompiledBodyOutputs {
+                namespaces: vec![internal_models::CompiledNamespaceValue {
+                    module: value.module,
+                    interface: value.interface,
+                    body_ir: value.body_ir,
+                    dependencies: value.dependencies,
+                    lowering_inputs: value.lowering_inputs,
+                }],
+                values: Vec::new(),
+                fallbacks: Vec::new(),
+            })
+            .map_err(|error| {
+                format!(
+                    "compiled graph output refused the namespace frame of {module}: {error:?} ({body_ir_bytes} raw \
+                     Body IR bytes)"
+                )
+            })?;
+            frames.extend(framed);
+            previous = Some(module);
+        }
+        Ok(frames)
+    }
+
+    /// Frame each explicit fallback in canonical order, naming the owner whose frame the codec refuses.
+    ///
+    /// `framed` holds the owners that kept a value frame, in order; an owner is never both a value and a fallback.
+    fn fallback_frames(&mut self, framed: &[(String, String)]) -> Result<Vec<Vec<u8>>, String> {
         self.fallbacks.sort_by(|left, right| {
             (&left.module, &left.name, &left.identity).cmp(&(&right.module, &right.name, &right.identity))
         });
-        self.namespaces.sort_by(|left, right| left.module.cmp(&right.module));
-        let reusable_declarations = self.values.len();
+        let mut frames = Vec::with_capacity(self.fallbacks.len());
+        let mut previous: Option<(&str, &str, Option<&str>)> = None;
+        for fallback in &self.fallbacks {
+            let owner = (
+                fallback.module.as_str(),
+                fallback.name.as_str(),
+                fallback.identity.as_deref(),
+            );
+            if previous == Some(owner) {
+                return Err(format!(
+                    "compiled graph output has two fallbacks for {} in {}",
+                    fallback.name, fallback.module
+                ));
+            }
+            if let Some(identity) = fallback.identity.as_deref() {
+                let value = framed.binary_search_by(|(module, owner)| {
+                    (module.as_str(), owner.as_str()).cmp(&(fallback.module.as_str(), identity))
+                });
+                if value.is_ok() {
+                    return Err(format!(
+                        "compiled graph output has both an owner value and a fallback for {identity} in {}",
+                        fallback.module
+                    ));
+                }
+            }
+            let framed = internal_models::encode_compiled_body_outputs(internal_models::CompiledBodyOutputs {
+                namespaces: Vec::new(),
+                values: Vec::new(),
+                fallbacks: vec![internal_models::CompiledBodyFallback {
+                    module: fallback.module.clone(),
+                    name: fallback.name.clone(),
+                    identity: fallback.identity.clone(),
+                    reason: fallback.reason.clone(),
+                }],
+            })
+            .map_err(|error| {
+                format!(
+                    "compiled graph output refused the fallback frame of {} in {}: {error:?}",
+                    fallback.name, fallback.module
+                )
+            })?;
+            frames.extend(framed);
+            previous = Some(owner);
+        }
+        Ok(frames)
+    }
+
+    /// Render the checker reuse report over the owners that kept their value frame and every explicit fallback.
+    fn reuse_report(&self, reusable_declarations: usize, restored: Vec<String>) -> Result<Vec<u8>, String> {
         let all_declarations = reusable_declarations + self.fallbacks.len();
         let mut artifact_refusals = BTreeMap::<String, usize>::new();
         for fallback in &self.fallbacks {
@@ -283,13 +438,7 @@ impl GraphBodyOutput {
             format!("{reusable_declarations}/{all_declarations} reusable declarations; refusals {refusal_text}")
         };
         // A selected record the checker refused is not restored: that body was checked afresh, and Oven counts it so.
-        let restored = self
-            .values
-            .iter()
-            .filter(|value| value.restored)
-            .map(|value| value.identity.clone())
-            .collect::<Vec<_>>();
-        let report = serde_json::to_vec(&serde_json::json!({
+        serde_json::to_vec(&serde_json::json!({
             "schema": "incan.checker-reuse/1",
             "summary": summary,
             "reusable_declarations": reusable_declarations,
@@ -297,59 +446,12 @@ impl GraphBodyOutput {
             "artifact_refusals": artifact_refusals,
             "restored": restored,
         }))
-        .map_err(|error| format!("cannot encode checker reuse report: {error}"))?;
-        let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
-        let values: Vec<internal_models::CompiledBodyValue> = self
-            .values
-            .into_iter()
-            .map(|value| internal_models::CompiledBodyValue {
-                module: value.module,
-                name: value.name,
-                identity: value.identity,
-                declaration: value.declaration,
-                local: value.local,
-                r#final: value.final_value,
-                body_ir: value.body_ir,
-                dependency_reads: value.dependency_reads,
-            })
-            .collect();
-        let fallbacks: Vec<internal_models::CompiledBodyFallback> = self
-            .fallbacks
-            .into_iter()
-            .map(|fallback| internal_models::CompiledBodyFallback {
-                module: fallback.module,
-                name: fallback.name,
-                identity: fallback.identity,
-                reason: fallback.reason,
-            })
-            .collect();
-        let namespaces: Vec<internal_models::CompiledNamespaceValue> = self
-            .namespaces
-            .into_iter()
-            .map(|value| internal_models::CompiledNamespaceValue {
-                module: value.module,
-                interface: value.interface,
-                body_ir: value.body_ir,
-                dependencies: value.dependencies,
-                lowering_inputs: value.lowering_inputs,
-            })
-            .collect();
-        let body_count = values.len();
-        let outputs = internal_models::CompiledBodyOutputs {
-            namespaces,
-            values,
-            fallbacks,
-        };
-        let frames = internal_models::encode_compiled_body_outputs(outputs)
-            .map_err(|error| {
-                format!(
-                    "compiled graph output refused: {error:?} ({body_count} owner frames, {body_ir_bytes} raw Body IR bytes)"
-                )
-            })?;
-        publish(&path, frames)?;
-        publish(&checker_report_path(&path), vec![report])
+        .map_err(|error| format!("cannot encode checker reuse report: {error}"))
     }
 }
+
+/// The reuse-report name of an owner whose complete value frame the codec refused after its records were accepted.
+const VALUE_FRAME_REFUSAL: &str = "owner-value-frame";
 
 /// Convert one compiler-produced owner independently so a codec limitation cannot refuse its successful build.
 fn encoded_body_value(
