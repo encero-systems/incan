@@ -74,6 +74,12 @@ def exercise_provider_edit(binary: str, project: Path, bakery: Path, fresh: Path
     invalid_check = command(binary, project, bakery, "check")?
     if invalid_check[0]:
         return Err("checking the linked program missed a provider source error")
+    manifest = project.joinpath("loaf.toml")
+    scripts = manifest.read_text("utf-8", "strict").map_err((error) => error.message())?
+    write(manifest, scripts.replace("second = \"src/second.incn\"\n", ""))?
+    write_provider(project, 15)?
+    if run_program(binary, project, bakery)? != b"15\n":
+        return Err("returning to the source route reused a linked declaration")
     return Ok(None)
 
 
@@ -113,9 +119,10 @@ def make_project(project: Path, value: int) -> Result[None, str]:
     make_directory(nested)?
     write(
         project.joinpath("loaf.toml"),
-        "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+        "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\nsecond = \"src/second.incn\"\n",
     )?
     write(project.joinpath("src/main.incn"), "from values import answer\n\ndef main() -> None:\n    println(answer())\n")?
+    write(project.joinpath("src/second.incn"), "from values import answer\n\ndef main() -> None:\n    println(answer())\n")?
     write_provider(project, value)?
     return write(nested.joinpath("lib.incn"), "pub def nested_marker() -> int:\n    return 11\n")
 

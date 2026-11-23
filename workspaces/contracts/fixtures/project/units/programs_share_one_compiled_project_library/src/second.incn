@@ -4,5 +4,7 @@ from shapes import Square, sides
 
 
 def main() -> None:
-    """Print the sides of a square of side 2."""
-    println(str(sides(Square(side=2))))
+    """Read the provider's computed property, which uses a private field."""
+    square = Square(side=2)
+    println(str(sides(square)))
+    println(str(square.perimeter))

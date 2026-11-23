@@ -131,32 +131,38 @@ def unit_graph_location(unit: UnitDescription) -> Path:
     return graph_location(unit.project_root, unit.profile, kind, unit.source)
 
 
-pub def recorded_reach(source: Path, profile: str, include_linked: bool = false) -> Option[SourceGraph]:
+pub def recorded_reach(source: Path, profile: str) -> Option[SourceGraph]:
     """
     Every file the recorded graphs of the program at `source` read and every absent path they probed, under each
-    scope; `None` without a readable record, which leaves a request capture listing the source root. Build and run may
-    also read a library-linked graph; checks rely on a graph collected from the program's own sources.
+    scope of its source-only graph. Without a readable record, the request captures the source root.
 
     The program's project is the directory of the nearest `loaf.toml`, else the file's own, as its description
     finds it. A capture checks these paths itself, so their recorded digests are not consulted here.
     """
     mut project = source.parent()
-    mut kinds = ["program"]
+    mut kind = "program"
     for candidate in manifest_candidates(source):
         if candidate.is_file():
             project = candidate.parent()
-            kinds = ["source-program"]
-            if include_linked:
-                kinds.append("linked-program")
+            kind = "source-program"
             break
+    return recorded_graph_reach(graph_location(project.0, profile, kind, source.0))
+
+
+pub def recorded_linked_reach(project: Path, source: Path, profile: str) -> Option[SourceGraph]:
+    """Read the linked graph only after capture selects the provider from the project's script declarations."""
+    return recorded_graph_reach(graph_location(project.0, profile, "linked-program", source.0))
+
+
+def recorded_graph_reach(location: Path) -> Option[SourceGraph]:
+    """Collect the lookup paths under every recorded scope at the selected graph location."""
     mut read: list[str] = []
     mut absent: list[str] = []
-    for kind in kinds:
-        for entry in recorded_entries(graph_location(project.0, profile, kind, source.0), false):
-            for item in required_items(entry, "read").unwrap_or([]):
-                read.append(required_text(item, "path").unwrap_or(""))
-            for item in required_items(entry, "absent").unwrap_or([]):
-                absent.append(item.as_str().unwrap_or(""))
+    for entry in recorded_entries(location, false):
+        for item in required_items(entry, "read").unwrap_or([]):
+            read.append(required_text(item, "path").unwrap_or(""))
+        for item in required_items(entry, "absent").unwrap_or([]):
+            absent.append(item.as_str().unwrap_or(""))
     if len(read) == 0 or "" in read or "" in absent:
         return None
     return Some(SourceGraph(read=unique(read), absent=unique(absent)))

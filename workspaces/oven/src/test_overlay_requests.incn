@@ -103,11 +103,45 @@ pub def test_a_keystroke_checks_only_the_function_it_edits() -> Result[None, str
     answered = overlay(binary, helper, buffer, store)
     if store.exists():
         stop_engine(binary, store)?
-    _ = ran?
+    baseline, _ = ran?
+    baseline_text = baseline.to_json().map_err((error) => error.message())?
+    assert count(baseline, "all_declarations")? == 3, baseline_text
+    assert count(baseline, "reusable_declarations")? == 3, baseline_text
     answer = answered?
     text = answer.to_json().map_err((error) => error.message())?
     assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
     work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    linked_project_editor(scratch.path().joinpath("linked"), binary)?
+    return Ok(None)
+
+
+def linked_project_editor(root: Path, binary: str) -> Result[None, str]:
+    """A linked executable checks only its entry, and an editor save publishes bodies for the whole source reach."""
+    source, helper, original = keystroke_package(root)?
+    package = source.parent().parent()
+    manifest = package.joinpath("loaf.toml")
+    declared = manifest.read_text("utf-8", "strict").map_err((error) => error.message())?
+    write(manifest, declared + "second = \"src/second.incn\"\n")?
+    write(source.parent().joinpath("second.incn"), "def main() -> None:\n    println(\"second\")\n")?
+    buffer = root.joinpath("edited.incn")
+    write(buffer, original.replace("value * 2", "value + value"))?
+    store = root.joinpath("store")
+    linked = records_run(binary, source, store)
+    saved = overlay_with(binary, helper, helper, store, ["--build"])
+    checked = overlay(binary, helper, buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    report, _ = linked?
+    native_work = report.to_json().map_err((error) => error.message())?
+    assert count(report, "all_declarations")? == 1, native_work
+    save = saved?
+    saved_text = save.to_json().map_err((error) => error.message())?
+    assert save.require("ok").and_then((value) => value.expect_bool()).map_err((error) => error.message())?, saved_text
+    checked_result = checked?
+    text = checked_result.to_json().map_err((error) => error.message())?
+    work = checked_result.require("work").map_err((error) => error.message())?
     assert count(work, "body_evaluations")? == 1, text
     assert count(work, "body_reuses")? == 2, text
     return Ok(None)

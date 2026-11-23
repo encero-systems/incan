@@ -4,3 +4,11 @@
 pub def answer() -> int:
     """Return the value printed by the programs."""
     return 7
+
+
+pub model Value:
+    pub base: int
+    multiplier: int = 2
+
+    pub property doubled -> int:
+        return self.base * self.multiplier

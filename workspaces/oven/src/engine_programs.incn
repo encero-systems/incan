@@ -125,7 +125,7 @@ pub model ProgramOutcome:
     pub frame_reads: list[FrameRead] = []
     pub graph_demands: list[GraphDemand] = []
     pub transaction: Option[Transaction] = None
-    # An editor overlay's source and checked-body records, published in the editor view only.
+    # Source and checked-body records for an editor overlay or a library-linked executable in its own graph view.
     pub view_transaction: Option[Transaction] = None
     pub claim: Option[Rc[LockGuard]] = None
     # The executable this request baked, whose view waits for the request's commit: see `view_sealed`.
@@ -252,12 +252,16 @@ def body_reading(
     retain_projections: bool = false,
 ) -> Result[BodyReading, str]:
     """
-    Read the graph a request selects checked bodies from and stage the source changes against it. An editor view
-    reads its own records. Other views use the shared graph. The writer generation is one input to the projections.
+    Stage source changes against the graph that owns this request's checked bodies. An editor reads its own view.
+    A linked build has a separate view because its bodies name the compiled provider's declarations. The shared
+    graph supplies ordinary source builds and checks. The writer generation is one input to the projections.
     """
     mut graph_view = str(HOME_VIEW)
     if is_editor_view(view):
         graph_view = view
+    else:
+        if let Some(library) = ready.project_library:
+            graph_view = f"linked-{fingerprint([view, library])?}"
     reading = begin_work()
     graph = admission.open(graph_view).map_err((error) => error.message())?
     record_work(Operation.EngineSelect, "graph-snapshot", reading)
@@ -361,8 +365,9 @@ pub def obtain(
     toolchain.captured_source_directory = source_directory.path
     verify_scheduled_origin(asked, scheduled_origin)?
     asked.unattended = is_editor_view(request_view)
-    files = epoch.project_sources(asked.source_root)
-    planned = planned_program(asked, false, Some(files))?
+    planned = match epoch.project_sources(asked.source_root):
+        Some(files) => planned_program(asked, false, Some(files))?
+        None => asked
     shared = planned.project_library is not None
     described, _ = prepare_project_library(planned, toolchain)?
     ready = prepared_for(request_view, described, toolchain)?
@@ -385,11 +390,10 @@ pub def obtain(
     key = linkage_key(native_key, development_link(ready, true))?
     binary = program_binary(ready)
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
-    # 3. Exactly one existing producer owns claiming and publishing a native unit. An editor's overlay reads and
-    # writes its source and checked-body records in its own view, so it never changes what a build reads.
-    editor = is_editor_view(request_view)
+    # 3. The native producer owns the payload claim. Checked records follow the graph that authorized them.
     mut selection = select_bodies(admission, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
     graph = selection.reading.graph
+    shared_graph = graph.view == HOME_VIEW
     mut captured_sources = take(selection.reading.projected.projections)
     projected = selection.reading.projected
     invalid = selection.invalid
@@ -482,7 +486,7 @@ pub def obtain(
     record_work(Operation.EngineInputVerification, epoch.roots[0], verifying_inputs)
     mut request_transaction = projected.transaction
     mut native = produced.transaction
-    if not editor:
+    if shared_graph:
         request_transaction = merge_request_transaction(produced.transaction, projected.transaction)?
         native = None
     mut body_evaluations = 0
@@ -541,10 +545,10 @@ pub def obtain(
     mut sealed: Option[SealedProgram] = None
     if produced.transaction is not None:
         sealed = Some(SealedProgram(fact=fact, binary=binary.0, shared=development_link(ready, true)))
-    # An overlay's content-addressed native results and finalized-unit index stay where every build finds them.
+    # Content-addressed native results and the finalized-unit index stay where every build finds them.
     mut shared = Some(request_transaction)
     mut view_records: Option[Transaction] = None
-    if editor:
+    if not shared_graph:
         shared = native
         view_records = Some(request_transaction)
     indexing = begin_work()
