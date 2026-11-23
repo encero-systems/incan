@@ -188,6 +188,30 @@ impl TypeCheckInfo {
                 Ok(Some(contract))
             }
             InputCallKind::Ordinary => {
+                let selected_clone = call.callee
+                    == crate::symbols::canonical_builtin_member_identity(
+                        incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Clone),
+                        incan_lang::lang::trait_bounds::rust::CLONE_METHOD,
+                    )
+                    && self.resolved_builtin_method_call(call.site)
+                        == Some(incan_lang::lang::builtins::BuiltinMethodId::Clone(
+                            incan_lang::lang::surface::clone_methods::CloneMethodId::Clone,
+                        ));
+                if selected_clone {
+                    let selected_identity = self.resolved_identity(call.site) == Some(&call.callee)
+                        || self.traits.inferred_method_identities.get(&call.site) == Some(&call.callee);
+                    if contract.is_some()
+                        || call.owner.is_none()
+                        || call.callee.kind != SemanticSourceTargetKind::Method
+                        || call.receiver != Some(crate::ast::Receiver::Immutable)
+                        || !call.parameters.is_empty()
+                        || !selected_identity
+                        || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
+                    {
+                        return Err("builtin Clone invocation differs from its selected checked surface");
+                    }
+                    return Ok(None);
+                }
                 let selected_result_map_err = call.callee
                     == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
                     && self.resolved_builtin_method_call(call.site)

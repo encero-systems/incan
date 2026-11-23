@@ -18,7 +18,7 @@ use incan_lang::lang::surface::{
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::IncanInputAccess;
+use incan_semantics_core::{IncanInputAccess, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 mod views;
 
@@ -452,6 +452,8 @@ impl Builder<'_> {
             })?
             .is_some();
         let clone_result = self.checked_clone_call(span);
+        let path_join_independent_result =
+            self.checked_standard_path_join_result(receiver, arguments, span, call, result);
         let selected_result_map_err = call.callee
             == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
             && call.receiver == Some(Receiver::Immutable)
@@ -482,6 +484,7 @@ impl Builder<'_> {
             && !owned_independent_result
             && !owned_dependent_result
             && !clone_result
+            && !path_join_independent_result
             && result_requirement.is_none()
             && (result.is_result() || result.is_option())
             && !self.checker.type_holds_borrow(result)
@@ -842,6 +845,85 @@ impl Builder<'_> {
                         if core_traits::from_str(trait_name) == Some(TraitId::Clone)
                 )
         })
+    }
+
+    /// Authenticate the one standard-library lexical method whose plain source signature predates owned-result
+    /// syntax but whose implementation always constructs new storage. Package, module, member and nominal type
+    /// identities all participate so another `Path.joinpath`, another `joinpath` method or a changed result type
+    /// cannot acquire this independent-result fact by spelling or shape alone.
+    fn checked_standard_path_join_result(
+        &self,
+        receiver: Option<&Spanned<Expr>>,
+        arguments: &[CallArg],
+        span: Span,
+        call: &super::super::InputCall,
+        result: &ResolvedType,
+    ) -> bool {
+        let Some(receiver) = receiver else {
+            return false;
+        };
+        let [CallArg::Positional(_)] = arguments else {
+            return false;
+        };
+        let [parameter] = call.parameters.as_slice() else {
+            return false;
+        };
+        let expected_origin = SymbolOrigin::Package {
+            library: "incan_stdlib_system".to_string(),
+            module_path: vec!["fs".to_string(), "path".to_string()],
+        };
+        let canonical_member = call.callee.namespace == SymbolNamespace::Member
+            && call.callee.origin == expected_origin
+            && call.callee.declaration_name == "joinpath"
+            && call.callee.kind == SemanticSourceTargetKind::Method;
+        let selected_surface = call.kind == super::super::InputCallKind::Ordinary
+            && call.receiver == Some(Receiver::Immutable)
+            && self.checker.type_info.resolved_identity(span) == Some(&call.callee)
+            && self.checker.type_info.resolved_builtin_method_call(span).is_none()
+            && self.checker.type_info.call_site_callable_params(span) == Some(call.parameters.as_slice())
+            && parameter.kind == ParamKind::Normal
+            && !parameter.is_mut
+            && parameter.ty == ResolvedType::Str;
+        let Some(receiver_type) = self.checker.type_info.expr_type(receiver.span) else {
+            return false;
+        };
+        let receiver_value_type = self
+            .checker
+            .explicit_ownership_value_type(receiver_type)
+            .unwrap_or_else(|| receiver_type.clone());
+        let receiver_value_type = match receiver_value_type {
+            ResolvedType::Ref(inner) => *inner,
+            other => other,
+        };
+        let result_value_type = self
+            .checker
+            .explicit_ownership_value_type(result)
+            .unwrap_or_else(|| result.clone());
+        let (ResolvedType::Named(receiver_name), ResolvedType::Named(result_name)) =
+            (&receiver_value_type, &result_value_type)
+        else {
+            return false;
+        };
+        let Some(receiver_identity) =
+            super::super::projection::checked_nominal_identity_in(&self.nominal_scope, receiver_name)
+        else {
+            return false;
+        };
+        let Some(result_identity) =
+            super::super::projection::checked_nominal_identity_in(&self.nominal_scope, result_name)
+        else {
+            return false;
+        };
+        let canonical_path = receiver_identity.namespace == SymbolNamespace::OrdinaryLexical
+            && receiver_identity.origin == expected_origin
+            && receiver_identity.declaration_name == "Path"
+            && receiver_identity.kind == SemanticSourceTargetKind::Newtype;
+        canonical_member
+            && selected_surface
+            && canonical_path
+            && receiver_identity == result_identity
+            && !self.checker.type_holds_borrow(result)
+            && !self.checker.type_holds_native_loan(result)
     }
 
     /// Evaluate one argument according to its selected slot. A borrowed place is evaluated once before taking its
