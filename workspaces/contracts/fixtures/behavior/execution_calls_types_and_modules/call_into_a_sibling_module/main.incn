@@ -1,6 +1,7 @@
 # behavior: a call into a sibling module returns its result
 # expect-stdout:
 #   42
+#   42
 
 """A call into a sibling module returns its result."""
 from helper import bump
