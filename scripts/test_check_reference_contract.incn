@@ -1,9 +1,11 @@
 """Verify reference prose rules, their exclusions and untracked-page discovery."""
 
+from rust::std::process import Command
+from rust::std::string import String as RustString
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from check_reference_contract import page_findings, changed_pages
-from check_support import git
+from check_support import git, repository_root
 
 
 def test_flags_each_rule_in_prose() -> Result[None, str]:
@@ -60,6 +62,19 @@ def test_changed_pages_include_untracked_reference_pages() -> Result[None, str]:
     path.parent().mkdir(True, True).map_err((error) => error.message())?
     path.write_text("Contract.\n", "utf-8", "strict", None).map_err((error) => error.message())?
     assert changed_pages(root, "")? == ["tooling/reference/new_contract.md"]
+    return Ok(None)
+
+
+def test_make_checks_every_reference_page() -> Result[None, str]:
+    """Each verification target checks the full reference inventory in a clean checkout."""
+    root = repository_root()?
+    for target in ["docs", "pre-commit"]:
+        output = Command.new("make").current_dir(root.0).arg("-n").arg(target).output().map_err(
+            (error) => error.to_string(),
+        )?
+        assert output.status.success()
+        commands = RustString.from_utf8(output.stdout).map_err((error) => error.to_string())?
+        assert "run scripts/check_reference_contract.incn -- --all" in commands, target
     return Ok(None)
 
 
