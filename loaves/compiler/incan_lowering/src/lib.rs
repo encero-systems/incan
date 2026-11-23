@@ -187,9 +187,7 @@ mod value_enums;
 pub use incan_mir_plan_native::{Plan, PlanType, SourceSpan};
 pub use lowering::{UnitContinuation, UnitPlanning};
 pub use nominal_records::RecordedLayouts;
-pub use plan_modules::{
-    AuthenticatedWholeAdmission, PlanAdmissions, PlanModuleSelection, read_plan_module_admissions,
-};
+pub use plan_modules::{AuthenticatedWholeAdmission, PlanAdmissions, PlanModuleSelection, read_plan_module_admissions};
 pub use runtime_requirements::{RefusalPlanning, RuntimeRequirement};
 pub use trace_channel::emit as emit_engine_trace;
 
@@ -308,10 +306,7 @@ pub fn program_refusals(
 }
 
 /// The runtime layouts a unit needs installed before its first lowering attempt.
-pub fn layout_runtime_requirements(
-    modules: &[BodyIrModule],
-    file: String,
-) -> Vec<RuntimeRequirement> {
+pub fn layout_runtime_requirements(modules: &[BodyIrModule], file: String) -> Vec<RuntimeRequirement> {
     runtime_calls::layout_runtime_requirements(modules, &file)
 }
 

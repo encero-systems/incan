@@ -105,9 +105,7 @@ fn parse_frame_list(text: &str) -> Option<HashMap<String, ListedFrame>> {
 fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
     match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            framed_bytes(&listed_frame(path)?)
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => framed_bytes(&listed_frame(path)?),
         Err(_) => None,
     }
 }
@@ -116,14 +114,10 @@ fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
 /// companion names, which is read only with the content digest the page is named by and only when it matches.
 pub(crate) fn staged_page(path: &Path) -> Result<Vec<u8>, String> {
     count_staged_read(path);
-    let bytes =
-        staged_bytes(path).ok_or_else(|| format!("cannot read staged page {}", path.display()))?;
+    let bytes = staged_bytes(path).ok_or_else(|| format!("cannot read staged page {}", path.display()))?;
     match named_content(path) {
         Some(content) if <[u8; 32]>::from(Sha256::digest(&bytes)) == content => Ok(bytes),
-        Some(_) => Err(format!(
-            "staged page {} differs from its named digest",
-            path.display()
-        )),
+        Some(_) => Err(format!("staged page {} differs from its named digest", path.display())),
         None if path.is_file() => Ok(bytes),
         None => Err(format!(
             "staged page {} is offered by its frame without a digest",
@@ -138,8 +132,7 @@ pub(crate) fn staged_page(path: &Path) -> Result<Vec<u8>, String> {
 pub(crate) fn admitted_plan_page(path: &Path) -> Result<Arc<PlanModuleValue>, String> {
     let read = || {
         let bytes = staged_page(path)?;
-        let page = decode_plan_module(&bytes)
-            .map_err(|error| format!("admitted plan module refused: {error:?}"))?;
+        let page = decode_plan_module(&bytes).map_err(|error| format!("admitted plan module refused: {error:?}"))?;
         Ok((page, bytes.len() as u64))
     };
     match named_content(path) {
@@ -263,11 +256,7 @@ impl ModulePage {
 
 /// Read a page's bytes into `cell` once, from its copy or its store frame, keeping them only when their digest is
 /// `content`.
-fn page_bytes<'a>(
-    cell: &'a OnceLock<Option<Vec<u8>>>,
-    path: &Path,
-    content: &[u8; 32],
-) -> Option<&'a [u8]> {
+fn page_bytes<'a>(cell: &'a OnceLock<Option<Vec<u8>>>, path: &Path, content: &[u8; 32]) -> Option<&'a [u8]> {
     cell.get_or_init(|| {
         let bytes = staged_bytes(path)?;
         (<[u8; 32]>::from(Sha256::digest(&bytes)) == *content).then_some(bytes)
@@ -336,17 +325,14 @@ impl PlanModuleSelection {
     /// Resolve one module in the canonical name order the decoder already verified.
     pub fn module(&self, module: &str) -> Option<&PlanSelectedModule> {
         let modules = &self.record.modules;
-        let position = modules
-            .binary_search_by(|row| row.module.as_str().cmp(module))
-            .ok()?;
+        let position = modules.binary_search_by(|row| row.module.as_str().cmp(module)).ok()?;
         modules.get(position)
     }
 }
 
 /// Bound the request-private descriptor and its named digest before allocating their byte buffers.
 fn read_selection_file(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(path)
-        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let file = std::fs::File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
     let metadata = file
         .metadata()
         .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
@@ -538,11 +524,7 @@ pub(crate) fn report_admitted(
     for suffix in [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE] {
         if suffix != selected || functions.is_empty() {
             let path = private.join(format!("{basename}{suffix}"));
-            for stale in [
-                placement_path(&path),
-                path,
-                root.join(format!("{basename}{suffix}")),
-            ] {
+            for stale in [placement_path(&path), path, root.join(format!("{basename}{suffix}"))] {
                 if stale.is_file() {
                     std::fs::remove_file(&stale).map_err(|error| error.to_string())?;
                 }
@@ -650,29 +632,20 @@ fn validate_admitted_products(
         if function.function.is_empty()
             || !names.insert(&function.function)
             || !product_hex(&product.key)
-            || !product
-                .digest
-                .strip_prefix("sha256:")
-                .is_some_and(product_hex)
+            || !product.digest.strip_prefix("sha256:").is_some_and(product_hex)
             || function
                 .placement
                 .as_ref()
                 .is_some_and(|placement| placement.key != product.key)
         {
-            return Err(format!(
-                "admitted products of {module} disagree with its note"
-            ));
+            return Err(format!("admitted products of {module} disagree with its note"));
         }
     }
     Ok(())
 }
 
 /// Write the request-local note Oven reads, with its sparse positions and the shared descriptor's diagnostic copy.
-fn write_admitted_note(
-    path: &Path,
-    diagnostic: &Path,
-    note: &AdmittedModule,
-) -> Result<(), String> {
+fn write_admitted_note(path: &Path, diagnostic: &Path, note: &AdmittedModule) -> Result<(), String> {
     let encoded = encode_module_note(note)?;
     prepare_note_directory(path)?;
     write_module_placement(&placement_path(path).to_string_lossy(), note)?;
@@ -700,10 +673,7 @@ fn placement_path(note: &Path) -> PathBuf {
 
 /// Match a complete lowercase SHA-256 representation used by native product keys and digests.
 fn product_hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    value.len() == 64 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Read the module notes the request made available to Oven.
@@ -715,11 +685,7 @@ fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
     }
     let mut paths: Vec<PathBuf> = std::fs::read_dir(directory)
         .map_err(|error| error.to_string())?
-        .map(|entry| {
-            entry
-                .map(|entry| entry.path())
-                .map_err(|error| error.to_string())
-        })
+        .map(|entry| entry.map(|entry| entry.path()).map_err(|error| error.to_string()))
         .collect::<Result<_, _>>()?;
     paths.sort_by_key(|path| path.to_string_lossy().into_owned());
     for path in paths {
@@ -728,14 +694,8 @@ fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
             continue;
         }
         let note = incan_mir_plan_native::read_module_admission(&path.to_string_lossy())?;
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
-        let expected = format!(
-            "{}{}",
-            hex::encode(note.module.as_bytes()),
-            note_suffix(note.complete)
-        );
+        let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
+        let expected = format!("{}{}", hex::encode(note.module.as_bytes()), note_suffix(note.complete));
         if name.as_deref() != Some(expected.as_str()) {
             return Err("module admission note disagrees with its filename".into());
         }
