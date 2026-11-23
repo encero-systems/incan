@@ -13,17 +13,17 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
-use crate::library_manifest::VocabExports;
 use crate::library_manifest::capabilities::Contributions;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
-use crate::library_manifest::install_record::{
-    INSTALL_RECORD_SCHEMA, LoafInstallRecord, read_published_install_record,
-};
+use crate::library_manifest::install_record::{INSTALL_RECORD_SCHEMA, LoafInstallRecord, PathInstallFacts};
 use crate::library_manifest::type_scope::ModuleTypeScope;
+use crate::library_manifest::{
+    CanonicalIdentityOriginExport, ExportIdentityKind, LIBRARY_MANIFEST_FORMAT, VocabExports,
+};
 use crate::rust_abi_cache::RustAbiCache;
-use incan_semantics_core::body_ir::RuntimeCallableBinding;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, body_ir::RuntimeCallableBinding};
 
 /// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
 const MAX_INVENTORY_RECORD_BYTES: u64 = 4 * 1024 * 1024;
@@ -107,6 +107,8 @@ pub(super) struct IndexedLoaf {
     named: Arc<Mutex<NamedRecords>>,
     /// The one admitted install record, including any authentication failure, for this indexed owner.
     install: Arc<OnceLock<Result<Option<Arc<LoafInstallRecord>>, LoafIndexError>>>,
+    /// The admitted install and named API values of a path Loaf, including its refusal.
+    path_install: Arc<OnceLock<Result<Option<Arc<PathInstallFacts>>, LoafIndexError>>>,
 }
 
 /// Records read by name, keyed by family and name.
@@ -123,6 +125,7 @@ impl IndexedLoaf {
         isolate_pending(&mut self.bindings);
         isolate_pending(&mut self.rust_abi);
         isolate_pending(&mut self.install);
+        isolate_pending(&mut self.path_install);
     }
 
     /// Start with the admitted owner and keep each later demand local to that exact indexed artifact.
@@ -151,6 +154,7 @@ impl IndexedLoaf {
             rust_abi: Arc::default(),
             named: Arc::default(),
             install: Arc::default(),
+            path_install: Arc::default(),
         }
     }
 
@@ -265,7 +269,7 @@ impl IndexedLoaf {
         }
         let before = observation(&path);
         let artifact = LoafArtifact::read(&dir, name)?;
-        let indexed = Self::admitted(LoafEntry {
+        let mut indexed = Self::admitted(LoafEntry {
             key,
             namespace,
             artifact,
@@ -273,15 +277,23 @@ impl IndexedLoaf {
         if let Some(before) = before
             && observation(&path).as_ref() == Some(&before)
         {
-            let _ = retain(&path, before, indexed.summary()?);
+            let _ = retain(&path, &before, indexed.summary()?);
+            indexed.path_generation = Some(before);
         }
         Ok(indexed)
     }
 
     /// Load the exact admitted owner on demand. A file changed since inventory admission refuses this compilation.
+    #[track_caller]
     pub fn demand(&self) -> Result<&LoafEntry, LoafIndexError> {
+        let caller = std::panic::Location::caller();
         self.entry
             .get_or_init(|| {
+                let _invocation = tracing::trace_span!(
+                    target: "incan::invocation", "incan_frontend::admit_demanded_loaf",
+                    loaf = %self.name, caller_file = caller.file(), caller_line = caller.line(),
+                )
+                .entered();
                 let artifact = LoafArtifact::read(&self.dir, &self.name)?;
                 if artifact.identity != self.summary()?.identity {
                     return Err(LoafIndexError::Unreadable {
@@ -319,6 +331,70 @@ impl IndexedLoaf {
             .clone()
     }
 
+    /// Select the ABI index for explicit re-exports when the path producer's checked sidecar includes them.
+    /// Older artifacts still publish the authoritative item inline in their manifest.
+    pub(super) fn indexed_rust_reexports(&self) -> Result<Option<Arc<RustAbiCache>>, LoafIndexError> {
+        if self.path_generation.is_some()
+            && matches!(self.namespace, LoafNamespace::Dependency { .. })
+            && self.summary()?.rust_abi_cache_digest.is_some()
+            && self
+                .path_install_facts()?
+                .is_some_and(|facts| facts.indexed_rust_reexports)
+        {
+            return self.rust_abi_cache();
+        }
+        Ok(None)
+    }
+
+    /// Prove a direct package-root Rust re-export from the exact path install record and its complete namespace
+    /// index. A competing namespace, another root identity or a legacy projection leaves the manifest in charge.
+    /// A source ownership manifest likewise uses the ordinary import path to register its callable contracts.
+    pub(super) fn root_rust_reexport_target(
+        &self,
+        name: &str,
+    ) -> Result<Option<(Vec<String>, CanonicalSymbolId)>, LoafIndexError> {
+        if !super::compiler_record_set::configured()
+            || self.path_generation.is_none()
+            || !matches!(self.namespace, LoafNamespace::Dependency { .. })
+        {
+            return Ok(None);
+        }
+        let Some(facts) = self.path_install_facts()? else {
+            return Ok(None);
+        };
+        if !facts.indexed_rust_reexports
+            || facts.rust_reexport_manifest_format != Some(LIBRARY_MANIFEST_FORMAT)
+            || facts.names(&[RecordFamily::PublicNamespace.as_str()], Some(name)) != Some(false)
+        {
+            return Ok(None);
+        }
+        let Some(alias) = facts.record.aliases.iter().find(|alias| alias.name == name) else {
+            return Ok(None);
+        };
+        let [root, rust_path @ ..] = alias.target_path.as_slice() else {
+            return Ok(None);
+        };
+        if root != "rust" || alias.projected_function.is_some() || alias.projected_type.is_some() {
+            return Ok(None);
+        }
+        let mut roots = facts.record.identity_graph.exports.iter().filter(|entry| {
+            matches!(entry.public_path.as_slice(), [package, member] if package == &self.name && member == name)
+        });
+        let (Some(identity), None) = (roots.next(), roots.next()) else {
+            return Ok(None);
+        };
+        if identity.kind != ExportIdentityKind::Alias || identity.target_path() != Some(alias.target_path.as_slice()) {
+            return Ok(None);
+        }
+        let Some(canonical) = identity.canonical.as_ref().filter(|canonical| {
+            canonical.kind == SemanticSourceTargetKind::RustItem.as_str()
+                && matches!(&canonical.origin, CanonicalIdentityOriginExport::RustCrate { path } if path == rust_path)
+        }).and_then(|canonical| canonical.hydrate()) else {
+            return Ok(None);
+        };
+        Ok(Some((alias.target_path.clone(), canonical)))
+    }
+
     /// Read the record projection needed to admit executable declarations without demanding the complete manifest.
     pub fn execution_manifest(&self) -> Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError> {
         self.execution
@@ -347,8 +423,8 @@ impl IndexedLoaf {
             .map_err(Clone::clone)
     }
 
-    /// What executable resolution reads of this Loaf: from its own records when the installed set publishes them,
-    /// otherwise derived from the executable projection.
+    /// What executable resolution reads of this Loaf. Installed records supply the surface directly. Path artifacts
+    /// share the projection of their exact admitted manifest across requests.
     pub fn executable_surface(&self) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
         self.surface
             .get_or_init(|| {
@@ -363,8 +439,18 @@ impl IndexedLoaf {
                     }
                     return Ok(surface);
                 }
-                let manifest = self.execution_manifest()?;
-                Ok(Arc::new(ExecutableSurface::of(&manifest)))
+                let build = || {
+                    let manifest = self.execution_manifest()?;
+                    Ok(Arc::new(ExecutableSurface::of(&manifest)))
+                };
+                if self.path_generation.is_none() || !matches!(self.namespace, LoafNamespace::Dependency { .. }) {
+                    return build();
+                }
+                let path = self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)));
+                self.validate_path_generation(&path)?;
+                let surface = super::retained::executable_surface(&path, &self.summary()?.identity, build)?;
+                self.validate_path_generation(&path)?;
+                Ok(surface)
             })
             .as_ref()
             .map(Arc::clone)
@@ -480,6 +566,17 @@ impl IndexedLoaf {
                 return Err(self.inventory_mismatch("records read by name differ from their admitted inventory"));
             }
             Some((values, _)) => Some(Arc::new(values)),
+            None if self.path_generation.is_some()
+                && matches!(self.namespace, LoafNamespace::Dependency { .. })
+                && PathInstallFacts::supports(family) =>
+            {
+                self.path_install_facts()?
+                    .map(|facts| facts.lookup(family, name))
+                    .transpose()
+                    .map_err(|error| self.inventory_mismatch(&error.to_string()))?
+                    .flatten()
+                    .map(Arc::new)
+            }
             None => None,
         };
         kept.insert((family, name.to_owned()), values.clone());
@@ -488,23 +585,21 @@ impl IndexedLoaf {
 
     /// Admit just this Loaf's install value. Only an absent descriptor on a legacy dependency enables recomputation.
     pub(super) fn install_record(&self) -> Result<Option<Arc<LoafInstallRecord>>, LoafIndexError> {
+        if matches!(self.namespace, LoafNamespace::Dependency { .. }) {
+            return self
+                .path_install_facts()
+                .map(|facts| facts.map(|facts| Arc::clone(&facts.record)));
+        }
         self.install
             .get_or_init(|| {
-                let record: LoafInstallRecord = if matches!(self.namespace, LoafNamespace::Dependency { .. }) {
-                    let Some(record) = self.path_install_record()? else {
-                        return Ok(None);
-                    };
-                    record
-                } else {
-                    let Some(values) = self.named_records(RecordFamily::InstallRecord.as_str(), &self.name)? else {
-                        return Ok(None);
-                    };
-                    let [value] = values.as_slice() else {
-                        return Err(self.inventory_mismatch("ambiguous named install record"));
-                    };
-                    serde::Deserialize::deserialize(value)
-                        .map_err(|error| self.inventory_mismatch(&error.to_string()))?
+                let Some(values) = self.named_records(RecordFamily::InstallRecord.as_str(), &self.name)? else {
+                    return Ok(None);
                 };
+                let [value] = values.as_slice() else {
+                    return Err(self.inventory_mismatch("ambiguous named install record"));
+                };
+                let record: LoafInstallRecord = serde::Deserialize::deserialize(value)
+                    .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
                 if record.schema != INSTALL_RECORD_SCHEMA {
                     return Err(self.inventory_mismatch("unsupported install record schema"));
                 }
@@ -513,39 +608,53 @@ impl IndexedLoaf {
             .clone()
     }
 
-    /// Reuse the install descriptor in the guarded inventory without materializing its manifest's other facts.
-    fn path_install_record(&self) -> Result<Option<LoafInstallRecord>, LoafIndexError> {
+    /// Read the sidecar at most once per indexed Loaf, including when a legacy artifact has no install record.
+    fn path_install_facts(&self) -> Result<Option<Arc<PathInstallFacts>>, LoafIndexError> {
+        self.path_install.get_or_init(|| self.read_path_install_facts()).clone()
+    }
+
+    /// Reuse the install descriptor in the guarded inventory without materializing the manifest's other facts.
+    fn read_path_install_facts(&self) -> Result<Option<Arc<PathInstallFacts>>, LoafIndexError> {
         let path = self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)));
-        let guard = || {
-            if let Some(expected) = self.path_generation.as_ref()
-                && observation(&path).as_ref() != Some(expected)
-            {
-                return Err(self.inventory_mismatch("the manifest changed after its inventory was admitted"));
-            }
-            Ok(())
-        };
-        let (manifest_digest, install_digest) = if self.path_generation.is_some() {
-            guard()?;
+        let (identity, install_digest) = if self.path_generation.is_some() {
+            self.validate_path_generation(&path)?;
             let summary = self.summary()?;
-            (&summary.identity.digest, summary.install_record_digest.as_deref())
+            (&summary.identity, summary.install_record_digest.as_deref())
         } else {
             let artifact = &self.demand()?.artifact;
             (
-                &artifact.identity.digest,
+                &artifact.identity,
                 artifact.manifest.contract_metadata.install_record_digest.as_deref(),
             )
         };
         let Some(expected) = install_digest else {
             return Ok(None);
         };
-        let value = read_published_install_record(&path, &self.name, manifest_digest, expected)
-            .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
-        let record = super::LibraryManifest::decode_compiler_record_value(&value.value)
-            .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
-        guard()?;
-        tracing::trace!(target: "incan::invocation", phase = "path_install_record",
-            loaf = %self.name, key = %value.key(), revision = expected, bytes = value.value.len());
-        Ok(Some(record))
+        let read = || {
+            let facts = PathInstallFacts::read(&path, &self.name, &identity.digest, expected)
+                .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
+            if facts.record.schema != INSTALL_RECORD_SCHEMA {
+                return Err(self.inventory_mismatch("unsupported install record schema"));
+            }
+            Ok(Arc::new(facts))
+        };
+        let facts = if self.path_generation.is_some() {
+            super::retained::path_install_facts(&path, identity, read)?
+        } else {
+            read()?
+        };
+        self.validate_path_generation(&path)?;
+        Ok(Some(facts))
+    }
+
+    /// Refuse a path selection that changed after its inventory was admitted.
+    fn validate_path_generation(&self, path: &Path) -> Result<(), LoafIndexError> {
+        if let Some(expected) = self.path_generation.as_ref()
+            && observation(path).as_ref() != Some(expected)
+        {
+            return Err(self.inventory_mismatch("the manifest changed after its inventory was admitted"));
+        }
+        Ok(())
     }
 
     /// Validate every record selected under this path, including aliases, before exposing its canonical identity.
@@ -598,7 +707,17 @@ impl IndexedLoaf {
         if !super::compiler_record_set::configured() {
             return Ok(None);
         }
-        super::compiler_record_set::names_record(&self.dir, &self.name, families, record)
+        let installed = super::compiler_record_set::names_record(&self.dir, &self.name, families, record)?;
+        if installed.is_some()
+            || self.path_generation.is_none()
+            || !matches!(self.namespace, LoafNamespace::Dependency { .. })
+            || !families.iter().all(|family| PathInstallFacts::supports(family))
+        {
+            return Ok(installed);
+        }
+        Ok(self
+            .path_install_facts()?
+            .and_then(|facts| facts.names(families, record)))
     }
 
     /// The governed bodies sidecar can be located from admitted identity without demanding declaration records.
@@ -631,7 +750,9 @@ impl IndexedLoaf {
             .and_then(|result| result.as_ref().err())
             .or_else(|| self.selected_summary.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.vocabulary.get().and_then(|result| result.as_ref().err()))
+            .or_else(|| self.surface.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.install.get().and_then(|result| result.as_ref().err()))
+            .or_else(|| self.path_install.get().and_then(|result| result.as_ref().err()))
     }
 
     /// Resolve namespace ownership from the index's declared binding, before reading manifest contents.
@@ -704,7 +825,7 @@ fn retained(path: &Path) -> Option<(Summary, Observation)> {
 }
 
 /// Atomically publish an optional inventory only after ordinary manifest admission has succeeded.
-fn retain(path: &Path, observation: Observation, summary: &Summary) -> std::io::Result<()> {
+fn retain(path: &Path, observation: &Observation, summary: &Summary) -> std::io::Result<()> {
     let Some(cache) = record_path(path) else { return Ok(()) };
     let guard = manifest_input::checked_guard(&observation.path, observation.source, &observation.compiler);
     let row = internal_models::ManifestInventory {

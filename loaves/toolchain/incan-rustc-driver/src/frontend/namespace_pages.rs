@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use super::CheckedProgram;
 use super::graph_scope_access::GraphScopeAccess;
-use super::namespace_admission::{FrameAccess, admit_header};
+use super::namespace_admission::{FrameAccess, ResidentInterfaces, admit_header};
 use super::namespace_crumb;
 use super::namespace_layout_pages::{LayoutPages, admit_layouts, reference_for};
 
@@ -77,6 +77,7 @@ struct ResidentBodies {
     scope: ProgramScope,
     values: HashMap<String, ResidentBody>,
     wire_bytes: usize,
+    installed_interfaces: Arc<ResidentInterfaces>,
 }
 
 static RESIDENT: Mutex<Option<ResidentBodies>> = Mutex::new(None);
@@ -90,6 +91,7 @@ pub(super) struct NamespacePages {
     layouts: Option<LayoutPages>,
     access: Option<FrameAccess>,
     scope: Option<ProgramScope>,
+    installed_interfaces: Option<Arc<ResidentInterfaces>>,
     checked: Mutex<HashMap<String, SelectedBody>>,
     pub(super) typed_executable: bool,
     pub(super) scope_access: GraphScopeAccess,
@@ -172,18 +174,20 @@ impl NamespacePages {
             project: project.to_owned(),
             typed_executable,
         });
-        if let Some(scope) = &scope
+        let installed_interfaces = if let Some(scope) = &scope
             && let Ok(mut resident) = RESIDENT.lock()
         {
             let contents = resident.get_or_insert_with(|| ResidentBodies {
                 scope: scope.clone(),
                 values: HashMap::new(),
                 wire_bytes: 0,
+                installed_interfaces: Arc::default(),
             });
             if &contents.scope != scope {
                 contents.scope = scope.clone();
                 contents.values.clear();
                 contents.wire_bytes = 0;
+                contents.installed_interfaces = Arc::default();
             }
             contents.values.retain(|source, cached| {
                 references
@@ -191,13 +195,17 @@ impl NamespacePages {
                     .is_ok_and(|index| cached.selected.digest.matches(&references[index]))
             });
             contents.wire_bytes = contents.values.values().map(|body| body.selected.wire_bytes).sum();
-        }
+            Some(Arc::clone(&contents.installed_interfaces))
+        } else {
+            None
+        };
         Self {
             references,
             headers: Vec::new(),
             layouts: None,
             access,
             scope,
+            installed_interfaces,
             checked: Mutex::default(),
             typed_executable,
             scope_access,
@@ -221,7 +229,7 @@ impl NamespacePages {
             if retained.selected.digest.frame.is_none() {
                 retained.selected.digest.frame = Some(reference.frame_digest.clone());
             }
-            for scope in &retained.selected.executable_scopes {
+            for scope in &mut retained.selected.executable_scopes {
                 self.scope_access
                     .reuse(source, scope)
                     .map_err(RecordAdapterFault::InvalidField)?;
@@ -341,11 +349,9 @@ impl NamespacePages {
     ) -> Result<BodyIrModule, RecordAdapterFault> {
         scopes.clear();
         restore_graph_executable_namespace(value, source, |digest| {
-            let bindings = self.scope_access.resolve(source, digest)?;
-            scopes.push(ExecutableScopeWitness {
-                digest: digest.to_owned(),
-                bindings: Arc::clone(&bindings),
-            });
+            let witness = self.scope_access.resolve_witness(source, digest)?;
+            let bindings = Arc::clone(&witness.bindings);
+            scopes.push(witness);
             Ok(bindings)
         })
         .map_err(RecordAdapterFault::InvalidField)
@@ -365,7 +371,14 @@ impl NamespacePages {
         ) else {
             return Ok(None);
         };
-        admit_header(access, source, &self.headers[header], &self.references[frame]).map(Some)
+        admit_header(
+            access,
+            source,
+            &self.headers[header],
+            &self.references[frame],
+            self.installed_interfaces.clone(),
+        )
+        .map(Some)
     }
 
     /// Take the one decoded owner. The cache never keeps a second copy alongside an active compiler.

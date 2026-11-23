@@ -43,6 +43,7 @@ from unit_publication import publication, published_identity, record_path, recor
 from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
+from installation_capability import probe_driver_capability
 from installation_page import admitted_identity, restore_selection
 from surfaces import expose_entry_points
 from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
@@ -901,16 +902,19 @@ def install_staged(archive: Path, plain: Path, stage: Path, target: Path, sysroo
     symlink(sysroot.0, sysroot_link.0).map_err(
         (error) => f"cannot link Rust sysroot {sysroot.0} at {sysroot_link.0}: {error}",
     )?
-    run_command(toolchain.driver, ["--identity", toolchain.sysroot]).map_err(
-        (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
-    )?
+    plan_selection_driver = probe_driver_capability(toolchain.driver, toolchain.sysroot)?
     # A sealed set the archive ships is verified in place; only an archive without one has its records converted.
     pin = installed_records(toolchain.driver, stage, shipped_pin(document)?, toolchain.compiler_record_export_crumb)?
     document = read_json(stage.joinpath("toolchain.json"))?
     document = replaced(document, "compiler_records", pin.to_json())?
     write_json(stage.joinpath("toolchain.json"), document)?
     # 6. The completed pin and its new store are admitted together; only that verified generation is published.
-    _completed, admission = prepare_installation(stage)?
+    _completed, completed_admission = prepare_installation(stage)?
+    admission = InstallationAdmission(
+        payloads=completed_admission.payloads,
+        facts=completed_admission.facts,
+        plan_selection_driver=plan_selection_driver,
+    )
     record(Operation.ToolchainAdmission, stage.0, clock)
     publish_install(stage, target, admission)?
     println(f"installed {TOOLCHAIN}: {target.0}")

@@ -73,7 +73,7 @@ pub def verify(settings: Settings) -> Result[None, str]:
 
     1. Establish cold and warm proof decisions and invalidate every stored proof field.
     2. Exercise malformed, unreadable, symlinked, unwritable, and concurrent proof storage.
-    3. Require bootstrap, mismatched sysroot, and loaded-library refusals before publication.
+    3. Check the installed identity replies and require bootstrap, sysroot, and loaded-library refusals before publication.
     4. Prove an otherwise valid driver also works without its installation manifest.
     """
     context = prepare(settings)?
@@ -146,9 +146,7 @@ pub def verify(settings: Settings) -> Result[None, str]:
         ["--unit", context.unit.0, "identity_probe", context.scratch.joinpath("bootstrap").0, context.sysroot.0],
         {"RUSTC_BOOTSTRAP": ""},
     )?
-    identity = run(context.driver, ["--identity", context.home.joinpath("sysroot").0], context.scratch, "identity", {})?
-    if identity.code != 0:
-        return Err(f"installed sysroot identity failed: {identity.stderr.strip()}")
+    verify_identity_replies(context)?
     verify_other_sysroot(context)?
     verify_loaded_library(context, expected)?
 
@@ -162,6 +160,56 @@ pub def verify(settings: Settings) -> Result[None, str]:
     println(
         "PASS identity: cold/warm, all proof keys, malformed/unreadable/unwritable store, concurrency, bootstrap, sysroot, loaded library, uninstalled driver",
     )
+    return Ok(None)
+
+
+def verify_identity_replies(context: Context) -> Result[None, str]:
+    """Check the exact plain and capability replies from the installed driver and its verified sysroot."""
+    compiler = run(context.sysroot.joinpath("bin/rustc"), ["-vV"], context.scratch, "identity_compiler", {})?
+    prefix = "host: "
+    hosts = [line[len(prefix):] for line in compiler.stdout.split("\n") if line.startswith(prefix)]
+    if compiler.code != 0 or compiler.stderr != "" or len(hosts) != 1 or hosts[0] == "":
+        return Err(f"installed compiler did not report one host target: {compiler.stdout}{compiler.stderr}")
+    target_line = f"{hosts[0]}\n"
+    sysroot = context.home.joinpath("sysroot").0
+    plain = run(context.driver, ["--identity", sysroot], context.scratch, "identity", {})?
+    if plain.code != 0 or plain.stderr != "" or plain.stdout != target_line:
+        return Err(f"unexpected installed plain identity reply: {plain.code}: {plain.stdout}{plain.stderr}")
+
+    envelope = "incan.driver-capabilities/1"
+    profile = "incan.plan-module-selection-sha256/1"
+    capability = run(
+        context.driver,
+        ["--identity", sysroot, "--capabilities", envelope],
+        context.scratch,
+        "identity_capability",
+        {},
+    )?
+    if capability.code != 0 or capability.stderr != "" or capability.stdout != f"{envelope}\n{target_line}{profile}\n":
+        return Err(f"unexpected installed capability reply: {capability.code}: {capability.stdout}{capability.stderr}")
+
+    unsupported = run(
+        context.driver,
+        ["--identity", sysroot, "--capabilities", "incan.driver-capabilities/unknown"],
+        context.scratch,
+        "identity_unsupported_capability",
+        {},
+    )?
+    usage = "usage: incan-rustc-driver --identity SYSROOT\n"
+    if unsupported.code != 1 or unsupported.stdout != "" or unsupported.stderr != usage:
+        return Err(
+            f"unexpected unsupported-envelope reply: {unsupported.code}: {unsupported.stdout}{unsupported.stderr}",
+        )
+
+    missing = run(
+        context.driver,
+        ["--identity", context.scratch.joinpath("missing_sysroot").0, "--capabilities", envelope],
+        context.scratch,
+        "identity_missing_capability_sysroot",
+        {},
+    )?
+    if missing.code != 1 or missing.stdout != "" or "cannot verify driver identity" not in missing.stderr:
+        return Err(f"capability command did not verify its sysroot: {missing.code}: {missing.stdout}{missing.stderr}")
     return Ok(None)
 
 
@@ -359,6 +407,7 @@ def cached_values(trace: Path) -> Result[list[bool], str]:
         message = match fields.get("message"):
             Some(value) => value.expect_str().map_err((error) => error.message())?
             None => continue
+
         if message == "loaded compiler library proof":
             values.append(
                 fields.require("cached").and_then((value) => value.expect_bool()).map_err((error) => error.message())?,

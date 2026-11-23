@@ -194,15 +194,70 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Verify the sysroot's compiler identity (`--identity`) and print its host target: the proof, without compiling,
-/// that this driver runs against that sysroot. Installers use it to check a relocated toolchain.
+/// Verify the sysroot's compiler identity and print its host target. An explicit installer query also returns the
+/// supported Plan admission profile. Both responses verify the relocated toolchain without compiling a unit.
 fn verify_sysroot(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let [sysroot] = arguments else {
-        return Err("usage: incan-rustc-driver --identity SYSROOT".into());
-    };
-    let verified = identity::verify(Path::new(sysroot))?;
-    println!("{}", verified.target);
+    let reply = identity_reply(arguments, |sysroot| {
+        identity::verify(sysroot).map(|verified| verified.target)
+    })?;
+    print!("{reply}");
     Ok(())
+}
+
+/// Select the existing identity response only after the supplied sysroot has passed verification.
+fn identity_reply(
+    arguments: &[String],
+    verify: impl FnOnce(&Path) -> Result<String, identity::IdentityError>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    const PROTOCOL: &str = "incan.driver-capabilities/1";
+    const PROFILE: &str = "incan.plan-module-selection-sha256/1";
+    let (sysroot, capabilities) = match arguments {
+        [sysroot] => (sysroot, false),
+        [sysroot, option, protocol] if option == "--capabilities" && protocol == PROTOCOL => (sysroot, true),
+        _ => return Err("usage: incan-rustc-driver --identity SYSROOT".into()),
+    };
+    let target = verify(Path::new(sysroot))?;
+    if capabilities {
+        Ok(format!("{PROTOCOL}\n{target}\n{PROFILE}\n"))
+    } else {
+        Ok(format!("{target}\n"))
+    }
+}
+
+#[cfg(test)]
+mod identity_reply_tests {
+    use super::{identity, identity_reply};
+    use std::path::Path;
+
+    /// The exact capability protocol belongs only to an explicitly requested, verified sysroot.
+    #[test]
+    fn verified_identity_emits_the_requested_plan_selection_profile() -> Result<(), Box<dyn std::error::Error>> {
+        let arguments = ["/verified/sysroot", "--capabilities", "incan.driver-capabilities/1"].map(str::to_owned);
+        let verify = |path: &Path| {
+            assert_eq!(path, Path::new("/verified/sysroot"));
+            Ok("aarch64-apple-darwin".into())
+        };
+        assert_eq!(identity_reply(&arguments[..1], verify)?, "aarch64-apple-darwin\n");
+        assert_eq!(
+            identity_reply(&arguments, verify)
+                .as_deref()
+                .unwrap_or("rejected capability request"),
+            "incan.driver-capabilities/1\naarch64-apple-darwin\nincan.plan-module-selection-sha256/1\n"
+        );
+        let [sysroot, capability, _] = arguments;
+        let unknown = [sysroot, capability, "incan.driver-capabilities/2".into()];
+        assert!(identity_reply(&unknown, |_| panic!("a malformed request reached verification")).is_err());
+        let refused = identity_reply(
+            &[
+                unknown[0].clone(),
+                unknown[1].clone(),
+                "incan.driver-capabilities/1".into(),
+            ],
+            |_| Err(identity::IdentityError::Mismatch("foreign sysroot".into())),
+        );
+        assert!(refused.is_err());
+        Ok(())
+    }
 }
 
 /// End the process with a command's nonzero status; status zero returns, so `main` completes normally.

@@ -5,20 +5,108 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.io import BytesIO
+from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
 from freshness_fixtures import make_executable, write
-from files import make_directory, read, read_json
+from files import json_text, make_directory, read, read_json
+from frozen_inputs import Document
 from home_paths import installation_catalog
 from installation_check import verify_runtime
-from installation_codec import decode as decode_installation, encode as encode_installation
-from installation_page import admitted_identity, restore_selection, recall as recall_installation, begin_command, end_command
+from installation_capability import DriverCapabilityIntake, probe_driver_capability
+from installation_codec import Installation, decode as decode_installation, encode as encode_installation
+from installation_page import (
+    admitted_identity,
+    restore_selection,
+    recall as recall_installation,
+    readmit as readmit_page,
+    begin_command,
+    end_command,
+)
 from json_fields import required_items
 from page_codec import Reader, put_texts
 from scratch import scratch_directory
 from store_path_conversion import payload_path
-from toolchain import prepare_installation, finish_installation, load_toolchain_at, readmit_installation
+from toolchain import (
+    Toolchain,
+    InstallationAdmission,
+    prepare_installation,
+    finish_installation,
+    load_toolchain_at,
+    readmit_installation,
+    read_toolchain,
+)
 from trace_adapter import count_work, finish_counting
 from unit_publication import published_identity, record_path, record_payload
+
+
+const DRIVER_CAPABILITY_SCHEMA: str = "incan.driver-capabilities/1"
+const FIXTURE_REGISTRY: str = "/installed/registry/closure.json"
+
+
+pub def test_installation_page_refuses_unbound_driver_capabilities() -> Result[None, str]:
+    """The existing page framing can carry a capability only at its selected driver and observation."""
+    scratch = scratch_directory()?
+    wire = scratch.path().joinpath("installation-page.bin")
+    digest = fingerprint_page(b"driver")
+    driver = f"/installed/bin/incan-rustc-driver-{digest[:12]}"
+    observation = "driver observation"
+    good: Document = Document(path=driver, stamp=observation, value=driver_capability(digest, DRIVER_CAPABILITY_SCHEMA))
+    initial: Installation = driver_capability_page(driver, digest, observation, [good], FIXTURE_REGISTRY)
+    baseline = encode_installation(initial)?
+    confirmed = decode_page_at(wire, baseline)?
+    assert encode_installation(confirmed)? == baseline
+    assert confirmed.toolchain.select().supports_plan_module_selection_digest
+    legacy = driver_capability_page(driver, digest, observation, [], FIXTURE_REGISTRY)
+    legacy_bytes = encode_installation(legacy)?
+    restored = decode_page_at(wire, legacy_bytes)?
+    assert encode_installation(restored)? == legacy_bytes
+    assert not restored.toolchain.select().supports_plan_module_selection_digest
+    cases = [
+        ("another driver SHA", Document(
+            path=driver,
+            stamp=observation,
+            value=driver_capability(fingerprint_page(b"foreign"), DRIVER_CAPABILITY_SCHEMA),
+        )),
+        ("another driver observation", Document(
+            path=driver,
+            stamp="foreign observation",
+            value=driver_capability(digest, DRIVER_CAPABILITY_SCHEMA),
+        )),
+        ("a loose native document", Document(
+            path="/installed/native/compiler/driver.native.json",
+            stamp=observation,
+            value=driver_capability(digest, DRIVER_CAPABILITY_SCHEMA),
+        )),
+        ("an unknown envelope", Document(
+            path=driver,
+            stamp=observation,
+            value=driver_capability(digest, "incan.driver-capabilities/2"),
+        )),
+        ("a missing driver SHA", Document(
+            path=driver,
+            stamp=observation,
+            value=JsonValue.object(
+                {"schema": JsonValue.string("incan.driver-capabilities/1"), "plan_selection_profile": JsonValue.string(
+                    "incan.plan-module-selection-sha256/1",
+                )},
+            ),
+        )),
+        ("a mistyped driver SHA", Document(
+            path=driver,
+            stamp=observation,
+            value=JsonValue.object(
+                {"schema": JsonValue.string("incan.driver-capabilities/1"), "driver_sha256": JsonValue.bool(true), "plan_selection_profile": JsonValue.string(
+                    "incan.plan-module-selection-sha256/1",
+                )},
+            ),
+        )),
+    ]
+    for name, document in cases:
+        page = driver_capability_page(driver, digest, observation, [document], FIXTURE_REGISTRY)
+        expect_capability_refusal(wire, page, name)?
+    at_registry = Document(path=driver, stamp=observation, value=driver_capability(digest, DRIVER_CAPABILITY_SCHEMA))
+    aliased = driver_capability_page(driver, digest, observation, [at_registry], driver)
+    return expect_capability_refusal(wire, aliased, "a registry-aliased driver document")
 
 
 pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
@@ -29,6 +117,150 @@ pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
     record_payload(original, "runtime producer")?
     verify_published_installation(scratch.path(), original)?
     verify_installation_check(scratch.path())?
+    return Ok(None)
+
+
+pub def test_installed_readmission_refuses_a_loose_driver_capability() -> Result[None, str]:
+    """Re-admission cannot turn an unrelated installed JSON file into the compiler's declaration."""
+    scratch = scratch_directory()?
+    original = scratch.path().joinpath("producer/runtime.incnlib")
+    write(original, "runtime interface")?
+    record_payload(original, "runtime producer")?
+    directory = scratch.path().joinpath("installation")
+    write_installation(directory, original, "fixture compiler", "installed producer")?
+    _, admission = prepare_installation(directory)?
+    finish_installation(directory, admission)?
+    selected = load_toolchain_at(directory)?
+    baseline = admitted_identity(directory)?
+    assert baseline.is_some()
+    loose = directory.joinpath("native/claimed-compiler/driver.native.json")
+    forged = driver_capability(selected.compiler_facts[0], DRIVER_CAPABILITY_SCHEMA)
+    write(loose, json_text(forged)?)?
+    match readmit_installation(directory):
+        Ok(_) => return Err("readmission accepted a loose driver capability")
+        Err(reason) =>
+            assert "driver capability" in reason, reason
+    assert admitted_identity(directory)? == baseline
+    assert load_toolchain_at(directory)?.driver == selected.driver
+    verify_admitted_identity_reply(scratch.path(), original)?
+    return verify_legacy_identity_reader(scratch.path(), original)
+
+
+def verify_admitted_identity_reply(scratch: Path, original: Path) -> Result[None, str]:
+    """A synthetic capable executable can authorize its own staged observation once."""
+    stage = scratch.joinpath("capable-stage")
+    write_installation(stage, original, "temporary compiler", "capable fixture")?
+    driver = stage.joinpath("driver")
+    require_envelope = "[ \"$#\" = 4 ] && [ \"$3\" = --capabilities ] && [ \"$4\" = incan.driver-capabilities/1 ] || exit 98\n"
+    reply = "printf '%s\\n' 'incan.driver-capabilities/1' 'x86_64-unknown-linux-gnu' 'incan.plan-module-selection-sha256/1'\n"
+    write_identity_fixture(driver, require_envelope + reply)?
+    _staged, original_admission = prepare_installation(stage)?
+    proof = probe_driver_capability(driver.0, stage.joinpath("sysroot").0)?
+    assert proof.is_some()
+    admission = InstallationAdmission(
+        payloads=original_admission.payloads,
+        facts=original_admission.facts,
+        plan_selection_driver=proof,
+    )
+    target = scratch.joinpath("capable-installation")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    finish_installation(target, admission)?
+    assert load_toolchain_at(target)?.supports_plan_module_selection_digest
+    count_work(target.0 + "/")
+    for _index in range(2):
+        assert load_toolchain_at(target)?.supports_plan_module_selection_digest
+    work = finish_counting()
+    assert work.reads == 0 and work.hashes == 0 and work.stats == 0
+    assert read(target.joinpath("identity-requests"))? == "4\n"
+    readmitted = readmit_page(target, read_toolchain, None, DriverCapabilityIntake.Selected)?
+    assert readmitted.toolchain.select().supports_plan_module_selection_digest
+    assert read(target.joinpath("identity-requests"))? == "4\n4\n"
+    return Ok(None)
+
+
+def verify_legacy_identity_reader(scratch: Path, original: Path) -> Result[None, str]:
+    """Only the measured old refusal followed by plain identity leaves the owned installation on scalar requests."""
+    target = scratch.joinpath("legacy-driver-installation")
+    write_installation(target, original, "temporary compiler", "legacy fixture")?
+    manifest = target.joinpath("toolchain.json")
+    mut description = read_json(manifest)?
+    description.set("supports_plan_module_selection_digest", JsonValue.bool(true)).map_err((error) => error.message())?
+    write(manifest, json_text(description)?)?
+    driver = target.joinpath("driver")
+    usage = "if [ \"$#\" = 4 ]; then printf '%s\\n' 'usage: incan-rustc-driver --identity SYSROOT' >&2; exit 1; fi\n"
+    write_identity_fixture(driver, usage + "printf '%s\\n' 'x86_64-unknown-linux-gnu'\n")?
+    _ = readmit_page(target, read_toolchain, None, DriverCapabilityIntake.Selected)?
+    assert not load_toolchain_at(target)?.supports_plan_module_selection_digest
+    assert read(target.joinpath("identity-requests"))? == "4\n2\n"
+    baseline = admitted_identity(target)?
+    write_identity_fixture(
+        driver,
+        "printf '%s\\n' 'incan.driver-capabilities/1' 'aarch64-apple-darwin' 'incan.plan-module-selection-sha256/1'\n",
+    )?
+    match readmit_page(target, read_toolchain, None, DriverCapabilityIntake.Selected):
+        Ok(_) => return Err("driver capability accepted another host target")
+        Err(reason) =>
+            assert "invalid driver capability" in reason, reason
+    assert admitted_identity(target)? == baseline
+    return Ok(None)
+
+
+def write_identity_fixture(driver: Path, reply: str) -> Result[None, str]:
+    """Emulate only the installed identity process and count the invocations made against it."""
+    write(driver.parent().joinpath("identity-requests"), "")?
+    write(
+        driver,
+        "#!/bin/sh\n[ \"$1\" = --identity ] || exit 99\nprintf '%s\\n' \"$#\" >> \"${2%/sysroot}/identity-requests\"\n" + reply,
+    )?
+    return make_executable(driver)
+
+
+def driver_capability(digest: str, schema: str) -> JsonValue:
+    """Build the normalized typed value carried beside the installed driver fact."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(schema), "driver_sha256": JsonValue.string(digest), "plan_selection_profile": JsonValue.string(
+            "incan.plan-module-selection-sha256/1",
+        )},
+    )
+
+
+def driver_capability_page(
+    driver: str,
+    digest: str,
+    observation: str,
+    documents: list[Document],
+    registry_units: str,
+) -> Installation:
+    """Construct a page with an exact compiler fact independently of the claimed capability."""
+    mut compiler = Toolchain(
+        driver=driver,
+        sysroot="/installed/sysroot",
+        rust_abi=[],
+        externs=[],
+        search=[],
+        registry_units=registry_units,
+    )
+    compiler.compiler_facts = [digest]
+    compiler.driver_observation = observation
+    return Installation(toolchain=compiler.installed(), manifests=[], paths=[], stamps=[], documents=documents)
+
+
+def decode_page_at(path: Path, bytes: bytes) -> Result[Installation, str]:
+    """Exercise the same mapped installation decoder as recall."""
+    path.write_bytes(bytes).map_err((error) => error.message())?
+    mapped = path.map_read().map_err((error) => error.message())?
+    match mapped.view(0, mapped.len()):
+        None => return Err("fixture has no whole mapped range")
+        Some(view) => return decode_installation(view)
+
+
+def expect_capability_refusal(path: Path, page: Installation, name: str) -> Result[None, str]:
+    """Require a semantic refusal for a well-framed but unbound projection."""
+    encoded = encode_installation(page)?
+    match decode_page_at(path, encoded):
+        Ok(_) => return Err(f"installation page accepted {name}")
+        Err(reason) =>
+            assert "driver capability" in reason, reason
     return Ok(None)
 
 
@@ -43,6 +275,7 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     finish_installation(target, admission)?
     installed = load_toolchain_at(target)?
     assert installed.driver == target.joinpath("driver").0
+    assert not installed.supports_plan_module_selection_digest
     match installed.compiler_records:
         None => return Err("selected installation lost the compiler record pin")
         Some(pin) =>

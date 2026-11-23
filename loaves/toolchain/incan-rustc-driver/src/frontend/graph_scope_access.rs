@@ -9,11 +9,11 @@ use std::thread::{self, JoinHandle};
 use incan_frontend::checker_records::ExecutableScopeWitness;
 use incan_frontend::typechecker::executable_frames::open_mapped_graph_executable_scope;
 use incan_semantics_core::body_ir::SharedIdentities;
-use internal_models::ExecutableSnapshot;
+use internal_models::{ExecutableSnapshot, PreparedWireReader};
 use sha2::{Digest, Sha256};
 
 /// Freeze the authored scope dictionary for all mapped reads in this compiler process.
-static EXECUTABLE_SCOPES: LazyLock<Result<internal_models_native::PreparedWireReader, String>> =
+static EXECUTABLE_SCOPES: LazyLock<Result<PreparedWireReader, String>> =
     LazyLock::new(internal_models::prepare_executable_scope_reader);
 
 /// Request-owned scope authority and the immutable checked bindings already restored under it.
@@ -27,7 +27,7 @@ pub(super) struct GraphScopeAccess {
 #[derive(Default)]
 struct ScopeState {
     reader: Option<Result<ScopeReader, String>>,
-    decoded: HashMap<String, HashMap<String, SharedIdentities>>,
+    decoded: HashMap<String, HashMap<String, ScopeValue>>,
 }
 
 struct ScopeAddress {
@@ -35,17 +35,29 @@ struct ScopeAddress {
     digest: String,
 }
 
+struct RetainedScope {
+    revision: Option<Vec<u8>>,
+    bindings: SharedIdentities,
+}
+
+/// The immutable bindings and the authenticated frame that supplied them in a pinned snapshot.
+#[derive(Clone)]
+struct ScopeValue {
+    revision: Vec<u8>,
+    bindings: SharedIdentities,
+}
+
 /// Keep the thread-bound Incan lease with its owner. Compiler workers share only the resulting immutable bindings.
 struct ScopeReader {
-    requests: Option<mpsc::SyncSender<(ScopeAddress, Option<SharedIdentities>)>>,
-    replies: mpsc::Receiver<(ScopeAddress, Result<SharedIdentities, String>)>,
+    requests: Option<mpsc::SyncSender<(ScopeAddress, Option<RetainedScope>)>>,
+    replies: mpsc::Receiver<(ScopeAddress, Result<ScopeValue, String>)>,
     owner: Option<JoinHandle<()>>,
 }
 
 impl ScopeReader {
     /// Start one lazy reader for the request's exact graph. Opening the snapshot here keeps its lease on this thread.
     fn start(request: PathBuf, bakery: Option<PathBuf>) -> Result<Self, String> {
-        let (requests, queries) = mpsc::sync_channel::<(ScopeAddress, Option<SharedIdentities>)>(0);
+        let (requests, queries) = mpsc::sync_channel::<(ScopeAddress, Option<RetainedScope>)>(0);
         // One caller holds the request lock at a time. An unbounded reply channel lets the lease close during unwind.
         let (results, replies) = mpsc::channel();
         let parent = tracing::Span::current();
@@ -55,15 +67,10 @@ impl ScopeReader {
                 let snapshot = parent.in_scope(|| open_snapshot(&request, bakery.as_deref()));
                 drop(parent);
                 for (address, retained) in queries {
-                    let result = snapshot.as_ref().map_err(Clone::clone).and_then(|selected| {
-                        let view =
-                            internal_models::selected_executable_scope(selected, &address.module, &address.digest)?;
-                        if let Some(bindings) = retained {
-                            return authenticate_retained_scope(view.0.as_bytes(), &address.digest, bindings);
-                        }
-                        let reader = EXECUTABLE_SCOPES.as_ref().map_err(Clone::clone)?;
-                        open_mapped_graph_executable_scope(reader, &view, &address.module, &address.digest)
-                    });
+                    let result = snapshot
+                        .as_ref()
+                        .map_err(Clone::clone)
+                        .and_then(|selected| Self::open_scope(selected, &address, retained));
                     if results.send((address, result)).is_err() {
                         break;
                     }
@@ -77,13 +84,38 @@ impl ScopeReader {
         })
     }
 
+    /// Bind retained data to the current index selection, opening scope bytes only when their proof is unavailable.
+    fn open_scope(
+        snapshot: &ExecutableSnapshot,
+        address: &ScopeAddress,
+        retained: Option<RetainedScope>,
+    ) -> Result<ScopeValue, String> {
+        let prior = retained.as_ref().map_or(&None, |scope| &scope.revision);
+        let selected = internal_models::select_executable_scope(snapshot, &address.module, &address.digest, prior)?;
+        let bindings = match (selected.value, retained) {
+            (None, Some(retained)) => retained.bindings,
+            (Some(view), Some(retained)) => {
+                authenticate_retained_scope(view.0.as_bytes(), &address.digest, retained.bindings)?
+            }
+            (Some(view), None) => {
+                let reader = EXECUTABLE_SCOPES.as_ref().map_err(Clone::clone)?;
+                open_mapped_graph_executable_scope(reader, &view, &address.module, &address.digest)?
+            }
+            (None, None) => return Err("scope selection omitted its opened value".into()),
+        };
+        Ok(ScopeValue {
+            revision: selected.revision,
+            bindings,
+        })
+    }
+
     /// Return the address with its checked binding so the cache owns the inputs already transferred to the reader.
     fn read(
         &self,
         module: &str,
         digest: &str,
-        retained: Option<SharedIdentities>,
-    ) -> Result<(ScopeAddress, SharedIdentities), String> {
+        retained: Option<RetainedScope>,
+    ) -> Result<(ScopeAddress, ScopeValue), String> {
         let address = ScopeAddress {
             module: module.to_owned(),
             digest: digest.to_owned(),
@@ -154,25 +186,35 @@ impl GraphScopeAccess {
 
     /// Share one checked scope per module and complete digest for the lifetime of this request.
     pub(super) fn resolve(&self, source: &str, digest: &str) -> Result<SharedIdentities, String> {
-        self.select(source, digest, None)
+        self.select(source, digest, None).map(|scope| scope.bindings)
+    }
+
+    /// Keep the scope's checked bindings and exact selected frame for subsequent resident namespace admissions.
+    pub(super) fn resolve_witness(&self, source: &str, digest: &str) -> Result<ExecutableScopeWitness, String> {
+        let scope = self.select(source, digest, None)?;
+        Ok(ExecutableScopeWitness {
+            digest: digest.to_owned(),
+            revision: Some(scope.revision),
+            bindings: scope.bindings,
+        })
     }
 
     /// Authenticate resident bindings under this request's snapshot and share them with any other selected owner.
-    pub(super) fn reuse(&self, source: &str, witness: &ExecutableScopeWitness) -> Result<(), String> {
-        self.select(source, &witness.digest, Some(&witness.bindings))
-            .map(|_| ())
+    pub(super) fn reuse(&self, source: &str, witness: &mut ExecutableScopeWitness) -> Result<(), String> {
+        let retained = RetainedScope {
+            revision: witness.revision.take(),
+            bindings: Arc::clone(&witness.bindings),
+        };
+        let scope = self.select(source, &witness.digest, Some(retained))?;
+        witness.revision = Some(scope.revision);
+        Ok(())
     }
 
     /// Open and authenticate an immutable scope only once per request. A resident value already has its typed bindings.
-    fn select(
-        &self,
-        source: &str,
-        digest: &str,
-        retained: Option<&SharedIdentities>,
-    ) -> Result<SharedIdentities, String> {
+    fn select(&self, source: &str, digest: &str, retained: Option<RetainedScope>) -> Result<ScopeValue, String> {
         let mut state = self.state.lock().map_err(|_| "executable scope cache is poisoned")?;
         if let Some(value) = state.decoded.get(source).and_then(|scopes| scopes.get(digest)) {
-            return Ok(Arc::clone(value));
+            return Ok(value.clone());
         }
         let _restore = tracing::trace_span!(
             target: "incan::invocation", "incan_rustc_driver::restore_executable_scope",
@@ -182,15 +224,12 @@ impl GraphScopeAccess {
         let reader = state
             .reader
             .get_or_insert_with(|| ScopeReader::start(self.request.clone(), self.bakery.clone()));
-        let (address, scope) = reader
-            .as_ref()
-            .map_err(Clone::clone)?
-            .read(source, digest, retained.map(Arc::clone))?;
+        let (address, scope) = reader.as_ref().map_err(Clone::clone)?.read(source, digest, retained)?;
         state
             .decoded
             .entry(address.module)
             .or_default()
-            .insert(address.digest, Arc::clone(&scope));
+            .insert(address.digest, scope.clone());
         Ok(scope)
     }
 }

@@ -1,0 +1,119 @@
+"""Bind installed compiler capabilities to the driver that proved them."""
+
+from rust::std::process import Command, Output
+from std.fs import Path
+from std.json import JsonValue
+from compiler_facts import FactAdmission, verified_fact
+from frozen_inputs import Document
+from json_fields import required_text
+from observation import observe
+from rust_target import decoded, host_triple
+from toolchain_types import InstalledCompiler
+
+const DRIVER_CAPABILITY_SCHEMA: str = "incan.driver-capabilities/1"
+const PLAN_SELECTION_PROFILE: str = "incan.plan-module-selection-sha256/1"
+const LEGACY_IDENTITY_USAGE: str = "usage: incan-rustc-driver --identity SYSROOT\n"
+
+
+pub enum DriverCapabilityIntake:
+    """Which existing admission can speak for the installed driver."""
+
+    Legacy
+    Selected
+    Staged(Option[FactAdmission])
+
+
+pub def plan_selection_capability(toolchain: InstalledCompiler, documents: list[Document]) -> Result[bool, str]:
+    """Read the one driver-addressed declaration, refusing misplaced or malformed claims."""
+    mut supported = false
+    for document in documents:
+        if document.path == toolchain.driver:
+            if supported or document.path in [toolchain.registry_lock, toolchain.registry_units]:
+                return Err(f"{document.path}: duplicate or aliased driver capability")
+            verify_document(toolchain, document)?
+            supported = true
+        elif capability_schema(document.value).startswith("incan.driver-capabilities/"):
+            return Err(f"{document.path}: driver capability belongs at {toolchain.driver}")
+    return Ok(supported)
+
+
+def capability_schema(document: JsonValue) -> str:
+    """Identify the reserved schema family without assigning meaning to ordinary installation documents."""
+    match document.get("schema"):
+        None => return ""
+        Some(value) => return value.as_str().unwrap_or("")
+
+
+def verify_document(toolchain: InstalledCompiler, document: Document) -> Result[None, str]:
+    """Require the exact protocol, driver SHA-256 and admitted observation at the selected driver path."""
+    detail = f"{document.path}: invalid driver capability"
+    digest = required_text(document.value, "driver_sha256").map_err((error) => f"{detail}: {error}")?
+    profile = required_text(document.value, "plan_selection_profile").map_err((error) => f"{detail}: {error}")?
+    fields = document.value.keys()
+    if (
+        len(fields) != 3
+        or capability_schema(document.value) != DRIVER_CAPABILITY_SCHEMA
+        or profile != PLAN_SELECTION_PROFILE
+    ):
+        return Err(f"{detail}: unsupported declaration")
+    if len(digest) != 64:
+        return Err(f"{detail}: expected a lowercase SHA-256")
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return Err(f"{detail}: expected a lowercase SHA-256")
+    if len(toolchain.compiler_facts) == 0 or toolchain.compiler_facts[0] != digest:
+        return Err(f"{detail}: driver SHA-256 differs from the admitted fact")
+    if document.stamp == "" or toolchain.driver_observation != document.stamp:
+        return Err(f"{detail}: driver observation differs from admission")
+    return Ok(None)
+
+
+pub def driver_document(driver: str, proof: FactAdmission) -> Document:
+    """Project the responding driver into the existing typed installation document inventory."""
+    return Document(
+        path=driver,
+        stamp=proof.observation,
+        value=JsonValue.object(
+            {"schema": JsonValue.string(DRIVER_CAPABILITY_SCHEMA), "driver_sha256": JsonValue.string(proof.digest), "plan_selection_profile": JsonValue.string(
+                PLAN_SELECTION_PROFILE,
+            )},
+        ),
+    )
+
+
+pub def probe_driver_capability(driver: str, sysroot: str) -> Result[Option[FactAdmission], str]:
+    """At admission, prove the selected driver's identity and accept only an exact profile reply."""
+    path = Path(driver)
+    before = verified_fact(path)?
+    rustc = Path(sysroot).joinpath("bin/rustc")
+    rustc_stamp = observe(rustc)?.stamp
+    host = host_triple(rustc.0)?
+    reply = identity_output(driver, ["--identity", sysroot, "--capabilities", DRIVER_CAPABILITY_SCHEMA])?
+    expected = f"{DRIVER_CAPABILITY_SCHEMA}\n{host}\n{PLAN_SELECTION_PROFILE}\n".encode("utf-8")
+    supported = reply.status.success() and reply.stderr == b"" and reply.stdout == expected
+    if not supported:
+        usage = LEGACY_IDENTITY_USAGE.encode("utf-8")
+        if reply.status.code() != Some(1i32) or reply.stdout != b"" or reply.stderr != usage:
+            return Err(
+                f"{driver}: invalid driver capability returned for Rust sysroot {sysroot}: {decoded(reply.stderr)}",
+            )
+        legacy = identity_output(driver, ["--identity", sysroot])?
+        if not legacy.status.success() or legacy.stderr != b"" or legacy.stdout != f"{host}\n".encode("utf-8"):
+            return Err(
+                f"{driver}: cannot verify legacy identity against Rust sysroot {sysroot}: {decoded(legacy.stderr)}",
+            )
+    after = verified_fact(path)?
+    if before.digest != after.digest or before.observation != after.observation or rustc_stamp != observe(rustc)?.stamp:
+        return Err(f"{driver}: driver or Rust compiler changed during identity verification")
+    if supported:
+        return Ok(Some(before))
+    return Ok(None)
+
+
+def identity_output(driver: str, arguments: list[str]) -> Result[Output, str]:
+    """Use the installer's established bootstrap-free identity environment."""
+    mut command = Command.new(driver)
+    command.env_remove("RUSTC_BOOTSTRAP")
+    for argument in arguments:
+        command.arg(argument)
+    return command.output().map_err((error) => f"{driver}: cannot verify driver identity: {error}")

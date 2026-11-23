@@ -440,7 +440,8 @@ pub fn prepare_loaf_publication(
         representation_version: EXECUTABLE_REPRESENTATION_VERSION,
         content_digest: hex::encode(Sha256::digest(&surface)),
     });
-    let rust_abi = prepare_rust_abi_cache(&mut manifest)?;
+    let index_reexports = install.is_some();
+    let rust_abi = prepare_rust_abi_cache(&mut manifest, index_reexports)?;
 
     // ---- Native closure and manifest ----
     let published = closure
@@ -449,7 +450,7 @@ pub fn prepare_loaf_publication(
     let closure = serde_json::to_vec_pretty(&published)
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
     let install = install
-        .map(|install| manifest.prepare_install_record(install))
+        .map(|install| manifest.prepare_install_record(install, index_reexports && rust_abi.is_some()))
         .transpose()
         .map_err(|error| CliError::failure(format!("cannot encode the install record of {name}: {error}")))?;
     let encoded = manifest
@@ -482,9 +483,9 @@ pub fn write_loaf(
     prepare_loaf_publication(dir, manifest, surface.bytes, closure, anchors, graph, None)?.write(dir)
 }
 
-/// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts
-/// through the existing indexed ABI codec. The manifest digest authenticates the asset without eager item decoding.
-fn prepare_rust_abi_cache(manifest: &mut LibraryManifest) -> CliResult<Option<Vec<u8>>> {
+/// Publish native facts through the indexed ABI codec. An install sidecar lets a consumer select explicit Rust
+/// re-exports from that index. Keep their inline representation for consumers that read the manifest contract.
+fn prepare_rust_abi_cache(manifest: &mut LibraryManifest, index_reexports: bool) -> CliResult<Option<Vec<u8>>> {
     let public = manifest
         .contract_metadata
         .identity_graph
@@ -497,18 +498,18 @@ fn prepare_rust_abi_cache(manifest: &mut LibraryManifest) -> CliResult<Option<Ve
     let Some(abi) = &mut manifest.rust_abi else {
         return Ok(None);
     };
-    let (embedded, indexed): (Vec<_>, Vec<_>) = std::mem::take(&mut abi.items)
-        .into_iter()
-        .partition(|item| public.contains(&item.canonical_path));
-    abi.items = embedded;
+    let indexed = abi
+        .items
+        .iter()
+        .filter(|item| index_reexports || !public.contains(&item.canonical_path))
+        .map(|item| (item.canonical_path.as_str(), item))
+        .collect::<BTreeMap<_, _>>();
     if indexed.is_empty() {
         return Ok(None);
     }
-    let indexed = indexed
-        .into_iter()
-        .map(|item| (item.canonical_path.clone(), item))
-        .collect::<BTreeMap<_, _>>();
-    let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(&indexed).map_err(CliError::failure)?;
+    let bytes =
+        incan_frontend::rust_abi_cache::encode_rust_abi_entries(indexed.into_iter()).map_err(CliError::failure)?;
+    abi.items.retain(|item| public.contains(&item.canonical_path));
     abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
     Ok(Some(bytes))
 }

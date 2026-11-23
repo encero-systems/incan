@@ -3,7 +3,7 @@
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from std.primitives.views import MappedView
-from pub::incan_platform.store import Lookup, Snapshot, lookup, read_manifest
+from pub::incan_platform.store import Lookup, Snapshot, locate_value, read_frame, read_manifest
 from pub::incan_platform.store.disk import root as disk_root
 from crumb_rows import ModelField, model_description, required_value
 from graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, number, text
@@ -19,6 +19,13 @@ pub model ExecutableSnapshot:
 
     pub graph: Snapshot
     pub origin: str
+
+
+pub model ExecutableScopeSelection:
+    """The exact frame digest selected for a scope, with the authenticated view when opened."""
+
+    pub revision: bytes
+    pub value: Option[MappedView]
 
 
 def description() -> Description:
@@ -52,9 +59,20 @@ pub def reopen_executable_snapshot(bakery: Borrowed[str], encoded: Borrowed[byte
     return Ok(ExecutableSnapshot(graph=graph, origin=origin))
 
 
-pub def selected_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str]) -> Result[MappedView, str]:
-    """Authenticate a single scope value by its full origin and module key in the pinned snapshot."""
+pub def select_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str], retained: Option[bytes]) -> Result[ExecutableScopeSelection, str]:
+    """
+    Select the scope's full origin and module key in the pinned snapshot.
+
+    The index binds the full key and frame digest. A matching retained digest supplies an already authenticated
+    immutable value even after compaction relocates it. Otherwise open and authenticate the selected frame.
+    """
     key = encode_record_key(executable_scope_key(selected.origin, module, digest)?)?
-    match lookup(selected.graph, key).map_err((error) => error.message())?:
-        Lookup.Found(value) => return Ok(value)
+    location = match locate_value(selected.graph, key).map_err((error) => error.message())?:
+        Some(found) => found
+        None => return Err("selected executable scope is missing")
+    if let Some(revision) = retained:
+        if revision == location.digest:
+            return Ok(ExecutableScopeSelection(revision=location.digest, value=None))
+    match read_frame(selected.graph.root, key, location).map_err((error) => error.message())?:
+        Lookup.Found(value) => return Ok(ExecutableScopeSelection(revision=location.digest, value=Some(value)))
         _ => return Err("selected executable scope is missing")

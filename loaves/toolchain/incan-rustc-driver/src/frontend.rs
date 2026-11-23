@@ -7,6 +7,7 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use crate::dependency_report::RootOrigin;
+use crate::rustc_process::PlanRecordProducts;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::{CliDiagnosticFailure, capture_warning_output};
 use incan_driver::loaf_publication::{
@@ -22,8 +23,8 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
 use incan_lowering::{
-    RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements,
-    program_refusals, resume_unit_plan, unit_plan,
+    PlanAdmissions, RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning,
+    layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{
     BodyIrModule, LinkedStaticAccessors, LoafCallable, NativeUnionDeclaration, NominalDeclaration,
@@ -207,7 +208,7 @@ pub(crate) struct Dependencies {
     /// Request-local directory for actual plan-function producer evaluations and reuses.
     plan_record_report: Option<PathBuf>,
     /// Bakery-selected plan-function products; private target caches are never record authority.
-    plan_record_products: Option<PathBuf>,
+    plan_record_products: Option<PlanRecordProducts>,
     /// The current home's toolchain and bakery roots, which anchor native-closure references (`--toolchain-root`,
     /// `--bakery-root`). A root Oven does not name leaves paths under it absolute.
     pub(crate) anchors: NativeAnchors,
@@ -225,6 +226,13 @@ impl Dependencies {
                 search: self.directories.clone(),
             })),
         }
+    }
+
+    /// The products the current invocation keeps live through Plan publication and native compilation.
+    fn plan_products(&self) -> Option<&Path> {
+        self.plan_record_products
+            .as_ref()
+            .map(|products| products.root.as_path())
     }
 
     /// The engine's graph-selected checker values, which a check installs exactly as a build does.
@@ -260,6 +268,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut graph_body_output = None;
     let mut plan_record_report = None;
     let mut plan_record_products = None;
+    let mut plan_module_selection = None;
     let mut anchors = NativeAnchors::default();
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
@@ -283,10 +292,25 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
             "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
             "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
+            "--plan-module-selection-digest" => {
+                if plan_module_selection.is_some() {
+                    return Err("plan module selection digest was supplied more than once".into());
+                }
+                let mut digest = [0; 32];
+                if !value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                    || hex::decode_to_slice(value, &mut digest).is_err()
+                {
+                    return Err("plan module selection digest must be a canonical SHA-256".into());
+                }
+                plan_module_selection = Some(digest);
+            }
             "--toolchain-root" => anchors.toolchain = Some(PathBuf::from(value)),
             "--bakery-root" => anchors.bakery = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown native source option {option}")),
         }
+    }
+    if plan_module_selection.is_some() && (plan_record_products.is_none() || plan_record_report.is_none()) {
+        return Err("plan module selection requires both native report and products directories".into());
     }
     if shared_native.is_some() && (unit.profile != "debug" || unit.kind == UnitKind::Library || library) {
         return Err("shared native linking requires a debug executable".into());
@@ -325,9 +349,84 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         namespace_pages,
         graph_body_output,
         plan_record_report,
-        plan_record_products,
+        plan_record_products: plan_record_products.map(|root| PlanRecordProducts {
+            root,
+            selection: plan_module_selection,
+            compact_notes: None,
+        }),
         anchors,
     })
+}
+
+#[cfg(test)]
+mod plan_record_option_tests {
+    use super::{UnitDescription, dependencies};
+
+    /// The independent digest is a single canonical capability option on a native report and products request.
+    #[test]
+    fn plan_selection_digest_requires_one_canonical_option_and_a_report() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let unit: UnitDescription = serde_json::from_value(serde_json::json!({
+            "schema": "incan.unit/1",
+            "source": root.path().join("main.incn"),
+            "project_root": root.path(),
+            "source_root": root.path(),
+            "package": "selection_probe",
+            "version": "0.1.0",
+            "profile": "debug",
+            "declared_features": [],
+            "active_features": [],
+            "loaves": [],
+            "rust_crates": [],
+            "contract_models": [],
+            "c_headers": [],
+            "externs": [],
+            "search": [],
+            "rust_abi": [],
+        }))?;
+        let products = root.path().join("products");
+        let report = root.path().join("report");
+        let scalar = [
+            "--plan-record-products".to_owned(),
+            products.to_string_lossy().into_owned(),
+            "--plan-record-report".to_owned(),
+            report.to_string_lossy().into_owned(),
+        ];
+        let legacy = dependencies(&unit, &scalar)?;
+        assert_eq!(legacy.plan_products(), Some(products.as_path()));
+        assert_eq!(legacy.plan_record_report.as_deref(), Some(report.as_path()));
+
+        let digest = "ab".repeat(32);
+        let option = "--plan-module-selection-digest";
+        let mut pinned = scalar.to_vec();
+        pinned.extend([option.to_owned(), digest.clone()]);
+        let outcome = dependencies(&unit, &pinned);
+        assert!(
+            outcome.is_ok(),
+            "native compiler refused the canonical selection option: {:?}",
+            outcome.as_ref().err()
+        );
+
+        let authority = outcome?.plan_record_products.ok_or("lost plan record authority")?;
+        assert_eq!(authority.root, products);
+        assert_eq!(authority.selection, Some([0xab; 32]));
+        let mut repeated = pinned.clone();
+        repeated.extend([option.to_owned(), digest.clone()]);
+        assert!(dependencies(&unit, &repeated).is_err());
+        assert!(dependencies(&unit, &pinned[2..]).is_err());
+        assert!(dependencies(&unit, &[&scalar[..2], &pinned[4..]].concat()).is_err());
+        assert!(dependencies(&unit, &pinned[..5]).is_err());
+        for malformed in [
+            "ab".repeat(31),
+            "AB".repeat(32),
+            format!("sha256:{digest}"),
+            "zz".repeat(32),
+        ] {
+            pinned[5] = malformed;
+            assert!(dependencies(&unit, &pinned).is_err());
+        }
+        Ok(())
+    }
 }
 
 /// Run one ordinary signature reader in the real compiler environment and publish only that owner's two Crumb values.
@@ -447,7 +546,11 @@ fn compile_unit(
     // its contents.
     unit.captured_sources = captured_sources.clone();
     let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
-    let dependencies = dependencies(&unit, options)?;
+    let mut dependencies = dependencies(&unit, options)?;
+    let selection = match &dependencies.plan_record_products {
+        Some(products) => products.read_selection()?,
+        None => None,
+    };
     if dependencies.library {
         if unit.kind == UnitKind::Test {
             return Err("a test unit cannot also be a library".into());
@@ -467,8 +570,7 @@ fn compile_unit(
     let cloves = unit.cloves.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
     let native_products = dependencies
-        .plan_record_products
-        .as_ref()
+        .plan_products()
         .map(|path| path.to_string_lossy().into_owned())
         .or_else(|| callable_products::native_directory(&unit));
     let mut program = check_compilation_source(
@@ -499,7 +601,8 @@ fn compile_unit(
         Arc::new(std::mem::take(&mut surface.linked_statics))
     });
     let mut published_unions = Vec::new();
-    let mut runtime_records = RuntimePlanRecords::read(dependencies.plan_record_products.as_deref());
+    let mut runtime_records = RuntimePlanRecords::read(dependencies.plan_products());
+    let mut plan_admissions = PlanAdmissions::with_selection(selection);
     let plan = lower_compilation_plan(
         &mut program,
         kind,
@@ -515,21 +618,24 @@ fn compile_unit(
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
         &mut runtime_records,
+        &mut plan_admissions,
     )?;
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
-    if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
+    if let (Some(products), Some(report)) = (&mut dependencies.plan_record_products, &dependencies.plan_record_report) {
         let _publication = tracing::trace_span!(
             target: "incan::invocation", "incan_rustc_driver::publish_plan_records",
         )
         .entered();
-        incan_lowering::publish_plan_records(
+        products.compact_notes = incan_lowering::publish_plan_records(
             &plan,
-            products.to_string_lossy().into_owned(),
-            report.to_string_lossy().into_owned(),
+            &products.root.to_string_lossy(),
+            &report.to_string_lossy(),
+            &plan_admissions,
         )?;
-        runtime_records.publish(products)?;
+        runtime_records.publish(&products.root)?;
     }
+    drop(plan_admissions);
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
@@ -602,6 +708,7 @@ fn compile_unit(
         overflow_checks,
         library_facades,
         plan_record_report: dependencies.plan_record_report,
+        plan_record_products: dependencies.plan_record_products,
         tests: (kind == UnitKind::Test)
             .then(|| serde_json::to_vec(&tests))
             .transpose()?,
@@ -678,6 +785,7 @@ fn lower_compilation_plan(
     recorded_layouts: Arc<RecordedLayouts>,
     plan_record_report: Option<String>,
     runtime_records: &mut RuntimePlanRecords,
+    admissions: &mut PlanAdmissions,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -756,7 +864,14 @@ fn lower_compilation_plan(
                     linked_static_exports: Arc::clone(linked_static_exports),
                     recorded_layouts: Arc::clone(&recorded_layouts),
                 };
-                let planned = unit_plan(&program.modules, &inputs, entry, &kind_name, &mut attempt_unions);
+                let planned = unit_plan(
+                    &program.modules,
+                    &inputs,
+                    entry,
+                    &kind_name,
+                    &mut attempt_unions,
+                    admissions,
+                );
                 program.sources = inputs.sources;
                 program.files = inputs.files;
                 program.dependencies.package_versions = inputs.package_versions;
