@@ -220,6 +220,7 @@ fn owner_dependent(body: &Body) -> bool {
         .is_some_and(|identity| identity.kind != SemanticSourceTargetKind::Function)
 }
 
+/// Schedule the generic callees a checked block reaches in source order.
 fn schedule_block<'a>(
     constructors: &ConstructorIndex,
     module: &'a BodyIrModule,
@@ -243,6 +244,7 @@ fn schedule_block<'a>(
     Ok(())
 }
 
+/// Visit calls and nested blocks that can introduce concrete nominal layouts.
 fn schedule_statement<'a>(
     constructors: &ConstructorIndex,
     module: &'a BodyIrModule,
