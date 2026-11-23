@@ -1,5 +1,7 @@
 //! A module's plan record: the plan function of every body of one module, as Bakery pages it for admission.
 
+use serde::{Deserialize, Serialize};
+
 use crate::wire::{
     MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, boolean_value, decode_graph_row, encode_graph_row,
     items, number, required, text, tuple_items,
@@ -207,8 +209,8 @@ pub struct PlanModuleSelectionRecord {
     pub modules: Vec<PlanSelectedModule>,
 }
 
-/// Accept only the selector's lowercase SHA-256 spelling.
-fn canonical_selection_digest(value: &str) -> bool {
+/// Accept only the canonical lowercase spelling of a raw SHA-256 digest.
+fn canonical_digest(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
@@ -220,7 +222,7 @@ fn validate_selection_scope(scope: &PlanSelectionScope) -> Result<(), String> {
     if scope.generation <= 0
         || scope.placement.is_empty()
         || (scope.store_root.is_empty() && !scope.placement.starts_with("memory:"))
-        || !canonical_selection_digest(&scope.manifest)
+        || !canonical_digest(&scope.manifest)
         || scope.view.is_empty()
         || scope.index.is_empty()
         || scope.origin.is_empty()
@@ -237,7 +239,7 @@ fn validate_selected_modules(modules: &[PlanSelectedModule]) -> Result<(), Strin
     for module in modules {
         if module.module.as_str() <= previous
             || module.output.is_empty()
-            || !canonical_selection_digest(&module.digest)
+            || !canonical_digest(&module.digest)
             || !(1..=MAX_PLAN_MODULE_FUNCTIONS as i64).contains(&module.count)
             || module.rank < 0
         {
@@ -288,4 +290,127 @@ pub fn decode_plan_module_selection(encoded: &[u8]) -> Result<PlanModuleSelectio
         .collect::<Result<Vec<_>, String>>()?;
     validate_selected_modules(&modules)?;
     Ok(PlanModuleSelectionRecord { scope, modules })
+}
+
+/// A lowering outcome that names the entire current positioned module selected by this compile request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WholeModuleAdmission {
+    pub module: String,
+    pub output: String,
+    pub digest: String,
+    pub count: i64,
+    pub selection: String,
+}
+
+/// Encode one versioned complete admission, without repeating function identities or placement.
+pub fn encode_whole_module_admission(_note: &WholeModuleAdmission) -> Result<Vec<u8>, String> {
+    Err("whole-module Plan admission has no engaged writer".into())
+}
+
+/// Decode the exact whole-admission row. A caller must still bind its selection and positioned module page.
+pub fn decode_whole_module_admission(_encoded: &[u8]) -> Result<WholeModuleAdmission, String> {
+    Err("whole-module Plan admission has no engaged reader".into())
+}
+
+/// The exact set of compact admission notes published by a request, carried through native handoff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactAdmissionPin {
+    pub count: u64,
+    pub digest: [u8; 32],
+}
+
+/// Pin the exact emitted notes in strictly ascending UTF-8 module order, without reopening their encoded bytes.
+pub fn compact_admission_pin<'a>(
+    _notes: impl IntoIterator<Item = (&'a str, [u8; 32])>,
+) -> Result<Option<CompactAdmissionPin>, String> {
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::records::lowering_events::{AdmittedFunction, AdmittedModule, decode_module_note, encode_module_note};
+
+    /// One positioned module note is smaller in shape and remains distinguishable from existing scalar notes.
+    #[test]
+    fn a_whole_module_note_binds_the_exact_versioned_fields() -> Result<(), String> {
+        let note = WholeModuleAdmission {
+            module: "probe".into(),
+            output: "plan-module\tprobe".into(),
+            digest: "2a".repeat(32),
+            count: 1,
+            selection: "e3".repeat(32),
+        };
+        let encoded = encode_whole_module_admission(&note);
+        assert!(encoded.is_ok(), "whole module writer refused a current positioned note");
+        let encoded = encoded?;
+        let observed = decode_whole_module_admission(&encoded)?;
+        assert_eq!(observed, note);
+        assert_eq!(encode_whole_module_admission(&observed)?, encoded);
+        assert!(decode_module_note(&encoded).is_err());
+        for invalid in [
+            WholeModuleAdmission {
+                selection: note.selection.to_uppercase(),
+                ..note.clone()
+            },
+            WholeModuleAdmission {
+                digest: "a".repeat(63),
+                ..note.clone()
+            },
+            WholeModuleAdmission {
+                count: 0,
+                ..note.clone()
+            },
+            WholeModuleAdmission {
+                count: MAX_PLAN_MODULE_FUNCTIONS as i64 + 1,
+                ..note.clone()
+            },
+            WholeModuleAdmission {
+                output: String::new(),
+                ..note.clone()
+            },
+            WholeModuleAdmission {
+                module: String::new(),
+                ..note.clone()
+            },
+        ] {
+            assert!(encode_whole_module_admission(&invalid).is_err());
+        }
+        let scalar = AdmittedModule {
+            module: note.module.clone(),
+            complete: true,
+            functions: vec![AdmittedFunction {
+                function: "probe_run".into(),
+                identity: "pub::probe::run".into(),
+                references: Vec::new(),
+                placement: None,
+            }],
+            inspected: false,
+        };
+        let encoded = encode_module_note(&scalar)?;
+        assert_eq!(decode_module_note(&encoded)?, scalar);
+        assert!(decode_whole_module_admission(&encoded).is_err());
+        Ok(())
+    }
+
+    /// The compact-set fingerprint uses UTF-8 byte lengths, exact note hashes, canonical order and final count.
+    #[test]
+    fn the_set_pin_keeps_compact_notes_in_exact_name_order() -> Result<(), String> {
+        let first = ("a", std::array::from_fn(|index| index as u8));
+        let second = ("ä", std::array::from_fn(|index| (index + 32) as u8));
+        let expected = CompactAdmissionPin {
+            count: 2,
+            digest: [
+                61, 227, 213, 16, 15, 55, 21, 121, 227, 50, 42, 160, 251, 137, 238, 166, 252, 236, 78, 251, 135, 195,
+                240, 150, 208, 77, 0, 116, 230, 153, 128, 86,
+            ],
+        };
+        assert_eq!(compact_admission_pin([first, second])?, Some(expected));
+        assert_ne!(compact_admission_pin([first])?, Some(expected));
+        assert_eq!(compact_admission_pin([])?, None);
+        assert!(compact_admission_pin([first, first]).is_err());
+        assert!(compact_admission_pin([second, first]).is_err());
+        assert!(compact_admission_pin([("", first.1)]).is_err());
+        Ok(())
+    }
 }
