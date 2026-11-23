@@ -29,6 +29,9 @@ use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_sem
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 
+#[cfg(test)]
+mod static_storage_tests;
+
 /// Checked products produced by one [`CompilationSession`] analysis pass: each module's checked facts, which Body IR
 /// lowers from, and its portable semantic snapshot, which tooling reads.
 #[derive(Debug, Clone)]
@@ -187,7 +190,12 @@ impl CompilationSession {
             }
             deferred.push((key.clone(), loaf.name.clone(), loaf.dir.clone(), loaf.standard));
         }
-        let loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
+        let mut loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
+        loaves.bind_native_loaves(
+            unit.externs
+                .iter()
+                .map(|binding| (binding.name.as_str(), binding.path.as_path())),
+        );
         let loaves = Arc::new(loaves);
         // Prelude names are resolved through the declared owner's named namespace and declaration records.
         // Source-selected conversion and entry contracts perform their own authenticated demands.

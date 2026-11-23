@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable};
+use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, StaticInitializer};
 use incan_semantics_core::executable_representation::{
     DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
 };
@@ -71,6 +71,15 @@ pub enum ExecutableResolutionError {
         version: String,
         source: ExecutableRepresentationError,
     },
+    /// A selected native Loaf published an initializer where the consumer needs producer-owned storage.
+    #[error(
+        "package `{library}` version {version} static `{declaration}` has no producer-owned storage binding; rebuild the Loaf with the current toolchain"
+    )]
+    MissingProducerStorage {
+        library: String,
+        version: String,
+        declaration: String,
+    },
     /// Artifact I/O failed; the package version is retained even when no representation bytes could be read.
     #[error("package `{library}` version {version} cannot read required executable artifact {path}: {reason}")]
     Unreadable {
@@ -113,11 +122,33 @@ struct PackageArtifact {
     key: String,
     range_head: Option<RangeHead>,
     surface: Arc<ExecutableSurface>,
+    links_native: bool,
     /// The Loaf's `.incnbody`.
     bodies: PathBuf,
 }
 
 impl PackageArtifact {
+    /// Admit storage from an authenticated fragment before retaining it. A native provider owns both its ordinary
+    /// cells and its decorated replacements. Initializers from source interfaces still supply local storage.
+    fn require_producer_storage(&self, declaration: &ExecutableDeclaration) -> Result<(), ExecutableResolutionError> {
+        if !self.links_native {
+            return Ok(());
+        }
+        let storage = match declaration {
+            ExecutableDeclaration::Static(storage) => storage,
+            ExecutableDeclaration::DecoratedBody { storage, .. } => storage.as_ref(),
+            _ => return Ok(()),
+        };
+        if matches!(storage.initial, StaticInitializer::Linked(_)) {
+            return Ok(());
+        }
+        Err(ExecutableResolutionError::MissingProducerStorage {
+            library: self.surface.name.clone(),
+            version: self.surface.version.clone(),
+            declaration: storage.canonical.declaration_name.clone(),
+        })
+    }
+
     /// Attach package identity to a codec error without relabeling it as a language limitation.
     fn unusable(&self, source: ExecutableRepresentationError) -> ExecutableResolutionError {
         ExecutableResolutionError::UnusableRepresentation {
@@ -172,6 +203,11 @@ fn catalog(loaves: &LoafIndex) -> Result<BTreeMap<String, String>, ExecutableRes
                     versions: format!("{previous:?}, {current:?}"),
                 });
             }
+            // Equal semantic publications can be installed at more than one location. Use the location whose
+            // archive the unit selected, so an equivalent source interface cannot stand in for native storage.
+            if loaves.links_native_loaf(key) && !loaves.links_native_loaf(previous_key) {
+                catalog.insert(name.to_owned(), key.to_owned());
+            }
         } else {
             catalog.insert(name.to_owned(), key.to_owned());
         }
@@ -204,6 +240,7 @@ fn demand_package<'a>(
         surface,
         bodies,
         range_head,
+        links_native: loaves.links_native_loaf(key),
     }))
 }
 
@@ -293,6 +330,7 @@ fn resolve_from_catalog(
         }));
         let (offset, length) = (*offset, *length);
         let declaration = surface.read(package, &identity, offset, length)?;
+        package.require_producer_storage(&declaration)?;
         if package.range_head.is_some() {
             resolved.content_bytes_verified += length;
         }
