@@ -1,0 +1,47 @@
+"""Build and pack run 14 through release-owned candidate publication functions."""
+
+from rust::std::process import Command
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from native_build import (
+    NativeContext, StandardProfile, build_support_tool, build_source_interfaces, build_runtime,
+    require_unique_runtime_root, build_standard_packages, build_oven_with_standard_profile,
+)
+from oven_tests import host_memory, shared_memory
+
+
+def main() -> Result[None, str]:
+    """Publish both shipped standard profiles, rebuild Oven against them, then pack the actual candidate."""
+    root = Path("/Volumes/Builds/incan-dev9-work/par/repo")
+    evidence = Path("/Volumes/Builds/incan-dev9-work/par/lane/run14/candidate-proof")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    timings = evidence.joinpath("timings.tsv")
+    timings.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    home = Path(get_or("INCAN_HOME", ""))
+    manifest = home.joinpath("toolchains/0.6.0-dev.8/toolchain.json")
+    mut document = JsonValue.parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+    _ = document.remove("compiler_records").map_err((error) => error.message())?
+    manifest.write_text(document.to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    context = NativeContext(
+        repo=root, lane=evidence.joinpath("lane"), home=home,
+        builder=get_or("RUN14_OVEN", home.joinpath("bin/oven").0), stdlib=root.joinpath("loaves/stdlib").0,
+        evidence=evidence, timings=timings, jobs=2, memory=shared_memory(host_memory()), timeout_seconds=3600,
+    )
+    helper = build_support_tool(context, home)?
+    interfaces = build_source_interfaces(context, helper, "candidate-")?
+    _ = build_runtime(context, helper, Some(interfaces), true)?
+    require_unique_runtime_root(context)?
+    build_standard_packages(context, helper, "candidate-", [StandardProfile.Release])?
+    oven = build_oven_with_standard_profile(context, helper, "candidate-", StandardProfile.Debug, false)?
+    bundle = evidence.joinpath("bundle")
+    bundle.mkdir(true, true).map_err((error) => error.message())?
+    _ = oven.copy(bundle.joinpath("incan"), true, true).map_err((error) => error.message())?
+    status = Command.new(oven.0).args(["toolchain", "pack", bundle.joinpath("toolchain.tar.zst").0])
+        .env("INCAN_HOME", home.0).env("INCAN_STDLIB", context.stdlib).status().map_err((error) => str(error))?
+    if not status.success():
+        return Err("candidate archive packing failed")
+    println("candidate standards, Oven, and archive completed")
+    return Ok(None)

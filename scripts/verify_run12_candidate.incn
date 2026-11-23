@@ -1,0 +1,42 @@
+"""Run only the release candidate's interface, runtime and eleven standard-package stages for this lane."""
+
+from std.environ import get_or
+from std.fs import Path
+from rust::std::process import exit
+from native_build_run12 import (
+    NativeContext, StandardProfile, build_support_tool, build_source_interfaces, build_runtime,
+    require_unique_runtime_root, build_standard_packages, standard_profiles, StandardGeneration,
+)
+from oven_tests import host_memory, shared_memory
+from check_support import write_stderr
+
+
+def main() -> None:
+    """Retain stage-private logs and propagate the first refused candidate stage."""
+    match verify():
+        Ok(_) => exit(0)
+        Err(message) =>
+            write_stderr(message + "\n")
+            exit(1)
+
+
+def verify() -> Result[None, str]:
+    """Use the same public build functions and candidate ordering as scripts/release.incn, without its censuses."""
+    root = Path("/Volumes/Builds/incan-dev9-work/par/repo")
+    evidence = Path("/Volumes/Builds/incan-dev9-work/par/lane/run12/candidate-proof")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    timings = evidence.joinpath("timings.tsv")
+    timings.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    home = Path(get_or("INCAN_HOME", ""))
+    context = NativeContext(
+        repo=root, lane=evidence.joinpath("lane"), home=home,
+        builder=get_or("RUN12_OVEN", home.joinpath("bin/oven").0), stdlib=root.joinpath("loaves/stdlib").0,
+        evidence=evidence, timings=timings, jobs=4, memory=shared_memory(host_memory()), timeout_seconds=600,
+    )
+    helper = build_support_tool(context, home)?
+    interfaces = build_source_interfaces(context, helper, "candidate-")?
+    _ = build_runtime(context, helper, Some(interfaces), true)?
+    require_unique_runtime_root(context)?
+    build_standard_packages(context, helper, "candidate-", standard_profiles(StandardGeneration.Candidate))?
+    println("candidate standard packages completed")
+    return Ok(None)

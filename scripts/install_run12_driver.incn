@@ -1,0 +1,24 @@
+"""Install the already-built source compiler into the freshly qualified proof home through the relink installer."""
+
+from rust::std::process import exit
+from std.environ import get_or
+from std.fs import Path
+from relink_run12 import install_driver
+
+
+def main() -> None:
+    """Install the exact source driver and rebuild its standard Rust ABI cache, propagating failure."""
+    home = Path(get_or("INCAN_HOME", ""))
+    toolchain = home.joinpath("toolchains/0.6.0-dev.8")
+    sysroot = toolchain.joinpath("sysroot").resolve()
+    match sysroot:
+        Err(error) =>
+            println(error.message())
+            exit(1)
+        Ok(root) =>
+            driver = Path("/Volumes/Builds/incan-dev9-work/par/repo/loaves/toolchain/incan-rustc-driver/target/incan/rust/release/bin/incan-rustc-driver")
+            match install_driver(toolchain, driver, root.0):
+                Ok(installed) => println(f"installed source driver: {installed.0}")
+                Err(error) =>
+                    println(error)
+                    exit(1)
