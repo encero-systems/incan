@@ -21,6 +21,12 @@ pub struct AuthenticatedWholeAdmission {
     pub definitions: Vec<AdmittedDefinition>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static DECODED_NOTES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    static PREFIX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Read all exact compact admissions for the current activation in canonical module-name order.
 pub fn read_plan_module_admissions(
     products: &Path,
@@ -95,6 +101,11 @@ fn read_note(entry: &std::fs::DirEntry) -> Result<(RequestModuleNote, Vec<u8>), 
         return Err("module admission is not an ordinary staged file".into());
     }
     let encoded = read_selection_file(&entry.path(), MAX_PLAN_MODULE_SELECTION_BYTES)?;
+    #[cfg(test)]
+    DECODED_NOTES.with(|read| {
+        let (count, bytes) = read.get();
+        read.set((count + 1, bytes + encoded.len()));
+    });
     Ok((decode_request_module_note(&encoded)?, encoded))
 }
 
@@ -214,7 +225,7 @@ mod tests {
     };
     use sha2::{Digest, Sha256};
 
-    use super::{AdmittedDefinition, read_plan_module_admissions};
+    use super::{AdmittedDefinition, DECODED_NOTES, PREFIX_BYTES, read_plan_module_admissions};
     use crate::plan_modules::{FRAME_LIST, PlanModuleSelection, tests::directory};
 
     /// Build one native positioned page with an independently known definition and nonempty product.
@@ -398,7 +409,52 @@ mod tests {
         );
         fs::remove_file(&stale).map_err(|error| error.to_string())?;
         fs::remove_file(&note).map_err(|error| error.to_string())?;
+
+        let ordinary = admissions.join(format!("{}{ADMITTED_MODULE_NOTE}", hex::encode("ordinary")));
+        let ordinary_note = AdmittedModule {
+            module: "ordinary".into(),
+            complete: true,
+            inspected: false,
+            functions: vec![AdmittedFunction {
+                function: "ordinary_run".into(),
+                identity: "pub::ordinary::run".into(),
+                references: Vec::new(),
+                placement: None,
+            }],
+        };
+        write(&ordinary, &encode_module_note(&ordinary_note)?)?;
+        let malformed_scalar = admissions.join(format!("{}{ADMITTED_MODULE_NOTE}", hex::encode("old")));
+        let malformed = b"malformed legacy diagnostic";
+        write(&malformed_scalar, malformed)?;
+        DECODED_NOTES.with(|read| read.set((0, 0)));
+        PREFIX_BYTES.with(|read| read.set(0));
         assert!(read_plan_module_admissions(&root, None)?.is_empty());
+        assert_eq!(
+            DECODED_NOTES.with(std::cell::Cell::get),
+            (0, 0),
+            "an unpinned native request replayed legacy scalar diagnostics"
+        );
+        assert_eq!(PREFIX_BYTES.with(std::cell::Cell::get), 2 * 32 + malformed.len());
+        write(&note, &whole_bytes)?;
+        assert!(read_plan_module_admissions(&root, None).is_err());
+        write(&note, &whole_bytes[..whole_bytes.len() - 1])?;
+        assert!(
+            read_plan_module_admissions(&root, None).is_err(),
+            "an unpinned whole-module note with a damaged body was ignored"
+        );
+        let selector = b"admwhl\0";
+        let dictionary = whole_bytes
+            .windows(selector.len())
+            .position(|window| window == selector)
+            .ok_or("whole module note omitted its reference selector")?;
+        let mut damaged_digest = whole_bytes;
+        damaged_digest[dictionary + selector.len()] ^= 1;
+        write(&note, &damaged_digest)?;
+        assert!(
+            read_plan_module_admissions(&root, None).is_err(),
+            "an unpinned whole-module note with a damaged description digest was ignored"
+        );
+        assert_eq!(DECODED_NOTES.with(std::cell::Cell::get), (0, 0));
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
