@@ -1,0 +1,27 @@
+# behavior: a method that reads a borrowed model and returns a fresh model in a Result hands back an independent value, taken with ? and passed on by value (#2994)
+# expect-stdout:
+#   3
+#   7
+
+
+pub model Slot:
+    pub n: int
+
+
+pub class Reader:
+    pub base: int
+
+    pub def root_slot(self, shape: Borrowed[Slot]) -> Result[Slot, str]:
+        return Ok(Slot(n=shape.n + self.base))
+
+    pub def select(self, index: int, selected: Slot) -> Result[int, str]:
+        return Ok(selected.n + index)
+
+
+def main() -> Result[None, str]:
+    reader = Reader(base=1)
+    shape = Slot(n=2)
+    selected = reader.root_slot(shape)?
+    println(selected.n)
+    println(reader.select(4, selected)?)
+    return Ok(None)

@@ -577,10 +577,12 @@ impl Builder<'_> {
             span: unpack.value.span,
             reason: reason.into(),
         };
-        let relation = self
+        let Some(relation) = self
             .call_relation(&unpack.value)?
             .filter(|_| self.tuple_carrier(&unpack.value))
-            .ok_or_else(|| unavailable("tuple unpacking needs checked aggregate dependency facts"))?;
+        else {
+            return self.fresh_tuple_unpack(unpack, incoming);
+        };
         let aggregate = relation.carried.is_none() && !relation.component.is_empty();
         let carried = relation
             .carried
@@ -616,6 +618,51 @@ impl Builder<'_> {
             } else {
                 self.root(&identity, span)?;
             }
+        }
+        Ok(incoming)
+    }
+
+    /// Unpack a fresh tuple into new names: a call result or tuple literal that can hold no borrow is evaluated once,
+    /// and each name owns its element. A stored tuple would give up or lend its elements, and an existing name would
+    /// be replaced, so both still need their own facts.
+    fn fresh_tuple_unpack(
+        &mut self,
+        unpack: &TupleUnpackStmt,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let unavailable = |reason: &str| Unavailable {
+            span: unpack.value.span,
+            reason: reason.into(),
+        };
+        if self.optional_place(&unpack.value)?.is_some() || !self.fresh_or_copy_field(&unpack.value) {
+            return Err(unavailable("tuple unpacking needs checked aggregate dependency facts"));
+        }
+        if unpack.binding == BindingKind::Reassign || unpack.names.len() != unpack.name_spans.len() {
+            return Err(unavailable(
+                "unpacking into existing names needs checked replacement facts",
+            ));
+        }
+        let mut identities = Vec::with_capacity(unpack.names.len());
+        for (name, &span) in unpack.names.iter().zip(&unpack.name_spans) {
+            let identity = self
+                .checker
+                .type_info
+                .resolved_write_identity(span, name)
+                .cloned()
+                .ok_or(Unavailable {
+                    span,
+                    reason: "missing checked unpacked name".into(),
+                })?;
+            if identity.declaration_span != span {
+                return Err(unavailable(
+                    "unpacking into existing names needs checked replacement facts",
+                ));
+            }
+            identities.push((identity, span));
+        }
+        let incoming = self.expression(&unpack.value, incoming, true)?;
+        for (identity, span) in identities {
+            self.root(&identity, span)?;
         }
         Ok(incoming)
     }

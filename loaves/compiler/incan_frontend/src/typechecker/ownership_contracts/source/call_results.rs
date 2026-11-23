@@ -5,7 +5,7 @@ use super::super::{InputCall, InputCallKind};
 use super::{Builder, CanonicalSymbolId, Root, Unavailable};
 use crate::ast::{Expr, Span, Spanned};
 use crate::ownership_metadata::CheckedOwnershipContract;
-use crate::symbols::ResolvedType;
+use crate::symbols::{ResolvedType, TypeInfo};
 use incan_lang::lang::builtins::BuiltinMethodId;
 use incan_lang::lang::surface::{
     clone_methods::CloneMethodId, list_methods::ListMethodId, option_methods::OptionMethodId,
@@ -109,6 +109,35 @@ impl Builder<'_> {
             }
             _ => self.checker.type_holds_no_borrow(ty),
         }
+    }
+
+    /// Whether a call's result is closed and fresh: every type it names is a declared class, model, enum or newtype, a
+    /// builtin collection or a builtin carrier, so no leaf can still be a type parameter (`conditional_result` treats a
+    /// named leaf as possibly one), and it can hold no borrow, so it retains no dependency on the call's inputs and
+    /// needs no conditional result requirement (#2994).
+    pub(super) fn closed_fresh_result(&self, result: &ResolvedType) -> bool {
+        fn nominal(builder: &Builder<'_>, name: &str) -> bool {
+            matches!(
+                builder.checker.lookup_type_info(name),
+                Some(TypeInfo::Class(_) | TypeInfo::Model(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+            )
+        }
+        fn declared(builder: &Builder<'_>, ty: &ResolvedType) -> bool {
+            match ty {
+                ResolvedType::Named(name) => nominal(builder, name),
+                ResolvedType::Generic(name, arguments) => {
+                    (ty.is_result()
+                        || ty.is_option()
+                        || collections::from_str(name).is_some()
+                        || nominal(builder, name))
+                        && arguments.iter().all(|argument| declared(builder, argument))
+                }
+                ResolvedType::Tuple(items) => items.iter().all(|item| declared(builder, item)),
+                ResolvedType::TypeVar(_) | ResolvedType::SelfType | ResolvedType::Unknown => false,
+                _ => true,
+            }
+        }
+        declared(self, result) && self.checker.type_holds_no_borrow(result)
     }
 
     /// Whether this expression is a call, possibly taken with `?`, whose result is carried as `carried_result` says.

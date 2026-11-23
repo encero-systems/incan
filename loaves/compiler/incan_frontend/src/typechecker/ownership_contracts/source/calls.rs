@@ -411,7 +411,8 @@ impl Builder<'_> {
             && contract.is_some_and(|contract| {
                 contract.result_source.is_none() && contract.modes.iter().all(|mode| mode.component.parameter.is_some())
             })
-            && conditional_result(result))
+            && conditional_result(result)
+            && !self.closed_fresh_result(result))
         .then(|| result.clone());
         // A source declaration's result that can hold no borrow carries no dependency on the call's inputs: only a
         // view type, a native reference or a type still open can retain one, and a source signature cannot name a

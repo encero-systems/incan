@@ -10,11 +10,13 @@ mod generic_carriers;
 mod invocations_and_accesses;
 mod lazy_reader_control_flow;
 mod literals;
+mod nominal_results;
 mod one_type;
 mod ordinary_arguments;
 mod property_views;
 mod source_flow;
 mod trait_inputs;
+mod tuple_unpacking;
 mod view_place_arguments;
 
 /// Project actual checked source so CFG tests cannot bypass canonical root/type lookup with hand-built facts.
