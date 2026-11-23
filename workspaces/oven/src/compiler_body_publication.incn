@@ -37,6 +37,7 @@ from compiler_owner_retirement import retire_missing_functions
 from compiler_owner_records import encode_body_frame, encode_eligibility, read_body_frame
 from store_selection_records import encode_binding
 from compiler_graph_records import EditCutoff, prepare_evaluation, reusable_evaluation
+from compiler_publication_local_receipts import PublicationLocalReceipts
 from compiler_body_rows import compiled_namespace_order, compiled_method_reads, read_compiled_body_outputs
 from compiler_namespace_layouts import read_compiled_layouts, stage_namespace_layout
 from pub::internal_models.overload_members import MethodReads
@@ -310,7 +311,8 @@ pub def prepare_compiled_bodies(
     if let Some(prior) = selected:
         retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
     executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
-    spans = module_spans(staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff)?
+    mut local_receipts = PublicationLocalReceipts.open(selected, plan_output is not None)
+    spans = module_spans(staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff, local_receipts)?
     for slot in spans.retained.keys():
         staged.source.add(slot, spans.retained[slot])
     stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts)?
@@ -340,7 +342,7 @@ pub def prepare_compiled_bodies(
         unit,
         origin,
         staged.rechecked,
-        plan_output,
+        plan_output, local_receipts,
         plan_modules,
         covered,
         admission_report,
@@ -563,6 +565,7 @@ def prepare_optional_lowering_records(
     origin: str,
     rechecked: list[str],
     plan_output: Option[Path],
+    local_receipts: Borrowed[PublicationLocalReceipts],
     plan_modules: list[AdmittedPlanModule] = [],
     covered: CoveredBodyOwners = CoveredBodyOwners(),
     admission_report: Option[Path] = None,
@@ -587,7 +590,7 @@ def prepare_optional_lowering_records(
                     rescued = select_body_inventory_of(graph, CHECKER_PROFILE, origin, demanded)?
         if len(rescued) != len(demanded):
             return Err("partially restored plan did not retain its demanded checked owner")
-        witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, cutoff)?
+        witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, local_receipts, cutoff)?
         return prepare_lowering_records(
             projections,
             prepared,
@@ -849,6 +852,7 @@ def lowering_witnesses(
     unit: UnitDescription,
     origin: str,
     mut orders: LoweringOrders,
+    local_receipts: Borrowed[PublicationLocalReceipts],
     cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[LoweringBody], str]:
     """
@@ -920,12 +924,12 @@ def lowering_witnesses(
         position = orders.retained(prior, decoded.source, body)?
         source.add(encode_record_key(key)?, body.value)
         local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
-        local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE, cutoff)?:
+        local = match local_receipts.for_lowering(prior, local_key, cutoff)?:
             None => return Err("retained lowering owner has no witnessed checker inputs")
             Some(value) => value
 
         mut signatures: list[RecordKey] = []
-        for witness in local.receipt.witnesses:
+        for witness in local.as_ref().witnesses:
             match witness:
                 ReadWitness.Found(found, _) =>
                     input = found.request.key

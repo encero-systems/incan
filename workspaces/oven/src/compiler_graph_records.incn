@@ -79,6 +79,7 @@ pub model ReusableEvaluation:
     pub value: bytes
     pub value_digest: str
     pub receipt: ReadReceipt
+    pub receipt_bytes: int
     pub namespace: int
     pub location: Option[Location] = None
 
@@ -275,14 +276,24 @@ pub def reusable_evaluation(
 
 pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
     """Bind an exact output slot to its completed, content-addressed read receipt."""
+    match sized_evaluation_authority(selected, output, profile)?:
+        Some((evaluation, receipt, _)) => return Ok(Some((evaluation, receipt)))
+        None => return Ok(None)
+
+
+def sized_evaluation_authority(
+    selected: Snapshot, output: RecordKey, profile: str,
+) -> Result[Option[tuple[Evaluation, ReadReceipt, int]], str]:
+    """Keep the authenticated receipt's encoded size for request-local retention limits."""
     value_key = encode_record_key(output)?
     evaluation = match selected_evaluation(selected, value_key, profile)?:
         Some(value) => value
         None => return Ok(None)
     _, mapped = authenticated_receipt(selected, evaluation.receipt_root)?
+    receipt_bytes = mapped.len()
     receipt = decode_read_receipt_view(mapped)?
     validate_receipt_authority(receipt.scope.profile, encode_record_key(receipt.preparation.output)?, evaluation)?
-    return Ok(Some((evaluation, receipt)))
+    return Ok(Some((evaluation, receipt, receipt_bytes)))
 
 
 def selected_evaluation(selected: Snapshot, value_key: str, profile: str) -> Result[Option[Evaluation], str]:
@@ -399,7 +410,7 @@ def select_evaluation(
     Validate an output, unless the edit's `cutoff` leaves it valid by the snapshot, and share only successful
     selections of the same pinned family read.
     """
-    evaluation, receipt = match evaluation_authority(selected, output, profile)?:
+    evaluation, receipt, receipt_bytes = match sized_evaluation_authority(selected, output, profile)?:
         Some(authority) => authority
         None => return Ok(None)
     if let Some(reach) = plan_reach:
@@ -423,7 +434,8 @@ def select_evaluation(
     if not defer_payload and output.identity_profile != SOURCE_PROFILE and checked_row_family(output.family) and len(selected_witnesses) < 8192 and len(value_key) <= 4096:
         if let Ok(request) = checked_row_request(output, len(value)):
             selected_witnesses[value_key] = (request, value_digest)
-    return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt, namespace=evaluation.namespace, location=location)))
+    return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt,
+        receipt_bytes=receipt_bytes, namespace=evaluation.namespace, location=location)))
 
 
 def deferred_frame(selected: Snapshot, key: str) -> Result[Location, str]:

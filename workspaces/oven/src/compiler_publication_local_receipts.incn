@@ -1,0 +1,77 @@
+"""Select the local checker receipts used by the two stages of one body publication."""
+
+from rust::std::rc import Rc
+from pub::incan_platform.store import Snapshot
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
+from compiler_graph_records import EditCutoff, evaluation_record_key, reusable_evaluation
+from graph_read_demands import note_graph_demand
+
+
+const MAX_LOCAL_RECEIPTS: int = 64
+const MAX_LOCAL_RECEIPT_BYTES: int = 1048576
+
+
+model RetainedLocalReceipt:
+    """One decoded local receipt and whether the selected cutoff checked its witnesses."""
+
+    receipt: Rc[ReadReceipt]
+    revalidated: bool
+
+
+pub class PublicationLocalReceipts:
+    """Own the span stage's selected receipts until the same body publication finishes."""
+
+    selection: Option[tuple[str, str, str, int, str, str]] = None
+    receipts: Dict[str, RetainedLocalReceipt] = {}
+    retained_bytes: int = 0
+
+    @staticmethod
+    pub def open(selected: Option[Snapshot], for_plan: bool) -> PublicationLocalReceipts:
+        """Bind a handoff to the publication's already leased graph when lowering will consume it."""
+        if for_plan:
+            if let Some(prior) = selected:
+                if prior.pin is not None:
+                    return PublicationLocalReceipts(selection=Some(selection_identity(prior)))
+        return PublicationLocalReceipts()
+
+    pub def for_spans(mut self, prior: Snapshot, key: RecordKey, cutoff: EditCutoff) -> Result[Option[Rc[ReadReceipt]], str]:
+        """Select the local receipt under the publication's cutoff before gathering owner spans."""
+        selected = match reusable_evaluation(prior, key, CHECKER_PROFILE, cutoff)?:
+            Some(value) => value
+            None => return Ok(None)
+        receipt_bytes = selected.receipt_bytes
+        receipt = Rc.new(selected.receipt)
+        if self.matches(prior) and len(self.receipts) < MAX_LOCAL_RECEIPTS and self.retained_bytes + receipt_bytes <= MAX_LOCAL_RECEIPT_BYTES:
+            encoded = encode_record_key(key)?
+            if encoded not in self.receipts:
+                # The handoff and the span walk share one decoded receipt. The local value is released here.
+                self.receipts[encoded] = RetainedLocalReceipt(receipt=receipt.clone(), revalidated=cutoff.revalidates(encoded))
+                self.retained_bytes += receipt_bytes
+        return Ok(Some(receipt))
+
+    pub def for_lowering(self, prior: Snapshot, key: RecordKey, cutoff: EditCutoff) -> Result[Option[Rc[ReadReceipt]], str]:
+        """Use the same local authority when it suffices for this cutoff, preserving semantic demand order."""
+        if self.matches(prior):
+            encoded = encode_record_key(key)?
+            if let Some(kept) = self.receipts.get(encoded):
+                if kept.revalidated or not cutoff.revalidates(encoded):
+                    note_graph_demand("evaluation", prior, evaluation_record_key(CHECKER_PROFILE, encoded))
+                    return Ok(Some(kept.receipt))
+        return select_receipt(prior, key, cutoff)
+
+    def matches(self, prior: Borrowed[Snapshot]) -> bool:
+        """A root, view or generation change requires selection under its own lease."""
+        return prior.pin is not None and self.selection == Some(selection_identity(prior))
+
+
+def selection_identity(prior: Borrowed[Snapshot]) -> tuple[str, str, str, int, str, str]:
+    """Match the store placement, view and exact selected index without owning the snapshot."""
+    return (prior.root.value, prior.root.placement, prior.view, prior.generation, prior.digest, prior.index)
+
+
+def select_receipt(prior: Snapshot, key: RecordKey, cutoff: EditCutoff) -> Result[Option[Rc[ReadReceipt]], str]:
+    """Read the graph's complete local evaluation and retain only its receipt."""
+    match reusable_evaluation(prior, key, CHECKER_PROFILE, cutoff)?:
+        Some(selected) => return Ok(Some(Rc.new(selected.receipt)))
+        None => return Ok(None)

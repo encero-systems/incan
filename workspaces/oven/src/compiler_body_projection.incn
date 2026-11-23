@@ -7,11 +7,11 @@ from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
 from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import CompiledBodyDependencyRead, CompiledBodyValue
-from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from compiler_body_keys import body_key, project_declaration_slot
 from compiler_body_values import SelectedBodyRecord
-from compiler_graph_records import EditCutoff, reusable_evaluation
+from compiler_graph_records import EditCutoff
+from compiler_publication_local_receipts import PublicationLocalReceipts
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
@@ -280,6 +280,7 @@ pub def module_spans(
     editable_packages: list[str],
     origin: str,
     cutoff: EditCutoff,
+    mut local_receipts: BorrowedMut[PublicationLocalReceipts],
 ) -> Result[ModuleSpans, str]:
     """
     The spans of the editable dependency declarations each module's owners read, fresh or retained. A namespace row
@@ -299,11 +300,11 @@ pub def module_spans(
             if len(record.body_ir) == 0:
                 continue
             local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
-            local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE, cutoff)?:
+            local = match local_receipts.for_spans(prior, local_key, cutoff)?:
                 Some(found) => found
                 None => continue
             module = decode_owner(record.body_ir).map_err((error) => str(error))?.source
-            for witness in local.receipt.witnesses:
+            for witness in local.as_ref().witnesses:
                 if let ReadWitness.Found(found, _) = witness:
                     if found.request.key.family == "owner-span":
                         slot = encode_record_key(found.request.key)?
