@@ -1,8 +1,10 @@
 //! A module's plan record: the plan function of every body of one module, as Bakery pages it for admission.
 
+use internal_models_bindings::MappedView;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::records::lowering_events::AdmittedDefinition;
 use crate::wire::{
     MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, boolean_value, decode_graph_row, encode_graph_row,
     field, items, number, required, text, tuple_items,
@@ -208,6 +210,14 @@ pub struct PlanSelectedModule {
 pub struct PlanModuleSelectionRecord {
     pub scope: PlanSelectionScope,
     pub modules: Vec<PlanSelectedModule>,
+}
+
+/// Project the native definition inputs from one authenticated, positioned module page.
+pub fn read_positioned_plan_members(
+    _view: &MappedView,
+    _selected: &PlanSelectedModule,
+) -> Result<Vec<AdmittedDefinition>, String> {
+    Err("positioned module members are unavailable".into())
 }
 
 /// Accept only the canonical lowercase spelling of a raw SHA-256 digest.
@@ -517,6 +527,82 @@ mod tests {
         let clipped = complete_view(&clipped_owner).ok_or("fixture clip refused")?;
         let refused = binary_list_field_views(&admitted, &clipped, &field, 1, &mut budget(1_048_576)?);
         assert!(matches!(refused, Err(error) if binary_message(&error).contains("invalid_offsets")));
+        Ok(())
+    }
+
+    /// Member projection validates the selected page digest and returns only its exact native fingerprints.
+    #[test]
+    fn selected_positioned_members_need_the_exact_admitted_backing() -> Result<(), String> {
+        let function = projected_event()?;
+        let prior = decode_lowering_event(&function.event)?;
+        let old = decode_plan_function_record(&prior.product)?;
+        let expected = AdmittedDefinition {
+            function: function.function.clone(),
+            identity: function.symbol.clone(),
+            key: function.key.clone(),
+            digest: old.digest,
+        };
+        assert_ne!(function.identity, expected.identity);
+        let mut page = PlanModuleValue {
+            module: "probe".into(),
+            functions: vec![function],
+        };
+        let encoded = encode_plan_module(&page)?;
+        let selected = PlanSelectedModule {
+            module: page.module.clone(),
+            output: "probe-positioned-module".into(),
+            digest: format!("{:x}", Sha256::digest(&encoded)),
+            count: 1,
+            positioned: true,
+            rank: 1,
+            certificate: "compiled-check".into(),
+        };
+        let owner = mapped_bytes(&encoded)?;
+        let view = complete_view(&owner).ok_or("no mapped fixture page")?;
+        let _ = take_materialized_binary_bytes();
+        let projected = read_positioned_plan_members(&view, &selected);
+        assert!(
+            projected.is_ok(),
+            "the exact positioned selection did not resolve its native member"
+        );
+        assert_eq!(projected?, [expected]);
+        assert_eq!(take_materialized_binary_bytes(), 0);
+
+        let wrong_arity = PlanSelectedModule {
+            count: 2,
+            ..selected.clone()
+        };
+        assert!(read_positioned_plan_members(&view, &wrong_arity).is_err());
+        let repositioned = PlanSelectedModule {
+            positioned: false,
+            ..selected.clone()
+        };
+        assert!(read_positioned_plan_members(&view, &repositioned).is_err());
+
+        let mut damaged = encoded.clone();
+        let last = damaged.last_mut().ok_or("fixture page unexpectedly empty")?;
+        *last ^= 1;
+        assert_eq!(damaged.len(), encoded.len());
+        page.module = "foreign".into();
+        let foreign = encode_plan_module(&page)?;
+        assert_eq!(decode_plan_module(&foreign)?.module, page.module);
+        for offered in [damaged, foreign.clone()] {
+            let owner = mapped_bytes(&offered)?;
+            let offered = complete_view(&owner).ok_or("fixture backing missing")?;
+            assert!(
+                matches!(read_positioned_plan_members(&offered, &selected),
+                         Err(reason) if reason.contains("selected page digest")),
+                "same-size damaged or coherent foreign bytes were admitted under the old SHA"
+            );
+        }
+        let foreign_selected = PlanSelectedModule {
+            digest: format!("{:x}", Sha256::digest(&foreign)),
+            ..selected
+        };
+        let foreign_owner = mapped_bytes(&foreign)?;
+        let foreign_view = complete_view(&foreign_owner).ok_or("foreign fixture backing missing")?;
+        assert!(matches!(read_positioned_plan_members(&foreign_view, &foreign_selected),
+                     Err(reason) if reason.contains("selected module name")));
         Ok(())
     }
 
