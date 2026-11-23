@@ -5,10 +5,13 @@
 #   validated
 #   0.5
 
-from percentile import Percentile
+"""Observe both newtype import forms with one shared producer."""
+
+from direct import observe as observe_direct
+from renamed import observe as observe_renamed
 
 
 def main() -> None:
-    """Construct a valid value through the imported newtype."""
-    checked = Percentile(0.5)
-    println(checked.0)
+    """Run the direct and renamed constructions in order."""
+    observe_direct()
+    observe_renamed()
