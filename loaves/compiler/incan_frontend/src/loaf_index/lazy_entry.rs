@@ -18,9 +18,7 @@ use crate::library_manifest::capabilities::Contributions;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
-use crate::library_manifest::install_record::{
-    INSTALL_RECORD_SCHEMA, LoafInstallRecord, read_published_install_record,
-};
+use crate::library_manifest::install_record::{INSTALL_RECORD_SCHEMA, LoafInstallRecord, PathInstallFacts};
 use crate::library_manifest::type_scope::ModuleTypeScope;
 use crate::rust_abi_cache::RustAbiCache;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
@@ -107,6 +105,8 @@ pub(super) struct IndexedLoaf {
     named: Arc<Mutex<NamedRecords>>,
     /// The one admitted install record, including any authentication failure, for this indexed owner.
     install: Arc<OnceLock<Result<Option<Arc<LoafInstallRecord>>, LoafIndexError>>>,
+    /// The admitted install and named API values of a path Loaf, including its refusal.
+    path_install: Arc<OnceLock<Result<Option<Arc<PathInstallFacts>>, LoafIndexError>>>,
 }
 
 /// Records read by name, keyed by family and name.
@@ -123,6 +123,7 @@ impl IndexedLoaf {
         isolate_pending(&mut self.bindings);
         isolate_pending(&mut self.rust_abi);
         isolate_pending(&mut self.install);
+        isolate_pending(&mut self.path_install);
     }
 
     /// Start with the admitted owner and keep each later demand local to that exact indexed artifact.
@@ -151,6 +152,7 @@ impl IndexedLoaf {
             rust_abi: Arc::default(),
             named: Arc::default(),
             install: Arc::default(),
+            path_install: Arc::default(),
         }
     }
 
@@ -491,6 +493,17 @@ impl IndexedLoaf {
                 return Err(self.inventory_mismatch("records read by name differ from their admitted inventory"));
             }
             Some((values, _)) => Some(Arc::new(values)),
+            None if self.path_generation.is_some()
+                && matches!(self.namespace, LoafNamespace::Dependency { .. })
+                && PathInstallFacts::supports(family) =>
+            {
+                self.path_install_facts()?
+                    .map(|facts| facts.lookup(family, name))
+                    .transpose()
+                    .map_err(|error| self.inventory_mismatch(&error.to_string()))?
+                    .flatten()
+                    .map(Arc::new)
+            }
             None => None,
         };
         kept.insert((family, name.to_owned()), values.clone());
@@ -499,23 +512,21 @@ impl IndexedLoaf {
 
     /// Admit just this Loaf's install value. Only an absent descriptor on a legacy dependency enables recomputation.
     pub(super) fn install_record(&self) -> Result<Option<Arc<LoafInstallRecord>>, LoafIndexError> {
+        if matches!(self.namespace, LoafNamespace::Dependency { .. }) {
+            return self
+                .path_install_facts()
+                .map(|facts| facts.map(|facts| Arc::clone(&facts.record)));
+        }
         self.install
             .get_or_init(|| {
-                let record: LoafInstallRecord = if matches!(self.namespace, LoafNamespace::Dependency { .. }) {
-                    let Some(record) = self.path_install_record()? else {
-                        return Ok(None);
-                    };
-                    record
-                } else {
-                    let Some(values) = self.named_records(RecordFamily::InstallRecord.as_str(), &self.name)? else {
-                        return Ok(None);
-                    };
-                    let [value] = values.as_slice() else {
-                        return Err(self.inventory_mismatch("ambiguous named install record"));
-                    };
-                    serde::Deserialize::deserialize(value)
-                        .map_err(|error| self.inventory_mismatch(&error.to_string()))?
+                let Some(values) = self.named_records(RecordFamily::InstallRecord.as_str(), &self.name)? else {
+                    return Ok(None);
                 };
+                let [value] = values.as_slice() else {
+                    return Err(self.inventory_mismatch("ambiguous named install record"));
+                };
+                let record: LoafInstallRecord = serde::Deserialize::deserialize(value)
+                    .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
                 if record.schema != INSTALL_RECORD_SCHEMA {
                     return Err(self.inventory_mismatch("unsupported install record schema"));
                 }
@@ -524,31 +535,43 @@ impl IndexedLoaf {
             .clone()
     }
 
-    /// Reuse the install descriptor in the guarded inventory without materializing its manifest's other facts.
-    fn path_install_record(&self) -> Result<Option<LoafInstallRecord>, LoafIndexError> {
+    /// Read the sidecar at most once per indexed Loaf, including when a legacy artifact has no install record.
+    fn path_install_facts(&self) -> Result<Option<Arc<PathInstallFacts>>, LoafIndexError> {
+        self.path_install.get_or_init(|| self.read_path_install_facts()).clone()
+    }
+
+    /// Reuse the install descriptor in the guarded inventory without materializing the manifest's other facts.
+    fn read_path_install_facts(&self) -> Result<Option<Arc<PathInstallFacts>>, LoafIndexError> {
         let path = self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)));
-        let (manifest_digest, install_digest) = if self.path_generation.is_some() {
+        let (identity, install_digest) = if self.path_generation.is_some() {
             self.validate_path_generation(&path)?;
             let summary = self.summary()?;
-            (&summary.identity.digest, summary.install_record_digest.as_deref())
+            (&summary.identity, summary.install_record_digest.as_deref())
         } else {
             let artifact = &self.demand()?.artifact;
             (
-                &artifact.identity.digest,
+                &artifact.identity,
                 artifact.manifest.contract_metadata.install_record_digest.as_deref(),
             )
         };
         let Some(expected) = install_digest else {
             return Ok(None);
         };
-        let value = read_published_install_record(&path, &self.name, manifest_digest, expected)
-            .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
-        let record = super::LibraryManifest::decode_compiler_record_value(&value.value)
-            .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
+        let read = || {
+            let facts = PathInstallFacts::read(&path, &self.name, &identity.digest, expected)
+                .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
+            if facts.record.schema != INSTALL_RECORD_SCHEMA {
+                return Err(self.inventory_mismatch("unsupported install record schema"));
+            }
+            Ok(Arc::new(facts))
+        };
+        let facts = if self.path_generation.is_some() {
+            super::retained::path_install_facts(&path, identity, read)?
+        } else {
+            read()?
+        };
         self.validate_path_generation(&path)?;
-        tracing::trace!(target: "incan::invocation", phase = "path_install_record",
-            loaf = %self.name, key = %value.key(), revision = expected, bytes = value.value.len());
-        Ok(Some(record))
+        Ok(Some(facts))
     }
 
     /// Refuse a path selection that changed after its inventory was admitted.
@@ -611,7 +634,17 @@ impl IndexedLoaf {
         if !super::compiler_record_set::configured() {
             return Ok(None);
         }
-        super::compiler_record_set::names_record(&self.dir, &self.name, families, record)
+        let installed = super::compiler_record_set::names_record(&self.dir, &self.name, families, record)?;
+        if installed.is_some()
+            || self.path_generation.is_none()
+            || !matches!(self.namespace, LoafNamespace::Dependency { .. })
+            || !families.iter().all(|family| PathInstallFacts::supports(family))
+        {
+            return Ok(installed);
+        }
+        Ok(self
+            .path_install_facts()?
+            .and_then(|facts| facts.names(families, record)))
     }
 
     /// The governed bodies sidecar can be located from admitted identity without demanding declaration records.
@@ -646,6 +679,7 @@ impl IndexedLoaf {
             .or_else(|| self.vocabulary.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.surface.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.install.get().and_then(|result| result.as_ref().err()))
+            .or_else(|| self.path_install.get().and_then(|result| result.as_ref().err()))
     }
 
     /// Resolve namespace ownership from the index's declared binding, before reading manifest contents.

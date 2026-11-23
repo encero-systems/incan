@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::library_manifest::executable_surface::ExecutableSurface;
+use crate::library_manifest::install_record::PathInstallFacts;
 use crate::rust_abi_cache::RustAbiCache;
 
 use super::manifest_input::{Generation, generation};
@@ -26,8 +27,9 @@ const PATH_READING_COUNT_LIMIT: usize = 32;
 const PATH_SURFACE_INPUT_BUDGET: u64 = MAX_READING_BYTES;
 
 static ARTIFACTS: OnceLock<Mutex<Store<LoafArtifact>>> = OnceLock::new();
-type SurfaceReading = (LoafIdentity, Arc<ExecutableSurface>);
-static SURFACES: OnceLock<Mutex<Store<SurfaceReading>>> = OnceLock::new();
+type LoafViews<T> = OnceLock<Mutex<Store<(LoafIdentity, Arc<T>)>>>;
+static SURFACES: LoafViews<ExecutableSurface> = OnceLock::new();
+static INSTALL_FACTS: LoafViews<PathInstallFacts> = OnceLock::new();
 static ABI: OnceLock<Mutex<Store<Arc<RustAbiCache>>>> = OnceLock::new();
 
 /// The current generations of all files a decoded value depends on, including optional assets' absence.
@@ -150,22 +152,45 @@ pub(super) fn executable_surface(
     identity: &LoafIdentity,
     read: impl FnOnce() -> Result<Arc<ExecutableSurface>, LoafIndexError>,
 ) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
-    let Ok(key) = fs::canonicalize(path) else { return read() };
     let paths = [path.to_owned(), path.with_extension("rustabi")];
-    let before = observe(&paths);
-    let store = SURFACES.get_or_init(Mutex::default);
+    loaf_view(&SURFACES, &paths, identity, "executable surface", read)
+}
+
+/// Reuse named lookup values only while both the manifest and its authenticated facts sidecar retain their generation.
+pub(super) fn path_install_facts(
+    path: &Path,
+    identity: &LoafIdentity,
+    read: impl FnOnce() -> Result<Arc<PathInstallFacts>, LoafIndexError>,
+) -> Result<Arc<PathInstallFacts>, LoafIndexError> {
+    let paths = [path.to_owned(), path.with_extension("incnfacts")];
+    loaf_view(&INSTALL_FACTS, &paths, identity, "install facts", read)
+}
+
+/// Retain a compact view of an admitted path Loaf under the full identity and the generations of its inputs.
+fn loaf_view<T>(
+    views: &LoafViews<T>,
+    paths: &[PathBuf],
+    identity: &LoafIdentity,
+    view: &str,
+    read: impl FnOnce() -> Result<Arc<T>, LoafIndexError>,
+) -> Result<Arc<T>, LoafIndexError> {
+    let Some(key) = paths.first().and_then(|path| fs::canonicalize(path).ok()) else {
+        return read();
+    };
+    let before = observe(paths);
+    let store = views.get_or_init(Mutex::default);
     if let Some(inputs) = &before
         && let Some((selected, surface)) = store.lock().ok().and_then(|store| store.get(&key, inputs))
         && &selected == identity
-        && observe(&paths).as_ref() == Some(inputs)
+        && observe(paths).as_ref() == Some(inputs)
     {
-        tracing::debug!(target: "incan::invocation", loaf = identity.name, "retained immutable Loaf executable surface");
+        tracing::debug!(target: "incan::invocation", loaf = identity.name, view, "retained immutable Loaf view");
         return Ok(surface);
     }
     let surface = read()?;
     if let Some(inputs) = before
         && inputs.bytes != 0
-        && observe(&paths).as_ref() == Some(&inputs)
+        && observe(paths).as_ref() == Some(&inputs)
         && let Ok(mut store) = store.lock()
     {
         store.insert(
@@ -207,13 +232,15 @@ pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
 }
 
 /// The artifact, executable surface and ABI readings held by the worker, with the bytes of their authorizing files.
-pub(super) fn inventory() -> [(&'static str, usize, u64); 3] {
+pub(super) fn inventory() -> [(&'static str, usize, u64); 4] {
     let (artifacts, artifact_bytes) = stored(&ARTIFACTS);
     let (surfaces, surface_bytes) = stored(&SURFACES);
+    let (facts, fact_bytes) = stored(&INSTALL_FACTS);
     let (indexes, index_bytes) = stored(&ABI);
     [
         ("Loaf artifacts", artifacts, artifact_bytes),
         ("Loaf executable surfaces", surfaces, surface_bytes),
+        ("Loaf path install facts", facts, fact_bytes),
         ("Rust ABI indexes", indexes, index_bytes),
     ]
 }
@@ -235,6 +262,11 @@ pub(super) fn release_artifacts() {
         store.readings.clear();
     }
     if let Some(store) = SURFACES.get()
+        && let Ok(mut store) = store.lock()
+    {
+        store.readings.clear();
+    }
+    if let Some(store) = INSTALL_FACTS.get()
         && let Ok(mut store) = store.lock()
     {
         store.readings.clear();

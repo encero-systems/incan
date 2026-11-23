@@ -33,7 +33,7 @@ use lazy_entry::IndexedLoaf;
 pub use native_reference::{NATIVE_CLOSURE_SCHEMA, NativeAnchors, PublishedNativeClosure};
 
 /// What this process keeps of the Loaves it read: each store, how many readings it holds and their files' bytes.
-pub fn retained_inventory() -> [(&'static str, usize, u64); 3] {
+pub fn retained_inventory() -> [(&'static str, usize, u64); 4] {
     retained::inventory()
 }
 

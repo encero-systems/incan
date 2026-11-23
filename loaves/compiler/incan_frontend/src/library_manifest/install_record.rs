@@ -7,6 +7,7 @@
 //! manifest's own published forms: names, paths, canonical identities and type origins.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
@@ -14,8 +15,8 @@ use sha2::{Digest, Sha256};
 
 use super::compiler_records::{CompilerRecord, RecordFamily};
 use super::{
-    AliasExport, CanonicalIdentityExport, LibraryIdentityGraph, LibraryManifestError, NominalTypeOriginExport,
-    TypeParamExport, TypeRef,
+    AliasExport, CanonicalIdentityExport, LibraryIdentityGraph, LibraryManifest, LibraryManifestError,
+    NominalTypeOriginExport, TypeParamExport, TypeRef,
 };
 
 /// Version of the Oven library-facts sidecar, including optional independently addressed values.
@@ -48,13 +49,23 @@ pub fn read_published_install_record(
     manifest_digest: &str,
     expected_digest: &str,
 ) -> Result<CompilerRecord, LibraryManifestError> {
+    read_facts(manifest_path, name, manifest_digest, expected_digest).map(|(record, _)| record)
+}
+
+/// Check the install binding once and return the optional named API payload beside it.
+fn read_facts(
+    manifest_path: &Path,
+    name: &str,
+    manifest_digest: &str,
+    expected_digest: &str,
+) -> Result<(CompilerRecord, Option<String>), LibraryManifestError> {
     #[derive(Deserialize)]
     struct Facts {
         schema: String,
         manifest_digest: String,
         install_record: PublishedInstallRecord,
+        path_named_records: Option<String>,
     }
-
     let path = manifest_path.with_extension("incnfacts");
     let content = fs::read(&path).map_err(|source| LibraryManifestError::Read {
         path: path.clone(),
@@ -79,7 +90,112 @@ pub fn read_published_install_record(
     if stored.key != record.key() || stored.revision != revision || revision != expected_digest {
         return Err(invalid("named value disagrees with its selected content identity"));
     }
-    Ok(record)
+    Ok((record, facts.path_named_records))
+}
+
+/// Exact compiler-record values grouped by family and name in publisher order for overloads.
+type PathLookup = BTreeMap<String, BTreeMap<String, Vec<String>>>;
+
+/// Prepare the path Loaf's named API lookup from the same encoded values the installed record set uses.
+pub(super) fn encode_path_lookup(records: &[CompilerRecord]) -> Result<String, LibraryManifestError> {
+    let mut lookup = PathLookup::new();
+    for record in records {
+        lookup
+            .entry(record.family.as_str().to_owned())
+            .or_default()
+            .entry(record.name.clone())
+            .or_default()
+            .push(hex::encode(&record.value));
+    }
+    serde_json::to_string(&lookup).map_err(|error| LibraryManifestError::Serialize(error.to_string()))
+}
+
+/// A path Loaf's checked install record and the exact named API lookups it authorizes.
+#[derive(Debug)]
+pub(crate) struct PathInstallFacts {
+    pub(crate) record: Arc<LoafInstallRecord>,
+    lookup: Option<PathLookup>,
+}
+
+impl PathInstallFacts {
+    /// Open both projections from the one sidecar. A missing or altered declared lookup is a refusal.
+    pub(crate) fn read(
+        manifest_path: &Path,
+        name: &str,
+        manifest_digest: &str,
+        expected_digest: &str,
+    ) -> Result<Self, LibraryManifestError> {
+        #[derive(Deserialize)]
+        struct InstallValue {
+            #[serde(flatten)]
+            record: LoafInstallRecord,
+            path_lookup_digest: Option<String>,
+        }
+        let (value, lookup) = read_facts(manifest_path, name, manifest_digest, expected_digest)?;
+        let install: InstallValue = LibraryManifest::decode_compiler_record_value(&value.value)?;
+        let lookup = match (install.path_lookup_digest, lookup) {
+            (Some(expected), Some(bytes)) if format!("{:x}", Sha256::digest(bytes.as_bytes())) == expected => {
+                Some(serde_json::from_str(&bytes).map_err(|error| LibraryManifestError::Invalid(error.to_string()))?)
+            }
+            (None, None) => None,
+            _ => {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "named API records of `{name}` disagree with their selected content identity"
+                )));
+            }
+        };
+        tracing::trace!(target: "incan::invocation", phase = "path_install_record",
+            loaf = name, key = %value.key(), revision = expected_digest, bytes = value.value.len());
+        Ok(Self {
+            record: Arc::new(install.record),
+            lookup,
+        })
+    }
+
+    /// Decode only the named values requested by this checker.
+    pub(crate) fn lookup(
+        &self,
+        family: &str,
+        name: &str,
+    ) -> Result<Option<Vec<serde_json::Value>>, LibraryManifestError> {
+        let Some(values) = self
+            .lookup
+            .as_ref()
+            .and_then(|lookup| lookup.get(family))
+            .and_then(|family| family.get(name))
+        else {
+            return Ok(None);
+        };
+        values
+            .iter()
+            .map(|value| {
+                let encoded = hex::decode(value).map_err(|error| LibraryManifestError::Invalid(error.to_string()))?;
+                LibraryManifest::decode_compiler_record_value(&encoded)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
+    /// Check a complete named API family without opening any value. Other families still use their prior authority.
+    pub(crate) fn names(&self, families: &[&str], name: Option<&str>) -> Option<bool> {
+        let lookup = self.lookup.as_ref()?;
+        if !families.iter().all(|family| Self::supports(family)) {
+            return None;
+        }
+        Some(families.iter().any(|family| {
+            lookup
+                .get(*family)
+                .is_some_and(|records| name.map_or(!records.is_empty(), |name| records.contains_key(name)))
+        }))
+    }
+
+    /// Whether this producer publishes an exhaustive index for the named API family.
+    pub(crate) fn supports(family: &str) -> bool {
+        matches!(
+            family,
+            "public-namespace" | "declaration-signature" | "layout" | "default" | "type-scope"
+        )
+    }
 }
 
 /// Schema of the install record.
