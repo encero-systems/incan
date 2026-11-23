@@ -4,6 +4,7 @@
 #   config/app.toml
 #   app.toml .toml app config
 #   config/log.txt
+#   config/owned
 
 from rust::std::process import Command
 from rust::std::string import String as RustString
@@ -39,6 +40,7 @@ def main() -> Result[None, str]:
     # 3. Keep the exact published owner through a method result.
     println(Path("config").joinpath("log.txt").0)
     assert Path("project").joinpath("src").joinpath("main.incn").0 == "project/src/main.incn"
+    println(owned_child(Path("config")).0)
     # 4. Keep the documented error type available through the filesystem facade.
     match create_directory(Path("created")):
         Ok(_) => pass
@@ -46,6 +48,11 @@ def main() -> Result[None, str]:
     # 5. The available and total counts use the same units as the independent host command.
     assert_disk_usage_matches_df(Path("."))?
     return Ok(None)
+
+
+def owned_child(root: Borrowed[Path]) -> Owned[Path]:
+    """Return independently owned storage from a lexical join on a borrowed path."""
+    return root.joinpath("owned")
 
 
 def create_directory(path: Path) -> Result[None, IoError]:

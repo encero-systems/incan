@@ -27,6 +27,7 @@ from rust::std::cell import RefCell
 from rust::std::env import args
 from rust::std::fs import File
 from rust::std::io import copy as copy_stream
+from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio, exit
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
@@ -36,6 +37,8 @@ from std.environ import get_or
 from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, write_stderr
+from release_support import ReleaseTermination, release_process_census, stop_child_process_tree
+from pub::incan_platform.probes import process_table
 
 const GIB: int = 1073741824
 # What one invocation reserves. Peaks measured one invocation at a time, as the summed RSS of its processes and the
@@ -103,6 +106,9 @@ model Running:
     timeout_seconds: int
     started: Instant
     child: Rc[RefCell[Child]]
+    # Every descendant observed while the root was alive, retained for fail-fast cleanup after the root exits.
+    members: list[int]
+    census_error: Option[str]
     # The worker project it runs in; empty when it has none.
     worker: str
 
@@ -260,7 +266,9 @@ pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int
     """
     # 1. The compile-ahead invocations lead the pool, so their failed positions are the lowest ones.
     early = compile_ahead(planned)
-    failed = run_all_failures(oven, early + [item for item in planned if not item.alone], jobs, memory)?
+    failed = run_all_failures(oven, early + [item for item in planned if not item.alone], jobs, memory, len(early))?
+    if len([index for index in failed if index >= len(early)]) > 0:
+        return Ok(false)
     # 2. A settled source requires an installation that no other invocation changes any more.
     ran_alone = run_all(oven, [item for item in planned if item.alone], 1, memory)?
     # 3. The settled runs decide again what a compile-ahead failure showed.
@@ -414,8 +422,14 @@ pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) ->
     return Ok(len(run_all_failures(oven, planned, jobs, memory)?) == 0)
 
 
-pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[list[int], str]:
-    """Run every invocation within the count and memory budgets and return failed positions in planned order."""
+pub def run_all_failures(
+    oven: str,
+    planned: list[Invocation],
+    jobs: int,
+    memory: int,
+    ignored_prefix: int = 0,
+) -> Result[list[int], str]:
+    """Run within the count and memory budgets, stopping after the first failure outside `ignored_prefix`."""
     reservations = [item.reservation for item in planned]
     mut waiting = [index for index in range(len(planned))]
     mut active: list[Running] = []
@@ -429,6 +443,7 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
             if len(planned[index].workers) > 0 and worker == "":
                 continue
             child = start(oven, planned[index], worker)?
+            root = int(child.id())
             busy.append(worker)
             started.append(index)
             active.append(
@@ -438,27 +453,73 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
                     timeout_seconds=planned[index].timeout_seconds,
                     started=Instant.now(),
                     child=Rc.new(RefCell.new(child)),
+                    members=[root],
+                    census_error=None,
                     worker=worker,
                 ),
             )
         waiting = [index for index in waiting if index not in started]
         mut running: list[Running] = []
+        mut stop = false
         for item in active:
+            root = int(item.child.borrow().id())
+            observed = release_process_census(process_table(), root)
+            custody = merged_custody(item.members, item.census_error, observed)
+            if stop:
+                stop_child_process_tree(item.child, custody, f"Oven test invocation {item.position}")?
+                continue
             match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
                 Some(status) =>
+                    stop_child_process_tree(item.child, custody, f"Oven test invocation {item.position}")?
                     if not status.success():
                         failed.append(item.position)
+                        if item.position >= ignored_prefix:
+                            stop = true
                 None =>
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
-                        _ = item.child.borrow_mut().kill()
-                        _ = item.child.borrow_mut().wait()
+                        stop_child_process_tree(item.child, custody, f"Oven test invocation {item.position}")?
                         failed.append(item.position)
+                        if item.position >= ignored_prefix:
+                            stop = true
                     else:
-                        running.append(item)
+                        running.append(
+                            Running(
+                                position=item.position,
+                                reservation=item.reservation,
+                                timeout_seconds=item.timeout_seconds,
+                                started=item.started,
+                                child=item.child,
+                                members=custody.members,
+                                census_error=custody.census_error,
+                                worker=item.worker,
+                            ),
+                        )
+        if stop:
+            for item in running:
+                stop_child_process_tree(
+                    item.child,
+                    ReleaseTermination(members=item.members, census_error=item.census_error),
+                    f"Oven test invocation {item.position}",
+                )?
+            return Ok(sorted(failed))
         if len(running) == len(active):
             sleep(Duration.from_millis(20))
         active = running
     return Ok(sorted(failed))
+
+
+def merged_custody(known: list[int], prior_error: Option[str], observed: ReleaseTermination) -> ReleaseTermination:
+    """Retain every observed descendant and every process-census error until one invocation is fully reaped."""
+    mut members = known.clone()
+    for pid in observed.members:
+        if pid not in members:
+            members.append(pid)
+    mut census_error = prior_error.clone()
+    if let Some(message) = observed.census_error:
+        match census_error:
+            Some(prior) => census_error = Some(prior + "; " + message)
+            None => census_error = Some(message)
+    return ReleaseTermination(members=sorted(members), census_error=census_error)
 
 
 pub def free_worker(workers: list[str], busy: list[str]) -> str:
@@ -503,7 +564,7 @@ def start(oven: str, planned: Invocation, worker: str = "") -> Result[Child, str
         command.current_dir(planned.directory)
     for name in sorted([name for name in planned.environment.keys()]):
         command.env(name, planned.environment[name])
-    command.stdin(Stdio.null())
+    command.stdin(Stdio.null()).process_group(0)
     command.stdout(log)
     command.stderr(errors)
     return command.spawn().map_err((error) => f"cannot start `{oven}`: {error}")
