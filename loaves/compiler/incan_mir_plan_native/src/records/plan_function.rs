@@ -3,12 +3,13 @@
 use std::collections::HashMap;
 
 use incan_semantics_core::semantic_digest::semantic_digest;
+use internal_models_bindings::{MappedView, view_len};
 use sha2::{Digest, Sha256};
 
 use crate::records::wire_schema::{STORED_EXTERNAL_SCHEMA, STORED_PRODUCT_SCHEMA};
 use crate::wire::{
-    Schema, Shape, ShapeBody, ShapeField, Wire, admit_root, decode_graph_row, encode_graph_row, items, required,
-    write_wire,
+    Schema, Shape, ShapeBody, ShapeField, Wire, admit_root, admit_root_view, decode_graph_row, encode_graph_row, items,
+    required, write_wire,
 };
 
 /// The root selector of a plan-function record.
@@ -121,13 +122,34 @@ fn validate_record(record: &PlanFunctionRecord) -> Result<(), String> {
     if record.inputs.is_empty() || record.function.is_empty() {
         return Err("incomplete plan-function record".to_owned());
     }
-    let digits = record.digest.strip_prefix("sha256:");
-    let valid = record.digest.len() == 71
+    validate_digest(&record.digest)
+}
+
+/// Check the canonical native product digest used in both scalar and whole-module admissions.
+fn validate_digest(digest: &str) -> Result<(), String> {
+    let digits = digest.strip_prefix("sha256:");
+    let valid = digest.len() == 71
         && digits.is_some_and(|digits| digits.bytes().all(|digit| matches!(digit, b'0'..=b'9' | b'a'..=b'f')));
     if !valid {
         return Err("invalid plan-function record digest".to_owned());
     }
     Ok(())
+}
+
+/// Read the declared fingerprint of an authenticated positioned product without materializing its body or requests.
+pub(crate) fn projected_product_digest(view: &MappedView) -> Result<String, String> {
+    let mut product = admit_root_view(
+        view,
+        PLAN_FUNCTION_ROOT,
+        &PLAN_FUNCTION_SCHEMA,
+        "positioned Plan function",
+    )?;
+    if items(&product.row.read_field(b"inputs")?)?.is_empty() || view_len(&product.binary_view(b"funct_")?) == 0 {
+        return Err("incomplete plan-function record".into());
+    }
+    let digest = text_value(&product.row.read_field(b"digest")?)?;
+    validate_digest(&digest)?;
+    Ok(digest)
 }
 
 /// Require one logical Crumb string.

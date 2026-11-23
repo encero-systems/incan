@@ -92,6 +92,7 @@ impl RustcHandoff {
             self.overflow_checks,
             self.library_facades,
             self.plan_record_report.as_deref(),
+            Vec::new(),
         )
         .map_err(|error| error.to_string())?;
         if let Some(tests) = self.tests {
@@ -191,25 +192,56 @@ mod tests {
         }
     }
 
-    /// A staged file with a different named digest refuses in either placement, even without native-interface.
+    /// Stage exact producer bytes and their named digest without reading authority back from staging.
+    fn stage_named(path: &Path, bytes: &[u8]) -> std::io::Result<[u8; 32]> {
+        let digest = Sha256::digest(bytes).into();
+        let mut companion = path.as_os_str().to_os_string();
+        companion.push(".digest");
+        std::fs::write(path, bytes)?;
+        std::fs::write(PathBuf::from(companion), hex::encode(digest))?;
+        Ok(digest)
+    }
+
+    /// Another valid graph selection of the same page refuses in both native placements under the original pin.
     #[test]
     fn native_handoff_refuses_a_replaced_named_plan_selection() -> Result<(), Box<dyn std::error::Error>> {
+        // Incan's plan_module_authority authored the two graph generations from the same positioned probe page.
+        let selection_a = include_bytes!("../tests/fixtures/plan_module_selection/selection-a.crumb");
+        let selection_b = include_bytes!("../tests/fixtures/plan_module_selection/selection-b.crumb");
+        let positioned = include_bytes!("../tests/fixtures/plan_module_selection/70726f6265.incnmodule.positioned");
         let root = tempfile::tempdir()?;
         let products = root.path().join("products");
         std::fs::create_dir(&products)?;
         let staged = products.join(PLAN_MODULE_SELECTION_PAGE);
-        let named = products.join(format!("{PLAN_MODULE_SELECTION_PAGE}.digest"));
-        let original = Sha256::digest(b"accepted selection").into();
-        let replacement = b"replacement selection";
-        let replacement_digest = Sha256::digest(replacement);
+        let packet = root.path().join("request.rustc-handoff");
 
         let scalar = handoff(root.path(), None);
+        write(&scalar, &packet)?;
+        let scalar: RustcHandoff = postcard::from_bytes(&std::fs::read(&packet)?)?;
         assert!(scalar.read_plan_module_selection()?.is_none());
+
+        let original = stage_named(&staged, selection_a)?;
         let resident = handoff(root.path(), Some(original));
-        let packet = root.path().join("request.rustc-handoff");
+        let accepted = resident
+            .read_plan_module_selection()?
+            .ok_or("the accepted selection was lost")?;
+        assert_eq!(accepted.scope().generation, 1);
         write(&resident, &packet)?;
-        std::fs::write(staged, replacement)?;
-        std::fs::write(named, hex::encode(replacement_digest))?;
+
+        let replacement = stage_named(&staged, selection_b)?;
+        assert_ne!(replacement, original);
+        let foreign = handoff(root.path(), Some(replacement));
+        let valid = foreign
+            .read_plan_module_selection()?
+            .ok_or("the foreign selection was lost")?;
+        assert_eq!(valid.scope().generation, 2);
+        let accepted_module = accepted
+            .module("probe")
+            .ok_or("the fixture did not select the probe module")?;
+        assert_eq!(accepted_module.digest, hex::encode(Sha256::digest(positioned)));
+        assert_eq!(accepted_module.count, 1);
+        assert_eq!(Some(accepted_module), valid.module("probe"));
+
         let detached: RustcHandoff = postcard::from_bytes(&std::fs::read(packet)?)?;
         for request in [&resident, &detached] {
             let authority = request
