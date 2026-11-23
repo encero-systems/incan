@@ -182,16 +182,22 @@ def is_reference_page(path: str) -> bool:
 
 
 def load_allow(path: Path) -> Result[list[tuple[str, str]], str]:
-    """Read the original gate's permissive page-and-phrase exception format."""
+    """Read optional reference exceptions and require a nonempty exact phrase."""
     if not path.exists():
         return Ok([])
     mut allowed: list[tuple[str, str]] = []
-    for line in source_lines(read(path)?)?:
+    lines = source_lines(read(path)?)?
+    for index in range(len(lines)):
+        line = lines[index]
         if line.strip() == "" or line.startswith("#"):
             continue
         fields = line.split("\t")
-        if len(fields) >= 2:
-            allowed.append((fields[0].strip(), fields[1]))
+        if len(fields) < 2:
+            continue
+        phrase = fields[1]
+        if phrase.strip() == "":
+            return Err(f"{path.0}:{index + 1}: expected a nonempty exact phrase")
+        allowed.append((fields[0].strip(), phrase))
     return Ok(allowed)
 
 
