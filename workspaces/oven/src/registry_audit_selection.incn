@@ -34,11 +34,16 @@ pub def audit_locked_registries(lock: OvenLock, audits: list[VerifiedAudit]) -> 
     """
     Project the authenticated feeds over a checked lock.
 
-    1. Index feeds by their pinned identity and mark coverage for the recorded source of every dependency.
+    1. Require one authenticated observation per pinned identity and mark coverage for every recorded source.
     2. Report the active exact-version advisories whose registry and locked version match.
     """
     # 1. A same-named package from a path, toolchain or other root is a different source.
-    available = {f"sha256:{audit.registry}": audit.checkpoint for audit in audits}
+    mut available: Dict[str, Checkpoint] = {}
+    for audit in audits:
+        identity = f"sha256:{audit.registry}"
+        if identity in available:
+            return Err(f"multiple audit observations for registry {identity}")
+        available[identity] = audit.checkpoint
     mut coverage: list[AuditCoverage] = []
     mut matched: set[tuple[str, str, str]] = set()
     for entry in lock.loaves:
