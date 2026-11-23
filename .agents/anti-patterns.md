@@ -30,7 +30,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | IN1 | Inline `.map_err((error) => error.message())` plumbing | 2589 | 2589 | 2589 |
 | IN2 | String-literal `match` arms where an `Enum(str)` belongs | 172 | 172 | 172 |
 | IN3 | Repeated `kind == "a" or kind == "b"` chains | 46 | 46 | 46 |
-| IN4 | Imports after the first declaration | 1 | 1 | 1 |
+| IN4 | Imports after the first declaration | 1 | 10 | 10 |
 | IN5 | Incan lines over 120 characters | 1252 | 1252 | 1252 |
 | IN6 | `Err(e) => return Err(e)` where `?` reads directly | 32 | 32 | 32 |
 | IN7 | `str("literal")` wrappers | 8 | 8 | 8 |
@@ -150,7 +150,8 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 
 - Source: `readable-incan.md`, "The shape of a module" ("Imports come first").
 - Search: the `lateimport` findings of [`incan_structure.awk`](#incan_structureawk).
-- Hit: `loaves/stdlib/primitives/src/primitives/io.incn:269`.
+- The earlier matcher counted only private imports. Count public re-exports as top-level imports too.
+- Verified hits: five statements in `loaves/compiler/incan_mir_plan/src/lib.incn` at lines 169–221, four in `loaves/stdlib/primitives/src/primitives/async.incn` at lines 34–58, and the slice import at line 269 of `loaves/stdlib/primitives/src/primitives/io.incn`.
 
 ### IN5 Long lines
 
@@ -287,7 +288,7 @@ FNR == 1 { depth = 0; seen = 0; in_str = 0; pending = 0 }
   is_type = (line ~ /^[ ]*(pub(\([a-z]+\))? )?(model|class|enum|trait|newtype) [A-Za-z_]/)
   if (is_def && depth > 0 && kind[depth] == "def") print "nested\t" FILENAME ":" FNR ":" line
   if (ind == 0) {
-    if (line ~ /^(from [^ ]+ import |import [^ ])/ && seen) print "lateimport\t" FILENAME ":" FNR ":" line
+    if (line ~ /^(pub(\([a-z]+\))? )?(from [^ ]+ import |import [^ ])/ && seen) print "lateimport\t" FILENAME ":" FNR ":" line
     if (line ~ /^(pub(\([a-z]+\))? )?(async )?(def|model|class|enum|trait|newtype|const|static|type|module) / || line ~ /^@/) seen = 1
   }
   if (is_def || is_type) {
