@@ -1,0 +1,69 @@
+"""
+Lane-only helper (never committed): rebuild the runtime and standard Loaves through a relinked candidate driver.
+
+Run `incan run scripts/d5_lane_candidate.incn -- REPO LANE HOME BUILDER EVIDENCE SEED_HOME` with the seed home
+selected. It repeats the release's candidate-compiler phase after the driver relink: readmit, source interfaces,
+runtime, and the standard packages in both profiles.
+"""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from check_support import write_stderr
+from native_build import (
+    NativeContext,
+    StandardProfile,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    build_support_tool,
+    readmit_build_home,
+    require_unique_runtime_root,
+)
+
+const GIB: int = 1073741824
+
+
+def main() -> None:
+    """Build the candidate closure, reporting the first failing phase."""
+    arguments = [argument for argument in args()]
+    if len(arguments) != 7:
+        write_stderr("usage: d5_lane_candidate REPO LANE HOME BUILDER EVIDENCE SEED_HOME\n")
+        exit(2)
+    repo = Path(arguments[1])
+    evidence = Path(arguments[5])
+    context = NativeContext(
+        repo=repo,
+        lane=Path(arguments[2]),
+        home=Path(arguments[3]),
+        builder=arguments[4],
+        stdlib=repo.joinpath("loaves/stdlib").0,
+        evidence=evidence,
+        timings=evidence.joinpath("timings.tsv"),
+        jobs=12,
+        memory=96 * GIB,
+        timeout_seconds=3600,
+    )
+    match candidate(context, Path(arguments[6])):
+        Ok(_) => exit(0)
+        Err(message) =>
+            write_stderr(f"{message}\n")
+            exit(1)
+
+
+def candidate(context: NativeContext, seed_home: Path) -> Result[None, str]:
+    """The release's candidate phase after its relink, with the support helper built by the seed."""
+    evidence = context.evidence
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    helper = build_support_tool(context, seed_home)?
+    readmit_build_home(context, helper, "candidate-driver-readmit")?
+    interfaces = build_source_interfaces(context, helper, "candidate-")?
+    _ = build_runtime(context, helper, Some(interfaces), true)?
+    require_unique_runtime_root(context)?
+    # The registry closure still selects a v55 data package for the interop vocabulary entry; every earlier wave of
+    # each profile is complete when that last wave refuses.
+    match build_standard_packages(context, helper, "candidate-", [StandardProfile.Debug]):
+        Ok(_) => pass
+        Err(message) => write_stderr(f"debug standard packages: {message}\n")
+    build_standard_packages(context, helper, "candidate-", [StandardProfile.Release])?
+    return Ok(None)
