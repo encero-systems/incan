@@ -54,6 +54,7 @@ from rust_registry import selected_registry
 from rust_manifest import RustFacet, package_environment, rust_facet
 from rust_build import (
     BuiltUnit,
+    IncanCompilation,
     RustBuild,
     artifact_context,
     extern_artifacts,
@@ -1208,7 +1209,7 @@ def compile_incan_library(
         dependency_search = dependency_search + [native.directory] + native.search
     loaves = incan_artifacts(providers)
     # 2. The graph already prepared every dependency; the source compiler only binds these selected artifacts.
-    mut code: i32 = 1
+    mut compiled = IncanCompilation(code=1)
     mut readings = NativeClosureInput()
     match request.incan_compiler:
         Some(compile) =>
@@ -1216,7 +1217,7 @@ def compile_incan_library(
             selected = [(binding.name, binding.path) for binding in bindings]
             toolchain = selected_toolchain(request)?
             readings = toolchain.native_closures
-            code = compile(
+            compiled = compile(
                 source.0,
                 request.profile,
                 facet.features,
@@ -1230,8 +1231,8 @@ def compile_incan_library(
                 request.unattended,
             )?
         None => return Err(f"no Incan unit compiler was supplied for {declared.package}")
-    if code != 0:
-        return Err(f"Incan library {declared.package} failed with exit code {code}")
+    if compiled.code != 0:
+        return Err(f"Incan library {declared.package} failed with exit code {compiled.code}")
     # 3. Rust's extern edge names the same public facade an Incan consumer receives.
     stored = library_directory(bakery()?, directory)?
     return Ok(
@@ -1241,6 +1242,7 @@ def compile_incan_library(
             directory=stored.0,
             search=native_search(stored.joinpath(f"{artifact_stem(declared.package)}.native.json"), readings)? + dependency_search,
             loaf=declared.package,
+            body_evaluations=compiled.body_evaluations,
         ),
     )
 

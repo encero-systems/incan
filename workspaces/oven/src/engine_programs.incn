@@ -45,7 +45,7 @@ from unit_compiler import (
     plan_record_counts,
     plan_record_report_path,
 )
-from unit_rust import prepare_native
+from unit_rust import prepare_native, prepare_native_with_counts
 from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
 from shared_link import carriers_present, development_link, linkage_key, library_witness
@@ -305,7 +305,9 @@ pub def obtain(
         or len(described.cloves) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    ready = prepare_native(described, toolchain)?
+    prepared = prepare_native_with_counts(described, toolchain)?
+    ready = prepared.unit
+    dependency_body_evaluations = prepared.body_evaluations
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
@@ -349,7 +351,7 @@ pub def obtain(
             ProgramOutcome(
                 code=produced.code,
                 evaluations=produced.evaluations,
-                body_evaluations=len(invalid),
+                body_evaluations=dependency_body_evaluations + len(invalid),
                 body_page_writes=len(retained_bodies),
                 console=console,
                 epoch_reads=epoch_reads,
@@ -373,7 +375,7 @@ pub def obtain(
     if not editor:
         request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
         native = None
-    mut body_evaluations = 0
+    mut body_evaluations = dependency_body_evaluations
     mut body_reuses = 0
     mut body_ir_evaluations = 0
     mut checker_counts = CheckerRecordCounts()
@@ -396,7 +398,7 @@ pub def obtain(
             checker_counts.restored,
         )?
         request_transaction = bodies.transaction
-        body_evaluations = bodies.checking_evaluations
+        body_evaluations += bodies.checking_evaluations
         body_reuses = bodies.body_reuses
         body_ir_evaluations = bodies.body_ir_evaluations
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.

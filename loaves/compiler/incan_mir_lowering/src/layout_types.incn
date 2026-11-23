@@ -9,11 +9,8 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
-from rust::incan_lang::lang::types::collections import (
-    from_str as collection_type,
-    as_str as collection_name,
-    CollectionTypeId,
-)
+from rust::incan_lang::lang::types import CollectionTypeId
+from rust::incan_lang::lang::types::collections import from_str as collection_type, as_str as collection_name
 from rust::incan_lang::lang::types::ownership import from_str as ownership_mode, OwnershipMode
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, tuple_element_type

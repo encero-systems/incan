@@ -128,7 +128,7 @@ def verify_unit_reads_only_its_graph(binary: str, root: Path) -> Result[None, st
 
 
 pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str]:
-    """A local Rust source edit rebuilds its native unit, while an unchanged request does no work."""
+    """A local Rust fact edit rechecks its Incan caller; a body-only edit and an unchanged request do not."""
     scratch = scratch_directory()?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     return verify_rust_source_edit_rebuild(binary, scratch.path())
@@ -513,7 +513,7 @@ def verify_rust_source_edit_rebuild(binary: str, root: Path) -> Result[None, str
         "from rust::rust_edit_native import native_value\n\n\npub def value() -> int:\n    return native_value()\n",
     )?
     native = provider.joinpath("rust/src/lib.rs")
-    write(native, "pub fn native_value() -> i64 {\n    42\n}\n")?
+    write(native, "pub fn native_value() -> i32 {\n    42\n}\n")?
     write(
         app.joinpath("loaf.toml"),
         "[project]\nname = \"rust_edit_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nrust_edit_provider = { path = \"../provider\" }\n",
@@ -527,22 +527,32 @@ def verify_rust_source_edit_rebuild(binary: str, root: Path) -> Result[None, str
     executable = app.joinpath("target/incan/debug/bin/rust_edit_app")
     require_probe_output(executable, "42")?
     write(native, "pub fn native_value() -> i64 {\n    43\n}\n")?
-    edited = rust_source_probe_build(binary, app, store)?
-    edited_diagnostic = edited.to_json().map_err((error) => error.message())?
+    fact_edited = rust_source_probe_build(binary, app, store)?
+    fact_diagnostic = fact_edited.to_json().map_err((error) => error.message())?
     require_probe_output(executable, "43")?
-    assert proof_count(edited, "source_reads")? == 1, edited_diagnostic
-    assert proof_count(edited, "source_listings")? == 0, edited_diagnostic
-    assert proof_count(edited, "body_evaluations")? == 0, edited_diagnostic
-    assert proof_count(edited, "unit_evaluations")? == 1, edited_diagnostic
-    assert proof_count(edited, "native_bakes")? == 1, edited_diagnostic
+    write(native, "pub fn native_value() -> i64 {\n    44\n}\n")?
+    body_edited = rust_source_probe_build(binary, app, store)?
+    body_diagnostic = body_edited.to_json().map_err((error) => error.message())?
+    require_probe_output(executable, "44")?
     unchanged = rust_source_probe_build(binary, app, store)?
     unchanged_diagnostic = unchanged.to_json().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    assert proof_count(fact_edited, "source_reads")? == 1, fact_diagnostic
+    assert proof_count(fact_edited, "source_listings")? == 0, fact_diagnostic
+    assert proof_count(fact_edited, "body_evaluations")? == 1, fact_diagnostic
+    assert proof_count(fact_edited, "unit_evaluations")? == 1, fact_diagnostic
+    assert proof_count(fact_edited, "native_bakes")? == 1, fact_diagnostic
+    assert proof_count(body_edited, "source_reads")? == 1, body_diagnostic
+    assert proof_count(body_edited, "source_listings")? == 0, body_diagnostic
+    assert proof_count(body_edited, "body_evaluations")? == 0, body_diagnostic
+    assert proof_count(body_edited, "unit_evaluations")? == 1, body_diagnostic
+    assert proof_count(body_edited, "native_bakes")? == 1, body_diagnostic
     assert proof_count(unchanged, "source_reads")? == 0, unchanged_diagnostic
     assert proof_count(unchanged, "source_listings")? == 0, unchanged_diagnostic
     assert proof_count(unchanged, "body_evaluations")? == 0, unchanged_diagnostic
     assert proof_count(unchanged, "unit_evaluations")? == 0, unchanged_diagnostic
     assert proof_count(unchanged, "native_bakes")? == 0, unchanged_diagnostic
-    return stop_example_engine(binary, store)
+    return Ok(None)
 
 
 def require_probe_output(executable: Path, expected: str) -> Result[None, str]:
