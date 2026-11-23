@@ -431,10 +431,15 @@ fn checked_attempt(
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
-    let imports = std::sync::Arc::new(incan_driver::modules::SourceModuleImports::new(
-        &modules,
-        session.own_standard_package(),
-    ));
+    let imports = {
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_source_module_imports")
+                .entered();
+        std::sync::Arc::new(incan_driver::modules::SourceModuleImports::new(
+            &modules,
+            session.own_standard_package(),
+        ))
+    };
     let namespace_indexes = graph_body_output.enabled().then(|| {
         modules
             .iter()
@@ -536,6 +541,9 @@ fn checked_attempt(
         .map(|p| p.to_string_lossy().into_owned())
         .collect::<BTreeSet<_>>();
     let rebound = lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
+    let retained_calls =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::recover_retained_call_requirements")
+            .entered();
     let retained_generated_member_owners =
         retained_generated_member_owners(&modules, &analysis, &bodies[..loaf_modules])?;
     let retained_requirements = retained_body_call_requirements(
@@ -543,6 +551,7 @@ fn checked_attempt(
         package_identity,
         &retained_generated_member_owners,
     );
+    drop(retained_calls);
     if !retained_requirements
         .iter()
         .all(|identity| requested.contains(identity))
@@ -574,6 +583,9 @@ fn checked_attempt(
     let mut reads_by_module = BTreeMap::new();
     let mut settled_inputs = None;
     if observes_graph || !graph_body_records.is_empty() {
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::settle_checked_call_inputs")
+                .entered();
         let access = incan_frontend::body_ir::SettledCallInputs::from_modules(&bodies[loaf_modules..])?;
         let mut changed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (module, lowered) in modules.iter().zip(&mut bodies[loaf_modules..]) {
@@ -608,6 +620,9 @@ fn checked_attempt(
             settled_inputs = Some(access);
         }
     }
+    let lowering_witnesses =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_lowering_input_witnesses")
+            .entered();
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let mut witnessed = cacheable_bodies
         .iter()
@@ -630,6 +645,7 @@ fn checked_attempt(
     tracing::trace!(target: "incan::invocation", fresh_settled = settled, namespace_witnesses = cacheable_bodies.len() - carried,
         "prepared lowering inputs");
     let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
+    drop(lowering_witnesses);
     graph_body_output.attach_body_ir(
         &modules,
         &mut bodies[loaf_modules..],
@@ -671,6 +687,9 @@ fn checked_attempt(
     entry_module.string_conversion_contract = string_conversion_contract;
     entry_module.runtime_callable_bindings = runtime_callable_bindings;
     entry_module.runtime_binding_scopes = runtime_binding_scopes;
+    let dependency_context =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::complete_checked_dependency_context")
+            .entered();
     let program = complete_dependency_context(
         CheckedProgram {
             cacheable_bodies,
@@ -706,6 +725,7 @@ fn checked_attempt(
         package_identity,
         &checked_local,
     )?;
+    drop(dependency_context);
     session.loaves().validate_demands().map_err(|error| error.to_string())?;
     Ok(CheckedAttempt::Complete(program))
 }

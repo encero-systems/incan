@@ -2,6 +2,7 @@
 
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
+use crate::library_manifest::TypeRef;
 use crate::library_manifest::install_record::{
     InstallExportKind, InstallNestedLayoutKind, LoafInstallRecord, is_nominal_export,
 };
@@ -648,8 +649,8 @@ impl TypeChecker {
         Some(TransitiveLayout::ready(info))
     }
 
-    /// Resolve the recorded root alias to a nominal layout. Target layout reads still use the older manifest
-    /// representation, while the choice of alias comes only from the install record.
+    /// Resolve an admitted root alias's nominal projection against the exact artifact that declares the type.
+    /// The manifest still resolves aliases whose projections cannot establish the layout.
     pub(super) fn recorded_root_alias_layout(
         &self,
         library: &str,
@@ -664,6 +665,14 @@ impl TypeChecker {
             return None;
         }
         let alias = record.aliases.iter().find(|alias| alias.name == public_name)?;
+        if alias.projected_function.is_none()
+            && let Some(TypeRef::Named {
+                origin: Some(origin), ..
+            }) = &alias.projected_type
+            && let Some(kind) = self.symbol_kind_from_nominal_origin(origin, Some(&origin.provider))
+        {
+            return nominal_layout(kind);
+        }
         let manifest = self.loaves.manifest(library)?;
         nominal_layout(self.symbol_kind_from_manifest_alias(manifest, alias, &mut HashSet::new())?)
     }

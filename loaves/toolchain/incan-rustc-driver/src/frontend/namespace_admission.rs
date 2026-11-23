@@ -2,14 +2,51 @@
 //! the header, and opens the namespace frame only for an interface a checked module installs.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use incan_frontend::checker_records::{GraphNamespaceAdmission, GraphNamespaceInterface, RecordAdapterFault};
 use incan_frontend::typechecker::ModuleDependencyInterface;
 use internal_models::NamespaceReference;
 use internal_models_native::MappedView;
+use internal_models_native::records::RecordKey;
 
 use super::namespace_crumb;
+
+/// The identity of an authenticated namespace frame. Compaction can change its address without changing its bytes.
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct FrameRevision {
+    key: RecordKey,
+    frame_digest: Vec<u8>,
+    value_digest: String,
+}
+
+const MAX_INSTALLED_INTERFACES: usize = 512;
+
+/// Verified frame revisions in the existing resident program's scope. The decoded interface owns its tables.
+#[derive(Debug, Default)]
+pub(super) struct ResidentInterfaces {
+    installed: Mutex<HashMap<FrameRevision, Weak<ModuleDependencyInterface>>>,
+}
+
+impl ResidentInterfaces {
+    /// Borrow tables only from the exact authenticated revision currently selected in this program.
+    fn get(&self, revision: &FrameRevision) -> Option<Arc<ModuleDependencyInterface>> {
+        self.installed.lock().ok()?.get(revision)?.upgrade()
+    }
+
+    /// Retain the frame witness without extending the lifetime of the immutable tables it identifies.
+    fn remember(&self, revision: FrameRevision, interface: &Arc<ModuleDependencyInterface>) {
+        let Ok(mut interfaces) = self.installed.lock() else {
+            return;
+        };
+        if interfaces.len() >= MAX_INSTALLED_INTERFACES {
+            interfaces.retain(|_, interface| interface.strong_count() > 0);
+        }
+        if interfaces.len() < MAX_INSTALLED_INTERFACES {
+            interfaces.insert(revision, Arc::downgrade(interface));
+        }
+    }
+}
 
 /// The request's Bakery frame reader and the frames it has verified, shared by the namespace pages and the interfaces
 /// admitted from headers, so each frame a request reads is opened and verified once.
@@ -59,6 +96,7 @@ pub(super) fn admit_header(
     source: &str,
     header: &NamespaceReference,
     frame: &NamespaceReference,
+    resident: Option<Arc<ResidentInterfaces>>,
 ) -> Result<GraphNamespaceAdmission, RecordAdapterFault> {
     let _span = tracing::trace_span!(
         target: "incan::invocation", "incan_rustc_driver::admit_namespace_header",
@@ -92,6 +130,7 @@ pub(super) fn admit_header(
             path: identity.path,
             frame: frame.clone(),
             access: access.clone(),
+            resident,
             admitted: OnceLock::new(),
         }),
     })
@@ -105,10 +144,37 @@ struct FrameInterface {
     path: Vec<String>,
     frame: NamespaceReference,
     access: FrameAccess,
-    admitted: OnceLock<Result<Arc<dyn GraphNamespaceInterface>, String>>,
+    resident: Option<Arc<ResidentInterfaces>>,
+    admitted: OnceLock<Result<Arc<ModuleDependencyInterface>, String>>,
 }
 
 impl FrameInterface {
+    /// Share the installed tables when the request selects their authenticated frame and matching header identity.
+    fn install(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
+        let selection = self.resident.as_ref().map(|interfaces| {
+            let frame = super::namespace_pages::frame_reference(&self.frame);
+            let revision = FrameRevision {
+                key: frame.key,
+                frame_digest: frame.frame_digest,
+                value_digest: frame.value_digest,
+            };
+            (interfaces, revision)
+        });
+        if let Some((interfaces, revision)) = &selection
+            && let Some(interface) = interfaces.get(revision)
+        {
+            if interface.module_name != self.name || interface.module_path != self.path {
+                return Err("checked namespace identity disagrees with its admitted header".into());
+            }
+            return Ok(interface);
+        }
+        let interface = self.open()?.installable()?;
+        if let Some((interfaces, revision)) = selection {
+            interfaces.remember(revision, &interface);
+        }
+        Ok(interface)
+    }
+
     /// Open the frame and admit its interface exactly as a complete namespace read admits it.
     fn open(&self) -> Result<Arc<dyn GraphNamespaceInterface>, String> {
         let _span = tracing::trace_span!(
@@ -138,6 +204,6 @@ impl GraphNamespaceInterface for FrameInterface {
     }
 
     fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
-        self.admitted.get_or_init(|| self.open()).clone()?.installable()
+        self.admitted.get_or_init(|| self.install()).clone()
     }
 }

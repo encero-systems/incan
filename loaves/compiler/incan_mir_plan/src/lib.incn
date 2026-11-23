@@ -204,20 +204,25 @@ pub from rust::incan_mir_plan_native import (
 )
 pub from rust::incan_mir_plan_native import (
     ADMITTED_MODULE_NOTE,
+    MAX_PLAN_MODULE_SELECTION_BYTES,
     PARTIAL_MODULE_NOTE,
     PLAN_MODULE_FAMILY,
     PLAN_MODULE_PAGE,
     PLAN_MODULE_SELECTION_PAGE,
     POSITIONED_MODULE_PAGE,
     REPOSITION_MODULE_PAGE,
+    WHOLE_ADMISSION_SELECTOR,
     PlanModuleFunction,
     PlanModuleSelectionRecord,
     PlanModuleValue,
     PlanSelectedModule,
     PlanSelectionScope,
+    WholeModuleAdmission,
     decode_plan_module,
     decode_plan_module_selection,
+    decode_whole_module_admission,
     encode_plan_module,
+    encode_whole_module_admission,
 )
 from std.fs import Path
 from rust::incan_mir_plan_native import (

@@ -19,9 +19,11 @@ use incan_driver::unit::{ToolchainAccess, UnitKind};
 use incan_lowering::PlanModuleSelection;
 use incan_mir_plan_native::CompactAdmissionPin;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::identity::DriverIdentity;
 use crate::library_exports::LibraryFacade;
+use crate::native_plan_report::PlanDigest;
 use crate::native_timing::Timing;
 use crate::plan::Plan;
 
@@ -79,7 +81,13 @@ pub(crate) struct RustcHandoff {
 impl RustcHandoff {
     /// Run rustc, then write the test report and publish the Loaf; native-boundary failures remain retryable.
     pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self.read_plan_module_selection()?;
+        let native = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %self.output.display(), functions = self.plan.functions.len()).entered();
+        let compact = {
+            let _admission =
+                tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile_plan_admission")
+                    .entered();
+            self.read_compact_definitions()?
+        };
         let _captured = crate::spans::captured_source_scope(self.captured_sources, self.captured_texts)?;
         crate::adapter::compile(
             self.plan,
@@ -95,9 +103,10 @@ impl RustcHandoff {
             self.overflow_checks,
             self.library_facades,
             self.plan_record_report.as_deref(),
-            Vec::new(),
+            compact,
         )
         .map_err(|error| error.to_string())?;
+        drop(native);
         if let Some(tests) = self.tests {
             std::fs::write(self.output.with_extension("tests.json"), tests)?;
         }
@@ -118,8 +127,7 @@ impl RustcHandoff {
         products.read_selection()
     }
 
-    /// Read the same compact inputs under the accepted selection so the counted request can observe settled members.
-    #[cfg(test)]
+    /// Verify the exact published note set and resolve its native members before codegen.
     fn read_compact_definitions(&self) -> Result<Vec<incan_mir_plan_native::AdmittedDefinition>, String> {
         let Some(products) = &self.plan_record_products else {
             return Ok(Vec::new());
@@ -132,6 +140,10 @@ impl RustcHandoff {
             (None, Some(_)) => return Err("settled compact admission outcome has no plan module selection".into()),
             (_, expected) => expected,
         };
+        // An empty settled result still has a report directory when the optional native interface is absent.
+        if expected.is_some_and(|pin| pin.count == 0) && !self.plan_record_report.as_deref().is_some_and(Path::is_dir) {
+            return Err("plan module selection has no native report directory".into());
+        }
         let whole = incan_lowering::read_plan_module_admissions(&products.root, selection.as_ref())?;
         if let Some(expected) = expected {
             let observed = incan_mir_plan_native::compact_admission_pin(
@@ -155,7 +167,11 @@ impl RustcHandoff {
         self.captured_texts.clear();
         self.checked_sources = crate::spans::checked_texts()?;
         let path = self.output.with_extension("rustc-handoff");
-        let written = write(&self, &path);
+        let written = if timing.observes_handoff() {
+            write_with_proof(&self, &path).map(|proof| self.record_packet("writer", &path, proof))
+        } else {
+            write(&self, &path)
+        };
         drop(self);
         if let Err(error) = written {
             let _ = std::fs::remove_file(&path);
@@ -163,6 +179,19 @@ impl RustcHandoff {
         }
         timing.mark("rustc_handoff_written");
         Ok(path)
+    }
+
+    /// Record the original packet identity with the expectation and settled outcome carried by its bytes.
+    fn record_packet(&self, role: &'static str, path: &Path, (bytes, digest): (usize, [u8; 32])) {
+        let products = self.plan_record_products.as_ref();
+        let selection = products.and_then(|products| products.selection).map(hex::encode);
+        let notes = products.and_then(|products| products.compact_notes);
+        let compact_sha = notes.map(|pin| hex::encode(pin.digest));
+        tracing::trace!(target: "incan::invocation", role,
+            packet = %path.display(), packet_size = bytes, packet_sha256 = %hex::encode(digest),
+            selection_sha256 = %selection.as_deref().unwrap_or_default(),
+            compact_count = notes.map_or(0, |pin| pin.count), compact_sha256 = %compact_sha.as_deref().unwrap_or_default(),
+            "rustc handoff packet");
     }
 }
 
@@ -173,10 +202,14 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
         return Err("usage: incan-rustc-driver --rustc-handoff PATH".into());
     };
     let mut timing = Timing::requested();
-    let encoded = std::fs::read(Path::new(path))?;
+    let path = Path::new(path);
+    let encoded = std::fs::read(path)?;
     let handoff: RustcHandoff = postcard::from_bytes(&encoded)?;
+    if timing.observes_handoff() {
+        handoff.record_packet("reader", path, (encoded.len(), Sha256::digest(&encoded).into()));
+    }
     drop(encoded);
-    std::fs::remove_file(Path::new(path))?;
+    std::fs::remove_file(path)?;
     timing.mark("rustc_handoff_read");
     crate::spans::retain_checked_sources(&handoff.checked_sources)?;
     let identity = crate::identity::verify(&handoff.sysroot)?;
@@ -186,9 +219,21 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
 
 /// Encode the handoff into its file.
 fn write(handoff: &RustcHandoff, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut writer = postcard::to_io(handoff, BufWriter::new(File::create(path)?))?;
-    writer.flush()?;
+    encode_handoff(handoff, BufWriter::new(File::create(path)?))?;
     Ok(())
+}
+
+/// Observe the exact original stream accepted by the file and release its proof after flushing it.
+fn write_with_proof(handoff: &RustcHandoff, path: &Path) -> Result<(usize, [u8; 32]), Box<dyn std::error::Error>> {
+    let writer = encode_handoff(handoff, BufWriter::new(PlanDigest::new(File::create(path)?)))?;
+    Ok(writer.into_inner().map_err(|error| error.into_error())?.finish())
+}
+
+/// Both observation modes use the same serialization and require the same successful flush.
+fn encode_handoff<W: Write>(handoff: &RustcHandoff, writer: W) -> Result<W, Box<dyn std::error::Error>> {
+    let mut writer = postcard::to_io(handoff, writer)?;
+    writer.flush()?;
+    Ok(writer)
 }
 
 #[cfg(test)]
@@ -507,15 +552,18 @@ mod tests {
             }
         }
         let root = fixture.root.path();
-        let [mut without_report, _] = fixture.requests(selection, Some(empty), false)?;
-        without_report.plan_record_report = None;
-        let packet = root.join("no-report.rustc-handoff");
-        write(&without_report, &packet)?;
-        let detached: RustcHandoff = postcard::from_bytes(&fs::read(packet)?)?;
-        for request in [&without_report, &detached] {
-            assert!(
-                matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no native report directory"))
-            );
+        for report in [None, Some(root.join("missing-native-report"))] {
+            let [mut without_report, _] = fixture.requests(selection, Some(empty), false)?;
+            without_report.plan_record_report = report;
+            let packet = root.join("no-report.rustc-handoff");
+            write(&without_report, &packet)?;
+            let detached: RustcHandoff = postcard::from_bytes(&fs::read(packet)?)?;
+            for request in [&without_report, &detached] {
+                assert!(
+                    matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no native report directory")),
+                    "a selected empty outcome accepted an absent report directory"
+                );
+            }
         }
         let mut scalar = handoff(root, None);
         scalar.plan_record_report = None;
@@ -533,6 +581,118 @@ mod tests {
                 matches!(request.read_compact_definitions(), Err(reason) if reason.contains("outcome has no plan module selection"))
             );
         }
+        Ok(())
+    }
+
+    /// Refuse invalid selected evidence through each native entry before publishing any unit artifacts.
+    #[test]
+    fn native_admission_refusal_leaves_test_and_loaf_outputs_empty() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let identity = crate::identity::verify_loaded_test_sysroot()?;
+        for kind in [UnitKind::Test, UnitKind::Library] {
+            verify_unpublished_native_refusals(&fixture, &identity, kind)?;
+        }
+        Ok(())
+    }
+
+    /// Exercise the same reportless, replaced or omitted evidence before and after writing a handoff.
+    fn verify_unpublished_native_refusals(
+        fixture: &Fixture,
+        identity: &DriverIdentity,
+        kind: UnitKind,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = fixture.root.path();
+        let packet = root.join("refused.rustc-handoff");
+        for failure in ["missing report", "foreign selection", "missing note"] {
+            let (selection, notes) = fixture.stage_selection(SELECTION_A)?;
+            let [mut request, _] = fixture.requests(selection, Some(notes), true)?;
+            let output = tempfile::tempdir_in(root)?;
+            request.output = output.path().join("probe");
+            request.sysroot = identity.sysroot.clone();
+            request.kind = kind;
+            if kind == UnitKind::Test {
+                request.tests = Some(b"[]".to_vec());
+            } else {
+                request.publication = Some((output.path().to_path_buf(), prepare_probe_loaf(output.path())?));
+            }
+            if failure == "missing report" {
+                request.plan_record_report = None;
+            }
+            write(&request, &packet)?;
+            let expected = match failure {
+                "missing report" => "no native report directory",
+                "foreign selection" => {
+                    fixture.stage_selection(SELECTION_B)?;
+                    "does not name the accepted digest"
+                }
+                _ => {
+                    fs::remove_file(&fixture.note)?;
+                    "expected 1 notes, observed 0"
+                }
+            };
+            let check = |placement,
+                         outcome: Result<(), Box<dyn std::error::Error>>|
+             -> Result<(), Box<dyn std::error::Error>> {
+                let reason = outcome.err().map(|error| error.to_string()).unwrap_or_default();
+                assert!(
+                    reason.contains(expected),
+                    "{placement} did not give the expected {failure} refusal for {kind:?}: {reason}"
+                );
+                assert!(
+                    fs::read_dir(output.path())?.next().is_none(),
+                    "{placement} published a refused {kind:?}"
+                );
+                Ok(())
+            };
+            check("resident", request.compile(identity))?;
+            check("handoff", super::serve(&[packet.to_string_lossy().into_owned()]))?;
+            assert!(!packet.exists(), "the detached entry did not consume its handoff");
+        }
+        Ok(())
+    }
+
+    /// Prepare a real Loaf artifact set before testing that a failed native request keeps it private.
+    fn prepare_probe_loaf(directory: &Path) -> Result<PreparedLoafPublication, String> {
+        use incan_driver::loaf_publication::{prepare_executable_surface, prepare_loaf_publication};
+        use incan_frontend::library_manifest::LibraryManifest;
+        use incan_frontend::loaf_index::{LoafNativeClosure, NativeAnchors};
+
+        let manifest = LibraryManifest::new("probe", "0.1.0");
+        let surface = prepare_executable_surface(&manifest, &[], false).map_err(|error| error.message)?;
+        prepare_loaf_publication(
+            directory,
+            manifest,
+            surface.bytes,
+            &LoafNativeClosure::default(),
+            &NativeAnchors::default(),
+            None,
+            None,
+        )
+        .map_err(|error| error.message)
+    }
+
+    /// The flushed observed packet has the ordinary bytes and the independently retained selection and outcome.
+    #[test]
+    fn handoff_proof_matches_the_original_flushed_bytes_and_pins() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let (selection, notes) = fixture.stage_selection(SELECTION_A)?;
+        let [mut resident, _] = fixture.requests(selection, Some(notes), false)?;
+        let root = fixture.root.path();
+        resident
+            .checked_sources
+            .push((root.join("captured.incn"), "captured text\n".repeat(2000)));
+        let ordinary = root.join("ordinary.rustc-handoff");
+        let observed = root.join("observed.rustc-handoff");
+        write(&resident, &ordinary)?;
+        let proof = write_with_proof(&resident, &observed)?;
+        let bytes = fs::read(observed)?;
+        assert_eq!(bytes, fs::read(ordinary)?);
+        assert!(bytes.len() > 16_384);
+        assert_eq!(proof, (bytes.len(), Sha256::digest(&bytes).into()));
+        let handoff: RustcHandoff = postcard::from_bytes(&bytes)?;
+        let products = handoff.plan_record_products.ok_or("lost original Plan products")?;
+        assert_eq!(products.selection, Some(selection));
+        assert_eq!(products.compact_notes, Some(notes));
         Ok(())
     }
 }

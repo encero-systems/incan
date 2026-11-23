@@ -141,6 +141,18 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
     })
 }
 
+/// Use the compiler that actually loaded this test process to verify a native request.
+#[cfg(test)]
+pub(crate) fn verify_loaded_test_sysroot() -> Result<DriverIdentity, IdentityError> {
+    let relative = option_env!("INCAN_DRIVER_LIBRARY").ok_or(IdentityError::Missing("INCAN_DRIVER_LIBRARY"))?;
+    let library = loaded_library()?;
+    let root = library
+        .ancestors()
+        .nth(Path::new(relative).components().count())
+        .ok_or_else(|| IdentityError::Mismatch("test compiler library has no sysroot".into()))?;
+    verify(root)
+}
+
 /// Keep the optional proof beside the installed toolchain manifest, independent of ambient home overrides.
 /// Uninstalled binaries retain full verification without persisting a proof in a build directory.
 fn proof_path() -> Option<PathBuf> {

@@ -76,6 +76,8 @@ pub struct GraphNamespaceAdmission {
 pub struct ExecutableScopeWitness {
     /// Complete encoded value digest, to be authenticated in the next selected snapshot.
     pub digest: String,
+    /// Frame digest previously authenticated at the scope's complete graph key.
+    pub revision: Option<Vec<u8>>,
     /// The checked bindings already represented by that value.
     pub bindings: incan_semantics_core::body_ir::SharedIdentities,
 }

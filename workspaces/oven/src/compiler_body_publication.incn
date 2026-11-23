@@ -53,7 +53,13 @@ from compiler_prepared_records import PreparedBodyRecordSource
 pub from compiler_prepared_records import prepared_product_request
 from compiler_namespace_products import ExecutableCallInputs, member_plan_inputs, prepare_namespace_products, stage_call_contracts
 from compiler_lowering_order import LoweringOrder, LoweringOrders
-from compiler_plan_modules import StagedPlan, restored_modules, stage_plan_modules, staged_plan
+from compiler_plan_modules import (
+    PlanModuleAdmissions,
+    StagedPlan,
+    plan_module_admissions,
+    stage_plan_modules,
+    staged_plan,
+)
 from compiler_plan_values import AdmittedPlanModule, RetainedPlanInputs, carried_lowering_demand
 from compiler_body_fallbacks import (
     fallback_lowering_event,
@@ -191,6 +197,7 @@ pub def prepare_compiled_bodies(
     cutoff: EditCutoff = EditCutoff(),
     compiler: str = "",
     mut captured_sources: Dict[str, SourceProjection] = {},
+    plan_admissions: Option[PlanModuleAdmissions] = None,
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -211,10 +218,13 @@ pub def prepare_compiled_bodies(
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     staging = begin_work()
+    staging_sources = begin_work()
     mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods, compiler, captured_sources)?
     for positioned in captured_positions.keys():
         staged.source.add(positioned, captured_positions[positioned])
 
+    record_work(Operation.EngineGraphStaging, "compiled-source-staging", staging_sources)
+    staging_scope = begin_work()
     stage_executable_scopes(staged.transaction, staged.source, authenticated.scopes)
 
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
@@ -235,7 +245,11 @@ pub def prepare_compiled_bodies(
     )?
     for slot in spans.retained.keys():
         staged.source.add(slot, spans.retained[slot])
+    record_work(Operation.EngineGraphStaging, "compiled-scope-order", staging_scope)
+    staging_namespaces = begin_work()
     stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts, authenticated.scopes)?
+    record_work(Operation.EngineGraphStaging, "compiled-namespace-staging", staging_namespaces)
+    staging_bodies = begin_work()
     published = stage_compiled_body_values(
         staged.transaction,
         staged.source,
@@ -252,6 +266,8 @@ pub def prepare_compiled_bodies(
         executable,
         authenticated.scopes,
     )?
+    record_work(Operation.EngineGraphStaging, "compiled-body-staging", staging_bodies)
+    staging_lowering = begin_work()
     lowering_demands = prepare_optional_lowering_records(
         staged.transaction,
         staged.source,
@@ -271,7 +287,9 @@ pub def prepare_compiled_bodies(
         retained_plans,
         cutoff,
         authenticated.scopes,
+        plan_admissions,
     )?
+    record_work(Operation.EngineGraphStaging, "compiled-lowering-staging", staging_lowering)
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
         PreparedCompiledBodies(
@@ -502,13 +520,18 @@ def prepare_optional_lowering_records(
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
     cutoff: EditCutoff = EditCutoff(),
     scopes: Borrowed[ExecutableScopeInputs],
+    plan_admissions: Option[PlanModuleAdmissions],
 ) -> Result[LoweringDemandWork, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
         events = lowering_events(report)?
         mut fresh = set([value.identity for value in outputs.values])
         notes = admission_report.unwrap_or(report)
-        complete = set(restored_modules(notes, whole_only=true)?)
+        admissions = match plan_admissions:
+            Some(value) => value
+            None => plan_module_admissions(notes, selected, plan_modules, None)?
+
+        complete = set(admissions.restored_modules(whole_only=true))
         for fallback in outputs.fallbacks:
             if let Some(owner) = fallback.identity:
                 fresh.add(owner)
@@ -541,9 +564,9 @@ def prepare_optional_lowering_records(
             outputs.namespaces,
             plan_modules,
             [module for module in covered.module_owners.keys()],
-            Some(notes),
             retained_plans,
             cutoff,
+            admissions,
         )
     return Ok(LoweringDemandWork())
 
@@ -975,9 +998,9 @@ def prepare_lowering_records(
     namespaces: list[CompiledNamespaceValue] = [],
     admitted: list[AdmittedPlanModule] = [],
     covered_modules: list[str] = [],
-    admission_report: Option[Path] = None,
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
     cutoff: EditCutoff = EditCutoff(),
+    admissions: Borrowed[PlanModuleAdmissions],
 ) -> Result[LoweringDemandWork, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
@@ -1138,7 +1161,19 @@ def prepare_lowering_records(
         source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
-    carried, carried_namespace, carried_digests = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted, cutoff)?
+    carried, carried_namespace, carried_digests = stage_plan_modules(
+        prepared,
+        source,
+        orders,
+        scope,
+        selected,
+        origin,
+        rechecked,
+        staged,
+        admissions,
+        admitted,
+        cutoff,
+    )?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(work)

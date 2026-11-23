@@ -108,7 +108,6 @@ pub fn compile(
     plan_record_report: Option<&Path>,
     compact_definitions: Vec<incan_mir_plan_native::AdmittedDefinition>,
 ) -> Result<(), DriverError> {
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
     force_plan_failure_once()?;
     let features = declared_features(access)?;

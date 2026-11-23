@@ -546,10 +546,11 @@ fn compile_unit(
     // its contents.
     unit.captured_sources = captured_sources.clone();
     let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
-    let dependencies = dependencies(&unit, options)?;
-    if let Some(products) = &dependencies.plan_record_products {
-        let _ = products.read_selection()?;
-    }
+    let mut dependencies = dependencies(&unit, options)?;
+    let selection = match &dependencies.plan_record_products {
+        Some(products) => products.read_selection()?,
+        None => None,
+    };
     if dependencies.library {
         if unit.kind == UnitKind::Test {
             return Err("a test unit cannot also be a library".into());
@@ -601,7 +602,7 @@ fn compile_unit(
     });
     let mut published_unions = Vec::new();
     let mut runtime_records = RuntimePlanRecords::read(dependencies.plan_products());
-    let mut plan_admissions = PlanAdmissions::default();
+    let mut plan_admissions = PlanAdmissions::with_selection(selection);
     let plan = lower_compilation_plan(
         &mut program,
         kind,
@@ -621,18 +622,18 @@ fn compile_unit(
     )?;
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
-    if let (Some(products), Some(report)) = (dependencies.plan_products(), &dependencies.plan_record_report) {
+    if let (Some(products), Some(report)) = (&mut dependencies.plan_record_products, &dependencies.plan_record_report) {
         let _publication = tracing::trace_span!(
             target: "incan::invocation", "incan_rustc_driver::publish_plan_records",
         )
         .entered();
-        incan_lowering::publish_plan_records(
+        products.compact_notes = incan_lowering::publish_plan_records(
             &plan,
-            &products.to_string_lossy(),
+            &products.root.to_string_lossy(),
             &report.to_string_lossy(),
             &plan_admissions,
         )?;
-        runtime_records.publish(products)?;
+        runtime_records.publish(&products.root)?;
     }
     drop(plan_admissions);
 
