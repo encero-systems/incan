@@ -1,2 +1,0 @@
-pub model Json[T]:
-    pub value: T

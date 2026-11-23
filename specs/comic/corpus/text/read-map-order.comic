@@ -1,3 +1,0 @@
-example.Value = Record { value: map<string, i64> }
-
-example.Value << (value={"b": 2, "a": 1})

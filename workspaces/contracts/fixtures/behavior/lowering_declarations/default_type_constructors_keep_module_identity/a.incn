@@ -1,6 +1,0 @@
-pub model Size:
-    pub n: int
-
-
-pub def make(size: Size = Size(n=1)) -> int:
-    return size.n

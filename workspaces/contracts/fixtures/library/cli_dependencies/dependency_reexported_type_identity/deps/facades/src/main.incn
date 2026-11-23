@@ -1,6 +1,0 @@
-from compose import compose
-
-
-def main() -> None:
-    """Use the same module in a project that also has a library."""
-    println(compose("world"))

@@ -1,5 +1,0 @@
-"""Callable output for the scalar native fixture, authored in Incan."""
-
-pub def print_int(value: int) -> None:
-    """Print a scalar through the language's existing output behavior."""
-    println(value)

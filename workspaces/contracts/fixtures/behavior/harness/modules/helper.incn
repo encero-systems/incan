@@ -1,6 +1,0 @@
-"""The sibling module a module fixture imports."""
-
-
-pub def answer() -> int:
-    """Return the answer the entrypoint prints."""
-    return 42

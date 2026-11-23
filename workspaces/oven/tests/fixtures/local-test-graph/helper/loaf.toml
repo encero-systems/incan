@@ -1,7 +1,0 @@
-[project]
-name='crates-io/helper'
-version='1.0.0'
-[dependencies]
-registry={loaf='crates-io/leaf',version='1',default-features=true}
-[rust]
-type='lib'

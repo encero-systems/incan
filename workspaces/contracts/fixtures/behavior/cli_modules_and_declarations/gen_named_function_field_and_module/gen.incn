@@ -1,6 +1,0 @@
-pub def produce() -> int:
-    return 7
-
-
-pub def gen() -> int:
-    return 1

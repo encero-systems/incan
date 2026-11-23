@@ -1,4 +1,0 @@
-example.Value = Record { value: string }
-
-# forbidden ‮
-example.Value << (value="ok")

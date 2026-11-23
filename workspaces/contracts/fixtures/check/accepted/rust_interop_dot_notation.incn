@@ -1,9 +1,0 @@
-# behavior: a Rust import spelled with `.` instead of `::` is accepted with a warning (INCAN-P0001)
-# expect-accepted:
-
-"""rust interop should be with `::`-notation not `.` notation."""
-
-import rust.std.time
-
-def main() -> None:
-    pass

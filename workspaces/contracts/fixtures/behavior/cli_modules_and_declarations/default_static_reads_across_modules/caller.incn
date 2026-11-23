@@ -1,7 +1,0 @@
-from helpers import take
-
-static COUNT: int = 10
-
-
-pub def run() -> int:
-    return take() + COUNT

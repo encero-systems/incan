@@ -1,3 +1,0 @@
-"""Compatibility exports for the primitive HMAC-SHA256 mechanism and signer type."""
-
-pub from std.primitives.hmac import HmacSha256Signer, hmac_sha256

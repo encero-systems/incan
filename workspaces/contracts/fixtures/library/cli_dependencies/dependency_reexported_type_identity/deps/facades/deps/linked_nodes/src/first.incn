@@ -1,3 +1,0 @@
-"""Republish the declaring module's nominal types."""
-
-pub from declarations import LinkedNode, LinkedState

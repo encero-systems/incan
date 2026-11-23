@@ -1,3 +1,0 @@
-from schema import Named as Description
-
-__derives__ = [Description]

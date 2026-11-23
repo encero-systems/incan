@@ -1,5 +1,0 @@
-"""
-Serde Prelude
-
-Re-exports the JSON derive module for convenient imports.
-"""

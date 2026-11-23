@@ -1,9 +1,0 @@
-[project]
-name = "regex_tutorial"
-version = "0.1.0"
-
-[project.scripts]
-main = "main.incn"
-
-[dependencies]
-regex = { loaf = "crates-io/regex", version = "1" }

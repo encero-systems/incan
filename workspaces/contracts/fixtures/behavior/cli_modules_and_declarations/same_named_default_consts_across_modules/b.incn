@@ -1,5 +1,0 @@
-const SIZE: int = 2
-
-
-pub def second(n: int = SIZE) -> int:
-    return n

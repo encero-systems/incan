@@ -1,5 +1,0 @@
-from ops import combine
-
-
-pub def combined() -> int:
-    return combine(1)

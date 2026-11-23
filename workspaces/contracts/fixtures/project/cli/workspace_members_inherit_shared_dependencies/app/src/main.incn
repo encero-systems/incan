@@ -1,5 +1,0 @@
-from pub::shared import answer
-
-
-def main() -> None:
-    println(f"inherited {answer()}")

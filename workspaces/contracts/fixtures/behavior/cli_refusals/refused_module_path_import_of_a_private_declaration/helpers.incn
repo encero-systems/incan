@@ -1,6 +1,0 @@
-pub def shown() -> int:
-    return 1
-
-
-def hidden() -> int:
-    return 2

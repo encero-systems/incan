@@ -1,3 +1,0 @@
-from local_traits import Deserialize as Decoder
-
-__derives__ = [Decoder]

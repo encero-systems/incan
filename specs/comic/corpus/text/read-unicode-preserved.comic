@@ -1,3 +1,0 @@
-example.Value = Record { value: string }
-
-example.Value << (value="é")

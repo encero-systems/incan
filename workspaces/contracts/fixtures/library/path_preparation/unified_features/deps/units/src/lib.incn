@@ -1,3 +1,0 @@
-pub def one() -> int:
-    """One catalog unit."""
-    return 1

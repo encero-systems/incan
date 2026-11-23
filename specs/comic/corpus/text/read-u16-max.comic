@@ -1,3 +1,0 @@
-example.Value = Record { value: u16 }
-
-example.Value << (value=65535)

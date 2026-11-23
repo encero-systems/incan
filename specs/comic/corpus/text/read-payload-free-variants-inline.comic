@@ -1,5 +1,0 @@
-example.Kind = Enum { Percent, Fixed }
-
-example.Rule = Record { kinds: list<example.Kind> }
-
-example.Rule << (kinds=[Percent, Fixed])

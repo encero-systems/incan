@@ -1,6 +1,0 @@
-"""A library whose vocabulary is distinct from its public implementation."""
-
-
-pub def marker() -> int:
-    """Return an ordinary public value."""
-    return 7

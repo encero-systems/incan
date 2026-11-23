@@ -1,3 +1,0 @@
-example.Value = Record { value: i64 }
-
-example.Value << (value=inf)

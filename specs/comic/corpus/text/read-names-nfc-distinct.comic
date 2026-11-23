@@ -1,3 +1,0 @@
-example.Word = Record { INCAN: i64, ĮŃĆĄŅ: i64, ІNСАN: i64 }
-
-example.Word << (1, 2, 3)

@@ -1,2 +1,0 @@
-def test_stepped_over() -> None:
-    assert true

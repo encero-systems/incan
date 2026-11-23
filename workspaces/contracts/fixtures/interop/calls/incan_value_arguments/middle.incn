@@ -1,8 +1,0 @@
-"""The second owner of Item."""
-
-
-pub model Item:
-    """A two-field source value."""
-
-    pub value: int
-    pub extra: int

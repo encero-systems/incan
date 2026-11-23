@@ -1,6 +1,0 @@
-[project]
-name = "badges"
-version = "0.1.0"
-
-[dependencies]
-scopes = { loaf = "scopes", path = "../scopes" }

@@ -1,5 +1,0 @@
-const SIZE: int = 1
-
-
-pub def first(n: int = SIZE) -> int:
-    return n

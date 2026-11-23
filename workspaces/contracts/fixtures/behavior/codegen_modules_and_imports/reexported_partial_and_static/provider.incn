@@ -1,8 +1,0 @@
-pub model Spec:
-    pub namespace: str
-    pub policy: str
-
-
-pub portable = partial Spec(namespace="core")
-
-pub static counter: int = 1

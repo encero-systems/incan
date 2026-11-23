@@ -1,7 +1,0 @@
-"""Identifiers a card refers to."""
-
-
-pub newtype EvidenceId = str
-
-
-pub newtype Tag = str

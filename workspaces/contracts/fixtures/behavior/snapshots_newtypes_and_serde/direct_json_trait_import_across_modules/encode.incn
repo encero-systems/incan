@@ -1,6 +1,0 @@
-from std.serde.json import Serialize
-from crate.models import Item
-
-
-pub def encode(item: Item) -> str:
-    return item.to_json()

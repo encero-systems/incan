@@ -1,8 +1,0 @@
-flowchart LR
-    source[Incan source and manifest] --> oven[Oven unit description]
-    oven --> frontend[Parser and type checker]
-    frontend --> body[Checked Body IR]
-    body --> lowering[Incan lowering]
-    lowering --> adapter[Native plan and Rust MIR adapter]
-    adapter --> artifact[Native artifact]
-    frontend --> evidence[Diagnostics and codegraph]

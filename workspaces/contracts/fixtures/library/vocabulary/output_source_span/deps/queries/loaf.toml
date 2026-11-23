@@ -1,5 +1,0 @@
-[project]
-name = "queries"
-version = "0.1.0"
-[vocab]
-entry = "src/lib.incn"
