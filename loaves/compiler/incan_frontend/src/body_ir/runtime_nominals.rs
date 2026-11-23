@@ -202,6 +202,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         Vec::new()
     };
     Some(bir::NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),

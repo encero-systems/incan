@@ -22,8 +22,11 @@ pub fn build_surface(
     public: &BTreeSet<CanonicalSymbolId>,
     unrepresentable: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    Ok(prepare_surface(modules, library, package_version, public, unrepresentable, false)?.bytes)
+    Ok(prepare_surface(modules, library, package_version, public, unrepresentable, false, None)?.bytes)
 }
+
+/// The frontend normalization boundary that describes a declaration as the linked planner will see it.
+pub type LinkedLayoutProducer = fn(&mut ExecutableDeclaration) -> Option<(String, String)>;
 
 /// The encoded executable surface and the native bindings the same Loaf must emit for its linked statics.
 pub struct PreparedSurface {
@@ -34,7 +37,8 @@ pub struct PreparedSurface {
 }
 
 /// Prepare one producer surface. Source-only interfaces cannot promise native storage and keep the original
-/// slots, while a compiled Loaf must emit the accessors returned with its fragments.
+/// slots, while a compiled Loaf must emit the accessors returned with its fragments. Its layout producer may attach
+/// a witness to each selected projected declaration before encoding the frame.
 pub fn prepare_surface(
     modules: &[BodyIrModule],
     library: &str,
@@ -42,6 +46,7 @@ pub fn prepare_surface(
     public: &BTreeSet<CanonicalSymbolId>,
     unrepresentable: &BTreeSet<CanonicalSymbolId>,
     native_storage: bool,
+    linked_layout: Option<LinkedLayoutProducer>,
 ) -> Result<PreparedSurface, ExecutableRepresentationError> {
     let candidates = checked_candidates(modules, library, public);
     let mut declarations = uncovered_owned_declarations(library, &candidates);
@@ -69,7 +74,7 @@ pub fn prepare_surface(
             linked_statics.insert(identity.clone(), links);
         }
     }
-    let bytes = encode_surface(library, package_version, public, admitted, declarations)?;
+    let bytes = encode_surface(library, package_version, public, admitted, declarations, linked_layout)?;
     Ok(PreparedSurface { bytes, linked_statics })
 }
 
@@ -669,11 +674,16 @@ pub(super) fn encode_surface(
     public: &BTreeSet<CanonicalSymbolId>,
     admitted: BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
     mut declarations: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+    linked_layout: Option<LinkedLayoutProducer>,
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
     // ---- Payloads: encode in canonical order across public and implementation declarations ----
     let mut payload = Vec::new();
-    for (identity, entry) in admitted {
+    for (identity, mut entry) in admitted {
+        let witness = linked_layout.and_then(|produce| produce(&mut entry.declaration));
         let mut encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
+        if let Some((specialization, version)) = witness {
+            linked_layout_codec::append(&mut encoded, &specialization, &version)?;
+        }
         if let Some(nominal) = entry.declaration.nominal() {
             append_trait_fields(&mut encoded, std::slice::from_ref(nominal))?;
         }

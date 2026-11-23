@@ -4,10 +4,12 @@ use incan_mir_plan_native::{
     EnumDeclaration, ExternalFunction, Function, NominalKind, NominalReference, ProductNominal, UnitNominals,
     describe_nominals, encode_checked_layout, product_nominals, unit_nominals,
 };
-use incan_semantics_core::CanonicalSymbolId;
-use incan_semantics_core::body_ir::{EnumDeclaration as SourceEnum, NominalDeclaration, StaticDeclaration};
+use incan_semantics_core::body_ir::{
+    EnumDeclaration as SourceEnum, LinkedLayoutWitness, NominalDeclaration, StaticDeclaration,
+};
 use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness, semantic_digest};
 use incan_semantics_core::stable_identity::StableDeclarationId;
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -133,30 +135,75 @@ fn describe_new_rows(program: &mut ProgramContext) {
         *described = DescribedNominals::default();
     }
     for declaration in &nominals[described.models.len()..] {
-        let witness = recorded.model(declaration).map_or_else(
-            || {
-                count_witness();
-                model_layout_witness(declaration).map_err(|error| error.to_string())
-            },
-            Ok,
-        );
+        let witness = recorded
+            .model(declaration)
+            .or_else(|| {
+                linked_layout(
+                    &declaration.canonical,
+                    declaration.linked_layout_witness.as_ref(),
+                    !declaration.native_item.is_empty(),
+                    declaration.native_type_arguments.is_empty(),
+                )
+            })
+            .map_or_else(
+                || {
+                    count_witness();
+                    model_layout_witness(declaration).map_err(|error| error.to_string())
+                },
+                Ok,
+            );
         let row = source_nominal(NominalKind::Model, &declaration.canonical, witness);
         described.models.push((row, model_symbol(&declaration.name)));
     }
     for declaration in &enums[described.enums.len()..] {
         let carrier = declaration.carrier_name();
-        let witness = recorded.enumeration(declaration).map_or_else(
-            || {
-                count_witness();
-                enum_layout_witness(declaration).map_err(|error| error.to_string())
-            },
-            Ok,
-        );
+        let witness = recorded
+            .enumeration(declaration)
+            .or_else(|| {
+                linked_layout(
+                    &declaration.canonical,
+                    declaration.linked_layout_witness.as_ref(),
+                    !declaration.native_item.is_empty(),
+                    declaration.native_type_arguments.is_empty(),
+                )
+            })
+            .map_or_else(
+                || {
+                    count_witness();
+                    enum_layout_witness(declaration).map_err(|error| error.to_string())
+                },
+                Ok,
+            );
         let row = source_nominal(NominalKind::Enum, &declaration.canonical, witness);
         described.enums.push((row, model_symbol(&carrier)));
     }
     let start = described.statics.len();
     described.statics.extend(statics[start..].iter().map(static_nominal));
+}
+
+/// Use a source-level provider witness only on its unspecialized linked layout. Older compiled providers retain the
+/// same local computation used before the witness was published.
+fn linked_layout(
+    identity: &CanonicalSymbolId,
+    record: Option<&LinkedLayoutWitness>,
+    native_linked: bool,
+    unspecialized: bool,
+) -> Option<(String, String)> {
+    if !unspecialized {
+        return None;
+    }
+    if crate::trace_channel::tracing_products() {
+        if let Some(witness) = record {
+            crate::trace_channel::emit(
+                "linked_layout_record",
+                "",
+                &format!("{} {}", identity.render_compact(), witness.1),
+            );
+        } else if native_linked && matches!(identity.origin, SymbolOrigin::Package { .. }) {
+            crate::trace_channel::emit("linked_layout_fallback", "", &identity.render_compact());
+        }
+    }
+    record.map(|witness| witness.as_ref().clone())
 }
 
 /// Describe one static cell by its stable declaration identity and the digest of its whole checked declaration: its

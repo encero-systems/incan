@@ -890,14 +890,12 @@ pub(super) fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], link
         .collect::<Vec<_>>();
     for module in modules.iter_mut().take(linked) {
         for declaration in &mut module.nominal_declarations {
-            if declaration.native_item.is_empty()
-                && let Some(item) = linked_type_item(&declaration.canonical, &declaration.type_parameters)
-            {
+            if let Some(item) = incan_frontend::body_ir::linked_model_item(declaration) {
                 declaration.native_item = item;
             }
         }
         for declaration in &mut module.enum_declarations {
-            if let Some(item) = linked_type_item(&declaration.canonical, &declaration.type_parameters) {
+            if let Some(item) = incan_frontend::body_ir::linked_enum_item(declaration) {
                 declaration.native_item = item;
             }
         }
@@ -948,20 +946,6 @@ pub(super) fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<Nomi
         }
     }
     Ok(layouts.into_values().collect())
-}
-
-/// Select a native carrier or provider-owned Loaf layout. Generic models, classes and enums publish one parameterized
-/// ADT; generic newtypes keep their governed source storage until their native templates are supported.
-pub(super) fn linked_type_item(identity: &CanonicalSymbolId, parameters: &[String]) -> Option<String> {
-    incan_semantics_core::body_ir::native_nominal_item(identity).or_else(|| {
-        (parameters.is_empty()
-            || matches!(
-                identity.kind,
-                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class | SemanticSourceTargetKind::Enum
-            ))
-        .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
-        .flatten()
-    })
 }
 
 /// Read each selected Loaf's published native union table, preserving its semantic carrier and physical variant

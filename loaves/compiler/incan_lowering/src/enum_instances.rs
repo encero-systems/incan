@@ -168,6 +168,7 @@ fn closed_arguments(arguments: &[IncanType]) -> bool {
 /// Substitute payload fields while keeping each source variant's declaration and canonical identities.
 fn close_layout(instance: &EnumInstance) -> Result<EnumDeclaration, String> {
     let mut result = instance.declaration.clone();
+    result.linked_layout_witness = None;
     result.name = nominal_symbol(&instance.declaration.carrier_name(), &instance.arguments);
     result.native_type_arguments = instance.arguments.clone();
     result.variants.clear();

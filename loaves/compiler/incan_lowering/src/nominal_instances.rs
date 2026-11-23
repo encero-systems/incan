@@ -606,6 +606,7 @@ pub fn close_layout(instance: &NominalInstance) -> Result<NominalDeclaration, St
     let template = &instance.declaration;
     let names = &template.type_parameters;
     let mut result = template.clone();
+    result.linked_layout_witness = None;
     if !result.native_item.is_empty() {
         for argument in &template.native_type_arguments {
             substitute(argument, names, &instance.arguments)?;
