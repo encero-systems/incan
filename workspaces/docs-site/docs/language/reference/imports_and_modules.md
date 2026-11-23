@@ -172,7 +172,7 @@ A module exports:
 - each module-level declaration marked `pub`, and each variant and variant alias of a `pub` enum;
 - each name that a `pub from ... import ...` of the module binds, from a source module, a Loaf or a Rust crate ([Re-exports](#re-exports)).
 
-A name a module imports without `pub` is bound in that module alone. A namespace's own module, its `prelude.incn`, follows the same rule: `from std.fs import Path` binds `Path` because the `std.fs` prelude re-exports it with `pub from`.
+A name a module imports without `pub` is bound in that module alone. The same export rule applies to a namespace's `prelude.incn`. For example, the `std.fs` prelude re-exports `Path` with `pub from`, and `from std.fs import Path` binds it in the importing module.
 
 `from M import X`, and `import M::X` where `M::X` is not a module, bind `X` only when `M` exports it. Refused (`INCAN-I0001`): a name `M` does not export, such as a declaration without `pub`, a name `M` imports without `pub`, or a module that `M` binds with `import`.
 

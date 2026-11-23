@@ -6,7 +6,8 @@ from std.fs import Path
 from std.regex import Regex
 from check_support import git, read, repository_root, source_lines, write_stderr
 
-const HELP: str = """usage: check_reference_contract.py [-h] [--base BASE] [--all] [paths ...]
+const USAGE: str = "usage: incan run scripts/check_reference_contract.incn -- [-h] [--base BASE] [--all] [paths ...]"
+const HELP: str = """
 
 Fail when a docs-site reference page states more than its contract.
 
@@ -82,12 +83,11 @@ def main() -> Result[None, str]:
 
 
 def command_options(arguments: list[str]) -> Options:
-    """Preserve argparse's diagnostic stream and status on an invalid command line."""
+    """Print usage to stderr and exit with status 2 on an invalid command line."""
     match parse_options(arguments):
         Ok(options) => return options
         Err(message) =>
-            usage = "usage: check_reference_contract.py [-h] [--base BASE] [--all] [paths ...]"
-            write_stderr(f"{usage}\ncheck_reference_contract.py: error: {message}\n")
+            write_stderr(f"{USAGE}\ncheck_reference_contract: error: {message}\n")
             exit(2)
 
 
@@ -99,7 +99,7 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     while index < len(arguments):
         argument = arguments[index]
         if not positional and (argument == "--help" or argument == "-h"):
-            println(HELP)
+            println(f"{USAGE}{HELP}")
             exit(0)
         elif not positional and argument == "--":
             positional = true

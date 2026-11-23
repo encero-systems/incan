@@ -33,6 +33,8 @@ Examples:
 - `obj()` can desugar to `obj.__call__(...)`
 - `a + b` can desugar to `a.__add__(b)`
 
+The name `Not` follows Rust's `std::ops::Not` trait. Incan uses `__invert__` as the method name for the bitwise inversion operator `~`. Comparison traits define fallback operators through default methods, so the trait declaration shows which behavior the adopter inherits.
+
 The important idea is that the *syntax* stays simple, while the *behavior* is defined by traits.
 
 ## Example: indexing is a hook

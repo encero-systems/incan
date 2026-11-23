@@ -138,7 +138,7 @@ The error returned by parsing, deserialization, source-location lookup, and seri
 
 `error.message() -> str` returns `"{path}: {detail}"` for a nonempty path, and `detail` otherwise.
 
-Coordinates follow the same conventions as `TomlLocation`. Decode errors can lack a corresponding source token; their position fields are then `None`. Missing values and invalid paths have no corresponding value span. Serialization errors always have `None` positions because there is no input document.
+Coordinates follow the same conventions as `TomlLocation`. Decode errors without a source token, missing values, invalid paths, and serialization errors have `None` position fields.
 
 ## `TomlErrorKind`
 

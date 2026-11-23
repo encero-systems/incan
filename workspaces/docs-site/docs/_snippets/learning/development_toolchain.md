@@ -1,4 +1,4 @@
-Development uses the same installed dev.8 toolchain as project builds. Select its Oven executable on `PATH`, install its matching archive, and set `INCAN_STDLIB` to the standard-package source directory.
+For checkout-source verification, use the installed Incan 0.6.0-dev.9 toolchain. Put the matching `incan` executable on `PATH`, install its matching archive, and set `INCAN_STDLIB` to the checkout's `loaves/stdlib` directory.
 
 ```bash
 incan --version

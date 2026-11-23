@@ -2,8 +2,6 @@
 
 Computed properties are field-like members whose value is produced by a body each time the member is read.
 
-Use a computed property when callers should see a value as part of the object's attribute surface, but the value should be derived instead of stored.
-
 ```incan
 model Account:
     cents: int
@@ -26,19 +24,16 @@ property name -> Type:
 
 Properties are valid in `model` and `class` bodies and in concrete trait implementation bodies. `self` is available in the body using the same immutable receiver rules as `def method(self) -> T`.
 
-Property declarations do not take parameters. Write `property total -> int:`, not `property total(self) -> int:`.
+Property declarations take no parameters, including an explicit `self`.
 
 ## Reads
 
-Read a property with ordinary dot access:
+Ordinary dot access evaluates the property body on every read. Call syntax is a type error.
 
 ```incan
-value = account.dollars
+value = account.dollars    # accepted
+value = account.dollars()  # refused: property is read with dot access (INCAN-T0001)
 ```
-
-Do not call a property. `account.dollars()` is a type error because properties are selected as fields at the source level, even though the compiler lowers the read to a zero-argument backend call.
-
-Each read executes the body. The compiler does not memoize property results; store or cache a value explicitly when that is the intended behavior.
 
 ## Traits
 
@@ -55,20 +50,12 @@ class User with Named:
         return self.name
 ```
 
-Trait properties are abstract requirements. The body belongs on the adopting `model`, `class`, or concrete trait implementation, not on the trait declaration.
+Trait properties are abstract requirements. The adopting `model`, `class`, or concrete trait implementation supplies the body.
 
-## Choosing `property` or `def`
+## Member names
 
-Prefer `property` when:
+Properties share the same member namespace as fields, methods, and trait members. A name can identify only one of those members on a type.
 
-- the member is conceptually an attribute, derived field, or projection
-- the read takes no arguments
-- callers should use `obj.name`, not `obj.name()`
+## See also
 
-Prefer `def` when:
-
-- the operation takes parameters
-- the operation performs work that should be visibly action-like at the call site
-- the result depends on options, external effects, or expensive computation that should not look like a simple member read
-
-Properties share the same member namespace as fields, methods, and trait members. One type cannot declare a field, method, and property with the same simple name.
+- [Model fields and computed properties](../explanation/models_and_classes/models.md#field-access)

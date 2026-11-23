@@ -4,9 +4,9 @@ Call Rust's regex API from Incan using an installed registry dependency.
 
 <aside class="inc-tutorial-meta" aria-label="Tutorial details"><dl>
 <div><dt>Reader</dt><dd>Native application developer</dd></div>
-<div><dt>Prerequisites</dt><dd>A dev.8 toolchain containing the regex registry unit</dd></div>
+<div><dt>Prerequisites</dt><dd>An installed toolchain containing the regex registry unit</dd></div>
 <div><dt>Time</dt><dd>10 minutes</dd></div>
-<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
 <div><dt>Status</dt><dd>Requires the installed regex dependency</dd></div>
 <div><dt>Outcome</dt><dd>An Incan program calling a native Rust API</dd></div>
 <div><dt>Artifacts</dt><dd>Manifest and native executable</dd></div>

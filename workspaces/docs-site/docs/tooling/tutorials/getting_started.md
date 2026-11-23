@@ -1,13 +1,13 @@
 # Getting started with Incan
 
-Create a small project, run its program, execute a test, and build a native executable with dev.8.
+Create a small project, run its program, execute a test, and build a native executable with an installed Incan toolchain.
 
 <aside class="inc-tutorial-meta" aria-label="Tutorial details">
   <dl>
     <div><dt>Reader</dt><dd>First-time Incan evaluator</dd></div>
-    <div><dt>Prerequisites</dt><dd>A matching dev.8 Oven executable, toolchain archive and standard-package sources</dd></div>
+    <div><dt>Prerequisites</dt><dd>A matching Incan executable and toolchain archive</dd></div>
     <div><dt>Time</dt><dd>10–15 minutes after installation</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
     <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A runnable, tested native project</dd></div>
     <div><dt>Artifacts</dt><dd>Manifest, source, test and debug executable</dd></div>
@@ -70,7 +70,7 @@ def test_addition() -> None:
 
 <section class="inc-learning-panel inc-learning-panel--result" data-label="Result" markdown="1">
 
-The program prints `Hello, Incan!`, and the test reports `test_main.incn::test_addition PASSED`. The executable is under `target/incan/debug/bin/`. There is no scaffolding command in dev.8: the files above are the project.
+The program prints `Hello, Incan!`, and the test reports `test_main.incn::test_addition PASSED`. The executable is under `target/incan/debug/bin/`.
 
 </section>
 
