@@ -163,7 +163,7 @@ def expire_unregistered(store: Path) -> Result[Expired, str]:
         remove_dir_all(project.0).map_err((error) => str(error))?
     log = store.joinpath("roots").joinpath("superseded")
     if log.is_file():
-        log.unlink().map_err((error) => error.message())?
+        log.unlink().map_err((error) => f"cannot remove file {error.message()}")?
     return Ok(Expired(records=len(expired), roots=len(registrations.orphaned)))
 
 
@@ -232,7 +232,7 @@ def read_registrations(store: Path) -> Result[Registrations, str]:
     mut registrations = Registrations(live=[], candidates=registered_lines(roots.joinpath("superseded"))?, orphaned=[])
     if not roots.is_dir():
         return Ok(registrations)
-    for project in roots.iterdir().map_err((error) => error.message())?:
+    for project in roots.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         if not project.is_dir():
             continue
         # `project` names the project's directory; every other file is one of its registrations.
@@ -240,7 +240,7 @@ def read_registrations(store: Path) -> Result[Registrations, str]:
         mut orphaned = false
         if owner.is_file():
             orphaned = not Path(read(owner)?).exists()
-        for marker in project.iterdir().map_err((error) => error.message())?:
+        for marker in project.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
             if marker.name() == "project":
                 continue
             for identity in registered(marker)?:
@@ -270,7 +270,7 @@ pub def project_roots(store: Path) -> Result[list[ProjectRoots], str]:
     mut projects: list[ProjectRoots] = []
     if not roots.is_dir():
         return Ok(projects)
-    for directory in roots.iterdir().map_err((error) => error.message())?:
+    for directory in roots.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         owner = directory.joinpath("project")
         if not directory.is_dir():
             continue
@@ -280,7 +280,7 @@ pub def project_roots(store: Path) -> Result[list[ProjectRoots], str]:
             project = read(owner)?
             orphaned = not Path(project).exists()
         mut registrations: dict[str, list[str]] = {}
-        for marker in directory.iterdir().map_err((error) => error.message())?:
+        for marker in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
             if marker.name() == "project" or marker.name().endswith(".tmp"):
                 continue
             lines = registered_lines(marker)?
@@ -358,9 +358,9 @@ def collect_staging(store: Path) -> Result[int, str]:
     for entry in staging_owners(store)?:
         # Holding the claim during removal keeps a new producer of the same staging name out.
         make_directory(Path(entry.claim).parent())?
-        free = Path(entry.claim).try_lock_exclusive().map_err((error) => error.message())?
+        free = Path(entry.claim).try_lock_exclusive().map_err((error) => f"cannot try to lock {error.message()}")?
         if free is not None:
-            entry.path.remove_tree().map_err((error) => error.message())?
+            entry.path.remove_tree().map_err((error) => f"cannot remove directory tree {error.message()}")?
             release(store, entry.path.name())
             cleared += 1
     return Ok(cleared)
@@ -394,7 +394,7 @@ def staging_owners(store: Path) -> Result[list[StagingOwner], str]:
     mut recorded: dict[str, str] = {}
     for reservation in read_reservations(store)?:
         recorded[reservation.name] = reservation.claim
-    for entry in directory.iterdir().map_err((error) => error.message())?:
+    for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         if not entry.is_dir() or entry.is_symlink():
             continue
         if entry.name() in recorded:
@@ -416,7 +416,7 @@ def claim_free(lock: Path) -> Result[bool, str]:
     """Whether nobody holds the claim `lock` names; a claim whose directory was never made was never held."""
     if not lock.parent().is_dir():
         return Ok(true)
-    free = lock.try_lock_exclusive().map_err((error) => error.message())?
+    free = lock.try_lock_exclusive().map_err((error) => f"cannot try to lock {error.message()}")?
     return Ok(free is not None)
 
 

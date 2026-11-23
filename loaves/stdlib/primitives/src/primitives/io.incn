@@ -25,7 +25,6 @@ pub model IoError with Error:
             return f"{self.operation} {path}: {self.detail}"
         return self.detail
 
-
 pub enum Endian:
     """Byte order for exact-width numeric I/O."""
 

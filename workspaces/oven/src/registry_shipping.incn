@@ -81,7 +81,7 @@ def declared_crates(checkout: Path) -> Result[set[str], str]:
     mut pending = [checkout]
     while len(pending) > 0:
         directory = pending.pop()
-        for entry in directory.iterdir().map_err((error) => error.message())?:
+        for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
             name = entry.name()
             if name.startswith(".") or name == "target":
                 continue
@@ -102,6 +102,7 @@ def manifest_crates(project: Path) -> Result[list[str], str]:
     intent = match intent_from_snapshot(snapshot):
         Err(_) => return Ok([])
         Ok(admitted) => admitted
+
     mut crates: list[str] = []
     for request in intent.rust_inputs:
         if request.path is None:

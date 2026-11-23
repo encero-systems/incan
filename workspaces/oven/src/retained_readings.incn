@@ -142,7 +142,7 @@ def retained_value(record: Path, source: Path, selection: str, stamp: str) -> Re
 
 def remember(record: Path, source: Path, selection: str, stamp: str, value: JsonValue) -> Result[None, str]:
     """Publish one complete record atomically; a racing command publishes the same reading of the same identity."""
-    record.parent().mkdir(true, true).map_err((error) => error.message())?
+    record.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     mut fields: Dict[str, JsonValue] = {}
     fields["schema"] = JsonValue.string(SCHEMA)
     fields["source"] = JsonValue.string(source.0)

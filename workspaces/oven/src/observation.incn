@@ -194,7 +194,7 @@ pub model Ledger:
         2. Each file row and each directory row is read in full.
         """
         # 1. Only a ledger of this version, for the same kind of files, can vouch for the files it names.
-        text = self.location.read_text("utf-8", "strict").map_err((error) => error.message())?
+        text = self.location.read_text("utf-8", "strict").map_err((error) => f"cannot read {error.message()}")?
         document = parse(text).map_err((error) => error.message())?
         if text_of(document, "schema")? != LEDGER_SCHEMA:
             return Err("not a ledger of this version")

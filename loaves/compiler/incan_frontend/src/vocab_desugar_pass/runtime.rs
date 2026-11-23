@@ -396,7 +396,8 @@ impl NativeDesugarerRuntime {
             .is_some_and(|cached| ExecutableStamp::observe(&cached.path).is_ok_and(|stamp| stamp == cached.stamp));
         if !current {
             let path = verified_executable(&entry.artifact.dir, &artifact.relative_path, &artifact.sha256)?;
-            let stamp = ExecutableStamp::observe(&path).map_err(|error| error.to_string())?;
+            let stamp = ExecutableStamp::observe(&path)
+                .map_err(|error| format!("cannot inspect native desugarer {}: {error}", path.display()))?;
             let verified = Executable {
                 name: vocab.package_name.clone(),
                 identity: artifact.unit_identity.clone(),
@@ -501,12 +502,18 @@ fn verified_executable(root: &Path, relative_path: &str, sha256: &str) -> Result
     if relative.components().any(|part| !matches!(part, Component::Normal(_))) || relative.as_os_str().is_empty() {
         return Err("desugarer artifact path escapes the dependency artifact root".into());
     }
-    let root = root.canonicalize().map_err(|error| error.to_string())?;
-    let path = root.join(relative).canonicalize().map_err(|error| error.to_string())?;
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve desugarer artifact root {}: {error}", root.display()))?;
+    let selected = root.join(relative);
+    let path = selected
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve desugarer artifact {}: {error}", selected.display()))?;
     if !path.starts_with(root) {
         return Err("desugarer artifact resolves outside the dependency artifact root".into());
     }
-    let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+    let bytes =
+        fs::read(&path).map_err(|error| format!("cannot read desugarer artifact {}: {error}", path.display()))?;
     if hex::encode(Sha256::digest(bytes)) != sha256 {
         return Err("native desugarer artifact checksum mismatch".into());
     }
@@ -592,6 +599,8 @@ fn native_error(provider: &Provider, message: String) -> VocabDesugarPassError {
 struct Worker {
     /// Child owned and reaped by this worker.
     child: Child,
+    /// Executable path retained for process-operation diagnostics.
+    executable: PathBuf,
     /// Input pump; only one invocation is outstanding per worker.
     input: Sender<Vec<u8>>,
     /// Framed output or a pipe/protocol failure.
@@ -619,7 +628,7 @@ impl Worker {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("cannot start native worker: {error}"))?;
+            .map_err(|error| format!("cannot start native worker {}: {error}", path.display()))?;
         let stdin = child
             .stdin
             .take()
@@ -642,6 +651,7 @@ impl Worker {
         });
         Ok(Self {
             child,
+            executable: path.to_path_buf(),
             input,
             output,
             next_batch: 0,
@@ -691,7 +701,11 @@ impl Worker {
     fn exit_status_after_pipe_failure(&mut self) -> Result<Option<ExitStatus>, String> {
         let deadline = Instant::now() + EXIT_STATUS_BOUND;
         loop {
-            if let Some(status) = self.child.try_wait().map_err(|error| error.to_string())? {
+            if let Some(status) = self
+                .child
+                .try_wait()
+                .map_err(|error| format!("cannot inspect native worker {}: {error}", self.executable.display()))?
+            {
                 return Ok(Some(status));
             }
             if Instant::now() >= deadline {

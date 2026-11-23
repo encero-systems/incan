@@ -251,7 +251,7 @@ pub def connect(endpoint: Endpoint, start: bool) -> Result[Option[Connection], s
         return Ok(None)
     # 3. Only the command holding the exclusive lock can start an owner. The lock is held until this function returns.
     prepare_directory(f"{endpoint.directory}")?
-    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => error.message())?
+    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => f"cannot lock {error.message()}")?
     # 4. An owner another command started while this one waited for the lock is used, not a second one.
     match attach(endpoint)?:
         Some(started) => return Ok(Some(started))
@@ -443,7 +443,7 @@ pub def stop_owners() -> Result[int, str]:
     endpoints = Path(prefix).parent()
     named = Path(prefix).name()
     mut stopped = 0
-    for entry in endpoints.iterdir().map_err((error) => error.message())?:
+    for entry in endpoints.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         name = entry.name()
         if name.startswith(named) and name.endswith(SOCKET_SUFFIX):
             generation = name[len(named):len(name) - len(SOCKET_SUFFIX)]

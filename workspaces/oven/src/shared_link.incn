@@ -39,7 +39,9 @@ pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[
     """Select the home's immutable native store only for a requested development executable."""
     if not development_link(unit, requested):
         return Ok([])
-    directory = home()?.joinpath("store").joinpath("native-shared").absolute().map_err((error) => error.message())?
+    directory = home()?.joinpath("store").joinpath("native-shared").absolute().map_err(
+        (error) => f"cannot make absolute {error.message()}",
+    )?
     return Ok(["--shared-native", directory.0])
 
 

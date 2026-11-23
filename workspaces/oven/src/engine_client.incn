@@ -46,14 +46,14 @@ pub def execute(
     3. Hold the selected execution pin until the program exits, then release it.
     """
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
-    absolute = source.absolute().map_err((error) => error.message())?
+    absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
     mut policy = ""
     if proofs:
         policy = "proofs"
     connecting = begin_work()
     store = bakery()?
-    store.mkdir(true, true).map_err((error) => error.message())?
+    store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     compiler = installed_compiler()?
     if not proofs:
         if let Some(code) = execute_local(store, compiler, command, absolute, view, profile, arguments, argv0)?:

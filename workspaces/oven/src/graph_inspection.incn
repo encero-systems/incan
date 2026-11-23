@@ -251,7 +251,7 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
     """
     # 1. Path and installation failures are execution errors after syntax has been admitted.
     started = Instant.now()
-    path = Path(selected.path).resolve().map_err((error) => error.message())?
+    path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     toolchain = load_toolchain()?
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
     source = entry_source(path)

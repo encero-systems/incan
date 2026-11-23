@@ -94,7 +94,9 @@ impl CallableProducts {
                 .map_err(|error| error.to_string())
                 .and_then(|products| {
                     admitted.extend(products.native_inputs().map_err(|error| error.to_string())?);
-                    publish(&directory.join(module_key(module)), products).map_err(|error| error.to_string())
+                    let path = directory.join(module_key(module));
+                    publish(&path, products)
+                        .map_err(|error| format!("cannot publish callable products {}: {error}", path.display()))
                 });
             if let Err(error) = result {
                 tracing::debug!(target: "incan::invocation", %error, "callable products were not retained");

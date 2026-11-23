@@ -165,7 +165,7 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
 
 pub def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
     """Identify the actual pinned compiler and SDK by content after resolving the installation's sysroot alias."""
-    compiler = Path(rustc).resolve().map_err((error) => error.message())?
+    compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     libraries = toolchain_libraries(compiler.0)?
     version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
     return fingerprint(

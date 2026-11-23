@@ -280,7 +280,7 @@ def source_graphs(
         Some(sources) =>
             mut paths: list[GraphUnit] = []
             for source in sources:
-                project = root.joinpath(source).resolve().map_err((error) => error.message())?
+                project = root.joinpath(source).resolve().map_err((error) => f"cannot resolve {error.message()}")?
                 if project.0 in ancestors + [root.0]:
                     return Err(f"cyclic codegraph source selection: {project.0}")
                 if project.0 in preparation.sources:
@@ -439,7 +439,10 @@ def compiled_directory(
         mut directory = candidate
         if let Some(fact) = viewed_fact(candidate)?:
             directory = fact
-        if directory.joinpath(f"{artifact_stem(package)}.incnlib").is_file() and directory.joinpath(f"{artifact_stem(package)}.incngraph").is_file():
+        if (
+            directory.joinpath(f"{artifact_stem(package)}.incnlib").is_file()
+            and directory.joinpath(f"{artifact_stem(package)}.incngraph").is_file()
+        ):
             verify_compiled_loaf(directory, package, version, features)?
             return Ok(Some(directory))
     return Ok(None)
@@ -454,7 +457,11 @@ def verify_compiled_loaf(directory: Path, package: str, version: str, features: 
     3. Its active features are the ones selected.
     """
     # 1. A graph beside a partial artifact set would let a consumer rely on a Loaf that cannot be linked.
-    for name in [f"lib{native_crate_name(package)}.rlib", f"{artifact_stem(package)}.incnbody", f"{artifact_stem(package)}.native.json"]:
+    for name in [
+        f"lib{native_crate_name(package)}.rlib",
+        f"{artifact_stem(package)}.incnbody",
+        f"{artifact_stem(package)}.native.json",
+    ]:
         if not directory.joinpath(name).is_file():
             return Err(f"{package}: incomplete compiled Loaf beside its graph")
     # 2. The Loaf is the package and version selected, and carries the native ABI cache it declares.

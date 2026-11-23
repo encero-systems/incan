@@ -62,7 +62,7 @@ pub def refresh(store: Path, directory: Path, project: str) -> Result[None, str]
     # The extractions this run used are the unit's current registration; the ones a newer run no longer uses retire.
     register_root(store, project, f"rust-facts\t{directory.name()}", registered)?
     publish(directory.joinpath("index"), "".join([f"{line}\n" for line in lines]))?
-    used_list.unlink().map_err((error) => error.message())?
+    used_list.unlink().map_err((error) => f"cannot remove file {error.message()}")?
     return Ok(None)
 
 
@@ -73,7 +73,7 @@ def bake(store: Path, identity: str, staged: Path) -> Result[None, str]:
         destination = bakery_staging(store, identity)?
         copy_file(staged.0, destination.joinpath(EXTRACTION).0).map_err((error) => f"{staged.0}: {error}")?
         _ = seal(store, identity, destination, "rust-facts", NAME, [], "rust ABI extraction")?
-    staged.unlink().map_err((error) => error.message())?
+    staged.unlink().map_err((error) => f"cannot remove file {error.message()}")?
     return Ok(None)
 
 
@@ -82,7 +82,7 @@ def used_identities(used: Path) -> Result[list[str], str]:
     mut identities: list[str] = []
     if not used.is_file():
         return Ok(identities)
-    text = used.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text = used.read_text("utf-8", "strict").map_err((error) => f"cannot read {error.message()}")?
     for line in text.split("\n"):
         if extraction_identity(line) and line not in identities:
             identities.append(line)

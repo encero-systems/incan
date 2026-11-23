@@ -128,7 +128,7 @@ pub def content_facts(root: Path) -> Result[tuple[list[str], bool], str]:
     mut base = root
     if root.is_file():
         base = root.parent()
-    canonical_root = base.resolve().map_err((error) => error.message())?
+    canonical_root = base.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     mut inputs: list[str] = []
     mut portable = true
     for index in range(0, len(observed), 2):
@@ -137,12 +137,13 @@ pub def content_facts(root: Path) -> Result[tuple[list[str], bool], str]:
         if path.startswith(root.0 + "/"):
             name = path[len(root.0) + 1:]
         inputs.extend(["file", name, observed[index + 1]])
-        canonical = Path(path).resolve().map_err((error) => error.message())?
+        canonical = Path(path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
         if not canonical.0.startswith(canonical_root.0 + "/"):
             portable = false
         elif canonical.0 != path:
             inputs.extend(["alias", name, canonical.0[len(canonical_root.0) + 1:]])
     return Ok((inputs, portable))
+
 
 pub def interface_inputs(directory: Path, package: str) -> Result[list[str], str]:
     """Identify only the interface and native fact cache the checker reads, excluding publication provenance."""

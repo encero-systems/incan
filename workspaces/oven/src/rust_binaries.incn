@@ -2,7 +2,13 @@
 
 from std.fs import Path
 from rust::std::env::consts import OS
-from codegen import DARWIN_UUID_SALT, remap_arguments, rust_executable_arguments, rust_incremental_arguments, rust_metadata
+from codegen import (
+    DARWIN_UUID_SALT,
+    remap_arguments,
+    rust_executable_arguments,
+    rust_incremental_arguments,
+    rust_metadata,
+)
 from darwin_executable import normalize_release_executable
 from loaf_local_graph import LocalFacet
 from observation import trace
@@ -56,7 +62,7 @@ pub def compile_binary(
     """
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
-    directory.mkdir(true, true).map_err((error) => error.message())?
+    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     mut output_name = name
     if testing:
         output_name = f"{test_role}-{name}-tests"

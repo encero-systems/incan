@@ -445,7 +445,12 @@ fn read_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
 fn validate_payload_directory(root: &Path) -> Result<(), String> {
     let directory = root.join("payloads");
     if fs::symlink_metadata(&directory)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            format!(
+                "cannot inspect compiler-record directory {}: {error}",
+                directory.display()
+            )
+        })?
         .file_type()
         .is_symlink()
     {
@@ -463,7 +468,7 @@ fn open_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
     let directory = root.join("payloads");
     let path = directory.join(digest);
     if fs::symlink_metadata(&path)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("cannot inspect compiler-record object {}: {error}", path.display()))?
         .file_type()
         .is_symlink()
     {

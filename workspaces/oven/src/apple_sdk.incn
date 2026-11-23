@@ -13,9 +13,14 @@ from observation import observe
 from publication import publish
 
 const SELECTORS = [
-    "/var/select/developer_dir", "/var/db/xcode_select_link",
-    "/usr/share/xcode-select/xcode_dir_link", "/usr/share/xcode-select/xcode_dir_path",
-    "/Applications", "/Applications/Xcode.app", "/Library/Developer/CommandLineTools", "/usr/bin/xcrun",
+    "/var/select/developer_dir",
+    "/var/db/xcode_select_link",
+    "/usr/share/xcode-select/xcode_dir_link",
+    "/usr/share/xcode-select/xcode_dir_path",
+    "/Applications",
+    "/Applications/Xcode.app",
+    "/Library/Developer/CommandLineTools",
+    "/usr/bin/xcrun",
 ]
 
 
@@ -148,9 +153,8 @@ def decode(content: bytes) -> Result[str, str]:
 
 def remember(record: Path, basis: str, root: str) -> Result[None, str]:
     """Publish a complete cache record; a racing owner may publish the same observation without weakening it."""
-    record.parent().mkdir(true, true).map_err((error) => error.message())?
-    document = JsonValue.object({
-        "basis": JsonValue.string(basis), "root": JsonValue.string(root),
-        "sdk": JsonValue.string(sdk_observation(root)),
-    })
+    record.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    document = JsonValue.object(
+        {"basis": JsonValue.string(basis), "root": JsonValue.string(root), "sdk": JsonValue.string(sdk_observation(root))},
+    )
     return publish(record, json_text(document)?)

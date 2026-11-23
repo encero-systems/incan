@@ -193,9 +193,11 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
             "2024",
         ), "domain": JsonValue.string("target"), "kind": JsonValue.string(unit.kind), "source_mapping": JsonValue.string(
             SOURCE_PREFIX,
-        ), "toolchain_mapping": JsonValue.string(TOOLCHAIN_PREFIX), "linker_uuid_salt": JsonValue.string(uuid_salt), "overflow_checks": JsonValue.bool(unit.profile != "release"), "vocabulary": JsonValue.bool(unit.vocabulary), "vocab_policy": JsonValue.string(
-            unit.vocab_policy,
-        ), "vocab_desugarer": JsonValue.bool(unit.vocab_desugarer)},
+        ), "toolchain_mapping": JsonValue.string(TOOLCHAIN_PREFIX), "linker_uuid_salt": JsonValue.string(uuid_salt), "overflow_checks": JsonValue.bool(
+            unit.profile != "release",
+        ), "vocabulary": JsonValue.bool(unit.vocabulary), "vocab_policy": JsonValue.string(unit.vocab_policy), "vocab_desugarer": JsonValue.bool(
+            unit.vocab_desugarer,
+        )},
     )
     bindings = [f"{loaf.key}={loaf.name}:{loaf.standard}:{loaf.toolchain_provided}" for loaf in unit.loaves]
     mut flags = native_arguments(unit.profile)
@@ -400,7 +402,7 @@ pub def record(stamp: Path, key: Key, outputs: list[Path], borrowed: list[Path] 
     borrowed_paths = [artifact.0 for artifact in borrowed]
     if key.refusal != "":
         if stamp.is_file():
-            stamp.unlink().map_err((error) => error.message())?
+            stamp.unlink().map_err((error) => f"cannot remove file {error.message()}")?
         for output in outputs:
             if output.0 not in borrowed_paths:
                 record_payload(output, "", key.provenance, key.refusal)?

@@ -138,7 +138,7 @@ pub def store_status(location: BakeryLocation) -> Result[StoreStatus, str]:
     mut unrecorded_bytes = 0
     directory = staging_root(location.path)
     if directory.is_dir():
-        for entry in directory.iterdir().map_err((error) => error.message())?:
+        for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
             if entry.is_dir() and not entry.is_symlink() and entry.name() not in recorded:
                 unrecorded += 1
                 unrecorded_bytes += tree_bytes(entry)

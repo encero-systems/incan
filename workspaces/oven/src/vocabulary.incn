@@ -36,7 +36,7 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
     # 1. The wrapper imports the authored entry, so the compiler checks its export and complete import closure.
     mut unit = admitted
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("vocabulary")
-    directory.mkdir(true, true).map_err((error) => error.message())?
+    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     entry = entry_module(unit)?
     wrapper = directory.joinpath("main.incn")
     write_changed(wrapper, registration_main(entry))?
@@ -110,7 +110,7 @@ def bake_registration(store: Path, identity: str, directory: Path, unit: UnitDes
     """Bake the produced descriptors and worker, so every later ask in any project views them."""
     staged = staging(store, identity)?
     for artifact in registration_artifacts(directory.joinpath("registration.json"), directory):
-        artifact.copy(staged.joinpath(artifact.name()), true, true).map_err((error) => error.message())?
+        artifact.copy(staged.joinpath(artifact.name()), true, true).map_err((error) => f"cannot copy {error.message()}")?
     fact = seal(store, identity, staged, "vocabulary", f"vocabulary\t{unit.package}", [], "vocabulary registration")?
     register_root(store, unit.project_root, f"vocabulary\t{unit.package}", [identity])?
     for file in fact.files:
@@ -125,9 +125,9 @@ pub def stage_vocabulary(unit: UnitDescription, directory: Path) -> Result[None,
         Some(metadata) =>
             source = Path(metadata).parent().joinpath("desugar")
             if source.is_file():
-                directory.mkdir(true, true).map_err((error) => error.message())?
+                directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
                 output = directory.joinpath("vocab-worker")
-                source.copy(output, true, true).map_err((error) => error.message())?
+                source.copy(output, true, true).map_err((error) => f"cannot copy {error.message()}")?
                 worker = read_json(Path(metadata))?.require("worker").map_err((error) => error.message())?
                 before = observe(output)?.stamp
                 payload = file_digest(output)?
@@ -171,7 +171,7 @@ def worker_metadata(executable: Path, key: Key, schema_version: JsonValue) -> Re
     """Publish executable identity with the syntax schema declared by the producer's std.vocab."""
     identity = wire_digest(key)?
     before = observe(executable)?.stamp
-    bytes = executable.read_bytes().map_err((error) => error.message())?
+    bytes = executable.read_bytes().map_err((error) => f"cannot read {error.message()}")?
     payload = hexlify(sha256.digest(bytes))
     record_verified_payload(executable, key.digest, payload, before, key.provenance)?
     return Ok(
@@ -200,8 +200,8 @@ def entry_module(unit: UnitDescription) -> Result[str, str]:
     match unit.vocab_entry:
         None => return Err("missing [vocab] entry")
         Some(declared) =>
-            root = Path(unit.project_root).resolve().map_err((error) => error.message())?
-            entry = root.joinpath(declared).resolve().map_err((error) => error.message())?
+            root = Path(unit.project_root).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+            entry = root.joinpath(declared).resolve().map_err((error) => f"cannot resolve {error.message()}")?
             if not entry.0.startswith(root.0 + "/") or not entry.is_file() or not entry.0.endswith(".incn"):
                 return Err("[vocab] entry must name an Incan module inside the Loaf")
             relative = entry.0[len(root.0) + 1:-5]

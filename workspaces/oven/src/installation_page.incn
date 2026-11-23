@@ -26,7 +26,6 @@ from frozen_inputs import clear as clear_documents, select as select_documents
 # How many times admission reads an installation that first use may still be settling, and the pause between reads.
 const ADMISSION_ATTEMPTS: int = 5
 const ADMISSION_RETRY_MS: u64 = 100
-
 # One current installation scope; later selections replace it rather than retaining a history of decoded pages.
 static pages: Dict[str, Installation] = {}
 static generations: Dict[str, str] = {}
@@ -224,7 +223,7 @@ def admit_generation(
     data = encode(page)?
     digest = hexlify(sha256.digest(data))
     # 2. Local production uses the same portable admission as a supplied sealed set.
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot create temporary directory {error.message()}")?
     source = temporary.path().joinpath("source")
     view = snapshot(source).map_err((error) => error.message())?
     staged = commit(put(begin(view), key, data)).map_err((error) => error.message())?
@@ -323,7 +322,9 @@ def standard_packages(standard: Path) -> Result[StandardPackages, str]:
         paths.append(standard.0)
         stamps.append(observe(standard)?.stamp)
         reader = ManifestReader()
-        entries = {entry.0: entry for entry in standard.iterdir().map_err((error) => error.message())?}
+        entries = {entry.0: entry for entry in standard
+            .iterdir()
+            .map_err((error) => f"cannot list directory {error.message()}")?}
         for entry_path in sorted([path for path in entries.keys()]):
             entry = entries[entry_path]
             # Directory observations also notice a previously absent manifest becoming present.

@@ -149,9 +149,9 @@ def refuse_project_config(file: Path, project_root: Option[Path]) -> Result[None
 
 def canonical(path: Path) -> Result[Path, str]:
     """An absolute physical spelling, resolving the deepest existing ancestor when the final path is not yet made."""
-    absolute = path.absolute().map_err((error) => error.message())?
+    absolute = path.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     if absolute.exists():
-        return absolute.resolve().map_err((error) => error.message())
+        return absolute.resolve().map_err((error) => f"cannot resolve {error.message()}")
     parent = absolute.parent()
     if parent.0 == absolute.0:
         return Ok(absolute)

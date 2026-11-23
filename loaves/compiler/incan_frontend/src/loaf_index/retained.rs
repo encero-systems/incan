@@ -123,7 +123,8 @@ pub(super) fn artifact(dir: &Path, name: &str) -> Result<LoafArtifact, LoafIndex
 /// Open the file-backed toolchain or unit ABI index once per unchanged generation; malformed inputs are never retained,
 /// and item payloads stay lazy.
 pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
-    let canonical = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("cannot resolve Rust ABI index {}: {error}", path.display()))?;
     let paths = [canonical.clone()];
     let before = observe(&paths);
     let store = ABI.get_or_init(Mutex::default);

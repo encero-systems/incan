@@ -132,8 +132,8 @@ def recorded_registry_bindings(units: list[RegistryUnit], source: Path) -> Resul
     toolchain = load_toolchain()?
     if toolchain.registry_lock == "":
         return Ok([])
-    actual = source.resolve().map_err((error) => error.message())?.0
-    selected = Path(toolchain.registry_units).resolve().map_err((error) => error.message())?.0
+    actual = source.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+    selected = Path(toolchain.registry_units).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
     if actual != selected:
         return Ok([])
     return registry_record(units, Path(toolchain.registry_lock))

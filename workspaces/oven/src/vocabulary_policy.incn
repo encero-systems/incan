@@ -37,13 +37,7 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
             continue
         identity = text(artifact, "unit_identity")
         executable = Path(loaf.dir).joinpath(text(artifact, "relative_path"))
-        covered = cover_loaf(
-            loaf.name,
-            loaf.source_root,
-            Some(executable),
-            ready.project_root,
-            ready.unattended,
-        )?
+        covered = cover_loaf(loaf.name, loaf.source_root, Some(executable), ready.project_root, ready.unattended)?
         providers.append(
             JsonValue.object(
                 {"dependency": JsonValue.string(loaf.key), "loaf": JsonValue.string(loaf.name), "unit_identity": JsonValue.string(
@@ -74,7 +68,7 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
     # 3. The lock is evidence of the resolved artifacts; the compiler separately checks admission and artifact bytes.
     if len(providers) > 0:
         directory = Path(ready.project_root).joinpath("target").joinpath("incan").joinpath("vocabulary")
-        directory.mkdir(true, true).map_err((error) => error.message())?
+        directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
         locked = JsonValue.object(
             {"schema": JsonValue.string("incan.vocab.providers/1"), "providers": JsonValue.array(providers), "policy": JsonValue.string(
                 ready.vocab_policy,

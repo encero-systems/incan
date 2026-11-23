@@ -86,7 +86,10 @@ pub(super) fn checked_modules(
     receipt: &RefusalReceipt,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
-    let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
+    let path = unit
+        .source
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve source {}: {error}", unit.source.display()))?;
     // The resident process already keeps immutable readings. Its full canonical index needs no on-disk lookup
     // footprint, whose directory census would otherwise be repeated before and after every source edit.
     let session = if resident {
@@ -233,11 +236,10 @@ pub(super) fn program_entrypoints(
     }
     let mut entries = Vec::new();
     for source in &unit.program_entries {
-        let path = unit
-            .project_root
-            .join(source)
+        let selected = unit.project_root.join(source);
+        let path = selected
             .canonicalize()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| format!("cannot resolve program entry {}: {error}", selected.display()))?;
         let index = files
             .iter()
             .position(|file| Path::new(file) == path)

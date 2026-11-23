@@ -314,12 +314,12 @@ def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
     """Observe project files without entering outputs, hidden directories or symbolic-link cycles."""
     if root.is_file():
         return Ok([root.0])
-    canonical = root.resolve().map_err((error) => error.message())?.0
+    canonical = root.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
     if canonical in visited:
         return Ok([])
     visited.add(canonical)
     mut paths: list[str] = []
-    for entry in root.iterdir().map_err((error) => error.message())?:
+    for entry in root.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         name = entry.name()
         if skipped_directory(name):
             continue

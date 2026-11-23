@@ -28,7 +28,8 @@ struct Header {
 
 /// Read admitted facts once for an unchanged file generation, or enter the ordinary public manifest reader.
 pub(super) fn read(path: &Path) -> Result<(Arc<LibraryManifest>, String), String> {
-    let canonical = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("cannot resolve Loaf manifest {}: {error}", path.display()))?;
     let state = fs::metadata(&canonical).ok().and_then(|metadata| generation(&metadata));
     let compiler = compiler_generation();
     let key = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
@@ -40,7 +41,8 @@ pub(super) fn read(path: &Path) -> Result<(Arc<LibraryManifest>, String), String
         return Ok(retained);
     }
     tracing::debug!(target: "incan::invocation", cached = false, "decoded Loaf facts");
-    let (content, digest) = manifest_input::read(path).map_err(|error| error.to_string())?;
+    let (content, digest) =
+        manifest_input::read(path).map_err(|error| format!("cannot read Loaf manifest {}: {error}", path.display()))?;
     let manifest = LibraryManifest::from_json_str(&content).map_err(|error| error.to_string())?;
     if let (Some(state), Some(compiler), Some(cache)) = (state, compiler, cache.as_deref())
         && fs::metadata(path).ok().and_then(|metadata| generation(&metadata)) == Some(state)

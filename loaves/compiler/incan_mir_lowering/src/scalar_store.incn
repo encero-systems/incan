@@ -109,8 +109,10 @@ def fingerprint(inputs: list[str]) -> Result[str, str]:
 def publish_record(directory: str, inputs: list[str], text: str) -> Result[None, str]:
     """Publish one complete record with a process-local temporary name under the producer's locked build."""
     path = scalar_path(directory, inputs)?
-    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    path.parent().mkdir(true, true).map_err((error) => f"cannot create scalar cache directory {error.message()}")?
     temporary = Path(f"{path.0}.{process_id()}.pending")
-    temporary.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
-    _ = temporary.replace(path).map_err((error) => error.message())?
+    temporary
+        .write_text(text, "utf-8", "strict", None)
+        .map_err((error) => f"cannot write scalar cache {error.message()}")?
+    _ = temporary.replace(path).map_err((error) => f"cannot replace scalar cache {error.message()}")?
     return Ok(None)

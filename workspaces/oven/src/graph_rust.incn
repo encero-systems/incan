@@ -64,8 +64,14 @@ pub def inspect_rust(
     prepared = prepare_graph(root, profile, features, substitutes, toolchain, [], published_only)?
     mut paths = prepared.paths
     if len(paths) > 0:
-        paths = paths + standard_graphs(root, profile, toolchain, paths, prepared.registry,
-                                       reader=prepared.request.manifests)?
+        paths = paths + standard_graphs(
+            root,
+            profile,
+            toolchain,
+            paths,
+            prepared.registry,
+            reader=prepared.request.manifests,
+        )?
     # 2. Every Rust export is keyed by the compiler, the libraries built and the registry artifacts it links against.
     context = native_context(prepared, toolchain)?
     registry = registry_artifacts(prepared.facets, prepared.request)?
@@ -174,7 +180,13 @@ def binary_graph(
     environment = binary_environment(prepared.request.rustc, facet.project, declared, crate_id)?
     keyed = inputs + [facet.domain.value(), f"binary:{name}", str(sorted(facet.features))]
     graph = checked_export(
-        facet, f"{declared.package}:{name}", arguments, environment, declared.unstable, keyed, toolchain,
+        facet,
+        f"{declared.package}:{name}",
+        arguments,
+        environment,
+        declared.unstable,
+        keyed,
+        toolchain,
     )?
     return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
 
@@ -273,6 +285,6 @@ def observe(
         publish_unchecked(path, unit_name, "contributing no facts", "Rust analysis failed\n" + "\n".join(failure))?
         return Ok(None)
     # 3. A completed analysis publishes its whole graph, and only a complete one is ever visible at the final name.
-    publish_binary(path, output.read_bytes().map_err((error) => error.message())?)?
+    publish_binary(path, output.read_bytes().map_err((error) => f"cannot read {error.message()}")?)?
     remove(output)?
     return Ok(None)
