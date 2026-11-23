@@ -31,6 +31,8 @@ Each declaration has a `kind`, a `name` and an `anchor`. The anchor has `id: str
 | `alias` | `target_path`, `is_public`, optional projected function and optional projected type. |
 | `partial` | Target path and kind, presets, type parameters, parameters, return type and async marker. |
 
+A function's `type_params` array gives each parameter's `name` and checked `bounds`. Each overload has its own declaration record with its type parameters, parameter types and return type.
+
 Callables retain parameter names, types, default values and `is_mut`; function types retain mutable parameter markers. Methods also retain their receiver, canonical identity when available, alias target when applicable, whether they have a body, and `visibility`, which is present only as `private`, for a method that consumers cannot call. Documentation-bearing declarations retain both `docstring` and parsed `docstring_sections`, each nullable.
 
 ## Editor preview

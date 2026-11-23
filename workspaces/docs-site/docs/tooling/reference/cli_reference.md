@@ -443,6 +443,8 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 
 `incan tools metadata api [PATH] [--format json|markdown]` prints the [checked API metadata](checked_api_metadata.md) of the source or project at `PATH` (default `.`): the `contract_metadata.api` its library manifest would carry, checked as a dependent sees it, without native compilation. `markdown` renders it as a reference: a ``# PACKAGE API`` title, a ``Version: `VERSION` `` line, a ``## Module `PATH` `` section per module and, per declaration, a ``### `NAME` `` heading with its signature in an `incan` code block; a function's docstring follows its signature, and a partial lists its target and presets.
 
+A generic function's Markdown signature shows its checked type parameters and bounds. Overloads appear in separate sections, as with `pub def convert[T with Int](value: int) -> int` and `pub def convert[T with Float](value: int) -> float`.
+
 `incan tools metadata model PATH MODEL [--format incan|json]` prints one [contract-backed model](contract_metadata.md) by its `logical_type_name` or `stable_model_id`. `PATH` is a project directory or source, whose declared bundles are all read, publishable or not; a bundle JSON file; or a `.incnlib` artifact, which carries only publishable bundles. `incan` (default) prints the formatted model source; `json` prints the canonical bundle. A model that is not there exits `1` with ``model `MODEL` was not found in checked model metadata for PATH (available: ...)``.
 
 ## `incan tools doctor`
