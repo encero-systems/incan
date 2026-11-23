@@ -5,8 +5,8 @@ from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
-from check_test_support import run_check, write
-from check_support import read, repository_root
+from check_test_support import Outcome, run_check, write
+from check_support import git, read, repository_root
 
 
 def test_missing_file_and_directory_report_document_and_line() -> Result[None, str]:
@@ -127,24 +127,83 @@ def test_links_and_line_suffixes_resolve_without_external_url_fragments() -> Res
 
 
 def test_doc_path_gate_stops_before_following_work() -> Result[None, str]:
-    """A failed doc-paths prerequisite prevents its dependent Make target from starting."""
+    """The real pre-commit recipe stops after a failed path audit and continues after success."""
     temporary = fixture()?
     root = temporary.path()
     repository = repository_root()?
-    write(root, "AGENTS.md", "`src/missing.rs`")?
+    # Give the real pre-commit Rust source discovery an empty inventory.
+    _ = git(root, ["init", "-q"])?
+    write(root, "AGENTS.md", "`src/missing.incn`\n")?
     for source in ["check_doc_paths.incn", "check_support.incn"]:
         write(root, f"scripts/{source}", read(repository.joinpath(f"scripts/{source}"))?)?
-    write(root, "Makefile", read(repository.joinpath("Makefile"))?
-        + "\naudit: doc-paths\n\t@touch checks-started\n")?
+    write(root, "Makefile", read(repository.joinpath("Makefile"))?)?
+    write(root, "scripts/doc_path_fixture.incn", fixture_launcher())?
+
+    sentinel = root.joinpath("checks-started")
+    failed = run_pre_commit(root)?
+    assert failed.code != 0
+    assert "  AGENTS.md:1: src/missing.incn\n" in failed.stdout, f"{failed.stdout}\n{failed.stderr}"
+    assert not sentinel.exists()
+
+    write(root, "src/missing.incn", "")?
+    recovered = run_pre_commit(root)?
+    assert recovered.code == 0, recovered.stderr
+    assert "doc path audit passed: 1 mentions, 0 explicit exceptions\n" in recovered.stdout
+    assert read(sentinel)? == "reference check reached"
+    return Ok(None)
+
+
+def run_pre_commit(root: Path) -> Result[Outcome, str]:
+    """Preserve the Make recipe and select the check-specific command fixture."""
     executable: str = var("INCAN").unwrap_or("incan")
     mut command = Command.new("make")
-    command.current_dir(root.0).arg("-s").arg("audit").arg(f"INCAN={executable}")
+    command.current_dir(root.0).env("DOC_PATH_TEST_INCAN", executable)
+    command.arg("-s").arg("pre-commit").arg("INCAN=\"$${DOC_PATH_TEST_INCAN}\" run scripts/doc_path_fixture.incn --")
     result = command.output().map_err((error) => error.to_string())?
-    output: str = RustString.from_utf8(result.stdout).map_err((error) => error.to_string())?
-    assert not result.status.success()
-    assert "AGENTS.md:1: src/missing.rs" in output
-    assert not root.joinpath("checks-started").exists()
-    return Ok(None)
+    stdout = RustString.from_utf8(result.stdout).map_err((error) => error.to_string())?
+    stderr = RustString.from_utf8(result.stderr).map_err((error) => error.to_string())?
+    return Ok(Outcome(code=result.status.code().unwrap_or(-1), stdout=stdout, stderr=stderr))
+
+
+def fixture_launcher() -> str:
+    """Delegate the actual path audit and mark the next real recipe command."""
+    return '''from rust::std::process import Command, exit
+from std.environ import args, get_or
+from std.fs import Path
+from check_support import write_stderr
+
+
+def main() -> None:
+    """Forward the recipe command and report unexpected invocations."""
+    match run(args().unwrap_or([])[1:]):
+        Ok(code) => exit(code)
+        Err(message) =>
+            write_stderr(f"{message}\\n")
+            exit(1)
+
+
+def run(arguments: list[str]) -> Result[i32, str]:
+    """Dispatch only the commands in the pre-commit recipe."""
+    if arguments == ["run", "scripts/check_doc_paths.incn"]:
+        mut command = Command.new(get_or("DOC_PATH_TEST_INCAN", "incan"))
+        for argument in arguments:
+            command.arg(argument)
+        status = command.status().map_err((error) => error.to_string())?
+        return Ok(status.code().unwrap_or(1))
+    if arguments == ["run", "scripts/check_reference_contract.incn", "--", "--all"]:
+        sentinel = Path("checks-started")
+        sentinel.write_text("reference check reached", "utf-8", "strict", None).map_err((error) => error.message())?
+        return Ok(0)
+    if arguments in [
+        ["run", "scripts/check_us_english.incn"],
+        ["test", "scripts/test_check_changed_rustdocs.incn"],
+        ["run", "scripts/check_changed_rustdocs.incn"],
+        ["run", "scripts/check_agents_doc_sync.incn"],
+        ["run", "scripts/check_std_reexports.incn"],
+    ]:
+        return Ok(0)
+    return Err(f"unexpected pre-commit command: {arguments}")
+'''
 
 
 def fixture() -> Result[TemporaryDirectory, str]:
