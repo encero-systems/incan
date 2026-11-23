@@ -69,8 +69,7 @@ pub(super) fn build_module_seed_observed(
         &mut local_fieldless_enum_declarations,
         &mut local_value_enum_declarations,
     );
-    let published_callable_returns = collect::collect_published_callable_returns(context, type_info);
-    let published_callable_defaults = collect::collect_published_callable_defaults(context);
+    let published_callables = collect::collect_published_callables(context, type_info);
     let published_newtype_returns = collect::collect_published_newtype_returns(context);
     let published_storage_types = collect::collect_published_storage_types(context);
     let local_trait_partials = trait_partials::collect(program, type_info);
@@ -81,8 +80,7 @@ pub(super) fn build_module_seed_observed(
         model_constants: &model_constants,
         local_enum_declarations: &local_enum_declarations,
         published_methods: &published_methods,
-        published_callable_returns: &published_callable_returns,
-        published_callable_defaults: &published_callable_defaults,
+        published_callables: &published_callables,
         published_newtype_returns: &published_newtype_returns,
         published_storage_types: &published_storage_types,
         published_constants: &published_constants,

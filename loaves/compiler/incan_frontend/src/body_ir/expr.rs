@@ -18,7 +18,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             _ => return None,
         };
         let identity = self.type_info.resolved_identity(span)?;
-        self.published_callable_returns.get(identity).cloned()
+        self.published_callable_return(identity).cloned()
     }
 
     /// Copy an already selected field's closed type from its exact retained owner layout. Provider-owned nominal
