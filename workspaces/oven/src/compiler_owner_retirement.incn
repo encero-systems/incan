@@ -32,7 +32,7 @@ pub def retire_missing_functions(
         projection = projections[module]
         census = projection.census.key
         previous = match get(selected, encode_record_key(census)?).map_err((error) => error.message())?:
-            Some(value) => source_value(census, value)?.decode().map_err((_) => "invalid previous owner census")?
+            Some(value) => source_value(census, value)?.decode().map_err((_) => "invalid r3k00001 owner census")?
             None => continue
         prior_names = set(previous.split("\n"))
         current: Dict[str, int] = name_counts([owner.key.facet for owner in projection.owners])
