@@ -19,9 +19,11 @@ use incan_driver::unit::{ToolchainAccess, UnitKind};
 use incan_lowering::PlanModuleSelection;
 use incan_mir_plan_native::CompactAdmissionPin;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::identity::DriverIdentity;
 use crate::library_exports::LibraryFacade;
+use crate::native_plan_report::PlanDigest;
 use crate::native_timing::Timing;
 use crate::plan::Plan;
 
@@ -165,7 +167,11 @@ impl RustcHandoff {
         self.captured_texts.clear();
         self.checked_sources = crate::spans::checked_texts()?;
         let path = self.output.with_extension("rustc-handoff");
-        let written = write(&self, &path);
+        let written = if timing.observes_handoff() {
+            write_with_proof(&self, &path).map(|proof| self.record_packet("writer", &path, proof))
+        } else {
+            write(&self, &path)
+        };
         drop(self);
         if let Err(error) = written {
             let _ = std::fs::remove_file(&path);
@@ -173,6 +179,19 @@ impl RustcHandoff {
         }
         timing.mark("rustc_handoff_written");
         Ok(path)
+    }
+
+    /// Record the original packet identity with the expectation and settled outcome carried by its bytes.
+    fn record_packet(&self, role: &'static str, path: &Path, (bytes, digest): (usize, [u8; 32])) {
+        let products = self.plan_record_products.as_ref();
+        let selection = products.and_then(|products| products.selection).map(hex::encode);
+        let notes = products.and_then(|products| products.compact_notes);
+        let compact_sha = notes.map(|pin| hex::encode(pin.digest));
+        tracing::trace!(target: "incan::invocation", role,
+            packet = %path.display(), packet_size = bytes, packet_sha256 = %hex::encode(digest),
+            selection_sha256 = %selection.as_deref().unwrap_or_default(),
+            compact_count = notes.map_or(0, |pin| pin.count), compact_sha256 = %compact_sha.as_deref().unwrap_or_default(),
+            "rustc handoff packet");
     }
 }
 
@@ -183,10 +202,14 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
         return Err("usage: incan-rustc-driver --rustc-handoff PATH".into());
     };
     let mut timing = Timing::requested();
-    let encoded = std::fs::read(Path::new(path))?;
+    let path = Path::new(path);
+    let encoded = std::fs::read(path)?;
     let handoff: RustcHandoff = postcard::from_bytes(&encoded)?;
+    if timing.observes_handoff() {
+        handoff.record_packet("reader", path, (encoded.len(), Sha256::digest(&encoded).into()));
+    }
     drop(encoded);
-    std::fs::remove_file(Path::new(path))?;
+    std::fs::remove_file(path)?;
     timing.mark("rustc_handoff_read");
     crate::spans::retain_checked_sources(&handoff.checked_sources)?;
     let identity = crate::identity::verify(&handoff.sysroot)?;
@@ -196,9 +219,21 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
 
 /// Encode the handoff into its file.
 fn write(handoff: &RustcHandoff, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut writer = postcard::to_io(handoff, BufWriter::new(File::create(path)?))?;
-    writer.flush()?;
+    encode_handoff(handoff, BufWriter::new(File::create(path)?))?;
     Ok(())
+}
+
+/// Observe the exact original stream accepted by the file and release its proof after flushing it.
+fn write_with_proof(handoff: &RustcHandoff, path: &Path) -> Result<(usize, [u8; 32]), Box<dyn std::error::Error>> {
+    let writer = encode_handoff(handoff, BufWriter::new(PlanDigest::new(File::create(path)?)))?;
+    Ok(writer.into_inner().map_err(|error| error.into_error())?.finish())
+}
+
+/// Both observation modes use the same serialization and require the same successful flush.
+fn encode_handoff<W: Write>(handoff: &RustcHandoff, writer: W) -> Result<W, Box<dyn std::error::Error>> {
+    let mut writer = postcard::to_io(handoff, writer)?;
+    writer.flush()?;
+    Ok(writer)
 }
 
 #[cfg(test)]
@@ -634,5 +669,30 @@ mod tests {
             None,
         )
         .map_err(|error| error.message)
+    }
+
+    /// The flushed observed packet has the ordinary bytes and the independently retained selection and outcome.
+    #[test]
+    fn handoff_proof_matches_the_original_flushed_bytes_and_pins() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let (selection, notes) = fixture.stage_selection(SELECTION_A)?;
+        let [mut resident, _] = fixture.requests(selection, Some(notes), false)?;
+        let root = fixture.root.path();
+        resident
+            .checked_sources
+            .push((root.join("captured.incn"), "captured text\n".repeat(2000)));
+        let ordinary = root.join("ordinary.rustc-handoff");
+        let observed = root.join("observed.rustc-handoff");
+        write(&resident, &ordinary)?;
+        let proof = write_with_proof(&resident, &observed)?;
+        let bytes = fs::read(observed)?;
+        assert_eq!(bytes, fs::read(ordinary)?);
+        assert!(bytes.len() > 16_384);
+        assert_eq!(proof, (bytes.len(), Sha256::digest(&bytes).into()));
+        let handoff: RustcHandoff = postcard::from_bytes(&bytes)?;
+        let products = handoff.plan_record_products.ok_or("lost original Plan products")?;
+        assert_eq!(products.selection, Some(selection));
+        assert_eq!(products.compact_notes, Some(notes));
+        Ok(())
     }
 }

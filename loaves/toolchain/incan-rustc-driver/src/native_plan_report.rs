@@ -63,11 +63,12 @@ impl<W> PlanDigest<W> {
 }
 
 impl<W: io::Write> io::Write for PlanDigest<W> {
-    /// Forward the offered bytes and include them in the stream fingerprint.
+    /// Forward this write and fingerprint the exact prefix the destination accepted.
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.sha256.update(bytes);
-        self.bytes += bytes.len();
-        self.writer.write(bytes)
+        let accepted = self.writer.write(bytes)?;
+        self.sha256.update(&bytes[..accepted]);
+        self.bytes += accepted;
+        Ok(accepted)
     }
 
     /// Flush the underlying stream before its caller releases the digest.
