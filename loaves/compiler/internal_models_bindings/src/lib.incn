@@ -19,6 +19,9 @@ pub from std.primitives.crumb.hashes import HashResult, description_hash, value_
 pub from std.primitives.crumb.metadata_values import encode as encode_metadata
 pub from std.primitives.crumb.values import Projection
 pub from std.primitives.crumb.encoding_errors import BinaryError
+from std.primitives.crumb.encoding_errors import BinaryFailure, failure
+from std.primitives.crumb.encoding_cursor import EncodingCursor
+from std.primitives.crumb.encoding_index import read_index, selected
 pub from std.primitives.crumb.errors import CrumbError
 pub from std.fs import Path
 pub from std.json import JsonValue
@@ -112,6 +115,56 @@ pub def read_field_at(rows: RowSet, index: int, identity: bytes, mut budget: Bud
 pub def binary_field_at(rows: RowSet, index: int, identity: bytes, mut budget: Budget) -> Result[MappedView, BinaryError]:
     """Return one binary field of an admitted row as a view of the envelope."""
     return rows.binary_field_view(index, identity, budget)
+
+
+pub def binary_list_field_views(
+    native: Borrowed[RowAdmission], backing: Borrowed[MappedView], identity: bytes, expected: int, mut budget: Budget,
+) -> Result[list[MappedView], BinaryError]:
+    """Return mapped payloads of one admitted binary-list field under the caller's count and budget."""
+    rows = RowSet.create(native.clone(), [], backing.clone())
+    cell = match rows.field_view(0, identity, budget)?:
+        Some(view) => view
+        None => return Err(failure(BinaryFailure.InvalidCell, 0))
+    mut sequence = EncodingCursor.create(cell)?
+    count = sequence.length(budget)?
+    if count != expected:
+        return Err(failure(BinaryFailure.ArityMismatch, 0))
+    index = read_index(sequence, count, budget)?
+    mut result: list[MappedView] = []
+    for position in range(count):
+        cell_view, origin = selected(index, position, budget)?
+        mut binary = EncodingCursor.create(cell_view, origin)?
+        value = binary.frame(budget)?
+        binary.finished()?
+        result.append(value)
+    return Ok(result)
+
+
+pub def single_row_reference_prefix(prefix: bytes, selector: bytes) -> bool:
+    """Identify a complete first reference selector in a bounded row prefix without admitting its body."""
+    match referenced_prefix(prefix, selector):
+        Ok(declared) => return declared
+        Err(_) => return false
+
+
+def referenced_prefix(prefix: bytes, selector: bytes) -> Result[bool, BinaryError]:
+    owner = MappedFile.owned(prefix).map_err((_) => failure(BinaryFailure.Truncated, 0))?
+    view = match complete_view(owner):
+        Some(value) => value
+        None => return Ok(false)
+
+    mut budget = Budget.create(len(prefix) * 2, len(prefix), 1).map_err((_) => failure(BinaryFailure.LimitExceeded, 0))?
+    mut cursor = EncodingCursor.create(view)?
+    if cursor.take(4, budget)?.to_bytes() != b"CRMB" or cursor.length(budget)? != 1 or cursor.length(budget)? != 1:
+        return Ok(false)
+    if cursor.byte(budget)? > 1:
+        return Ok(false)
+    # Only the payload length and its first referenced selector are needed to recognize the note. The rest may be
+    # truncated or damaged. The result is a discriminator for refusal, never an admitted Crumb row.
+    _ = cursor.length(budget)?
+    if cursor.length(budget)? != 1 or cursor.byte(budget)? != 1:
+        return Ok(false)
+    return Ok(cursor.frame(budget)?.to_bytes() == selector)
 
 
 pub def crumb_message(error: CrumbError) -> str:

@@ -64,7 +64,7 @@ def test_letters_inside_a_camel_case_word_do_not_match() -> Result[None, str]:
 
 
 def test_check_reports_path_line_word_and_replacement() -> Result[None, str]:
-    """The command reports each original source line and replacement."""
+    """The command names its input for spelling findings and malformed UTF-8."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     initialize(root)?
@@ -73,6 +73,13 @@ def test_check_reports_path_line_word_and_replacement() -> Result[None, str]:
     assert result.code == 1
     assert "src/lib.rs:1: colour → color" in result.stdout
     assert "src/lib.rs:2: behaviour → behavior" in result.stdout
+    source = root.resolve().map_err((error) => error.message())?.joinpath("src/lib.rs")
+    source.write_bytes(b"\xff").map_err((error) => error.message())?
+    malformed = run_check("check_us_english", root)?
+    assert malformed.code == 2
+    assert malformed.stdout == ""
+    assert "invalid utf-8" in malformed.stderr, malformed.stderr
+    assert f"cannot decode {source.0} as UTF-8:" in malformed.stderr, malformed.stderr
     return Ok(None)
 
 
@@ -108,7 +115,7 @@ def test_allow_file_exempts_a_path_a_word_or_an_enclosing_phrase() -> Result[Non
 
 
 def test_malformed_allow_line_is_a_configuration_error() -> Result[None, str]:
-    """A malformed exception line fails closed with configuration status 2."""
+    """Configuration refusals use status 2 and identify the selected input."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     initialize(root)?
@@ -116,6 +123,15 @@ def test_malformed_allow_line_is_a_configuration_error() -> Result[None, str]:
     result = run_check("check_us_english", root)?
     assert result.code == 2
     assert "expected path, token and reason" in result.stderr
+
+    outside = TemporaryDirectory.try_new().map_err((error) => f"cannot create test directory: {error.message()}")?
+    selected_root = outside.path().resolve().map_err((error) => f"cannot resolve test directory: {error.message()}")?
+    write(selected_root, "scripts/check_us_english.allow", "")?
+    missing_repository = run_check("check_us_english", selected_root)?
+    assert missing_repository.code == 2
+    assert missing_repository.stdout == ""
+    assert f"git ls-files -z in {selected_root.0}:" in missing_repository.stderr, missing_repository.stderr
+    assert "fatal: not a git repository" in missing_repository.stderr
     return Ok(None)
 
 

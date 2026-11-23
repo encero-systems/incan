@@ -182,16 +182,22 @@ def is_reference_page(path: str) -> bool:
 
 
 def load_allow(path: Path) -> Result[list[tuple[str, str]], str]:
-    """Read the original gate's permissive page-and-phrase exception format."""
+    """Read optional reference exceptions and require a nonempty exact phrase."""
     if not path.exists():
         return Ok([])
     mut allowed: list[tuple[str, str]] = []
-    for line in source_lines(read(path)?)?:
+    lines = source_lines(read(path)?)?
+    for index in range(len(lines)):
+        line = lines[index]
         if line.strip() == "" or line.startswith("#"):
             continue
         fields = line.split("\t")
-        if len(fields) >= 2:
-            allowed.append((fields[0].strip(), fields[1]))
+        if len(fields) < 2:
+            continue
+        phrase = fields[1]
+        if phrase.strip() == "":
+            return Err(f"{path.0}:{index + 1}: expected a nonempty exact phrase")
+        allowed.append((fields[0].strip(), phrase))
     return Ok(allowed)
 
 
@@ -200,6 +206,7 @@ pub def page_findings(source: str, page: str, allowed: list[tuple[str, str]]) ->
     if not is_reference_page(page):
         return Ok([])
     rules = prose_rules(page.startswith("language/"))?
+    opening_fence = regex("^`{3,}|^~{3,}")?
     inline = regex("`[^`]*`")?
     links = regex("\\]\\([^)]*\\)|^\\[[^\\]]+\\]:\\s*\\S+.*$")?
     strings = regex("\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")?
@@ -209,18 +216,22 @@ pub def page_findings(source: str, page: str, allowed: list[tuple[str, str]]) ->
     see_also = regex("(?i)^#{1,6}\\s+See also\\b")?
     comment = regex("(?i)^(?:accepted|refused)\\b|^[\\w./-]+\\.(?:incn|toml)$")?
     mut findings: list[Finding] = []
-    mut fenced = false
+    mut fence = ""
     mut language = ""
     mut in_see_also = false
     lines = source_lines(source)?
     for index in range(len(lines)):
         line = lines[index]
         stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            fenced = not fenced
-            language = fence_language(stripped)
+        if fence == "":
+            if let Some(opened) = opening_fence.find(stripped):
+                fence = opened.as_str()
+                language = fence_language(stripped[len(fence):])
+                continue
+        elif stripped == fence:
+            fence = ""
             continue
-        if fenced:
+        if fence != "":
             if language in ["", "bash", "text", "console", "shell", "sh", "txt", "output"]:
                 if diagnostic.is_match(line):
                     findings.append(Finding(page=page, line=index + 1, rule="quoted diagnostic output", text=stripped))
@@ -283,9 +294,9 @@ def regex(pattern: str) -> Result[Regex, str]:
     return Regex(pattern).map_err((error) => error.message())
 
 
-def fence_language(line: str) -> str:
-    """Read the first lowercase info-string word after the three-character fence marker."""
-    words = line[3:].strip().split_whitespace()
+def fence_language(info: str) -> str:
+    """Read the first lowercase info-string word after its opening fence."""
+    words = info.split_whitespace()
     if len(words) == 0:
         return ""
     return words[0].lower()

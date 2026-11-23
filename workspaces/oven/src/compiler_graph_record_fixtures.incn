@@ -31,3 +31,17 @@ pub def required(before: Snapshot, key: str) -> Result[bytes, str]:
     match get(before, key).map_err((error) => error.message())?:
         Some(value) => return Ok(value)
         None => return Err(f"missing persisted envelope {key}")
+
+
+pub def count_prefix(values: list[str], prefix: str) -> int:
+    """Count selected store keys in one engine-owned graph family."""
+    mut count = 0
+    for value in values:
+        if value.startswith(prefix):
+            count += 1
+    return count
+
+
+pub def record_request(key: RecordKey) -> RecordRequest:
+    """Read one complete logical record through its canonical field selection."""
+    return RecordRequest(key=key, selection=RecordSelection.Field("value"))

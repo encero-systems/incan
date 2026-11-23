@@ -21,7 +21,7 @@ use incan_lowering::corpus::{
 use incan_lowering::corpus_recording::{Recording, recordable};
 use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies, check_records_keys};
 use incan_lowering::{
-    Plan, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
+    Plan, PlanAdmissions, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
     layout_runtime_requirements, program_refusals, publish_plan_records, resume_unit_plan, unit_plan,
 };
 use sha2::{Digest, Sha256};
@@ -153,12 +153,14 @@ fn differing_files(
 struct StepDirectories {
     products: PathBuf,
     report: PathBuf,
+    admissions: PlanAdmissions,
     /// The produced module initializer names the reference products a case restores are renamed to.
     names: BTreeMap<i64, String>,
     /// A recording call reads the products its previous call wrote, as the reference's did, instead of restoring them.
     chained: bool,
 }
 
+/// Prepare the product and report directories and their admission state for one replay case.
 fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
     let root = scratch.join("case");
     if root.exists() {
@@ -167,6 +169,7 @@ fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
     let directories = StepDirectories {
         products: root.join("products"),
         report: root.join("report"),
+        admissions: PlanAdmissions::default(),
         names: BTreeMap::new(),
         chained: false,
     };
@@ -177,11 +180,11 @@ fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
 
 /// The produced module initializer names of a case's final plan, from one replay of its steps.
 fn prepass_names(corpus: &Corpus, case: &Case, scratch: &Path) -> Result<BTreeMap<i64, String>, String> {
-    let directories = case_directories(scratch)?;
+    let mut directories = case_directories(scratch)?;
     let mut continuation = None;
     let mut names = BTreeMap::new();
     for step in &case.steps {
-        let (actual, _) = replay_step(corpus, step, &directories, &mut continuation)?;
+        let (actual, _) = replay_step(corpus, step, &mut directories, &mut continuation)?;
         if let Outcome::Complete(Some(plan)) = &actual {
             names = produced_initializers(plan);
         }
@@ -217,10 +220,11 @@ fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result
     })
 }
 
+/// Run one captured call with the case's retained continuation and settled admissions.
 fn replay_step(
     corpus: &Corpus,
     step: &Step,
-    directories: &StepDirectories,
+    directories: &mut StepDirectories,
     continuation: &mut Option<UnitContinuation>,
 ) -> Result<(Outcome, Vec<incan_semantics_core::body_ir::NativeUnionDeclaration>), String> {
     let modules = corpus.modules(&step.modules)?;
@@ -228,7 +232,14 @@ fn replay_step(
     let mut unions = Vec::new();
     let answer = match step.call.as_str() {
         "unit" => outcome(
-            unit_plan(&modules, &inputs, step.entry, &step.kind, &mut unions),
+            unit_plan(
+                &modules,
+                &inputs,
+                step.entry,
+                &step.kind,
+                &mut unions,
+                &mut directories.admissions,
+            ),
             continuation,
         ),
         "resume" => match continuation.take() {
@@ -257,6 +268,7 @@ fn replay_step(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Compare one captured case's plans, record files, and final publication against the corpus.
 fn replay_case(
     corpus: &Corpus,
     name: &str,
@@ -308,7 +320,7 @@ fn replay_case(
         tally.steps += 1;
         directories.chained =
             recorded.is_some() && index > 0 && step.products_before == case.steps[index - 1].products_after;
-        let (actual, unions) = replay_step(corpus, step, &directories, &mut continuation)?;
+        let (actual, unions) = replay_step(corpus, step, &mut directories, &mut continuation)?;
         if let Some(cursor) = trace.as_mut() {
             report_reuse(corpus, name, index, step, &cursor.take(), evidence.base.as_ref())?;
         }
@@ -457,8 +469,9 @@ fn compare_publication(
     let plan: Plan = postcard::from_bytes(produced).map_err(|error| error.to_string())?;
     if let Err(refusal) = publish_plan_records(
         &plan,
-        directories.products.to_string_lossy().into_owned(),
-        directories.report.to_string_lossy().into_owned(),
+        &directories.products.to_string_lossy(),
+        &directories.report.to_string_lossy(),
+        &directories.admissions,
     ) {
         tally.mismatches.push(format!("{name}: publication refused: {refusal}"));
         return Ok(());
@@ -546,6 +559,7 @@ fn check_case_records_keys(corpus: &Corpus, name: &str, case: &Case, scratch: &P
         let directories = StepDirectories {
             products: directory.clone(),
             report: directory.join("report"),
+            admissions: PlanAdmissions::default(),
             names: BTreeMap::new(),
             chained: false,
         };

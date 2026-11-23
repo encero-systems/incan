@@ -169,7 +169,7 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     snapshot = string_field(original_records[0], "snapshot_id")
     if not snapshot.startswith("snapshot:"):
         return Err("an export has no content-addressed snapshot identity")
-    fresh = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    fresh = invoke(incan, snapshot_status_command(original_records[0], snapshot), project)?
     if fresh.code != Some(0) or snapshot_stale(fresh.stdout)?:
         return Err("an unchanged snapshot is stale")
     check_identity_queries(incan, project, original)?
@@ -207,7 +207,7 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
     check_comment_freshness(incan, project, source, before)?
     write(source, f"{prefix_comment(source)} source positions are provenance\n{before}")?
     moved = document(incan, project, "jsonl")?
-    stale = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    stale = invoke(incan, snapshot_status_command(original.records[0], snapshot), project)?
     if stale.code != Some(0) or not snapshot_stale(stale.stdout)?:
         return Err("changed source did not invalidate the snapshot")
     if original.digest == moved.digest:
@@ -228,7 +228,7 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
         if declaration_identities(original)? == declaration_identities(changed)?:
             failures.append("a real source signature change retained every declaration identity")
     write(source, "this is invalid in both languages {")?
-    invalid = document(incan, project, "jsonl")?
+    invalid = document(incan, project, "jsonl", allow_errors=true)?
     refused = invoke(incan, ["inspect", "codegraph", ".", "--strict"], project)?
     write(source, before)?
     if refused.code == Some(0):
@@ -286,11 +286,19 @@ def check_comment_freshness(incan: str, project: Path, source: Path, before: str
     records = document(incan, project, "jsonl")?.records
     snapshot = string_field(records[0], "snapshot_id")
     replace_with_time_preserved(source, f"{before}\n{prefix} snapshot b\n")?
-    status = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    status = invoke(incan, snapshot_status_command(records[0], snapshot), project)?
     write(source, before)?
     if status.code != Some(0) or not snapshot_stale(status.stdout)?:
         return Err("an equal-size comment edit left the source snapshot fresh")
     return Ok(None)
+
+
+def snapshot_status_command(header: JsonValue, snapshot: str) -> list[str]:
+    """Ask for the matching explicit mode of a previously exported snapshot."""
+    command = ["inspect", "codegraph", ".", "--stale", snapshot]
+    if string_field(header, "mode") == "strict":
+        return command + ["--strict"]
+    return command + ["--allow-errors"]
 
 
 def snapshot_stale(document: str) -> Result[bool, str]:
@@ -313,21 +321,34 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
     """
     A unit that fails checking is named in one warning and contributes only unchecked facts, never costing the others.
 
-    1. Add a function that does not type check to the context unit, and ask four questions about it.
+    1. Add a function that does not type check to the context unit and inspect the results.
     2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
     3. The failing unit's own facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
+    4. Raw JSONL names the author of the source quoted by the diagnostic, separately from its provenance.
+    5. Bare raw export agrees with explicit strict export for healthy and broken source.
+    6. Bare snapshot status recognizes both current export modes and reports an edit to unchecked as stale.
     """
     source = project.joinpath("context").joinpath("src").joinpath("lib.incn")
     if not source.is_file():
         return Ok(None)
-    # 1. A function that does not type check is added to the context unit, and four questions are asked about it.
+    # 1. The bad return gives the diagnostic a workspace-authored spelling to quote.
+    export = ["inspect", "codegraph", "context"]
+    clean_default = invoke(incan, export, project)?
+    clean_strict = invoke(incan, export + ["--strict"], project)?
     before = read(source)?
-    write(source, before + "\n\npub def refused() -> int:\n    return \"not an int\"\n")?
+    prefix = before + "\n\npub def refused() -> int:\n"
+    line = len(prefix.split("\n"))
+    invalid = prefix + "    return missing_context_fact\n"
+    check_bare_snapshot_modes(incan, project, source, before, invalid, clean_default, clean_strict)?
+    write(source, invalid)?
     query = ["inspect", "codegraph", ".", "--query", "defs"]
     sibling = invoke(incan, query + ["checked_helper"], project)?
     broken = invoke(incan, query + ["contextual_helper"], project)?
     repeated = invoke(incan, query + ["contextual_helper"], project)?
     strict = invoke(incan, query + ["contextual_helper", "--strict"], project)?
+    raw = invoke(incan, export + ["--allow-errors", "--format", "jsonl"], project)?
+    broken_default = invoke(incan, export, project)?
+    broken_strict = invoke(incan, export + ["--strict"], project)?
     write(source, before)?
     # 2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
     warnings = [line for line in sibling.stderr.split("\n") if line.startswith("warning:")]
@@ -344,6 +365,154 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
         return Err("a warm query dropped or changed the unchecked warning")
     if strict.code == Some(0) or "graph_context" not in strict.stderr:
         return Err(f"strict export accepted a unit that fails checking: {strict.stderr}")
+    # 4. The raw record retains the compiler's evidence and attributes the quoted source to the workspace.
+    check_diagnostic_author(raw, source, line)?
+    # 5. The bare export refuses the same error as explicit strict, even after a tolerant export warmed the inputs.
+    if broken_strict.code != Some(1) or broken_strict.stdout != "" or "missing_context_fact" not in broken_strict.stderr:
+        return Err("explicit strict raw export failed to refuse the authored type error")
+    if (
+        broken_default.code != broken_strict.code
+        or broken_default.stdout != ""
+        or broken_default.stderr != broken_strict.stderr
+    ):
+        code = broken_default.code.unwrap_or(-1)
+        return Err(f"bare raw export differed from strict on broken source, exit {code}")
+    if clean_default.code != Some(0) or clean_strict.code != Some(0) or clean_default.stdout != clean_strict.stdout:
+        return Err("bare raw export differed from strict on healthy source")
+    return Ok(None)
+
+
+def check_bare_snapshot_modes(
+    incan: str,
+    project: Path,
+    source: Path,
+    before: str,
+    invalid: str,
+    default_export: Outcome,
+    strict_export: Outcome,
+) -> Result[None, str]:
+    """
+    Ordinary status accepts the actual current checked or tolerant snapshot. It still identifies changes on errors.
+
+    1. Capture both explicit mode IDs and ask matching and bare status against the unchanged source.
+    2. Edit otherwise valid source, then make the source unchecked and ask about the old and current snapshots.
+    3. Require the unchanged bare checked answer after the other controls so its failure is specific.
+    """
+    export = ["inspect", "codegraph", "context"]
+    status = export + ["--stale"]
+    tolerant_export = invoke(incan, export + ["--allow-errors"], project)?
+    default_snapshot = export_snapshot(default_export)?
+    strict_snapshot = export_snapshot(strict_export)?
+    tolerant_snapshot = export_snapshot(tolerant_export)?
+    if strict_snapshot == tolerant_snapshot:
+        return Err("explicit checked and tolerant exports share a snapshot identity")
+    require_snapshot_status(incan, project, status + [strict_snapshot, "--strict"], strict_snapshot, false)?
+    require_snapshot_status(incan, project, status + [tolerant_snapshot, "--allow-errors"], tolerant_snapshot, false)?
+    require_snapshot_status(incan, project, status + [tolerant_snapshot], tolerant_snapshot, false)?
+    bare_default = invoke(incan, status + [default_snapshot], project)?
+    bare_strict = invoke(incan, status + [strict_snapshot], project)?
+
+    write(source, before + "\n# snapshot source changed\n")?
+    changed = export_snapshot(invoke(incan, export + ["--allow-errors"], project)?)?
+    for previous in [strict_snapshot, tolerant_snapshot]:
+        require_snapshot_status(incan, project, status + [previous], changed, true)?
+
+    write(source, invalid)?
+    unchecked = export_snapshot(invoke(incan, export + ["--allow-errors"], project)?)?
+    for previous in [strict_snapshot, tolerant_snapshot]:
+        require_snapshot_status(incan, project, status + [previous], unchecked, true)?
+    require_snapshot_status(incan, project, status + [unchecked], unchecked, false)?
+    strict_refused = invoke(incan, status + [strict_snapshot, "--strict"], project)?
+    write(source, before)?
+    if (
+        strict_refused.code != Some(1)
+        or strict_refused.stdout != ""
+        or "missing_context_fact" not in strict_refused.stderr
+    ):
+        return Err("explicit strict snapshot status failed to refuse unchecked input")
+
+    if (
+        bare_strict.code != Some(0)
+        or snapshot_stale(bare_strict.stdout)?
+        or status_snapshot(bare_strict)? != strict_snapshot
+    ):
+        return Err("bare snapshot status reported an unchanged checked export as stale")
+    if (
+        bare_default.code != Some(0)
+        or snapshot_stale(bare_default.stdout)?
+        or status_snapshot(bare_default)? != default_snapshot
+    ):
+        return Err("ordinary export followed by ordinary status reported unchanged source as stale")
+    return Ok(None)
+
+
+def export_snapshot(outcome: Outcome) -> Result[str, str]:
+    """Take the snapshot directly from a successful ordinary JSONL export."""
+    if outcome.code != Some(0):
+        return Err(f"snapshot export failed: {outcome.stderr}")
+    return required_text(parse_json(outcome.stdout.split("\n")[0])?, "snapshot_id")
+
+
+def status_snapshot(outcome: Outcome) -> Result[str, str]:
+    """The current snapshot ID named by a status response."""
+    return required_text(parse_json(outcome.stdout)?, "snapshot_id")
+
+
+def require_snapshot_status(
+    incan: str,
+    project: Path,
+    arguments: list[str],
+    current: str,
+    stale: bool,
+) -> Result[None, str]:
+    """Require a successful status with the expected current ID and staleness."""
+    outcome = invoke(incan, arguments, project)?
+    if outcome.code != Some(0) or snapshot_stale(outcome.stdout)? != stale or status_snapshot(outcome)? != current:
+        command = " ".join(arguments)
+        return Err(f"snapshot status differed for {command}, expected {current} with stale={stale}")
+    return Ok(None)
+
+
+def check_diagnostic_author(raw: Outcome, source: Path, line: int) -> Result[None, str]:
+    """Require one compiler diagnostic with its exact authored anchor and separate workspace author."""
+    if raw.code != Some(0):
+        return Err(f"tolerant raw diagnostic export failed: {raw.stderr}")
+    lines = raw.stdout.split("\n")
+    header = parse_json(lines[0])?
+    if string_field(header, "mode") != "allow_errors" or required(header, "degraded")?.as_bool() != Some(true):
+        return Err("tolerant raw diagnostic export is missing its degraded header")
+    mut diagnostics: list[JsonValue] = []
+    for json in lines[1:]:
+        if json.strip() == "":
+            continue
+        record = parse_json(json)?
+        if (
+            string_field(record, "record") == "diagnostic"
+            and string_field(record, "message") == "Unknown symbol 'missing_context_fact'"
+        ):
+            diagnostics.append(record)
+    if len(diagnostics) != 1:
+        return Err(f"expected one authored raw diagnostic, found {len(diagnostics)}")
+    diagnostic = diagnostics[0]
+    if (
+        string_field(diagnostic, "code") != "INCAN-T0001"
+        or string_field(diagnostic, "origin") != "typechecker"
+        or string_field(diagnostic, "provenance") != "diagnostic"
+        or required(diagnostic, "degraded")?.as_bool() != Some(true)
+    ):
+        return Err("raw diagnostic lost its compiler provenance or degraded state")
+    span = required(diagnostic, "primary_span")?
+    if (
+        string_field(span, "file") != source.0
+        or required(span, "start_line")?.as_int() != Some(line)
+        or required(span, "end_line")?.as_int() != Some(line)
+        or required(span, "start_column")?.as_int() != Some(12)
+        or required(span, "end_column")?.as_int() != Some(32)
+    ):
+        return Err(f"raw diagnostic lost the authored identifier's anchor at {source.0}:{line}:12")
+    author = diagnostic.get("author").unwrap_or(JsonValue.null())
+    if string_field(author, "kind") != "workspace":
+        return Err("raw diagnostic quotes missing_context_fact without a workspace author")
     return Ok(None)
 
 

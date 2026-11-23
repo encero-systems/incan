@@ -142,15 +142,9 @@ impl TypeChecker {
         member: &str,
     ) -> Result<Option<ResolvedPublicModuleSymbol>, Vec<String>> {
         if module_path.is_empty() {
-            let Some(kind) = self.lookup_pub_library_symbol_member(library, member) else {
+            let Some((kind, canonical)) = self.resolve_pub_library_root_member(library, member) else {
                 return Ok(None);
             };
-            let canonical = self.loaves.manifest(library).and_then(|manifest| {
-                manifest
-                    .contract_metadata
-                    .identity_graph
-                    .canonical_for_public_name(member)
-            });
             return Ok(Some(ResolvedPublicModuleSymbol {
                 kind,
                 canonical,
@@ -183,6 +177,30 @@ impl TypeChecker {
             source_module_path,
             source_name: resolved.source_name,
         }))
+    }
+
+    /// Reuse a bare Rust re-export's admitted identity and ABI. Missing compatible records leave the manifest
+    /// resolver's signature, partial and alias precedence in charge.
+    fn resolve_pub_library_root_member(
+        &mut self,
+        library: &str,
+        member: &str,
+    ) -> Option<(SymbolKind, Option<CanonicalSymbolId>)> {
+        // An error on selected path facts is retained by the index for validate_demands.
+        if let Some((target, canonical)) = self.loaves.root_rust_reexport_target(library, member).ok()?
+            && let Some(kind) = self.indexed_rust_reexport_symbol(library, &target)
+        {
+            self.cache_transitive_pub_export_semantics(library);
+            return Some((kind, Some(canonical)));
+        }
+        let kind = self.lookup_pub_library_symbol_member(library, member)?;
+        let canonical = self
+            .loaves
+            .manifest(library)?
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_name(member);
+        Some((kind, canonical))
     }
 
     /// Resolve partial-call projection metadata for a member reached through a checked public module namespace.

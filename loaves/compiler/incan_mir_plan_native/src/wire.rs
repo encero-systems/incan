@@ -9,7 +9,10 @@
 use std::sync::OnceLock;
 
 // The standard library's native row codec, by the stable names the compiler bindings publish.
-use internal_models_bindings::{RowAdmission, RowRead, RowRequest, RowWriteRequest};
+use internal_models_bindings::{
+    MappedView, RowAdmission, RowRead, RowRequest, RowWriteRequest, binary_list_field_views,
+    binary_message as view_error, codec_allowance, create_budget, crumb_message, view_len, view_request,
+};
 
 /// The largest encoded plan or graph record, in bytes.
 pub(crate) const MAX_RECORD_BYTES: i64 = 67_108_864;
@@ -671,6 +674,11 @@ impl AdmittedRow {
         self.admission.records
     }
 
+    /// The written selector of the only row in an admitted graph envelope.
+    pub(crate) fn root_key(&self) -> Vec<u8> {
+        self.admission.key(0)
+    }
+
     /// Materialize the root row's selector and value under the remaining allowance.
     pub(crate) fn read_root(mut self) -> Result<(Vec<u8>, Wire), String> {
         let mut read = self
@@ -679,7 +687,7 @@ impl AdmittedRow {
         let used = (read.bytes_charged, read.elements_charged);
         settle(&mut self.budget, used, &read.category, read.offset)?;
         let value = build(&mut read)?;
-        Ok((self.admission.key(0), value))
+        Ok((self.root_key(), value))
     }
 }
 
@@ -694,8 +702,31 @@ pub(crate) fn admit_root(
     if encoded.len() as u64 > MAX_RECORD_BYTES as u64 {
         return Err(format!("{name} exceeds its byte limit"));
     }
+    admit_root_request(RowRequest::new(encoded.to_vec(), false, true), root, schema, name)
+}
+
+/// Admit an immutable range and keep the paired backing for subsequent field projections.
+pub(crate) fn admit_root_view<'a>(
+    view: &'a MappedView,
+    root: &[u8],
+    schema: &Schema,
+    name: &str,
+) -> Result<MappedAdmittedRow<'a>, String> {
+    if view_len(view) > MAX_RECORD_BYTES {
+        return Err(format!("{name} exceeds its byte limit"));
+    }
+    let (row, _) = admit_root_request(view_request(view, false, true), root, schema, name)?;
+    Ok(MappedAdmittedRow { row, view })
+}
+
+/// Run the same exact description and row admission for owned bytes and retained views.
+fn admit_root_request(
+    mut request: RowRequest,
+    root: &[u8],
+    schema: &Schema,
+    name: &str,
+) -> Result<(AdmittedRow, Vec<i64>), String> {
     let mut budget = Budget::graph();
-    let mut request = RowRequest::new(encoded.to_vec(), false, true);
     for description in schema.descriptions() {
         request.supply(description.clone());
     }
@@ -725,6 +756,61 @@ pub(crate) fn admit_root(
         slots.push(slot);
     }
     Ok((AdmittedRow { admission, budget }, slots))
+}
+
+/// An exact admitted row with the same immutable range from which its parser derived every field offset.
+pub(crate) struct MappedAdmittedRow<'a> {
+    pub(crate) row: AdmittedRow,
+    view: &'a MappedView,
+}
+
+impl MappedAdmittedRow<'_> {
+    /// Project a required binary field's payload without creating a byte buffer.
+    pub(crate) fn binary_view(&mut self, identity: &[u8]) -> Result<MappedView, String> {
+        let budget = &mut self.row.budget;
+        let field =
+            self.row
+                .admission
+                .binary_field_cell(0, identity.to_vec(), budget.bytes, budget.elements, budget.depth);
+        settle(
+            budget,
+            (field.bytes_charged, field.elements_charged),
+            &field.category,
+            field.offset,
+        )?;
+        if !field.present {
+            return Err("admitted binary field is absent".into());
+        }
+        let mut selected = self.view.clone();
+        selected.0 = self
+            .view
+            .0
+            .slice(field.origin, field.length)
+            .ok_or("admitted binary field extends outside its row")?;
+        Ok(selected)
+    }
+
+    /// Retain exact binary list members under the same remaining allowance, without projecting their bodies.
+    pub(crate) fn binary_list_views(&mut self, identity: &[u8], count: i64) -> Result<Vec<MappedView>, String> {
+        let budget = &mut self.row.budget;
+        let before = (budget.bytes, budget.elements);
+        let mut allowance = create_budget(before.0, before.1, budget.depth).map_err(|error| crumb_message(&error))?;
+        let result = binary_list_field_views(
+            &self.row.admission,
+            self.view,
+            &identity.to_vec(),
+            count,
+            &mut allowance,
+        );
+        let left = codec_allowance(&allowance);
+        budget
+            .charge_bytes(before.0 - left.0)
+            .map_err(|error| error.message())?;
+        budget
+            .charge_elements(before.1 - left.1)
+            .map_err(|error| error.message())?;
+        result.map_err(|error| view_error(&error))
+    }
 }
 
 /// The envelope range of one root field's cell: its origin and length, or `None` when the field is absent.
@@ -776,6 +862,18 @@ impl AdmittedRow {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Native binary byte buffers materialized by the wire reader on this test's thread.
+    static MATERIALIZED_BINARY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Take the current test's materialization count before comparing the mapped route.
+#[cfg(test)]
+pub(crate) fn take_materialized_binary_bytes() -> usize {
+    MATERIALIZED_BINARY_BYTES.with(|count| count.replace(0))
+}
+
 /// Build one logical value from a successful native read's pre-order nodes.
 fn build(read: &mut RowRead) -> Result<Wire, String> {
     let code = read.next();
@@ -789,7 +887,12 @@ fn build(read: &mut RowRead) -> Result<Wire, String> {
         4 => Wire::Unsigned(read.unsigned()),
         5 => Wire::Float(read.number(), read.bytes()),
         7 => Wire::Text(read.text()),
-        8 => Wire::Binary(read.bytes()),
+        8 => {
+            let bytes = read.bytes();
+            #[cfg(test)]
+            MATERIALIZED_BINARY_BYTES.with(|count| count.set(count.get() + bytes.len()));
+            Wire::Binary(bytes)
+        }
         10 => Wire::List(build_values(read, count)?),
         11 => Wire::Tuple(build_values(read, count)?),
         14 => Wire::Record(build_fields(read, count)?),

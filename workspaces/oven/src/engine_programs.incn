@@ -31,7 +31,7 @@ from compiler_body_values import (
     select_namespace_inventory_except,
 )
 from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
-from compiler_plan_modules import restored_modules
+from compiler_plan_modules import plan_module_admissions
 from compiler_refusals import PreparedWarnings, replay_checked_warnings
 from compiler_graph_records import (
     EditCutoff, EditReaders, PlanImportReach, ReceiptProjectionCache,
@@ -431,8 +431,15 @@ pub def obtain(
     invalid_plans = sorted([owner for owner in plan_reads.keys()])
     positioned = set([key.identity for key in projected.keys if key.family == "source-positioned" and key.origin == origin])
     plan_modules = select_plan_modules(
-        graph, origin, invalid_namespaces, invalid + invalid_plans, namespaces.complete, positioned, cutoff,
+        graph,
+        origin,
+        invalid_namespaces,
+        invalid + invalid_plans,
+        namespaces.complete,
+        positioned,
+        cutoff,
         reachable_modules=modules,
+        compact_authority=toolchain.supports_plan_module_selection_digest,
     )?
     covered = plan_modules.covered
     record_work(Operation.EngineSelect, "plan-modules", selecting)
@@ -456,6 +463,10 @@ pub def obtain(
     record_work(Operation.EngineSelect, "plan-inventory", selecting)
     selected_bodies.extend(scalar_plans.pages)
     selected_bodies.extend(plan_modules.pages)
+    mut expected_plan_selection: Option[str] = None
+    if let Some(authority) = plan_modules.authority:
+        expected_plan_selection = Some(authority.digest)
+        selected_bodies.append(authority)
     runtime_key = runtime_requirements_key(origin, ready.source, ready.profile)
     if not listing_refusals:
         if let Some(requirements) = get(graph, runtime_key).map_err((error) => error.message())?:
@@ -473,7 +484,6 @@ pub def obtain(
     if produced.evaluations > 0:
         reading_plan_sidecars = begin_work()
         plan_counts = plan_record_counts(ready, compiled_key, toolchain.unit_descriptor_crumb)?
-        plan_module_reuses = len(restored_modules(admission_report, whole_only=true)?)
         record_work(
             Operation.EngineSidecarAuthentication,
             plan_report.0,
@@ -512,6 +522,14 @@ pub def obtain(
     mut checker_counts = CheckerRecordCounts()
     mut demand_work = LoweringDemandWork()
     if produced.native_bakes == 1:
+        reading_admissions = begin_work()
+        if produced.plan_module_selection_digest is not None and produced.plan_module_selection_digest != expected_plan_selection:
+            return Err("successful Plan dispatch differs from the selected module authority")
+        admissions = match produced.plan_module_selection_digest:
+            Some(digest) => plan_module_admissions(admission_report, Some(graph), plan_modules.records, Some(digest))?
+            None => plan_module_admissions(admission_report, None, [], None)?
+        plan_module_reuses = len(admissions.restored_modules(whole_only=true))
+        record_work(Operation.EngineSidecarAuthentication, admission_report.0, reading_admissions)
         runtime_report = records.joinpath(RUNTIME_REQUIREMENTS_REPORT)
         if runtime_report.is_file():
             requirements = runtime_report.read_bytes().map_err((error) => error.message())?
@@ -542,6 +560,7 @@ pub def obtain(
             cutoff,
             record_writer,
             captured_sources,
+            plan_admissions=Some(admissions),
         )?
         request_transaction = bodies.transaction
         demand_work = bodies.lowering_demands

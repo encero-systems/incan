@@ -40,6 +40,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         Arc::default(),
         None,
         &mut RuntimePlanRecords::default(),
+        &mut PlanAdmissions::default(),
     )?;
     let native_runtime = native_runtime_operations(&plan, &program.dependencies.origins);
     // The dependency inspection's roots come from checked source and final planning, independently of the

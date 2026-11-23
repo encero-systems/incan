@@ -38,7 +38,8 @@ use crate::native_type_identity::{
     extend_constructor_index, extend_generic_constructor_arities, with_generic_constructor_arities,
 };
 use crate::nominal_instances::{NominalInstance, specialize_nominals_with_instances};
-use crate::options::intrinsic_declarations;
+use crate::options::{ClosedCarrierSignatures, intrinsic_declarations};
+use crate::plan_modules::PlanAdmissions;
 use crate::program_context::{ProgramContext, extend_program_context};
 use crate::program_entries::{
     EmittedFrames, collected_test_entries, comparison_bridge_instances, loaf_exports, lower_ordinary_bodies,
@@ -73,6 +74,7 @@ pub struct UnitContinuation {
     pub unions: Vec<IncanType>,
     pub nominal_instances: Vec<NominalInstance>,
     pub intrinsic_layouts: Vec<EnumDeclaration>,
+    closed_carrier_signatures: ClosedCarrierSignatures,
     /// A suspended generic instance pass appended nominals after these layouts were settled.
     layout_inputs_grew: bool,
     pub models: Vec<ModelDeclaration>,
@@ -191,6 +193,7 @@ pub fn unit_plan(
     modules: &[BodyIrModule],
     inputs: &UnitInputs<'_>,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
     let kind = inputs.kind;
     if kind != "program" && kind != "library" && kind != "test" {
@@ -200,7 +203,7 @@ pub fn unit_plan(
     for (identity, witness) in inputs.scalar_bodies {
         scalar_index.insert(identity.clone(), witness.clone());
     }
-    lowered_plan(modules, inputs, scalar_index, published)
+    lowered_plan(modules, inputs, scalar_index, published, admissions)
 }
 
 /// Freeze program dispatch mappings after layout admission, copying storage once from the still-borrowed module.
@@ -252,6 +255,7 @@ fn lowered_plan(
     inputs: &UnitInputs<'_>,
     scalar_bodies: BTreeMap<CompilerNodeId, String>,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
     let trace = traced("INCAN_TRACE_LOWERING");
     let sources = inputs.sources;
@@ -281,12 +285,14 @@ fn lowered_plan(
     } = contexts;
     let shared_source_context = Arc::new(source_context);
     let context = Arc::new(context);
+    let mut closed_carrier_signatures = ClosedCarrierSignatures::default();
     let (constructor_table, body_indices, unions, initial_intrinsics) = layout_tables(
         &context,
         &files[entry],
         &source_files,
         inputs.package_versions,
         Vec::new(),
+        Some(&mut closed_carrier_signatures),
     )?;
     let constructors = Arc::new(with_generic_constructor_arities(
         constructor_table,
@@ -337,7 +343,8 @@ fn lowered_plan(
         inputs.scalar_products.clone(),
         &scalar_bodies,
         inputs.overflow_checks,
-        inputs.record_report.clone(),
+        inputs.record_report.as_deref(),
+        admissions,
     )?;
     let statics = lower_computed_statics(
         &context,
@@ -368,6 +375,7 @@ fn lowered_plan(
                 unions,
                 nominal_instances,
                 intrinsic_layouts: intrinsics,
+                closed_carrier_signatures,
                 layout_inputs_grew: false,
                 models: inventories.models,
                 enums: inventories.enums,
@@ -398,6 +406,7 @@ fn lowered_plan(
             entry_owner,
             entry_file,
             intrinsics,
+            closed_carrier_signatures,
             inventories,
             emitted_frames,
             statics,
@@ -450,6 +459,7 @@ struct Finishing {
     entry_owner: String,
     entry_file: String,
     intrinsics: Vec<EnumDeclaration>,
+    closed_carrier_signatures: ClosedCarrierSignatures,
     inventories: Inventories,
     emitted_frames: EmittedFrames,
     statics: Vec<StaticCell>,
@@ -480,6 +490,7 @@ fn finish_unit_plan(
         entry_owner,
         entry_file,
         mut intrinsics,
+        closed_carrier_signatures,
         mut inventories,
         emitted_frames,
         mut statics,
@@ -542,6 +553,7 @@ fn finish_unit_plan(
                 unions,
                 nominal_instances: retained_nominals,
                 intrinsic_layouts: retry_intrinsic_layouts,
+                closed_carrier_signatures,
                 models: inventories.models,
                 enums: inventories.enums,
                 functions: inventories.functions,
@@ -558,6 +570,7 @@ fn finish_unit_plan(
             drop(retry_intrinsic_layouts);
             drop(retry_externals);
             drop(retry_instances);
+            drop(closed_carrier_signatures);
             statics.extend(instance_cells);
         }
     }
@@ -768,12 +781,13 @@ fn initial_plan_layouts(
 }
 
 /// Prepare matching layout tables and the single specialized body index used by carrier discovery and dispatch.
-pub fn layout_tables(
+pub(crate) fn layout_tables(
     context: &BodyIrModule,
     file: &str,
     source_files: &BTreeMap<String, String>,
     package_versions: &BTreeMap<String, String>,
     retained_intrinsics: Vec<EnumDeclaration>,
+    closed_carrier_signatures: Option<&mut ClosedCarrierSignatures>,
 ) -> Result<(ConstructorIndex, BodyIndex, Vec<IncanType>, Vec<EnumDeclaration>), String> {
     let constructors = index_constructors(&context.nominal_declarations, source_files, package_versions);
     let body_indices = body_index(context);
@@ -785,6 +799,7 @@ pub fn layout_tables(
         file,
         retained_intrinsics,
         "initial",
+        closed_carrier_signatures,
     )?;
     trace_union_selection("initial", unions.len(), unions.len(), &unions);
     Ok((constructors, body_indices, unions, intrinsics))

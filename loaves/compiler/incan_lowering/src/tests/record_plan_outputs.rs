@@ -10,7 +10,9 @@ use incan_mir_plan_native::{
     encode_lowering_refusal, product_nominals, read_module_admission, source_span,
 };
 
-use crate::plan_modules::{AdmittedProduct, report_admitted};
+use crate::plan_modules::{
+    AdmittedProduct, PlanAdmissions, PlanModuleSelection, admitted_page, report_admitted, staged_page_reads,
+};
 use crate::record_plan_outputs::publish_plan_records;
 use crate::scalar_store::{ProductEvent, record_scalar_inputs, report_scalar, retain_scalar};
 
@@ -19,6 +21,7 @@ struct Request {
     root: PathBuf,
     products: String,
     report: String,
+    admissions: PlanAdmissions,
 }
 
 impl Request {
@@ -32,6 +35,7 @@ impl Request {
         Ok(Request {
             products: products.to_string_lossy().into_owned(),
             report: report.to_string_lossy().into_owned(),
+            admissions: PlanAdmissions::default(),
             root,
         })
     }
@@ -143,7 +147,7 @@ fn fresh_keyed_plan_retains_the_whole_program_function() -> Result<(), String> {
     let whole = unit_function("main", 1);
     let unit = plan(vec![whole.clone()], &[]);
     let key = retain_product(&request, &unit_function("main", 2), false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert_eq!(request.interface_plan()?, unit);
     let reported = decode_lowering_event(&read(&request.report(&format!("{key}.event")))?)?;
     let retained = read(&Path::new(&request.products).join(format!("{key}.incnfunction")))?;
@@ -166,7 +170,7 @@ fn runtime_retry_keeps_current_requests_product_fresh() -> Result<(), String> {
     )?;
     assert!(!decode_lowering_event(&read(&path)?)?.reused);
     let unit = plan(vec![unit_function("main", 1)], &["main"]);
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert_eq!(request.interface_plan()?, unit);
     Ok(())
 }
@@ -184,8 +188,8 @@ fn reused_keyed_plan_must_equal_whole_program_plan() -> Result<(), String> {
     std::fs::write(request.report("helper.refusal"), encode_lowering_refusal(&refusal)?)
         .map_err(|error| error.to_string())?;
     retain_product(&request, &unit_function("main", 2), true)?;
-    match publish_plan_records(&unit, &request.products, &request.report) {
-        Ok(()) => panic!("a reused keyed plan that differs from the whole-program plan was accepted"),
+    match publish_plan_records(&unit, &request.products, &request.report, &request.admissions) {
+        Ok(_) => panic!("a reused keyed plan that differs from the whole-program plan was accepted"),
         Err(message) => assert!(
             message.contains("plan-function main differs from the whole-program plan"),
             "{message}"
@@ -231,7 +235,7 @@ fn keyed_plan_naming_a_model_publishes_its_interface() -> Result<(), String> {
         Some(&request.report),
         &event(&request, &inputs, &function.name, false, &references),
     )?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert_eq!(request.interface_plan()?, unit);
     Ok(())
 }
@@ -249,7 +253,7 @@ fn keyed_plan_carrying_a_frame_refuses_the_interface() -> Result<(), String> {
         Some(&request.report),
         &event(&request, &inputs, &caller.name, false, &[]),
     )?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         !request.report(INTERFACE_REPORT).is_file(),
         "a unit with a carried frame published an interface"
@@ -272,7 +276,7 @@ fn keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -> Result<(
     let adapter = unit_function("__incan_module_runtime_assert__runtime_frame", 2);
     let unit = plan(vec![caller.clone(), adapter.clone()], &[]);
     retain_product(&request, &caller, false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         !request.report(INTERFACE_REPORT).is_file(),
         "an unwitnessed runtime frame published an interface"
@@ -297,7 +301,7 @@ fn keyed_plan_with_a_returning_main_refuses_the_interface() -> Result<(), String
     main.return_type = PlanType::Int;
     let unit = plan(vec![main.clone()], &[]);
     retain_product(&request, &main, false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         !request.report(INTERFACE_REPORT).is_file(),
         "a main the entry record cannot bind published an interface"
@@ -327,7 +331,7 @@ fn keyed_plan_calling_a_linked_crate_publishes_the_interface() -> Result<(), Str
         span: keyed_span(),
     }];
     retain_product(&request, &main, false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         request.report(INTERFACE_REPORT).is_file(),
         "a unit inventory naming a linked crate published no interface"
@@ -354,7 +358,7 @@ fn plan_evidence() -> AdmittedProduct {
 /// An incomplete interface can publish native fingerprints from admitted evidence without reopening its plan page.
 #[test]
 fn admitted_definition_publication_uses_settled_products_without_reading_pages() -> Result<(), String> {
-    let request = Request::new("retain-admitted-native-definition")?;
+    let mut request = Request::new("retain-admitted-native-definition")?;
     let owner = AdmittedFunction {
         function: "main".into(),
         identity: "stable.main".into(),
@@ -362,16 +366,24 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
         placement: None,
     };
     report_admitted(
+        &mut request.admissions,
         Some(&request.report),
         "m",
-        &[owner],
-        &[plan_evidence()],
+        vec![owner],
+        vec![plan_evidence()],
         1,
         true,
         Some(&request.products),
+        None,
     )?;
+    assert!(
+        !Path::new(&request.products)
+            .join("admissions/6d.admitted.frames")
+            .is_file(),
+        "one redundant per-module frame sidecar was written"
+    );
     let unit = plan(vec![unit_function("main", 1), unit_function("helper", 2)], &[]);
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     let definitions = decode_admitted_definitions(&read(&request.report(ADMITTED_DEFINITIONS))?)?;
     assert_eq!(definitions.len(), 1);
     assert_eq!(definitions[0].function, "main");
@@ -381,7 +393,7 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
     assert!(!request.report(INTERFACE_REPORT).is_file());
     // A complete interface must still read actual product bytes and refuse a missing page.
     let complete = plan(vec![unit_function("main", 1)], &[]);
-    assert!(publish_plan_records(&complete, &request.products, &request.report).is_err());
+    assert!(publish_plan_records(&complete, &request.products, &request.report, &request.admissions).is_err());
     Ok(())
 }
 
@@ -404,13 +416,15 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
         };
         let products = attempt.join("products").to_string_lossy().into_owned();
         report_admitted(
+            &mut PlanAdmissions::default(),
             Some(&root_text),
             "m",
-            &[owner],
-            &[plan_evidence()],
+            vec![owner],
+            vec![plan_evidence()],
             1,
             true,
             Some(&products),
+            None,
         )?;
     }
     for (line, attempt) in (8..).zip(&attempts) {
@@ -467,7 +481,7 @@ fn every_function_without_an_event_has_a_native_input() -> Result<(), String> {
             &event(&request, &inputs, &caller.name, false, &[]),
         )?;
         let unit = plan(vec![caller.clone(), frame.clone(), adapter.clone()], &[]);
-        publish_plan_records(&unit, &request.products, &request.report)?;
+        publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
         assert!(!request.report(INTERFACE_REPORT).is_file());
         let named = native_inputs(&request)?;
         let key = std::fs::read_dir(&request.report)
@@ -511,7 +525,7 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
         POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, encode_lowering_event, encode_plan_module,
     };
 
-    let request = Request::new("complete-admitted-interface")?;
+    let mut request = Request::new("complete-admitted-interface")?;
     let function = unit_function("main", 1);
     let key = retain_product(&request, &function, false)?;
     let event_path = request.report(&format!("{key}.event"));
@@ -543,16 +557,18 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
         helpers: Vec::new(),
     };
     report_admitted(
+        &mut request.admissions,
         Some(&request.report),
         "m",
-        std::slice::from_ref(&owner),
-        std::slice::from_ref(&evidence),
+        vec![owner.clone()],
+        vec![evidence.clone()],
         1,
         false,
         Some(&request.products),
+        None,
     )?;
     let whole = plan(vec![function], &[]);
-    publish_plan_records(&whole, &request.products, &request.report)?;
+    publish_plan_records(&whole, &request.products, &request.report, &request.admissions)?;
     let produced = postcard::to_allocvec(&request.interface_plan()?).map_err(|error| error.to_string())?;
     let expected = postcard::to_allocvec(&whole).map_err(|error| error.to_string())?;
     assert_eq!(produced, expected);
@@ -561,17 +577,187 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
 
     evidence.digest = format!("sha256:{}", "ef".repeat(32));
     report_admitted(
+        &mut request.admissions,
         Some(&request.report),
         "m",
-        &[owner],
-        &[evidence],
+        vec![owner],
+        vec![evidence],
         1,
         false,
         Some(&request.products),
+        None,
     )?;
-    match publish_plan_records(&whole, &request.products, &request.report) {
+    match publish_plan_records(&whole, &request.products, &request.report, &request.admissions) {
         Err(error) if error.contains("digest differs from its settled product") => Ok(()),
         Err(error) => Err(error),
-        Ok(()) => Err("a changed admission digest was accepted".into()),
+        Ok(_) => Err("a changed admission digest was accepted".into()),
     }
+}
+
+/// A complete selected positioned module uses one compact note beside the separate changed scalar event.
+#[test]
+fn settled_positioned_module_emits_one_compact_note() -> Result<(), String> {
+    use incan_mir_plan_native::{
+        ADMITTED_MODULE_NOTE, POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, compact_admission_pin,
+        decode_whole_module_admission, encode_lowering_event, encode_plan_module,
+    };
+    use sha2::{Digest, Sha256};
+
+    let mut request = Request::new("settled-positioned-compact")?;
+    let unchanged = unit_function("unchanged", 1);
+    let keyed = retain_product(&request, &unchanged, false)?;
+    let initial = request.report(&format!("{keyed}.event"));
+    let mut event = decode_lowering_event(&read(&initial)?)?;
+    std::fs::remove_file(initial).map_err(|error| error.to_string())?;
+    event.module = "m".into();
+    let product = decode_plan_function_record(&event.product)?;
+    let page = encode_plan_module(&PlanModuleValue {
+        module: event.module.clone(),
+        functions: vec![PlanModuleFunction {
+            function: event.function.clone(),
+            identity: event.identity.clone(),
+            symbol: event.identity.clone(),
+            key: keyed.clone(),
+            event: encode_lowering_event(&event)?,
+        }],
+    })?;
+    let products = PathBuf::from(&request.products);
+    let basename = format!("6d{POSITIONED_MODULE_PAGE}");
+    let digest = hex::encode(Sha256::digest(&page));
+    std::fs::write(products.join(&basename), page).map_err(|error| error.to_string())?;
+    std::fs::write(products.join(format!("{basename}.digest")), &digest).map_err(|error| error.to_string())?;
+    let pin = [0x39; 32];
+    let output = format!("plan-module\tincan.stable-declaration/1\tprobe\tm.incn\tchecked\t{digest}");
+    let selection = positioned_selection(&digest, &output, pin);
+    let owner = AdmittedFunction {
+        function: event.function,
+        identity: event.identity,
+        references: event.references,
+        placement: None,
+    };
+    let evidence = AdmittedProduct {
+        key: keyed,
+        digest: product.digest,
+        helpers: Vec::new(),
+    };
+    let name = format!("6d{ADMITTED_MODULE_NOTE}");
+    let note_path = products.join("admissions").join(&name);
+    let publish = |request: &mut Request, selection, owner, evidence, unit: &Plan| -> Result<_, String> {
+        let empty = !note_path.is_file();
+        request.admissions = PlanAdmissions::with_selection(selection);
+        let staged = admitted_page(Some(&request.products), "m", Some("keyed-plan-test"));
+        report_admitted(
+            &mut request.admissions,
+            Some(&request.report),
+            "m",
+            vec![owner],
+            vec![evidence],
+            1,
+            false,
+            Some(&request.products),
+            staged.positioned_content(),
+        )?;
+        if empty && request.admissions.selection().is_some() {
+            assert!(
+                !note_path.is_file(),
+                "a compact candidate wrote a provisional scalar note"
+            );
+        }
+        publish_plan_records(unit, &request.products, &request.report, &request.admissions)
+    };
+    let changed = unit_function("main", 2);
+    let changed_key = retain_product(&request, &changed, false)?;
+    let unit = plan(vec![unchanged, changed], &[]);
+    let page = products.join(&basename);
+    let before = staged_page_reads(&page);
+    let settled = publish(&mut request, Some(selection), owner.clone(), evidence.clone(), &unit)?;
+    assert_eq!(
+        settled.map_or(0, |pin| pin.count),
+        1,
+        "a settled complete positioned module emitted no compact note"
+    );
+    assert_eq!(
+        staged_page_reads(&page) - before,
+        1,
+        "the complete interface opens its selected page once"
+    );
+    let encoded = read(&note_path)?;
+    let note_digest = Sha256::digest(&encoded);
+    let verified = compact_admission_pin([("m", note_digest.into())])?;
+    assert_eq!(settled, Some(verified));
+    let note = decode_whole_module_admission(&encoded)?;
+    assert_eq!(
+        (note.module, note.output, note.digest, note.count, note.selection),
+        ("m".into(), output, digest, 1, hex::encode(pin))
+    );
+    assert_eq!(read(&request.report(&name))?, encoded);
+    assert!(!products.join("admissions").join(format!("{name}.placement")).exists());
+    assert!(!request.report(ADMITTED_DEFINITIONS).is_file());
+    let changed_event = decode_lowering_event(&read(&request.report(&format!("{changed_key}.event")))?)?;
+    assert_eq!(changed_event.function, "main");
+    assert_eq!(ordinary_events(&request)?, ["main"]);
+    let interface = read(&request.report(INTERFACE_REPORT))?;
+    let selected_entry = decode_native_interface(&interface)?.entry;
+    std::fs::remove_file(request.report(&format!("{selected_entry}.event"))).map_err(|error| error.to_string())?;
+    assert_eq!(publish(&mut request, None, owner, evidence, &unit)?, None);
+    let scalar = read_module_admission(&note_path.to_string_lossy())?;
+    assert!(scalar.complete && scalar.functions.len() == 1);
+    assert_eq!(read(&request.report(INTERFACE_REPORT))?, interface);
+    println!(
+        "compact fixture notes={} set={} private_note={} interface={} full_page_reads=1",
+        verified.count,
+        hex::encode(verified.digest),
+        hex::encode(&encoded),
+        hex::encode(Sha256::digest(&interface)),
+    );
+    let native = postcard::to_allocvec(&request.interface_plan()?).map_err(|error| error.to_string())?;
+    let expected = postcard::to_allocvec(&unit).map_err(|error| error.to_string())?;
+    assert_eq!(native, expected);
+    Ok(())
+}
+
+/// One independently selected exact positioned page.
+fn positioned_selection(digest: &str, output: &str, pin: [u8; 32]) -> PlanModuleSelection {
+    use incan_mir_plan_native::{PlanModuleSelectionRecord, PlanSelectedModule, PlanSelectionScope};
+
+    PlanModuleSelection::test_selection(
+        PlanModuleSelectionRecord {
+            scope: PlanSelectionScope {
+                store_root: String::new(),
+                placement: "memory:1".into(),
+                manifest: "ab".repeat(32),
+                generation: 4,
+                view: "home".into(),
+                index: "index".into(),
+                origin: "probe".into(),
+                profile: "incan.lowering-records/12".into(),
+            },
+            modules: vec![PlanSelectedModule {
+                module: "m".into(),
+                output: output.into(),
+                digest: digest.into(),
+                count: 1,
+                positioned: true,
+                rank: 1,
+                certificate: "probe-order".into(),
+            }],
+        },
+        pin,
+    )
+}
+
+/// Report actual emitted scalar definitions, omitting the ordinary pseudo-entry binding.
+fn ordinary_events(request: &Request) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(&request.report).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.extension().is_some_and(|suffix| suffix == "event") {
+            let event = decode_lowering_event(&read(&path)?)?;
+            if event.role != "entry" {
+                names.push(event.function);
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
 }

@@ -1,7 +1,12 @@
 """A nested editable declaration keeps its typed result, anchors and identities across the graph boundary."""
 
 from namespace_proof import encode_namespace_proof, read_namespace_proof
-from executable_scope import decode_executable_scope, encode_executable_scope, prepare_executable_scope_reader, read_executable_scope_source
+from executable_scope import decode_executable_scope, encode_executable_scope, executable_scope_key, prepare_executable_scope_reader, read_executable_scope_source
+from executable_snapshot import ExecutableSnapshot, select_executable_scope
+from records import encode_record_key
+from pub::incan_platform.store import begin, commit, put, read_counts, snapshot as store_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from std.encoding.hex import hexlify
 from std.primitives.views import MappedFile
 from std.hash import sha256
 from namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, prepare_namespace_reader, decode_prepared_namespace, identify_prepared_namespace, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
@@ -108,5 +113,21 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     assert decode_executable_scope(scope, "src/peer.incn").is_err()
     assert decode_executable_scope(encoded, "src/provider.incn").is_err()
     assert decode_executable_scope(scope[:len(scope) - 1], "src/provider.incn").is_err()
+    # A resident worker must select the same exact frame from the current graph without reading it again.
+    digest = hexlify(sha256.digest(scope))
+    scope_key = encode_record_key(executable_scope_key("fixture", "src/provider.incn", digest)?)?
+    base = store_snapshot(memory_root()).map_err((error) => error.message())?
+    origin = commit(put(begin(base), scope_key, scope)).map_err((error) => error.message())?
+    first = select_executable_scope(ExecutableSnapshot(graph=origin, origin="fixture"), "src/provider.incn", digest, None)?
+    edited = commit(put(begin(origin), "unrelated", b"new")).map_err((error) => error.message())?
+    before = read_counts()
+    bound = select_executable_scope(ExecutableSnapshot(graph=edited, origin="fixture"), "src/provider.incn", digest, Some(first.revision.clone()))?
+    after = read_counts()
+    assert after.records == before.records and after.bytes == before.bytes, "resident scope read its frame again"
+    assert bound.revision == first.revision and bound.value is None
+    changed = commit(put(begin(edited), scope_key, b"changed scope")).map_err((error) => error.message())?
+    replaced = select_executable_scope(ExecutableSnapshot(graph=changed, origin="fixture"), "src/provider.incn", digest, Some(first.revision.clone()))?
+    assert replaced.revision != first.revision and replaced.value is not None
+    assert select_executable_scope(ExecutableSnapshot(graph=changed, origin="other"), "src/provider.incn", digest, Some(first.revision.clone())).is_err()
     print(f"typed namespace with nested function, schema and canonical declaration identity: {len(encoded)} bytes")
     return Ok(None)

@@ -5,6 +5,7 @@ This page specifies the JSONL records `incan inspect codegraph` writes. Its opti
 ```bash
 incan inspect codegraph src/main.incn --format jsonl
 incan inspect codegraph . --format jsonl --strict
+incan inspect codegraph . --format jsonl --allow-errors
 ```
 
 ## Stream
@@ -17,8 +18,10 @@ incan inspect codegraph . --format jsonl --strict
 
 | `mode` | Selected by | Source with an error |
 | --- | --- | --- |
-| `strict` | `--strict` | Fails the command. |
-| `allow_errors` | The default. | Parseable units still produce records; stderr names unchecked units. |
+| `strict` | Plain raw export by default, or explicit `--strict`. | Fails the command. |
+| `allow_errors` | `--allow-errors`, or a raw export with `--risk` and without `--strict`. | Parseable units still produce records. Stderr names unchecked units. |
+
+A plain raw export omits `--query`, `--task`, `--stale` and `--risk`.
 
 - An unchecked unit contributes syntax facts without resolved reference or call edges. Checked units in the same selection retain their checked facts.
 - The header's `degraded` is `true` when any selected unit failed checking.

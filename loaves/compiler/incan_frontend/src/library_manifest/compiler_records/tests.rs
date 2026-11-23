@@ -72,9 +72,9 @@ fn path_install_record_publication_and_compatibility() -> Result<(), Box<dyn std
             .iter()
             .any(|declaration| declaration.name == "Price")
     }));
-    let record = manifest.prepare_install_record(&checked)?;
-    let value = record.value.clone();
-    let key = record.key();
+    let record = manifest.prepare_install_record(&checked, false)?;
+    let value = record.record.value.clone();
+    let key = record.record.key();
     let revision = sha256_hex(&value);
     let encoded = manifest.to_json_string()?;
     fs::write(&path, &encoded)?;
@@ -91,6 +91,9 @@ fn path_install_record_publication_and_compatibility() -> Result<(), Box<dyn std
         .ok_or("converter omitted the install family")?;
     assert_eq!(selected.key(), key);
     assert_eq!(selected.value, value);
+    let published: serde_json::Value = serde_json::from_slice(&facts)?;
+    assert_eq!(published["record_content"], converted.digests.record_content);
+    assert_eq!(published["semantic_facts"], converted.digests.semantic_facts);
     let index = open()?;
     let read = index
         .install_record("pricing")?
@@ -101,7 +104,19 @@ fn path_install_record_publication_and_compatibility() -> Result<(), Box<dyn std
         .ok_or("indexed path lost its admitted row")?;
     assert!(Arc::ptr_eq(&read, &repeated));
 
-    let mut corrupted: serde_json::Value = serde_json::from_slice(&facts)?;
+    let mut corrupted = published;
+    corrupted["path_named_records"] = serde_json::Value::String("{}".into());
+    fs::write(&sidecar, serde_json::to_vec(&corrupted)?)?;
+    let fresh = open()?;
+    assert!(
+        fresh.install_record("pricing").is_err(),
+        "corrupt named API was admitted"
+    );
+    assert!(
+        fresh.validate_demands().is_err(),
+        "the named API refusal was not retained"
+    );
+
     corrupted["install_record"]["value"] = serde_json::Value::String("00".into());
     fs::write(&sidecar, serde_json::to_vec(&corrupted)?)?;
     let fresh = open()?;

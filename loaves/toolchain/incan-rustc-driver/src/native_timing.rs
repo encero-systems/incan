@@ -6,6 +6,7 @@
 //! with `eprintln!`, so a timed rustc run redirects stderr and routes rustc's own records to the trace; every other
 //! captured line still reaches stderr. rustc's incremental session statistics are printed only when the timing
 //! setting is `incremental`, never for an ordinary timing request.
+//! The `handoff` setting adds the exact flushed and decoded packet fingerprints to the existing trace.
 
 use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
@@ -85,19 +86,26 @@ pub(crate) struct Timing(Option<Clock>);
 struct Clock {
     started: Instant,
     previous: Instant,
+    handoff_proof: bool,
 }
 
 impl Timing {
     /// Start observing only when the existing native phase diagnostic has been requested.
     pub(crate) fn requested() -> Self {
         sample_heap();
-        Self(requested().then(|| {
+        Self(std::env::var_os("INCAN_NATIVE_TIMING").map(|mode| {
             let now = Instant::now();
             Clock {
                 started: now,
                 previous: now,
+                handoff_proof: mode == "handoff",
             }
         }))
+    }
+
+    /// Measure exact handoff packets only under the dedicated native diagnostic mode.
+    pub(crate) fn observes_handoff(&self) -> bool {
+        self.0.as_ref().is_some_and(|clock| clock.handoff_proof)
     }
 
     /// Preserve rustc's ordinary compilation policy while enabling its pinned JSON phase format.

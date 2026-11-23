@@ -106,8 +106,8 @@ pub fn compile(
     overflow_checks: bool,
     library_facades: Vec<crate::library_exports::LibraryFacade>,
     plan_record_report: Option<&Path>,
+    compact_definitions: Vec<incan_mir_plan_native::AdmittedDefinition>,
 ) -> Result<(), DriverError> {
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
     force_plan_failure_once()?;
     let features = declared_features(access)?;
@@ -149,7 +149,9 @@ pub fn compile(
 
     // ---- Fresh rustc session and planned MIR ----
     let plan = Arc::new(plan);
-    let reader = Arc::new(PlanReader::new(Arc::clone(&plan), plan_record_report).map_err(DriverError::Invocation)?);
+    let reader = Arc::new(
+        PlanReader::new(Arc::clone(&plan), plan_record_report, compact_definitions).map_err(DriverError::Invocation)?,
+    );
     reader.write_fingerprint_report()?;
     *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&reader));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;

@@ -701,7 +701,11 @@ impl GraphBodyOutput {
                         .into_iter()
                         .zip(scopes.bindings)
                         .filter_map(|(digest, bindings)| {
-                            digest.map(|digest| ExecutableScopeWitness { digest, bindings })
+                            digest.map(|digest| ExecutableScopeWitness {
+                                digest,
+                                revision: None,
+                                bindings,
+                            })
                         })
                         .collect();
                 } else {

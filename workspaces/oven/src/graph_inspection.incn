@@ -28,7 +28,13 @@ from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import matches, query, query_group, selection_keys, text
 from graph_identity import keyed, link_keys, declaration_digests
-from graph_snapshot import artifact_observations, snapshot_identity, snapshot_status
+from graph_snapshot import (
+    artifact_observations,
+    current_snapshot_match,
+    current_status_snapshot,
+    snapshot_identity,
+    snapshot_status,
+)
 from graph_context import pack
 from graph_context_index import ContextIndex
 from graph_context_items import anchor_root
@@ -55,8 +61,9 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
     "--task",
     "--budget",
 ]
-# The version of the key an answer is cached under; changing it discards every cached answer.
+# The versions of the cache keys for ordinary answers and raw exports.
 const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/19"
+const EXPORT_PRESENTATION_DOMAIN: str = "incan.codegraph.export-presentation/1"
 
 
 pub model GraphOptions:
@@ -69,10 +76,12 @@ pub model GraphOptions:
     pub term: str = ""
     pub limit: int = 20
     pub strict: bool = false
-    # 0.5.1's `--allow-errors`: the tolerant export, which is the default; it only refuses `--strict` beside it.
+    # An explicit tolerant selection. The CLI resolves its raw export default separately.
     pub allow_errors: bool = false
     pub substitutes: Dict[str, str] = {}
     pub stale: str = ""
+    # A bare CLI status can match either current raw export mode.
+    pub match_export_modes: bool = false
     pub task: str = ""
     pub budget: int = 8000
     pub risk: bool = false
@@ -169,8 +178,8 @@ pub def help_text() -> str:
             "  --task TASK                 Select a context pack; excludes --query and --stale.",
             "  --budget N                  Context byte bound (default 8000; 128..1000000).",
             "  --stale SNAPSHOT            Check an exported snapshot: identity.",
-            "  --strict                    Refuse unchecked units.",
-            "  --allow-errors              Export unchecked units' parseable facts (the default).",
+            "  --strict                    Refuse unchecked units. Plain exports check by default.",
+            "  --allow-errors              Export unchecked units' parseable facts.",
             "  --risk                      Include optional local git observations.",
             "  --substitute NAME=DIR       Select a local dependency source; repeatable.",
             "  --features A,B              Add public root-package features.",
@@ -241,8 +250,14 @@ def budget_of(item: str) -> Result[int, str]:
 
 
 pub def inspect_codegraph(selected: GraphOptions) -> Result[i32, str]:
-    """Print a public export or query, leaving an empty query answer silent."""
-    rendered = selected_response(selected)?
+    """Check ordinary exports by default and leave an empty query answer silent."""
+    mut request = selected
+    if not request.risk and not request.allow_errors:
+        if raw_export(request):
+            request.strict = true
+        elif request.stale != "" and request.query == "" and not request.strict:
+            request.match_export_modes = true
+    rendered = selected_response(request)?
     if rendered != "":
         println(rendered)
     return Ok(0)
@@ -273,7 +288,7 @@ pub model PreparedInspection:
     pub page: Option[GraphPage] = None
 
     pub def snapshot(self) -> Result[str, str]:
-        """Identify the exact prepared inputs used by feedback and the answer in this request."""
+        """Identify the exact prepared inputs used by context preferences."""
         if let Some(page) = self.page:
             if page.snapshot != "":
                 return Ok(page.snapshot)
@@ -282,20 +297,29 @@ pub model PreparedInspection:
         return snapshot_identity(self.paths, self.root, self.selected.strict)
 
     pub def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
+        """Render the admitted request for the selected preferences."""
+        return Ok(self.answer(preferences)?.text)
+
+    pub def feedback_answer(self, expected: str) -> Result[Answered, str]:
+        """Validate a current feedback snapshot and return its graph under the service's canonical identity."""
+        return self.answer({}, Some(expected))
+
+    def answer(self, preferences: Dict[str, int], feedback: Option[str] = None) -> Result[Answered, str]:
         """
         Render the admitted request over its prepared graph without reopening the dependency closure, and keep the
-        answer in the request's page. A warm page answers for the preferences it has an answer for; for others the
-        request is prepared now.
+        answer in the request's page. A warm page can answer a matching feedback snapshot directly. An alternate
+        mode needs the current graph facts, so that request is prepared once before it renders an answer.
         """
         if let Some(page) = self.page:
-            if let Some(answer) = page.answer(preferences)?:
-                trace(f"graph page {self.key[:12]}: warm")
-                return Ok(answer)
-            return prepare_cold(self.selected, self.key, self.toolchain)?.respond(preferences)
-        answered = response(self.paths, self.root, self.selected, self.toolchain, preferences, self.key != "")?
+            if feedback is None or feedback == Some(page.snapshot):
+                if let Some(text) = page.answer(preferences)?:
+                    trace(f"graph page {self.key[:12]}: warm")
+                    return Ok(Answered(text=text, snapshot=page.snapshot))
+            return prepare_cold(self.selected, self.key, self.toolchain)?.answer(preferences, feedback)
+        answered = response(self.paths, self.root, self.selected, self.toolchain, preferences, self.key != "", feedback)?
         if self.key != "":
             keep_page(self, preferences, answered)
-        return Ok(answered.text)
+        return Ok(answered)
 
 
 pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection, str]:
@@ -369,14 +393,28 @@ def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result
     if selected.risk:
         return Ok("")
     source = entry_source(path)
-    mut parts = [PRESENTATION_DOMAIN, path.0, source.0, selected.profile, selected.format, selected.query]
+    mut parts = [presentation_domain(selected), path.0, source.0, selected.profile, selected.format, selected.query]
     parts = parts + [selected.term]
     parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
+    if selected.match_export_modes:
+        parts.append("status:export-modes/1")
     parts = parts + [selected.task, str(selected.budget), ",".join(selected.request.features)]
     parts = parts + [str(selected.request.default_features), str(selected.request.all_features)]
     for name in sorted([name for name in selected.substitutes.keys()]):
         parts.append(f"substitute:{name}={selected.substitutes[name]}")
     return request_key(parts, toolchain)
+
+
+def presentation_domain(selected: GraphOptions) -> str:
+    """Version raw export bytes independently of query, task and snapshot answers."""
+    if raw_export(selected):
+        return EXPORT_PRESENTATION_DOMAIN
+    return PRESENTATION_DOMAIN
+
+
+def raw_export(selected: GraphOptions) -> bool:
+    """Whether this request returns the graph records themselves."""
+    return selected.query == "" and selected.task == "" and selected.stale == ""
 
 
 def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answered: Answered) -> None:
@@ -450,6 +488,7 @@ def response(
     toolchain: Toolchain,
     preferences: Dict[str, int],
     paged: bool = false,
+    feedback: Option[str] = None,
 ) -> Result[Answered, str]:
     """
     Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
@@ -468,13 +507,21 @@ def response(
     notes = unchecked_notes(paths)?
     if selected.strict and len(notes) > 0:
         return Err("\n".join([unchecked_refusal(note) for note in notes]))
+    degraded = len(notes) > 0
+    mut snapshot = ""
+    if let Some(expected) = feedback:
+        current, matched = current_snapshot_match(paths, root, expected, not degraded)?
+        if not matched:
+            return Err("feedback snapshot is stale; read the current graph summary")
+        snapshot = current
     for note in notes:
         warn(unchecked_warning(note))
-    degraded = len(notes) > 0
     # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
-    mut snapshot = ""
-    if needs_snapshot(selected):
-        snapshot = snapshot_identity(paths, root, selected.strict)?
+    if feedback is None:
+        if selected.match_export_modes:
+            snapshot = current_status_snapshot(paths, root, selected.stale, not degraded)?
+        elif needs_snapshot(selected):
+            snapshot = snapshot_identity(paths, root, selected.strict)?
     trace(f"graph snapshot: {started.elapsed().as_millis()} ms")
     lookup = Instant.now()
     mut process: list[JsonValue] = []
@@ -536,7 +583,7 @@ def presentation_inputs(
             None => return Ok(None)
             Some(scope) => key_root = f"relative:{scope}"
     mut inputs = [
-        PRESENTATION_DOMAIN,
+        presentation_domain(selected),
         snapshot,
         key_root,
         selected.profile,
@@ -713,7 +760,8 @@ def export_records(
 
     1. Separate the requested project's units from its dependency providers.
     2. Read provider declaration keys for joins, without copying their records into the answer.
-    3. Export local facts and references to each provider's original graph.
+    3. Export local facts, attributing source-bearing diagnostics to the local unit's author.
+    4. Address each provider's original graph by content identity.
     """
     # 1. An explicit additional source is also a separate unit, rather than an owner of this project's records.
     mut owner = Path(root)
@@ -723,8 +771,21 @@ def export_records(
     dependencies = [unit for unit in paths if unit.root.0 != owner.0]
     # 2. Foreign keys remain available to local references through the exact published declaration identities.
     providers = provider_keys(dependencies, toolchain)?
-    # 3. Every dependency keeps one graph; the answer carries only its address and content identity.
-    records = read_records(local, root, toolchain, "", selected.strict, degraded, snapshot, None, providers)?
+    # 3. Every selected local unit has the same source root and author.
+    mut records = read_records(local, root, toolchain, "", selected.strict, degraded, snapshot, None, providers)?
+    if len(local) > 0:
+        author = local[0].author(anchor_root(Path(root)).0).json()
+        for index in range(1, len(records)):
+            record = records[index]
+            if text(record, "record") != "diagnostic":
+                continue
+            span = record.get("primary_span").unwrap_or(JsonValue.null())
+            if text(span, "file") == "":
+                continue
+            mut fields = record.expect_object().map_err((error) => error.message())?
+            fields["author"] = author
+            records[index] = JsonValue.object(fields)
+    # 4. Every dependency keeps one graph; the answer carries only its address and content identity.
     mut header = records[0].expect_object().map_err((error) => error.message())?
     mut references: list[JsonValue] = []
     mut ledger = artifact_observations(root)

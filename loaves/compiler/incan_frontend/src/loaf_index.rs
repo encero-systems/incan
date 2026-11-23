@@ -33,17 +33,17 @@ use lazy_entry::IndexedLoaf;
 pub use native_reference::{NATIVE_CLOSURE_SCHEMA, NativeAnchors, PublishedNativeClosure};
 
 /// What this process keeps of the Loaves it read: each store, how many readings it holds and their files' bytes.
-pub fn retained_inventory() -> [(&'static str, usize, u64); 2] {
+pub fn retained_inventory() -> [(&'static str, usize, u64); 4] {
     retained::inventory()
 }
 
-/// Release the decoded Loaf artifacts and installed record groups held by this process.
+/// Release the decoded Loaf artifacts, their executable surfaces, and installed record groups held by this process.
 pub fn release_retained_loaves() {
     settle_retained_loaves(false);
 }
 
 /// Release request-owned installed record groups. A continuing worker can keep bounded, generation-guarded path
-/// manifests for its next request.
+/// manifest and executable surface views for its next request.
 pub fn settle_retained_loaves(keep_path_artifacts: bool) {
     if !keep_path_artifacts {
         retained::release_artifacts();
@@ -545,6 +545,7 @@ impl LoafIndex {
 
     /// Canonical demand with explicit artifact failure, distinct from an absent namespace. Nullable checker lookup
     /// adapters retain failures in the entry; `validate_demands` must gate successful analysis and closure publication.
+    #[track_caller]
     pub fn demand(&self, key: &str) -> Result<Option<&LoafEntry>, LoafIndexError> {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
@@ -938,6 +939,7 @@ impl LoafIndex {
     }
 
     /// The entry indexed as `key`.
+    #[track_caller]
     pub fn entry(&self, key: &str) -> Option<&LoafEntry> {
         self.demand(key).ok().flatten()
     }
@@ -1010,6 +1012,7 @@ impl LoafIndex {
     }
 
     /// The manifest of the Loaf indexed as `key`.
+    #[track_caller]
     pub fn manifest(&self, key: &str) -> Option<&LibraryManifest> {
         self.entry(key).map(|entry| entry.artifact.manifest.as_ref())
     }
@@ -1026,6 +1029,31 @@ impl LoafIndex {
             items.insert(canonical_path.to_owned(), Arc::clone(&resolved));
         }
         Some(resolved)
+    }
+
+    /// Resolve the ABI item shipped by the exact Loaf defining this public Rust re-export.
+    pub(crate) fn indexed_rust_reexport(&self, key: &str, path: &str) -> Option<Arc<RustItemMetadata>> {
+        let entry = self.entries.get(key)?;
+        let cache = match entry.indexed_rust_reexports() {
+            Ok(cache) => cache?,
+            Err(error) => {
+                let _ = self.rust_abi_failure.set(error);
+                return None;
+            }
+        };
+        self.cache_fact(cache.get(path), || entry.dir.clone()).map(Arc::new)
+    }
+
+    /// Select the exact unambiguous package-root Rust re-export and its published identity from the path Loaf.
+    pub(crate) fn root_rust_reexport_target(
+        &self,
+        key: &str,
+        name: &str,
+    ) -> Result<Option<(Vec<String>, CanonicalSymbolId)>, LoafIndexError> {
+        let Some(entry) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        entry.root_rust_reexport_target(name)
     }
 
     /// Release every Rust item decoded so far, for this index and the clones that share its store, when checking is
@@ -1072,6 +1100,19 @@ impl LoafIndex {
         };
         // A Loaf whose demand fails is skipped here; `validate_demands` reports its retained failure.
         for entry in shipping().filter(|entry| entry.summary().is_ok_and(|s| s.rust_paths.contains(canonical_path))) {
+            match entry.indexed_rust_reexports() {
+                Ok(Some(cache)) => {
+                    if let Some(item) = self.cache_fact(read_cache(&cache, canonical_path), || entry.dir.clone()) {
+                        return Some(item);
+                    }
+                    continue;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = self.rust_abi_failure.set(error);
+                    continue;
+                }
+            }
             let Ok(entry) = entry.demand() else {
                 continue;
             };
