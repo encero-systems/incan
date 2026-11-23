@@ -5,11 +5,31 @@ use super::*;
 impl Callbacks {
     /// Replace the session's plan with one refined against native metadata; MIR building reads the replacement.
     pub(super) fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
-        self.plan = Arc::new(plan);
-        self.reader = Arc::new(self.reader.with_plan(Arc::clone(&self.plan)));
+        self.reader = Arc::new(self.reader.with_plan(plan));
         match PLAN.lock() {
             Ok(mut slot) => *slot = Some(Arc::clone(&self.reader)),
             Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
+        }
+    }
+
+    /// Update the plan only between rustc queries. Withdraw the shared handle while validating the refinement, then
+    /// restore it before rustc can enter MIR construction or report a native plan refusal.
+    fn refine_opaque_fields(&mut self, tcx: TyCtxt<'_>, fields: &[(usize, usize)]) {
+        let result = {
+            let Ok(mut slot) = PLAN.lock() else {
+                tcx.dcx().fatal(DriverError::State.to_string());
+            };
+            *slot = None;
+            let result = Arc::get_mut(&mut self.reader)
+                .ok_or(DriverError::State)
+                .and_then(|reader| reader.refine_opaque_fields(fields).map_err(DriverError::Plan));
+            *slot = Some(Arc::clone(&self.reader));
+            result
+        };
+        match result {
+            Ok(()) => {}
+            Err(DriverError::Plan(error)) => refuse(tcx, error),
+            Err(error) => tcx.dcx().fatal(error.to_string()),
         }
     }
 
@@ -23,7 +43,7 @@ impl Callbacks {
         sources: &Sources<'_>,
     ) {
         let mut grouped: std::collections::BTreeMap<usize, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
-        for function in &self.plan.functions {
+        for function in &self.reader.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
                 Err(error) => {
@@ -34,7 +54,7 @@ impl Callbacks {
                     compiler.sess.dcx().fatal(message);
                 }
             };
-            let mut item = match declarations::function(&self.plan, function, span) {
+            let mut item = match declarations::function(&self.reader, function, span) {
                 Ok(item) => item,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
@@ -51,9 +71,9 @@ impl Callbacks {
                     function,
                     span,
                 ));
-                item.tokens = Some(crate::native_attributes::function_tokens(&self.plan, function, span));
+                item.tokens = Some(crate::native_attributes::function_tokens(&self.reader, function, span));
             }
-            if self.plan.tests.contains(&function.name) {
+            if self.reader.tests.contains(&function.name) {
                 item.attrs.push(crate::test_unit::attribute(
                     &compiler.sess.psess.attr_id_generator,
                     span,
@@ -73,9 +93,9 @@ impl Callbacks {
                 .items
                 .extend(declarations::partition_module(partition, items, krate.spans.inner_span));
         }
-        if !self.plan.programs.is_empty() {
+        if !self.reader.programs.is_empty() {
             krate.items.push(
-                match crate::program_entries::dispatcher(&self.plan, krate.spans.inner_span) {
+                match crate::program_entries::dispatcher(&self.reader, krate.spans.inner_span) {
                     Ok(item) => item,
                     Err(error) => compiler.sess.dcx().fatal(error.to_string()),
                 },
@@ -85,13 +105,13 @@ impl Callbacks {
 
     /// Declare compiler-owned bridges before publishing the library's public root names.
     pub(super) fn declare_bridges_and_exports(&self, compiler: &interface::Compiler, krate: &mut ast::Crate) {
-        match native_bridge_items(&self.plan, krate.spans.inner_span) {
+        match native_bridge_items(&self.reader, krate.spans.inner_span) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
         // A library unit re-exports its public names at the crate root (see `library_exports`).
         match crate::library_exports::items(
-            &self.plan,
+            &self.reader,
             &self.library_facades,
             &compiler.sess.psess.attr_id_generator,
             krate.spans.inner_span,
@@ -108,11 +128,11 @@ impl Callbacks {
         krate: &mut ast::Crate,
         sources: &Sources<'_>,
     ) {
-        match native_static_items(&self.plan, sources) {
+        match native_static_items(&self.reader, sources) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
-        let mut roots = native_roots(&self.plan);
+        let mut roots = native_roots(&self.reader);
         roots.extend(crate::native_crates::declaration_roots(krate));
         // A root re-export names its item's own crate, declared here as a callee's crate is (see `library_exports`).
         roots.extend(
@@ -187,7 +207,7 @@ impl rustc_driver::Callbacks for Callbacks {
 
         // ---- Source-backed native declarations ----
         if let Err(error) =
-            add_source_backed_declarations(&self.plan, &sources, &compiler.sess.psess.attr_id_generator, krate)
+            add_source_backed_declarations(&self.reader, &sources, &compiler.sess.psess.attr_id_generator, krate)
         {
             compiler.sess.dcx().fatal(error.to_string());
         }
@@ -220,34 +240,34 @@ impl rustc_driver::Callbacks for Callbacks {
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         self.timing.mark("rustc_expansion");
         crate::native_crates::bind_extern_crates(tcx);
-        if let Err(error) = verify_library_argument_profiles(tcx, &self.plan) {
+        if let Err(error) = verify_library_argument_profiles(tcx, &self.reader) {
             refuse(tcx, error);
         }
-        match instantiate_generic_externals(tcx, &self.plan) {
+        match instantiate_generic_externals(tcx, &self.reader) {
             Ok(Some(plan)) => self.replace_plan(tcx, plan),
             Ok(None) => {}
             Err(error) => refuse(tcx, error),
         }
-        match verify_library_layouts(tcx, &self.plan) {
-            Ok(Some(plan)) => self.replace_plan(tcx, plan),
-            Ok(None) => {}
+        match opaque_library_fields(tcx, &self.reader) {
+            Ok(fields) if !fields.is_empty() => self.refine_opaque_fields(tcx, &fields),
+            Ok(_) => {}
             Err(error) => refuse(tcx, error),
         }
-        for value in self.plan.enums.iter().filter(|value| !value.library_item.is_empty()) {
+        for value in self.reader.enums.iter().filter(|value| !value.library_item.is_empty()) {
             if let Err(error) = verify_library_enum(tcx, value) {
                 refuse(tcx, error);
             }
         }
-        if let Err(error) = crate::cloneable_closures::verify_captures(tcx, &self.plan) {
+        if let Err(error) = crate::cloneable_closures::verify_captures(tcx, &self.reader) {
             refuse(tcx, error);
         }
-        if let Err(error) = crate::statics::verify_method_results(tcx, &self.plan) {
+        if let Err(error) = crate::statics::verify_method_results(tcx, &self.reader) {
             refuse(tcx, error);
         }
-        if let Err(error) = verify_planned_clone_bounds(tcx, &self.plan) {
+        if let Err(error) = verify_planned_clone_bounds(tcx, &self.reader) {
             refuse(tcx, error);
         }
-        for external in &self.plan.externals {
+        for external in &self.reader.externals {
             let def = match callees::planned_external(tcx, external) {
                 Ok(def) => def,
                 Err(error) => refuse(tcx, error),
@@ -312,7 +332,7 @@ impl rustc_driver::Callbacks for Callbacks {
     /// Snapshot dynamic library generations after analysis, before codegen and linking can publish an executable.
     fn after_analysis(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         self.timing.mark("rustc_analysis");
-        if let Err(error) = crate::native_plan_report::write(&self.plan, tcx) {
+        if let Err(error) = crate::native_plan_report::write(&self.reader, tcx) {
             tcx.dcx().fatal(error);
         }
         if self.development {

@@ -36,7 +36,7 @@ impl DefinitionInput {
 /// A record-backed plan reader. Missing record input keeps ordinary compilation available but makes the unit
 /// ineligible for native incremental reuse.
 pub(crate) struct PlanReader {
-    plan: Arc<Plan>,
+    plan: Plan,
     by_name: HashMap<String, usize>,
     function_inputs: HashMap<String, DefinitionInput>,
     alias_inputs: HashMap<String, DefinitionInput>,
@@ -45,7 +45,7 @@ pub(crate) struct PlanReader {
 
 impl PlanReader {
     /// Authenticate the native-interface and every per-function product before exposing query answers.
-    pub(super) fn new(plan: Arc<Plan>, report: Option<&Path>) -> Result<Self, String> {
+    pub(super) fn new(plan: Plan, report: Option<&Path>) -> Result<Self, String> {
         let mut reader = Self::with_inputs(plan, HashMap::new(), HashMap::new());
         let Some(report) = report else {
             return Ok(reader);
@@ -76,8 +76,9 @@ impl PlanReader {
         Ok(reader)
     }
 
+    /// Index function names for this plan before exposing its record-backed native inputs.
     fn with_inputs(
-        plan: Arc<Plan>,
+        plan: Plan,
         function_inputs: HashMap<String, DefinitionInput>,
         alias_inputs: HashMap<String, DefinitionInput>,
     ) -> Self {
@@ -100,8 +101,16 @@ impl PlanReader {
     }
 
     /// Keep authenticated definition inputs when native metadata refines only invocation-local plan facts.
-    pub(super) fn with_plan(&self, plan: Arc<Plan>) -> Self {
+    pub(super) fn with_plan(&self, plan: Plan) -> Self {
         Self::with_inputs(plan, self.function_inputs.clone(), self.alias_inputs.clone())
+    }
+
+    /// Mask incompatible native fields and revalidate the plan before publishing it to the MIR queries.
+    pub(super) fn refine_opaque_fields(&mut self, fields: &[(usize, usize)]) -> Result<(), PlanError> {
+        let mut refined = self.plan.clone();
+        super::library_verification::apply_opaque_fields(&mut refined, fields)?;
+        self.plan = refined;
+        Ok(())
     }
 
     fn read_function_inputs(report: &Path, plan: &Plan) -> Result<HashMap<String, DefinitionInput>, String> {
@@ -332,9 +341,10 @@ impl std::ops::Deref for PlanReader {
 #[cfg(test)]
 mod tests {
     use super::PlanReader;
-    use crate::plan::{Function, Plan, PlanType};
+    use crate::plan::{
+        BasicBlock, Function, Local, ModelDeclaration, Parameter, Plan, PlanType, Terminator, TerminatorKind,
+    };
     use incan_mir_plan_native::{AdmittedDefinition, NATIVE_DEFINITIONS, encode_admitted_definitions, source_span};
-    use std::sync::Arc;
 
     fn plan(names: &[&str]) -> Plan {
         let span = source_span("reader.incn", 1, 1);
@@ -376,12 +386,70 @@ mod tests {
         let report = tempfile::tempdir()?;
         let names = ["main", "__incan_closure_main_0"];
         std::fs::write(report.path().join(NATIVE_DEFINITIONS), definitions(&names)?)?;
-        let reader = PlanReader::new(Arc::new(plan(&names)), Some(report.path()))?;
+        let reader = PlanReader::new(plan(&names), Some(report.path()))?;
         assert!(reader.has_record_inputs());
         assert!(names.iter().all(|name| reader.function_input(name).is_some()));
         std::fs::write(report.path().join(NATIVE_DEFINITIONS), definitions(&names[..1])?)?;
-        let partial = PlanReader::new(Arc::new(plan(&names)), Some(report.path()))?;
+        let partial = PlanReader::new(plan(&names), Some(report.path()))?;
         assert!(!partial.has_record_inputs());
+        Ok(())
+    }
+
+    /// A field mask updates the native layout while leaving every checked function's body allocation in place.
+    #[test]
+    fn opaque_layout_refinement_preserves_body_allocations() -> Result<(), Box<dyn std::error::Error>> {
+        let mut plan = plan(&["first", "second"]);
+        let span = plan.span.clone();
+        let mut layout = ModelDeclaration::new(
+            "NativeLayout".into(),
+            false,
+            vec![Parameter {
+                name: "field".into(),
+                ty: PlanType::Int,
+                span: span.clone(),
+            }],
+            vec![true],
+            Vec::new(),
+            span.clone(),
+        );
+        layout.library_item = "native::Layout".into();
+        plan.models.push(layout);
+        for function in &mut plan.functions {
+            function.locals.push(Local {
+                ty: PlanType::Unit,
+                span: span.clone(),
+            });
+            function.blocks.push(BasicBlock {
+                statements: Vec::new(),
+                terminator: Terminator {
+                    kind: TerminatorKind::Return,
+                    span: span.clone(),
+                },
+                cleanup: false,
+                span: span.clone(),
+            });
+        }
+        let mut reader = PlanReader::new(plan, None)?;
+        let body_allocations: Vec<_> = reader
+            .functions
+            .iter()
+            .map(|function| function.blocks.as_ptr())
+            .collect();
+
+        reader.refine_opaque_fields(&[(0, 0)])?;
+
+        assert_eq!(reader.models[0].unavailable_native_fields, [0]);
+        assert_eq!(reader.models[0].fields[0].ty, PlanType::Unit);
+        let replaced = reader
+            .functions
+            .iter()
+            .zip(body_allocations)
+            .filter(|(function, previous)| function.blocks.as_ptr() != *previous)
+            .count();
+        assert_eq!(
+            replaced, 0,
+            "layout refinement replaced {replaced} function body allocations"
+        );
         Ok(())
     }
 }

@@ -114,22 +114,21 @@ pub(super) fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::T
     }
 }
 
-/// Check every retained native layout against metadata. A field whose planned type is not its native type becomes
-/// opaque in a refined plan, which is validated again: any read, write or construction relying on that field is then
-/// refused, while the layout's other fields stay usable. No refinement is needed when every planned type matches.
-pub(super) fn verify_library_layouts(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
+/// Find every field whose planned type differs from its native metadata, in declaration and field order.
+pub(super) fn opaque_library_fields(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Vec<(usize, usize)>, PlanError> {
     let mut opaque = Vec::new();
     for (owner, model) in plan.models.iter().enumerate() {
         if !model.library_item.is_empty() {
             opaque.extend(verify_library_layout(tcx, model)?.into_iter().map(|slot| (owner, slot)));
         }
     }
-    if opaque.is_empty() {
-        return Ok(None);
-    }
-    let mut refined = plan.clone();
-    for (owner, slot) in opaque {
-        let model = &mut refined.models[owner];
+    Ok(opaque)
+}
+
+/// Mask the fields identified by native metadata, then refuse any projection or construction that depends on them.
+pub(super) fn apply_opaque_fields(plan: &mut Plan, opaque: &[(usize, usize)]) -> Result<(), PlanError> {
+    for &(owner, slot) in opaque {
+        let model = &mut plan.models[owner];
         let index = i64::try_from(slot).map_err(|_| PlanError::Unsupported {
             function: model.library_item.clone(),
             reason: "native field slot overflow".into(),
@@ -138,8 +137,7 @@ pub(super) fn verify_library_layouts(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Opt
         model.unavailable_native_fields.push(index);
     }
     // The unit's entry was checked before the session began; every declaration and body contract is checked again.
-    validation::validate(&refined, true)?;
-    Ok(Some(refined))
+    validation::validate(plan, true)
 }
 
 /// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their

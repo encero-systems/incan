@@ -63,7 +63,6 @@ pub enum DriverError {
 struct Callbacks {
     /// The unstable features the unit's description declares; this session enables them and no others.
     features: Vec<String>,
-    plan: Arc<Plan>,
     library_facades: Vec<crate::library_exports::LibraryFacade>,
     search: Vec<rustc_session::search_paths::SearchPath>,
     shared: Vec<String>,
@@ -148,8 +147,7 @@ pub fn compile(
     timing.mark("shared_dependencies");
 
     // ---- Fresh rustc session and planned MIR ----
-    let plan = Arc::new(plan);
-    let reader = Arc::new(PlanReader::new(Arc::clone(&plan), plan_record_report).map_err(DriverError::Invocation)?);
+    let reader = Arc::new(PlanReader::new(plan, plan_record_report).map_err(DriverError::Invocation)?);
     reader.write_fingerprint_report()?;
     *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&reader));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
@@ -197,7 +195,6 @@ pub fn compile(
     timing.mark("native_arguments");
     let mut callbacks = Callbacks {
         features,
-        plan,
         library_facades,
         search,
         shared: shared.iter().map(|(name, _)| name.clone()).collect(),
