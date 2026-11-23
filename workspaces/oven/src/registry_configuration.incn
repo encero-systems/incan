@@ -1,11 +1,22 @@
-"""Operator-owned RFC 117 registry configuration boundary."""
+"""Operator-owned RFC 117 registry registrations and canonical RFC 125 root pins."""
 
+from std.encoding.base64 import b64decode, b64encode
+from std.encoding.hex import hexlify
 from std.fs import Path
-from registry_trust import Root
+from std.toml import TomlValue
+from ecdsa import Curve
+from files import read
+from registry_checkpoint import DEFAULT_MAX_AGE_SECONDS
+from registry_trust import Key, KeyKind, Root, pin
+from storage_policy import parse_duration
+from trust_policy import organization_config, refuse_project_config, user_config
+from x509 import expect as der_expect, public_key as ec_public_key
+
+const ED25519_SPKI_HEADER: str = "302a300506032b6570032100"
 
 
 pub model RegistryConfiguration:
-    """One operator-configured registry alias, root and its HTTPS audit URLs."""
+    """The operator-authorized root and transport for one registry alias."""
 
     pub alias: str
     pub root: Root
@@ -14,8 +25,161 @@ pub model RegistryConfiguration:
     pub source: str
 
 
+pub def configured_registries(project_root: Path) -> Result[list[RegistryConfiguration], str]:
+    """Load registrations from Oven's user config and supported host organization config."""
+    return read_registries(user_config()?, organization_config(), project_root)
+
+
 pub def read_registries(
-    _user: Path, _organization: Option[Path], _project_root: Path,
+    user: Path,
+    organization: Option[Path],
+    project_root: Path,
 ) -> Result[list[RegistryConfiguration], str]:
-    """Refuse registry configuration until its trusted sources and root encoding are admitted."""
-    return Err("operator registry configuration is not yet admitted")
+    """
+    Read registry authority from the two operator-owned layers.
+
+    1. Read organization registrations first so a repeated alias keeps its policy provenance.
+    2. Add user registrations and mirrors. Both layers must agree on the exact root for any shared alias.
+    """
+    # 1. Project-located files cannot contribute authority, including through a symlink.
+    mut selected: Dict[str, RegistryConfiguration] = {}
+    if let Some(file) = organization:
+        for entry in registry_file(file, project_root)?:
+            selected[entry.alias] = entry
+
+    # 2. The user's mirrors cannot repin an organization registry or replace its freshness policy.
+    for entry in registry_file(user, project_root)?:
+        match selected.get(entry.alias):
+            Some(previous) =>
+                if previous.root.registry != entry.root.registry:
+                    return Err(
+                        f"{entry.source}: registry {entry.alias} conflicts with the root pinned by {previous.source}",
+                    )
+                mut merged = previous
+                for url in entry.audit_urls:
+                    if url not in merged.audit_urls:
+                        merged.audit_urls.append(url)
+                selected[entry.alias] = merged
+            None => selected[entry.alias] = entry
+    return Ok([selected[alias] for alias in sorted(selected.keys())])
+
+
+def registry_file(file: Path, project_root: Path) -> Result[list[RegistryConfiguration], str]:
+    """Read registrations from this file alone, leaving its other policy tables to their owners."""
+    if not file.is_file():
+        return Ok([])
+    refuse_project_config(file, Some(project_root))?
+    parsed = TomlValue.parse(read(file)?).map_err((error) => f"{file.0}: {error.message()}")?
+    document = parsed.as_table().map_err((error) => f"{file.0}: {error.message()}")?
+    if "registries" not in document:
+        return Ok([])
+    registries = document["registries"].as_table().map_err((_) => f"{file.0}: `registries` must be a table")?
+    mut result: list[RegistryConfiguration] = []
+    for alias in sorted(registries.keys()):
+        entry = read_registration(alias, registries[alias], file.0).map_err(
+            (reason) => f"{file.0}: registries.{alias}: {reason}",
+        )?
+        if let Some(registry) = entry:
+            result.append(registry)
+    return Ok(result)
+
+
+def read_registration(alias: str, value: TomlValue, file: str) -> Result[Option[RegistryConfiguration], str]:
+    """Admit reloadable RFC 125 Loaf registry configuration without consulting the consuming project."""
+    table = value.as_table().map_err((_) => "registration must be a table")?
+    if text_field(table, "kind")? != "loaf":
+        return Ok(None)
+    if text_field(table, "trust")? != "require-signature":
+        return Err("Loaf registry trust must be require-signature")
+    identifier = text_field(table, "id")?
+    roots = strings(table, "root-keys")?
+    if len(roots) != 1:
+        return Err("a registry needs one pinned root key for its declared identity")
+    root = configured_root(identifier, roots[0])?
+    endpoints = strings(table, "endpoints")?
+    if len(endpoints) == 0:
+        return Err("a registry needs an HTTPS endpoint")
+    mut urls: list[str] = []
+    for endpoint in endpoints:
+        url = audit_url(endpoint)?
+        if url not in urls:
+            urls.append(url)
+    return Ok(
+        Some(
+            RegistryConfiguration(alias=alias, root=root, audit_urls=urls, max_age_seconds=max_age(table)?, source=file),
+        ),
+    )
+
+
+def configured_root(identifier: str, encoded: str) -> Result[Root, str]:
+    """Check RFC 117 spellings and pin the digest of the unwrapped key material."""
+    if not identifier.startswith("sha256:"):
+        return Err("registry id must use sha256:<lowercase root digest>")
+    parts = encoded.split(":")
+    if len(parts) != 2:
+        return Err("root-keys must contain an algorithm and a base64 DER public key")
+    der = b64decode(parts[1]).map_err((error) => error.message())?
+    if b64encode(der) != parts[1]:
+        return Err("the registry root public key uses noncanonical base64")
+    return pin(identifier[7:], spki_key(parts[0], der)?)
+
+
+def spki_key(kind: str, der: bytes) -> Result[Key, str]:
+    """Decode the configured SubjectPublicKeyInfo using its exact key algorithm."""
+    if kind == "ed25519":
+        if len(der) != 44 or hexlify(der[:12]) != ED25519_SPKI_HEADER:
+            return Err("the registry root public key is not Ed25519 SubjectPublicKeyInfo")
+        return Ok(Key(kind=KeyKind.Ed25519, material=der[12:]))
+    if kind not in ["ecdsa-p256", "ecdsa-p384"]:
+        return Err(f"unsupported registry root key algorithm {kind}")
+    info = der_expect(der, 0, len(der), 48)?
+    if info.end != len(der):
+        return Err("bytes follow the registry root SubjectPublicKeyInfo")
+    key = ec_public_key(der, 0, len(der))?
+    if kind == "ecdsa-p256" and key.curve == Curve.P256:
+        return Ok(Key(kind=KeyKind.EcdsaP256, material=key.point))
+    if kind == "ecdsa-p384" and key.curve == Curve.P384:
+        return Ok(Key(kind=KeyKind.EcdsaP384, material=key.point))
+    return Err("the registry root public key does not match its declared curve")
+
+
+def audit_url(base: str) -> Result[str, str]:
+    """Name the signed feed below an operator-configured HTTPS base without userinfo, query or fragment."""
+    if not base.startswith("https://") or "#" in base or "?" in base or "\\" in base:
+        return Err("registry endpoints must be HTTPS base URLs without a query or fragment")
+    authority = base[8:].split("/")[0]
+    if authority == "" or "@" in authority or " " in base or "\n" in base or "\r" in base or "\t" in base:
+        return Err("registry endpoints need an HTTPS authority and keep credentials outside the URL")
+    mut trimmed: str = base
+    while trimmed.endswith("/"):
+        trimmed = trimmed[:len(trimmed) - 1]
+    return Ok(trimmed + "/audit/v1.json")
+
+
+def max_age(table: Dict[str, TomlValue]) -> Result[int, str]:
+    """Read the per-registry checkpoint limit or use RFC 125's seven-day default."""
+    if "checkpoint-max-age" not in table:
+        return Ok(DEFAULT_MAX_AGE_SECONDS)
+    text = text_field(table, "checkpoint-max-age")?
+    match parse_duration(text):
+        Some(seconds) => return Ok(seconds)
+        None => return Err("checkpoint-max-age must be a duration such as \"7d\"")
+
+
+def text_field(table: Dict[str, TomlValue], key: str) -> Result[str, str]:
+    """Read one required textual setting from an operator registration."""
+    if key not in table:
+        return Err(f"missing {key}")
+    return table[key].as_str().map_err((_) => f"{key} must be text")
+
+
+def strings(table: Dict[str, TomlValue], key: str) -> Result[list[str], str]:
+    """Read one required list of textual settings from an operator registration."""
+    if key not in table:
+        return Err(f"missing {key}")
+    error = f"{key} must be an array of strings"
+    members = table[key].as_array().map_err((_) => error)?
+    mut values: list[str] = []
+    for member in members:
+        values.append(member.as_str().map_err((_) => error)?)
+    return Ok(values)

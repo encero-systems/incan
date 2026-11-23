@@ -1,11 +1,14 @@
-"""Checked lock projection boundary for authenticated registry audit."""
+"""Project authenticated registry advisories onto an already validated oven.lock."""
 
 from std.json import JsonValue
 from lock_format import OvenLock
-from registry_advisory import VerifiedAdvisory
+from registry_advisory import VerifiedAdvisory, active_advisories
 from registry_audit_wire import VerifiedAudit
+from registry_checkpoint import Checkpoint
 
 pub const NO_REGISTRY_ORIGIN: str = "no registry origin: not covered"
+const UNCOVERED_ORIGINS: FrozenList[str] = ["template", "mix", "asset"]
+const NOT_COVERED: str = "not covered"
 
 
 pub model AuditCoverage:
@@ -24,18 +27,108 @@ pub model LockedRegistryAudit:
 
     pub coverage: list[AuditCoverage]
     pub advisories: list[VerifiedAdvisory]
+    pub checkpoints: Dict[str, Checkpoint] = {}
 
 
-pub def audit_locked_registries(_lock: OvenLock, _audits: list[VerifiedAudit]) -> LockedRegistryAudit:
-    """Provide no coverage until the checked lock's recorded sources can be projected."""
-    return LockedRegistryAudit(coverage=[], advisories=[])
+pub def audit_locked_registries(lock: OvenLock, audits: list[VerifiedAudit]) -> LockedRegistryAudit:
+    """
+    Project the authenticated feeds over a checked lock.
+
+    1. Index feeds by their pinned identity and mark coverage for the recorded source of every dependency.
+    2. Report the active exact-version advisories whose registry and locked version match.
+    """
+    # 1. A same-named package from a path, toolchain or other root is a different source.
+    available = {f"sha256:{audit.registry}": audit.checkpoint for audit in audits}
+    mut coverage: list[AuditCoverage] = []
+    mut matched: set[tuple[str, str, str]] = set()
+    for entry in lock.loaves:
+        if entry.origin == "root":
+            continue
+        mut reason: str = NO_REGISTRY_ORIGIN
+        covered = entry.origin == "registry" and entry.registry in available
+        if covered:
+            reason = ""
+            matched.add((entry.registry, entry.name, entry.version))
+        elif entry.origin == "registry":
+            reason = "no authenticated audit feed for the recorded registry"
+        coverage.append(
+            AuditCoverage(
+                package=entry.name,
+                version=entry.version,
+                origin=entry.origin,
+                registry=entry.registry,
+                covered=covered,
+                reason=reason,
+            ),
+        )
+
+    # 2. Only the latest event on the exact authenticated tuple contributes a finding.
+    mut findings: list[VerifiedAdvisory] = []
+    for audit in audits:
+        for advisory in active_advisories(audit.advisories):
+            key = (f"sha256:{advisory.registry}", advisory.package, advisory.version)
+            if key in matched:
+                findings.append(advisory)
+    return LockedRegistryAudit(coverage=coverage, advisories=findings, checkpoints=available)
 
 
-pub def audit_text(_report: LockedRegistryAudit) -> str:
-    """The human report before its coverage records are available."""
-    return ""
+pub def audit_text(report: LockedRegistryAudit) -> str:
+    """Print signed advisory findings and the provenance this package audit covers."""
+    mut lines: list[str] = []
+    for finding in report.advisories:
+        lines.append(f"{finding.package} {finding.version}: vulnerable ({finding.identifier}): {finding.reason}")
+    for row in report.coverage:
+        origin = f"{row.package} {row.version}"
+        if row.covered:
+            checkpoint = report.checkpoints[row.registry]
+            lines.append(f"{origin}: checked advisories from {row.registry} at checkpoint {checkpoint.head}")
+        else:
+            lines.append(f"{origin}: {row.reason}")
+    for origin in UNCOVERED_ORIGINS:
+        lines.append(f"{origin} origins: {NOT_COVERED}")
+    return "\n".join(lines)
 
 
-pub def audit_json(_report: LockedRegistryAudit) -> Result[str, str]:
-    """The JSON report before its coverage records are available."""
-    return JsonValue.object({}).to_json().map_err((error) => error.message())
+pub def audit_json(report: LockedRegistryAudit) -> Result[str, str]:
+    """Serialize versioned audit output with separate package and provenance coverage records."""
+    origins = {origin: JsonValue.string(NOT_COVERED) for origin in UNCOVERED_ORIGINS}
+    checkpoints = {root: checkpoint_json(report.checkpoints[root]) for root in report.checkpoints.keys()}
+    fields = {
+        "schema_version": JsonValue.int(1),
+        "origin_coverage": JsonValue.object(origins),
+        "package_coverage": JsonValue.array([coverage_json(row) for row in report.coverage]),
+        "advisories": JsonValue.array([advisory_json(item) for item in report.advisories]),
+        "checkpoints": JsonValue.object(checkpoints),
+    }
+    return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def coverage_json(row: AuditCoverage) -> JsonValue:
+    """Name the exact checked dependency and the outcome of its authority lookup."""
+    return JsonValue.object(
+        {"package": JsonValue.string(row.package), "version": JsonValue.string(row.version), "origin": JsonValue.string(
+            row.origin,
+        ), "registry": JsonValue.string(row.registry), "covered": JsonValue.bool(row.covered), "reason": JsonValue.string(
+            row.reason,
+        )},
+    )
+
+
+def advisory_json(item: VerifiedAdvisory) -> JsonValue:
+    """Name one active authenticated finding and the registry event that asserted it."""
+    return JsonValue.object(
+        {"package": JsonValue.string(item.package), "version": JsonValue.string(item.version), "registry": JsonValue.string(
+            f"sha256:{item.registry}",
+        ), "id": JsonValue.string(item.identifier), "state": JsonValue.string("vulnerable"), "reason": JsonValue.string(
+            item.reason,
+        ), "sequence": JsonValue.int(item.sequence)},
+    )
+
+
+def checkpoint_json(item: Checkpoint) -> JsonValue:
+    """Give automation the exact signed log generation used by this audit."""
+    return JsonValue.object(
+        {"head": JsonValue.string(item.head), "length": JsonValue.int(item.length), "timestamp": JsonValue.int(
+            item.timestamp,
+        )},
+    )

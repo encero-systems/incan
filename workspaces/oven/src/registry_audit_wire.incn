@@ -33,6 +33,7 @@ const INITIAL_HEAD: str = "00000000000000000000000000000000000000000000000000000
 pub model VerifiedAudit:
     """The authenticated checkpoint, advisories and revocations admitted by the audit document."""
 
+    pub registry: str
     pub checkpoint: Checkpoint
     pub advisories: list[VerifiedAdvisory]
     pub revocations: list[VerifiedRevocation]
@@ -102,7 +103,7 @@ pub def verify_audit_document(
     if let Some(previous) = observed:
         if prefix != previous.head:
             return Err("the registry checkpoint conflicts with the observed log prefix")
-    return Ok(VerifiedAudit(checkpoint=verified, advisories=log.advisories, revocations=log.revocations))
+    return Ok(VerifiedAudit(registry=root.registry, checkpoint=verified, advisories=log.advisories, revocations=log.revocations))
 
 
 def admit_event(root: Root, event: JsonValue, sequence: int, mut log: BorrowedMut[AuditLog]) -> Result[bytes, str]:

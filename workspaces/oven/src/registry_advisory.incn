@@ -55,23 +55,36 @@ pub def verify_advisory(trust: Trust, advisory: Advisory, signature: Signature) 
 
 
 pub def audit_advisories(package: str, version: str, advisories: list[VerifiedAdvisory]) -> Result[None, str]:
-    """Fail explicit audit for each target whose latest authenticated advisory event is a publication."""
-    for candidate in advisories:
-        if candidate.package != package or candidate.version != version or candidate.action != AdvisoryAction.Publish:
-            continue
-        mut superseded = false
-        for later in advisories:
-            if (
-                later.registry == candidate.registry
-                and later.identifier == candidate.identifier
-                and later.package == candidate.package
-                and later.version == candidate.version
-                and later.sequence > candidate.sequence
-            ):
-                superseded = true
-        if not superseded:
-            return Err(f"{package} {version} has advisory {candidate.identifier}: {candidate.reason}")
+    """Fail explicit audit for the locked target while its latest authenticated advisory is active."""
+    for advisory in active_advisories(advisories):
+        if advisory.package == package and advisory.version == version:
+            return Err(f"{package} {version} has advisory {advisory.identifier}: {advisory.reason}")
     return Ok(None)
+
+
+pub def active_advisories(advisories: list[VerifiedAdvisory]) -> list[VerifiedAdvisory]:
+    """Report the latest authenticated publication per exact target in input order."""
+    mut latest: Dict[str, int] = {}
+    for index in range(len(advisories)):
+        event = advisories[index]
+        target = advisory_target(event)
+        if let Some(previous) = latest.get(target):
+            if advisories[previous].sequence >= event.sequence:
+                continue
+        latest[target] = index
+
+    mut findings: list[VerifiedAdvisory] = []
+    for index in range(len(advisories)):
+        event = advisories[index]
+        if event.action == AdvisoryAction.Publish and latest[advisory_target(event)] == index:
+            findings.append(event)
+    return findings
+
+
+def advisory_target(event: VerifiedAdvisory) -> str:
+    """Frame all four exact target fields so unrelated advisories cannot share a lookup key."""
+    fields = [event.registry, event.identifier, event.package, event.version]
+    return "".join([f"{len(field.encode("utf-8"))}:{field}" for field in fields])
 
 
 def advisory_payload(advisory: Advisory) -> bytes:

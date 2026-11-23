@@ -1,18 +1,82 @@
-"""Durable RFC 125 audit observation boundary."""
+"""Home-owned monotonic observation of authenticated RFC 125 registry audit logs."""
 
 from std.fs import Path
-from registry_audit_wire import VerifiedAudit
-from registry_checkpoint import DEFAULT_MAX_AGE_SECONDS
+from pub::incan_platform.store import Snapshot, begin, commit, get, put
+from home_paths import installation_catalog
+from registry_audit_wire import VerifiedAudit, verify_audit_document
+from registry_checkpoint import Checkpoint, DEFAULT_MAX_AGE_SECONDS
 from registry_trust import Root
+from store_path_conversion import claim, snapshot
+
+const AUDIT_OBSERVATION: str = "incan.oven.registry-audit-observation/1"
+
+
+pub def observe_audit(
+    root: Root,
+    text: str,
+    now: int,
+    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
+) -> Result[VerifiedAudit, str]:
+    """Verify and durably retain a feed under its pinned identity in the home-owned Bakery."""
+    return retain_audit(installation_catalog()?, root, text, now, max_age_seconds)
 
 
 pub def retain_audit(
-    _store: Path, _root: Root, _text: str, _now: int, _max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
+    store: Path,
+    root: Root,
+    text: str,
+    now: int,
+    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> Result[VerifiedAudit, str]:
-    """Refuse to report an online observation until it can be advanced durably."""
-    return Err("the registry audit observation cannot yet be advanced")
+    """
+    Admit one online read and advance the home observation.
+
+    1. Claim the pinned identity and open its latest durable snapshot inside that claim.
+    2. Verify the observed and proposed snapshots before comparing their lengths, timestamps and prefix.
+    3. Save the exact verified response in one Bakery transaction while still holding the claim.
+    """
+    # 1. Another reader may have advanced the observation while this reader fetched its response.
+    key = observation_key(root)
+    held = claim(store, key).map_err((error) => error.message())?
+    view = snapshot(store).map_err((error) => error.message())?
+
+    # 2. A cached response must authenticate. An absent record is the only first observation.
+    previous = observed_text(view, key)?
+    mut checkpoint: Option[Checkpoint] = None
+    if let Some(saved) = previous:
+        if saved == text:
+            return verify_audit_document(root, text, None, now, max_age_seconds=max_age_seconds)
+        verified = verify_audit_document(root, saved, None, now, online=false)?
+        checkpoint = Some(verified.checkpoint)
+    checked = verify_audit_document(root, text, checkpoint, now, max_age_seconds=max_age_seconds)?
+
+    # 3. Publication sees the same snapshot that supplied the rollback and prefix facts.
+    commit(put(begin(view), key, text.encode("utf-8"))).map_err((error) => error.message())?
+    return Ok(checked)
 
 
-pub def retained_audit(_store: Path, _root: Root, _now: int) -> Result[VerifiedAudit, str]:
-    """Refuse offline state until an authenticated observation is present."""
-    return Err("no authenticated registry audit observation")
+pub def offline_registry_audit(root: Root, now: int) -> Result[VerifiedAudit, str]:
+    """Use and authenticate the exact locally observed feed without an online freshness bound."""
+    return retained_audit(installation_catalog()?, root, now)
+
+
+pub def retained_audit(store: Path, root: Root, now: int) -> Result[VerifiedAudit, str]:
+    """Read one immutable Bakery snapshot and reverify its signed response and log."""
+    view = snapshot(store).map_err((error) => error.message())?
+    match observed_text(view, observation_key(root))?:
+        Some(text) => return verify_audit_document(root, text, None, now, online=false)
+        None => return Err("no authenticated audit document has been observed for this registry")
+
+
+def observed_text(view: Snapshot, key: str) -> Result[Option[str], str]:
+    """Read the saved response as UTF-8, preserving any corruption as a refusal."""
+    match get(view, key).map_err((error) => error.message())?:
+        Some(data) =>
+            text = data.decode("utf-8", "strict").map_err((_) => "the observed registry audit document is not UTF-8")?
+            return Ok(Some(text))
+        None => return Ok(None)
+
+
+def observation_key(root: Root) -> str:
+    """Identify durable observations by the authenticated key digest, independent of URL and alias."""
+    return f"{AUDIT_OBSERVATION}:{root.registry}"
