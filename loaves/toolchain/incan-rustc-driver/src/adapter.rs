@@ -192,7 +192,14 @@ pub fn compile(
                 && overflow_checks
                 && reader.has_record_inputs() =>
         {
-            native_incremental(&mut args, crate_name, identity, report, &all)?
+            native_incremental(
+                &mut args,
+                crate_name,
+                &identity.toolchain,
+                &identity.target,
+                report,
+                &all,
+            )?
         }
         _ => None,
     };
@@ -245,7 +252,8 @@ pub fn compile(
 fn native_incremental(
     args: &mut Vec<String>,
     crate_name: &str,
-    identity: &DriverIdentity,
+    toolchain: &str,
+    target: &str,
     report: &Path,
     linked: &[(String, PathBuf)],
 ) -> Result<Option<PrivateOutput>, DriverError> {
@@ -253,15 +261,15 @@ fn native_incremental(
     let parent = report
         .parent()
         .ok_or_else(|| DriverError::Invocation("native plan report has no private unit directory".into()))?;
-    let compiler = incan_semantics_core::semantic_digest::semantic_digest(&identity.toolchain)
+    let compiler = incan_semantics_core::semantic_digest::semantic_digest(&toolchain)
         .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
     let compiler = compiler.trim_start_matches("sha256:");
     let private = PrivateOutput::acquire(parent, crate_name, compiler)?;
     let incremental = incremental_session(parent, crate_name, compiler, linked, private.is_some())?;
     let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
         crate_name.to_owned(),
-        identity.toolchain.clone(),
-        identity.target.clone(),
+        toolchain.to_owned(),
+        target.to_owned(),
     ])
     .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
     args.push("-C".into());
@@ -570,7 +578,7 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, optimization_level};
+    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
     use std::path::Path;
 
     /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
@@ -587,13 +595,29 @@ mod tests {
                 "lib.incn".to_owned(),
             ]
         };
-        let (mut first, mut second) = (arguments("/staging/one/oven"), arguments("/staging/two/oven"));
-        let held = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free")?;
-        held.redirect(&mut first);
-        assert!(PrivateOutput::acquire(units.path(), "oven", "abc")?.is_none());
+        let report = units.path().join("native-report");
+        let prepare = |args: &mut Vec<String>| native_incremental(args, "oven", "pinned-rustc", "target", &report, &[]);
+        let (mut first, mut contender, mut second) = (
+            arguments("/staging/one/oven"),
+            arguments("/staging/contender/oven"),
+            arguments("/staging/two/oven"),
+        );
+        let held = prepare(&mut first)?.ok_or("the private output is free")?;
+        let incremental_arguments = |args: &[String]| {
+            args.iter()
+                .filter(|argument| argument.starts_with("incremental="))
+                .count()
+        };
+        assert_eq!(incremental_arguments(&first), 1);
+        assert!(prepare(&mut contender)?.is_none());
+        assert_eq!(contender[2], "/staging/contender/oven");
+        assert_eq!(
+            incremental_arguments(&contender),
+            0,
+            "a compilation without the native output lease must not write its predecessor's incremental root"
+        );
         drop(held);
-        let again = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free again")?;
-        again.redirect(&mut second);
+        let _again = prepare(&mut second)?.ok_or("the private output is free again")?;
         assert_eq!(first, second);
         assert!(Path::new(&first[2]).starts_with(units.path()));
         Ok(())
