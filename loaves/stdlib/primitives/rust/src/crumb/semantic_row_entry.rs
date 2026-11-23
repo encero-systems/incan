@@ -240,8 +240,8 @@ mod tests {
     const EMPTY_REFERENCE: &str = "43524d420101002f0101071ddb0b3ce6d3009e98c15038948f7d341f1889af1dbdfa8509d3e6f8f6bb8ec783cce0a6d723770100020100";
     const EMPTY_DESCRIPTION: &str = r#"{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}"#;
 
-    fn bytes(hex: &str) -> Vec<u8> {
-        super::super::columns::hex(hex).expect("test hex")
+    fn bytes(hex: &str) -> Result<Vec<u8>, &'static str> {
+        super::super::columns::hex(hex).ok_or("invalid Crumb test input hex")
     }
 
     fn request(data: Vec<u8>, exact: bool) -> RowRequest {
@@ -251,8 +251,8 @@ mod tests {
     }
 
     #[test]
-    fn an_exact_read_refuses_trailing_bytes_and_a_prefix_read_reports_its_length() {
-        let mut data = bytes(ENUM_INLINE);
+    fn an_exact_read_refuses_trailing_bytes_and_a_prefix_read_reports_its_length() -> Result<(), &'static str> {
+        let mut data = bytes(ENUM_INLINE)?;
         let length = data.len();
         data.push(0);
         let exact = request(data.clone(), true).admit();
@@ -267,25 +267,28 @@ mod tests {
             (prefix.consumed, prefix.records, prefix.sealed),
             (length as i64, 1, false)
         );
+        Ok(())
     }
 
     #[test]
-    fn supplied_descriptions_arrive_d_encoded() {
-        let missing = request(bytes(EMPTY_REFERENCE), true).admit();
+    fn supplied_descriptions_arrive_d_encoded() -> Result<(), String> {
+        let missing = request(bytes(EMPTY_REFERENCE)?, true).admit();
         assert_eq!((missing.category.as_str(), missing.offset), ("missing_description", 9));
-        let notation = serde_json::from_str(EMPTY_DESCRIPTION).expect("description notation");
-        let description = rows::notation(&notation).expect("description");
+        let notation = serde_json::from_str(EMPTY_DESCRIPTION)
+            .map_err(|error| format!("parse Crumb test description: {error}"))?;
+        let description = rows::notation(&notation).ok_or("invalid Crumb test description notation")?;
         let mut encoded = Vec::new();
         let mut unlimited = Budget::new(u64::MAX, u64::MAX, u64::MAX);
-        rows::encode_metadata(&description, &mut encoded, &mut unlimited).expect("D encoding");
-        let mut supplied = request(bytes(EMPTY_REFERENCE), true);
+        rows::encode_metadata(&description, &mut encoded, &mut unlimited)?;
+        let mut supplied = request(bytes(EMPTY_REFERENCE)?, true);
         supplied.supply(encoded);
         let admitted = supplied.admit();
         assert!(admitted.admitted(), "reference refused: {}", admitted.category);
         assert_eq!(admitted.records, 1);
-        let mut malformed = request(bytes(EMPTY_REFERENCE), true);
+        let mut malformed = request(bytes(EMPTY_REFERENCE)?, true);
         malformed.supply(vec![9]);
         assert_eq!(malformed.admit().category, "invalid_description");
+        Ok(())
     }
 
     #[test]
@@ -295,12 +298,12 @@ mod tests {
         let mut encoded = Vec::new();
         let mut budget = Budget::new(u64::MAX, u64::MAX, u64::MAX);
         rows::encode_metadata(&description, &mut encoded, &mut budget)?;
-        let mut reference = request(bytes(EMPTY_REFERENCE), true);
+        let mut reference = request(bytes(EMPTY_REFERENCE)?, true);
         reference.supply(encoded.clone());
         reference.supply(encoded);
         let first = reference.admit();
         let second = reference.admit();
-        let owner = crate::mapping::MappedFile::owned(bytes(EMPTY_REFERENCE))?;
+        let owner = crate::mapping::MappedFile::owned(bytes(EMPTY_REFERENCE)?)?;
         let view = owner.view(0, owner.len()).ok_or("missing complete input view")?;
         let mut mapped = RowRequest::from_view(view.clone(), false, true);
         mapped.allow(i64::MAX, i64::MAX, i64::MAX);
@@ -375,24 +378,25 @@ mod tests {
     }
 
     #[test]
-    fn a_registered_profile_kind_takes_its_registered_shape() {
+    fn a_registered_profile_kind_takes_its_registered_shape() -> Result<(), &'static str> {
         // The corpus's `bytes-empty-inline` envelope with its kind `Record` respelled `Sample`.
         let profile = "43524d420101004b010043410604046b696e64030653616d706c65076e6f6d696e616c04071ddb0b3ce6d3000470617468030d6578616d706c652e56616c75650a70726f706572746965730600000100020100";
-        let unknown = request(bytes(profile), true).admit();
+        let unknown = request(bytes(profile)?, true).admit();
         assert_eq!((unknown.category.as_str(), unknown.offset), ("invalid_description", 11));
-        let mut registered = request(bytes(profile), true);
+        let mut registered = request(bytes(profile)?, true);
         registered.register("Sample".to_string(), true);
         let admitted = registered.admit();
         assert!(admitted.admitted(), "registered kind refused: {}", admitted.category);
         assert_eq!(admitted.records, 1);
+        Ok(())
     }
 
     #[test]
-    fn the_admission_reports_exactly_the_allowance_it_used() {
-        let first = request(bytes(ENUM_INLINE), true).admit();
+    fn the_admission_reports_exactly_the_allowance_it_used() -> Result<(), &'static str> {
+        let first = request(bytes(ENUM_INLINE)?, true).admit();
         assert!(first.admitted());
         assert!(first.bytes_charged > 0 && first.elements_charged > 0);
-        let mut exact = RowRequest::new(bytes(ENUM_INLINE), false, true);
+        let mut exact = RowRequest::new(bytes(ENUM_INLINE)?, false, true);
         exact.allow(first.bytes_charged, first.elements_charged, 128);
         let again = exact.admit();
         assert!(
@@ -408,12 +412,13 @@ mod tests {
             (first.bytes_charged - 1, first.elements_charged, "bytes"),
             (first.bytes_charged, first.elements_charged - 1, "elements"),
         ] {
-            let mut short = RowRequest::new(bytes(ENUM_INLINE), false, true);
+            let mut short = RowRequest::new(bytes(ENUM_INLINE)?, false, true);
             short.allow(bytes_left, elements_left, 128);
             let refused = short.admit();
             assert_eq!(refused.category, "limit_exceeded");
             assert_eq!(refused.cause, cause);
             assert!(refused.bytes_charged <= bytes_left && refused.elements_charged <= elements_left);
         }
+        Ok(())
     }
 }
