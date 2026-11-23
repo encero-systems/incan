@@ -64,7 +64,7 @@ def test_letters_inside_a_camel_case_word_do_not_match() -> Result[None, str]:
 
 
 def test_check_reports_path_line_word_and_replacement() -> Result[None, str]:
-    """The command reports each original source line and replacement."""
+    """The command names its input for spelling findings and malformed UTF-8."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     initialize(root)?
@@ -73,6 +73,13 @@ def test_check_reports_path_line_word_and_replacement() -> Result[None, str]:
     assert result.code == 1
     assert "src/lib.rs:1: colour → color" in result.stdout
     assert "src/lib.rs:2: behaviour → behavior" in result.stdout
+    source = root.resolve().map_err((error) => error.message())?.joinpath("src/lib.rs")
+    source.write_bytes(b"\xff").map_err((error) => error.message())?
+    malformed = run_check("check_us_english", root)?
+    assert malformed.code == 2
+    assert malformed.stdout == ""
+    assert "invalid utf-8" in malformed.stderr, malformed.stderr
+    assert f"cannot decode {source.0} as UTF-8:" in malformed.stderr, malformed.stderr
     return Ok(None)
 
 
