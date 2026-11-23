@@ -1,6 +1,8 @@
 """Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
 
+from cfg_predicate import identifier
 from graph_read_demands import note_graph_demand
+from pub::internal_models.namespace_order import decode_namespace_order
 from pub::internal_models.record_scope import checked_row_family, checked_row_request
 from pub::internal_models.source_value_records import SOURCE_PROFILE
 from std.encoding.hex import hexlify
@@ -297,6 +299,7 @@ def select_evaluation(
     mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
     defer_payload: bool = false,
     cutoff: EditCutoff = EditCutoff(),
+    plan_reach: Option[PlanImportReach] = None,
 ) -> Result[Option[ReusableEvaluation], str]:
     """
     Validate an output, unless the edit's `cutoff` leaves it valid by the snapshot, and share only successful
@@ -305,6 +308,10 @@ def select_evaluation(
     evaluation, receipt = match evaluation_authority(selected, output, profile)?:
         Some(authority) => authority
         None => return Ok(None)
+    if let Some(reach) = plan_reach:
+        mut scoped = reach
+        if not scoped.permits(selected, output, receipt.preparation.rank_certificate)?:
+            return Ok(None)
     value_key = evaluation.output
     value_digest = evaluation.value_digest
     mut value: bytes = b""
@@ -329,6 +336,75 @@ def select_evaluation(
     return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt, namespace=evaluation.namespace, location=location)))
 
 
+pub class PlanImportReach:
+    """A plan selection's authenticated source reach and the rank groups checked against it in one view."""
+
+    root: str
+    snapshot: str
+    index: str
+    origin: str
+    modules: set[str]
+    named_modules: Option[set[str]]
+    groups: Dict[str, bool] = {}
+
+    @staticmethod
+    pub def open(selected: Snapshot, origin: str, modules: list[str], named_modules: Option[set[str]]) -> PlanImportReach:
+        """Bind the reachable source modules to the graph view used for selection."""
+        return PlanImportReach(root=selected.root.value, snapshot=selected.digest, index=selected.index,
+            origin=origin, modules=set(modules), named_modules=named_modules)
+
+    pub def validate(self, selected: Snapshot, origin: str) -> Result[None, str]:
+        """Keep one request's source reach within its own authenticated graph and origin."""
+        if selected.root.value != self.root or selected.digest != self.snapshot or selected.index != self.index or origin != self.origin:
+            return Err("plan import reach belongs to another graph view or origin")
+        return Ok(None)
+
+    pub def named_owner(self, owner: str) -> Option[bool]:
+        """Classify only ordinary top-level functions in the stable declaration identity's compact spelling."""
+        names = match self.named_modules:
+            Some(modules) => modules
+            None => return None
+        parts = owner.split("|")
+        signature = "incan.source-signature/2:sha256:"
+        if len(parts) != 2 or not parts[0].startswith("function:") or not parts[1].startswith(signature):
+            return None
+        digest = parts[1][len(signature):]
+        if len(digest) != 64:
+            return None
+        for digit in digest:
+            if digit not in "0123456789abcdef":
+                return None
+        qualified = parts[0][len("function:"):].split("::")
+        if len(qualified) < 2 or qualified[0] in ["pub", "rust", "builtin"]:
+            return None
+        for part in qualified:
+            if not identifier(part):
+                return None
+        return Some("::".join(qualified[:len(qualified) - 1]) in names)
+
+    pub def permits(mut self, selected: Snapshot, output: RecordKey, certificate: str) -> Result[bool, str]:
+        """Use an authenticated namespace certificate for an owner whose key gives no exact source module."""
+        self.validate(selected, output.origin)?
+        if let Some(included) = self.named_owner(output.identity):
+            return Ok(included)
+        if certificate == "compiled-check":
+            return Ok(true)
+        if certificate in self.groups:
+            return Ok(self.groups[certificate])
+        mut included = true
+        if let Some(value) = get(selected, "incan.compiler.namespace-order\t" + certificate).map_err((error) => error.message())?:
+            order = decode_namespace_order(value, self.origin)?
+            if order.evidence != certificate:
+                return Err("plan namespace certificate differs from its content identity")
+            included = len(order.members) == 0
+            for module in order.members:
+                if module in self.modules:
+                    included = true
+                    break
+        self.groups[certificate] = included
+        return Ok(included)
+
+
 pub model OutputSlots:
     """A selection over output-index keys that can be answered before reading their values."""
 
@@ -337,6 +413,7 @@ pub model OutputSlots:
     pub included: Option[list[str]] = None
     pub excluded: list[str] = []
     pub excluded_outputs: list[str] = []
+    pub plan_reach: Option[PlanImportReach] = None
 
 
 pub def reusable_family_records(
@@ -388,14 +465,16 @@ def select_family_records(
 ) -> Result[list[ReusableRecord], str]:
     """Read one family under the snapshot and profile that own the verified selections."""
     mut excluded: set[str] = set()
+    mut reach: Option[PlanImportReach] = None
     if let Some(scope) = slots:
         excluded = set(scope.excluded_outputs)
+        reach = scope.plan_reach
     mut records: list[ReusableRecord] = []
     for output in family_outputs(selected, family, profile, slots)?:
         if output in excluded:
             continue
         key = decode_record_key(output)?
-        match select_evaluation(selected, key, profile, verified, defer_payload, cutoff)?:
+        match select_evaluation(selected, key, profile, verified, defer_payload, cutoff, reach)?:
             Some(reused) =>
                 records.append(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
                     receipt=reused.receipt, namespace=reused.namespace, location=reused.location))
@@ -464,6 +543,8 @@ pub def family_outputs(
     if let Some(scope) = slots:
         if "\t" in scope.origin or "\t" in scope.identity_profile:
             return Err("invalid compiler output range")
+        if let Some(reach) = scope.plan_reach:
+            reach.validate(selected, scope.origin)?
         excluded = set(scope.excluded)
         if let Some(owners) = scope.included:
             if len(owners) == 0:
@@ -489,6 +570,9 @@ pub def family_outputs(
                     continue
                 if let Some(names) = included:
                     if fields[5] not in names:
+                        continue
+                if let Some(reach) = scope.plan_reach:
+                    if reach.named_owner(fields[5]) == Some(false):
                         continue
             note_graph_demand("output-slot", selected, indexed)
             output = read_pointer(required_value(selected, indexed)?)?

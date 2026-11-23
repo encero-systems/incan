@@ -23,6 +23,7 @@ from compiler_graph_records import (
     InputReaders,
     NamespaceRecordSelection,
     OutputSlots,
+    PlanImportReach,
     PublishedEvaluation,
     ReusableRecord,
     publish_evaluation,
@@ -90,10 +91,12 @@ pub def select_namespace_inventory_except(
     use_references: bool = false,
     cutoff: EditCutoff = EditCutoff(),
     use_layouts: bool = false,
+    reachable_modules: Option[list[str]] = None,
 ) -> Result[NamespaceInventory, str]:
     """Select namespace pages and certify which scoped checker peers may travel exclusively in a whole module."""
     mut inventory = NamespaceInventory()
-    slots = OutputSlots(origin=origin, identity_profile=NAMESPACE_IDENTITY_PROFILE, excluded=invalid)
+    slots = OutputSlots(origin=origin, identity_profile=NAMESPACE_IDENTITY_PROFILE, excluded=invalid,
+        included=reachable_modules)
     mut orders: Dict[str, NamespaceOrder] = {}
     mut modules: Dict[str, str] = {}
     mut references: list[NamespaceReference] = []
@@ -240,12 +243,13 @@ pub def select_body_inventory_except(
     invalid: list[str],
     mint_body_ir: bool = false,
     cutoff: EditCutoff = EditCutoff(),
+    plan_reach: Option[PlanImportReach] = None,
 ) -> Result[list[SelectedBodyRecord], str]:
     """
     Select this project origin's complete owners except those reached by its current source changes. Under the
     edit's `cutoff`, only owners that read a changed record, directly or through other readers, are validated again.
     """
-    slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid))
+    slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, plan_reach=plan_reach))
     locals, finals, bodies = reusable_checker_records(selected, profile, slots, cutoff=cutoff)?
     return paired_records(locals, finals, bodies, profile, mint_body_ir)
 
