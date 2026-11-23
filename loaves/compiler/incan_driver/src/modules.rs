@@ -346,8 +346,8 @@ fn collect_file(
     open_sources: &HashMap<PathBuf, String>,
     reads: &mut SourceGraphReads,
 ) -> Result<CollectedFile, CliDiagnosticFailure> {
-    let source = match open_sources.get(Path::new(&file_path)) {
-        Some(source) => source.clone(),
+    let (source, from_capture) = match open_sources.get(Path::new(&file_path)) {
+        Some(source) => (source.clone(), false),
         None => {
             let captured = session
                 .unit()
@@ -357,11 +357,14 @@ fn collect_file(
                 .transpose()?
                 .flatten();
             match captured {
-                Some(source) => source,
-                None => read_source_for_diagnostics(file_path)?,
+                Some(source) => (source, true),
+                None => (read_source_for_diagnostics(file_path)?, false),
             }
         }
     };
+    if session.unit().captured_sources.is_some() {
+        session.record_source_origin(file_path, from_capture)?;
+    }
     let file_path_obj = Path::new(&file_path);
     let (mut ast, gated_exports) =
         match session
