@@ -474,14 +474,33 @@ mod tests {
         let fixture = Fixture::new()?;
         let (selection, _) = fixture.stage_selection(SELECTION_A)?;
         fs::remove_file(&fixture.note)?;
+        let mut digest = [0; 32];
+        hex::decode_to_slice(
+            "95ee7d59f26344aeaf5603871ed13d20fbd05638dfc19c804b24d02abaf90d98",
+            &mut digest,
+        )?;
+        let empty = CompactAdmissionPin { count: 0, digest };
+        let mut different = empty;
+        different.digest[0] ^= 1;
         for with_interface in [false, true] {
-            let requests = fixture.requests(selection, None, with_interface)?;
-            for request in &requests {
+            for request in &fixture.requests(selection, None, with_interface)? {
+                assert!(
+                    matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no settled compact admission outcome")),
+                    "a selected request accepted an absent publication in place of the authenticated empty set"
+                );
+            }
+            for request in &fixture.requests(selection, Some(empty), with_interface)? {
                 assert!(request.read_compact_definitions()?.is_empty());
+            }
+            for request in &fixture.requests(selection, Some(different), with_interface)? {
+                assert!(
+                    matches!(request.read_compact_definitions(), Err(reason) if reason.contains("expected 0 notes, observed 0")),
+                    "a selected request accepted a different digest for the empty set"
+                );
             }
         }
         let root = fixture.root.path();
-        let mut without_report = handoff(root, Some(selection));
+        let [mut without_report, _] = fixture.requests(selection, Some(empty), false)?;
         without_report.plan_record_report = None;
         let packet = root.join("no-report.rustc-handoff");
         write(&without_report, &packet)?;
@@ -489,6 +508,22 @@ mod tests {
         for request in [&without_report, &detached] {
             assert!(
                 matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no native report directory"))
+            );
+        }
+        let mut scalar = handoff(root, None);
+        scalar.plan_record_report = None;
+        assert!(scalar.read_compact_definitions()?.is_empty());
+        scalar
+            .plan_record_products
+            .as_mut()
+            .ok_or("missing test products")?
+            .compact_notes = Some(empty);
+        let packet = root.join("no-selection.rustc-handoff");
+        write(&scalar, &packet)?;
+        let detached: RustcHandoff = postcard::from_bytes(&fs::read(packet)?)?;
+        for request in [&scalar, &detached] {
+            assert!(
+                matches!(request.read_compact_definitions(), Err(reason) if reason.contains("outcome has no plan module selection"))
             );
         }
         Ok(())
