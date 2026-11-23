@@ -41,7 +41,9 @@ from bakery_records import Fact
 from bakery_roots import lease_unit, register_root
 from compiler_body_values import SelectedBodyPage
 from compiler_ranked_build import RankedBuildInputs, ranked_build_pages
-from compiler_refusals import check_or_replay, ordinary_compilation, retain_checked_warnings, warning_identity
+from compiler_refusals import (
+    PreparedWarnings, check_or_replay, ordinary_compilation, retain_checked_warnings, warning_identity,
+)
 from compiler_worker import relay_console
 from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
@@ -161,6 +163,8 @@ pub model Made:
     pub identity: str = ""
     # The selected raw-source check's warning record, independent of positioned native code.
     pub warnings: str = ""
+    # A deferred warning receipt keeps its own producer claim and payload until the request publishes.
+    pub prepared_warnings: Option[PreparedWarnings] = None
 
 
 pub def compile_unit(
@@ -300,14 +304,14 @@ pub def obtain_executable(
     register_root(store, unit.project_root, root_registration(unit), retained)?
     # 1. A sealed executable uses the checked warnings of this raw source identity.
     if let Some(fact) = current_executable(store, identity, output)?:
-        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared)?
+        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication)?
         trace(f"{label}: reused")
         return Ok(made)
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
     if let Some(fact) = current_executable(store, identity, output)?:
-        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared)?
+        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
     # 4. A failed bake publishes nothing; its staging directory goes with it.
@@ -343,10 +347,11 @@ pub def obtain_executable(
     if key.compiler != "" and not executable_inputs_match(unit, toolchain, key, warnings != "")?:
         _ = staged.remove_tree()
         return Err("unit inputs changed while the native producer ran; no unit record was published")
+    mut prepared_warnings: Option[PreparedWarnings] = None
     if warning_file.is_file():
         warning_bytes = warning_file.read_bytes().map_err((error) => error.message())?
         warning_file.unlink().map_err((error) => error.message())?
-        retain_checked_warnings(store, warnings, unit, warning_bytes)?
+        prepared_warnings = retain_checked_warnings(store, warnings, unit, warning_bytes, defer_publication)?
     # 5. A request may group the record with capture and selection while retaining the producer claim.
 
     reaches = reached(store, [loaf.dir for loaf in unit.loaves])?
@@ -375,6 +380,7 @@ pub def obtain_executable(
                 claim=Some(Rc.new(held)),
                 identity=identity,
                 warnings=warnings,
+                prepared_warnings=prepared_warnings,
             ),
         )
     fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
@@ -397,12 +403,15 @@ def reuse_executable(
     key: Key,
     warnings: str,
     shared: bool,
+    defer_publication: bool,
 ) -> Result[Made, str]:
     """Select the executable and the warning result for the requesting project's exact authored sources."""
+    mut prepared: Option[PreparedWarnings] = None
     if warnings != "":
-        executable_warnings(unit, toolchain, store, key, warnings)?
+        prepared = executable_warnings(unit, toolchain, store, key, warnings, defer_publication)?
     mut result = viewed(store, fact, output, unit.kind, shared)?
     result.warnings = warnings
+    result.prepared_warnings = prepared
     return Ok(result)
 
 
