@@ -503,3 +503,75 @@ fn every_function_without_an_event_has_a_native_input() -> Result<(), String> {
     assert_ne!(carried[&frame.name], first[&frame.name]);
     Ok(())
 }
+
+/// An admitted plan with complete coverage reconstructs the whole interface through the original product bytes.
+#[test]
+fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), String> {
+    use incan_mir_plan_native::{
+        POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, encode_lowering_event, encode_plan_module,
+    };
+
+    let request = Request::new("complete-admitted-interface")?;
+    let function = unit_function("main", 1);
+    let key = retain_product(&request, &function, false)?;
+    let event_path = request.report(&format!("{key}.event"));
+    let mut event = decode_lowering_event(&read(&event_path)?)?;
+    event.module = "m".into();
+    let record = decode_plan_function_record(&event.product)?;
+    let page = PlanModuleValue {
+        module: "m".into(),
+        functions: vec![PlanModuleFunction {
+            identity: event.identity.clone(),
+            symbol: event.identity.clone(),
+            function: event.function.clone(),
+            key: key.clone(),
+            event: encode_lowering_event(&event)?,
+        }],
+    };
+    let path = Path::new(&request.products).join(format!("6d{POSITIONED_MODULE_PAGE}"));
+    std::fs::write(path, encode_plan_module(&page)?).map_err(|error| error.to_string())?;
+    std::fs::remove_file(event_path).map_err(|error| error.to_string())?;
+    let owner = AdmittedFunction {
+        function: event.function,
+        identity: event.identity,
+        references: Vec::new(),
+        placement: None,
+    };
+    let mut evidence = AdmittedProduct {
+        key,
+        digest: record.digest,
+        helpers: Vec::new(),
+    };
+    report_admitted(
+        Some(&request.report),
+        "m",
+        std::slice::from_ref(&owner),
+        std::slice::from_ref(&evidence),
+        1,
+        false,
+        Some(&request.products),
+    )?;
+    let whole = plan(vec![function], &[]);
+    publish_plan_records(&whole, &request.products, &request.report)?;
+    let produced = postcard::to_allocvec(&request.interface_plan()?).map_err(|error| error.to_string())?;
+    let expected = postcard::to_allocvec(&whole).map_err(|error| error.to_string())?;
+    assert_eq!(produced, expected);
+    let interface = decode_native_interface(&read(&request.report(INTERFACE_REPORT))?)?;
+    std::fs::remove_file(request.report(&format!("{}.event", interface.entry))).map_err(|error| error.to_string())?;
+
+    evidence.digest = format!("sha256:{}", "ef".repeat(32));
+    report_admitted(
+        Some(&request.report),
+        "m",
+        &[owner],
+        &[evidence],
+        1,
+        false,
+        Some(&request.products),
+    )?;
+    match publish_plan_records(&whole, &request.products, &request.report) {
+        Err(error) if error.contains("digest differs from its settled product") => Ok(()),
+        Err(error) => Err(error),
+        Ok(()) => Err("a changed admission digest was accepted".into()),
+    }
+}
