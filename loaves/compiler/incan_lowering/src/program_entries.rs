@@ -215,6 +215,7 @@ pub fn lower_ordinary_bodies(
             ordinary,
             page.inspect_placement,
             keyed.directory,
+            page.positioned_content(),
         )?;
     }
     Ok(())

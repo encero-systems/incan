@@ -10,11 +10,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use incan_mir_plan_native::{
-    ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, MAX_PLAN_MODULE_SELECTION_BYTES,
-    PARTIAL_MODULE_NOTE, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction,
-    PlanModuleSelectionRecord, PlanModuleValue, PlanSelectedModule, PlanSelectionScope,
-    REPOSITION_MODULE_PAGE, decode_plan_module, decode_plan_module_selection, encode_module_note,
-    write_module_placement,
+    ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
+    PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleSelectionRecord, PlanModuleValue,
+    PlanSelectedModule, PlanSelectionScope, REPOSITION_MODULE_PAGE, WholeModuleAdmission, decode_plan_module,
+    decode_plan_module_selection, encode_module_note, encode_whole_module_admission, write_module_placement,
 };
 
 use sha2::{Digest, Sha256};
@@ -239,6 +238,11 @@ impl ModulePage {
     /// The page this worker keeps for this content.
     pub fn resident(&self) -> &Arc<ResidentPage> {
         &self.resident
+    }
+
+    /// The exact content of the positioned page this request admitted, if there was one.
+    pub(crate) fn positioned_content(&self) -> Option<[u8; 32]> {
+        (!self.path.as_os_str().is_empty() && !self.inspect_placement).then_some(self.content)
     }
 
     /// The bytes of the final event of the body lowered to `function`, read from this request's page.
@@ -469,14 +473,22 @@ fn note_suffix(complete: bool) -> &'static str {
 /// Settled module admissions from a single compilation request.
 #[derive(Default)]
 pub struct PlanAdmissions {
+    selection: Option<PlanModuleSelection>,
     modules: BTreeMap<String, SettledModule>,
 }
 
 impl PlanAdmissions {
     /// Start the lowering request with its independently accepted module selection, when present.
     pub fn with_selection(selection: Option<PlanModuleSelection>) -> Self {
-        let _ = selection;
-        Self::default()
+        Self {
+            selection,
+            modules: BTreeMap::new(),
+        }
+    }
+
+    /// The independently accepted selection for this entire request.
+    pub(crate) fn selection(&self) -> Option<&PlanModuleSelection> {
+        self.selection.as_ref()
     }
 
     /// Borrow the exact module admissions established by lowering.
@@ -489,6 +501,7 @@ impl PlanAdmissions {
 pub(crate) struct SettledModule {
     pub note: AdmittedModule,
     pub products: Vec<AdmittedProduct>,
+    compact: Option<WholeModuleAdmission>,
 }
 
 /// The exact product identity and helper inventory established while admitting one native function.
@@ -511,6 +524,7 @@ pub(crate) fn report_admitted(
     ordinary: usize,
     inspected: bool,
     products: Option<&str>,
+    positioned: Option<[u8; 32]>,
 ) -> Result<(), String> {
     let (Some(report), Some(directory)) = (report, products) else {
         return Ok(());
@@ -546,15 +560,80 @@ pub(crate) fn report_admitted(
         functions,
         inspected,
     };
-    write_admitted_note(&private.join(&name), &root.join(&name), &note)?;
+    let compact = whole_module_candidate(admissions.selection(), &note, positioned);
+    if compact.is_none() {
+        write_admitted_note(&private.join(&name), &root.join(&name), &note)?;
+    }
     admissions.modules.insert(
         module.to_owned(),
         SettledModule {
             note,
             products: evidence,
+            compact,
         },
     );
     Ok(())
+}
+
+/// Nominate a complete admission only when the worker used the exact current positioned selection.
+fn whole_module_candidate(
+    selection: Option<&PlanModuleSelection>,
+    note: &AdmittedModule,
+    positioned: Option<[u8; 32]>,
+) -> Option<WholeModuleAdmission> {
+    let selection = selection?;
+    let selected = selection.module(&note.module)?;
+    let digest = hex::encode(positioned?);
+    let count = i64::try_from(note.functions.len()).ok()?;
+    if !note.complete
+        || note.inspected
+        || !selected.positioned
+        || selected.count != count
+        || selected.digest != digest
+        || note.functions.iter().any(|function| function.placement.is_some())
+    {
+        return None;
+    }
+    Some(WholeModuleAdmission {
+        module: note.module.clone(),
+        output: selected.output.clone(),
+        digest,
+        count,
+        selection: hex::encode(selection.digest()),
+    })
+}
+
+/// Emit a nominated admission once the publisher knows which declarations the scalar events already name.
+pub(crate) fn publish_settled_module_note(
+    directory: &str,
+    report: &Path,
+    settled: &SettledModule,
+    reported: &HashSet<String>,
+) -> Result<Option<[u8; 32]>, String> {
+    let Some(compact) = &settled.compact else {
+        return Ok(None);
+    };
+    let basename = format!("{}{ADMITTED_MODULE_NOTE}", hex::encode(&compact.module));
+    let private = Path::new(directory).join("admissions").join(&basename);
+    let diagnostic = report.join(&basename);
+    if settled
+        .note
+        .functions
+        .iter()
+        .any(|function| reported.contains(&function.function))
+    {
+        write_admitted_note(&private, &diagnostic, &settled.note)?;
+        return Ok(None);
+    }
+    let encoded = encode_whole_module_admission(compact)?;
+    prepare_note_directory(&private)?;
+    match std::fs::remove_file(placement_path(&private)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    write_note_bytes(&private, &diagnostic, &encoded)?;
+    Ok(Some(Sha256::digest(&encoded).into()))
 }
 
 /// Reject an incomplete or ambiguous module admission before either consumer sees it.
@@ -595,12 +674,23 @@ fn write_admitted_note(
     note: &AdmittedModule,
 ) -> Result<(), String> {
     let encoded = encode_module_note(note)?;
+    prepare_note_directory(path)?;
+    write_module_placement(&placement_path(path).to_string_lossy(), note)?;
+    write_note_bytes(path, diagnostic, &encoded)
+}
+
+/// Ensure the request-private admission directory exists before emitting either note shape.
+fn prepare_note_directory(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    write_module_placement(&placement_path(path).to_string_lossy(), note)?;
-    std::fs::write(path, &encoded).map_err(|error| error.to_string())?;
-    std::fs::write(diagnostic, &encoded).map_err(|error| error.to_string())
+    Ok(())
+}
+
+/// Preserve the exact request-private bytes in the public diagnostic copy.
+fn write_note_bytes(path: &Path, diagnostic: &Path, encoded: &[u8]) -> Result<(), String> {
+    std::fs::write(path, encoded).map_err(|error| error.to_string())?;
+    std::fs::write(diagnostic, encoded).map_err(|error| error.to_string())
 }
 
 /// The coordinates beside the note Oven reads.
@@ -773,6 +863,7 @@ mod tests {
             2,
             false,
             Some(&products_text),
+            None,
         )?;
         assert_eq!(names(&report), [format!("{basename}.partially-admitted")]);
         let whole = vec![restored("a", false), restored("b", true)];
@@ -786,6 +877,7 @@ mod tests {
             2,
             true,
             Some(&products_text),
+            None,
         )?;
         assert_eq!(names(&report), [format!("{basename}.admitted")]);
         let admissions = products.join("admissions");
@@ -817,7 +909,8 @@ mod tests {
                 Vec::new(),
                 2,
                 true,
-                Some(&products_text)
+                Some(&products_text),
+                None,
             )
             .is_err()
         );
@@ -830,6 +923,7 @@ mod tests {
             2,
             true,
             Some(&products_text),
+            None,
         )?;
         assert!(request.modules().is_empty());
         assert!(names(&report).is_empty());
@@ -855,6 +949,7 @@ mod tests {
             1,
             false,
             Some(&products_text),
+            None,
         )?;
         let admissions = products.join("admissions");
         let from = admissions.join(format!("{}.admitted", hex::encode("lone_alpha")));

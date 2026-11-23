@@ -10,7 +10,9 @@ use incan_mir_plan_native::{
     encode_lowering_refusal, product_nominals, read_module_admission, source_span,
 };
 
-use crate::plan_modules::{AdmittedProduct, PlanAdmissions, PlanModuleSelection, report_admitted, staged_page_reads};
+use crate::plan_modules::{
+    AdmittedProduct, PlanAdmissions, PlanModuleSelection, admitted_page, report_admitted, staged_page_reads,
+};
 use crate::record_plan_outputs::publish_plan_records;
 use crate::scalar_store::{ProductEvent, record_scalar_inputs, report_scalar, retain_scalar};
 
@@ -372,6 +374,7 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
         1,
         true,
         Some(&request.products),
+        None,
     )?;
     assert!(
         !Path::new(&request.products)
@@ -421,6 +424,7 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
             1,
             true,
             Some(&products),
+            None,
         )?;
     }
     for (line, attempt) in (8..).zip(&attempts) {
@@ -561,6 +565,7 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
         1,
         false,
         Some(&request.products),
+        None,
     )?;
     let whole = plan(vec![function], &[]);
     publish_plan_records(&whole, &request.products, &request.report, &request.admissions)?;
@@ -580,6 +585,7 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
         1,
         false,
         Some(&request.products),
+        None,
     )?;
     match publish_plan_records(&whole, &request.products, &request.report, &request.admissions) {
         Err(error) if error.contains("digest differs from its settled product") => Ok(()),
@@ -634,8 +640,12 @@ fn settled_positioned_module_emits_one_compact_note() -> Result<(), String> {
         digest: product.digest,
         helpers: Vec::new(),
     };
+    let name = format!("6d{ADMITTED_MODULE_NOTE}");
+    let note_path = products.join("admissions").join(&name);
     let publish = |request: &mut Request, selection, owner, evidence, unit: &Plan| -> Result<_, String> {
+        let empty = !note_path.is_file();
         request.admissions = PlanAdmissions::with_selection(selection);
+        let staged = admitted_page(Some(&request.products), "m", Some("keyed-plan-test"));
         report_admitted(
             &mut request.admissions,
             Some(&request.report),
@@ -645,7 +655,14 @@ fn settled_positioned_module_emits_one_compact_note() -> Result<(), String> {
             1,
             false,
             Some(&request.products),
+            staged.positioned_content(),
         )?;
+        if empty && request.admissions.selection().is_some() {
+            assert!(
+                !note_path.is_file(),
+                "a compact candidate wrote a provisional scalar note"
+            );
+        }
         publish_plan_records(unit, &request.products, &request.report, &request.admissions)
     };
     let changed = unit_function("main", 2);
@@ -664,19 +681,17 @@ fn settled_positioned_module_emits_one_compact_note() -> Result<(), String> {
         1,
         "the complete interface opens its selected page once"
     );
-    let name = format!("6d{ADMITTED_MODULE_NOTE}");
-    let note_path = products.join("admissions").join(&name);
     let encoded = read(&note_path)?;
-    assert_eq!(
-        settled,
-        Some(compact_admission_pin([("m", Sha256::digest(&encoded).into())])?)
-    );
+    let note_digest = Sha256::digest(&encoded);
+    let verified = compact_admission_pin([("m", note_digest.into())])?;
+    assert_eq!(settled, Some(verified));
     let note = decode_whole_module_admission(&encoded)?;
     assert_eq!(
         (note.module, note.output, note.digest, note.count, note.selection),
         ("m".into(), output, digest, 1, hex::encode(pin))
     );
     assert_eq!(read(&request.report(&name))?, encoded);
+    assert!(!products.join("admissions").join(format!("{name}.placement")).exists());
     assert!(!request.report(ADMITTED_DEFINITIONS).is_file());
     let changed_event = decode_lowering_event(&read(&request.report(&format!("{changed_key}.event")))?)?;
     assert_eq!(changed_event.function, "main");
@@ -688,6 +703,13 @@ fn settled_positioned_module_emits_one_compact_note() -> Result<(), String> {
     let scalar = read_module_admission(&note_path.to_string_lossy())?;
     assert!(scalar.complete && scalar.functions.len() == 1);
     assert_eq!(read(&request.report(INTERFACE_REPORT))?, interface);
+    println!(
+        "compact fixture notes={} set={} private_note={} interface={} full_page_reads=1",
+        verified.count,
+        hex::encode(verified.digest),
+        hex::encode(&encoded),
+        hex::encode(Sha256::digest(&interface)),
+    );
     let native = postcard::to_allocvec(&request.interface_plan()?).map_err(|error| error.to_string())?;
     let expected = postcard::to_allocvec(&unit).map_err(|error| error.to_string())?;
     assert_eq!(native, expected);
