@@ -341,10 +341,10 @@ impl std::ops::Deref for PlanReader {
 #[cfg(test)]
 mod tests {
     use super::PlanReader;
-    use crate::plan::{
-        BasicBlock, Function, Local, ModelDeclaration, Parameter, Plan, PlanType, Terminator, TerminatorKind,
+    use crate::plan::{Function, ModelDeclaration, Parameter, Plan, PlanType, Terminator, TerminatorKind};
+    use incan_mir_plan_native::{
+        AdmittedDefinition, BasicBlock, Local, NATIVE_DEFINITIONS, encode_admitted_definitions, source_span,
     };
-    use incan_mir_plan_native::{AdmittedDefinition, NATIVE_DEFINITIONS, encode_admitted_definitions, source_span};
 
     fn plan(names: &[&str]) -> Plan {
         let span = source_span("reader.incn", 1, 1);
