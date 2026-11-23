@@ -15,7 +15,6 @@ from pub::incan_platform.store import (
     measure_frame_reads,
     put,
     read_counts,
-    store_identity,
 )
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
@@ -108,7 +107,6 @@ def verify_namespace_receipts(root: StorePath) -> Result[None, str]:
     left = "src/left.incn"
     right = "src/right.incn"
     order = certified_namespace_order(origin, {left: [], right: []})?
-    _ = store_identity(root).map_err((error) => error.message())?
     selected = store_snapshot(root).map_err((error) => error.message())?
     mut graph = commit(put(begin(selected), "incan.compiler.namespace-order\t" + order[left].evidence, order[left].certificate)).map_err((error) => error.message())?
     graph = commit(put(begin(graph), "incan.compiler.namespace-order\t" + order[right].evidence, order[right].certificate)).map_err((error) => error.message())?
@@ -152,7 +150,7 @@ def verify_namespace_receipts(root: StorePath) -> Result[None, str]:
     observed = finish_frame_reads()
     inventory = warm?
     assert inventory.complete == set([left]), "the compact selection must retain the certified cycle"
-    assert projections.generation_observations() == 1, "three receipt frames share one segment observation"
+    assert projections.generation_observations() == 1, "three warm receipts need one segment observation in an ordinary Bakery"
     assert len(inventory.pages) == len(pages), "unchanged receipts must preserve the page inventory"
     for page in inventory.pages:
         assert page.value == pages[page.key], f"unchanged receipt altered {page.key}"
