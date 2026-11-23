@@ -1,0 +1,15 @@
+"""Guard fallible Rust tests against direct panic helpers."""
+
+from std.regex import Regex
+from check_support import read, repository_root, source_lines
+
+
+def test_rust_abi_string_codec_tests_propagate_errors() -> Result[None, str]:
+    """Rust ABI string codec tests must propagate serialization failures through their result."""
+    root = repository_root()?
+    path = root.joinpath("loaves/compiler/incan_frontend/src/rust_abi_cache/strings.rs")
+    pattern = Regex("^\\s*[^/\\s].*(\\.unwrap\\(\\)|\\.expect\\(\")").map_err((error) => error.message())?
+    source = source_lines(read(path)?)?
+    offending = [line.strip() for line in source if pattern.is_match(line)]
+    assert offending == [], f"{len(offending)} direct panic-helper lines in {path.0}: {offending}"
+    return Ok(None)
