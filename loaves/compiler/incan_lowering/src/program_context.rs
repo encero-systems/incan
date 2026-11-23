@@ -9,7 +9,7 @@ use incan_semantics_core::body_ir::{
     BodyIrModule, DecoratedBinding, EnumDeclaration, NominalDeclaration, StaticDeclaration, ValueEnumDeclaration,
 };
 
-use crate::body_index::{BodyIndex, empty_body_index, extend_body_index};
+use crate::body_index::{BodyIndex, empty_body_index};
 use crate::native_type_identity::{ConstructorIndex, extend_constructor_index};
 use crate::nominal_records::{DescribedNominals, RecordedLayouts};
 
@@ -84,7 +84,9 @@ pub fn retain_nominal_tables(program: &mut ProgramContext, module: &BodyIrModule
     Ok(())
 }
 
-/// Extend retained program lookup and storage generations after runtime resolution without rebuilding dispatch roots.
+/// Extend retained storage and layout generations after runtime resolution.
+///
+/// The caller has already extended the shared body index before discovering carriers for the appended frames.
 pub fn extend_program_context(
     program: &mut ProgramContext,
     module: &BodyIrModule,
@@ -99,7 +101,6 @@ pub fn extend_program_context(
     {
         return Err("invalid Body IR program context generation".into());
     }
-    extend_body_index(&mut program.body_indices, module)?;
     let statics = program.statics.len();
     Arc::make_mut(&mut program.statics).extend(module.static_declarations[statics..].iter().cloned());
     let nominals = program.nominals.len();

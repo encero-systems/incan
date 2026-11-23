@@ -83,7 +83,7 @@ fn body_refusals(modules: &[BodyIrModule], inputs: &CensusInputs<'_>) -> Result<
         &empty_templates,
     )?;
     let mut context = context;
-    let (constructor_table, unions, initial_intrinsics) = layout_tables(
+    let (constructor_table, body_indices, unions, initial_intrinsics) = layout_tables(
         &context,
         &inputs.files[entry],
         &source_files,
@@ -98,6 +98,7 @@ fn body_refusals(modules: &[BodyIrModule], inputs: &CensusInputs<'_>) -> Result<
     let mut inventories = Inventories::default();
     let mut program = initial_plan_roots(
         constructors,
+        body_indices,
         &context,
         &inputs.files[entry],
         &mut intrinsics,

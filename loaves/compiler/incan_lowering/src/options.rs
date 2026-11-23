@@ -1,6 +1,8 @@
 //! Concrete standard Option and Result layouts shared with native enum operations.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::mem::size_of;
+use std::time::Instant;
 
 use incan_lang::lang::surface::constructors::{ConstructorId, from_str as builtin_constructor};
 use incan_lang::lang::surface::option_methods::OptionMethodId;
@@ -12,12 +14,13 @@ use incan_mir_plan_native::{
     carrier_position, place as plan_place, source_span,
 };
 use incan_semantics_core::body_ir::{
-    Block, Body, BodyIrModule, CallableTarget, Callee, MatchArm, NamedCallableTarget, Operand, Rvalue, StatementKind,
-    StaticInitializer,
+    Block, Body, BodyIrModule, CallableTarget, Callee, LoafCallable, MatchArm, NamedCallableTarget, Operand, Rvalue,
+    StatementKind, StaticInitializer,
 };
 use incan_semantics_core::body_ir::{Constant as SourceConstant, Pattern, ResultVariantKind};
-use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin, generic};
+use incan_semantics_core::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolOrigin, generic};
 
+use crate::body_index::BodyIndex;
 use crate::carrier_operands::boundary_plan_operand;
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
 use crate::enums::validate_payload_patterns;
@@ -31,20 +34,36 @@ use crate::lists::taking_iterator_locals;
 use crate::native_type_identity::{ConstructorIndex, native_owner};
 use crate::nominal_frames::{closed_arguments, closed_type, declaration_storage};
 use crate::numerics::numeric_carrier;
+use crate::program_entries::frame_label;
 use crate::text_plan::clone_text;
+use crate::trace_channel::{emit, tracing_products};
 use crate::tuples::{is_tuple_type, tuple_fields, tuple_has_owners};
 use crate::type_parameters::substitute;
 use crate::unions::lower_union_declaration;
 
+#[cfg(test)]
+#[path = "tests/carrier_signatures.rs"]
+mod carrier_signatures;
+
 /// Retain concrete carriers after any layouts whose indices an earlier lowering already published.
+///
+/// `body_indices` belongs to this specialized module so carrier discovery and frame dispatch select the same
+/// checked bodies in the same order.
 pub fn intrinsic_declarations(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
+    body_indices: &BodyIndex,
     file: &str,
     retained: Vec<EnumDeclaration>,
+    phase: &str,
 ) -> Result<Vec<EnumDeclaration>, String> {
     let mut declarations = retained;
-    let mut pass = CarrierPass::new(constructors, module, &mut declarations, file);
+    let retained_count = declarations.len();
+    let tracing = tracing_products();
+    let started = tracing.then(Instant::now);
+    let signatures = CarrierSignatures::new(body_indices, module);
+    let mut pass = CarrierPass::new(constructors, module, &mut declarations, file, Some(&signatures));
+    let mut bodies = Vec::new();
     for ty in declaration_storage(module) {
         if closed_type(&ty) {
             pass.retain(&ty)?;
@@ -87,12 +106,37 @@ pub fn intrinsic_declarations(
             continue;
         }
         pass.retain_body(body)?;
+        if tracing {
+            bodies.push(body);
+        }
     }
     for declaration in &module.static_declarations {
         pass.retain(&declaration.ty)?;
         if let StaticInitializer::Computed(body) = &declaration.initial {
             pass.retain_body(body)?;
         }
+    }
+    if let Some(started) = started {
+        let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        let owners: Vec<String> = bodies.into_iter().map(frame_label).collect();
+        let row = serde_json::json!({
+            "phase": phase,
+            "elapsed_ns": elapsed_ns,
+            "bodies": owners,
+            "nominals": module.nominal_declarations.len(),
+            "enums": module.enum_declarations.len(),
+            "statics": module.static_declarations.len(),
+            "callable_candidates": pass.body_candidates + pass.loaf_candidates,
+            "body_candidates": pass.body_candidates,
+            "loaf_candidates": pass.loaf_candidates,
+            "source_parameter_copy_slot_bytes": 0,
+            "borrowed_parameter_slot_bytes": pass.borrowed_parameter_bytes,
+            "borrowed_body_position_bytes": pass.borrowed_position_bytes,
+            "loaf_signatures_indexed": module.loaf_callables.len(),
+            "carriers_constructed": pass.declarations.len() - retained_count,
+            "ordered_layouts": pass.declarations,
+        });
+        emit("carrier_traversal", "", &row.to_string());
     }
     Ok(declarations)
 }
@@ -105,7 +149,27 @@ pub fn retain_body_carriers(
     body: &Body,
     file: &str,
 ) -> Result<(), String> {
-    CarrierPass::new(constructors, module, declarations, file).retain_body(body)
+    CarrierPass::new(constructors, module, declarations, file, None).retain_body(body)
+}
+
+/// Borrow ordered source positions and the current checked Loaf signatures for a whole declaration pass.
+///
+/// Runtime continuation replaces the linked callable table. Its checked records are indexed anew, while the body
+/// positions belong to the shared append-only execution context.
+struct CarrierSignatures<'a> {
+    bodies: &'a BodyIndex,
+    loaves: BTreeMap<&'a CanonicalSymbolId, Vec<&'a LoafCallable>>,
+}
+
+impl<'a> CarrierSignatures<'a> {
+    /// Index each current linked signature once, preserving the checked table's order and borrowing its payload.
+    fn new(bodies: &'a BodyIndex, module: &'a BodyIrModule) -> Self {
+        let mut loaves: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for callable in &module.loaf_callables {
+            loaves.entry(&callable.canonical).or_default().push(callable);
+        }
+        Self { bodies, loaves }
+    }
 }
 
 /// One carrier inventory pass over a module context: the carriers it appends and the closed types it has retained.
@@ -119,22 +183,35 @@ struct CarrierPass<'a> {
     module: &'a BodyIrModule,
     declarations: &'a mut Vec<EnumDeclaration>,
     file: &'a str,
+    signatures: Option<&'a CarrierSignatures<'a>>,
     retained: HashSet<IncanType>,
+    body_candidates: usize,
+    loaf_candidates: usize,
+    borrowed_position_bytes: usize,
+    /// In-place source parameter type slots, excluding allocations made later by type substitution.
+    borrowed_parameter_bytes: usize,
 }
 
 impl<'a> CarrierPass<'a> {
+    /// Start demand discovery against one checked context and its already assigned carrier slots.
     fn new(
         constructors: &'a ConstructorIndex,
         module: &'a BodyIrModule,
         declarations: &'a mut Vec<EnumDeclaration>,
         file: &'a str,
+        signatures: Option<&'a CarrierSignatures<'a>>,
     ) -> Self {
         Self {
             constructors,
             module,
             declarations,
             file,
+            signatures,
             retained: HashSet::new(),
+            body_candidates: 0,
+            loaf_candidates: 0,
+            borrowed_position_bytes: 0,
+            borrowed_parameter_bytes: 0,
         }
     }
 
@@ -234,48 +311,75 @@ impl<'a> CarrierPass<'a> {
 
     /// Retain closed source and published free-function signatures, including carriers absent from locals.
     fn retain_call(&mut self, target: &NamedCallableTarget) -> Result<(), String> {
-        match &target.canonical {
-            Some(identity) if identity.kind != SemanticSourceTargetKind::Function => return Ok(()),
-            None => return Ok(()),
-            _ => {}
-        }
+        let Some(identity) = target
+            .canonical
+            .as_ref()
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+        else {
+            return Ok(());
+        };
         if !closed_arguments(&target.type_args) {
             return Ok(());
         }
         let module = self.module;
-        for candidate in &module.bodies {
-            if target.canonical != candidate.canonical || candidate.type_parameters.len() != target.type_args.len() {
+        if let Some(signatures) = self.signatures {
+            let positions = signatures.bodies.positions(identity);
+            self.borrowed_position_bytes += std::mem::size_of_val(positions);
+            let bodies = positions.iter().map(|position| &module.bodies[*position]);
+            let loaves = signatures.loaves.get(identity).into_iter().flatten().copied();
+            return self.retain_signatures(identity, &target.type_args, bodies, loaves);
+        }
+        self.retain_signatures(
+            identity,
+            &target.type_args,
+            module.bodies.iter(),
+            module.loaf_callables.iter(),
+        )
+    }
+
+    /// Close matching source signatures before linked signatures, preserving checked arity and refusal rules.
+    fn retain_signatures<'b>(
+        &mut self,
+        identity: &CanonicalSymbolId,
+        arguments: &[IncanType],
+        bodies: impl Iterator<Item = &'b Body>,
+        loaves: impl Iterator<Item = &'b LoafCallable>,
+    ) -> Result<(), String> {
+        for candidate in bodies {
+            self.body_candidates += 1;
+            if candidate.canonical.as_ref() != Some(identity) || candidate.type_parameters.len() != arguments.len() {
                 continue;
             }
-            let parameters: Vec<IncanType> = candidate.params.iter().map(|parameter| parameter.ty.clone()).collect();
+            self.borrowed_parameter_bytes += candidate.params.len() * size_of::<IncanType>();
             self.retain_closed_signature(
-                &parameters,
+                candidate.params.iter().map(|parameter| &parameter.ty),
                 &candidate.return_type,
                 &candidate.type_parameters,
-                &target.type_args,
+                arguments,
             )?;
         }
-        for delegation in &module.loaf_callables {
-            if target.canonical.as_ref() != Some(&delegation.canonical) {
+        for delegation in loaves {
+            self.loaf_candidates += 1;
+            if &delegation.canonical != identity {
                 continue;
             }
-            if target.type_args.len() != delegation.type_parameters.len() {
+            if arguments.len() != delegation.type_parameters.len() {
                 return Err("the standard library carrier type argument count is unsupported".into());
             }
             self.retain_closed_signature(
-                &delegation.parameters,
+                delegation.parameters.iter(),
                 &delegation.return_type,
                 &delegation.type_parameters,
-                &target.type_args,
+                arguments,
             )?;
         }
         Ok(())
     }
 
     /// Close a retained callable's signature from checked type arguments before any operand needs its carrier.
-    fn retain_closed_signature(
+    fn retain_closed_signature<'b>(
         &mut self,
-        parameters: &[IncanType],
+        parameters: impl Iterator<Item = &'b IncanType>,
         result: &IncanType,
         names: &[String],
         arguments: &[IncanType],
