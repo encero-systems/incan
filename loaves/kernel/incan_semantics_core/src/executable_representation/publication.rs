@@ -148,13 +148,11 @@ pub(super) fn project_compiled_frame(
     if source.input_profile_gap().is_some() {
         return Err(CoverageReason::UnsupportedConstruct);
     }
-    let mut frame = source.clone();
-    frame.block.stmts.clear();
-    frame.panic_facts.clear();
     let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
-    let identity = frame.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
-    audit.identity(identity, false)?;
-    if let Some(profile) = &mut frame.checked_input_profile {
+    let mut canonical = source.canonical.clone().ok_or(CoverageReason::UnresolvedReference)?;
+    audit.identity(&mut canonical, false)?;
+    let mut checked_input_profile = source.checked_input_profile.clone();
+    if let Some(profile) = &mut checked_input_profile {
         audit.identity(&mut profile.owner, false)?;
         profile.owned_initializers.clear();
         profile.result_requirements.clear();
@@ -162,31 +160,61 @@ pub(super) fn project_compiled_frame(
             profile.version -= 2;
         }
     }
-    frame.decl_id = declaration_id(identity)?;
-    frame.direct_call_id = frame.decl_id.clone();
-    audit.ty(&frame.return_type)?;
-    audit.parameters(&mut frame.params)?;
+    let identity = declaration_id(&canonical)?;
+    audit.ty(&source.return_type)?;
+    let mut params = source.params.clone();
+    audit.parameters(&mut params)?;
     let retained_slots = audit
         .local_slots
         .iter()
         .next_back()
         .map_or(0, |local| local.index() + 1);
-    frame.locals.truncate(retained_slots);
     // Explicit binding obligations stay; their session-local checker identities do not.
-    for binding in &mut frame.explicit_input_bindings {
+    let mut explicit_input_bindings = source.explicit_input_bindings.clone();
+    for binding in &mut explicit_input_bindings {
         binding.identity = None;
     }
-    for local in &mut frame.locals {
+    let mut locals = Vec::with_capacity(retained_slots.min(source.locals.len()));
+    for original in source.locals.iter().take(retained_slots) {
+        let mut local = original.clone();
         local.identity = None;
         if audit.local_slots.contains(&local.id) {
-            audit.ty(&local.ty)?;
+            audit.ty(&mut local.ty)?;
         } else {
             // Keep slot indices stable for defaults without publishing implementation-only carriers.
             local.ty = IncanType::Tuple(Vec::new());
         }
+        locals.push(local);
     }
-    frame.runtime_requirements.clear();
-    frame.named_type_identities = std::sync::Arc::new(audit.used_nominal_types);
+    let frame = Body {
+        nominal_instantiation: source.nominal_instantiation.clone(),
+        trait_default_instantiation: source.trait_default_instantiation.clone(),
+        type_parameters: source.type_parameters.clone(),
+        decl_id: identity.clone(),
+        direct_call_id: identity,
+        canonical: Some(canonical),
+        name: source.name.clone(),
+        span: source.span,
+        return_type: source.return_type.clone(),
+        callable_representation: source.callable_representation.clone(),
+        checked_input_profile,
+        explicit_input_bindings,
+        returned_view: source.returned_view.clone(),
+        named_type_identities: std::sync::Arc::new(audit.used_nominal_types),
+        locals,
+        params,
+        param_locals: source.param_locals.clone(),
+        scopes: source.scopes.clone(),
+        block: crate::body_ir::Block {
+            scope: source.block.scope,
+            stmts: Vec::new(),
+        },
+        runtime_requirements: Vec::new(),
+        panic_facts: Vec::new(),
+        is_async: source.is_async,
+        retired_rust_facade_wire: source.retired_rust_facade_wire.clone(),
+        native_attributes: source.native_attributes.clone(),
+    };
     require_module_initialization(module, &mut audit.requirements);
     let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();
     let callables = selected_native_calls(&audit.native_calls, &native_callables)?;

@@ -147,7 +147,7 @@ struct CheckedProgram {
     /// Invocation-local producer evidence for self-contained scalar native function products.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     retained_namespaces: Vec<checked_program::RetainedNamespaceBody>,
-    /// Position of the original authored callables in the entry module's current linked catalogue.
+    /// Position of the original authored callables in the entry module's current linked catalog.
     authored_callable_start: Option<usize>,
     dependencies: RuntimeDependencyContext,
     modules: Vec<BodyIrModule>,
@@ -519,6 +519,10 @@ fn compile_unit(
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
     if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
+        let _publication = tracing::trace_span!(
+            target: "incan::invocation", "incan_rustc_driver::publish_plan_records",
+        )
+        .entered();
         incan_lowering::publish_plan_records(
             &plan,
             products.to_string_lossy().into_owned(),

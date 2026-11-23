@@ -685,9 +685,6 @@ fn checked_attempt(
                 layout_admissions,
                 package: package_identity.to_owned(),
                 layout_modules: Vec::new(),
-                sources: sources[loaf_modules..].to_vec(),
-                files: files[loaf_modules..].to_vec(),
-                entry: entry - loaf_modules,
             },
             modules: bodies,
             sources,
@@ -915,7 +912,7 @@ include!("checked_program/dependency_context.rs");
 /// Replace standalone package bodies with linked contracts. Body IR keeps governed templates, including defaults
 /// with an open Self receiver, available for checked adopter specialization. Move existing contracts into the
 /// returned inventory so joining declaration modules cannot publish the same compiled callable twice.
-/// Track the authored tables or the previous catalogue at their exact placement in the new inventory.
+/// Track the authored tables or the previous catalog at their exact placement in the new inventory.
 pub(super) fn retain_linked_loaf_declarations(
     modules: &mut [BodyIrModule],
     linked: usize,
@@ -946,22 +943,14 @@ pub(super) fn retain_linked_loaf_declarations(
             .filter(|body| module.body_requires_instantiation(body))
             .filter_map(|body| body.canonical.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        module.bodies.retain(|body| {
-            if body
-                .canonical
-                .as_ref()
-                .is_some_and(|identity| governed.contains(identity))
-            {
-                return true;
-            }
-            match incan_semantics_core::body_ir::LoafCallable::from_body(body) {
-                Some(callable) => {
-                    loaf_callables.push(callable);
-                    false
-                }
-                None => true,
-            }
-        });
+        loaf_callables.extend(
+            module
+                .bodies
+                .extract_if(.., |body| {
+                    LoafCallable::compiled_identity(body).is_some_and(|identity| !governed.contains(identity))
+                })
+                .filter_map(|body| LoafCallable::from_owned_frame(Box::new(body))),
+        );
     }
     (loaf_callables, position)
 }
@@ -1154,7 +1143,7 @@ mod tests {
     use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, SemanticSourceTargetKind};
 
     /// Create distinct declaration markers to test callable order without needing executable bodies.
-    fn catalogue_fixture(module: &str, names: &[&str]) -> BodyIrModule {
+    fn catalog_fixture(module: &str, names: &[&str]) -> BodyIrModule {
         let mut body = BodyIrModule::declarations_only(module.into());
         body.loaf_callables = names
             .iter()
@@ -1180,17 +1169,17 @@ mod tests {
 
     /// A runtime retry may prepend new dependencies, but cannot change authored callable order or ownership.
     #[test]
-    fn callable_catalogue_tracks_original_authored_ranges_across_retries() {
+    fn callable_catalog_tracks_original_authored_ranges_across_retries() {
         let mut modules = [
-            catalogue_fixture("loaded", &["dependency"]),
-            catalogue_fixture("helper", &["first", "second"]),
-            catalogue_fixture("main", &["entry"]),
+            catalog_fixture("loaded", &["dependency"]),
+            catalog_fixture("helper", &["first", "second"]),
+            catalog_fixture("main", &["entry"]),
         ];
         let (initial, first_offset) = retain_linked_loaf_declarations(&mut modules, 1, 1);
         assert_eq!(first_offset, 1);
         assert!(modules.iter().all(|module| module.loaf_callables.is_empty()));
         modules[2].loaf_callables = initial;
-        modules[0] = catalogue_fixture("loaded", &["runtime-one", "runtime-two"]);
+        modules[0] = catalog_fixture("loaded", &["runtime-one", "runtime-two"]);
         let (retried, previous_offset) = retain_linked_loaf_declarations(&mut modules, 1, 2);
         let start = first_offset + previous_offset;
         assert_eq!(start, 3);

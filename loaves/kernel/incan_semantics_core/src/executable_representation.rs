@@ -341,11 +341,8 @@ impl ExecutableDeclaration {
             Self::NativeBody { body, callables } => (!callables.is_empty() && valid_native_calls(callables))
                 .then_some(body.canonical.as_ref())
                 .flatten(),
-            Self::CompiledCallableFrame { frame, callables } => (frame.block.stmts.is_empty()
-                && valid_native_calls(callables)
-                && crate::body_ir::LoafCallable::from_body(frame).is_some())
-            .then_some(frame.canonical.as_ref())
-            .flatten(),
+            Self::CompiledCallableFrame { frame, callables } => crate::body_ir::LoafCallable::compiled_identity(frame)
+                .filter(|_| frame.block.stmts.is_empty() && valid_native_calls(callables)),
             Self::InvocationDecoratedBody { .. } => None,
             Self::GenericDecoratedBody {
                 body,

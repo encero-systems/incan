@@ -299,11 +299,10 @@ pub(super) fn project_declarations(
 /// Compiled callables retain declaration frames independently of their implementation's portable closure.
 /// Open owners, trait defaults and generator producers still require their executable governed representation.
 pub(super) fn publishes_compiled_frame(module: &BodyIrModule, body: &Body) -> bool {
-    let Some(identity) = &body.canonical else {
+    let Some(identity) = crate::body_ir::LoafCallable::compiled_identity(body) else {
         return false;
     };
-    crate::body_ir::LoafCallable::from_body(body).is_some()
-        && !module.body_requires_instantiation(body)
+    !module.body_requires_instantiation(body)
         && !body.is_generator()
         && !module
             .decorated_bindings

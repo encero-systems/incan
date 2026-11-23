@@ -518,7 +518,7 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         }
         ExecutableDeclaration::CompiledCallableFrame { mut frame, callables } => {
             crate::body_ir::retain_published_frame(&mut frame);
-            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
+            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_owned_frame(frame) {
                 module.loaf_callables.push(callable);
             }
             retain_native_callables(module, callables);
