@@ -1,8 +1,11 @@
 """Verify that a standard package's own function re-exported through `std.` is refused, and nothing else is."""
 
+from rust::std::process import Command
+from rust::std::string import String as RustString
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from check_std_reexports import check, defined_functions, reexports
+from check_support import read, repository_root
 from check_test_support import write
 
 
@@ -70,6 +73,7 @@ def test_reads_function_names_and_import_lists() -> Result[None, str]:
     assert found[0].module == "io"
     assert found[0].names == ["BytesIO", "IoError"]
     assert found[0].aliases == ["Buffer", "IoError"]
+    require_late_import_inventory()?
     return Ok(None)
 
 
@@ -83,3 +87,32 @@ def package() -> Result[TemporaryDirectory, str]:
     write(root, "loaves/stdlib/system/src/fs/locking.incn", locking)?
     write(root, "loaves/stdlib/system/src/lib.incn", "pub from crate.fs.locking import exclusive\n")?
     return Ok(temporary)
+
+
+def require_late_import_inventory() -> Result[None, str]:
+    """The inventory reports real plain and public late imports, while skipping literal examples."""
+    repository = repository_root()?
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    guide = read(repository.joinpath(".agents/anti-patterns.md"))?
+    sections = guide.split("### incan_structure.awk\n")
+    assert len(sections) == 2
+    fenced = sections[1].split("```")
+    assert len(fenced) > 2 and fenced[1].startswith("awk\n")
+    write(root, "incan_structure.awk", fenced[1][4:])?
+    mut fixture = "\"\"\"An example in the module docstring.\npub from crate.example import DocOnly\n\"\"\"\n"
+    fixture += "from std.fs import Path\npub from crate.example import Early\npub def sample() -> None:\n"
+    fixture += "    \"\"\"An example in the function docstring.\npub from crate.example import StillDocOnly\n"
+    fixture += "    \"\"\"\n    pass\npub from crate.example import Late\nfrom std.fs import File\n"
+    write(root, "sample.incn", fixture)?
+    mut command = Command.new("/usr/bin/awk")
+    command.current_dir(root.0).arg("-f").arg("incan_structure.awk").arg("sample.incn")
+    result = command.output().map_err((error) => f"cannot run the inventory matcher: {error}")?
+    assert result.status.success()
+    output = RustString.from_utf8(result.stdout).map_err((error) => f"invalid inventory output: {error}")?
+    late = [line for line in output.split("\n") if line.startswith("lateimport\t")]
+    assert late == [
+        "lateimport\tsample.incn:11:pub from crate.example import Late",
+        "lateimport\tsample.incn:12:from std.fs import File",
+    ], output
+    return Ok(None)
