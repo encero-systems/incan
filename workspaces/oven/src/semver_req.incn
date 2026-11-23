@@ -104,7 +104,7 @@ def split_version(value: str) -> Result[Version, str]:
             break
     parts = core.split(".")
     if len(parts) > 3 or len(parts) == 0:
-        return Err("version needs major.minor.patch")
+        return Err("measured exact version needs major.minor.patch")
     mut checked: list[str] = []
     for part in parts:
         checked.append(component(part)?)

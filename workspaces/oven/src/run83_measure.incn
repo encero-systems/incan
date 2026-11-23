@@ -1,0 +1,9 @@
+"""Measurement-only entrypoint for a body edit in Oven's semver module."""
+
+from semver_req import parse_version
+
+
+def main() -> Result[None, str]:
+    version = parse_version("1.2.3")?
+    println(version.major)
+    return Ok(None)
