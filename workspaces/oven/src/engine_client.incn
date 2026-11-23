@@ -28,7 +28,7 @@ from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
 from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, begin, commit, fork, get, put, view_snapshot
-from store_path_conversion import claim, snapshot, store_path
+from store_path_conversion import ClientStoreAdmission, claim, snapshot, store_path
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity
 from unit_freshness import compiler_fingerprint, fingerprint
@@ -202,7 +202,8 @@ def built_overlay(editor: str, target: Path, request: OverlayRequest) -> Result[
     console_capture["capturing"] = "yes"
     console_capture["captured"] = ""
     console_capture["errors"] = ""
-    built = execute_in("build", target, request.profile, [], None, "", false, editor, None)
+    mut admission = ClientStoreAdmission()
+    built = execute_in("build", target, request.profile, [], None, "", false, editor, None, admission)
     console_capture["capturing"] = ""
     code = built?
     none: list[JsonValue] = []
@@ -310,6 +311,7 @@ pub def execute(
     argv0: Option[str],
     format: str,
     proofs: bool,
+    mut preflight: BorrowedMut[ClientStoreAdmission],
     unit_options: str = "",
     output: str = "",
 ) -> Result[i32, str]:
@@ -328,7 +330,9 @@ pub def execute(
         view_profile = profile + "+check"
     bound = selected_home_view()?
     view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"), unit_options)?
-    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound, unit_options, output)
+    return execute_in(
+        command, absolute, profile, arguments, argv0, format, proofs, view, bound, preflight, unit_options, output,
+    )
 
 
 def view_scope(bound: Option[str]) -> Result[str, str]:
@@ -351,6 +355,7 @@ def execute_in(
     proofs: bool,
     view: str,
     bound: Option[str],
+    mut preflight: BorrowedMut[ClientStoreAdmission],
     unit_options: str = "",
     output: str = "",
 ) -> Result[i32, str]:
@@ -364,7 +369,7 @@ def execute_in(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     compiler = installed_compiler()?
-    mut admission = SnapshotAdmission.for_store(store_path(store))
+    mut admission = preflight.take_reader(store)
     selected = admission.open(view).map_err((error) => error.message())?
     if selected.index == "":
         # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.

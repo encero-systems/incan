@@ -14,8 +14,8 @@ from observation import Observation, SETTLE_SECONDS, now_seconds, observe
 from registry_codec import Catalog, decode, encode
 from registry_units import RegistryUnit, sole_library
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
-from pub::incan_platform.store import begin, commit, get, lease, put
-from store_path_conversion import snapshot
+from pub::incan_platform.store import begin, commit, get, put
+from store_path_conversion import ClientStoreAdmission, snapshot
 from frozen_inputs import admit_observations
 
 const PROFILE: str = "incan.registry-page/2"
@@ -33,6 +33,12 @@ def page_fingerprint(inputs: list[str]) -> Result[str, str]:
 
 
 pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
+    """Read the current catalog page using a local bakery admission."""
+    mut admission = ClientStoreAdmission()
+    return recall_catalog_with_admission(key, admission)
+
+
+pub def recall_catalog_with_admission(key: str, mut admission: BorrowedMut[ClientStoreAdmission]) -> Result[Option[Catalog], str]:
     """
     Read the currently selected completed page, preserving all store and codec integrity errors.
 
@@ -42,8 +48,10 @@ pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
     """
     # 1. A missing binding is a miss; damage to any selected object is an error.
     clock = begin_work()
-    view = snapshot(bakery()?).map_err((error) => error.message())?
-    held = lease(view).map_err((error) => error.message())?
+    root = bakery()?
+    view = admission.open_home(root).map_err((error) => error.message())?
+    # Hold the already registered placement lease through mapped page decoding.
+    _held = view.pin.clone()
     match get(view, binding(key)).map_err((error) => error.message())?:
         None => return Ok(None)
         Some(value) =>
