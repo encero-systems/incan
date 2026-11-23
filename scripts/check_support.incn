@@ -35,15 +35,17 @@ pub def read(path: Path) -> Result[str, str]:
 
 
 pub def git(root: Path, arguments: list[str]) -> Result[str, str]:
-    """Capture a Git command in the selected repository and propagate command failures."""
+    """Capture a Git command and identify its selected repository when it fails."""
+    operation = f"git {" ".join(arguments)} in {root.0}"
     mut command = Command.new("git")
     command.current_dir(root.0)
     for argument in arguments:
         command.arg(argument)
-    output = command.output().map_err((error) => error.to_string())?
+    output = command.output().map_err((error) => f"cannot run {operation}: {error}")?
     if not output.status.success():
-        return Err(RustString.from_utf8(output.stderr).map_err((error) => error.to_string())?)
-    return RustString.from_utf8(output.stdout).map_err((error) => error.to_string())
+        detail = RustString.from_utf8(output.stderr).map_err((error) => f"invalid stderr from {operation}: {error}")?
+        return Err(f"{operation}: {detail}")
+    return RustString.from_utf8(output.stdout).map_err((error) => f"invalid stdout from {operation}: {error}")
 
 
 pub def write_stderr(message: str) -> None:
