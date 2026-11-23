@@ -1,4 +1,5 @@
 # behavior: std.graph directed graphs, DAGs and multigraphs add nodes and edges, answer neighborhood and traversal queries, and refuse an edge that would close a cycle in a DAG (RFC 047)
+# Legacy GraphNode and GraphEdge values can still be imported, constructed, and read (#3144).
 # expect-stdout:
 #   successors 1
 #   bfs 2
@@ -10,13 +11,27 @@
 #   dag cycle refused
 #   multi edges 2
 
-from std.graph import DiGraph, Dag, MultiDiGraph, NodeId, EdgeId, GraphError
+from std.graph import Dag, DiGraph, EdgeId, GraphEdge, GraphError, GraphNode, MultiDiGraph, NodeId
 
 
 def count(result: Result[list[NodeId], GraphError]) -> int:
     match result:
         Ok(nodes) => return len(nodes)
         Err(_) => return -1
+
+
+def exercise_graph_records() -> None:
+    """Check the public fields of standalone graph records from the installed standard library."""
+    source = NodeId(1)
+    target = NodeId(2)
+    node: GraphNode[str] = GraphNode(id=source, payload="legacy", active=True)
+    edge = GraphEdge(id=EdgeId(3), from_=node.id, to=target, active=True)
+    assert node.payload == "legacy"
+    assert node.active
+    assert edge.id == EdgeId(3)
+    assert edge.from_ == source
+    assert edge.to == target
+    assert edge.active
 
 
 def exercise_graphs() -> None:
@@ -52,4 +67,5 @@ def exercise_graphs() -> None:
 
 
 def main() -> None:
+    exercise_graph_records()
     exercise_graphs()
