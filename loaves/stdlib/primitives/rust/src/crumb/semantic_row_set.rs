@@ -721,25 +721,31 @@ mod tests {
     const IDENTITY: [u8; 6] = [0x01, 0x3f, 0x54, 0x40, 0x0c, 0x82];
 
     /// The corpus's one-field reference description `example.Value`, with this field type.
-    fn described(storage: &str) -> Vec<u8> {
+    fn described(storage: &str) -> Result<Vec<u8>, String> {
         let notation = format!(
             r#"{{"kind":"map","entries":[[{{"kind":"string","value":"nominal"}},{{"kind":"binary","hex":"1ddb0b3ce6d300"}}],[{{"kind":"string","value":"kind"}},{{"kind":"string","value":"Record"}}],[{{"kind":"string","value":"path"}},{{"kind":"string","value":"example.Value"}}],[{{"kind":"string","value":"fields"}},{{"kind":"list","items":[{{"kind":"map","entries":[[{{"kind":"string","value":"id"}},{{"kind":"binary","hex":"013f54400c82"}}],[{{"kind":"string","value":"name"}},{{"kind":"string","value":"age"}}],[{{"kind":"string","value":"type"}},{{"kind":"string","value":"{storage}"}}],[{{"kind":"string","value":"canonical"}},{{"kind":"boolean","value":true}}],[{{"kind":"string","value":"absent"}},{{"kind":"string","value":"required"}}],[{{"kind":"string","value":"properties"}},{{"kind":"map","entries":[]}}]]}}]}}],[{{"kind":"string","value":"properties"}},{{"kind":"map","entries":[]}}]]}}"#
         );
-        let description = rows::notation(&serde_json::from_str(&notation).expect("notation")).expect("description");
+        let parsed = serde_json::from_str(&notation)
+            .map_err(|error| format!("parse Crumb test description for {storage}: {error}"))?;
+        let description = rows::notation(&parsed).ok_or("invalid Crumb test description notation")?;
         let mut encoded = Vec::new();
         let mut unlimited = Budget::new(u64::MAX, u64::MAX, u64::MAX);
-        rows::encode_metadata(&description, &mut encoded, &mut unlimited).expect("D encoding");
-        encoded
+        rows::encode_metadata(&description, &mut encoded, &mut unlimited)?;
+        Ok(encoded)
     }
 
     /// Admit a corpus envelope whose one reference description has this field type.
-    fn admitted(input: &str, storage: &str) -> RowAdmission {
-        let mut request = RowRequest::new(columns::hex(input).expect("hex"), false, true);
-        request.supply(described(storage));
+    fn admitted(input: &str, storage: &str) -> Result<RowAdmission, String> {
+        let mut request = RowRequest::new(
+            columns::hex(input).ok_or("invalid Crumb test envelope hex")?,
+            false,
+            true,
+        );
+        request.supply(described(storage)?);
         request.allow(16_777_216, 1_048_576, 128);
         let admission = request.admit();
         assert!(admission.admitted(), "corpus envelope refused: {}", admission.category);
-        admission
+        Ok(admission)
     }
 
     fn field(value: Item) -> Vec<Item> {
@@ -749,16 +755,16 @@ mod tests {
     const BOOLEAN: &str = "43524d42010100310101071ddb0b3ce6d3001da133a298ed40ff061c1219f095f290c49ba4ed00e4c9dad4afcf37eb2519ae01000401000101";
 
     #[test]
-    fn records_arrive_in_their_incan_carriers_shape() {
+    fn records_arrive_in_their_incan_carriers_shape() -> Result<(), String> {
         let negative = "43524d42010100310101071ddb0b3ce6d300cdc6d397d5ecca21865e6132d7929c2951a49c6094b85504e67f4f2ff3a09ae1010004010001ff";
         let nan = "43524d42010100340101071ddb0b3ce6d30076b8e223de0229780edd3b61535050ae5e6678388ac7b0a065c29196c41d816b0100070100040000c07f";
         let union = "43524d42010100320101071ddb0b3ce6d300be267290480c1f4b128fb0c6d3f45abf012bcf4759d1a1b0b2d74187899618510100050100020107";
-        let read = admitted(negative, "i8").read_record(0, 65_536, 65_536, 64);
+        let read = admitted(negative, "i8")?.read_record(0, 65_536, 65_536, 64);
         assert!(read.succeeded(), "{}", read.category);
         assert_eq!(read.items, field(Item::Signed(-1)));
-        let read = admitted(nan, "fp32").read_record(0, 65_536, 65_536, 64);
+        let read = admitted(nan, "fp32")?.read_record(0, 65_536, 65_536, 64);
         assert_eq!(read.items, field(Item::Float(32, vec![0x7f, 0xc0, 0, 0])));
-        let mut read = admitted(union, "union<string,i8>").read_record(0, 65_536, 65_536, 64);
+        let mut read = admitted(union, "union<string,i8>")?.read_record(0, 65_536, 65_536, 64);
         assert_eq!(
             read.items,
             [
@@ -778,11 +784,12 @@ mod tests {
         );
         assert_eq!(read.next(), -1);
         assert!(read.bytes_charged > 0 && read.elements_charged > 0);
+        Ok(())
     }
 
     #[test]
     fn a_field_is_selected_by_identity_and_a_record_is_read_under_the_callers_allowance() -> Result<(), String> {
-        let rows = admitted(BOOLEAN, "boolean");
+        let rows = admitted(BOOLEAN, "boolean")?;
         assert_eq!(rows.key(0), vec![0x1d, 0xdb, 0x0b, 0x3c, 0xe6, 0xd3, 0x00]);
         let cell = rows.field_cell(0, IDENTITY.to_vec(), 64, 64, 16);
         assert!(cell.succeeded() && cell.present, "{}", cell.category);
@@ -823,7 +830,7 @@ mod tests {
 
         let payload = b"anchored bin";
         let mut writer = RowWriteRequest::new(true);
-        let description = described("binary");
+        let description = described("binary")?;
         writer.description(description.clone(), false);
         writer.record(rows.key(0));
         writer.node(14, 1, false, 0, 0, 0, 0, Vec::new(), Vec::new(), String::new());
