@@ -1252,7 +1252,11 @@ mod tests {
         };
         return_retained_namespaces(&mut program, &GraphBodyRecords::default());
         assert!(program.modules[2].loaf_callables.is_empty());
-        let kept: Vec<_> = program.modules[3].loaf_callables.iter().map(|value| value.item.as_str()).collect();
+        let kept: Vec<_> = program.modules[3]
+            .loaf_callables
+            .iter()
+            .map(|value| value.item.as_str())
+            .collect();
         assert_eq!(kept, ["first", "second"]);
     }
 
