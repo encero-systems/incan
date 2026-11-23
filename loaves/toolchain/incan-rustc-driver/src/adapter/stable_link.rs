@@ -12,10 +12,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) const STORE_ARGUMENT: &str = "--incan-link-input-store=";
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
-/// Replace every direct object or archive input with an immutable content-named copy, then preserve ld's status and
+/// Replace every direct object or archive input with an immutable content-named copy, make the symbols a dynamic
+/// library exports exportable in its archives, then preserve ld's status and
 /// diagnostics. Rust rlibs are archives even when their published Bakery path has no extension.
 pub(crate) fn run(arguments: &[String]) -> io::Result<i32> {
     let store = link_store(arguments)?;
+    let exported = exported_symbols(arguments)?;
     let mut rewritten = Vec::with_capacity(arguments.len());
     for argument in arguments {
         if argument.starts_with(STORE_ARGUMENT) {
@@ -23,7 +25,13 @@ pub(crate) fn run(arguments: &[String]) -> io::Result<i32> {
         }
         let path = Path::new(argument);
         match link_input_suffix(path)? {
-            Some(suffix) => rewritten.push(stable_input(&store, path, suffix)?.to_string_lossy().into_owned()),
+            Some(suffix) => {
+                let mut input = stable_input(&store, path, suffix)?;
+                if suffix == "a" && !exported.is_empty() {
+                    input = exportable_archive(&store, input, &exported)?;
+                }
+                rewritten.push(input.to_string_lossy().into_owned());
+            }
             None => rewritten.push(argument.clone()),
         }
     }
@@ -203,4 +211,139 @@ pub(crate) fn file_digest(path: &Path) -> io::Result<String> {
         hash.update(&buffer[..length]);
     }
     Ok(hex::encode(hash.finalize()))
+}
+
+/// The symbols a dynamic-library link exports: each line of the file `-exported_symbols_list` names, or none.
+fn exported_symbols(arguments: &[String]) -> io::Result<Vec<Vec<u8>>> {
+    let Some(position) = arguments
+        .iter()
+        .position(|argument| argument == "-exported_symbols_list")
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(list) = arguments.get(position + 1) else {
+        return Ok(Vec::new());
+    };
+    let mut names = fs::read(list)?
+        .split(|byte| *byte == b'\n')
+        .filter(|name| !name.is_empty())
+        .map(<[u8]>::to_vec)
+        .collect::<Vec<_>>();
+    names.sort();
+    Ok(names)
+}
+
+/// An archive whose members define every exported symbol as an external one.
+///
+/// A C library compiled with hidden visibility defines its functions as private externals, which `ld` links but
+/// refuses to export. A carrier exports the ones a consumer's own code may call, so the archive is published once
+/// more, under the digest of its changed bytes, with the private-external bit of exactly those symbols cleared. An
+/// archive that defines none of them that way is returned as it is.
+fn exportable_archive(store: &Path, archive: PathBuf, exported: &[Vec<u8>]) -> io::Result<PathBuf> {
+    let mut bytes = fs::read(&archive)?;
+    if unhide_archive(&mut bytes, exported) == 0 {
+        return Ok(archive);
+    }
+    let digest = hex::encode(Sha256::digest(&bytes));
+    let directory = store.join("link-inputs/sha256").join(&digest[..2]);
+    let target = directory.join(format!("{digest}.a"));
+    if target.is_file() {
+        return Ok(target);
+    }
+    fs::create_dir_all(&directory)?;
+    let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+    let temporary = directory.join(format!(".{digest}.{}.{number}.tmp", std::process::id()));
+    let written = fs::write(&temporary, &bytes).and_then(|()| {
+        let mut permissions = fs::metadata(&temporary)?.permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&temporary, permissions)?;
+        fs::rename(&temporary, &target)
+    });
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written?;
+    Ok(target)
+}
+
+/// One little-endian 32-bit field of a Mach-O structure.
+fn macho_field(data: &[u8], offset: usize) -> Option<usize> {
+    let bytes = data.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
+}
+
+/// Clear the private-external bit of the named defined symbols in each 64-bit Mach-O member of an archive, in place,
+/// and return how many symbols changed. A BSD long member name sits in front of the member's data.
+fn unhide_archive(archive: &mut [u8], names: &[Vec<u8>]) -> usize {
+    const HEADER: usize = 60;
+    let mut offset = 8;
+    let mut changed = 0;
+    while let Some(header) = archive.get(offset..offset + HEADER) {
+        let size: usize = String::from_utf8_lossy(&header[48..58]).trim().parse().unwrap_or(0);
+        let name = String::from_utf8_lossy(&header[..16]);
+        let long: usize = name
+            .trim_end()
+            .strip_prefix("#1/")
+            .and_then(|digits| digits.parse().ok())
+            .unwrap_or(0);
+        let end = (offset + HEADER + size).min(archive.len());
+        if let Some(member) = archive.get_mut(offset + HEADER + long..end) {
+            changed += unhide_object(member, names);
+        }
+        offset += HEADER + size + (size & 1);
+    }
+    changed
+}
+
+/// Clear the bit in one object's symbol table; anything that is not a 64-bit little-endian Mach-O object is left.
+fn unhide_object(object: &mut [u8], names: &[Vec<u8>]) -> usize {
+    const MAGIC_64: usize = 0xfeed_facf;
+    const SYMBOL_TABLE: usize = 0x2;
+    const DEBUG: u8 = 0xe0;
+    const PRIVATE_EXTERNAL: u8 = 0x10;
+    const DEFINED: u8 = 0x0e;
+    const EXTERNAL: u8 = 0x01;
+    if macho_field(object, 0) != Some(MAGIC_64) {
+        return 0;
+    }
+    let commands = macho_field(object, 16).unwrap_or(0);
+    let mut offset = 32;
+    let mut changed = 0;
+    for _ in 0..commands {
+        let (Some(command), Some(size)) = (macho_field(object, offset), macho_field(object, offset + 4)) else {
+            break;
+        };
+        if command == SYMBOL_TABLE {
+            let table = (
+                macho_field(object, offset + 8),
+                macho_field(object, offset + 12),
+                macho_field(object, offset + 16),
+            );
+            let (Some(symbols), Some(count), Some(strings)) = table else {
+                break;
+            };
+            for index in 0..count {
+                let entry = symbols + index * 16;
+                let (Some(name), Some(kind)) = (macho_field(object, entry), object.get(entry + 4).copied()) else {
+                    break;
+                };
+                let hidden =
+                    kind & DEBUG == 0 && kind & EXTERNAL != 0 && kind & DEFINED != 0 && kind & PRIVATE_EXTERNAL != 0;
+                if !hidden {
+                    continue;
+                }
+                let text = object.get(strings + name..).unwrap_or(&[]);
+                let end = text.iter().position(|byte| *byte == 0).unwrap_or(0);
+                if names
+                    .binary_search_by(|candidate| candidate.as_slice().cmp(&text[..end]))
+                    .is_ok()
+                {
+                    object[entry + 4] = kind & !PRIVATE_EXTERNAL;
+                    changed += 1;
+                }
+            }
+        }
+        offset += size.max(8);
+    }
+    changed
 }
