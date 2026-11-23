@@ -740,7 +740,18 @@ mod tests {
         };
         assert_eq!(compact_admission_pin([first, second])?, Some(expected));
         assert_ne!(compact_admission_pin([first])?, Some(expected));
-        assert_eq!(compact_admission_pin([])?, None);
+        let empty = CompactAdmissionPin {
+            count: 0,
+            digest: [
+                149, 238, 125, 89, 242, 99, 68, 174, 175, 86, 3, 135, 30, 209, 61, 32, 251, 208, 86, 56, 223, 193, 156,
+                128, 75, 36, 208, 42, 186, 249, 13, 152,
+            ],
+        };
+        assert_eq!(
+            compact_admission_pin([])?,
+            Some(empty),
+            "selected empty compact publication has no independently settled fingerprint"
+        );
         assert!(compact_admission_pin([first, first]).is_err());
         assert!(compact_admission_pin([second, first]).is_err());
         assert!(compact_admission_pin([("", first.1)]).is_err());
