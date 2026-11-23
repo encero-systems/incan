@@ -123,7 +123,7 @@ struct RuntimeDependencyContext {
 
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
-    /// Invocation-local producer evidence for self-contained scalar native function products.
+    /// Invocation-local producer evidence for native functions keyed by their complete checked Body IR.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     dependencies: RuntimeDependencyContext,
     modules: Vec<BodyIrModule>,

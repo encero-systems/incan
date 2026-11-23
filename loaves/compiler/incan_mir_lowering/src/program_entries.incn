@@ -26,6 +26,7 @@ from program_context import ProgramContext, body_at
 from rust::std::collections import BTreeMap
 from rust::serde_json import to_string as native_json
 from scalar_store import scalar_inputs, retained_scalar, retain_scalar
+from redo_counts import record_product_refusal
 from table_views import borrowed_at
 from decorator_caches import DecoratorFrame
 from traits import is_lazy_method_body
@@ -147,7 +148,7 @@ def lower_ordinary_frame(
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
-    """Read only producer-admitted scalar products, or lower normally and retain an exact witnessed result."""
+    """Read only producer-admitted exact Body IR products, or lower normally and retain a witnessed result."""
     inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted)
     original_intrinsics = len(intrinsics)
     if let Some(directory) = products:
@@ -170,6 +171,8 @@ def lower_ordinary_frame(
         if let Some(directory) = products:
             if let Some(witness) = inputs:
                 retain_scalar(directory, witness, function, runtime)
+    else:
+        record_product_refusal(true, function.name, "native product depends on synthesized lowering work")
     return Ok((function, runtime, pending, synthesized))
 
 
@@ -182,14 +185,19 @@ def ordinary_product_inputs(
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
 ) -> Option[list[str]]:
-    """Retain exact checked input only for frames whose complete read witnesses the source producer proved."""
+    """Retain exact checked input only for frames whose complete Body IR authority the producer proved."""
     if products is None:
+        record_product_refusal(true, str(body.name), "native product directory unavailable")
         return None
     match admitted.get(body.direct_call_id):
-        None => return None
+        None =>
+            record_product_refusal(true, str(body.name), "complete Body IR identity was not admitted")
+            return None
         Some(witness) =>
             match native_json(body):
-                Err(_) => return None
+                Err(_) =>
+                    record_product_refusal(true, str(body.name), "complete Body IR could not be encoded")
+                    return None
                 Ok(input) =>
                     span = location(body.span, source, file)
                     name = evaluator_name(context, body)

@@ -1,9 +1,10 @@
 //! Native source-item products selected by Oven's source-independent semantic context.
 //!
 //! A module product contains independent checked bodies, not a replacement checking route. Its frontend owner
-//! admits only scalar expressions with complete local-call witnesses and validates exact current locators. Imported
-//! calls and other bodies fall back to ordinary source checking; a missing, corrupt or concurrently replaced product
-//! is an ordinary miss.
+//! admits only scalar expressions with complete local-call witnesses and validates exact current locators. Native
+//! lowering products use the complete checked Body IR as their separate input authority, so unsupported checker
+//! products still avoid repeating unchanged lowering. A missing, corrupt or concurrently replaced product is an
+//! ordinary miss.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -72,8 +73,9 @@ impl CallableProducts {
         }
     }
 
-    /// Publish independently validated products from the actual completed Body IR pass. A cache write failure is
-    /// observational only and cannot change source acceptance or substitute another native implementation.
+    /// Publish independently validated checker products and admit every completed Body IR body to the separately
+    /// keyed native store. A cache write failure is observational only and cannot change source acceptance or
+    /// substitute another native implementation.
     pub(super) fn publish(
         mut self,
         modules: &[ParsedModule],
@@ -82,7 +84,16 @@ impl CallableProducts {
         let Some(directory) = self.directory else {
             return Vec::new();
         };
-        let mut admitted = Vec::new();
+        let mut admitted = bodies
+            .iter()
+            .flat_map(|module| &module.bodies)
+            .map(|body| {
+                (
+                    body.direct_call_id.clone(),
+                    "incan.complete-body-ir-native-product/1".to_owned(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         for (module, body) in modules.iter().zip(bodies) {
             let Some(inputs) = self.inputs.remove(&module.file_path) else {
                 continue;
@@ -98,7 +109,7 @@ impl CallableProducts {
                 tracing::debug!(target: "incan::invocation", %error, "callable products were not retained");
             }
         }
-        admitted
+        admitted.into_iter().collect()
     }
 }
 

@@ -38,3 +38,25 @@ pub def record_lowering(enabled: bool, body: &Body, frame: str, arguments: &list
                     _ = trace.write_all(RustString.from(text).into_bytes())
                 Err(_) => pass
         Err(_) => pass
+
+
+pub def record_product_refusal(enabled: bool, function: str, reason: str) -> None:
+    """Record why one completed native function could not become a reusable product."""
+    if not enabled:
+        return
+    match var("INCAN_NATIVE_TIMING"):
+        Err(_) => return
+        Ok(_) => pass
+    text = f"redo-reason: native-product\t{reason}\t{function}\n"
+    match var("OVEN_TRACE"):
+        Ok(destination) =>
+            if destination == "" or destination == "-":
+                return
+            mut options = OpenOptions.new()
+            options.create(true).append(true)
+            match options.open(destination):
+                Ok(file) =>
+                    mut trace = file
+                    _ = trace.write_all(RustString.from(text).into_bytes())
+                Err(_) => pass
+        Err(_) => pass

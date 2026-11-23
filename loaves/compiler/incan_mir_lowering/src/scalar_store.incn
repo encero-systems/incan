@@ -7,6 +7,7 @@ from rust::std::process import id as process_id
 from std.fs import Path
 from pub::incan_mir_plan import ExternalFunction, Function, SourceSpan
 from scalar_products import encode_product, decode_product
+from redo_counts import record_product_refusal
 
 
 @derive(Serialize, Deserialize)
@@ -59,7 +60,9 @@ pub def retain_scalar(directory: str, inputs: list[str], function: &Function, ru
     """
     # 1. An unsupported native shape refuses this cache, retaining ordinary lowering.
     match encoded_record(inputs, function, runtime):
-        Err(_) => return
+        Err(reason) =>
+            record_product_refusal(true, function.name, reason)
+            return
         Ok(text) =>
             # 2. Publication is independent of the successful compilation's verdict.
             _ = publish_record(directory, inputs, text)
