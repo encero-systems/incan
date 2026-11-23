@@ -16,7 +16,7 @@ from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPO
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 
-pub const LOWERING_PROFILE: str = "incan.lowering-records/11"
+pub const LOWERING_PROFILE: str = "incan.lowering-records/12"
 
 
 pub def plan_reads_changed(changed: Borrowed[list[InputReaders]]) -> Dict[str, list[RecordKey]]:

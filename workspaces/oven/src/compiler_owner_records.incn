@@ -12,7 +12,7 @@ const ELIGIBILITY: bytes = b"eligib\x00"
 
 
 def body_description() -> Description:
-    return model_description(BODY_FRAME, "incan.graph.executable-owner/1", [
+    return model_description(BODY_FRAME, "incan.graph.executable-owner/2", [
         ModelField(identity=b"digest", name="frame_sha256", storage="binary"),
         ModelField(identity=b"frame_", name="kernel_frame", storage="binary"),
         ModelField(identity=b"key___", name="record_key", storage=KEY_TYPE),

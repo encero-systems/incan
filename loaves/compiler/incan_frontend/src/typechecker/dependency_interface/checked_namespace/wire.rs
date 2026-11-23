@@ -261,6 +261,7 @@ mod atoms;
 pub(crate) mod callable_fields;
 mod declarations;
 mod executable;
+pub mod executable_frames;
 pub use atoms::{to_atom, to_cell};
 #[cfg(test)]
 pub(super) use executable::verify_executable_codec;

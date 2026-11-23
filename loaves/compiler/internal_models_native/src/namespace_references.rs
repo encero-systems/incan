@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 const NAMESPACE_REFERENCE_PAGE: &str = "namespace-references.crumb";
 const NAMESPACE_HEADER_REFERENCE_PAGE: &str = "namespace-header-references.crumb";
-pub const NAMESPACE_IDENTITY_PROFILE: &str = "incan.editable-namespace-crumb/7";
+pub const NAMESPACE_IDENTITY_PROFILE: &str = "incan.editable-namespace-crumb/8";
 const ROW: &[u8] = b"nsrefs\x00";
 
 /// An evaluated namespace in an immutable segment under the request's bakery anchor.

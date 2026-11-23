@@ -191,5 +191,5 @@ pub(crate) fn verify_executable_codec(mut expected: BodyIrModule) -> Result<(), 
                 .into()
         )
     );
-    Ok(())
+    super::executable_frames::verify_executable_frames(expected)
 }

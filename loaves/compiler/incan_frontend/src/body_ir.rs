@@ -58,7 +58,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-pub use canonical_rebinding::refresh_dependency_call_targets;
+pub use canonical_rebinding::DependencyCallTargets;
 pub use context_modules::{ContextModules, ContextModulesIter};
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub use nominal_carriers::{linked_enum_item, linked_model_item, publish_linked_layout};

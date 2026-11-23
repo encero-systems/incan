@@ -8,6 +8,7 @@ use super::*;
 mod checked_namespace;
 mod stable_encoding;
 
+pub use checked_namespace::executable_frames;
 pub(crate) use checked_namespace::{CheckedCellProjection, callable_projection};
 pub use checked_namespace::{
     CheckedNamespaceInterface, NamespaceCell, NamespaceCrumb, executable_body_value, executable_module_value,

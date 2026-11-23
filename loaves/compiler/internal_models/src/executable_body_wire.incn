@@ -1,13 +1,28 @@
 """Graph-only Crumb roots for checked executable bodies and modules."""
 
-from rust::internal_models_native import NamespaceAtom, decode_checked_projection, encode_checked_projection, executable_type_descriptions
+pub from rust::internal_models_native import NamespaceAtom, PreparedWireReader
+from rust::internal_models_native import (
+    checked_projection_fields, decode_checked_projection, decode_checked_projection_view,
+    encode_checked_projection, executable_type_descriptions,
+)
 from std.primitives.crumb.descriptions import Description
 from std.primitives.text import copy_frozen_bytes
+from std.primitives.views import MappedView
 from executable_body_shapes import descriptions as body_descriptions
 from executable_declaration_shapes import descriptions as declaration_descriptions
+from executable_graph_schema import (
+    EXECUTABLE_NAMESPACE, EXECUTABLE_OWNER, executable_namespace_description, executable_owner_description,
+)
 
 const BODY: bytes = b"\x02\xff\x73\xc4\xb3\x17\x00"
 const MODULE: bytes = b"\x70\x27\x49\xa1\x72\x4a\x00"
+pub const EXECUTABLE_GRAPH_INPUT: str = "executable-graph-format"
+pub const EXECUTABLE_GRAPH_FORMAT: bytes = b"incan.graph.checked-executable/1"
+
+
+pub def executable_graph_output_marker() -> str:
+    """Request the typed executable rows while preserving the earlier sidecar suffix capabilities."""
+    return ".executable-crumb"
 
 
 def shapes(include_declarations: bool) -> list[Description]:
@@ -37,3 +52,62 @@ pub def encode_executable_module(value: Borrowed[NamespaceAtom]) -> Result[bytes
 pub def decode_executable_module(encoded: Borrowed[bytes]) -> Result[NamespaceAtom, str]:
     """Admit the exact graph module shape before exposing its executable fields."""
     return decode_checked_projection(copy_frozen_bytes(MODULE), shapes(true), encoded)
+
+
+def owner_shapes() -> list[Description]:
+    """Use the same body closure inside the bounded owner and provenance record."""
+    mut descriptions = shapes(false)
+    descriptions.append(executable_owner_description())
+    return descriptions
+
+
+def namespace_shapes() -> list[Description]:
+    """Use the same module closure inside its independently authenticated scope directory."""
+    mut descriptions = shapes(true)
+    descriptions.append(executable_namespace_description())
+    return descriptions
+
+
+pub def encode_executable_owner_frame(value: Borrowed[NamespaceAtom]) -> Result[bytes, str]:
+    """Write a checked executable owner with its exact provenance, scope reference and body."""
+    return encode_checked_projection(copy_frozen_bytes(EXECUTABLE_OWNER), owner_shapes(), value)
+
+
+pub def decode_executable_owner_frame(encoded: Borrowed[bytes]) -> Result[NamespaceAtom, str]:
+    """Admit the complete typed owner record before native checked-body restoration."""
+    return decode_checked_projection(copy_frozen_bytes(EXECUTABLE_OWNER), owner_shapes(), encoded)
+
+
+pub def prepare_executable_owner_reader() -> Result[PreparedWireReader, str]:
+    """Freeze the exact description dictionary shared by metadata reads of native owner frames."""
+    return PreparedWireReader.create(copy_frozen_bytes(EXECUTABLE_OWNER), owner_shapes(), "executable owner")
+
+
+pub def read_executable_owner_header(reader: Borrowed[PreparedWireReader], view: Borrowed[MappedView]) -> Result[list[NamespaceAtom], str]:
+    """Read owner, source, name, symbol and scope from an authenticated view without restoring the body."""
+    return checked_projection_fields(reader, view, [b"ident_", b"source", b"name__", b"canon_", b"scope_"])
+
+
+pub def encode_executable_namespace_frame(value: Borrowed[NamespaceAtom]) -> Result[bytes, str]:
+    """Write a checked module and its first-use scope directory as one typed graph value."""
+    return encode_checked_projection(copy_frozen_bytes(EXECUTABLE_NAMESPACE), namespace_shapes(), value)
+
+
+pub def decode_executable_namespace_frame(encoded: Borrowed[bytes]) -> Result[NamespaceAtom, str]:
+    """Admit the checked module and its typed scope slots before restoring executable declarations."""
+    return decode_checked_projection(copy_frozen_bytes(EXECUTABLE_NAMESPACE), namespace_shapes(), encoded)
+
+
+pub def prepare_executable_namespace_reader() -> Result[PreparedWireReader, str]:
+    """Freeze the exact typed declaration, Body IR and scope-slot dictionary before mapped restore."""
+    return PreparedWireReader.create(copy_frozen_bytes(EXECUTABLE_NAMESPACE), namespace_shapes(), "executable namespace")
+
+
+pub def decode_executable_namespace_view(reader: Borrowed[PreparedWireReader], view: Borrowed[MappedView]) -> Result[NamespaceAtom, str]:
+    """Restore the selected executable module from its authenticated immutable bytes."""
+    return decode_checked_projection_view(reader, view)
+
+
+pub def read_executable_namespace_scopes(reader: Borrowed[PreparedWireReader], view: Borrowed[MappedView]) -> Result[list[NamespaceAtom], str]:
+    """Read the owning source and the first-use digest directory without materializing executable declarations."""
+    return checked_projection_fields(reader, view, [b"source", b"scopes"])
