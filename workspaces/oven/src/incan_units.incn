@@ -40,7 +40,7 @@ from bakery_records import Fact
 from bakery_roots import register_root
 from compiler_body_values import SelectedBodyPage
 from compiler_refusals import check_or_replay
-from observation import trace, trace_launch
+from observation import trace, trace_boundary, trace_launch
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
@@ -194,20 +194,25 @@ pub def obtain_executable(
     identity = unit_identity(selected)
     label = f"unit {crate_name(unit)} {unit.kind}"
     register_root(store, unit.project_root, root_registration(unit), [identity])?
+    trace_boundary("run25_root_registered")
     # 1. A sealed executable of the identity starts no compiler.
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused")
         return Ok(made)
+    trace_boundary("run25_current_checked")
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
+    trace_boundary("run25_claimed")
     # 3. A bake another command finished while this one waited is used, not repeated.
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
+    trace_boundary("run25_current_rechecked")
     # 4. A failed bake publishes nothing; its staging directory goes with it.
     staged = staging(store, identity, prior_size(store, unit_name(unit)))?
+    trace_boundary("run25_staged")
     code = compile_staged(
         unit,
         toolchain,
