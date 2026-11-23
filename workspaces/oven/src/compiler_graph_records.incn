@@ -236,7 +236,8 @@ pub def evaluation_record_key(profile: str, output: str) -> str:
 
 def output_index_key(profile: str, output: str) -> str:
     """Name one profile's current logical output without duplicating its value or evaluation document."""
-    return "incan.engine.output\t" + profile + "\t" + output
+    prefix = "incan.engine.output\t" + profile
+    return prefix + "\t" + output
 
 
 def decode_record_key(encoded: str) -> Result[RecordKey, str]:
