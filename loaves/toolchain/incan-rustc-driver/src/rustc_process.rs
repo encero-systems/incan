@@ -79,7 +79,13 @@ pub(crate) struct RustcHandoff {
 impl RustcHandoff {
     /// Run rustc, then write the test report and publish the Loaf; native-boundary failures remain retryable.
     pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self.read_plan_module_selection()?;
+        let native = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %self.output.display(), functions = self.plan.functions.len()).entered();
+        let compact = {
+            let _admission =
+                tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile_plan_admission")
+                    .entered();
+            self.read_compact_definitions()?
+        };
         let _captured = crate::spans::captured_source_scope(self.captured_sources, self.captured_texts)?;
         crate::adapter::compile(
             self.plan,
@@ -95,9 +101,10 @@ impl RustcHandoff {
             self.overflow_checks,
             self.library_facades,
             self.plan_record_report.as_deref(),
-            Vec::new(),
+            compact,
         )
         .map_err(|error| error.to_string())?;
+        drop(native);
         if let Some(tests) = self.tests {
             std::fs::write(self.output.with_extension("tests.json"), tests)?;
         }
@@ -118,8 +125,7 @@ impl RustcHandoff {
         products.read_selection()
     }
 
-    /// Read the same compact inputs under the accepted selection so the counted request can observe settled members.
-    #[cfg(test)]
+    /// Verify the exact published note set and resolve its native members before codegen.
     fn read_compact_definitions(&self) -> Result<Vec<incan_mir_plan_native::AdmittedDefinition>, String> {
         let Some(products) = &self.plan_record_products else {
             return Ok(Vec::new());
