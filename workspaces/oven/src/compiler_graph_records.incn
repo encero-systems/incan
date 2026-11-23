@@ -22,14 +22,13 @@ from pub::incan_platform.store import (
     locate_value,
     owned,
     read_frame,
-    read_store_identity,
     revisions_with_prefix,
     stage_delete,
     stage_put,
 )
 from pub::incan_platform.store.codec import KIND_TOMBSTONE, KIND_VALUE, Write, matches_value_frame
 from pub::incan_platform.store.files import index_failure
-from pub::incan_platform.store.index import Location, entries_with_prefix, find as indexed_frame
+from pub::incan_platform.store.index import Location, entries_with_prefix
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -47,7 +46,8 @@ from pub::internal_models.records import (
     RecordRequest,
     encode_record_key,
 )
-from std.primitives.views import MappedView
+pub from compiler_receipt_projections import ReceiptProjectionCache
+from compiler_receipt_projections import authenticated_receipt, validate_receipt_authority
 from compiler_graph_rows import (
     Evaluation, IncomingEdge, OutgoingEdge, encode_evaluation, encode_incoming, encode_outgoing, encode_pointer,
     evaluation_value_digest, read_evaluation, read_identity, read_incoming, read_outgoing, read_pointer,
@@ -293,7 +293,7 @@ def sized_evaluation_authority(
     evaluation = match selected_evaluation(selected, value_key, profile)?:
         Some(value) => value
         None => return Ok(None)
-    _, mapped = authenticated_receipt(selected, evaluation.receipt_root)?
+    mapped = authenticated_receipt(selected, evaluation.receipt_root)?
     receipt_bytes = mapped.len()
     receipt = decode_read_receipt_view(mapped)?
     validate_receipt_authority(receipt.scope.profile, encode_record_key(receipt.preparation.output)?, evaluation)?
@@ -314,91 +314,6 @@ def selected_evaluation(selected: Snapshot, value_key: str, profile: str) -> Res
     if evaluation.profile != profile or evaluation.output != value_key:
         return Err("selected compiler evaluation has mismatched authority")
     return Ok(Some(evaluation))
-
-
-def authenticated_receipt(selected: Snapshot, receipt_root: str) -> Result[tuple[Location, MappedView], str]:
-    """Authenticate the current frame in place and keep the exact revision from that lookup."""
-    key = "incan.engine.receipt\t" + receipt_root
-    location = match indexed_frame(selected.root, selected.index, key).map_err((error) => index_failure(error).message())?:
-        Some(value) => value
-        None => return Err("selected compiler evaluation is incomplete")
-    match read_frame(selected.root, key, location).map_err((error) => error.message())?:
-        Lookup.Found(mapped) => return Ok((location, mapped))
-        Lookup.Deleted | Lookup.Absent => return Err("selected compiler evaluation is incomplete")
-
-
-def validate_receipt_authority(profile: str, output: str, evaluation: Evaluation) -> Result[None, str]:
-    """Apply the same producer and output checks to full receipts and cached metadata."""
-    if profile != evaluation.profile or output != evaluation.output:
-        return Err("selected compiler receipt does not describe its evaluation")
-    return Ok(None)
-
-
-const MAX_RECEIPT_PROJECTIONS: int = 1024
-const RECEIPT_PROJECTION_BYTES: int = 2097152
-
-
-model ReceiptProjection:
-    """Only the immutable authority metadata from one fully decoded receipt."""
-    revision: bytes
-    output: str
-    scope: ReadScope
-    certificate: str
-    size: int
-
-
-pub class ReceiptProjectionCache:
-    """A bounded memo for one authenticated store and view. It retains no snapshot, lease, or witness values."""
-    view: tuple[str, str, str] = ("", "", "")
-    store: str = ""
-    entries: Dict[str, ReceiptProjection] = {}
-    retained_bytes: int = 0
-
-    @staticmethod
-    pub def empty() -> ReceiptProjectionCache:
-        """Start without a selected store or any retained receipt facts."""
-        return ReceiptProjectionCache()
-
-    pub def select_view(mut self, selected: Snapshot) -> None:
-        """Select the current physical store and view once for a group of metadata consumers."""
-        view = (selected.root.value, selected.root.placement, selected.view)
-        mut store = selected.root.placement
-        if not store.startswith("memory:"):
-            store = match read_store_identity(selected.root):
-                Ok(identity) => identity
-                Err(_) => ""
-        if view != self.view or store != self.store or store == "":
-            self.entries = {}
-            self.retained_bytes = 0
-        self.view = view
-        self.store = store
-
-    pub def certificate(mut self, selected: Snapshot, evaluation: Evaluation) -> Result[str, str]:
-        """Check the current physical frame before borrowing certified receipt metadata."""
-        location, mapped = authenticated_receipt(selected, evaluation.receipt_root)?
-        current = self.view == (selected.root.value, selected.root.placement, selected.view)
-        mut replaced = 0
-        if current:
-            if let Some(prior) = self.entries.get(evaluation.receipt_root):
-                if prior.revision == location.digest:
-                    validate_receipt_authority(prior.scope.profile, prior.output, evaluation)?
-                    return Ok(prior.certificate)
-                replaced = prior.size
-        receipt = decode_read_receipt_view(mapped)?
-        output = encode_record_key(receipt.preparation.output)?
-        certificate = receipt.preparation.rank_certificate
-        validate_receipt_authority(receipt.scope.profile, output, evaluation)?
-        cost = 4 * (len(output) + len(receipt.scope.profile) + len(receipt.scope.snapshot) + len(certificate)) + 96
-        if current and cost <= RECEIPT_PROJECTION_BYTES:
-            self.retained_bytes -= replaced
-            if (replaced == 0 and len(self.entries) >= MAX_RECEIPT_PROJECTIONS) or self.retained_bytes + cost > RECEIPT_PROJECTION_BYTES:
-                self.entries = {}
-                self.retained_bytes = 0
-            self.entries[evaluation.receipt_root] = ReceiptProjection(
-                revision=location.digest, output=output, scope=receipt.scope, certificate=certificate, size=cost,
-            )
-            self.retained_bytes += cost
-        return Ok(certificate)
 
 
 def select_evaluation(
