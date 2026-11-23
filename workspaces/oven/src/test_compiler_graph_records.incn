@@ -58,6 +58,7 @@ from compiler_graph_records import (
     OutputSlots,
     PublishedEvaluation,
     ReceiptProjectionCache,
+    prepare_evaluation,
     edit_cutoff,
     publish_evaluation,
     reusable_evaluation,
@@ -90,7 +91,7 @@ from compiler_projection_cache import cached_editable_dependency_signature_recor
 pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Result[None, str]:
     """
     Offer only the selected namespace and its header and layout. Across generations, preserve their exact pages
-    and authenticate every receipt without reopening unchanged witnesses. A cached receipt cannot mask damage.
+    without reopening unchanged receipts or witnesses. A cached receipt cannot mask damage.
     """
     origin = "coverage"
     left = "src/left.incn"
@@ -108,16 +109,16 @@ pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Re
         scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
         mut source = PreparedBodyRecordSource.open(scope)
         source.add(input_key, b"before")
+        mut transaction = begin(graph)
         receipt = source.receipt(scope, namespace_key(origin, file), [dependency], order[file].evidence)?
-        published = publish_evaluation(graph, file, rank, b"selected namespace page", receipt)?
+        published = prepare_evaluation(transaction, file, rank, b"selected namespace page", receipt)?
         header = source.receipt(scope, namespace_header_key(origin, file), [dependency], order[file].evidence)?
-        published_header = publish_evaluation(published.snapshot, "header-" + file, rank, b"selected namespace header", header)?
-        graph = published_header.snapshot
+        published_header = prepare_evaluation(transaction, "header-" + file, rank, b"selected namespace header", header)?
         if file == left:
             layout = source.receipt(scope, namespace_layout_key(origin, file), [dependency], order[file].evidence)?
-            published_layout = publish_evaluation(graph, "layout-" + file, rank, b"selected namespace layout", layout)?
+            published_layout = prepare_evaluation(transaction, "layout-" + file, rank, b"selected namespace layout", layout)?
             selected_receipts = [published.receipt_key, published_header.receipt_key, published_layout.receipt_key]
-            graph = published_layout.snapshot
+        graph = commit(transaction).map_err((error) => error.message())?
     mut projections = ReceiptProjectionCache.empty()
     unchanged = EditCutoff(active=true)
     offered = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], projections, true, unchanged, true)?
@@ -142,16 +143,11 @@ pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Re
     assert len(inventory.pages) == len(pages), "unchanged receipts must preserve the page inventory"
     for page in inventory.pages:
         assert page.value == pages[page.key], f"unchanged receipt altered {page.key}"
-    mut authenticated: set[str] = set()
     mut other_values = 0
     for read in observed:
         assert read.key != input_key, "an unchanged namespace reopened its witness"
-        if read.key in selected_receipts:
-            assert read.reads == 1 and read.frame_bytes > read.value_bytes, f"expected one complete receipt frame for {read.key}"
-            authenticated.add(read.key)
-        else:
-            other_values += read.reads * read.value_bytes
-    assert authenticated == set(selected_receipts), "the warm selection must authenticate all three receipts"
+        assert read.key not in selected_receipts, "a warm namespace reopened a verified receipt frame"
+        other_values += read.reads * read.value_bytes
 
     changed = commit(put(begin(later), input_key, b"after")).map_err((error) => error.message())?
     cutoff = edit_cutoff(changed, [dependency.key], [CHECKER_PROFILE])?
