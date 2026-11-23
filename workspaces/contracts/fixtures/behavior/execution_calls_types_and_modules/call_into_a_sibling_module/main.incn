@@ -1,12 +1,15 @@
-# behavior: a call into a sibling module returns its result
+# behavior: a direct import and a module alias both call the same sibling function
 # expect-stdout:
 #   42
 #   42
 
-"""A call into a sibling module returns its result."""
-from helper import bump
+"""Observe the direct and module-qualified calls with one sibling helper."""
+
+from direct import observe as observe_direct
+from renamed import observe as observe_renamed
 
 
 def main() -> None:
-    """Print the fixture values in the expected order."""
-    println(bump(41))
+    """Run the direct and module-qualified observations in order."""
+    observe_direct()
+    observe_renamed()
