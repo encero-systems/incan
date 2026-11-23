@@ -1,0 +1,18 @@
+"""Durable RFC 125 audit observation boundary."""
+
+from std.fs import Path
+from registry_audit_wire import VerifiedAudit
+from registry_checkpoint import DEFAULT_MAX_AGE_SECONDS
+from registry_trust import Root
+
+
+pub def retain_audit(
+    _store: Path, _root: Root, _text: str, _now: int, _max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
+) -> Result[VerifiedAudit, str]:
+    """Refuse to report an online observation until it can be advanced durably."""
+    return Err("the registry audit observation cannot yet be advanced")
+
+
+pub def retained_audit(_store: Path, _root: Root, _now: int) -> Result[VerifiedAudit, str]:
+    """Refuse offline state until an authenticated observation is present."""
+    return Err("no authenticated registry audit observation")

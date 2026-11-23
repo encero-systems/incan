@@ -1,0 +1,30 @@
+"""Checked lock projection boundary for authenticated registry audit."""
+
+from lock_format import OvenLock
+from registry_advisory import VerifiedAdvisory
+from registry_audit_wire import VerifiedAudit
+
+pub const NO_REGISTRY_ORIGIN: str = "no registry origin: not covered"
+
+
+pub model AuditCoverage:
+    """Whether the exact locked source had an authenticated registry snapshot."""
+
+    pub package: str
+    pub version: str
+    pub origin: str
+    pub registry: str
+    pub covered: bool
+    pub reason: str
+
+
+pub model LockedRegistryAudit:
+    """One registry coverage record per locked dependency and its active findings."""
+
+    pub coverage: list[AuditCoverage]
+    pub advisories: list[VerifiedAdvisory]
+
+
+pub def audit_locked_registries(_lock: OvenLock, _audits: list[VerifiedAudit]) -> LockedRegistryAudit:
+    """Provide no coverage until the checked lock's recorded sources can be projected."""
+    return LockedRegistryAudit(coverage=[], advisories=[])

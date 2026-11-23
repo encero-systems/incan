@@ -1,0 +1,21 @@
+"""Operator-owned RFC 117 registry configuration boundary."""
+
+from std.fs import Path
+from registry_trust import Root
+
+
+pub model RegistryConfiguration:
+    """One operator-configured registry alias, root and its HTTPS audit URLs."""
+
+    pub alias: str
+    pub root: Root
+    pub audit_urls: list[str]
+    pub max_age_seconds: int
+    pub source: str
+
+
+pub def read_registries(
+    _user: Path, _organization: Option[Path], _project_root: Path,
+) -> Result[list[RegistryConfiguration], str]:
+    """Refuse registry configuration until its trusted sources and root encoding are admitted."""
+    return Err("operator registry configuration is not yet admitted")
