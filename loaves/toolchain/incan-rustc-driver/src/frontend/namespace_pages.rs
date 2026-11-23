@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use incan_frontend::checker_records::{GraphNamespaceHeader, GraphNamespaceRecord, RecordAdapterFault};
+use incan_frontend::checker_records::{
+    ExecutableScopeWitness, GraphNamespaceHeader, GraphNamespaceRecord, RecordAdapterFault,
+};
 use incan_frontend::typechecker::executable_frames::restore_graph_executable_namespace;
 use incan_semantics_core::SymbolOrigin;
 use incan_semantics_core::body_ir::BodyIrModule;
@@ -54,7 +56,7 @@ struct SelectedBody {
     header: Arc<GraphNamespaceHeader>,
     interface_digest: Option<namespace_crumb::InterfaceDigest>,
     wire_bytes: usize,
-    executable_scopes: Vec<String>,
+    executable_scopes: Vec<ExecutableScopeWitness>,
     /// Exact authored bytes held only until the backend returns a reusable decoded body.
     authored: Option<Vec<u8>>,
 }
@@ -219,13 +221,13 @@ impl NamespacePages {
             if retained.selected.digest.frame.is_none() {
                 retained.selected.digest.frame = Some(reference.frame_digest.clone());
             }
+            for scope in &retained.selected.executable_scopes {
+                self.scope_access
+                    .reuse(source, scope)
+                    .map_err(RecordAdapterFault::InvalidField)?;
+            }
             let body_ir = match retained.body {
                 ResidentBodyIr::Decoded(body) => {
-                    for digest in &retained.selected.executable_scopes {
-                        self.scope_access
-                            .resolve(source, digest)
-                            .map_err(RecordAdapterFault::InvalidField)?;
-                    }
                     tracing::trace!(target: "incan::invocation", module = source, wire_bytes = retained.selected.wire_bytes,
                         "reused resident namespace Body IR");
                     body
@@ -317,7 +319,7 @@ impl NamespacePages {
         &self,
         body: &MappedView,
         source: &str,
-        scopes: &mut Vec<String>,
+        scopes: &mut Vec<ExecutableScopeWitness>,
     ) -> Result<BodyIrModule, RecordAdapterFault> {
         if !self.typed_executable {
             return decode_namespace_body(body.0.as_bytes());
@@ -335,12 +337,16 @@ impl NamespacePages {
         &self,
         value: internal_models::NamespaceAtom,
         source: &str,
-        scopes: &mut Vec<String>,
+        scopes: &mut Vec<ExecutableScopeWitness>,
     ) -> Result<BodyIrModule, RecordAdapterFault> {
+        scopes.clear();
         restore_graph_executable_namespace(value, source, |digest| {
-            let scope = self.scope_access.resolve(source, digest)?;
-            scopes.push(digest.to_owned());
-            Ok(scope)
+            let bindings = self.scope_access.resolve(source, digest)?;
+            scopes.push(ExecutableScopeWitness {
+                digest: digest.to_owned(),
+                bindings: Arc::clone(&bindings),
+            });
+            Ok(bindings)
         })
         .map_err(RecordAdapterFault::InvalidField)
     }
@@ -386,7 +392,7 @@ impl NamespacePages {
         header: Arc<GraphNamespaceHeader>,
         value: String,
         body_ir: Vec<u8>,
-        executable_scopes: Vec<String>,
+        executable_scopes: Vec<ExecutableScopeWitness>,
     ) {
         let source = header.source.clone();
         self.note(

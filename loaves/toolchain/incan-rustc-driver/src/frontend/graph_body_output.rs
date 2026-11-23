@@ -9,7 +9,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use incan_frontend::checker_records::{GraphBodyRecords, GraphNamespaceHeader, GraphNamespaceInterface};
+use incan_frontend::checker_records::{
+    ExecutableScopeWitness, GraphBodyRecords, GraphNamespaceHeader, GraphNamespaceInterface,
+};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::typechecker::executable_frames::{
@@ -64,7 +66,7 @@ struct PendingNamespaceValue {
     call_reads: Vec<internal_models::SettledCallRead>,
     call_contracts: Option<Vec<internal_models::SettledCallContract>>,
     body_ir: Vec<u8>,
-    executable_scopes: Vec<String>,
+    executable_scopes: Vec<ExecutableScopeWitness>,
     dependencies: Vec<String>,
     lowering_inputs: Vec<Vec<String>>,
 }
@@ -694,7 +696,14 @@ impl GraphBodyOutput {
             if let Some(mut scopes) = scopes {
                 if let Some(namespace) = namespace {
                     // The complete namespace references every packed scope. Move their exact witnesses into it.
-                    namespace.executable_scopes = scopes.digests.into_iter().flatten().collect();
+                    namespace.executable_scopes = scopes
+                        .digests
+                        .into_iter()
+                        .zip(scopes.bindings)
+                        .filter_map(|(digest, bindings)| {
+                            digest.map(|digest| ExecutableScopeWitness { digest, bindings })
+                        })
+                        .collect();
                 } else {
                     scopes.values.retain(|digest, _| referenced_scopes.contains(digest));
                     if scopes.values.len() != referenced_scopes.len() {

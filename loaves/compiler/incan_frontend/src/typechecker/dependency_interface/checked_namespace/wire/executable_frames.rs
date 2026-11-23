@@ -42,6 +42,8 @@ pub struct OpenExecutableOwner {
 pub struct ExecutableScopeRecords {
     /// One digest per first-use slot, with no separate record for the empty map.
     pub digests: Vec<Option<String>>,
+    /// The original shared maps in the same first-use order as their wire digests.
+    pub bindings: Vec<SharedIdentities>,
     /// Scope slots in the order of bodies followed by model, enum and alias declarations.
     pub slots: Vec<usize>,
     /// Exact typed source-module records by complete value digest.
@@ -55,7 +57,7 @@ impl ExecutableScopeRecords {
         let (maps, slots) = executable_scope_directory(module);
         let mut digests = Vec::with_capacity(maps.len());
         let mut values = BTreeMap::new();
-        for map in maps {
+        for map in &maps {
             if map.is_empty() {
                 digests.push(None);
                 continue;
@@ -70,7 +72,12 @@ impl ExecutableScopeRecords {
             }
             digests.push(Some(digest));
         }
-        Ok(Self { digests, slots, values })
+        Ok(Self {
+            digests,
+            bindings: maps,
+            slots,
+            values,
+        })
     }
 }
 

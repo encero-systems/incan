@@ -191,10 +191,19 @@ fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<
         output.namespaces[0]
             .executable_scopes
             .iter()
+            .map(|witness| &witness.digest)
             .collect::<std::collections::BTreeSet<_>>(),
         output.scope_values.keys().collect(),
         "the resident namespace must authenticate every scope its executable frame references",
     );
+    for witness in &output.namespaces[0].executable_scopes {
+        let encoded = output
+            .scope_values
+            .get(&witness.digest)
+            .ok_or("missing emitted executable scope")?;
+        let restored = super::open_graph_executable_scope(encoded, "src/main.incn", &witness.digest)?;
+        assert_eq!(witness.bindings, restored);
+    }
     assert!(output.values.iter().any(|value| value.name == "route"));
     std::fs::remove_dir_all(&scratch)?;
     Ok(())

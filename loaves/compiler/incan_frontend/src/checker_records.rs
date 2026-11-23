@@ -71,6 +71,15 @@ pub struct GraphNamespaceAdmission {
     pub interface: Arc<dyn GraphNamespaceInterface>,
 }
 
+/// A scope whose immutable bindings were produced by the compiler or admitted from its exact typed record.
+#[derive(Debug)]
+pub struct ExecutableScopeWitness {
+    /// Complete encoded value digest, to be authenticated in the next selected snapshot.
+    pub digest: String,
+    /// The checked bindings already represented by that value.
+    pub bindings: incan_semantics_core::body_ir::SharedIdentities,
+}
+
 /// A verified header with one movable, decoded Body IR contribution.
 #[derive(Debug)]
 pub struct GraphNamespaceRecord {
@@ -109,7 +118,7 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
         _header: Arc<GraphNamespaceHeader>,
         _value: String,
         _body_ir: Vec<u8>,
-        _executable_scopes: Vec<String>,
+        _executable_scopes: Vec<ExecutableScopeWitness>,
     ) {
     }
 
@@ -498,7 +507,7 @@ impl GraphBodyRecords {
         header: Arc<GraphNamespaceHeader>,
         value: String,
         body_ir: Vec<u8>,
-        executable_scopes: Vec<String>,
+        executable_scopes: Vec<ExecutableScopeWitness>,
     ) {
         if let Some(reader) = &self.source {
             reader.publish_namespace(header, value, body_ir, executable_scopes);
