@@ -16,6 +16,7 @@ pub mod reflection;
 pub mod strings;
 pub mod sync;
 pub mod task;
+pub mod text_cursor;
 pub mod time;
 pub mod unicode_names;
 pub mod validation;

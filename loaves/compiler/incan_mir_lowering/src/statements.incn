@@ -20,6 +20,7 @@ from pub::incan_mir_plan import (
 )
 from explicit_arguments import explicit_place_argument, reference_contract
 from loop_exits import exits_to
+from text_cursors import close_loop_cursors, open_loop_cursors
 from rust::incan_semantics_core import IncanInputAccess
 from rust::incan_semantics_core::body_ir import (
     RaceArm as RustRaceArm,
@@ -632,6 +633,8 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     """Lower a normalized loop: a header block that the body jumps back to, and an `after` block for `break`."""
     header = builder.new_block(span)
     after = builder.new_block(span)
+    # Each string the loop reads by index and never changes gets a cursor, started before the loop (#3070).
+    cursors = open_loop_cursors(builder, body, span)
     builder.finish(TerminatorKind.Goto(header), span)
     builder.current = header
     incoming = builder.owned
@@ -641,6 +644,7 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     builder.loop_exit_blocks.append([])
     builder.loop_exit_owners.append([])
     lower_block(module, builder, body)?
+    close_loop_cursors(builder, cursors)
     if not builder.closed[builder.current]:
         drop_loop_owners(builder, span)?
     _loop = builder.loops.pop()

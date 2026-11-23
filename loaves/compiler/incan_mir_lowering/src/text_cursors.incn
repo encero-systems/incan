@@ -1,0 +1,312 @@
+"""
+Cursors for the strings a loop reads and never changes inside it (#3070).
+
+`s[i]` and `s[i:j]` find their first scalar by walking `s` from its start, and `len(s)` counts every scalar, so a loop
+that reads each scalar in turn, or tests `len(s)` on every turn, walks the string once per read. A loop gets one cursor
+for each string it reads when nothing in the loop can change that string: the string is declared outside the loop, no
+assignment, call or poll writes to it, and no read moves it or borrows it mutably. Its index and slice reads then seek
+from the cursor and its `len` reads the count the cursor keeps, through `incan_std_primitives::text_cursor`, so reading
+every scalar once, in ascending order, walks the string once and `len` counts it once per loop entry. A cursor is
+`(scalar, byte, count)`, starting at `(0, 0, -1)` each time the loop is entered. A loop body this scan cannot see
+through gives no string a cursor.
+"""
+
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    AssertionKind as RustAssertionKind,
+    Block as RustBlock,
+    DictEntry as RustDictEntry,
+    FormatPart as RustFormatPart,
+    MatchArm as RustMatchArm,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    PlaceElem,
+    Rvalue as RustRvalue,
+    Statement as RustStatement,
+    StatementKind as RustStatementKind,
+)
+from pub::incan_mir_plan import (
+    Constant,
+    Operand,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TupleElement,
+    assign as plan_assign,
+)
+from frame import Builder, place_type, temporary, literal, read_place
+from table_views import borrowed_at
+
+const CURSOR_ELEMENTS: FrozenList[TupleElement] = [TupleElement.Int, TupleElement.Int, TupleElement.Int]
+
+
+pub model LoopTextReads:
+    """The frame slots a loop body reads, the slots it may change, and whether the body hid anything from the scan."""
+
+    pub offset: int
+    pub indexed: list[int] = []
+    pub changed: list[int] = []
+    pub opaque: bool = false
+
+
+pub def cursor_type() -> PlanType:
+    """A string cursor's frame type: the scalar index and byte offset of a boundary, and the scalar count or -1."""
+    return PlanType.Tuple([element for element in CURSOR_ELEMENTS])
+
+
+pub def cursor_reference_type() -> PlanType:
+    """The exclusive borrow a cursor read takes of its loop's cursor."""
+    return PlanType.TupleMutRef([element for element in CURSOR_ELEMENTS])
+
+
+pub def open_loop_cursors(mut builder: Builder, body: RustBlock, span: SourceSpan) -> int:
+    """
+    Start a cursor, before the loop, for each string the loop body reads and cannot change, and
+    return how many it registered; `close_loop_cursors` takes them back off after the loop.
+    """
+    mut reads = LoopTextReads(offset=builder.local_offset)
+    visit_block(body, reads)
+    if reads.opaque:
+        return 0
+    mut opened = 0
+    for slot in reads.indexed:
+        if slot in reads.changed or slot in [pair[0] for pair in builder.text_cursors]:
+            continue
+        if slot >= len(builder.locals):
+            continue
+        if place_type(builder.locals, Place(local=slot, projection=Projection.Whole, span=span)) not in [PlanType.String, PlanType.StringRef]:
+            continue
+        if declared_inside(builder, slot, int(body.scope.0)):
+            continue
+        cursor = temporary(builder, cursor_type(), span)
+        start = [literal(Constant.Int(0), span), literal(Constant.Int(0), span), literal(Constant.Int(-1), span)]
+        builder.emit(plan_assign(cursor, RvalueKind.Tuple(start), span))
+        builder.text_cursors.append((slot, cursor.local))
+        opened += 1
+    return opened
+
+
+pub def close_loop_cursors(mut builder: Builder, opened: int) -> None:
+    """Drop the cursors `open_loop_cursors` registered for the loop that just ended."""
+    for _ in range(opened):
+        _ = builder.text_cursors.pop()
+
+
+pub def loop_cursor(mut builder: Builder, source: RustPlace, slot: int) -> Option[int]:
+    """The cursor of the string `source` reads, when its first step is the index or slice being read."""
+    if slot != 0:
+        return None
+    match source.local_id():
+        Some(local) =>
+            frame_slot = int(local.index()) + 1 + builder.local_offset
+            for pair in builder.text_cursors:
+                if pair[0] == frame_slot:
+                    return Some(pair[1])
+            return None
+        None => return None
+
+
+def declared_inside(mut builder: Builder, slot: int, loop_scope: int) -> bool:
+    """Whether a slot is declared in the loop's scope or one nested in it; a slot with no source scope counts as inside."""
+    for entry in builder.scoped_locals:
+        if entry[0] != slot:
+            continue
+        mut current = entry[1]
+        for _ in range(len(builder.scope_parents) + 1):
+            if current == loop_scope:
+                return true
+            mut parent = -1
+            for link in builder.scope_parents:
+                if link[0] == current:
+                    parent = link[1]
+            if parent < 0:
+                return false
+            current = parent
+        return true
+    return true
+
+
+def visit_block(block: RustBlock, mut reads: LoopTextReads) -> None:
+    """Visit every statement of a same-frame block."""
+    for position in range(len(block.stmts)):
+        visit_statement(borrowed_at(block.stmts, position), reads)
+
+
+def visit_statements(statements: list[RustStatement], mut reads: LoopTextReads) -> None:
+    """Visit a match arm's or guard's statements."""
+    for position in range(len(statements)):
+        visit_statement(borrowed_at(statements, position), reads)
+
+
+def visit_statement(statement: RustStatement, mut reads: LoopTextReads) -> None:
+    """Record what one statement reads by index or slice and what it may change."""
+    match statement.kind:
+        RustStatementKind.Assign(place=destination, rvalue=value) =>
+            write_place(destination, reads)
+            visit_rvalue(value, reads)
+        RustStatementKind.Call(destination=destination, callee=_callee, args=arguments, may_panic=_may_panic) =>
+            visit_arguments(arguments, reads)
+            match destination:
+                Some(place) => write_place(place, reads)
+                None => pass
+        RustStatementKind.If(cond=condition, then_block=then_body, else_block=else_body) =>
+            visit_operand(condition, reads)
+            visit_block(then_body, reads)
+            match else_body:
+                Some(body) => visit_block(body, reads)
+                None => pass
+        RustStatementKind.Loop(body=body) => visit_block(body, reads)
+        RustStatementKind.UnsafeRegion(acknowledgment=_acknowledgment, body=body) => visit_block(body, reads)
+        RustStatementKind.Drop(local=local) => reads.changed.append(int(local.index()) + 1 + reads.offset)
+        RustStatementKind.Expr(value=value) => visit_operand(value, reads)
+        RustStatementKind.Return(value=value) =>
+            match value:
+                Some(operand) => visit_operand(operand, reads)
+                None => pass
+        RustStatementKind.Break(value=value) =>
+            match value:
+                Some(operand) => visit_operand(operand, reads)
+                None => pass
+        RustStatementKind.Continue => pass
+        RustStatementKind.TryPropagate(destination=destination, operand=operand, error_routing=_routing) =>
+            visit_operand(operand, reads)
+            write_place(destination, reads)
+        RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=_protocol) =>
+            visit_operand(iterator, reads)
+            write_place(destination, reads)
+        RustStatementKind.Assert(kind=kind, message=message, may_panic=_may_panic) =>
+            visit_assertion(kind, reads)
+            match message:
+                Some(operand) => visit_operand(operand, reads)
+                None => pass
+        _ => reads.opaque = true
+
+
+def visit_assertion(kind: RustAssertionKind, mut reads: LoopTextReads) -> None:
+    """Read an assertion's operands."""
+    match kind:
+        RustAssertionKind.Condition(cond=condition) => visit_operand(condition, reads)
+        RustAssertionKind.Pattern(scrutinee=scrutinee, pattern=_pattern) => visit_operand(scrutinee, reads)
+        RustAssertionKind.Raises(call=call, expected_error=_expected) => visit_operand(call, reads)
+        _ => reads.opaque = true
+
+
+def visit_rvalue(value: RustRvalue, mut reads: LoopTextReads) -> None:
+    """Read every operand of one right-hand side; a closure or generator body is another frame and hides the loop."""
+    match value:
+        RustRvalue.Use(operand) => visit_operand(operand, reads)
+        RustRvalue.UnaryOp(_operator, operand) => visit_operand(operand, reads)
+        RustRvalue.BinaryOp(_operator, left, right) =>
+            visit_operand(left, reads)
+            visit_operand(right, reads)
+        RustRvalue.Aggregate(_kind, elements) => visit_arguments(elements, reads)
+        RustRvalue.Dict(entries) =>
+            for entry in entries:
+                match entry:
+                    RustDictEntry.Pair(key, entry_value) =>
+                        visit_operand(key, reads)
+                        visit_operand(entry_value, reads)
+                    RustDictEntry.Spread(spread) => visit_operand(spread.source, reads)
+        RustRvalue.Format(parts) =>
+            for part in parts:
+                match part:
+                    RustFormatPart.Expr(operand=operand, style=_style) => visit_operand(operand, reads)
+                    _ => pass
+        RustRvalue.ResultVariant(variant) => visit_operand(variant.payload, reads)
+        RustRvalue.IsInstance(test) => visit_operand(test.value, reads)
+        RustRvalue.ValueEnumVariant(_target) => pass
+        RustRvalue.FieldlessEnumVariant(_target) => pass
+        RustRvalue.Match(scrutinee=scrutinee, arms=arms) =>
+            visit_operand(scrutinee, reads)
+            for arm in arms:
+                visit_arm(arm, reads)
+        _ => reads.opaque = true
+
+
+def visit_arm(arm: RustMatchArm, mut reads: LoopTextReads) -> None:
+    """Visit one match arm's guard, body and result."""
+    visit_statements(arm.guard_stmts, reads)
+    match arm.guard:
+        Some(guard) => visit_operand(guard, reads)
+        None => pass
+    visit_statements(arm.body_stmts, reads)
+    visit_operand(arm.result, reads)
+
+
+def visit_arguments(arguments: list[RustArgumentElement], mut reads: LoopTextReads) -> None:
+    """Read each argument or element operand."""
+    for argument in arguments:
+        match argument:
+            RustArgumentElement.One(operand) => visit_operand(operand, reads)
+            RustArgumentElement.Named(name=_name, operand=operand) => visit_operand(operand, reads)
+            RustArgumentElement.Spread(spread) => visit_operand(spread.source, reads)
+
+
+def visit_operand(operand: RustOperand, mut reads: LoopTextReads) -> None:
+    """Record a whole, indexed or sliced read of a local, and a move or mutable borrow as a change."""
+    match operand:
+        RustOperand.Place(read) =>
+            visit_projection_operands(read.place, reads)
+            match read.place.local_id():
+                Some(local) =>
+                    slot = int(local.index()) + 1 + reads.offset
+                    if changes(read.fact):
+                        reads.changed.append(slot)
+                    if len(read.place.projection) == 0 or reads_text_position(borrowed_at(read.place.projection, 0)):
+                        if slot not in reads.indexed:
+                            reads.indexed.append(slot)
+                None => pass
+        _ => pass
+
+
+def changes(fact: OwnershipFact) -> bool:
+    """A move, a mutable borrow or an unclassified read may change or end the value read."""
+    match fact:
+        OwnershipFact.Move => return true
+        OwnershipFact.MutBorrow => return true
+        OwnershipFact.Unknown => return true
+        _ => return false
+
+
+def reads_text_position(step: PlaceElem) -> bool:
+    """Whether a place's first step reads by scalar index or slices."""
+    match step:
+        PlaceElem.Index(_index) => return true
+        PlaceElem.Slice(start=_start, end=_end, step=_step) => return true
+        _ => return false
+
+
+def write_place(place: RustPlace, mut reads: LoopTextReads) -> None:
+    """A write anywhere in a local's storage changes that local."""
+    visit_projection_operands(place, reads)
+    match place.local_id():
+        Some(local) => reads.changed.append(int(local.index()) + 1 + reads.offset)
+        None => pass
+
+
+def visit_projection_operands(place: RustPlace, mut reads: LoopTextReads) -> None:
+    """Read the operands a place's index and slice steps evaluate."""
+    for position in range(len(place.projection)):
+        match borrowed_at(place.projection, position):
+            PlaceElem.Index(index) => visit_operand(index, reads)
+            PlaceElem.Slice(start=start, end=end, step=stride) =>
+                match start:
+                    Some(operand) => visit_operand(operand, reads)
+                    None => pass
+                match end:
+                    Some(operand) => visit_operand(operand, reads)
+                    None => pass
+                match stride:
+                    Some(operand) => visit_operand(operand, reads)
+                    None => pass
+            _ => pass
+
+
+pub def cursor_reference(mut builder: Builder, cursor: int, span: SourceSpan) -> Operand:
+    """Lend one read the exclusive borrow of its loop's cursor that the cursor helpers advance."""
+    reference = temporary(builder, cursor_reference_type(), span)
+    builder.emit(plan_assign(reference, RvalueKind.MutBorrow(Place(local=cursor, projection=Projection.Whole, span=span)), span))
+    return read_place(reference, true, span)

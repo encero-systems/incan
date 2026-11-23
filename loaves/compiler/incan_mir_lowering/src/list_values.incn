@@ -38,6 +38,7 @@ from numerics import numeric_carrier
 from frozen_plan import frozen_observation_type
 from builtins import list_call
 from strings import emit_text_helper
+from text_cursors import cursor_reference, cursor_reference_type, loop_cursor
 from frame import (
     place_type,
     Builder,
@@ -328,7 +329,7 @@ pub def projected_element_read(
         place = sequence_read_storage(builder, place, span)?
         match source.projection[slot]:
             PlaceElem.Slice(start=_start, end=_end, step=_step) =>
-                place = read_sequence_slice(builder, place, source.projection[slot], span)?
+                place = read_sequence_slice(builder, place, source.projection[slot], loop_cursor(builder, source, slot), span)?
             PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
                 place = read_element_field(builder, place, source.projection[slot], span)?
             PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) =>
@@ -385,7 +386,7 @@ def read_indexed_element(
         return read_dictionary_element(builder, place, source, slot, span)
     argument = list_index_operand(builder, source, slot, span)?
     if place_type(builder.locals, place) == PlanType.String:
-        return read_text_element(builder, place, argument, span)
+        return read_text_element(builder, place, argument, loop_cursor(builder, source, slot), span)
     return read_list_element(builder, place, argument, span)
 
 
@@ -417,21 +418,30 @@ def read_native_text_array(
             return Ok(Place(local=result.local, projection=Projection.Deref(PlanType.StrRef), span=span))
 
 
-def read_text_element(mut builder: Builder, place: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
-    """Borrow retained String storage for the canonical Unicode-scalar index helper, preserving negative indices and IndexError behavior."""
+def read_text_element(
+    mut builder: Builder,
+    place: Place,
+    index: Operand,
+    cursor: Option[int],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """
+    Borrow retained String storage for the canonical Unicode-scalar index helper, preserving negative indices and
+    IndexError behavior. A read with its loop's cursor seeks from that cursor (#3070).
+    """
     reference = temporary(builder, PlanType.StringRef, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
     output = temporary(builder, PlanType.String, span)
-    instantiated_external_call(
-        builder,
-        "incan_std_primitives::strings::str_index",
-        [PlanType.StringRef],
-        [PlanType.StringRef, PlanType.Int],
-        PlanType.String,
-        [read_place(reference, false, span), index],
-        output,
-        span,
-    )?
+    mut path = "incan_std_primitives::strings::str_index"
+    mut parameters = [PlanType.StringRef, PlanType.Int]
+    mut operands = [read_place(reference, false, span), index]
+    match cursor:
+        Some(slot) =>
+            path = "incan_std_primitives::text_cursor::str_index_from"
+            parameters.append(cursor_reference_type())
+            operands.append(cursor_reference(builder, slot, span))
+        None => pass
+    instantiated_external_call(builder, path, [PlanType.StringRef], parameters, PlanType.String, operands, output, span)?
     return Ok(output)
 
 
@@ -484,9 +494,13 @@ def read_sequence_slice(
     mut builder: Builder,
     place: Place,
     projection: PlaceElem,
+    cursor: Option[int],
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Copy a typed string or list slice through its own legacy runtime boundary."""
+    """
+    Copy a typed string or list slice through its own legacy runtime boundary. A string slice with its loop's cursor
+    seeks its start from that cursor (#3070).
+    """
     if place_type(builder.locals, place) != PlanType.String:
         return read_list_slice(builder, place, projection, span)
     bounds = sequence_slice_bounds(builder, projection, span)?
@@ -494,16 +508,24 @@ def read_sequence_slice(
     builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
     mut operands = [read_place(reference, false, span)]
     operands.extend(bounds)
-    return Ok(
-        emit_text_helper(
-            builder,
-            "slice_text",
-            PlanType.String,
-            [PlanType.StringRef, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int],
-            operands,
-            span,
-        ),
-    )
+    parameters = [PlanType.StringRef, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int]
+    match cursor:
+        Some(slot) =>
+            operands.append(cursor_reference(builder, slot, span))
+            output = temporary(builder, PlanType.String, span)
+            instantiated_external_call(
+                builder,
+                "incan_std_primitives::text_cursor::str_slice_from",
+                [PlanType.StringRef],
+                parameters + [cursor_reference_type()],
+                PlanType.String,
+                operands,
+                output,
+                span,
+            )?
+            return Ok(output)
+        None => pass
+    return Ok(emit_text_helper(builder, "slice_text", PlanType.String, parameters, operands, span))
 
 
 def read_list_slice(mut builder: Builder, place: Place, projection: PlaceElem, span: SourceSpan) -> Result[Place, str]:

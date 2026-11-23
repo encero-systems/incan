@@ -158,6 +158,9 @@ pub model Builder:
     # Every owner that has moved or dropped so far. One that holds no value when a match starts was declared before
     # the match, so a value an arm gives it belongs to the enclosing scope, not to the arm.
     pub released: list[int] = []
+    # Each enclosing loop's string cursors (#3070): the frame slot of a string the loop reads by index and never
+    # changes, paired with the slot of its cursor.
+    pub text_cursors: list[tuple[int, int]] = []
 
     property nominals -> &list[RustNominalDeclaration]:
         """Borrow the module's specialized nominal table without retaining a frame-local copy."""

@@ -47,7 +47,8 @@ from checked_values import scalar_operand, scalar_place
 from operators import operand_type
 from calls import instantiated_external_call
 from call_arguments import call_argument_operand
-from operand_borrows import borrow_slice_operand, list_slice_view, lower_text_helper
+from operand_borrows import borrow_slice_operand, borrow_text_operand, list_slice_view, lower_text_helper
+from text_cursors import cursor_reference, cursor_reference_type, loop_cursor
 from static_storage import persist_static_value, read_static
 from list_values import (
     checked_list_argument,
@@ -526,6 +527,10 @@ pub def lower_list_builtin(
                     span,
                 )
                 return Ok(None)
+    if ty in [PlanType.String, PlanType.StringRef]:
+        match measured_text_cursor(builder, arguments):
+            Some(cursor) => return cursor_length(builder, arguments, cursor, destination, span)
+            None => pass
     if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
     receiver = shared_receiver_place(builder, arguments, 0, span)?
@@ -696,3 +701,38 @@ def assignment_value(mut builder: Builder, value: &RustRvalue, span: SourceSpan)
     match value:
         RustRvalue.Use(operand) => return value_operand(builder, operand, span)
         _ => return Err("unsupported Body IR indexed assignment rvalue")
+
+
+def measured_text_cursor(mut builder: Builder, arguments: list[RustArgumentElement]) -> Option[int]:
+    """The loop cursor of a whole string local `len` measures, if its loop keeps one (#3070)."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            if len(read.place.projection) != 0:
+                return None
+            return loop_cursor(builder, read.place, 0)
+        _ => return None
+
+
+def cursor_length(
+    mut builder: Builder,
+    arguments: list[RustArgumentElement],
+    cursor: int,
+    destination: Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Count a string's scalars once per loop entry: the loop's cursor keeps the count `len` took (#3070)."""
+    match arguments[0].as_one():
+        Some(value) =>
+            text = borrow_text_operand(builder, value, span)?
+            output = call_destination(builder, destination, PlanType.Int, span)?
+            return instantiated_external_call(
+                builder,
+                "incan_std_primitives::text_cursor::str_len_from",
+                [PlanType.StringRef],
+                [PlanType.StringRef, cursor_reference_type()],
+                PlanType.Int,
+                [text, cursor_reference(builder, cursor, span)],
+                output,
+                span,
+            )
+        None => return Err("unsupported Body IR spread string length")
