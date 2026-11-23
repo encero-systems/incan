@@ -824,9 +824,8 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
 
     0. A release build of `incan` verifies the archive's signature before anything is unpacked, in a fresh home
        as in any other; a local build carries no signer and says that it installs unverified (DD-0016).
-    1. Unpack the archive into a staging directory beside the installation.
-    2. Verify the staged toolchain and publish it, then remove the staging directory and any decompressed archive
-       whatever happened.
+    1. Check the local Rust prerequisites before creating staging or decompressing the archive.
+    2. Unpack, verify and publish the staged toolchain, then remove any staging and decompressed archive.
     3. Expose this program as both `oven` and `incan` beside it (RFC 118).
     4. The home records the signer the archive ships, only when the archive verified.
     """
@@ -837,13 +836,14 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     match verified:
         Some(proof) => println(f"verified release signature: {proof.identity}, log entry {proof.log_index}")
         None => println(f"installing {archive.0} unverified: this incan is a local build and carries no release signer")
+    # 1. Reject missing Rust before allocating an installation stage or decompressing the archive.
+    sysroot = local_sysroot()?
     make_directory(target.parent())?
-    # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.
+    # 2. The archive is unpacked beside the installation so a refusal leaves the installed toolchain intact.
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
     create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
     plain = target.parent().joinpath(f".install-{TOOLCHAIN}.tar")
-    # 2. The stage is verified and published, and removed whatever the outcome.
-    result = install_staged(archive, plain, stage, target)
+    result = install_staged(archive, plain, stage, target, sysroot)
     if stage.is_dir():
         remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
     if plain.is_file():
@@ -858,7 +858,7 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Result[None, str]:
+def install_staged(archive: Path, plain: Path, stage: Path, target: Path, sysroot: Path) -> Result[None, str]:
     """
     Unpack, bind the machine's pinned sysroot and prove driver identity before publishing any installation.
 
@@ -896,8 +896,7 @@ def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Res
     clock = begin()
     toolchain, _initial_admission = prepare_installation(stage)?
     verify_contents(toolchain)?
-    # 5. The machine's Rust installation is linked in, and the driver proves it is the compiler it was built against.
-    sysroot = local_sysroot()?
+    # 5. Link the checked local sysroot and prove the driver was built against it.
     sysroot_link = stage.joinpath("sysroot")
     symlink(sysroot.0, sysroot_link.0).map_err(
         (error) => f"cannot link Rust sysroot {sysroot.0} at {sysroot_link.0}: {error}",
