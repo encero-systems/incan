@@ -22,7 +22,7 @@ from rust_activation import DependencyDomain
 from rust_units import build_rust
 from rust_build import RustBuild, facet_slot, ordered, rust_output
 from rust_registry import read_registry_units
-from rust_scheduler import LOWERING_RESERVATION_BYTES, UNIT_RESERVATION_BYTES, RustUnitSchedule
+from rust_scheduler import LOWERING_RESERVATION_BYTES, UNIT_RESERVATION_BYTES, RustUnitSchedule, bounded_pool_size
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
 from toolchain import Toolchain, load_toolchain, rust_compiler
@@ -153,6 +153,11 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
 
 def verify_scheduler_policy() -> Result[None, str]:
     """Admit newly ready work immediately and keep lowering within its larger memory reservation."""
+    assert bounded_pool_size(18, 0, LOWERING_RESERVATION_BYTES) == 18, "unknown host memory serialized a CPU-sized worker pool"
+    assert bounded_pool_size(18, 5 * LOWERING_RESERVATION_BYTES, LOWERING_RESERVATION_BYTES) == 5
+    assert bounded_pool_size(2, 5 * LOWERING_RESERVATION_BYTES, LOWERING_RESERVATION_BYTES) == 2
+    assert bounded_pool_size(18, UNIT_RESERVATION_BYTES, LOWERING_RESERVATION_BYTES) == 1
+    assert bounded_pool_size(0, 5 * LOWERING_RESERVATION_BYTES, LOWERING_RESERVATION_BYTES) == 1
     left = scheduling_facet("left")
     right = scheduling_facet("right")
     dependent = scheduling_facet("dependent", [LocalEdge(alias="left", project="left", domain=DependencyDomain.Target)])
