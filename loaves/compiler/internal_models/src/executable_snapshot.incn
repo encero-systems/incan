@@ -59,20 +59,20 @@ pub def reopen_executable_snapshot(bakery: Borrowed[str], encoded: Borrowed[byte
     return Ok(ExecutableSnapshot(graph=graph, origin=origin))
 
 
-pub def selected_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str]) -> Result[MappedView, str]:
-    """Authenticate a single scope value by its full origin and module key in the pinned snapshot."""
-    selection = select_executable_scope(selected, module, digest, None)?
-    match selection.value:
-        Some(value) => return Ok(value)
-        None => return Err("selected executable scope is missing")
+pub def select_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str], retained: Option[bytes]) -> Result[ExecutableScopeSelection, str]:
+    """
+    Select the scope's full origin and module key in the pinned snapshot.
 
-
-pub def select_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str], _retained: Option[bytes]) -> Result[ExecutableScopeSelection, str]:
-    """Select the scope by its full origin and module key in the pinned snapshot."""
+    The index binds the full key and frame digest. A matching retained digest supplies an already authenticated
+    immutable value even after compaction relocates it. Otherwise open and authenticate the selected frame.
+    """
     key = encode_record_key(executable_scope_key(selected.origin, module, digest)?)?
     location = match locate_value(selected.graph, key).map_err((error) => error.message())?:
         Some(found) => found
         None => return Err("selected executable scope is missing")
+    if let Some(revision) = retained:
+        if revision == location.digest:
+            return Ok(ExecutableScopeSelection(revision=location.digest, value=None))
     match read_frame(selected.graph.root, key, location).map_err((error) => error.message())?:
         Lookup.Found(value) => return Ok(ExecutableScopeSelection(revision=location.digest, value=Some(value)))
         _ => return Err("selected executable scope is missing")

@@ -221,7 +221,7 @@ impl NamespacePages {
             if retained.selected.digest.frame.is_none() {
                 retained.selected.digest.frame = Some(reference.frame_digest.clone());
             }
-            for scope in &retained.selected.executable_scopes {
+            for scope in &mut retained.selected.executable_scopes {
                 self.scope_access
                     .reuse(source, scope)
                     .map_err(RecordAdapterFault::InvalidField)?;
@@ -341,11 +341,9 @@ impl NamespacePages {
     ) -> Result<BodyIrModule, RecordAdapterFault> {
         scopes.clear();
         restore_graph_executable_namespace(value, source, |digest| {
-            let bindings = self.scope_access.resolve(source, digest)?;
-            scopes.push(ExecutableScopeWitness {
-                digest: digest.to_owned(),
-                bindings: Arc::clone(&bindings),
-            });
+            let witness = self.scope_access.resolve_witness(source, digest)?;
+            let bindings = Arc::clone(&witness.bindings);
+            scopes.push(witness);
             Ok(bindings)
         })
         .map_err(RecordAdapterFault::InvalidField)

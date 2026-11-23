@@ -240,4 +240,4 @@ pub from executable_scope import (
     EXECUTABLE_SCOPE_DIRECTORY, EXECUTABLE_SCOPE_FAMILY, decode_executable_scope, decode_executable_scope_view,
     encode_executable_scope, executable_scope_key, prepare_executable_scope_reader,
 )
-pub from executable_snapshot import ExecutableSnapshot, reopen_executable_snapshot, selected_executable_scope
+pub from executable_snapshot import ExecutableScopeSelection, ExecutableSnapshot, reopen_executable_snapshot, select_executable_scope
