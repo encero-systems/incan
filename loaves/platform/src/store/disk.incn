@@ -1,5 +1,7 @@
 """Disk placement for the shared segment-store engine."""
 
+from rust::std::fs import metadata
+from rust::std::os::unix::fs import MetadataExt
 from std.primitives.hash import sha256
 from std.primitives.locking import LockGuard
 from std.primitives.fs import MappedFile, Path, exclusive, map_read, try_exclusive, shared
@@ -37,6 +39,7 @@ def _operations() -> StorePathOps:
         sync_ordered=_sync_ordered,
         barrier=_barrier,
         map_read=_map_read,
+        file_generation=_file_generation,
         lock_shared=_lock_shared,
         lock_exclusive=_lock_exclusive,
         try_lock_exclusive=_try_lock_exclusive,
@@ -166,6 +169,15 @@ def _barrier(_context: StoreContextRef, path: str) -> Result[None, str]:
 def _map_read(_context: StoreContextRef, path: str) -> Result[MappedFile, str]:
     """Map one immutable disk file."""
     return map_read(_path(path))
+
+
+def _file_generation(_context: StoreContextRef, path: str) -> Result[Option[str], str]:
+    """Observe replacement, writes and permission changes with one status query."""
+    observed = metadata(path).map_err((error) => str(error))?
+    if not observed.is_file() or observed.ctime_nsec() == 0:
+        # A whole-second change timestamp may conceal a write in the same tick.
+        return Ok(None)
+    return Ok(Some(f"{observed.dev()}:{observed.ino()}:{observed.size()}:{observed.mode()}:{observed.mtime()}:{observed.mtime_nsec()}:{observed.ctime()}:{observed.ctime_nsec()}"))
 
 
 def _lock_shared(_context: StoreContextRef, path: str) -> Result[LockGuard, str]:

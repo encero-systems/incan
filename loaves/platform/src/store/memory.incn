@@ -3,7 +3,7 @@
 from std.primitives.hash import sha256
 from std.primitives.locking import LockGuard
 from std.primitives.views import MappedFile
-from crate.store.path import StoreContext, StoreContextRef, StorePath, StorePathOps, store_context
+from crate.store.path import MemoryFile, StoreContext, StoreContextRef, StorePath, StorePathOps, store_context
 
 
 static roots: int = 0
@@ -45,6 +45,7 @@ def _operations() -> StorePathOps:
         sync_ordered=_sync,
         barrier=_sync,
         map_read=_mapping,
+        file_generation=_file_generation,
         lock_shared=_lock,
         lock_exclusive=_lock,
         try_lock_exclusive=_try_lock,
@@ -144,15 +145,31 @@ def _ancestors(context: StoreContextRef, path: str) -> list[str]:
     return directories
 
 
-def _mapping(context: StoreContextRef, path: str) -> Result[MappedFile, str]:
-    """Clone one immutable object's shared owner anchor."""
+def _file(context: StoreContextRef, path: str) -> Result[MemoryFile, str]:
+    """Borrow the backing identity and retain only its immutable owner anchor."""
     current = _take(context.clone())
     if path not in current.files:
         _restore(context, current)
         return Err("object does not exist")
-    mapping = current.files[path].clone()
+    file = current.files[path].clone()
     _restore(context, current)
-    return Ok(mapping)
+    return Ok(file)
+
+
+def _mapping(context: StoreContextRef, path: str) -> Result[MappedFile, str]:
+    """Return one immutable object's shared mapping."""
+    return _file(context, path).map((file) => file.mapping)
+
+
+def _file_generation(context: StoreContextRef, path: str) -> Result[Option[str], str]:
+    """Observe the generation of the current backing without reading its bytes."""
+    return _file(context, path).map((file) => Some(str(file.generation)))
+
+
+def _install(mut current: BorrowedMut[StoreContext], path: str, mapping: MappedFile) -> None:
+    """Give newly stored bytes a distinct backing identity, even when they replace an equal-length object."""
+    current.file_generation += 1
+    current.files[path] = MemoryFile(mapping=mapping, generation=current.file_generation)
 
 
 def _read_all(context: StoreContextRef, path: str) -> Result[bytes, str]:
@@ -170,7 +187,7 @@ def _write_all(context: StoreContextRef, path: str, data: bytes) -> Result[None,
     if _parent(context.clone(), path) not in current.directories:
         _restore(context, current)
         return Err("parent directory does not exist")
-    current.files[path] = mapping
+    _install(current, path, mapping)
     _restore(context, current)
     return Ok(None)
 
@@ -199,12 +216,12 @@ def _length(context: StoreContextRef, path: str) -> Result[int, str]:
 
 def _copy(context: StoreContextRef, source: str, target: str) -> Result[None, str]:
     """Share an immutable object anchor under another logical name."""
-    mapping = _mapping(context.clone(), source)?
+    file = _file(context.clone(), source)?
     mut current = _take(context.clone())
     if _parent(context.clone(), target) not in current.directories:
         _restore(context, current)
         return Err("target parent directory does not exist")
-    current.files[target] = mapping
+    current.files[target] = file
     _restore(context, current)
     return Ok(None)
 
@@ -246,13 +263,13 @@ def _remove_tree(context: StoreContextRef, path: str) -> Result[None, str]:
 
 def _replace(context: StoreContextRef, source: str, target: str) -> Result[None, str]:
     """Move one immutable object name to its publication target in the shared state cell."""
-    mapping = _mapping(context.clone(), source)?
+    file = _file(context.clone(), source)?
     mut current = _take(context.clone())
     if target in current.directories:
         _restore(context, current)
         return Err("replace requires a non-directory target")
     current.files = {name: current.files[name].clone() for name in current.files.keys() if name != source}
-    current.files[target] = mapping
+    current.files[target] = file
     _restore(context, current)
     return Ok(None)
 
@@ -274,7 +291,7 @@ def _lock(context: StoreContextRef, path: str) -> Result[LockGuard, str]:
         anchor = current.leases[entry].clone()
     else:
         current.leases[entry] = anchor.clone()
-        current.files[entry] = empty
+        _install(current, entry, empty)
     _restore(context, current)
     return Ok(anchor)
 
@@ -292,7 +309,7 @@ def _try_lock(context: StoreContextRef, path: str) -> Result[Option[LockGuard], 
             return Ok(None)
     else:
         current.leases[entry] = anchor.clone()
-        current.files[entry] = empty
+        _install(current, entry, empty)
     _restore(context, current)
     return Ok(Some(anchor))
 
