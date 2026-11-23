@@ -23,8 +23,8 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
 use incan_lowering::{
-    RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements,
-    program_refusals, resume_unit_plan, unit_plan,
+    PlanAdmissions, RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning,
+    layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{
     BodyIrModule, LinkedStaticAccessors, LoafCallable, NativeUnionDeclaration, NominalDeclaration,
@@ -352,6 +352,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         plan_record_products: plan_record_products.map(|root| PlanRecordProducts {
             root,
             selection: plan_module_selection,
+            compact_notes: None,
         }),
         anchors,
     })
@@ -600,6 +601,7 @@ fn compile_unit(
     });
     let mut published_unions = Vec::new();
     let mut runtime_records = RuntimePlanRecords::read(dependencies.plan_products());
+    let mut plan_admissions = PlanAdmissions::default();
     let plan = lower_compilation_plan(
         &mut program,
         kind,
@@ -615,6 +617,7 @@ fn compile_unit(
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
         &mut runtime_records,
+        &mut plan_admissions,
     )?;
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
@@ -625,11 +628,13 @@ fn compile_unit(
         .entered();
         incan_lowering::publish_plan_records(
             &plan,
-            products.to_string_lossy().into_owned(),
-            report.to_string_lossy().into_owned(),
+            &products.to_string_lossy(),
+            &report.to_string_lossy(),
+            &plan_admissions,
         )?;
         runtime_records.publish(products)?;
     }
+    drop(plan_admissions);
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
@@ -779,6 +784,7 @@ fn lower_compilation_plan(
     recorded_layouts: Arc<RecordedLayouts>,
     plan_record_report: Option<String>,
     runtime_records: &mut RuntimePlanRecords,
+    admissions: &mut PlanAdmissions,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -857,7 +863,14 @@ fn lower_compilation_plan(
                     linked_static_exports: Arc::clone(linked_static_exports),
                     recorded_layouts: Arc::clone(&recorded_layouts),
                 };
-                let planned = unit_plan(&program.modules, &inputs, entry, &kind_name, &mut attempt_unions);
+                let planned = unit_plan(
+                    &program.modules,
+                    &inputs,
+                    entry,
+                    &kind_name,
+                    &mut attempt_unions,
+                    admissions,
+                );
                 program.sources = inputs.sources;
                 program.files = inputs.files;
                 program.dependencies.package_versions = inputs.package_versions;

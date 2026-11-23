@@ -674,6 +674,11 @@ impl AdmittedRow {
         self.admission.records
     }
 
+    /// The written selector of the only row in an admitted graph envelope.
+    pub(crate) fn root_key(&self) -> Vec<u8> {
+        self.admission.key(0)
+    }
+
     /// Materialize the root row's selector and value under the remaining allowance.
     pub(crate) fn read_root(mut self) -> Result<(Vec<u8>, Wire), String> {
         let mut read = self
@@ -682,7 +687,7 @@ impl AdmittedRow {
         let used = (read.bytes_charged, read.elements_charged);
         settle(&mut self.budget, used, &read.category, read.offset)?;
         let value = build(&mut read)?;
-        Ok((self.admission.key(0), value))
+        Ok((self.root_key(), value))
     }
 }
 

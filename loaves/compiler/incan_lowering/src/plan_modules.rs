@@ -1,6 +1,8 @@
 //! A module's admitted plan record: the page a worker restores its functions from, and the note of what it restored.
 
-use std::collections::HashMap;
+mod compact;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -11,12 +13,14 @@ use incan_mir_plan_native::{
     ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
     PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleSelectionRecord, PlanModuleValue,
     PlanSelectedModule, PlanSelectionScope, REPOSITION_MODULE_PAGE, decode_plan_module, decode_plan_module_selection,
-    encode_module_note, read_module_admission, write_module_placement,
+    encode_module_note, write_module_placement,
 };
 
 use sha2::{Digest, Sha256};
 
 use crate::resident_products::{ResidentPage, resident_full_page, resident_page};
+
+pub use compact::{AuthenticatedWholeAdmission, read_plan_module_admissions};
 
 /// The file of a staged directory naming every page Oven offers by the immutable store frame that holds it instead of
 /// a copy, one line per page: its file name, the segment file, the value's offset and length, and its content digest,
@@ -73,6 +77,11 @@ fn listed_frame(path: &Path) -> Option<ListedFrame> {
 /// Every page a frame list names; none when any line is malformed.
 fn read_frame_list(list: &Path) -> Option<HashMap<String, ListedFrame>> {
     let text = std::fs::read_to_string(list).ok()?;
+    parse_frame_list(&text)
+}
+
+/// Interpret the canonical staged frame columns without reading their payloads.
+fn parse_frame_list(text: &str) -> Option<HashMap<String, ListedFrame>> {
     let mut frames = HashMap::new();
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -436,7 +445,27 @@ fn note_suffix(complete: bool) -> &'static str {
     }
 }
 
+/// Settled module admissions from a single compilation request.
+#[derive(Default)]
+pub struct PlanAdmissions {
+    modules: BTreeMap<String, SettledModule>,
+}
+
+impl PlanAdmissions {
+    /// Borrow the exact module admissions established by lowering.
+    pub(crate) fn modules(&self) -> &BTreeMap<String, SettledModule> {
+        &self.modules
+    }
+}
+
+/// A module's exact admission note and the native inputs established for its functions, in the same order.
+pub(crate) struct SettledModule {
+    pub note: AdmittedModule,
+    pub products: Vec<AdmittedProduct>,
+}
+
 /// The exact product identity and helper inventory established while admitting one native function.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct AdmittedProduct {
     pub key: String,
@@ -444,128 +473,99 @@ pub(crate) struct AdmittedProduct {
     pub helpers: Vec<String>,
 }
 
-/// Report each restored function; only a request that restored all ordinary bodies records a whole module.
-/// Product evidence stays in the existing private companion, aligned with the functions it authenticates.
+/// Publish the Oven note for a restored module and transfer its checked native inputs to this request's publisher.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn report_admitted(
+    admissions: &mut PlanAdmissions,
     report: Option<&str>,
     module: &str,
-    functions: &[AdmittedFunction],
-    evidence: &[AdmittedProduct],
+    functions: Vec<AdmittedFunction>,
+    evidence: Vec<AdmittedProduct>,
     ordinary: usize,
     inspected: bool,
     products: Option<&str>,
 ) -> Result<(), String> {
-    let (Some(root), Some(directory)) = (report, products) else {
+    let (Some(report), Some(directory)) = (report, products) else {
         return Ok(());
     };
-    if evidence.len() != functions.len() {
+    validate_admitted_products(module, &functions, &evidence)?;
+    let basename = hex::encode(module.as_bytes());
+    let complete = functions.len() == ordinary;
+    let selected = note_suffix(complete);
+    let private = Path::new(directory).join("admissions");
+    let root = Path::new(report);
+    for suffix in [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE] {
+        if suffix != selected || functions.is_empty() {
+            let path = private.join(format!("{basename}{suffix}"));
+            for stale in [placement_path(&path), path, root.join(format!("{basename}{suffix}"))] {
+                if stale.is_file() {
+                    std::fs::remove_file(&stale).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+    }
+    if functions.is_empty() {
+        admissions.modules.remove(module);
+        return Ok(());
+    }
+    let name = format!("{basename}{selected}");
+    let note = AdmittedModule {
+        module: module.to_owned(),
+        complete,
+        functions,
+        inspected,
+    };
+    write_admitted_note(&private.join(&name), &root.join(&name), &note)?;
+    admissions.modules.insert(
+        module.to_owned(),
+        SettledModule {
+            note,
+            products: evidence,
+        },
+    );
+    Ok(())
+}
+
+/// Reject an incomplete or ambiguous module admission before either consumer sees it.
+fn validate_admitted_products(
+    module: &str,
+    functions: &[AdmittedFunction],
+    products: &[AdmittedProduct],
+) -> Result<(), String> {
+    if products.len() != functions.len() {
         return Err("admitted products are not aligned with the restored functions".into());
     }
-    let basename = hex::encode(module.as_bytes());
-    let selected = note_suffix(functions.len() == ordinary);
-    let private = Path::new(directory).join("admissions");
-    for suffix in [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE] {
-        let path = private.join(format!("{basename}{suffix}"));
-        let diagnostic = Path::new(root).join(format!("{basename}{suffix}"));
-        if suffix == selected && !functions.is_empty() {
-            let note = AdmittedModule {
-                module: module.to_owned(),
-                complete: selected == ADMITTED_MODULE_NOTE,
-                functions: functions.to_vec(),
-                inspected,
-            };
-            write_admitted_note(&path, &diagnostic, &note, evidence)?;
-            continue;
-        }
-        for stale in [frames_path(&path), path, diagnostic] {
-            if stale.is_file() {
-                std::fs::remove_file(&stale).map_err(|error| error.to_string())?;
-            }
+    let mut names = HashSet::new();
+    for (function, product) in functions.iter().zip(products) {
+        if function.function.is_empty()
+            || !names.insert(&function.function)
+            || !product_hex(&product.key)
+            || !product.digest.strip_prefix("sha256:").is_some_and(product_hex)
+            || function
+                .placement
+                .as_ref()
+                .is_some_and(|placement| placement.key != product.key)
+        {
+            return Err(format!("admitted products of {module} disagree with its note"));
         }
     }
     Ok(())
 }
 
-/// Publish the current plan positions and the evidence already established by native reuse.
-fn write_admitted_note(
-    path: &Path,
-    diagnostic: &Path,
-    note: &AdmittedModule,
-    evidence: &[AdmittedProduct],
-) -> Result<(), String> {
+/// Write the request-local note Oven reads, with its sparse positions and the shared descriptor's diagnostic copy.
+fn write_admitted_note(path: &Path, diagnostic: &Path, note: &AdmittedModule) -> Result<(), String> {
     let encoded = encode_module_note(note)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    write_module_placement(&format!("{}.placement", path.display()), note)?;
-    let mut listed = String::new();
-    for (function, product) in note.functions.iter().zip(evidence) {
-        listed.push_str(&function.function);
-        listed.push('\t');
-        listed.push_str(&product.key);
-        listed.push('\t');
-        listed.push_str(&product.digest);
-        for frame in &product.helpers {
-            listed.push('\t');
-            listed.push_str(frame);
-        }
-        listed.push('\n');
-    }
-    std::fs::write(frames_path(path), listed).map_err(|error| error.to_string())?;
+    write_module_placement(&placement_path(path).to_string_lossy(), note)?;
     std::fs::write(path, &encoded).map_err(|error| error.to_string())?;
-    // The usual descriptor-scoped note is retained for external observers. Publication reads the private files above.
     std::fs::write(diagnostic, &encoded).map_err(|error| error.to_string())
 }
 
-/// The private evidence beside a module note contains each restored function, its product key, digest and helpers.
-fn frames_path(note: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.frames", note.display()))
-}
-
-/// Read the private proof of each product once so the native publisher can reuse the settled definition.
-pub(crate) fn admitted_products(
-    directory: &Path,
-    note: &AdmittedModule,
-) -> Result<HashMap<String, AdmittedProduct>, String> {
-    let path = frames_path(&directory.join(format!(
-        "{}{}",
-        hex::encode(note.module.as_bytes()),
-        note_suffix(note.complete)
-    )));
-    let listed =
-        std::fs::read_to_string(&path).map_err(|error| format!("cannot read admitted helper frames {error}"))?;
-    let refuse = || format!("admitted products of {} disagree with its note", note.module);
-    let mut products = HashMap::with_capacity(note.functions.len());
-    for line in listed.lines() {
-        let mut fields = line.split('\t');
-        let (Some(function), Some(key), Some(digest)) = (fields.next(), fields.next(), fields.next()) else {
-            return Err(refuse());
-        };
-        if function.is_empty() || !product_hex(key) || !digest.strip_prefix("sha256:").is_some_and(product_hex) {
-            return Err(refuse());
-        }
-        let product = AdmittedProduct {
-            key: key.to_owned(),
-            digest: digest.to_owned(),
-            helpers: fields.map(str::to_owned).collect(),
-        };
-        if products.insert(function.to_owned(), product).is_some() {
-            return Err(refuse());
-        }
-    }
-    if products.len() != note.functions.len()
-        || note.functions.iter().any(|function| {
-            products.get(&function.function).is_none_or(|product| {
-                function
-                    .placement
-                    .as_ref()
-                    .is_some_and(|placement| placement.key != product.key)
-            })
-        })
-    {
-        return Err(refuse());
-    }
-    Ok(products)
+/// The coordinates beside the note Oven reads.
+fn placement_path(note: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.placement", note.display()))
 }
 
 /// Match a complete lowercase SHA-256 representation used by native product keys and digests.
@@ -573,8 +573,9 @@ fn product_hex(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Read every module note of a plan report, in name order.
-pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
+/// Read the module notes the request made available to Oven.
+#[cfg(test)]
+fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
     let mut notes = Vec::new();
     if !directory.is_dir() {
         return Ok(notes);
@@ -589,7 +590,7 @@ pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
         if !text.ends_with(ADMITTED_MODULE_NOTE) && !text.ends_with(PARTIAL_MODULE_NOTE) {
             continue;
         }
-        let note = read_module_admission(&path.to_string_lossy())?;
+        let note = incan_mir_plan_native::read_module_admission(&path.to_string_lossy())?;
         let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
         let expected = format!("{}{}", hex::encode(note.module.as_bytes()), note_suffix(note.complete));
         if name.as_deref() != Some(expected.as_str()) {
@@ -612,7 +613,7 @@ mod tests {
     };
 
     use super::{
-        AdmittedProduct, FRAME_LIST, PlanModuleSelection, admitted_page, admitted_plan_page, admitted_products,
+        AdmittedProduct, FRAME_LIST, PlanAdmissions, PlanModuleSelection, admitted_page, admitted_plan_page,
         read_admitted, report_admitted, staged_page, staged_page_reads,
     };
     use crate::record_positions::{indexed_product, placed_record};
@@ -643,7 +644,7 @@ mod tests {
     }
 
     /// A fresh directory for one test.
-    fn directory(test: &str) -> PathBuf {
+    pub(super) fn directory(test: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("incan-plan-modules-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("directory");
@@ -695,25 +696,29 @@ mod tests {
         std::fs::create_dir_all(&report).map_err(|error| error.to_string())?;
         let module = "lone_alpha";
         let basename = hex::encode(module);
-        let (report_text, products_text) = (report.to_string_lossy(), products.to_string_lossy());
-        let partial = [restored("a", false)];
+        let mut request = PlanAdmissions::default();
+        let report_text = report.to_string_lossy();
+        let products_text = products.to_string_lossy();
+        let partial = vec![restored("a", false)];
         report_admitted(
+            &mut request,
             Some(&report_text),
             module,
-            &partial,
-            &[evidence(&[])],
+            partial,
+            vec![evidence(&[])],
             2,
             false,
             Some(&products_text),
         )?;
         assert_eq!(names(&report), [format!("{basename}.partially-admitted")]);
-        let whole = [restored("a", false), restored("b", true)];
-        let carried = [evidence(&[]), evidence(&["helper"])];
+        let whole = vec![restored("a", false), restored("b", true)];
+        let carried = vec![evidence(&[]), evidence(&["helper"])];
         report_admitted(
+            &mut request,
             Some(&report_text),
             module,
-            &whole,
-            &carried,
+            whole.clone(),
+            carried.clone(),
             2,
             true,
             Some(&products_text),
@@ -722,21 +727,44 @@ mod tests {
         let admissions = products.join("admissions");
         assert_eq!(
             names(&admissions),
-            [
-                format!("{basename}.admitted"),
-                format!("{basename}.admitted.frames"),
-                format!("{basename}.admitted.placement")
-            ]
+            [format!("{basename}.admitted"), format!("{basename}.admitted.placement")]
         );
         let notes = read_admitted(&admissions)?;
         assert_eq!(notes.len(), 1);
         assert!(notes[0].complete && notes[0].inspected);
         assert_eq!(notes[0].functions, whole);
-        let products = admitted_products(&admissions, &notes[0])?;
-        assert_eq!(products.get("a"), Some(&carried[0]));
-        assert_eq!(products.get("b"), Some(&carried[1]));
-        assert!(report_admitted(Some(&report_text), module, &whole, &[], 2, true, Some(&products_text)).is_err());
-        report_admitted(Some(&report_text), module, &[], &[], 2, true, Some(&products_text))?;
+        {
+            let stored = request
+                .modules()
+                .get(module)
+                .ok_or("request did not retain its admission")?;
+            assert_eq!(stored.note.functions, whole);
+            assert_eq!(stored.products, carried);
+        }
+        assert!(
+            report_admitted(
+                &mut request,
+                Some(&report_text),
+                module,
+                whole,
+                Vec::new(),
+                2,
+                true,
+                Some(&products_text)
+            )
+            .is_err()
+        );
+        report_admitted(
+            &mut request,
+            Some(&report_text),
+            module,
+            Vec::new(),
+            Vec::new(),
+            2,
+            true,
+            Some(&products_text),
+        )?;
+        assert!(request.modules().is_empty());
         assert!(names(&report).is_empty());
         assert!(read_admitted(&admissions)?.is_empty());
         let _ = std::fs::remove_dir_all(&root);
@@ -748,12 +776,15 @@ mod tests {
         let root = directory("renamed");
         let (report, products) = (root.join("report"), root.join("products"));
         std::fs::create_dir_all(&report).map_err(|error| error.to_string())?;
-        let (report_text, products_text) = (report.to_string_lossy(), products.to_string_lossy());
+        let mut request = PlanAdmissions::default();
+        let report_text = report.to_string_lossy();
+        let products_text = products.to_string_lossy();
         report_admitted(
+            &mut request,
             Some(&report_text),
             "lone_alpha",
-            &[restored("a", false)],
-            &[evidence(&[])],
+            vec![restored("a", false)],
+            vec![evidence(&[])],
             1,
             false,
             Some(&products_text),

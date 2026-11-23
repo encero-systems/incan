@@ -187,7 +187,7 @@ mod value_enums;
 pub use incan_mir_plan_native::{Plan, PlanType, SourceSpan};
 pub use lowering::{UnitContinuation, UnitPlanning};
 pub use nominal_records::RecordedLayouts;
-pub use plan_modules::PlanModuleSelection;
+pub use plan_modules::{AuthenticatedWholeAdmission, PlanAdmissions, PlanModuleSelection, read_plan_module_admissions};
 pub use runtime_requirements::{RefusalPlanning, RuntimeRequirement};
 pub use trace_channel::emit as emit_engine_trace;
 
@@ -245,15 +245,16 @@ impl SourceInputs {
     }
 }
 
-/// Lower one checked program, library or collected test unit.
+/// Lower one checked program, library, or collected test unit and retain its settled admissions for publication.
 pub fn unit_plan(
     modules: &[BodyIrModule],
     inputs: &SourceInputs,
     entry: i64,
     kind: &str,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
-    lowering::unit_plan(modules, &inputs.unit(entry, kind), published)
+    lowering::unit_plan(modules, &inputs.unit(entry, kind), published, admissions)
 }
 
 /// Resume retained work against the exact runtime declarations the driver resolved.
@@ -315,9 +316,14 @@ pub fn owned_capture(ty: PlanType) -> bool {
 }
 
 /// Publish a records request's whole-program plan functions under their keyed products, its entry binding and its
-/// native interface, for Bakery admission.
-pub fn publish_plan_records(plan: &Plan, products: String, report: String) -> Result<(), String> {
-    record_plan_outputs::publish_plan_records(plan, &products, &report)
+/// native interface, for Bakery admission. The admissions are those lowering settled in the same request.
+pub fn publish_plan_records(
+    plan: &Plan,
+    products: &str,
+    report: &str,
+    admissions: &PlanAdmissions,
+) -> Result<(), String> {
+    record_plan_outputs::publish_plan_records(plan, products, report, admissions)
 }
 
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.

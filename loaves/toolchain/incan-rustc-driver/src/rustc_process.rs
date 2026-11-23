@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use incan_driver::loaf_publication::PreparedLoafPublication;
 use incan_driver::unit::{ToolchainAccess, UnitKind};
 use incan_lowering::PlanModuleSelection;
+use incan_mir_plan_native::CompactAdmissionPin;
 use serde::{Deserialize, Serialize};
 
 use crate::identity::DriverIdentity;
@@ -29,6 +30,8 @@ use crate::plan::Plan;
 pub(crate) struct PlanRecordProducts {
     pub(crate) root: PathBuf,
     pub(crate) selection: Option<[u8; 32]>,
+    /// The settled note count and digest, including zero, when this compilation accepted a selection.
+    pub(crate) compact_notes: Option<CompactAdmissionPin>,
 }
 
 impl PlanRecordProducts {
@@ -115,6 +118,37 @@ impl RustcHandoff {
         products.read_selection()
     }
 
+    /// Read the same compact inputs under the accepted selection so the counted request can observe settled members.
+    #[cfg(test)]
+    fn read_compact_definitions(&self) -> Result<Vec<incan_mir_plan_native::AdmittedDefinition>, String> {
+        let Some(products) = &self.plan_record_products else {
+            return Ok(Vec::new());
+        };
+        let selection = self.read_plan_module_selection()?;
+        let expected = match (selection.as_ref(), products.compact_notes) {
+            (Some(_), None) => {
+                return Err("native plan module selection has no settled compact admission outcome".into());
+            }
+            (None, Some(_)) => return Err("settled compact admission outcome has no plan module selection".into()),
+            (_, expected) => expected,
+        };
+        let whole = incan_lowering::read_plan_module_admissions(&products.root, selection.as_ref())?;
+        if let Some(expected) = expected {
+            let observed = incan_mir_plan_native::compact_admission_pin(
+                whole
+                    .iter()
+                    .map(|admission| (admission.note.module.as_str(), admission.note_sha256)),
+            )?;
+            if expected != observed {
+                return Err(format!(
+                    "native compact admission set differs from the settled publication (expected {} notes, observed {})",
+                    expected.count, observed.count
+                ));
+            }
+        }
+        Ok(whole.into_iter().flat_map(|admission| admission.definitions).collect())
+    }
+
     /// Write the handoff beside its output, encoded straight into the file without a whole-plan buffer, and return
     /// its path for the caller that runs it.
     pub(crate) fn hand_off(mut self, timing: &mut Timing) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -160,8 +194,14 @@ fn write(handoff: &RustcHandoff, path: &Path) -> Result<(), Box<dyn std::error::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incan_mir_plan_native::PLAN_MODULE_SELECTION_PAGE;
+    use incan_mir_plan_native::{
+        ADMITTED_MODULE_NOTE, NativeInterface, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE,
+        WholeModuleAdmission, compact_admission_pin, decode_lowering_event, decode_plan_function_record,
+        decode_plan_module, decode_product, encode_native_interface, encode_record_plan, encode_whole_module_admission,
+        native_interface_filename,
+    };
     use sha2::{Digest, Sha256};
+    use std::fs;
 
     /// The test and both runtime placements carry the accepted selection independently of the staged files.
     fn handoff(root: &Path, selection: Option<[u8; 32]>) -> RustcHandoff {
@@ -183,6 +223,7 @@ mod tests {
             plan_record_products: Some(PlanRecordProducts {
                 root: root.join("products"),
                 selection,
+                compact_notes: None,
             }),
             tests: None,
             publication: None,
@@ -255,6 +296,241 @@ mod tests {
                     Err(reason) if reason.contains("does not name the accepted digest")
                 ),
                 "a staged replacement bypassed the native selection admission"
+            );
+        }
+        Ok(())
+    }
+
+    const MODULE: &str = "probe";
+    const PAGE: &[u8] = include_bytes!("../tests/fixtures/plan_module_selection/70726f6265.incnmodule.positioned");
+    const SELECTION_A: &[u8] = include_bytes!("../tests/fixtures/plan_module_selection/selection-a.crumb");
+    const SELECTION_B: &[u8] = include_bytes!("../tests/fixtures/plan_module_selection/selection-b.crumb");
+    const PROFILE: &[u8] = b"a86e4d83e0cb13ca8ffccd67993a2ed8ce5a663c53893c0cc802dc181d3e79b6";
+
+    struct Fixture {
+        root: tempfile::TempDir,
+        note: PathBuf,
+        interface: Vec<u8>,
+    }
+
+    impl Fixture {
+        /// Stage the exact positioned product shared with the Incan selector.
+        fn new() -> Result<Self, Box<dyn std::error::Error>> {
+            let root = tempfile::tempdir()?;
+            let products = root.path().join("products");
+            let note = products
+                .join("admissions")
+                .join(format!("{}{ADMITTED_MODULE_NOTE}", hex::encode(MODULE)));
+            fs::create_dir_all(note.parent().ok_or("compact note has no parent")?)?;
+            fs::write(products.join("producer-profile"), PROFILE)?;
+            let page = products.join(format!("{}{POSITIONED_MODULE_PAGE}", hex::encode(MODULE)));
+            let _ = stage_named(&page, PAGE)?;
+            let positioned = decode_plan_module(PAGE)?;
+            let [member] = positioned.functions.as_slice() else {
+                return Err("the compact fixture must hold exactly one function".into());
+            };
+            let event = decode_lowering_event(&member.event)?;
+            let product = decode_plan_function_record(&event.product)?;
+            let (function, externals) = decode_product(&product.function, &[])?;
+            let span = function.span.clone();
+            let plan = crate::plan::Plan::new(Vec::new(), Vec::new(), vec![function], externals, span);
+            let interface = encode_native_interface(&NativeInterface {
+                entry: event.key,
+                plan: encode_record_plan(&plan)?,
+            })?;
+            Ok(Self { root, note, interface })
+        }
+
+        /// Stage one valid production-encoded selection and its independently captured one-note outcome.
+        fn stage_selection(
+            &self,
+            fixture: &[u8],
+        ) -> Result<([u8; 32], CompactAdmissionPin), Box<dyn std::error::Error>> {
+            let products = self.root.path().join("products");
+            let selection = stage_named(&products.join(PLAN_MODULE_SELECTION_PAGE), fixture)?;
+            let authority = incan_lowering::PlanModuleSelection::read(&products, selection)?;
+            let selected = authority
+                .module(MODULE)
+                .ok_or("the selector fixture does not name probe")?;
+            assert_eq!(selected.digest, hex::encode(Sha256::digest(PAGE)));
+            assert_eq!(selected.count, 1);
+            let note = encode_whole_module_admission(&WholeModuleAdmission {
+                module: MODULE.into(),
+                output: selected.output.clone(),
+                digest: selected.digest.clone(),
+                count: selected.count,
+                selection: hex::encode(selection),
+            })?;
+            let pin = compact_admission_pin([(MODULE, Sha256::digest(&note).into())])?;
+            fs::write(&self.note, &note)?;
+            Ok((selection, pin))
+        }
+
+        /// Build a decoded handoff through the same Postcard writer used when the worker retires.
+        fn requests(
+            &self,
+            pin: [u8; 32],
+            notes: Option<CompactAdmissionPin>,
+            interface: bool,
+        ) -> Result<[RustcHandoff; 2], Box<dyn std::error::Error>> {
+            let root = self.root.path();
+            let report = root.join(if interface { "reported" } else { "unreported" });
+            fs::create_dir_all(&report)?;
+            if interface {
+                fs::write(report.join(native_interface_filename()), &self.interface)?;
+            }
+            let mut resident = handoff(root, Some(pin));
+            resident.plan_record_report = Some(report);
+            resident.plan_record_products = Some(PlanRecordProducts {
+                root: root.join("products"),
+                selection: Some(pin),
+                compact_notes: notes,
+            });
+            let packet = root.join("request.rustc-handoff");
+            write(&resident, &packet)?;
+            let detached = postcard::from_bytes(&fs::read(packet)?)?;
+            Ok([resident, detached])
+        }
+    }
+
+    #[test]
+    fn native_compact_outcome_counts_the_same_exact_emitted_set_after_handoff() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new()?;
+        for interface in [false, true] {
+            let (selection, notes) = fixture.stage_selection(SELECTION_A)?;
+            let requests = fixture.requests(selection, Some(notes), interface)?;
+            let observed = requests[0].read_compact_definitions()?;
+            assert_eq!(
+                observed.len(),
+                1,
+                "the native reader must retain one authoritative definition"
+            );
+            assert_eq!(observed[0].function, "probe_run");
+            assert_eq!(observed[0].identity, "pub::probe::run");
+            let unpinned = handoff(fixture.root.path(), None);
+            assert!(matches!(
+                unpinned.read_compact_definitions(),
+                Err(reason) if reason.contains("no independently accepted selection")
+            ));
+            fs::remove_file(&fixture.note)?;
+            for request in &requests {
+                assert_eq!(
+                    request
+                        .plan_record_products
+                        .as_ref()
+                        .and_then(|products| products.compact_notes),
+                    Some(notes)
+                );
+                assert!(
+                    matches!(
+                        request.read_compact_definitions(),
+                        Err(reason) if reason.contains("expected 1 notes, observed 0")
+                    ),
+                    "the missing emitted note bypassed the native admission"
+                );
+            }
+            fixture.stage_selection(SELECTION_A)?;
+            fs::write(&fixture.note, b"damaged compact note")?;
+            for request in &requests {
+                assert!(request.read_compact_definitions().is_err());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_compact_outcome_refuses_a_coherent_foreign_pair_after_handoff() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new()?;
+        for interface in [false, true] {
+            let (selection_a, notes_a) = fixture.stage_selection(SELECTION_A)?;
+            let requests = fixture.requests(selection_a, Some(notes_a), interface)?;
+            assert_eq!(requests[0].read_compact_definitions()?.len(), 1);
+            let (selection_b, notes_b) = fixture.stage_selection(SELECTION_B)?;
+            assert_ne!(selection_a, selection_b);
+            assert_eq!(notes_a.count, notes_b.count);
+            let [valid_b, _] = fixture.requests(selection_b, Some(notes_b), interface)?;
+            assert_eq!(valid_b.read_compact_definitions()?.len(), 1);
+            for request in &requests {
+                assert!(
+                    matches!(
+                        request.read_compact_definitions(),
+                        Err(reason) if reason.contains("does not name the accepted digest")
+                    ),
+                    "a coherent foreign selection and note bypassed the native pin"
+                );
+            }
+            fixture.stage_selection(SELECTION_A)?;
+            for request in &fixture.requests(selection_a, Some(notes_b), interface)? {
+                assert!(
+                    matches!(
+                        request.read_compact_definitions(),
+                        Err(reason) if reason.contains("expected 1 notes, observed 1")
+                    ),
+                    "the native reader compared only the number of notes"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// A valid selected request may emit no compact note and still requires its native report location.
+    #[test]
+    fn native_compact_outcome_accepts_the_empty_set_and_requires_a_report() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let (selection, _) = fixture.stage_selection(SELECTION_A)?;
+        fs::remove_file(&fixture.note)?;
+        let mut digest = [0; 32];
+        hex::decode_to_slice(
+            "95ee7d59f26344aeaf5603871ed13d20fbd05638dfc19c804b24d02abaf90d98",
+            &mut digest,
+        )?;
+        let empty = CompactAdmissionPin { count: 0, digest };
+        let mut different = empty;
+        different.digest[0] ^= 1;
+        for with_interface in [false, true] {
+            for request in &fixture.requests(selection, None, with_interface)? {
+                assert!(
+                    matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no settled compact admission outcome")),
+                    "a selected request accepted an absent publication in place of the authenticated empty set"
+                );
+            }
+            for request in &fixture.requests(selection, Some(empty), with_interface)? {
+                assert!(request.read_compact_definitions()?.is_empty());
+            }
+            for request in &fixture.requests(selection, Some(different), with_interface)? {
+                assert!(
+                    matches!(request.read_compact_definitions(), Err(reason) if reason.contains("expected 0 notes, observed 0")),
+                    "a selected request accepted a different digest for the empty set"
+                );
+            }
+        }
+        let root = fixture.root.path();
+        let [mut without_report, _] = fixture.requests(selection, Some(empty), false)?;
+        without_report.plan_record_report = None;
+        let packet = root.join("no-report.rustc-handoff");
+        write(&without_report, &packet)?;
+        let detached: RustcHandoff = postcard::from_bytes(&fs::read(packet)?)?;
+        for request in [&without_report, &detached] {
+            assert!(
+                matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no native report directory"))
+            );
+        }
+        let mut scalar = handoff(root, None);
+        scalar.plan_record_report = None;
+        assert!(scalar.read_compact_definitions()?.is_empty());
+        scalar
+            .plan_record_products
+            .as_mut()
+            .ok_or("missing test products")?
+            .compact_notes = Some(empty);
+        let packet = root.join("no-selection.rustc-handoff");
+        write(&scalar, &packet)?;
+        let detached: RustcHandoff = postcard::from_bytes(&fs::read(packet)?)?;
+        for request in [&scalar, &detached] {
+            assert!(
+                matches!(request.read_compact_definitions(), Err(reason) if reason.contains("outcome has no plan module selection"))
             );
         }
         Ok(())

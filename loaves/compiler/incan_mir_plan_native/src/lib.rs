@@ -55,10 +55,11 @@ pub use records::layout::{
 pub use records::lowering_events::{
     ADMITTED_DEFINITIONS, AdmittedDefinition, AdmittedFunction, AdmittedModule, AdmittedPlacement, EventPosition,
     EventReference, INTERFACE_REPORT, LoweringEvent, LoweringRefusal, NATIVE_DEFINITIONS, NativeInterface,
-    admitted_definitions_filename, decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal,
-    decode_module_note, decode_native_interface, encode_admitted_definitions, encode_lowering_event,
-    encode_lowering_refusal, encode_module_note, encode_native_interface, native_interface_filename,
-    place_admitted_event, placed_admission, read_module_admission, write_module_placement,
+    RequestModuleNote, admitted_definitions_filename, decode_admitted_definitions, decode_lowering_event,
+    decode_lowering_refusal, decode_module_note, decode_native_interface, decode_request_module_note,
+    encode_admitted_definitions, encode_lowering_event, encode_lowering_refusal, encode_module_note,
+    encode_native_interface, native_interface_filename, place_admitted_event, placed_admission, read_module_admission,
+    write_module_placement,
 };
 pub use records::plan_function::{
     LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,
@@ -68,8 +69,9 @@ pub use records::plan_module::{
     ADMITTED_MODULE_NOTE, CompactAdmissionPin, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
     PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction,
     PlanModuleSelectionRecord, PlanModuleValue, PlanSelectedModule, PlanSelectionScope, REPOSITION_MODULE_PAGE,
-    WholeModuleAdmission, compact_admission_pin, decode_plan_module, decode_plan_module_selection,
-    decode_whole_module_admission, encode_plan_module, encode_whole_module_admission, read_positioned_plan_members,
+    WHOLE_ADMISSION_SELECTOR, WholeModuleAdmission, compact_admission_pin, decode_plan_module,
+    decode_plan_module_selection, decode_whole_module_admission, encode_plan_module, encode_whole_module_admission,
+    read_positioned_plan_members,
 };
 pub use span_file::SpanFile;
 pub use types::{

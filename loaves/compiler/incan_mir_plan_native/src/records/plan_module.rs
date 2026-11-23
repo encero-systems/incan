@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 
 use crate::records::lowering_events::{AdmittedDefinition, projected_definition};
 use crate::wire::{
-    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, admit_root_view, boolean_value, decode_graph_row,
-    encode_graph_row, field, items, number, required, text, tuple_items,
+    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, boolean_value,
+    decode_graph_row, encode_graph_row, field, items, number, required, text, tuple_items,
 };
 
 /// The family of a module's plan record.
@@ -352,8 +352,9 @@ pub fn decode_plan_module_selection(encoded: &[u8]) -> Result<PlanModuleSelectio
     Ok(PlanModuleSelectionRecord { scope, modules })
 }
 
-const WHOLE_ADMISSION_SELECTOR: &[u8] = b"admwhl\x00";
-static WHOLE_ADMISSION: Shape = Shape {
+/// The Crumb reference selector declared by a complete positioned module note.
+pub const WHOLE_ADMISSION_SELECTOR: &[u8] = b"admwhl\x00";
+pub(crate) static WHOLE_ADMISSION: Shape = Shape {
     selector: WHOLE_ADMISSION_SELECTOR,
     path: "incan.module-admission-whole/1",
     body: ShapeBody::Record(&[
@@ -410,12 +411,20 @@ pub fn encode_whole_module_admission(note: &WholeModuleAdmission) -> Result<Vec<
 /// Decode the exact whole-admission row. A caller must still bind its selection and positioned module page.
 pub fn decode_whole_module_admission(encoded: &[u8]) -> Result<WholeModuleAdmission, String> {
     let fields = decode_graph_row(encoded, WHOLE_ADMISSION_SELECTOR, &WHOLE_ADMISSION_SCHEMA, 5)?;
+    whole_admission_fields(&fields)
+}
+
+/// Interpret the shared whole-admission fields once the exact versioned root has been admitted.
+pub(crate) fn whole_admission_fields(fields: &[WireField]) -> Result<WholeModuleAdmission, String> {
+    let [count, digest, module, output, selection] = fields else {
+        return Err("whole-module Plan admission has the wrong field count".into());
+    };
     let note = WholeModuleAdmission {
-        count: number(&fields[0].value)?,
-        digest: text(&fields[1].value)?,
-        module: text(&fields[2].value)?,
-        output: text(&fields[3].value)?,
-        selection: text(&fields[4].value)?,
+        count: number(&count.value)?,
+        digest: text(&digest.value)?,
+        module: text(&module.value)?,
+        output: text(&output.value)?,
+        selection: text(&selection.value)?,
     };
     note.validate()?;
     Ok(note)
@@ -428,10 +437,10 @@ pub struct CompactAdmissionPin {
     pub digest: [u8; 32],
 }
 
-/// Pin the exact emitted notes in strictly ascending UTF-8 module order, without reopening their encoded bytes.
+/// Pin the exact emitted set, including an empty set, in strictly ascending UTF-8 module order.
 pub fn compact_admission_pin<'a>(
     notes: impl IntoIterator<Item = (&'a str, [u8; 32])>,
-) -> Result<Option<CompactAdmissionPin>, String> {
+) -> Result<CompactAdmissionPin, String> {
     let mut hash = Sha256::new();
     hash.update(b"incan.plan-compact-admissions/1\x00");
     let mut count = 0u64;
@@ -446,14 +455,11 @@ pub fn compact_admission_pin<'a>(
         count += 1;
         previous = module;
     }
-    if count == 0 {
-        return Ok(None);
-    }
     hash.update(count.to_be_bytes());
-    Ok(Some(CompactAdmissionPin {
+    Ok(CompactAdmissionPin {
         count,
         digest: hash.finalize().into(),
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -729,9 +735,20 @@ mod tests {
                 240, 150, 208, 77, 0, 116, 230, 153, 128, 86,
             ],
         };
-        assert_eq!(compact_admission_pin([first, second])?, Some(expected));
-        assert_ne!(compact_admission_pin([first])?, Some(expected));
-        assert_eq!(compact_admission_pin([])?, None);
+        assert_eq!(compact_admission_pin([first, second])?, expected);
+        assert_ne!(compact_admission_pin([first])?, expected);
+        let empty = CompactAdmissionPin {
+            count: 0,
+            digest: [
+                149, 238, 125, 89, 242, 99, 68, 174, 175, 86, 3, 135, 30, 209, 61, 32, 251, 208, 86, 56, 223, 193, 156,
+                128, 75, 36, 208, 42, 186, 249, 13, 152,
+            ],
+        };
+        assert_eq!(
+            compact_admission_pin([])?,
+            empty,
+            "selected empty compact publication has no independently settled fingerprint"
+        );
         assert!(compact_admission_pin([first, first]).is_err());
         assert!(compact_admission_pin([second, first]).is_err());
         assert!(compact_admission_pin([("", first.1)]).is_err());
