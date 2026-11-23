@@ -72,6 +72,13 @@ pub struct TypeCheckInfo {
     /// Optional migration-baseline owners, captured only by an explicitly requested baseline activation. They are not
     /// serialized, are not retained by idle workers, and never authorize a production record read.
     pub(crate) body_ir_baseline_inputs: Option<super::BodyIrBaselineInputs>,
+    /// Complete accepted scalar bodies selected before checking, consumed only by the native Body IR bridge.
+    /// Inspection never installs products, so semantic graph generation always retains full current source facts.
+    pub(crate) reused_callable_bodies: BTreeMap<Span, incan_semantics_core::body_ir::Body>,
+    /// Physical function scope required by retained scalar lexical identities; absence means no lexical bindings.
+    pub(crate) reused_callable_scopes: BTreeMap<Span, Option<usize>>,
+    /// Exact parameter ownership retained beside reused scalar bodies for subsequent product publication.
+    pub(crate) reused_callable_contexts: Vec<(CanonicalSymbolId, CanonicalSymbolId, u32)>,
     /// Trait hierarchy metadata consumed by trait impl and default-method lowering.
     pub traits: TraitArtifacts,
     /// Derive expansion metadata imported from dependency modules and manifests.

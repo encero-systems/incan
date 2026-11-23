@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
+use incan_semantics_core::{HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
@@ -351,6 +351,15 @@ impl SourceAccesses<'_, '_> {
     /// Visit source expressions according to the producer's actual evaluation policy. Borrowing a stored place
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        if matches!(expression.node, Expr::Field(..))
+            && self
+                .proof
+                .facts
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            return Ok(());
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 self.stored_place_access(expression, consume)?
@@ -420,6 +429,30 @@ impl SourceAccesses<'_, '_> {
         arguments: &[CallArg],
         consume: bool,
     ) -> Result<(), &'static str> {
+        if let Some(loans) = self.proof.graph.carrier_calls.get(&expression.span) {
+            self.expression(receiver, true)?;
+            for argument in arguments {
+                let value = match argument {
+                    CallArg::Positional(value)
+                    | CallArg::Named(_, value)
+                    | CallArg::PositionalUnpack(value)
+                    | CallArg::KeywordUnpack(value) => value,
+                };
+                self.expression(value, false)?;
+            }
+            for id in loans {
+                let loan = self
+                    .proof
+                    .graph
+                    .loans
+                    .get(id.0)
+                    .ok_or("temporary carrier call has an unknown source loan")?;
+                if loan.span != expression.span {
+                    self.access(expression.span, &loan.source, Some(*id), flow::Access::Read)?;
+                }
+            }
+            return Ok(());
+        }
         if let Some(iterator) = super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) {
             return self.retained_iterator_call(receiver, arguments, iterator, expression.span, consume);
         }
@@ -431,7 +464,7 @@ impl SourceAccesses<'_, '_> {
                 let CallArg::Positional(value) = argument else {
                     return Err("source access needs positional list method arguments");
                 };
-                self.expression(value, false)?;
+                self.expression(value, true)?;
             }
             let access = if writes {
                 flow::Access::Write
@@ -440,13 +473,34 @@ impl SourceAccesses<'_, '_> {
             };
             return self.access(expression.span, &place, through, access);
         }
+        if self
+            .proof
+            .facts
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            for argument in arguments {
+                let CallArg::Positional(value) = argument else {
+                    return Err("source access needs positional enum payloads");
+                };
+                self.expression(value, false)?;
+            }
+            return Ok(());
+        }
         let invocation = self
             .proof
             .graph
             .invocations
             .get(&expression.span)
             .ok_or("source access method call has no checked invocation")?;
-        if self.proof.facts.native_associated_call(expression.span) {
+        if self
+            .proof
+            .facts
+            .protocols
+            .explicit_input_calls
+            .get(&expression.span)
+            .is_some_and(|call| call.receiver.is_none())
+        {
             return self.invocation_arguments(invocation, arguments);
         }
         if invocation.receiver_owned {

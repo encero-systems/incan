@@ -9,6 +9,9 @@ impl BodyLocal {
     pub(super) fn take(checker: &mut TypeChecker) -> Self {
         let TypeCheckInfo {
             body_ir_baseline_inputs: _,
+            reused_callable_bodies: _,
+            reused_callable_contexts: _,
+            reused_callable_scopes: _,
             traits,
             derivations: _,
             expressions,

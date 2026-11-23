@@ -23,6 +23,7 @@ from unit_compiler import crate_name, run_compiler
 from rust_units import build_rust
 from rust_build import RustBuild
 from rust_registry import read_registry_units
+from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, parse_lock_command
@@ -512,7 +513,13 @@ def tested_incan(options: Options) -> Result[i32, str]:
                 return Ok(status_code(reply.exit))
             return run_collected(Path(reply.binary), Path(options.path).name())
         None => pass
-    mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
+    mut unit = describe(
+        Path(options.path),
+        options.profile,
+        options.request,
+        options.manifests,
+        purpose=ActivationPurpose.Test,
+    )?
     unit.kind = "test"
     return run_tests(unit, toolchain_for(unit)?)
 

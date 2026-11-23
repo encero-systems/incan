@@ -165,11 +165,120 @@ pub fn required_loaf_identities(
                 .copied()
                 .flat_map(incan_frontend::body_ir::registry_helper_identities),
         )
+        .chain(infos.iter().copied().flat_map(retained_result_type_identities))
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )
         .collect();
     Ok(requested)
+}
+
+/// Retain dependency nominal declarations that checked expression and call results place in executable frame locals.
+///
+/// A selected dependency method can return a generic carrier that the caller never names in source. The selected
+/// method identity reaches its body, but native layout also needs the carrier declaration named only by the checked
+/// result type. Walk only executable result facts, preserving the checker's canonical binding for every nested leaf;
+/// the dependency graph then closes the carrier's own fields and methods normally.
+fn retained_result_type_identities(
+    info: &incan_frontend::typechecker::TypeCheckInfo,
+) -> impl Iterator<Item = CanonicalSymbolId> {
+    let mut retained = Vec::new();
+    for identity in info
+        .expressions
+        .expression_type_identities
+        .values()
+        .flat_map(|identities| identities.values())
+    {
+        if !retained.contains(identity) {
+            retained.push(identity.clone());
+        }
+    }
+    for ty in info
+        .expressions
+        .body_ir_expr_types
+        .values()
+        .chain(info.calls.body_ir_call_result_types.values())
+        .chain(info.calls.inferred_call_result_types.values())
+    {
+        retain_type_identities(ty, info, &mut retained);
+    }
+    retained.into_iter()
+}
+
+/// Project canonical nominal leaves from one already checked type without resolving source spelling again.
+fn retain_type_identities(
+    ty: &incan_frontend::symbols::ResolvedType,
+    info: &incan_frontend::typechecker::TypeCheckInfo,
+    identities: &mut Vec<CanonicalSymbolId>,
+) {
+    use incan_frontend::symbols::ResolvedType;
+
+    match ty {
+        ResolvedType::Named(name) => retain_type_identity(name, info, identities),
+        ResolvedType::Generic(base, arguments) => {
+            retain_type_identity(base, info, identities);
+            for argument in arguments {
+                retain_type_identities(argument, info, identities);
+            }
+        }
+        ResolvedType::Function(parameters, result) => {
+            for parameter in parameters {
+                retain_type_identities(&parameter.ty, info, identities);
+            }
+            retain_type_identities(result, info, identities);
+        }
+        ResolvedType::TypeToken(inner)
+        | ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner)
+        | ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner) => retain_type_identities(inner, info, identities),
+        ResolvedType::FrozenDict(key, value) => {
+            retain_type_identities(key, info, identities);
+            retain_type_identities(value, info, identities);
+        }
+        ResolvedType::Tuple(items) => {
+            for item in items {
+                retain_type_identities(item, info, identities);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Add one checker-authenticated nominal binding, including a module-qualified route when that is the checked name.
+fn retain_type_identity(
+    name: &str,
+    info: &incan_frontend::typechecker::TypeCheckInfo,
+    identities: &mut Vec<CanonicalSymbolId>,
+) {
+    let identity = info
+        .declarations
+        .named_type_identities
+        .get(name)
+        .or_else(|| info.declarations.body_ir_native_type_identities.get(name))
+        .or_else(|| {
+            info.declarations
+                .named_type_identities
+                .values()
+                .chain(info.declarations.body_ir_native_type_identities.values())
+                .find(|identity| incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(name))
+        })
+        .or_else(|| {
+            info.declarations
+                .qualified_type_references
+                .values()
+                .find(|reference| match &reference.resolved {
+                    incan_frontend::symbols::ResolvedType::Named(route)
+                    | incan_frontend::symbols::ResolvedType::Generic(route, _) => route == name,
+                    _ => false,
+                })
+                .map(|reference| &reference.identity)
+        });
+    if let Some(identity) = identity
+        && !identities.contains(identity)
+    {
+        identities.push(identity.clone());
+    }
 }
 
 /// Read the authenticated dependency closure and its reached package identities, allowing only exact checked
@@ -182,4 +291,48 @@ pub fn load_loaf_modules(
 ) -> Result<incan_frontend::executable_resolution::ResolvedExecutableModules, String> {
     incan_frontend::executable_resolution::resolve_loaf_declarations(loaves, requested, checked_local)
         .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retained_result_type_identities;
+    use incan_frontend::symbols::ResolvedType;
+    use incan_frontend::typechecker::TypeCheckInfo;
+    use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
+
+    /// A dependency carrier named only by a nested checked call result remains an executable dependency root.
+    #[test]
+    fn checked_call_results_retain_dependency_nominal_identities() -> Result<(), Box<dyn std::error::Error>> {
+        let mut info = TypeCheckInfo::default();
+        let mut carrier = CanonicalSymbolId::module_declaration(
+            vec!["typed_source".into()],
+            "Source",
+            SemanticSourceTargetKind::Class,
+            HirSourceSpan::new(4, 10),
+        );
+        carrier.origin = SymbolOrigin::Package {
+            library: "standard".into(),
+            module_path: vec!["typed_source".into()],
+        };
+        let key = incan_semantics_core::body_ir::nominal_carrier_key(&carrier)
+            .ok_or("dependency carrier has no canonical key")?;
+        info.declarations
+            .named_type_identities
+            .insert("Source".into(), carrier.clone());
+        info.calls.inferred_call_result_types.insert(
+            incan_frontend::ast::Span::new(20, 30),
+            ResolvedType::Generic(
+                "Result".into(),
+                vec![ResolvedType::Generic(key, vec![ResolvedType::Int]), ResolvedType::Str],
+            ),
+        );
+        info.expressions.expression_type_identities.insert(
+            incan_frontend::ast::Span::new(40, 50),
+            std::collections::BTreeMap::from([(Vec::new(), carrier.clone())]),
+        );
+
+        let retained = retained_result_type_identities(&info).collect::<Vec<_>>();
+        assert_eq!(retained, [carrier]);
+        Ok(())
+    }
 }

@@ -140,6 +140,17 @@ impl Builder<'_> {
             let incoming = self.bind_closure(root.clone(), &assignment.value, incoming)?;
             return Ok((incoming, true));
         }
+        // A generic receiver can carry a declared dependency into another generic carrier without restating the
+        // original owner's source path. The result gets child loans so the receiver's own last use is independent.
+        if let Some(result) = self.retained_receiver_result(&assignment.value, incoming.clone())? {
+            if self.graph.dependent_locals.insert(root.clone(), result.loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "receiver-carried result has more than one dependency destination".into(),
+                });
+            }
+            return Ok((result.incoming, true));
+        }
         // A lazy builtin result owns its runtime cursor while retaining ordinary graph loans to every stored source.
         let lazy_result = matches!(self.checker.type_info.expr_type(assignment.value.span),
             Some(ResolvedType::Generic(name, _))

@@ -12,6 +12,12 @@ impl TypeChecker {
     /// Dispatches to `check_model`, `check_class`, etc. Expects symbols to already be registered via
     /// [`collect_declaration`](Self::collect_declaration).
     pub fn check_declaration(&mut self, decl: &Spanned<Declaration>) {
+        if !matches!(
+            decl.node,
+            Declaration::Import(_) | Declaration::Alias(_) | Declaration::Docstring(_)
+        ) {
+            self.record_check_work("declaration", "top_level", decl.span);
+        }
         match &decl.node {
             Declaration::Import(_) => {} // Already handled
             Declaration::Const(konst) => {
@@ -55,6 +61,13 @@ impl TypeChecker {
             Declaration::Capability(cap) => self.check_capability_decl(cap, decl.span),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
         }
+    }
+
+    /// Observe an actual checking boundary. Module and source span distinguish physical inputs only within this
+    /// invocation; they are diagnostics, never stable identities or cache keys.
+    pub(in crate::typechecker) fn record_check_work(&self, action: &'static str, kind: &'static str, span: Span) {
+        tracing::trace!(target: "incan::invocation", phase = "checking", action, kind,
+            module = ?self.current_module_path, input = ?span, "compiler work");
     }
 
     /// Record how a declared model, class, enum or newtype displays when lowering has to give it a Rust `Display`: the

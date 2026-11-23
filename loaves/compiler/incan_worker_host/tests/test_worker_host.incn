@@ -29,6 +29,16 @@ from protocol import (
     request_document,
     retired,
 )
+from record_protocol import (
+    RECORD_SCHEMA,
+    RecordMessage,
+    Prepare,
+    NeedPrerequisite,
+    Evaluate,
+    Produced,
+    decode_record_message,
+    encode_record_message,
+)
 
 const GENERATION: str = "0123456789abcdef"
 
@@ -227,6 +237,51 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
     )
     retiring_text = expected.replace(",\"schema\"", ",\"retire_after\":true,\"schema\"")
     assert retiring.to_json().map_err((error) => error.message())? == retiring_text
+    return Ok(None)
+
+
+pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[None, str]:
+    """Prepare, prerequisite, evaluation and production bodies round-trip only under the record worker schema."""
+    prepare = RecordMessage.Prepare(Prepare(stage="declaration", snapshot="s", demand_root="d", producer_profile="p"))
+    prepared = decode_record_message(encode_record_message(prepare, GENERATION), GENERATION)?
+    match prepared:
+        RecordMessage.Prepare(value) =>
+            assert value.stage == "declaration" and value.snapshot == "s"
+        _ => return Err("worker record Prepare changed family")
+
+    prerequisite = RecordMessage.NeedPrerequisite(NeedPrerequisite(keys_root="keys", earlier_rank=7))
+    match decode_record_message(encode_record_message(prerequisite, GENERATION), GENERATION)?:
+        RecordMessage.NeedPrerequisite(value) =>
+            assert value.keys_root == "keys" and value.earlier_rank == 7
+        _ => return Err("worker record NeedPrerequisite changed family")
+
+    evaluate = RecordMessage.Evaluate(
+        Evaluate(
+            work_root="work",
+            snapshot="s",
+            prepared_root="prepared",
+            reservation="reservation",
+            cancellation_generation=9,
+        ),
+    )
+    match decode_record_message(encode_record_message(evaluate, GENERATION), GENERATION)?:
+        RecordMessage.Evaluate(value) =>
+            assert value.work_root == "work" and value.cancellation_generation == 9
+        _ => return Err("worker record Evaluate changed family")
+
+    produced = RecordMessage.Produced(
+        Produced(staged_root="staged", witness_root="w", diagnostic_root="d", counter_root="c"),
+    )
+    match decode_record_message(encode_record_message(produced, GENERATION), GENERATION)?:
+        RecordMessage.Produced(value) =>
+            assert value.staged_root == "staged" and value.witness_root == "w"
+        _ => return Err("worker record Produced changed family")
+
+    wrong = f"{{\"generation\":\"{GENERATION}\",\"kind\":\"prepare\",\"schema\":\"incan.engine/1\"}}"
+    match decode_record_message(wrong.encode("utf-8"), GENERATION):
+        Err(_) => pass
+        Ok(_) => return Err("the worker admitted an engine protocol record body")
+    assert RECORD_SCHEMA == "incan.compiler-worker/2"
     return Ok(None)
 
 

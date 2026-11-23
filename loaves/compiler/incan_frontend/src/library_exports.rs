@@ -22,11 +22,12 @@ use crate::symbols::{
 use crate::typechecker::{PartialProjectionTargetKind, TypeChecker};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
-mod declaration_exports;
+pub(crate) mod declaration_exports;
 mod members;
 mod partials_and_defaults;
 mod public_exports;
 
+pub(crate) use declaration_exports::checked_function_export;
 use declaration_exports::*;
 pub use members::*;
 use partials_and_defaults::*;
@@ -225,13 +226,15 @@ fn path_is_already_absolute(path: &[String]) -> bool {
     matches!(path.first().map(String::as_str), Some("std" | "rust" | "pub"))
 }
 
-#[derive(Debug, Clone)]
+/// Checked type parameter and its complete declared and inferred caller obligations.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CheckedTypeParam {
     pub name: String,
     pub bounds: Vec<CheckedTypeBound>,
 }
 
-#[derive(Debug, Clone)]
+/// Resolved generic obligation, preserving owner provenance and implementation-only requirements for exact replay.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CheckedTypeBound {
     pub name: String,
     pub source_name: Option<String>,
@@ -294,7 +297,9 @@ pub struct CheckedMethod {
     pub made_private: Option<crate::symbols::MadePrivateInfo>,
 }
 
-#[derive(Debug, Clone)]
+/// Checked callable surface, including keyword binding and materializable defaults. Equality compares all retained
+/// facts so a private codec can reject a lossy public-contract projection before publishing a reusable header.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CheckedFunctionExport {
     /// Checked explicit access and result-source metadata; absence leaves the ordinary inferred contract.
     pub ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,

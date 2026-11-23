@@ -34,10 +34,6 @@ from engine_messages import (
     Submit,
     Accepted,
     Captured,
-    Prepare,
-    NeedPrerequisite,
-    Evaluate,
-    Produced,
     Query,
     Page,
     Event,
@@ -232,7 +228,7 @@ def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
 
 
 def check_worker_retirement() -> Result[None, str]:
-    """A one-activation compiler retires without joining its caller monitor's polling timeout."""
+    """A one-activation compiler retires, and a body edit reads frozen compiler records instead of whole manifests."""
     scratch = scratch_directory()?
     root = scratch.path()
     project = root.joinpath("project")
@@ -258,9 +254,37 @@ def check_worker_retirement() -> Result[None, str]:
         .env("INCAN_JEC_TRACE", jec.0)
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
         .env("INCAN_ENGINE_REQUEST", "worker-order")
+        .env("INCAN_TRACE_DIR", observations.0)
         .output()
         .map_err((error) => str(error))?
-    assert outcome.status.success() and outcome.stdout == b"hello\x0a" and outcome.stderr == b""
+    if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
+        return Err(f"initial records run: status={outcome.status.code()} stdout_bytes={len(outcome.stdout)} stderr_bytes={len(outcome.stderr)}")
+    initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
+    initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
+    write(source, "def main() -> None:\n    println(\"hullo\")\n")?
+    edited = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", root.joinpath("store").0)
+        .env("INCAN_NATIVE_TIMING", "1")
+        .env("OVEN_TRACE", trace.0)
+        .env("INCAN_ENGINE_TRACE", observations.0)
+        .env("INCAN_JEC_TRACE", jec.0)
+        .env("INCAN_ENGINE_RUN", "host-clock-proof")
+        .env("INCAN_ENGINE_REQUEST", "worker-order-edited")
+        .env("INCAN_TRACE_DIR", observations.0)
+        .output()
+        .map_err((error) => str(error))?
+    if not edited.status.success() or edited.stdout != b"hullo\x0a" or edited.stderr != b"":
+        return Err(f"edited records run: status={edited.status.code()} stdout_bytes={len(edited.stdout)} stderr_bytes={len(edited.stderr)}")
+    manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest") - initial_manifest_reads
+    if manifest_reads != 0:
+        return Err(f"one-body edit reopened {manifest_reads} whole Loaf manifests")
+    record_reads = invocation_count(observations, "incan_frontend::read_compiler_records") - initial_record_reads
+    if record_reads > 6:
+        return Err(f"one-body edit reconstructed {record_reads} compiler-record groups")
     # Stop this test's disposable engine before the temporary directory leaves scope.
     store = root.joinpath("store")
     mut identity = service_identity(store)?
@@ -281,10 +305,47 @@ def check_worker_retirement() -> Result[None, str]:
     releases = len([line for line in lines if "worker_heap_released" in line])
     assert waits == 0 and detached == 1 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
-    assert len(released_requests) == 1, "request teardown did not release its payload verification observations"
+    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
     check_worker_clock(observations)?
     return Ok(None)
+
+
+def invocation_count(directory: Path, function: str) -> int:
+    """Count completed compiler invocation-span starts with the exact instrumented function name."""
+    mut count = 0
+    match directory.iterdir():
+        Err(_) => return count
+        Ok(entries) =>
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                match entry.read_text("utf-8", "strict"):
+                    Err(_) => continue
+                    Ok(text) =>
+                        for line in text.split("\n"):
+                            if line == "":
+                                continue
+                            match parse(line):
+                                Err(_) => continue
+                                Ok(document) =>
+                                    if json_text_is(document, "kind", "begin") and json_text_is(
+                                        document,
+                                        "function",
+                                        function,
+                                    ):
+                                        count += 1
+    return count
+
+
+def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
+    """Whether one optional JSON field is text equal to `expected`, without comparing carrier values."""
+    match document.get(key):
+        None => return false
+        Some(value) =>
+            match value.as_str():
+                None => return false
+                Some(found) => return found == expected
 
 
 def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
@@ -579,27 +640,6 @@ def check_bodies() -> Result[None, str]:
         ),
         Message.Accepted(Accepted(capture_token="descriptor", interest_token="descriptor")),
         Message.Captured(Captured(epoch="descriptor", snapshot="descriptor")),
-        Message.Prepare(
-            Prepare(stage="descriptor", snapshot="descriptor", demand_root="descriptor", producer_profile="descriptor"),
-        ),
-        Message.NeedPrerequisite(NeedPrerequisite(keys_root="descriptor", earlier_rank=1)),
-        Message.Evaluate(
-            Evaluate(
-                work_root="descriptor",
-                snapshot="descriptor",
-                prepared_root="descriptor",
-                reservation="descriptor",
-                cancellation_generation=1,
-            ),
-        ),
-        Message.Produced(
-            Produced(
-                staged_root="descriptor",
-                witness_root="descriptor",
-                diagnostic_root="descriptor",
-                counter_root="descriptor",
-            ),
-        ),
         Message.Query(
             Query(snapshot="descriptor", query_root="descriptor", cursor="descriptor", row_limit=1, byte_limit=1),
         ),
@@ -635,6 +675,8 @@ def check_bodies() -> Result[None, str]:
         assert refused_body(decode(tag, joined([raw, scalar(0, 1)])))
     assert refused_body(decode(16, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
     assert refused_body(decode(15, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
+    for worker_record_tag in [6, 7, 8, 9]:
+        assert refused_body(decode(worker_record_tag, scalar(1, 2)))
     assert refused_body(decode(65535, scalar(1, 2)))
     assert refused_body(decode(1, scalar(2, 2)))
     assert refused_body(decode(1, joined([scalar(1, 2), scalar(4294967295, 4)])))

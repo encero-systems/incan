@@ -6,7 +6,7 @@ use super::*;
 ///
 /// A type parameter exports its declared bounds as spelled in source, then the `Eq` and `Hash` bounds the checker
 /// inferred for it because the body hashes it (#1758).
-pub(super) fn checked_function_export(
+pub(crate) fn checked_function_export(
     function: &FunctionDecl,
     checker: &TypeChecker,
     span: Span,

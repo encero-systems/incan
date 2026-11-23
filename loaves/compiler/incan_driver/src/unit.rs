@@ -69,6 +69,12 @@ pub struct UnitDescription {
     pub version: String,
     /// The build profile whose Loaf artifacts the unit reads.
     pub profile: String,
+    /// Source-independent semantic context of private callable products, owned and reconciled by Oven.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_context: Option<String>,
+    /// Explicit private item-product directory for independently validated scalar declarations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_products: Option<PathBuf>,
     /// Every feature the package declares, which `when feature(...)` may name.
     pub declared_features: BTreeSet<String>,
     /// The features active for this unit.

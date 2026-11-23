@@ -22,16 +22,6 @@ from oven_tests import (
 )
 
 const GIB: int = 1073741824
-const RECORD_FILES: FrozenList[str] = [
-    "src/checker_records.incn",
-    "src/record_scope.incn",
-    "src/records.incn",
-    "src/record_service.incn",
-    "tests/canonical_record_controls.incn",
-    "tests/test_record_scope.incn",
-]
-
-
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
     """A positive configured count wins; otherwise the cores decide, and at least one runs."""
     assert default_jobs("3", 18) == 3
@@ -167,8 +157,8 @@ def test_log_names_sort_in_invocation_order() -> Result[None, str]:
     return Ok(None)
 
 
-def test_invocations_follow_the_former_order_and_exclusions() -> Result[None, str]:
-    """Oven units first, then Loaf tests from their Loaf, then the isolated record contract."""
+def test_invocations_follow_the_declared_order_and_package_ownership() -> Result[None, str]:
+    """Oven units run first, then every Loaf test from its owning Loaf, with compiler-scale reservations."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     fixture(root)?
@@ -176,52 +166,24 @@ def test_invocations_follow_the_former_order_and_exclusions() -> Result[None, st
     logs = evidence.joinpath("oven-tests")
     planned = invocations(root, evidence, logs)?
     oven = root.joinpath("workspaces/oven")
+    models = root.joinpath("loaves/compiler/internal_models")
     lowering = root.joinpath("loaves/compiler/lowering")
     loaf_a = root.joinpath("loaves/group_b/loaf_a")
     loaf_b = root.joinpath("loaves/group_a/loaf_b")
-    contract = evidence.joinpath("checker-records/project/src/test_record_scope.incn")
     assert [item.arguments for item in planned] == [
         ["test", oven.joinpath("src/test_alpha.incn").0],
         ["test", oven.joinpath("src/test_beta.incn").0],
+        ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
         ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
         ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
         ["test", loaf_a.joinpath("tests/test_one.incn").0, "--profile", "release"],
         ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
-        ["test", contract.0, "--profile", "release"],
     ]
-    assert [item.directory for item in planned] == [oven.0, oven.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0, ""]
-    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB, 6 * GIB]
+    assert [item.directory for item in planned] == [oven.0, oven.0, models.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0]
+    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
     assert [item.serial for item in planned] == [true, true, false, false, false, false, false]
     assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
-    assert planned[6].log.0 == logs.joinpath("006-test_record_scope.log").0
-    return Ok(None)
-
-
-def test_record_contract_project_copies_its_sources_and_names_the_adapter() -> Result[None, str]:
-    """The isolated project holds the six copied sources and a manifest that adds the frontend."""
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    root = temporary.path()
-    fixture(root)?
-    evidence = root.joinpath("evidence")
-    _ = invocations(root, evidence, evidence.joinpath("oven-tests"))?
-    project = evidence.joinpath("checker-records/project")
-    for name in RECORD_FILES:
-        copied = project.joinpath("src").joinpath(Path(name).name())
-        assert copied.read_text("utf-8", "strict").map_err((error) => error.message())? == f"# {name}\n"
-    frontend = root.joinpath("loaves/compiler/incan_frontend").0
-    manifest = project.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
-    expected = [
-        "[project]",
-        "name = \"checker_record_contract_test\"",
-        "version = \"0.1.0\"",
-        "private = true",
-        "[project.scripts]",
-        "contract = \"src/test_record_scope.incn\"",
-        "[dependencies]",
-        f"incan_frontend = {{ loaf = \"incan_frontend\", path = \"{frontend}\" }}",
-    ]
-    assert manifest == "\n".join(expected) + "\n"
-    assert refusal(invocations(root, evidence, evidence.joinpath("oven-tests"))) != ""
+    assert planned[2].log.0 == logs.joinpath("002-test_record_scope.log").0
     return Ok(None)
 
 
@@ -265,10 +227,9 @@ def fixture(root: Path) -> Result[None, str]:
     write(root, "loaves/group_a/loaf_b/tests/test_one.incn", "")?
     write(root, "loaves/group_a/.hidden/tests/test_one.incn", "")?
     write(root, "loaves/group_a/loaf_c/src/test_source.incn", "")?
-    write(root, "loaves/compiler/incan_frontend/loaf.toml", "")?
+    write(root, "loaves/compiler/internal_models/tests/canonical_record_controls.incn", "")?
+    write(root, "loaves/compiler/internal_models/tests/test_record_scope.incn", "")?
     write(root, "loaves/compiler/lowering/tests/test_three.incn", "")?
-    for name in RECORD_FILES:
-        write(root, f"loaves/compiler/internal_models/{name}", f"# {name}\n")?
     return Ok(None)
 
 

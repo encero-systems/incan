@@ -109,6 +109,18 @@ pub def read_record_index(
             required += 1
         else:
             eligible += 1
+    return read_record_index_counts(eligible, required, cursor, budget)
+
+
+pub def read_record_index_counts(
+    eligible: int,
+    required: int,
+    mut cursor: EncodingCursor,
+    mut budget: Budget,
+) -> Result[RecordIndex, BinaryError]:
+    """Validate a record index from precomputed admitted field counts without rescanning its description."""
+    if eligible < 0 or required < 0:
+        return Err(failure(BinaryFailure.InvalidOffsets, cursor.absolute()))
     bitmap_size = eligible // 8
     mut size = bitmap_size + 0
     if eligible % 8 != 0:

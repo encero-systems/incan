@@ -40,13 +40,7 @@ pub class Budget:
         if bytes < 0 or elements < 0 or depth < 0:
             return Err(CrumbError.invalid_input("budget"))
         return Ok(
-            Budget(
-                state=Rc.new(
-                    RefCell.new(
-                        BudgetState(bytes_left=bytes, elements_left=elements, depth_limit=depth),
-                    ),
-                ),
-            ),
+            Budget(state=Rc.new(RefCell.new(BudgetState(bytes_left=bytes, elements_left=elements, depth_limit=depth)))),
         )
 
     pub def charge_bytes(mut self, count: int) -> Result[None, CrumbError]:
@@ -93,7 +87,7 @@ pub class Budget:
         _restore(self.state.clone(), state)
         return Ok(None)
 
-    pub def snapshot(self) -> Self:
+    pub def snapshot(self) -> Budget:
         """Return an independent allowance for a codec object that must retain its own mutable state."""
         state = _take(self.state.clone())
         copied = BudgetState(

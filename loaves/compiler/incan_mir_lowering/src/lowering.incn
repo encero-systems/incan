@@ -25,7 +25,7 @@ from pub::incan_mir_plan import (
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
 from pub::incan_platform.probes import current_footprint, current_live_allocated
-from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId, CompilerNodeId
 from rust::incan_semantics_core::body_ir import (
     NativeUnionDeclaration,
     BodyIrModule as RustBodyIrModule,
@@ -181,11 +181,28 @@ pub def unit_plan(
     mut published: list[NativeUnionDeclaration],
     package_versions: BTreeMap[str, str],
     overflow_checks: bool = true,
+    scalar_products: Option[str] = None,
+    scalar_bodies: list[tuple[CompilerNodeId, str]] = [],
 ) -> Result[UnitPlanning, str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    return lowered_plan(modules, sources, files, entry, kind, tests, published, overflow_checks, package_versions)
+    mut scalar_index: BTreeMap[CompilerNodeId, str] = BTreeMap.new()
+    for identity, inputs in scalar_bodies:
+        _ = scalar_index.insert(identity, inputs)
+    return lowered_plan(
+        modules,
+        sources,
+        files,
+        entry,
+        kind,
+        tests,
+        published,
+        overflow_checks,
+        package_versions,
+        scalar_products,
+        scalar_index,
+    )
 
 
 def program_context(
@@ -211,6 +228,7 @@ def program_context(
             value_enums=Arc.new(list(module.value_enum_declarations)),
             decorated_bindings=Arc.new(list(module.decorated_bindings)),
             overflow_checks=overflow_checks,
+            observe_work=native_environment("INCAN_NATIVE_TIMING").is_some(),
         ),
     )
 
@@ -225,6 +243,8 @@ def lowered_plan(
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool,
     package_versions: BTreeMap[str, str],
+    scalar_products: Option[str],
+    scalar_bodies: BTreeMap[CompilerNodeId, str],
 ) -> Result[UnitPlanning, str]:
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
@@ -290,6 +310,8 @@ def lowered_plan(
         emitted_frames,
         unions,
         trace,
+        scalar_products,
+        scalar_bodies,
     )?
     mut statics = lower_computed_statics(
         context,
@@ -952,6 +974,7 @@ def lower_plan_frames(
     trace: bool,
 ) -> Result[BodyPlanning, str]:
     """Lower ordinary frames, then retain request layouts and the nominal length for source restoration."""
+    empty_scalar_bodies: BTreeMap[CompilerNodeId, str] = BTreeMap.new()
     lower_ordinary_bodies(
         context,
         program,
@@ -968,6 +991,8 @@ def lower_plan_frames(
         emitted_frames,
         unions,
         trace,
+        None,
+        empty_scalar_bodies,
     )?
     original_nominal_count = len(context.nominal_declarations)
     match lower_requested_frames(
@@ -1192,7 +1217,9 @@ def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
         Ok(footprint) =>
             match current_live_allocated():
                 Ok(live) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes")
-                Err(reason) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}")
+                Err(reason) => println(
+                    f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}",
+                )
         Err(reason) => println(f"lowering footprint: {boundary}: unavailable: {reason}")
 
 

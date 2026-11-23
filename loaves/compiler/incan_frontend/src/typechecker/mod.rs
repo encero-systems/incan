@@ -483,6 +483,8 @@ struct AnnotationOwner {
 /// them. Type-parameter positions never grant a declaration-owned nominal identity to a caller's substitution.
 #[derive(Clone, Debug)]
 struct DeclarationCallableTypes {
+    /// Type parameters declared by the callable and its nominal owner, in source scope order.
+    type_params: Vec<String>,
     /// Parameter templates in declaration order, including their source binding labels.
     params: Vec<CallableParam>,
     /// Original return template before call-site substitution.
@@ -538,6 +540,10 @@ pub struct TypeChecker {
     body_open_diagnostics: Vec<CompileError>,
     /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
     checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Declaration-family records emitted at their settlement boundary, before any module product observes them.
+    produced_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Producer-validated declaration records selected for the current source revision and consumed once by owner.
+    callable_declaration_reuse: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
     /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
     lazy_result_bodies: HashSet<CanonicalSymbolId>,
@@ -699,6 +705,8 @@ pub struct TypeChecker {
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub local_function_decls: HashMap<String, FunctionDecl>,
+    /// Accepted scalar-body products selected for one exact parsed input by the native producer.
+    callable_body_reuse: Option<crate::declaration_interface::ValidatedCallableBodies>,
     /// Names of the declarations the program being checked marks `pub`.
     ///
     /// A public library carries a parameter default that constructs a model or class to its consumers only when they
@@ -769,6 +777,11 @@ pub struct TypeChecker {
     pub const_eval_cache: HashMap<String, const_eval::ConstEvalResult>,
     /// Reusable typechecker output for downstream stages.
     pub type_info: TypeCheckInfo,
+    /// Concrete source types already classified by the current program's complete nominal storage graph.
+    ///
+    /// The graph is immutable after declaration collection. Caching its transitive view-type result prevents every
+    /// callable, field and constructor from recursively rescanning the same cyclic declaration closure.
+    view_type_cache: RefCell<HashMap<(ResolvedType, bool), bool>>,
     /// Current source-order boundary for borrowed declaration/environment readers.
     visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.

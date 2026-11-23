@@ -38,8 +38,8 @@ pub model LocalDemand:
     pub defaults: bool
     # `--all-features` asks the root for every feature its manifest declares; dependencies never inherit it.
     pub all_features: bool = false
-    # Only the requested root selects an environment; dependencies keep their production declarations.
-    pub environment: str = ""
+    # Only the requested root selects a non-normal purpose; dependencies keep their production declarations.
+    pub purpose: ActivationPurpose = ActivationPurpose.Normal
 
 
 pub def unique(values: list[str]) -> list[str]:
@@ -127,10 +127,10 @@ def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, Local
             features=unique(previous.features + demand.features),
             defaults=previous.defaults or demand.defaults,
             all_features=previous.all_features or demand.all_features,
-            environment=previous.environment,
+            purpose=previous.purpose,
         )
-        if selected.environment == "":
-            selected.environment = demand.environment
+        if selected.purpose == ActivationPurpose.Normal:
+            selected.purpose = demand.purpose
     result[identity] = selected
     return result
 
@@ -376,7 +376,7 @@ def canonical_demand(demand: LocalDemand) -> LocalDemand:
         features=unique(demand.features),
         defaults=demand.defaults,
         all_features=demand.all_features,
-        environment=demand.environment,
+        purpose=demand.purpose,
     )
 
 
@@ -401,13 +401,16 @@ def activated(
     # 1. The authored manifest is the only feature and dependency authority.
     project = read_project(Path(demand.project), reader).map_err((error) => error.message())?
     intent = project.intent.clone()
-    inputs = catalog(intent, demand.environment)?
+    mut environment = ""
+    if demand.purpose == ActivationPurpose.Test:
+        environment = demand.purpose.value()
+    inputs = catalog(intent, environment)?
     requested = requested_features(demand, inputs)
     # 2. The slots are activated for the features demanded and for the domain the demand is built in.
     context = ActivationContext(
         host=configuration,
         target=configuration,
-        purpose=ActivationPurpose.Normal,
+        purpose=demand.purpose,
         domain=demand.domain,
         requested_features=requested,
         default_features=demand.defaults,

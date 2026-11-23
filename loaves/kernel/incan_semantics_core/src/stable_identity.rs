@@ -26,8 +26,60 @@
 pub mod source_signature;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use crate::facts::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use crate::facts::{
+    CanonicalStableDeclarationContext, CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+};
+
+/// Checked correspondence for projecting physical types and lexical identities into semantic identity.
+/// Missing lexical ownership or an unbound generated carrier refuses the projection.
+#[derive(Debug, Default)]
+pub struct StableIdentityProjection {
+    /// Checker-owned nearest named owners, with collision-local binding ordinals.
+    pub contexts: BTreeMap<CanonicalSymbolId, CanonicalStableDeclarationContext>,
+    /// Final checked callable signatures, including the overload discriminator of a lexical owner.
+    pub signatures: BTreeMap<CanonicalSymbolId, DeclarationSignature>,
+}
+
+impl StableIdentityProjection {
+    /// Project a checked identity without allowing a scope-table index or diagnostic coordinate to participate.
+    pub fn declaration(&self, identity: &CanonicalSymbolId) -> Option<StableDeclarationId> {
+        self.declaration_with_owners(identity, &mut Vec::new())
+    }
+
+    /// Follow named owners with a cycle guard; malformed ownership never creates a portable key.
+    fn declaration_with_owners(
+        &self,
+        identity: &CanonicalSymbolId,
+        owners: &mut Vec<CanonicalSymbolId>,
+    ) -> Option<StableDeclarationId> {
+        if owners.contains(identity) {
+            return None;
+        }
+        let context = if identity.scope_discriminant.is_some() {
+            let context = self.contexts.get(identity)?;
+            owners.push(identity.clone());
+            let owner = self.declaration_with_owners(&context.owner, owners)?;
+            owners.pop();
+            Some(StableDeclarationContext {
+                owner,
+                binding_ordinal: context.binding_ordinal,
+            })
+        } else {
+            None
+        };
+        StableDeclarationId::from_canonical(identity, self.signatures.get(identity).cloned(), context)
+    }
+
+    /// Resolve a nominal type through its retained checked binding, keeping ordinary unbound type names literal.
+    pub fn type_name(&self, name: &str, bindings: &BTreeMap<String, CanonicalSymbolId>) -> Option<String> {
+        if let Some(identity) = bindings.get(name) {
+            return Some(self.declaration(identity)?.render_compact());
+        }
+        (!name.starts_with(crate::body_ir::NOMINAL_CARRIER_KEY_PREFIX)).then(|| name.to_owned())
+    }
+}
 
 /// Stable location of a declaration within its semantic owner.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

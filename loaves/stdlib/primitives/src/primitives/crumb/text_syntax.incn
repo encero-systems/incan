@@ -82,4 +82,3 @@ pub def last_segment(path: str) -> str:
     """Return the final dotted path segment."""
     parts = path.split(".")
     return parts[len(parts) - 1]
-

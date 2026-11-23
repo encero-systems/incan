@@ -21,6 +21,8 @@ impl TypeChecker {
             body_checks: Vec::new(),
             checked_bodies: Vec::new(),
             checked_declarations: Vec::new(),
+            produced_declaration_records: std::collections::BTreeMap::new(),
+            callable_declaration_reuse: std::collections::BTreeMap::new(),
             lazy_result_bodies: HashSet::new(),
             iteration_replacement_bodies: HashSet::new(),
             dictionary_lookup_bodies: HashSet::new(),
@@ -89,6 +91,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            callable_body_reuse: None,
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
             body_ir_decorator_factory_span: None,
@@ -108,6 +111,7 @@ impl TypeChecker {
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
+            view_type_cache: RefCell::new(HashMap::new()),
             visibility_point: VisibilityPoint::default(),
             dependency_exports: HashMap::new(),
             selected_dependency_interfaces: Vec::new(),
@@ -160,6 +164,12 @@ impl TypeChecker {
             pending_trait_supertraits: Vec::new(),
             native_queries: NativeQueryState::default(),
         }
+    }
+
+    /// Install producer-validated bodies for one exact program. Declaration collection and final publication still
+    /// run; only admitted scalar bodies with complete source-call witnesses skip checking and feed Body IR directly.
+    pub fn set_callable_body_reuse(&mut self, products: crate::declaration_interface::ValidatedCallableBodies) {
+        self.callable_body_reuse = Some(products);
     }
 
     /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]` for checked direct imports and derives.

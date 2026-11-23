@@ -392,6 +392,42 @@ fn method_frames_borrow_receiver_and_inputs() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+/// A method on a carrier that already retains source loans uses its authenticated carrier call rather than asking
+/// Body IR to materialize a second explicit invocation for the same receiver.
+#[test]
+fn retained_carrier_method_uses_ordinary_receiver_materialization() -> Result<(), Box<dyn std::error::Error>> {
+    let module = admitted(
+        "trait Plan:\n    def width(self) -> int:\n        pass\nclass StoredPlan with Plan:\n    pub value: int\n    def width(self) -> int:\n        return self.value\nclass Source[P with Plan]:\n    pub plan: P\n    pub def finish(mut self) -> Result[int, str]:\n        return Ok(self.plan.width())\nmodel Selected[P with Plan]:\n    plan: P\n    pub def source(self) -> Source[P]:\n        return Source(plan=self.plan)\nclass Envelope:\n    pub plan: StoredPlan\n    pub def select(self) -> Selected[Borrowed[StoredPlan]] from self.plan:\n        return Selected[Borrowed[StoredPlan]](plan=self.plan)\ndef main() -> Result[None, str]:\n    envelope = Envelope(plan=StoredPlan(value=1))\n    selected = envelope.select()\n    mut source = selected.source()\n    value = source.finish()?\n    assert value == 1\n    return Ok(None)\n",
+    )?;
+    let caller = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing carrier caller")?;
+    assert!(
+        caller
+            .block
+            .stmts
+            .iter()
+            .all(|statement| !matches!(statement.kind, bir::StatementKind::Unsupported { .. })),
+        "{:?}",
+        caller.block
+    );
+    assert!(caller.block.stmts.iter().any(|statement| {
+        matches!(
+            &statement.kind,
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "finish"
+                && matches!(args.first(), Some(bir::ArgumentElement::One(bir::Operand::Place(read)))
+                    if read.fact == bir::OwnershipFact::MutBorrow)
+        )
+    }));
+    Ok(())
+}
+
 /// A view body returns a borrow of its declared place, and a caller runs the view call for its effects and aliases
 /// the substituted place: the later receiver is the original field, not a copy or a reference-valued local.
 #[test]

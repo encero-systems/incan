@@ -9,6 +9,8 @@ pub struct DeclarationArtifacts {
     pub record_package_identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
     /// Explicit callable contracts keyed by the checked declaring identity, including refused executable declarations.
     pub ownership_contracts: BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
+    /// Declaration-scoped generic binders for source callables whose result obligations survive graph checking.
+    pub(crate) callable_type_params: BTreeMap<CanonicalSymbolId, Vec<String>>,
     /// Checked source-signature identities published before body checks or native representation selection.
     pub source_identities: BTreeMap<CanonicalSymbolId, incan_semantics_core::stable_identity::StableDeclarationId>,
     /// Body IR-only canonical trait adoptions, retaining marker protocols and ordered checked arguments.

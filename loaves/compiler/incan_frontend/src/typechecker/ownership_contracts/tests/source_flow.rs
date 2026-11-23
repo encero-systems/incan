@@ -2,16 +2,116 @@
 
 use super::*;
 
-/// Resource-observer fixtures must reach cleanup through represented call boundaries. An ordinary helper
-/// retains its selected header but still needs non-Copy argument or nominal returned-dependency facts.
+const BORROWED_GENERIC_CARRIER: &str = r#"
+trait Plan:
+    def width(self) -> int:
+        pass
+
+class StoredPlan with Plan:
+    pub value: int
+
+    def width(self) -> int:
+        return self.value
+
+class Walker[P with Plan]:
+    pub plan: P
+    pub total: int = 0
+
+    pub def write(mut self, value: int) -> None:
+        self.total += value + self.plan.width()
+
+    pub def finish(self) -> int:
+        return self.total
+
+model Selected[P with Plan]:
+    plan: P
+
+    pub def walker(self) -> Walker[P]:
+        return Walker(plan=self.plan)
+
+    pub def walker_from(self, total: int) -> Walker[P]:
+        return Walker(plan=self.plan, total=total)
+
+class Envelope:
+    pub plan: StoredPlan
+    pub total: int = 0
+
+    pub def select(self) -> Selected[Borrowed[StoredPlan]] from self.plan:
+        return Selected[Borrowed[StoredPlan]](plan=self.plan)
+
+    pub def append(mut self, value: int) -> None:
+        self.total += value
+
+"#;
+
+/// A dependency declared by the original selector survives a generic carrier method result until that result's last
+/// use. Mutation after consuming the walker is valid; mutation while the walker remains live is refused.
+#[test]
+fn generic_carrier_method_result_retains_receiver_dependency_issue2972() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker()\n    walker.write(3)\n    completed = walker.finish()\n    envelope.append(completed)\n    assert envelope.total == 5\n"
+    ))?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+
+    let chained = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    completed = envelope.select().walker().finish()\n    envelope.append(completed)\n    assert envelope.total == 0\n"
+    ))?;
+    assert!(chained.errors.is_empty(), "{:?}", chained.errors);
+
+    let accepted_with_argument = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker_from(1)\n    walker.write(3)\n    completed = walker.finish()\n    envelope.append(completed)\n    assert envelope.total == 6\n"
+    ))?;
+    assert!(
+        accepted_with_argument.errors.is_empty(),
+        "{:?}",
+        accepted_with_argument.errors
+    );
+
+    let refused = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker()\n    envelope.append(1)\n    walker.write(3)\n"
+    ))?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        refused.errors
+    );
+
+    let refused_with_argument = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker_from(1)\n    envelope.append(1)\n    walker.write(3)\n"
+    ))?;
+    assert!(
+        refused_with_argument
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        refused_with_argument.errors
+    );
+    Ok(())
+}
+
+/// An explicitly owned factory may assemble fresh enum payloads without inventing a dependency on caller storage.
+#[test]
+fn owned_factory_accepts_fresh_enum_payloads() -> Result<(), Box<dyn std::error::Error>> {
+    let checker = checked(
+        "enum Metadata:\n    Text(str)\n    Binary(bytes)\n    List(list[Metadata])\nenum Policy(str):\n    Required = \"required\"\nmodel Description:\n    metadata: Metadata\n    policy: Policy\ndef identity() -> bytes:\n    return b\"amount\"\ndef description() -> Owned[Description]:\n    return Description(metadata=Metadata.List([Metadata.Text(\"amount\"), Metadata.Binary(identity())]), policy=Policy.Required)\ndef main() -> None:\n    value = description()\n",
+    )?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    Ok(())
+}
+
+/// Resource-observer fixtures must reach cleanup through represented call boundaries. Ordinary read-only
+/// duckborrows retain their selected header; nominal returned dependencies still need an owned-result contract.
 #[test]
 fn resource_probe_wrappers_retain_exact_source_boundary_refusals() -> Result<(), Box<dyn std::error::Error>> {
+    let ordinary = checked(
+        "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
+    )?;
+    assert!(ordinary.errors.is_empty(), "{:?}", ordinary.errors);
     for (source, call, reason) in [
-        (
-            "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
-            "\"join\"",
-            "ordinary argument requires inferred access or mutable binding facts",
-        ),
         (
             "class Holder:\n    pub value: int\ndef make(value: int) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
             "make(1)",
@@ -197,15 +297,16 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
             .iter()
             .any(|error| error.stable_code() == Some("INCAN-T0126"))
     );
-    for source in [
-        "def inspect(value: Borrowed[str]) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n",
-        "def inspect(value: Borrowed[Measure]) -> int:\n    return len(value)\nclass Measure:\n    def __len__(self) -> int:\n        return 1\n",
-    ] {
-        assert!(
-            source_graph(source)?.is_err(),
-            "unprojected observer admitted: {source}"
-        );
-    }
+    let ordinary = "def inspect(value: Borrowed[str]) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n";
+    assert!(
+        source_graph(ordinary)?.is_ok(),
+        "ordinary duckborrow refused: {ordinary}"
+    );
+    let unprojected = "def inspect(value: Borrowed[Measure]) -> int:\n    return len(value)\nclass Measure:\n    def __len__(self) -> int:\n        return 1\n";
+    assert!(
+        source_graph(unprojected)?.is_err(),
+        "unprojected observer admitted: {unprojected}"
+    );
     let shadowed = checked(
         "def inspect(value: Borrowed[str]) -> None:\n    print(value)\ndef print(value: str) -> None:\n    pass\n",
     )?;
@@ -390,6 +491,23 @@ fn explicit_transfer_uses_copy_evidence() -> Result<(), Box<dyn std::error::Erro
         let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
         assert_eq!(!analysis.conflicts.is_empty(), conflict, "{source}\n{analysis:?}");
     }
+
+    let retained = checked(
+        "model Item:\n    value: int\ndef retain(mut items: BorrowedMut[list[Item]], item: Owned[Item]) -> None:\n    items.append(item)\ndef main() -> None:\n    mut items: list[Item] = []\n    retain(items, Item(value=1))\n",
+    )?;
+    assert!(retained.errors.is_empty(), "{:?}", retained.errors);
+
+    let used_after_transfer = checked(
+        "model Item:\n    value: int\ndef retain(mut items: BorrowedMut[list[Item]], item: Owned[Item]) -> None:\n    items.append(item)\n    print(item.value)\n",
+    )?;
+    assert!(
+        used_after_transfer
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        used_after_transfer.errors
+    );
     Ok(())
 }
 

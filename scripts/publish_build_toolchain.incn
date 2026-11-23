@@ -94,7 +94,7 @@ def publish_host(commit: str, bundle: HostBundle, stage: Path) -> Result[str, st
     _ = bundle.archive.copy(directory.joinpath("toolchain.tar.zst"), true, true).map_err((error) => error.message())?
     _ = bundle.oven.copy(directory.joinpath("incan"), true, true).map_err((error) => error.message())?
     _ = bundle.lsp.copy(directory.joinpath("incan-lsp"), true, true).map_err((error) => error.message())?
-    reference = f"ghcr.io/encero-systems/incan.pub/toolchain/incan:{commit}-{bundle.target}"
+    reference = f"ghcr.io/encero-systems/loaves.pub/toolchain/incan:{commit}-{bundle.target}"
     mut command = Command.new("oras")
     command.current_dir(directory.0)
     for argument in push_arguments(reference, commit, bundle.target):

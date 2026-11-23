@@ -6,6 +6,33 @@
 
 use super::*;
 
+#[test]
+fn malformed_local_in_generic_class_keeps_formatter_diagnostic_focused() -> Result<(), String> {
+    let source = r#"
+class Source[T]:
+    def select(self, value: T) -> T:
+        mut selected: T
+        return value
+
+    def finish(self) -> int:
+        return 1
+"#;
+    let error = crate::format_source(source)
+        .err()
+        .ok_or_else(|| "formatter accepted an uninitialized local".to_string())?
+        .to_string();
+
+    assert!(
+        error.contains("Expected '=' in assignment"),
+        "formatter lost the owning assignment diagnostic: {error}"
+    );
+    assert!(
+        !error.contains("Expected declaration"),
+        "formatter reported the following class member at module scope: {error}"
+    );
+    Ok(())
+}
+
 fn assert_decl_block_docstring_markers(doc: Option<&str>, context: &str) -> Result<(), FormatError> {
     let Some(doc) = doc else {
         return Err(FormatError::SyntaxError(format!(

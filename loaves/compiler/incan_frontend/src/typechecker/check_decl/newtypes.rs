@@ -33,7 +33,7 @@ impl TypeChecker {
         self.validate_made_private_decorators(&nt.decorators, nt.visibility, &format!("newtype '{}'", nt.name));
 
         // Check underlying type exists
-        let underlying = self.resolve_type_checked(&nt.underlying);
+        let underlying = self.resolve_stored_type_checked(&nt.underlying);
         if matches!(underlying, ResolvedType::Unknown) {
             self.errors.push(errors::unknown_symbol(
                 &format!("{:?}", nt.underlying.node),

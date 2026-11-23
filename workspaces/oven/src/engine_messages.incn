@@ -50,41 +50,6 @@ pub model Captured:
     pub snapshot: str
 
 
-pub model Prepare:
-    """Compiler-owned preparation descriptors for one stage."""
-
-    pub stage: str
-    pub snapshot: str
-    pub demand_root: str
-    pub producer_profile: str
-
-
-pub model NeedPrerequisite:
-    """Earlier-rank scheduling input; never a diagnostic or absence witness."""
-
-    pub keys_root: str
-    pub earlier_rank: int
-
-
-pub model Evaluate:
-    """Ready work and activation descriptors under one resource reservation."""
-
-    pub work_root: str
-    pub snapshot: str
-    pub prepared_root: str
-    pub reservation: str
-    pub cancellation_generation: int
-
-
-pub model Produced:
-    """Staged results and evidence roots, awaiting publication and selection."""
-
-    pub staged_root: str
-    pub witness_root: str
-    pub diagnostic_root: str
-    pub counter_root: str
-
-
 pub model Query:
     """Snapshot-bound read-only query with bounded page limits."""
 
@@ -224,10 +189,6 @@ pub enum Message:
     Submit(Submit)
     Accepted(Accepted)
     Captured(Captured)
-    Prepare(Prepare)
-    NeedPrerequisite(NeedPrerequisite)
-    Evaluate(Evaluate)
-    Produced(Produced)
     Query(Query)
     Page(Page)
     Event(Event)

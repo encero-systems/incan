@@ -285,6 +285,67 @@ impl TypeChecker {
         }
     }
 
+    /// Reconstruct only the lexical frame consumed by a changed function body from its already collected and
+    /// producer-validated declaration value. This performs no annotation, default, decorator or ownership checking.
+    pub(in crate::typechecker) fn prepare_reused_function_body(
+        &mut self,
+        func: &FunctionDecl,
+        decl_span: Span,
+        binding: &FunctionBindingInfo,
+    ) -> PreparedFunctionCheck {
+        self.symbols.enter_scope(ScopeKind::Function);
+        let previous_annotation_owner = self.enter_annotation_owner(&func.name, &[]);
+        self.current_type_param_bound_details.push(HashMap::new());
+
+        // ---- Parameter frame: bind the accepted resolved types without revisiting their annotations or defaults ----
+        let resolved_param_types = binding
+            .params
+            .iter()
+            .map(|parameter| parameter.ty.clone())
+            .collect::<Vec<_>>();
+        let previous_mutable_bindings = std::mem::take(&mut self.mutable_bindings);
+        let mut_param_body = self.enter_mut_param_body(
+            &func.name,
+            SemanticSourceTargetKind::Function,
+            decl_span,
+            &func.params,
+            &resolved_param_types,
+        );
+        for (slot, (param, resolved_ty)) in func.params.iter().zip(resolved_param_types).enumerate() {
+            self.bind_checked_callable_parameter(param, resolved_ty, slot);
+        }
+
+        // ---- Body context: recover the accepted return and native-call owners without declaration validation ----
+        let body_return_type = binding.identity.as_ref().map_or_else(
+            || binding.return_type.clone(),
+            |identity| self.returned_value_type(identity, &binding.return_type),
+        );
+        self.symbols.set_return_type(body_return_type.clone());
+        self.current_return_error_type = body_return_type.result_err_type().cloned();
+        let previous_c_abi_raw_call_owner =
+            self.current_c_abi_raw_call_owner
+                .replace(crate::typechecker::CBindingRawCallOwner {
+                    name: func.name.clone(),
+                    visibility: func.visibility,
+                    declaration_span: decl_span,
+                });
+        let previous_function = self.receiver_plan_inputs.current_function.replace(decl_span);
+        PreparedFunctionCheck {
+            callable: self.suspend_prepared_callable(
+                previous_annotation_owner,
+                previous_mutable_bindings,
+                mut_param_body,
+                YieldContext::Disallowed,
+                true,
+            ),
+            function: std::mem::replace(&mut self.receiver_plan_inputs.current_function, previous_function),
+            c_abi_raw_call_owner: std::mem::replace(
+                &mut self.current_c_abi_raw_call_owner,
+                previous_c_abi_raw_call_owner,
+            ),
+        }
+    }
+
     /// Bind a function's declared generic parameters and bounds before checking its defaults or frame.
     pub(super) fn prepare_function_generic_context(&mut self, func: &FunctionDecl) -> Option<super::AnnotationOwner> {
         // Define type parameters so explicit generic bounds are visible in function-level type resolution.

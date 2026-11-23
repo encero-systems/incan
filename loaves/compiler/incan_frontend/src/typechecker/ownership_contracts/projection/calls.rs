@@ -48,6 +48,19 @@ pub(crate) struct CheckedInputInvocation<'a> {
 }
 
 impl<'a> CheckedInputBody<'a> {
+    /// Whether this call is authenticated as an operation on a local carrier that retains source loans, rather than
+    /// as an explicit invocation with independently materialized receiver and argument loans.
+    pub(crate) fn is_carrier_call(&self, span: HirSourceSpan, callee: &CanonicalSymbolId) -> bool {
+        !self.graph.invocations.contains_key(&span)
+            && self.graph.carrier_calls.contains_key(&span)
+            && self
+                .facts
+                .protocols
+                .explicit_input_calls
+                .get(&span)
+                .is_some_and(|call| &call.callee == callee)
+    }
+
     /// Select exactly the call already authenticated in this body's flow. Missing or unsupported source facts
     /// refuse rather than recovering access from the native signature or the spelling of the function.
     pub(crate) fn invocation(

@@ -740,12 +740,22 @@ pub def test_each_test_source_keeps_its_own_executable() -> Result[None, str]:
 
 
 pub def test_two_sources_of_one_project_test_at_once() -> Result[None, str]:
-    """The installed command tests two sources of one project at once, and each run finds its own tests."""
+    """The installed command gives concurrent Incan tests distinct executables and the root's test dependencies."""
     scratch = scratch_directory()?
     project = scratch.path().joinpath("pair")
-    write(project.joinpath("loaf.toml"), "[project]\nname = \"pair\"\nversion = \"0.1.0\"\n")?
+    support = scratch.path().joinpath("support")
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"pair\"\nversion = \"0.1.0\"\n[envs.test.dependencies]\nsupport = { loaf = \"support\", path = \"../support\" }\n",
+    )?
+    write(
+        support.joinpath("loaf.toml"),
+        "[project]\nname = \"support\"\nversion = \"0.1.0\"\n[rust]\ntype = \"lib\"\n",
+    )?
+    write(support.joinpath("src/lib.rs"), "pub fn value() -> i64 { 7 }\n")?
     for name in ["first", "second"]:
-        write(project.joinpath(f"tests/test_{name}.incn"), f"def test_{name}_case() -> None:\n    assert 1 + 1 == 2\n")?
+        source = "from rust::support import value\n\n" + f"def test_{name}_case() -> None:\n    assert value() == 7\n"
+        write(project.joinpath(f"tests/test_{name}.incn"), source)?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     first = started_test(binary, project, "first")?
     second = started_test(binary, project, "second")?

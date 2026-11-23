@@ -24,9 +24,16 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         let mut next_leading = self.consume_inter_statement_blank_prefix();
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
-            let mut stmt = self.statement()?;
-            stmt.leading_blank_lines = next_leading;
-            stmts.push(stmt);
+            match self.statement() {
+                Ok(mut stmt) => {
+                    stmt.leading_blank_lines = next_leading;
+                    stmts.push(stmt);
+                }
+                Err(error) => {
+                    self.errors.push(error);
+                    self.synchronize_statement();
+                }
+            }
             next_leading = self.consume_inter_statement_blank_prefix();
             if next_leading > 0 && self.check(&TokenKind::Dedent) && self.dedent_is_followed_by_outer_statement() {
                 self.pending_dedent_blank_lines = self.pending_dedent_blank_lines.max(next_leading);
@@ -34,6 +41,18 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(stmts)
+    }
+
+    /// Advance past one malformed statement without crossing its enclosing block boundary.
+    ///
+    /// Declaration recovery is too broad here: a `def` following a bad statement may be the next member of the same
+    /// class rather than a module declaration. Stopping at the first newline or dedent keeps the parser in the owning
+    /// method and lets its ordinary dedent handling return to the member parser.
+    fn synchronize_statement(&mut self) {
+        while !self.is_at_end() && !self.check(&TokenKind::Newline) && !self.check(&TokenKind::Dedent) {
+            self.advance();
+        }
+        self.match_token(&TokenKind::Newline);
     }
 
     /// Return whether the current `Dedent` leads back to an outer statement, not a declaration/member boundary.

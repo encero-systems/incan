@@ -50,6 +50,7 @@ fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph 
         dependent_locals: BTreeMap::new(),
         dependent_values: BTreeSet::new(),
         operations: BTreeMap::new(),
+        carrier_calls: BTreeMap::new(),
         owned_locals: BTreeMap::new(),
         invocations: BTreeMap::new(),
         closures: BTreeMap::new(),

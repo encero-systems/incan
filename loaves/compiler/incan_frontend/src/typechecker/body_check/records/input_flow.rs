@@ -218,6 +218,15 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         operations.push((key, row));
     }
     ordered_fields(operations, fields)?;
+    let mut carrier_calls = Vec::new();
+    for (span, loans) in &graph.carrier_calls {
+        let mut row = vec![anchor(positions, *span)?];
+        let key = canonical_key(&row);
+        row.push(loans.len().to_string());
+        row.extend(loans.iter().map(|loan| loan.0.to_string()));
+        carrier_calls.push((key, row));
+    }
+    ordered_fields(carrier_calls, fields)?;
     let mut invocations = Vec::new();
     for (span, invocation) in &graph.invocations {
         let mut row = vec![anchor(positions, *span)?];
@@ -432,6 +441,11 @@ impl Reader<'_> {
             dependent_values: self.span_set()?,
             owned_locals: self.ordered_map(Self::identity, Self::owned_initialization)?,
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
+            carrier_calls: if schema >= 4 {
+                self.ordered_map(Self::semantic_span, Self::loan_ids)?
+            } else {
+                BTreeMap::new()
+            },
             invocations: self.ordered_map(Self::semantic_span, |reader| reader.invocation(schema))?,
             closures: self.ordered_map(Self::semantic_span, Self::closure)?,
             mutation: MutationBody::default(),
