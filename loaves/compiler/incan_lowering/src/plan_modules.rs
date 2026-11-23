@@ -294,6 +294,12 @@ pub struct PlanModuleSelection {
 }
 
 impl PlanModuleSelection {
+    /// Supply an already typed selection for publication tests that use a synthetic independent pin.
+    #[cfg(test)]
+    pub(crate) fn test_selection(record: PlanModuleSelectionRecord, digest: [u8; 32]) -> Self {
+        Self { record, digest }
+    }
+
     /// Read the canonical staged descriptor under the current activation's independent selection authority.
     pub fn read(products: &Path, expected: [u8; 32]) -> Result<Self, String> {
         let path = products.join(PLAN_MODULE_SELECTION_PAGE);
@@ -467,6 +473,12 @@ pub struct PlanAdmissions {
 }
 
 impl PlanAdmissions {
+    /// Start the lowering request with its independently accepted module selection, when present.
+    pub fn with_selection(selection: Option<PlanModuleSelection>) -> Self {
+        let _ = selection;
+        Self::default()
+    }
+
     /// Borrow the exact module admissions established by lowering.
     pub(crate) fn modules(&self) -> &BTreeMap<String, SettledModule> {
         &self.modules

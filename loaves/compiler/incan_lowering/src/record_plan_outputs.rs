@@ -8,9 +8,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use incan_mir_plan_native::{
-    ADMITTED_DEFINITIONS, AdmittedDefinition, Function, INTERFACE_REPORT, LoweringEvent, NATIVE_DEFINITIONS,
-    NativeInterface, NominalKind, NominalReference, Plan, PlanType, REPOSITION_MODULE_PAGE, carrier_position,
-    decode_lowering_event, decode_lowering_refusal, decode_plan_function_record, decode_plan_module,
+    ADMITTED_DEFINITIONS, AdmittedDefinition, CompactAdmissionPin, Function, INTERFACE_REPORT, LoweringEvent,
+    NATIVE_DEFINITIONS, NativeInterface, NominalKind, NominalReference, Plan, PlanType, REPOSITION_MODULE_PAGE,
+    carrier_position, decode_lowering_event, decode_lowering_refusal, decode_plan_function_record, decode_plan_module,
     encode_admitted_definitions, encode_entry_record, encode_lowering_event, encode_native_interface,
     encode_record_plan_products, is_carrier_index, place_admitted_event, product_frame_names, verify_entry_record,
 };
@@ -30,7 +30,7 @@ pub fn publish_plan_records(
     products: &str,
     report: &str,
     admissions: &PlanAdmissions,
-) -> Result<(), String> {
+) -> Result<Option<CompactAdmissionPin>, String> {
     let report_path = Path::new(report);
     let mut events = scalar_events(report_path)?;
     let restored = append_admitted_events(
@@ -60,7 +60,8 @@ pub fn publish_plan_records(
     )?;
     publish_native_definitions(plan, report_path, &events, &restored)?;
     if !publishable {
-        return refuse_interface(plan, report, &events, &carried);
+        refuse_interface(plan, report, &events, &carried)?;
+        return Ok(None);
     }
     if keyed.len() != plan.functions.len() {
         return Err("native-interface has an unwitnessed plan-function member".into());
@@ -70,14 +71,18 @@ pub fn publish_plan_records(
     // compiles exactly as it would have.
     let main = match ordinary_entry(plan) {
         Ok(main) => main,
-        Err(refusal) => return report_scalar_refusal(Some(report), INTERFACE_IDENTITY, "main", &refusal),
+        Err(refusal) => {
+            report_scalar_refusal(Some(report), INTERFACE_IDENTITY, "main", &refusal)?;
+            return Ok(None);
+        }
     };
     let interface_attempt = enter_producer("compiler", "native-interface", report, "encode");
     let encoded = match encode_record_plan_products(plan, keyed, references) {
         Ok(encoded) => encoded,
         Err(refusal) => {
             finish_producer(interface_attempt, "refused");
-            return report_scalar_refusal(Some(report), INTERFACE_IDENTITY, INTERFACE_IDENTITY, &refusal);
+            report_scalar_refusal(Some(report), INTERFACE_IDENTITY, INTERFACE_IDENTITY, &refusal)?;
+            return Ok(None);
         }
     };
     finish_producer(interface_attempt, "produced");
@@ -134,7 +139,8 @@ pub fn publish_plan_records(
     write(
         &report_path.join(INTERFACE_REPORT),
         &encode_native_interface(&interface)?,
-    )
+    )?;
+    Ok(None)
 }
 
 /// Name a native input for every plan function no event names, so native incremental reuse can track every definition
