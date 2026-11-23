@@ -23,6 +23,7 @@ from pub::incan_platform.store import (
     EXPECT_ABSENT_OR_DAMAGED,
     Lookup,
     Snapshot,
+    SnapshotAdmission,
     begin,
     begin_compared,
     commit,
@@ -524,19 +525,103 @@ pub def test_a_commit_s_manifest_does_not_grow_with_the_store_s_generations() ->
 
 pub def test_a_snapshot_reads_its_manifest_once() -> Result[None, str]:
     """
-    Opening a snapshot reads, checks and decodes the selected generation's manifest once: its lease is registered
-    under the same lifecycle gate, against the manifest just decoded. A cold test case opens about twenty snapshots.
+    A request authenticates a generation once across its selected views. A publisher can advance CURRENT while each
+    view keeps its own lease, and collection expires one old view without expiring its peer.
     """
+    if get_or("INCAN_STORE_PROOF_CHILD", "") == "publish-peers":
+        return publish_peer_replacements(Path(get_or("INCAN_STORE_PROOF_ROOT", "")))
     scratch = scratch_directory()?
-    root = scratch.path().joinpath("store")
-    _ = write_one(root, "key", "value").map_err((error) => error.message())?
+    mut counts: list[int] = []
+    for extra in [0, 32]:
+        root = scratch.path().joinpath(f"store-{extra}")
+        prepare_view_admission(root, extra)?
+        counts.append(prove_view_admission(root, extra + 2)?)
+    assert counts == [1, 1], f"opening two views of one generation read its manifest {counts} times"
+    return Ok(None)
+
+
+def prepare_view_admission(root: Path, extra: int) -> Result[None, str]:
+    """Publish different values in two requested views and optionally enlarge the immutable inventory."""
+    mut group = [
+        put(begin(snapshot(root).map_err((error) => error.message())?), "key", b"home-old"),
+        put(begin(snapshot(root, "peer").map_err((error) => error.message())?), "key", b"peer-old"),
+    ]
+    for entry in range(extra):
+        extra_view = snapshot(root, f"unselected-{entry}").map_err((error) => error.message())?
+        group.append(put(begin(extra_view), "key", b"unselected"))
+    _ = commit_group(group).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def prove_view_admission(root: Path, views: int) -> Result[int, str]:
+    """Count just the admissions, then exercise their independent leases across a real publishing process."""
+    mut admission = SnapshotAdmission.for_store(store_path(root))
     observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
     before = observed_work.get("store_manifest_read", 0)
-    held = snapshot(root).map_err((error) => error.message())?
+    mut home = admission.open().map_err((error) => error.message())?
+    mut peer = admission.open("peer").map_err((error) => error.message())?
     reads = observed_work.get("store_manifest_read", 0) - before
     observe_work(WorkObserver())
-    assert text(lookup(held, "key")) == "value"
-    assert reads == 1, f"opening one snapshot read its manifest {reads} times"
+    assert home.generation == peer.generation and home.digest == peer.digest
+    path = Path(manifest_path(home.root, home.generation, home.digest).value)
+    size = path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    println(f"request admission: {views} views, {reads} manifest opens, {reads * size} manifest bytes")
+
+    mut command = proof_command("test_a_snapshot_reads_its_manifest_once")?
+    command.env("INCAN_STORE_PROOF_CHILD", "publish-peers").env("INCAN_STORE_PROOF_ROOT", root.0)
+    mut child = command.spawn().map_err((error) => str(error))?
+    assert child.wait().map_err((error) => str(error))?.success(), "concurrent publisher or collector failed"
+    assert text(lookup(home, "key")) == "home-old"
+    assert text(lookup(peer, "key")) == "peer-old"
+    observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
+    refreshed = observed_work.get("store_manifest_read", 0)
+    latest = admission.open("peer").map_err((error) => error.message())?
+    latest_home = admission.open().map_err((error) => error.message())?
+    refreshed_reads = observed_work.get("store_manifest_read", 0) - refreshed
+    observe_work(WorkObserver())
+    assert refreshed_reads == 1, f"opening two views after CURRENT advanced read {refreshed_reads} manifests"
+    assert latest.generation > peer.generation and text(lookup(latest, "key")) == "peer-new"
+    assert latest_home.generation == latest.generation and latest_home.digest == latest.digest
+    assert text(lookup(latest_home, "key")) == "home-new"
+
+    # The collector can now take home's lease lock exclusively, while peer's own guard still protects its pages.
+    home.pin = None
+    _ = collect_layouts(root).map_err((error) => error.message())?
+    match lease(home):
+        Ok(_) => return Err("a released view reopened through the retained peer's manifest")
+        Err(error) => assert error.kind == "expired", error.message()
+    assert text(lookup(peer, "key")) == "peer-old"
+    peer.pin = None
+    _ = collect_layouts(root).map_err((error) => error.message())?
+    assert not path.is_file(), "the last released view kept the old manifest alive"
+    println(f"request admission: {views} views, current values advanced and old leases expired independently")
+    return Ok(reads)
+
+
+def publish_peer_replacements(root: Path) -> Result[None, str]:
+    """Replace both views in one publication and collect while the parent holds the old leases."""
+    mut home = snapshot(root).map_err((error) => error.message())?
+    mut peer = snapshot(root, "peer").map_err((error) => error.message())?
+    previous = Path(manifest_path(home.root, home.generation, home.digest).value)
+    old_bytes = previous.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    group = [put(begin(home), "key", b"home-new"), put(begin(peer), "key", b"peer-new")]
+    home.pin = None
+    peer.pin = None
+    observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
+    before = observed_work.get("store_manifest_read", 0)
+    published = commit_pinned(group, home.view).map_err((error) => error.message())?
+    reads = observed_work.get("store_manifest_read", 0) - before
+    observe_work(WorkObserver())
+    selected = published.snapshot
+    following = Path(manifest_path(selected.root, selected.generation, selected.digest).value)
+    new_bytes = following.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    assert published.pin is not None
+    assert selected.generation > home.generation and text(lookup(selected, "key")) == "home-new"
+    # The new manifest is opened once to audit the execution pin before CURRENT is switched.
+    manifest_bytes = old_bytes * (reads - 1) + new_bytes
+    println(f"publication: {reads} manifest opens, {manifest_bytes} manifest bytes")
+    _ = collect_layouts(root).map_err((error) => error.message())?
+    assert reads == 2, f"publication opened {reads} manifests for one prior and one new generation"
     return Ok(None)
 
 

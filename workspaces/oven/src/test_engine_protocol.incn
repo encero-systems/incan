@@ -19,10 +19,10 @@ from engine_programs import (
     view_sealed,
 )
 from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection
-from engine_epochs import prepare_submit
+from engine_epochs import prepare_admitted_submit, prepare_submit
 from engine_client import service_generation, service_identity
-from pub::incan_platform.store import Transaction, durable_commits, begin, get, put, commit, commit_group
-from store_path_conversion import compact, snapshot
+from pub::incan_platform.store import SnapshotAdmission, Transaction, durable_commits, begin, get, put, commit, commit_group
+from store_path_conversion import compact, snapshot, store_path
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
@@ -859,8 +859,9 @@ def check_collection_before_selection() -> Result[None, str]:
     store = root.joinpath("store")
     for turn in range(2):
         view = f"selection-{turn}"
-        captured = prepare_submit(
-            store,
+        mut admission = SnapshotAdmission.for_store(store_path(store))
+        captured = prepare_admitted_submit(
+            admission,
             Submit(
                 command="build",
                 view=view,
@@ -873,6 +874,7 @@ def check_collection_before_selection() -> Result[None, str]:
         handle = program_handle(captured.identity, "collection-proof", view)?
         produced = obtain(
             store,
+            admission,
             captured.revision,
             handle,
             root.joinpath("console").0,

@@ -18,8 +18,10 @@ from engine_capture import (
     selected_home,
 )
 from engine_messages import Submit
-from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
-from store_path_conversion import snapshot
+from pub::incan_platform.store import (
+    Lookup, Snapshot, SnapshotAdmission, Transaction, begin_compared, commit, lookup, owned, put,
+)
+from store_path_conversion import snapshot, store_path
 from features import FeatureRequest
 from observation import SourceReading, children, observe, trace
 from unit import describe, discovered_project
@@ -67,19 +69,31 @@ pub def prepare_submit(
     discover_standalone: bool = false,
     canonical_source: Option[Path] = None,
 ) -> Result[CapturedRequest, str]:
+    """Capture a request that has no admission scope from a preceding stage."""
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    return prepare_admitted_submit(admission, submit, discover_standalone, canonical_source)
+
+
+pub def prepare_admitted_submit(
+    mut admission: SnapshotAdmission,
+    submit: Submit,
+    discover_standalone: bool = false,
+    canonical_source: Option[Path] = None,
+) -> Result[CapturedRequest, str]:
     """Prepare this request's authoritative inputs without publishing them."""
-    match prepare_capture(store, submit, discover_standalone, canonical_source, false)?:
+    match prepare_capture(admission, submit, discover_standalone, canonical_source, false)?:
         Some(captured) => return Ok(captured)
         None => return Err("authoritative capture returned no input epoch")
 
 
-pub def probe_submit(store: Path, submit: Submit) -> Result[Option[CapturedRequest], str]:
+pub def probe_submit(mut admission: SnapshotAdmission, submit: Submit) -> Result[Option[CapturedRequest], str]:
     """Select an unchanged caller-local epoch, leaving changed source reads to the producing service."""
-    return prepare_capture(store, submit, false, None, true)
+    return prepare_capture(admission, submit, false, None, true)
 
 
 def prepare_capture(
-    store: Path, submit: Submit, discover_standalone: bool, canonical_source: Option[Path], probe_only: bool,
+    mut admission: SnapshotAdmission, submit: Submit, discover_standalone: bool, canonical_source: Option[Path],
+    probe_only: bool,
 ) -> Result[Option[CapturedRequest], str]:
     """
     Capture a file request and prepare its revision without publishing any part of the request.
@@ -111,7 +125,7 @@ def prepare_capture(
         "settled-source-observation/3", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
     ]
     head = f"incan.engine.capture-head\t{fingerprint(inputs)?}"
-    before = snapshot(store, submit.view).map_err((error) => error.message())?
+    before = admission.open(submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
     # 2. Every engine request starts at its selected source, and build and run select the same program inputs: the verb
     #    is an execution action, not a compiled identity. The unit's recorded source graphs bound its reach once they

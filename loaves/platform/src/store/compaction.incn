@@ -30,7 +30,7 @@ pub def compact(root: Path) -> Result[Snapshot, StoreError]:
     latest = snapshot(root)?
     mut writes: list[Write] = []
     mut per_view: Dict[str, list[Write]] = {}
-    for entry in latest.views:
+    for entry in latest.views.as_ref():
         mut held_writes: list[Write] = []
         seen = snapshot(root, entry.view)?
         for leaf in index_entries(root, seen.index).map_err(index_failure)?:
@@ -46,7 +46,7 @@ pub def compact(root: Path) -> Result[Snapshot, StoreError]:
     ensure_directory(page_directory(root))?
     writer = PageWriter()
     mut built: list[ViewRoot] = []
-    for entry in latest.views:
+    for entry in latest.views.as_ref():
         held_encoded = encoded_frames(per_view[entry.view])?
         relocated = in_key_order(relocate(leaf_entries(held_encoded, name), encoded))
         built.append(ViewRoot(view=entry.view, root=build(writer, relocated).map_err(index_failure)?))
