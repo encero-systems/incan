@@ -1,0 +1,288 @@
+"""Signed RFC 125 audit documents from independent fixture keys."""
+
+from std.encoding.base64 import b64decode, b64encode
+from std.encoding.hex import unhexlify
+from std.fs import Path
+from std.json import JsonValue, parse
+from files import read, write
+from json_fields import required_items, required_text
+from lock_format import LockDependency, LockLoaf, LockToolchain, OvenLock, graph_identity, read_lock, write_lock
+from registry_advisory import audit_advisories
+from registry_audit_selection import LockedRegistryAudit, NO_REGISTRY_ORIGIN, audit_json, audit_locked_registries, audit_text
+from registry_audit_wire import VerifiedAudit, verify_audit_document
+from registry_configuration import read_registries
+from registry_observation import retain_audit, retained_audit
+from registry_trust import Key, KeyKind, Root, pin
+from scratch import scratch_directory
+from trust_policy import PUBLISHER, read_policy
+
+const REGISTRY: str = "8822a599af5b58bc7b2e535cfe9ef02ba5389c510ffb4c736f550c20857454cd"
+const ROOT: str = "89c8c566218f4277ad6cb5751e29676bacaab7027f724bbf725a6a17740f2d3d"
+const FIXTURE_NOW: int = 1795392150
+const STALE_NOW: int = 1795996951
+const BASE: str = "https://audit-fixture.invalid"
+
+
+pub def test_the_complete_signed_log_controls_a_locked_version() -> Result[None, str]:
+    """
+    1. Authenticate a publication and report it against the exact locked version.
+    2. Authenticate its signed withdrawal as an advancing prefix and clear that finding.
+    """
+    # 1. The complete publication log drives the finding and leaves other versions clear.
+    root = fixture_root()?
+    published = verify_audit_document(root, fixture("published")?, None, FIXTURE_NOW)?
+    assert published.checkpoint.length == 2
+    assert len(published.advisories) == 1
+    match audit_advisories("example/loaf", "1.2.3", published.advisories):
+        Err(reason) => assert reason == "example/loaf 1.2.3 has advisory INCAN-2026-0010: fixture vulnerability"
+        Ok(_) => return Err("the signed publication passed audit")
+    assert audit_advisories("example/loaf", "1.2.4", published.advisories).is_ok()
+
+    # 2. An authenticated append clears the issue for the original target.
+    withdrawn = verify_audit_document(root, fixture("withdrawn")?, Some(published.checkpoint), FIXTURE_NOW)?
+    assert withdrawn.checkpoint.length == 3
+    assert len(withdrawn.advisories) == 2
+    assert audit_advisories("example/loaf", "1.2.3", withdrawn.advisories).is_ok()
+    return Ok(None)
+
+
+pub def test_incomplete_reordered_and_tampered_signed_logs_are_refused() -> Result[None, str]:
+    """
+    1. Refuse fewer events than committed and events in the wrong order.
+    2. Refuse changed signed bytes and a checkpoint signer revoked by the root.
+    """
+    root = fixture_root()?
+    document = fixture("published")?
+    events = required_items(parse(document).map_err((error) => error.message())?, "events")?
+
+    # 1. Omitting or reordering entries leaves the original signed checkpoint intact.
+    refused(verify_audit_document(root, event_list(document, [events[0]])?, None, FIXTURE_NOW), "log length")?
+    refused(verify_audit_document(root, event_list(document, [events[1], events[0]])?, None, FIXTURE_NOW), "event sequence")?
+
+    # 2. An exact commitment is insufficient when the signing authority is missing.
+    encoded = required_text(events[1], "payload")?
+    payload = b64decode(encoded).map_err((error) => error.message())?
+    text = payload.decode("utf-8", "strict").map_err((_) => "the fixture payload is not UTF-8")?
+    changed = text.replace("fixture vulnerability", "different vulnerability")
+    tampered = document.replace(encoded, b64encode(changed.encode("utf-8")))
+    assert tampered != document
+    refused(verify_audit_document(root, tampered, None, FIXTURE_NOW), "statement signature does not verify")?
+    other = root_for("0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67",
+        "c84248d610c216a70ac930c7cbf36b3a3c8c84f8aa9472ca522344f5360d5b85")?
+    refused(verify_audit_document(other, document, None, FIXTURE_NOW), "does not match the pinned registry")?
+    refused(
+        verify_audit_document(root, fixture("revoked-checkpoint")?, None, FIXTURE_NOW),
+        "checkpoint signing key is revoked",
+    )?
+    return Ok(None)
+
+
+pub def test_an_advancing_signed_fork_and_a_stale_online_head_are_refused() -> Result[None, str]:
+    """
+    1. An independently signed, complete fork is rejected after the original prefix is observed.
+    2. Offline age exception still refuses rollback and preserves signature verification.
+    """
+    root = fixture_root()?
+    base = fixture("published")?
+    published = verify_audit_document(root, base, None, FIXTURE_NOW)?
+    observed = Some(published.checkpoint)
+
+    # 1. Both logs verify in isolation. Their prefixes disagree at the observed extent.
+    fork = fixture("advancing-fork")?
+    assert verify_audit_document(root, fork, None, FIXTURE_NOW).is_ok()
+    refused(verify_audit_document(root, fork, observed, FIXTURE_NOW), "observed log prefix")?
+
+    # 2. Offline verification permits the old timestamp but continues to enforce ancestry.
+    refused(verify_audit_document(root, base, None, STALE_NOW), "freshness bound")?
+    assert verify_audit_document(root, base, None, STALE_NOW, false).is_ok()
+    refused(verify_audit_document(root, fork, observed, STALE_NOW, false), "observed log prefix")?
+    withdrawn = verify_audit_document(root, fixture("withdrawn")?, observed, FIXTURE_NOW)?
+    refused(verify_audit_document(root, base, Some(withdrawn.checkpoint), STALE_NOW, false), "rolls back")?
+    return Ok(None)
+
+
+def fixture(name: str) -> Result[str, str]:
+    """Read the exact public signed HTTP document as UTF-8."""
+    return Path("tests/fixtures/registry-audit").joinpath(name + ".json").read_text("utf-8", "strict").map_err(
+        (error) => error.message(),
+    )
+
+
+def fixture_root() -> Result[Root, str]:
+    """Pin the fixture root separately from the response it authorizes."""
+    return root_for(REGISTRY, ROOT)
+
+
+def root_for(identity: str, material: str) -> Result[Root, str]:
+    """Pin a fixture's digest and raw Ed25519 key independently of response bytes."""
+    raw = unhexlify(material).map_err((error) => error.message())?
+    return pin(identity, Key(kind=KeyKind.Ed25519, material=raw))
+
+
+def event_list(text: str, values: list[JsonValue]) -> Result[str, str]:
+    """Change the returned event list without changing its signed checkpoint."""
+    mut fields = parse(text).map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
+    fields["events"] = JsonValue.array(values)
+    return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def refused(result: Result[VerifiedAudit, str], expected: str) -> Result[None, str]:
+    """Require a refusal for the asserted security invariant."""
+    match result:
+        Ok(_) => return Err(f"admitted a document that should refuse `{expected}`")
+        Err(message) => assert expected in message, message
+    return Ok(None)
+
+
+pub def test_root_configuration_uses_the_operator_boundary_and_pinned_digest() -> Result[None, str]:
+    """
+    1. Read both trusted layers and preserve the organization pin and policy when the user adds a mirror.
+    2. Refuse a different key digest, alternate case and a consuming project's own registration.
+    """
+    temporary = scratch_directory()?
+    directory = temporary.path()
+    user = directory.joinpath("user.toml")
+    organization = directory.joinpath("organization.toml")
+    project = directory.joinpath("receiver")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    config = read(Path("tests/fixtures/registry-audit/config.toml"))?
+
+    # 1. The organization decides freshness and the user can supply a second transport for the same pin.
+    write(organization, config + "checkpoint-max-age = \"4d\"\n[trust]\npublishers = [\"organization\"]\n")?
+    mirror = config.replace(BASE, "https://mirror.invalid/catalog/")
+    write(user, mirror + "checkpoint-max-age = \"1d\"\n[trust]\npublishers = [\"receiver-user\"]\n")?
+    registries = read_registries(user, Some(organization), project)?
+    assert len(registries) == 1
+    first = registries[0]
+    assert first.root.registry == REGISTRY
+    assert first.source == organization.0
+    assert first.max_age_seconds == 345600
+    assert first.audit_urls == [BASE + "/audit/v1.json", "https://mirror.invalid/catalog/audit/v1.json"]
+    assert verify_audit_document(first.root, fixture("published")?, None, FIXTURE_NOW).is_ok()
+    trust = read_policy(user, Some(organization), [], Some(project))?
+    assert trust.values(PUBLISHER) == ["organization", "receiver-user"]
+
+    # 2. Pins are exact and are selected only by operator authorities.
+    write(user, config.replace(REGISTRY, REGISTRY.upper()))?
+    assert read_registries(user, None, project).is_err()
+    write(user, config.replace(REGISTRY, "0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67"))?
+    assert read_registries(user, None, project).is_err()
+    repinned = config.replace(REGISTRY, "8d4973150c8a67729a41d4fda1746f3b045c0f689aa756a79452fa93451d5e18").replace(
+        "MCowBQYDK2VwAyEAicjFZiGPQnetbLV1Hilna6yqtwJ/cku/clpqF3QPLT0=",
+        "MCowBQYDK2VwAyEAdjvwHNQbSItnZdxS0pzWUbxG31VH2V3WrSRaIKcxMqs=",
+    )
+    write(user, repinned)?
+    assert read_registries(user, None, project).is_ok()
+    assert read_registries(user, Some(organization), project).is_err()
+    project_config = project.joinpath("config.toml")
+    write(project_config, config)?
+    match read_registries(project_config, None, project):
+        Ok(_) => return Err("the consuming project supplied its own audit root")
+        Err(reason) => assert "inside the consuming project" in reason, reason
+    return Ok(None)
+
+
+pub def test_a_delayed_audit_response_cannot_replace_the_durable_head() -> Result[None, str]:
+    """
+    1. Retain the signed publication and verify that a refused fork leaves it observable.
+    2. Advance with the signed withdrawal and replay the already fetched earlier response.
+    """
+    temporary = scratch_directory()?
+    directory = temporary.path()
+    root = fixture_root()?
+    store = directory.joinpath("bakery")
+    assert retained_audit(store, root, FIXTURE_NOW).is_err()
+
+    # 1. The accepted prefix survives a signed fork.
+    delayed = fixture("published")?
+    published = retain_audit(store, root, delayed, FIXTURE_NOW)?
+    fork = fixture("advancing-fork")?
+    assert retain_audit(store, root, fork, FIXTURE_NOW).is_err()
+    still_published = retained_audit(store, root, FIXTURE_NOW)?
+    assert still_published.checkpoint.head == published.checkpoint.head
+
+    # 2. A late request must compare against the newer durable snapshot.
+    withdrawn = retain_audit(store, root, fixture("withdrawn")?, FIXTURE_NOW)?
+    match retain_audit(store, root, delayed, FIXTURE_NOW):
+        Ok(_) => return Err("an earlier response overwrote the observed checkpoint")
+        Err(reason) => assert "rolls back" in reason, reason
+    final = retained_audit(store, root, STALE_NOW)?
+    assert final.checkpoint.head == withdrawn.checkpoint.head
+    assert final.checkpoint.length == 3
+    return Ok(None)
+
+
+pub def test_lock_projection_uses_the_recorded_registry_and_discloses_uncovered_sources() -> Result[None, str]:
+    """
+    1. Attribute a trusted finding to the exact registry-origin entry, excluding other roots and local origins.
+    2. Withdraw it in the same fixture while preserving coverage and the lock's bytes.
+    """
+    temporary = scratch_directory()?
+    directory = temporary.path()
+    lock_path = directory.joinpath("oven.lock")
+    write_lock(lock_path, fixture_lock()?)?
+    lock = read_lock(lock_path)?
+    before = read(lock_path)?
+    root = fixture_root()?
+
+    # 1. The same package/version under another origin has a different source.
+    blocked = verify_audit_document(root, fixture("published")?, None, FIXTURE_NOW)?
+    report = audit_locked_registries(lock, [blocked])?
+    assert len([row for row in report.coverage if row.covered]) == 1, "the pinned registry entry had no authenticated coverage"
+    assert len([row for row in report.coverage if row.reason == NO_REGISTRY_ORIGIN]) == 2
+    assert len(report.advisories) == 1
+    assert report.advisories[0].identifier == "INCAN-2026-0010"
+
+    # 2. Only the signed withdrawal clears the matching version.
+    cleared = verify_audit_document(root, fixture("withdrawn")?, Some(blocked.checkpoint), FIXTURE_NOW)?
+    after = audit_locked_registries(lock, [cleared])?
+    assert len([row for row in after.coverage if row.covered]) == 1
+    assert len(after.advisories) == 0
+    assert read(lock_path)? == before
+    return Ok(None)
+
+
+pub def test_package_audit_output_names_all_uncovered_origin_providers() -> Result[None, str]:
+    """Name the unsupported template, mix and asset origins even when a package audit has no findings."""
+    report = LockedRegistryAudit(coverage=[], advisories=[])
+    text = audit_text(report)
+    document = parse(audit_json(report)?).map_err((error) => error.message())?
+    for origin in ["template", "mix", "asset"]:
+        assert f"{origin} origins: not covered" in text
+    coverage = document.require("origin_coverage").map_err((error) => error.message())?
+    for origin in ["template", "mix", "asset"]:
+        assert required_text(coverage, origin)? == "not covered"
+    return Ok(None)
+
+
+pub def test_two_observations_for_the_same_registry_cannot_mix() -> Result[None, str]:
+    """A checkpoint from one authenticated response cannot label findings from another response of the same root."""
+    root = fixture_root()?
+    published = verify_audit_document(root, fixture("published")?, None, FIXTURE_NOW)?
+    withdrawn = verify_audit_document(root, fixture("withdrawn")?, Some(published.checkpoint), FIXTURE_NOW)?
+    match audit_locked_registries(fixture_lock()?, [published, withdrawn]):
+        Ok(_) => return Err("two generations of one registry were combined in the audit report")
+        Err(reason) => assert reason == f"multiple audit observations for registry sha256:{REGISTRY}", reason
+    return Ok(None)
+
+
+def fixture_lock() -> Result[OvenLock, str]:
+    """Build a graph-sealed lock with the same version under four distinct source identities."""
+    leaves = [
+        LockLoaf(name="example/loaf", version="1.2.3", origin="registry", registry=f"sha256:{REGISTRY}",
+            protocol="https", entry="registry-fixture"),
+        LockLoaf(name="example/loaf", version="1.2.3", origin="registry",
+            registry="sha256:0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67", entry="registry-other"),
+        LockLoaf(name="example/loaf", version="1.2.3", origin="toolchain", entry="compiled-toolchain"),
+        LockLoaf(name="example/loaf", version="1.2.3", origin="path", path="deps/loaf", entry="path-fixture"),
+    ]
+    root = LockLoaf(
+        name="app", version="1.0.0", origin="root",
+        dependencies=[LockDependency(key=leaf.entry, loaf=leaf.name, version=leaf.version, entry=leaf.entry) for leaf in leaves],
+    )
+    mut lock = OvenLock(
+        format=1, mode="lowest", graph="", toolchain=LockToolchain(version="0.6.0"),
+        loaves=[root] + leaves,
+    )
+    lock.graph = graph_identity(lock)?
+    return Ok(lock)

@@ -1,0 +1,8 @@
+"""Call the sibling function through a direct import."""
+
+from helper import bump
+
+
+pub def observe() -> None:
+    """Print the result of the unqualified call."""
+    println(bump(41))

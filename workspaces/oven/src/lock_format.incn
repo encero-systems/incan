@@ -222,13 +222,16 @@ def read_loaf(value: TomlValue, source: str) -> Result[LockLoaf, str]:
         return Err(f"{source}: Loaf origin must be root, path, registry or toolchain, got `{origin}`")
     name = required_text(table, "name", source)?
     refuse_capitals(name).map_err((reason) => f"{source}: {reason}")?
+    registry = optional_text(table, "registry", source)?
+    if origin == "registry" and registry == "":
+        return Err(f"{source}: registry-origin Loaf {name} needs a recorded registry identity")
     return Ok(
         LockLoaf(
             name=name,
             version=required_text(table, "version", source)?,
             origin=origin,
             path=optional_text(table, "path", source)?,
-            registry=optional_text(table, "registry", source)?,
+            registry=registry,
             protocol=optional_text(table, "protocol", source)?,
             revision=optional_int(table, "revision", source)?,
             checksum=optional_text(table, "checksum", source)?,

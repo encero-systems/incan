@@ -6,7 +6,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from check_reference_contract import page_findings, changed_pages
-from check_support import git, repository_root
+from check_support import git, read, repository_root
 from check_test_support import Outcome
 
 
@@ -49,6 +49,15 @@ def test_ignores_code_links_and_see_also() -> Result[None, str]:
         + "## See also\n\n- [Rust types for Python developers](../how-to/rust.md)\n"
     )
     assert findings(text)? == []
+
+    nested = (
+        "````markdown\n```text\nYou should see literal text.\n```\n"
+        + "`````\nYou should also see literal text.\n`````\n"
+        + "~~~\nYou should see a literal tilde fence.\n~~~\n````\n\n"
+        + "You should see a real finding.\n"
+    )
+    reported = page_findings(nested, "tooling/reference/fences.md", [])?
+    assert [finding.text for finding in reported] == ["You should see a real finding."]
     return Ok(None)
 
 
@@ -83,6 +92,12 @@ def test_make_checks_every_reference_page() -> Result[None, str]:
     comment = "# " + FULL_REFERENCE_SCAN
     assert not invokes_full_reference_scan(comment), "a commented recipe cannot run the reference scan"
     check_repository_checker_usage(root)?
+    checked_api = read(root.joinpath("workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md"))?
+    function_rows = [line for line in checked_api.split("\n") if line.startswith("| `function` |")]
+    assert len(function_rows) == 1, "the checked API reference must have one function inventory row"
+    function_row = function_rows[0]
+    assert "`native_attribute`" not in function_row, "the checked API function row names the retired attribute field"
+    assert "`decorators`" in function_row, "the checked API function row omits the decorators field"
     return Ok(None)
 
 

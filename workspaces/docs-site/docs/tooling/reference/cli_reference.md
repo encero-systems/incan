@@ -222,6 +222,8 @@ Trust controls only whether unattended preparation and the language server may r
 
 `PATH` names an Incan entry source or a directory. A directory, or no `PATH`, selects the Loaf at or above it, whose program is selected as for [`oven build`](#oven-build); outside a Loaf the command exits `1`. On `incan run`, `-c CODE` or `--command CODE` runs `CODE`, a whole module, as direct source, as `--direct` runs a file; when `CODE` does not contain `def main`, the module also gets a `main` that does nothing. `oven run` refuses it. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
+An uncaught bounds failure on a list read prints the `IndexError` message and the authored `path:line:column` when that location is available.
+
 With `INCAN_ENGINE=records`, `PATH` selects the unit legacy mode selects, with the same options, and the profile must be `debug` or `release`. A unit the engine keeps no declaration records for, such as a library, a unit with Cloves, vocabulary or foreign headers, or one with feature selections, additional program entries or `--interop-target`, is compiled whole under the identity of all its inputs; an `--engine-report` counts it in `whole_unit_compiles` and its `checks` names the reason. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
 ## `oven check`
@@ -442,6 +444,8 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 ## `incan tools metadata api` and `model`
 
 `incan tools metadata api [PATH] [--format json|markdown]` prints the [checked API metadata](checked_api_metadata.md) of the source or project at `PATH` (default `.`): the `contract_metadata.api` its library manifest would carry, checked as a dependent sees it, without native compilation. `markdown` renders it as a reference: a ``# PACKAGE API`` title, a ``Version: `VERSION` `` line, a ``## Module `PATH` `` section per module and, per declaration, a ``### `NAME` `` heading with its signature in an `incan` code block; a function's docstring follows its signature, and a partial lists its target and presets.
+
+A generic function's Markdown signature shows its checked type parameters and bounds. Overloads appear in separate sections, as with `pub def convert[T with Int](value: int) -> int` and `pub def convert[T with Float](value: int) -> float`.
 
 `incan tools metadata model PATH MODEL [--format incan|json]` prints one [contract-backed model](contract_metadata.md) by its `logical_type_name` or `stable_model_id`. `PATH` is a project directory or source, whose declared bundles are all read, publishable or not; a bundle JSON file; or a `.incnlib` artifact, which carries only publishable bundles. `incan` (default) prints the formatted model source; `json` prints the canonical bundle. A model that is not there exits `1` with ``model `MODEL` was not found in checked model metadata for PATH (available: ...)``.
 

@@ -158,7 +158,7 @@ Build/serve locally:
 
 ```bash
 make docs
-make docs-serve
+make -C workspaces/docs-site docs-serve
 ```
 
 ## Performance

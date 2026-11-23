@@ -45,7 +45,9 @@ def test_shell_commands_and_diagrams_both_check_concrete_paths() -> Result[None,
     assert result.code == 1
     assert "AGENTS.md:5: src/missing.rs" in result.stdout
     assert "AGENTS.md:2: src/diagram.rs" in result.stdout
-    require_archive_command_match(root, repository_root()?)?
+    repository = repository_root()?
+    require_archive_command_match(root, repository)?
+    require_contributor_commands(repository)?
     return Ok(None)
 
 
@@ -182,4 +184,25 @@ def require_archive_command_match(root: Path, repository: Path) -> Result[None, 
     assert result.status.code().unwrap_or(-1) == 1, stderr
     expected = "README and install guide must use the same archive installation command"
     assert expected in output, f"{output}\n{stderr}"
+    return Ok(None)
+
+
+def require_contributor_commands(repository: Path) -> Result[None, str]:
+    """Keep documented local serving and contributor toolchain setup usable from the checkout."""
+    readme = read(repository.joinpath("README.md"))?
+    serve_lines = [line for line in readme.split("\n") if line.startswith("make ") and "docs-serve" in line]
+    assert len(serve_lines) == 1
+    mut command = Command.new("make")
+    command.current_dir(repository.0).arg("-n")
+    for argument in serve_lines[0].split(" ")[1:]:
+        command.arg(argument)
+    result = command.output().map_err((error) => f"cannot inspect the documented docs serve target: {error}")?
+    stdout = RustString.from_utf8(result.stdout).map_err((error) => f"invalid make output: {error}")?
+    contributors = read(repository.joinpath("CONTRIBUTING.md"))?
+    mut failures: list[str] = []
+    if not result.status.success() or "mkdocs serve" not in stdout:
+        failures.append("README must name the executable docs-site serve target")
+    if "dev.8" in contributors:
+        failures.append("CONTRIBUTING must describe the installed toolchain for the current checkout")
+    assert failures == [], "\n".join(failures)
     return Ok(None)

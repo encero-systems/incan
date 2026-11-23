@@ -13,7 +13,7 @@ Incan compiles checked source through Body IR and Incan lowering into the pinned
 
 ## Prepare the checkout
 
-Use an installed dev.8 toolchain with its matching compiled standard packages. See the [installation guide](workspaces/docs-site/docs/tooling/how-to/install_and_run.md) for toolchain setup and [compiler driver](loaves/toolchain/incan-rustc-driver/README.md) for its unit interface.
+Use an installed Incan 0.6 toolchain that matches the checkout, including its compiled standard packages. See the [installation guide](workspaces/docs-site/docs/tooling/how-to/install_and_run.md) for toolchain setup and [compiler driver](loaves/toolchain/incan-rustc-driver/README.md) for its unit interface.
 
 ```bash
 git clone https://github.com/encero-systems/incan
