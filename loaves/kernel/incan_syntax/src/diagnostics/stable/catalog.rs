@@ -877,7 +877,7 @@ pub(super) const IMPORTED_TYPE_MADE_PRIVATE: DiagnosticCatalogEntry = Diagnostic
     phase: "typecheck",
     summary: "A compiled provider records that an imported nominal type moved from public to private visibility.",
     explanation: "A `made_private` type is no longer part of the provider's public API, but its compiled manifest retains checked migration guidance. The consumer receives that guidance instead of a suggestion to edit the dependency.",
-    examples: &["from std.graph import GraphNode"],
+    examples: &["from pub::ledger import LegacyLedger"],
     common_causes: &["Consumer code still imports a provider type that was removed from the public surface."],
     fixes: &["Use the replacement named by the provider, or keep the value behind the provider's public abstraction."],
     docs_url: None,
