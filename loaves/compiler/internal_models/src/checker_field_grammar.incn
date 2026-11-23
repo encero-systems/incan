@@ -138,6 +138,9 @@ pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
                 end = type_end(values, end, 0)?
         else:
             return Err(CodecFault.Unsupported(field.selector))
+    # A constructor call's argument-to-field binding, or the checked field one of its arguments initializes.
+    elif field.family in ["constructor", "requirement"]:
+        end = constructor_field_end(field)?
     # A builtin call keeps its selected function; a builtin method also keeps its selected owner.
     elif field.family == "builtin":
         if field.selector == "call" and len(values) == 1 and values[0] != "":
@@ -154,9 +157,9 @@ pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     # A parameter's type.
     elif field.family == "parameter":
         end = type_end(values, 0, 0)?
-    # An identifier's kind; only plain values are recorded.
+    # An identifier's kind; plain values and type names, such as a constructor's nominal, are recorded.
     elif field.family == "identifier":
-        if field.selector != "kind" or values != ["value"]:
+        if field.selector != "kind" or len(values) != 1 or values[0] not in ["value", "type-name"]:
             return Err(CodecFault.Unsupported("identifier"))
         end = 1
     # Generated protocol artifact rows retain one checked receiver identity at its source node.
@@ -416,6 +419,35 @@ def ownership_end(values: list[str]) -> Result[int, CodecFault]:
         if identity == "":
             return Err(CodecFault.Malformed)
     return Ok(end + size)
+
+
+def constructor_field_end(field: CanonicalField) -> Result[int, CodecFault]:
+    """
+    A constructor's argument-to-field binding: its field count, its counted argument slots and its counted, ascending
+    defaulted slots, which together occupy every field once. A requirement names one checked field and its owner.
+    """
+    values = field.values
+    if field.node == "":
+        return Err(CodecFault.Malformed)
+    if field.family == "requirement":
+        if field.selector != "constructor-field" or len(values) != 2 or values[0] == "" or values[1] == "":
+            return Err(CodecFault.Malformed)
+        return Ok(2)
+    if field.selector != "field-binding" or len(values) < 3:
+        return Err(CodecFault.Malformed)
+    mut counts: list[int] = []
+    for value in values:
+        counts.append(decimal(value)?)
+    defaults_at = counts[1] + 2
+    if defaults_at >= len(counts) or counts[defaults_at] != len(counts) - defaults_at - 1:
+        return Err(CodecFault.Malformed)
+    defaulted = counts[defaults_at + 1:]
+    for index in range(1, len(defaulted)):
+        if defaulted[index - 1] >= defaulted[index]:
+            return Err(CodecFault.Malformed)
+    if sorted(counts[2:defaults_at] + defaulted) != [slot for slot in range(counts[0])]:
+        return Err(CodecFault.Malformed)
+    return Ok(len(values))
 
 
 class InputFields:

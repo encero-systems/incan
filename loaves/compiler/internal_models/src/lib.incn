@@ -135,7 +135,6 @@ pub from checker_records import (
     CompiledBodyFallback,
     CompiledNamespaceValue,
     CompiledBodyOutputs,
-    CodecFault,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
@@ -149,6 +148,7 @@ pub from checker_records import (
     decode_graph_namespace_value,
     record_root,
 )
+pub from checker_field_grammar import CodecFault
 pub from compiled_body_frames import (
     CompiledBodyOutput,
     encode_compiled_body_outputs,

@@ -1,0 +1,56 @@
+"""A constructor call's checked rows: its argument-to-field binding and the field each argument initializes."""
+
+from checker_records import CHECKER_PROFILE, CodecFault, from_native_final_fields, native_fields
+from rust::incan_frontend::checker_records import fixture_record, verify_fixture
+
+
+pub def test_a_constructor_caller_records_and_restores_its_field_binding() -> Result[None, str]:
+    """A body that constructs a model keeps its field binding and field requirement, and restores from them."""
+    source = "model Flag:\n    ready: bool\n    weight: int = 2\n\n\ndef main() -> None:\n    flag = Flag(ready=true)\n    println(flag.ready)\n"
+    rows = fixture_record(source, "main", false).map_err((error) => error.to_string())?
+    record = match from_native_final_fields(rows):
+        Ok(value) => value
+        Err(CodecFault.Unsupported(name)) => return Err("unsupported constructor row: " + name)
+        Err(_) => return Err("malformed constructor row")
+    assert len([field for field in record.fields if field.family == "constructor"]) == 1
+    assert len([field for field in record.fields if field.family == "requirement"]) == 1
+    verify_fixture(source, "main", native_fields(record).map_err((_) => "constructor fields")?).map_err(
+        (error) => "constructor restore: " + error.to_string(),
+    )?
+    return Ok(None)
+
+
+pub def test_constructor_rows_refuse_a_malformed_binding() -> None:
+    """A binding occupies every field once, its defaults ascending; a requirement names one field and its owner."""
+    assert admitted("constructor", "field-binding", ["2", "1", "0", "1", "1"])
+    assert admitted("constructor", "field-binding", ["2", "2", "1", "0", "0"])
+    assert admitted("requirement", "constructor-field", ["field", "owner"])
+    # A field no argument or default occupies, a field occupied twice, and descending defaults.
+    assert refused("constructor", "field-binding", ["2", "1", "0", "0"]) == "malformed"
+    assert refused("constructor", "field-binding", ["2", "2", "0", "0", "0"]) == "malformed"
+    assert refused("constructor", "field-binding", ["3", "1", "0", "2", "2", "1"]) == "malformed"
+    # A count that is not canonical, and an argument count beyond the row.
+    assert refused("constructor", "field-binding", ["1", "1", "00", "0"]) == "malformed"
+    assert refused("constructor", "field-binding", ["1", "2", "0", "0"]) == "malformed"
+    assert refused("requirement", "constructor-field", ["field", ""]) == "malformed"
+    assert refused("constructor", "arguments", ["0", "0", "0"]) == "malformed"
+
+
+def admitted(family: str, selector: str, values: list[str]) -> bool:
+    """Whether one constructor row on a body node validates."""
+    return refused(family, selector, values) == ""
+
+
+def refused(family: str, selector: str, values: list[str]) -> str:
+    """Name why one final record holding a single constructor row is refused, or return empty when it validates."""
+    root = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    rows = [
+        ["header", "function:main::value", root, CHECKER_PROFILE],
+        [family, "node/Function/body/0/span", selector] + values,
+        ["status", "", "refused", "false"],
+    ]
+    match from_native_final_fields(rows):
+        Ok(_) => return ""
+        Err(CodecFault.Unsupported(name)) => return name
+        Err(CodecFault.Malformed) => return "malformed"
+        Err(_) => return "other"
