@@ -2,12 +2,14 @@
 
 use crate::callable_schema::{CALLABLE_PRODUCT, callable_descriptions};
 use crate::crumb_rows::{field_value, operation_budget, required_value};
-use crate::graph_crumb_fields::{graph_read_budget, items, text};
+use crate::graph_crumb_fields::{graph_read_budget, graph_read_budget_at_depth, items, text};
 use crate::namespace_schema::{
     NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, NAMESPACE_SCHEMA, namespace_descriptions,
     namespace_field_is_canonical, namespace_root,
 };
-use crate::plan_wire_rows::{PreparedWireReader, admit_wire, read_wire, wire_field, write_wire};
+use crate::plan_wire_rows::{
+    PreparedWireReader, admit_wire, read_wire, read_wire_with_budget, wire_field, write_wire, write_wire_with_budget,
+};
 use internal_models_bindings::{
     Budget, IntegerValue, MapEntry, MappedView, Projection, RowAdmission, RowRead, Value, ValueField, binary_message,
     codec_allowance, crumb_message, depth_allowance, read_field_at, settle, value_hash,
@@ -52,6 +54,9 @@ pub enum NamespaceAtom {
 }
 
 const INVALID_CELL: &str = "invalid logical cell in a checked namespace";
+
+// A single Body IR edge can cross a collection, a typed cell and a nominal record.
+const EXECUTABLE_DEPTH: i64 = 512;
 
 fn selector(number: u64) -> Result<Vec<u8>, String> {
     if number > 0xffff_ffff_ffff {
@@ -376,7 +381,12 @@ pub fn encode_checked_projection(
     descriptions: &Vec<internal_models_bindings::Description>,
     value: &NamespaceAtom,
 ) -> Result<Vec<u8>, String> {
-    write_wire(root, descriptions, logical(value)?)
+    write_wire_with_budget(
+        root,
+        descriptions,
+        logical(value)?,
+        &mut graph_read_budget_at_depth(EXECUTABLE_DEPTH)?,
+    )
 }
 
 /// Admit the exact authored root and reference closure before restoring the compiler's logical cells.
@@ -385,7 +395,12 @@ pub fn decode_checked_projection(
     descriptions: &Vec<internal_models_bindings::Description>,
     encoded: &[u8],
 ) -> Result<NamespaceAtom, String> {
-    atom(&read_wire(encoded, root, descriptions)?)
+    atom(&read_wire_with_budget(
+        encoded,
+        root,
+        descriptions,
+        &mut graph_read_budget_at_depth(EXECUTABLE_DEPTH)?,
+    )?)
 }
 
 /// Authenticate a mapped compiler root and materialize only the requested named fields.
@@ -394,7 +409,7 @@ pub fn checked_projection_fields(
     view: &MappedView,
     identities: &[Vec<u8>],
 ) -> Result<Vec<NamespaceAtom>, String> {
-    let mut budget = graph_read_budget()?;
+    let mut budget = graph_read_budget_at_depth(EXECUTABLE_DEPTH)?;
     let row = reader.admit_view(view, &mut budget)?;
     identities
         .iter()
@@ -404,7 +419,7 @@ pub fn checked_projection_fields(
 
 /// Open a fully needed executable value in its authenticated mapped backing.
 pub fn decode_checked_projection_view(reader: &PreparedWireReader, view: &MappedView) -> Result<NamespaceAtom, String> {
-    let mut budget = graph_read_budget()?;
+    let mut budget = graph_read_budget_at_depth(EXECUTABLE_DEPTH)?;
     let row = reader.admit_view(view, &mut budget)?;
     decode_admitted(&row, &mut budget)
 }
@@ -486,4 +501,67 @@ pub fn decode_callable_inventory(encoded: &[u8]) -> Result<NamespaceAtom, String
         _ => return Err("missing callable publication checksum".into()),
     }
     atom(&fields[1].value)
+}
+
+#[cfg(test)]
+mod executable_depth_tests {
+    use super::*;
+    use crate::crumb_rows::{ModelField, model_description};
+    use internal_models_bindings::{complete_view, mapped_bytes};
+
+    const ROOT: &[u8] = b"nestd_\0";
+    const CHILDREN: &[u8] = b"child_";
+    const LABEL: &[u8] = b"label_";
+
+    /// Build a finite chain in a recursive model, mirroring the named scopes in deeply nested Body IR.
+    fn nested_value(depth: usize) -> Result<NamespaceAtom, String> {
+        let children = selector_number(CHILDREN)?;
+        let label = selector_number(LABEL)?;
+        let node = |child| {
+            NamespaceAtom::Fields(vec![
+                NamespaceField {
+                    identity: children,
+                    value: NamespaceAtom::Items(child),
+                },
+                NamespaceField {
+                    identity: label,
+                    value: NamespaceAtom::Unsigned(7),
+                },
+            ])
+        };
+        Ok((0..depth).fold(node(Vec::new()), |child, _| node(vec![child])))
+    }
+
+    /// A deeper executable value must round-trip through both admission paths under the same finite budget.
+    #[test]
+    fn executable_projection_round_trips_nested_records() -> Result<(), String> {
+        let descriptions = vec![model_description(
+            ROOT,
+            "DeepExecutableFixture",
+            &[
+                ModelField::new(CHILDREN, "children", "list<record@6e657374645f>"),
+                ModelField::new(LABEL, "label", "u64"),
+            ],
+        )];
+        let expected = nested_value(60)?;
+        let encoded = encode_checked_projection(ROOT, &descriptions, &expected)?;
+        assert_eq!(decode_checked_projection(ROOT, &descriptions, &encoded)?, expected);
+
+        let encoded_again = encode_checked_projection(ROOT, &descriptions, &expected)?;
+        assert_eq!(encoded, encoded_again);
+        let reader = PreparedWireReader::create(ROOT, &descriptions, "deep executable fixture")?;
+        let mapped = mapped_bytes(&encoded)?;
+        let view = complete_view(&mapped).ok_or("deep executable fixture has no complete mapped view")?;
+        assert_eq!(
+            checked_projection_fields(&reader, &view, &[LABEL.to_vec()])?,
+            [NamespaceAtom::Unsigned(7)]
+        );
+        assert_eq!(decode_checked_projection_view(&reader, &view)?, expected);
+        assert!(write_wire(ROOT, &descriptions, logical(&expected)?).is_err());
+        let refused = encode_checked_projection(ROOT, &descriptions, &nested_value(176)?)
+            .err()
+            .ok_or("an over-depth executable frame was accepted")?;
+        assert!(refused.contains("depth"), "{refused}");
+        Ok(())
+    }
 }

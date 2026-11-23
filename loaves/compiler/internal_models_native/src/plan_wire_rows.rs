@@ -13,14 +13,22 @@ const MAX_WIRE_BYTES: i64 = 67_108_864;
 
 /// Write a schema-checked row under the same byte, element and nesting limits as other graph records.
 pub fn write_wire(key: &[u8], descriptions: &Vec<Description>, value: Value) -> Result<Vec<u8>, String> {
-    let mut budget = graph_read_budget()?;
-    let registry = empty_registry(&mut budget).map_err(|error| crumb_message(&error))?;
+    write_wire_with_budget(key, descriptions, value, &mut graph_read_budget()?)
+}
+
+/// Write a compiler record using the depth and work limits selected by its format.
+pub(crate) fn write_wire_with_budget(
+    key: &[u8],
+    descriptions: &Vec<Description>,
+    value: Value,
+    budget: &mut Budget,
+) -> Result<Vec<u8>, String> {
+    let registry = empty_registry(budget).map_err(|error| crumb_message(&error))?;
     let rows = vec![RowRecord {
         key: key.to_vec(),
         value,
     }];
-    let encoded =
-        write_rows(descriptions, &rows, &registry, false, &mut budget).map_err(|error| crumb_message(&error))?;
+    let encoded = write_rows(descriptions, &rows, &registry, false, budget).map_err(|error| crumb_message(&error))?;
     if encoded.len() as i64 > MAX_WIRE_BYTES {
         return Err("native plan wire exceeds its byte limit".into());
     }
@@ -29,9 +37,18 @@ pub fn write_wire(key: &[u8], descriptions: &Vec<Description>, value: Value) -> 
 
 /// Authenticate every reachable schema and the sole root selector before interpreting the native payload.
 pub fn read_wire(encoded: &[u8], key: &[u8], supplied: &Vec<Description>) -> Result<Value, String> {
-    let mut budget = graph_read_budget()?;
-    let rows = admit_wire(encoded, supplied, &mut budget)?;
-    let row = read_record_at(&rows, 0, &mut budget).map_err(|error| binary_message(&error))?;
+    read_wire_with_budget(encoded, key, supplied, &mut graph_read_budget()?)
+}
+
+/// Open a compiler record using the depth and work limits selected by its format.
+pub(crate) fn read_wire_with_budget(
+    encoded: &[u8],
+    key: &[u8],
+    supplied: &Vec<Description>,
+    budget: &mut Budget,
+) -> Result<Value, String> {
+    let rows = admit_wire(encoded, supplied, budget)?;
+    let row = read_record_at(&rows, 0, budget).map_err(|error| binary_message(&error))?;
     if row.key != key {
         return Err("unexpected native plan root selector".into());
     }

@@ -490,7 +490,10 @@ impl GraphBodyOutput {
             let module_path = module_path.to_string_lossy().into_owned();
             let scopes = (self.typed_executable
                 && (namespaces.contains_key(&module_path) || owners.contains_key(&module_path)))
-            .then(|| ExecutableScopeRecords::pack(&module_path, lowered))
+            .then(|| {
+                ExecutableScopeRecords::pack(&module_path, lowered)
+                    .map_err(|error| format!("checked executable scopes for {module_path}: {error}"))
+            })
             .transpose()?;
             let mut referenced_scopes = std::collections::BTreeSet::new();
             if let Some(namespace) = namespaces.remove(&module_path) {
@@ -508,7 +511,8 @@ impl GraphBodyOutput {
                 namespace.body_ir = match &scopes {
                     Some(scopes) => {
                         referenced_scopes.extend(scopes.digests.iter().flatten().cloned());
-                        encode_graph_executable_namespace(&module_path, lowered, &scopes.digests, &scopes.slots)?
+                        encode_graph_executable_namespace(&module_path, lowered, &scopes.digests, &scopes.slots)
+                            .map_err(|error| format!("checked executable namespace {module_path}: {error}"))?
                     }
                     None => incan_semantics_core::executable_representation::encode_namespace_module(lowered)
                         .map_err(|error| format!("Body IR namespace row output refused: {error}"))?,
@@ -656,7 +660,13 @@ impl GraphBodyOutput {
                             scope_digest,
                         },
                         body,
-                    )?;
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "checked executable owner {} in {module_path}: {error}",
+                            pending.identity
+                        )
+                    })?;
                 } else {
                     pending.body_ir = incan_semantics_core::executable_representation::encode_graph_owner(
                         &lowered.module_id,
