@@ -104,6 +104,7 @@ impl PlanReader {
         Self::with_inputs(plan, self.function_inputs.clone(), self.alias_inputs.clone())
     }
 
+    /// Read authenticated function events and admitted definitions, requiring coverage of the active plan.
     fn read_function_inputs(report: &Path, plan: &Plan) -> Result<HashMap<String, DefinitionInput>, String> {
         let mut paths = std::fs::read_dir(report)
             .map_err(|error| format!("cannot read native plan report: {error}"))?
@@ -139,7 +140,11 @@ impl PlanReader {
                 product.digest.clone(),
             ])
             .map_err(|error| format!("cannot fingerprint native function record: {error}"))?;
-            if !plan.functions.iter().any(|value| value.name == event.function) {
+            if !plan.functions.iter().any(|value| {
+                #[cfg(test)]
+                tests::record_active_function_probe();
+                value.name == event.function
+            }) {
                 return Err(format!(
                     "native function product is outside the active plan for {}",
                     event.function
@@ -199,7 +204,11 @@ impl PlanReader {
             if inputs.contains_key(&definition.function) {
                 continue;
             }
-            if !plan.functions.iter().any(|value| value.name == definition.function) {
+            if !plan.functions.iter().any(|value| {
+                #[cfg(test)]
+                tests::record_active_function_probe();
+                value.name == definition.function
+            }) {
                 return Err(format!(
                     "admitted function product is outside the active plan for {}",
                     definition.function
@@ -336,6 +345,15 @@ mod tests {
     use incan_mir_plan_native::{AdmittedDefinition, NATIVE_DEFINITIONS, encode_admitted_definitions, source_span};
     use std::sync::Arc;
 
+    thread_local! {
+        static ACTIVE_FUNCTION_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Count each membership comparison on the native definition admission route.
+    pub(super) fn record_active_function_probe() {
+        ACTIVE_FUNCTION_PROBES.with(|probes| probes.set(probes.get() + 1));
+    }
+
     fn plan(names: &[&str]) -> Plan {
         let span = source_span("reader.incn", 1, 1);
         let functions = names
@@ -376,7 +394,13 @@ mod tests {
         let report = tempfile::tempdir()?;
         let names = ["main", "__incan_closure_main_0"];
         std::fs::write(report.path().join(NATIVE_DEFINITIONS), definitions(&names)?)?;
+        ACTIVE_FUNCTION_PROBES.set(0);
         let reader = PlanReader::new(Arc::new(plan(&names)), Some(report.path()))?;
+        assert_eq!(
+            ACTIVE_FUNCTION_PROBES.replace(0),
+            names.len(),
+            "native admission must make one indexed membership probe per definition"
+        );
         assert!(reader.has_record_inputs());
         assert!(names.iter().all(|name| reader.function_input(name).is_some()));
         std::fs::write(report.path().join(NATIVE_DEFINITIONS), definitions(&names[..1])?)?;
