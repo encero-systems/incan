@@ -1,0 +1,28 @@
+"""Stop the run-83 records engine through its authenticated bakery identity."""
+
+from std.fs import Path
+from engine_client import service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from observation import observe
+from unit_freshness import fingerprint
+
+
+def main() -> Result[None, str]:
+    store = Path("/Volumes/Builds/incan-dev9-work/b4/lane/run83/home/bakery")
+    binary = "/Volumes/Builds/incan-dev9-work/b4/lane/run83/home/bin/oven"
+    mut identity = service_identity(store)?
+    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    mut channel = connect_with(store, identity, binary).map_err((error) => error.detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="run 83 compiler generation refresh"))).map_err(
+        (error) => error.detail,
+    )?
+    stopped = channel.receive().map_err((error) => error.detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            if value.status != "Stopping":
+                return Err(f"records service returned stop status {value.status}")
+        _ => return Err("records service did not acknowledge stop")
+    _ = channel.transport.close()
+    return Ok(None)
