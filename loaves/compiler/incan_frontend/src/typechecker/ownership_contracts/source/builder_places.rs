@@ -155,11 +155,7 @@ impl Builder<'_> {
                         reason: "computed property access".into(),
                     });
                 }
-                let identity = self
-                    .checker
-                    .type_info
-                    .resolved_identity(expression.span)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+                let identity = super::call_results::stored_projection_identity(&self.checker.type_info, expression)
                     .ok_or(Unavailable {
                         span: expression.span,
                         reason: "field lacks a checked stored identity".into(),
@@ -243,11 +239,7 @@ impl Builder<'_> {
                         reason: "computed property access".into(),
                     });
                 }
-                let identity = self
-                    .checker
-                    .type_info
-                    .resolved_identity(expression.span)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+                let identity = super::call_results::stored_projection_identity(&self.checker.type_info, expression)
                     .ok_or(Unavailable {
                         span: expression.span,
                         reason: "field lacks a checked stored identity".into(),
@@ -455,6 +447,7 @@ impl Builder<'_> {
             {
                 Ok(None)
             }
+            Expr::Field(_, _) if self.fresh_newtype_slot(expression).is_some() => Ok(None),
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
             Expr::MethodCall(..)

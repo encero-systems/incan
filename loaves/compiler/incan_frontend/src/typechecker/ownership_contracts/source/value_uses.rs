@@ -176,6 +176,16 @@ impl Builder<'_> {
         })
     }
 
+    /// A checked newtype slot projected from a fresh call evaluates that call once and has no stored base place.
+    pub(super) fn fresh_newtype_slot(&self, value: &Spanned<Expr>) -> Option<ValueUsePlan> {
+        if !matches!(value.node, Expr::Field(..))
+            || self.checker.type_info.resolved_identity(value.span)?.kind != SemanticSourceTargetKind::Newtype
+        {
+            return None;
+        }
+        self.classify_call_result_field_projection(value, self.checker.type_info.expr_type(value.span)?)
+    }
+
     /// Evaluate and retain one classification. Stored routes require one exact final event; a selected call result
     /// retains no stored access and is replayed only while this non-persisted classification exists.
     pub(super) fn apply_value_use(
@@ -622,7 +632,9 @@ impl Builder<'_> {
             super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
         ) && call.owner.as_ref() == Some(&self.owner)
             && crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
-            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
+            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| {
+                owned.is_none() || contract.is_some_and(|contract| contract.result_source.is_none())
+            })
             && if tried {
                 matches!(self.checker.type_info.expr_type(call_expression.span),
                     Some(ResolvedType::Generic(name, arguments))
