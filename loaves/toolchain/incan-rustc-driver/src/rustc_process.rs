@@ -30,7 +30,7 @@ use crate::plan::Plan;
 pub(crate) struct PlanRecordProducts {
     pub(crate) root: PathBuf,
     pub(crate) selection: Option<[u8; 32]>,
-    /// Exact compact note count and digest from the producer that settled this compilation.
+    /// The settled note count and digest, including zero, when this compilation accepted a selection.
     pub(crate) compact_notes: Option<CompactAdmissionPin>,
 }
 
@@ -125,18 +125,26 @@ impl RustcHandoff {
             return Ok(Vec::new());
         };
         let selection = self.read_plan_module_selection()?;
+        let expected = match (selection.as_ref(), products.compact_notes) {
+            (Some(_), None) => {
+                return Err("native plan module selection has no settled compact admission outcome".into());
+            }
+            (None, Some(_)) => return Err("settled compact admission outcome has no plan module selection".into()),
+            (_, expected) => expected,
+        };
         let whole = incan_lowering::read_plan_module_admissions(&products.root, selection.as_ref())?;
-        let observed = incan_mir_plan_native::compact_admission_pin(
-            whole
-                .iter()
-                .map(|admission| (admission.note.module.as_str(), admission.note_sha256)),
-        )?;
-        if products.compact_notes != observed {
-            let expected = products.compact_notes.map_or(0, |pin| pin.count);
-            let observed = observed.map_or(0, |pin| pin.count);
-            return Err(format!(
-                "native compact admission set differs from the settled publication (expected {expected} notes, observed {observed})"
-            ));
+        if let Some(expected) = expected {
+            let observed = incan_mir_plan_native::compact_admission_pin(
+                whole
+                    .iter()
+                    .map(|admission| (admission.note.module.as_str(), admission.note_sha256)),
+            )?;
+            if expected != observed {
+                return Err(format!(
+                    "native compact admission set differs from the settled publication (expected {} notes, observed {})",
+                    expected.count, observed.count
+                ));
+            }
         }
         Ok(whole.into_iter().flat_map(|admission| admission.definitions).collect())
     }
@@ -353,8 +361,7 @@ mod tests {
                 count: selected.count,
                 selection: hex::encode(selection),
             })?;
-            let pin = compact_admission_pin([(MODULE, Sha256::digest(&note).into())])?
-                .ok_or("the fixture emitted no compact note")?;
+            let pin = compact_admission_pin([(MODULE, Sha256::digest(&note).into())])?;
             fs::write(&self.note, &note)?;
             Ok((selection, pin))
         }

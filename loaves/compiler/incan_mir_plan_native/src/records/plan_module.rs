@@ -437,10 +437,10 @@ pub struct CompactAdmissionPin {
     pub digest: [u8; 32],
 }
 
-/// Pin the exact emitted notes in strictly ascending UTF-8 module order, without reopening their encoded bytes.
+/// Pin the exact emitted set, including an empty set, in strictly ascending UTF-8 module order.
 pub fn compact_admission_pin<'a>(
     notes: impl IntoIterator<Item = (&'a str, [u8; 32])>,
-) -> Result<Option<CompactAdmissionPin>, String> {
+) -> Result<CompactAdmissionPin, String> {
     let mut hash = Sha256::new();
     hash.update(b"incan.plan-compact-admissions/1\x00");
     let mut count = 0u64;
@@ -455,14 +455,11 @@ pub fn compact_admission_pin<'a>(
         count += 1;
         previous = module;
     }
-    if count == 0 {
-        return Ok(None);
-    }
     hash.update(count.to_be_bytes());
-    Ok(Some(CompactAdmissionPin {
+    Ok(CompactAdmissionPin {
         count,
         digest: hash.finalize().into(),
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -738,8 +735,8 @@ mod tests {
                 240, 150, 208, 77, 0, 116, 230, 153, 128, 86,
             ],
         };
-        assert_eq!(compact_admission_pin([first, second])?, Some(expected));
-        assert_ne!(compact_admission_pin([first])?, Some(expected));
+        assert_eq!(compact_admission_pin([first, second])?, expected);
+        assert_ne!(compact_admission_pin([first])?, expected);
         let empty = CompactAdmissionPin {
             count: 0,
             digest: [
@@ -749,7 +746,7 @@ mod tests {
         };
         assert_eq!(
             compact_admission_pin([])?,
-            Some(empty),
+            empty,
             "selected empty compact publication has no independently settled fingerprint"
         );
         assert!(compact_admission_pin([first, first]).is_err());
