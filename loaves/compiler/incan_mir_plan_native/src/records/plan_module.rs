@@ -400,7 +400,125 @@ pub fn compact_admission_pin<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::records::lowering_events::{AdmittedFunction, AdmittedModule, decode_module_note, encode_module_note};
+    use crate::records::lowering_events::{
+        AdmittedFunction, AdmittedModule, LoweringEvent, decode_lowering_event, decode_module_note,
+        encode_lowering_event, encode_module_note,
+    };
+    use crate::wire::take_materialized_binary_bytes;
+    use crate::{
+        Function, Local, PlanFunctionRecord, PlanType, RvalueKind, TerminatorKind, assign, block,
+        decode_plan_function_record, encode_plan_function_record, encode_product, integer, place, plan_function_digest,
+        source_span,
+    };
+    use internal_models_bindings::{
+        binary_list_field_views, binary_message, complete_view, create_budget, crumb_message, mapped_bytes,
+        view_request,
+    };
+
+    /// Build a real positioned event whose owned decode would materialize its complete native function product.
+    fn projected_event() -> Result<PlanModuleFunction, String> {
+        let span = source_span("probe.incn", 11, 5);
+        let body = block(
+            vec![assign(place(0, &span), RvalueKind::Use(integer(10, &span)), &span)],
+            TerminatorKind::Return,
+            &span,
+        );
+        let function = Function::new(
+            "probe_run".into(),
+            Vec::new(),
+            PlanType::Int,
+            vec![Local {
+                ty: PlanType::Int,
+                span: span.clone(),
+            }],
+            vec![body],
+            span,
+        );
+        let encoded = encode_product(&function, &[], &[], &[])?;
+        let product = encode_plan_function_record(&PlanFunctionRecord {
+            inputs: vec!["probe".into()],
+            digest: plan_function_digest(&encoded, &[])?,
+            function: encoded,
+            requests: Vec::new(),
+        })?;
+        let key = "2a".repeat(32);
+        let symbol = "pub::probe::run";
+        let event = encode_lowering_event(&LoweringEvent {
+            function: "probe_run".into(),
+            module: "probe".into(),
+            identity: symbol.into(),
+            product,
+            key: key.clone(),
+            reused: true,
+            ..LoweringEvent::default()
+        })?;
+        Ok(PlanModuleFunction {
+            identity: "function:probe::run|signature".into(),
+            symbol: symbol.into(),
+            function: "probe_run".into(),
+            key,
+            event,
+        })
+    }
+
+    /// One admitted module field keeps its actual event bytes at the existing anchor, with work and range refusals.
+    #[test]
+    fn admitted_plan_events_keep_their_immutable_backing() -> Result<(), String> {
+        let function = projected_event()?;
+        let event = function.event.clone();
+        let encoded = encode_plan_module(&PlanModuleValue {
+            module: "probe".into(),
+            functions: vec![function],
+        })?;
+        let _ = take_materialized_binary_bytes();
+        let decoded = decode_plan_module(&encoded)?;
+        assert_eq!(decoded.functions[0].event, event);
+        let old_event = decode_lowering_event(&decoded.functions[0].event)?;
+        let old_product = decode_plan_function_record(&old_event.product)?;
+        let body_bytes = old_product.function.len();
+        assert!(body_bytes > 0);
+        assert_eq!(
+            take_materialized_binary_bytes(),
+            event.len() + old_event.product.len() + body_bytes
+        );
+
+        let owner = mapped_bytes(&encoded)?;
+        let backing = complete_view(&owner).ok_or("fixture has no bounded module view")?;
+        let mut request = view_request(&backing, false, true);
+        for description in PLAN_MODULE_SCHEMA.descriptions() {
+            request.supply(description.clone());
+        }
+        request.allow(1_048_576, 1_048_576, 128);
+        let admitted = request.admit();
+        assert!(admitted.admitted(), "{}", admitted.category);
+        let budget = |bytes| create_budget(bytes, 1_048_576, 128).map_err(|error| crumb_message(&error));
+        let field = b"events".to_vec();
+        let views = binary_list_field_views(&admitted, &backing, &field, 1, &mut budget(1_048_576)?)
+            .map_err(|error| binary_message(&error));
+        assert!(views.is_ok(), "the admitted module's exact event was not projected");
+        let [view]: [_; 1] = views?.try_into().map_err(|_| "module projection changed event count")?;
+        let source = backing.0.as_bytes();
+        let kept = view.0.as_bytes();
+        let offset = kept
+            .as_ptr()
+            .addr()
+            .checked_sub(source.as_ptr().addr())
+            .ok_or("shared view left parent")?;
+        assert_eq!(source.get(offset..offset + kept.len()), Some(kept));
+        assert_eq!(kept, event);
+        assert_eq!(take_materialized_binary_bytes(), 0);
+
+        for (count, bytes, reason) in [(2, 1_048_576, "arity_mismatch"), (1, 1, "limit_exceeded")] {
+            let refused = binary_list_field_views(&admitted, &backing, &field, count, &mut budget(bytes)?)
+                .map_err(|error| binary_message(&error));
+            assert!(matches!(refused, Err(message) if message.contains(reason)));
+        }
+        let clipped_owner = mapped_bytes(&source[..4].to_vec())?;
+        let clipped = complete_view(&clipped_owner).ok_or("fixture clip refused")?;
+        let refused = binary_list_field_views(&admitted, &clipped, &field, 1, &mut budget(1_048_576)?);
+        assert!(matches!(refused, Err(error) if binary_message(&error).contains("invalid_offsets")));
+        Ok(())
+    }
 
     /// One positioned module note is smaller in shape and remains distinguishable from existing scalar notes.
     #[test]

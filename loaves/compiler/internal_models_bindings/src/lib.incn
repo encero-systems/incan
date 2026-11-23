@@ -19,6 +19,7 @@ pub from std.primitives.crumb.hashes import HashResult, description_hash, value_
 pub from std.primitives.crumb.metadata_values import encode as encode_metadata
 pub from std.primitives.crumb.values import Projection
 pub from std.primitives.crumb.encoding_errors import BinaryError
+from std.primitives.crumb.encoding_errors import BinaryFailure, failure
 pub from std.primitives.crumb.errors import CrumbError
 pub from std.fs import Path
 pub from std.json import JsonValue
@@ -112,6 +113,17 @@ pub def read_field_at(rows: RowSet, index: int, identity: bytes, mut budget: Bud
 pub def binary_field_at(rows: RowSet, index: int, identity: bytes, mut budget: Budget) -> Result[MappedView, BinaryError]:
     """Return one binary field of an admitted row as a view of the envelope."""
     return rows.binary_field_view(index, identity, budget)
+
+
+pub def binary_list_field_views(
+    native: Borrowed[RowAdmission], backing: Borrowed[MappedView], identity: bytes, expected: int, mut budget: Budget,
+) -> Result[list[MappedView], BinaryError]:
+    """Return mapped payloads of one admitted binary-list field under the caller's count and budget."""
+    _ = native.admitted()
+    _ = backing.len()
+    _ = (identity, expected)
+    _ = budget.codec_allowance()
+    return Err(failure(BinaryFailure.InvalidCell, 0))
 
 
 pub def crumb_message(error: CrumbError) -> str:

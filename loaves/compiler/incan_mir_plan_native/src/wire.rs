@@ -776,6 +776,18 @@ impl AdmittedRow {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Native binary byte buffers materialized by the wire reader on this test's thread.
+    static MATERIALIZED_BINARY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Take the current test's materialization count before comparing the mapped route.
+#[cfg(test)]
+pub(crate) fn take_materialized_binary_bytes() -> usize {
+    MATERIALIZED_BINARY_BYTES.with(|count| count.replace(0))
+}
+
 /// Build one logical value from a successful native read's pre-order nodes.
 fn build(read: &mut RowRead) -> Result<Wire, String> {
     let code = read.next();
@@ -789,7 +801,12 @@ fn build(read: &mut RowRead) -> Result<Wire, String> {
         4 => Wire::Unsigned(read.unsigned()),
         5 => Wire::Float(read.number(), read.bytes()),
         7 => Wire::Text(read.text()),
-        8 => Wire::Binary(read.bytes()),
+        8 => {
+            let bytes = read.bytes();
+            #[cfg(test)]
+            MATERIALIZED_BINARY_BYTES.with(|count| count.set(count.get() + bytes.len()));
+            Wire::Binary(bytes)
+        }
         10 => Wire::List(build_values(read, count)?),
         11 => Wire::Tuple(build_values(read, count)?),
         14 => Wire::Record(build_fields(read, count)?),
