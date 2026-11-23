@@ -55,8 +55,9 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
     "--task",
     "--budget",
 ]
-# The version of the key an answer is cached under; changing it discards every cached answer.
+# The versions of the cache keys for ordinary answers and raw exports.
 const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/19"
+const EXPORT_PRESENTATION_DOMAIN: str = "incan.codegraph.export-presentation/1"
 
 
 pub model GraphOptions:
@@ -369,7 +370,7 @@ def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result
     if selected.risk:
         return Ok("")
     source = entry_source(path)
-    mut parts = [PRESENTATION_DOMAIN, path.0, source.0, selected.profile, selected.format, selected.query]
+    mut parts = [presentation_domain(selected), path.0, source.0, selected.profile, selected.format, selected.query]
     parts = parts + [selected.term]
     parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
     parts = parts + [selected.task, str(selected.budget), ",".join(selected.request.features)]
@@ -377,6 +378,13 @@ def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result
     for name in sorted([name for name in selected.substitutes.keys()]):
         parts.append(f"substitute:{name}={selected.substitutes[name]}")
     return request_key(parts, toolchain)
+
+
+def presentation_domain(selected: GraphOptions) -> str:
+    """Version raw export bytes independently of query, task and snapshot answers."""
+    if selected.query == "" and selected.task == "" and selected.stale == "":
+        return EXPORT_PRESENTATION_DOMAIN
+    return PRESENTATION_DOMAIN
 
 
 def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answered: Answered) -> None:
@@ -536,7 +544,7 @@ def presentation_inputs(
             None => return Ok(None)
             Some(scope) => key_root = f"relative:{scope}"
     mut inputs = [
-        PRESENTATION_DOMAIN,
+        presentation_domain(selected),
         snapshot,
         key_root,
         selected.profile,
@@ -713,7 +721,8 @@ def export_records(
 
     1. Separate the requested project's units from its dependency providers.
     2. Read provider declaration keys for joins, without copying their records into the answer.
-    3. Export local facts and references to each provider's original graph.
+    3. Export local facts, attributing source-bearing diagnostics to the local unit's author.
+    4. Address each provider's original graph by content identity.
     """
     # 1. An explicit additional source is also a separate unit, rather than an owner of this project's records.
     mut owner = Path(root)
@@ -723,8 +732,21 @@ def export_records(
     dependencies = [unit for unit in paths if unit.root.0 != owner.0]
     # 2. Foreign keys remain available to local references through the exact published declaration identities.
     providers = provider_keys(dependencies, toolchain)?
-    # 3. Every dependency keeps one graph; the answer carries only its address and content identity.
-    records = read_records(local, root, toolchain, "", selected.strict, degraded, snapshot, None, providers)?
+    # 3. Every selected local unit has the same source root and author.
+    mut records = read_records(local, root, toolchain, "", selected.strict, degraded, snapshot, None, providers)?
+    if len(local) > 0:
+        author = local[0].author(anchor_root(Path(root)).0).json()
+        for index in range(1, len(records)):
+            record = records[index]
+            if text(record, "record") != "diagnostic":
+                continue
+            span = record.get("primary_span").unwrap_or(JsonValue.null())
+            if text(span, "file") == "":
+                continue
+            mut fields = record.expect_object().map_err((error) => error.message())?
+            fields["author"] = author
+            records[index] = JsonValue.object(fields)
+    # 4. Every dependency keeps one graph; the answer carries only its address and content identity.
     mut header = records[0].expect_object().map_err((error) => error.message())?
     mut references: list[JsonValue] = []
     mut ledger = artifact_observations(root)
