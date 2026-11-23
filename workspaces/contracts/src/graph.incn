@@ -326,6 +326,7 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
     3. The failing unit's own facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
     4. Raw JSONL names the author of the source quoted by the diagnostic, separately from its provenance.
     5. Bare raw export agrees with explicit strict export for healthy and broken source.
+    6. Bare snapshot status recognizes both current export modes and reports an edit to unchecked as stale.
     """
     source = project.joinpath("context").joinpath("src").joinpath("lib.incn")
     if not source.is_file():
@@ -337,7 +338,9 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
     before = read(source)?
     prefix = before + "\n\npub def refused() -> int:\n"
     line = len(prefix.split("\n"))
-    write(source, prefix + "    return missing_context_fact\n")?
+    invalid = prefix + "    return missing_context_fact\n"
+    check_bare_snapshot_modes(incan, project, source, before, invalid, clean_default, clean_strict)?
+    write(source, invalid)?
     query = ["inspect", "codegraph", ".", "--query", "defs"]
     sibling = invoke(incan, query + ["checked_helper"], project)?
     broken = invoke(incan, query + ["contextual_helper"], project)?
@@ -376,6 +379,97 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
         return Err(f"bare raw export differed from strict on broken source, exit {code}")
     if clean_default.code != Some(0) or clean_strict.code != Some(0) or clean_default.stdout != clean_strict.stdout:
         return Err("bare raw export differed from strict on healthy source")
+    return Ok(None)
+
+
+def check_bare_snapshot_modes(
+    incan: str,
+    project: Path,
+    source: Path,
+    before: str,
+    invalid: str,
+    default_export: Outcome,
+    strict_export: Outcome,
+) -> Result[None, str]:
+    """
+    Ordinary status accepts the actual current checked or tolerant snapshot. It still identifies changes on errors.
+
+    1. Capture both explicit mode IDs and ask matching and bare status against the unchanged source.
+    2. Edit otherwise valid source, then make the source unchecked and ask about the old and current snapshots.
+    3. Require the unchanged bare checked answer after the other controls so its failure is specific.
+    """
+    export = ["inspect", "codegraph", "context"]
+    status = export + ["--stale"]
+    tolerant_export = invoke(incan, export + ["--allow-errors"], project)?
+    default_snapshot = export_snapshot(default_export)?
+    strict_snapshot = export_snapshot(strict_export)?
+    tolerant_snapshot = export_snapshot(tolerant_export)?
+    if strict_snapshot == tolerant_snapshot:
+        return Err("explicit checked and tolerant exports share a snapshot identity")
+    require_snapshot_status(incan, project, status + [strict_snapshot, "--strict"], strict_snapshot, false)?
+    require_snapshot_status(incan, project, status + [tolerant_snapshot, "--allow-errors"], tolerant_snapshot, false)?
+    require_snapshot_status(incan, project, status + [tolerant_snapshot], tolerant_snapshot, false)?
+    bare_default = invoke(incan, status + [default_snapshot], project)?
+    bare_strict = invoke(incan, status + [strict_snapshot], project)?
+
+    write(source, before + "\n# snapshot source changed\n")?
+    changed = export_snapshot(invoke(incan, export + ["--allow-errors"], project)?)?
+    for previous in [strict_snapshot, tolerant_snapshot]:
+        require_snapshot_status(incan, project, status + [previous], changed, true)?
+
+    write(source, invalid)?
+    unchecked = export_snapshot(invoke(incan, export + ["--allow-errors"], project)?)?
+    for previous in [strict_snapshot, tolerant_snapshot]:
+        require_snapshot_status(incan, project, status + [previous], unchecked, true)?
+    require_snapshot_status(incan, project, status + [unchecked], unchecked, false)?
+    strict_refused = invoke(incan, status + [strict_snapshot, "--strict"], project)?
+    write(source, before)?
+    if (
+        strict_refused.code != Some(1)
+        or strict_refused.stdout != ""
+        or "missing_context_fact" not in strict_refused.stderr
+    ):
+        return Err("explicit strict snapshot status failed to refuse unchecked input")
+
+    if (
+        bare_strict.code != Some(0)
+        or snapshot_stale(bare_strict.stdout)?
+        or status_snapshot(bare_strict)? != strict_snapshot
+    ):
+        return Err("bare snapshot status reported an unchanged checked export as stale")
+    if (
+        bare_default.code != Some(0)
+        or snapshot_stale(bare_default.stdout)?
+        or status_snapshot(bare_default)? != default_snapshot
+    ):
+        return Err("ordinary export followed by ordinary status reported unchanged source as stale")
+    return Ok(None)
+
+
+def export_snapshot(outcome: Outcome) -> Result[str, str]:
+    """Take the snapshot directly from a successful ordinary JSONL export."""
+    if outcome.code != Some(0):
+        return Err(f"snapshot export failed: {outcome.stderr}")
+    return required_text(parse_json(outcome.stdout.split("\n")[0])?, "snapshot_id")
+
+
+def status_snapshot(outcome: Outcome) -> Result[str, str]:
+    """The current snapshot ID named by a status response."""
+    return required_text(parse_json(outcome.stdout)?, "snapshot_id")
+
+
+def require_snapshot_status(
+    incan: str,
+    project: Path,
+    arguments: list[str],
+    current: str,
+    stale: bool,
+) -> Result[None, str]:
+    """Require a successful status with the expected current ID and staleness."""
+    outcome = invoke(incan, arguments, project)?
+    if outcome.code != Some(0) or snapshot_stale(outcome.stdout)? != stale or status_snapshot(outcome)? != current:
+        command = " ".join(arguments)
+        return Err(f"snapshot status differed for {command}, expected {current} with stale={stale}")
     return Ok(None)
 
 
