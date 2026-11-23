@@ -159,7 +159,7 @@ pub use overload_members::{
 pub use plan_wire_rows::{
     PreparedWireReader, admit_wire, enum_schema, read_wire, variant_schema, wire_field, write_wire,
 };
-pub use read_receipts::{RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt};
+pub use read_receipts::{RECEIPT_SCHEMA, decode_read_receipt, decode_read_receipt_view, encode_read_receipt};
 pub use record_scope::{
     AbsentFact, DEFAULT_READ_BYTES, DeletedFact, MAX_CHECKER_ROW_BYTES, MemberFact, MemberSelection, PayloadSelection,
     PreparationEvidence, READ_SCHEMA, ReadCounters, ReadFault, ReadReceipt, ReadScope, ReadWitness, RecordKey,

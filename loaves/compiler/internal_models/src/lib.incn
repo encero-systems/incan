@@ -158,6 +158,7 @@ pub from rust::internal_models_native import (
     decode_compiled_body_row,
     RECEIPT_SCHEMA,
     decode_read_receipt,
+    decode_read_receipt_view,
     encode_read_receipt,
     PayloadAdmission,
     decode_unit_admission,
