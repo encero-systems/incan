@@ -19,7 +19,7 @@ incan inspect codegraph . --format jsonl --allow-errors
 | `mode` | Selected by | Source with an error |
 | --- | --- | --- |
 | `strict` | Plain raw export by default, or explicit `--strict`. | Fails the command. |
-| `allow_errors` | `--allow-errors`. | Parseable units still produce records. Stderr names unchecked units. |
+| `allow_errors` | `--allow-errors`, or a raw export with `--risk` and without `--strict`. | Parseable units still produce records. Stderr names unchecked units. |
 
 A plain raw export omits `--query`, `--task`, `--stale` and `--risk`.
 

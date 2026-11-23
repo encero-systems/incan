@@ -98,7 +98,7 @@ Every argument object rejects unknown fields. Fields listed below are required; 
 | `context_for_declaration` | `declaration: string`, `budget: integer` | Compact context using the declaration selector as its task. |
 | `graph_query` | `kind: string`, `term: string` | CLI query hits; the default limit is `20`. |
 | `graph_summary` | `{}` or omitted | JSON object with `snapshot_id`, `degraded`, `languages`, `semantic_contexts` and `counts`, an object from record kind to count. |
-| `snapshot_status` | `snapshot: string` | Freshness JSON as described above. |
+| `snapshot_status` | `snapshot: string` | Freshness JSON comparing the supplied ID with the service snapshot reported by `graph_summary`. |
 | `process_risk` | `{}` or omitted | JSON array of optional process observations. |
 | `record_feedback` | `task: string`, `declaration: string`, `snapshot: string`, `ttl_seconds: integer` | The retained feedback object. Mutates only this MCP session. |
 | `task_memory` | `task: string` | JSON array of current feedback for that exact task. |
