@@ -64,11 +64,8 @@ pub(super) fn complete_dependency_context_in_place(
         install_dependency_modules(program, resolved);
     }
     program.dependencies.requested = requested;
-    let boundary = if program.authored_callable_start.is_some() {
-        program.entry
-    } else {
-        program.own
-    };
+    let first_preparation = program.authored_callable_start.is_none();
+    let boundary = if !first_preparation { program.entry } else { program.own };
     let (loaf_callables, preceding) = retain_linked_loaf_declarations(&mut program.modules, program.own, boundary);
     if !program.retained_namespaces.is_empty() {
         program.authored_callable_start = Some(program.authored_callable_start.unwrap_or_default() + preceding);
@@ -82,11 +79,20 @@ pub(super) fn complete_dependency_context_in_place(
     // field no body reads does not pull its type's private items into the unit. A read field's value is a checked
     // body local or external signature type, which still counts. A constructed layout writes every field, so its field
     // types count too, even when only a dependency names them.
-    let layouts = take_rust_layouts(&mut program.modules)?;
+    let retained = if first_preparation {
+        program.retained_namespaces.as_mut_slice()
+    } else {
+        &mut []
+    };
+    let layouts = take_rust_layouts::<NominalDeclaration>(&mut program.modules, program.own, retained)?;
     let mut opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
     let constructed = incan_semantics_core::body_ir::constructed_rust_field_items(&program.modules, &layouts, &opaque);
     opaque.extend(constructed);
-    let native_enums = take_rust_enums(&mut program.modules)?;
+    let native_enums = take_rust_layouts::<incan_semantics_core::body_ir::EnumDeclaration>(
+        &mut program.modules,
+        program.own,
+        retained,
+    )?;
     let owners: std::collections::HashSet<_> = layouts
         .iter()
         .map(|declaration| declaration.canonical.clone())
