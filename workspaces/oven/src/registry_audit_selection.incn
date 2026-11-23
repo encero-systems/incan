@@ -30,7 +30,7 @@ pub model LockedRegistryAudit:
     pub checkpoints: Dict[str, Checkpoint] = {}
 
 
-pub def audit_locked_registries(lock: OvenLock, audits: list[VerifiedAudit]) -> LockedRegistryAudit:
+pub def audit_locked_registries(lock: OvenLock, audits: list[VerifiedAudit]) -> Result[LockedRegistryAudit, str]:
     """
     Project the authenticated feeds over a checked lock.
 
@@ -69,7 +69,7 @@ pub def audit_locked_registries(lock: OvenLock, audits: list[VerifiedAudit]) -> 
             key = (f"sha256:{advisory.registry}", advisory.package, advisory.version)
             if key in matched:
                 findings.append(advisory)
-    return LockedRegistryAudit(coverage=coverage, advisories=findings, checkpoints=available)
+    return Ok(LockedRegistryAudit(coverage=coverage, advisories=findings, checkpoints=available))
 
 
 pub def audit_text(report: LockedRegistryAudit) -> str:

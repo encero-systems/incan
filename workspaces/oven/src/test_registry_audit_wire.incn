@@ -227,7 +227,7 @@ pub def test_lock_projection_uses_the_recorded_registry_and_discloses_uncovered_
 
     # 1. The same package/version under another origin has a different source.
     blocked = verify_audit_document(root, fixture("published")?, None, FIXTURE_NOW)?
-    report = audit_locked_registries(lock, [blocked])
+    report = audit_locked_registries(lock, [blocked])?
     assert len([row for row in report.coverage if row.covered]) == 1, "the pinned registry entry had no authenticated coverage"
     assert len([row for row in report.coverage if row.reason == NO_REGISTRY_ORIGIN]) == 2
     assert len(report.advisories) == 1
@@ -235,7 +235,7 @@ pub def test_lock_projection_uses_the_recorded_registry_and_discloses_uncovered_
 
     # 2. Only the signed withdrawal clears the matching version.
     cleared = verify_audit_document(root, fixture("withdrawn")?, Some(blocked.checkpoint), FIXTURE_NOW)?
-    after = audit_locked_registries(lock, [cleared])
+    after = audit_locked_registries(lock, [cleared])?
     assert len([row for row in after.coverage if row.covered]) == 1
     assert len(after.advisories) == 0
     assert read(lock_path)? == before
@@ -252,6 +252,17 @@ pub def test_package_audit_output_names_all_uncovered_origin_providers() -> Resu
     coverage = document.require("origin_coverage").map_err((error) => error.message())?
     for origin in ["template", "mix", "asset"]:
         assert required_text(coverage, origin)? == "not covered"
+    return Ok(None)
+
+
+pub def test_two_observations_for_the_same_registry_cannot_mix() -> Result[None, str]:
+    """A checkpoint from one authenticated response cannot label findings from another response of the same root."""
+    root = fixture_root()?
+    published = verify_audit_document(root, fixture("published")?, None, FIXTURE_NOW)?
+    withdrawn = verify_audit_document(root, fixture("withdrawn")?, Some(published.checkpoint), FIXTURE_NOW)?
+    match audit_locked_registries(fixture_lock()?, [published, withdrawn]):
+        Ok(_) => return Err("two generations of one registry were combined in the audit report")
+        Err(reason) => assert reason == f"multiple audit observations for registry sha256:{REGISTRY}", reason
     return Ok(None)
 
 
