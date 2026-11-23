@@ -209,6 +209,43 @@ pub def test_a_keystroke_after_a_save_writes_only_the_pages_the_save_changed() -
     return Ok(None)
 
 
+pub def test_a_second_save_builds_beside_an_unchanged_module() -> Result[None, str]:
+    """
+    A save after an earlier save builds and runs when its edit is to the entry and an imported module is unchanged:
+    the compiler restores `shapes` whole, checking none of its bodies, `summary` among them, which constructs a model.
+    Mid's second save failed here while a body that constructs a model had no record of its own.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    package = scratch.path().joinpath("package")
+    package.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    manifest = "[project]\nname = \"saves\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    write(package.joinpath("loaf.toml"), manifest)?
+    shapes = "pub model Item:\n    pub count: int\n\n\npub def scaled(item: Item) -> int:\n    return item.count * 2\n"
+    write(
+        package.joinpath("src").joinpath("shapes.incn"),
+        shapes + "\n\npub def summary() -> int:\n    item = Item(count=3)\n    return scaled(item)\n",
+    )?
+    source = package.joinpath("src").joinpath("main.incn")
+    entry = "from shapes import summary\n\n\ndef main() -> None:\n    println(str(summary()))\n"
+    write(source, entry)?
+    store = scratch.path().joinpath("store")
+    first = overlay_with(binary, source, source, store, ["--build"])
+    wrote = write(source, entry.replace("str(summary())", "str(summary() + 1)"))
+    second = overlay_with(binary, source, source, store, ["--build"])
+    ran = records_run(binary, source, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    first_text = first?.to_json().map_err((error) => error.message())?
+    _ = wrote?
+    answer = second.map_err((error) => f"first save: {first_text}\nsecond save: {error}")?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    report, output = ran?
+    assert output == "7\n", report.to_json().map_err((error) => error.message())?
+    return Ok(None)
+
+
 def keystroke_package(scratch: Path) -> Result[tuple[Path, Path, str], str]:
     """A package whose `main` calls `twice` and `thrice` from `helper`: its entry, its helper and the helper's text."""
     package = scratch.joinpath("package")
