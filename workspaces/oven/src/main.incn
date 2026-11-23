@@ -564,6 +564,8 @@ def records_command(command: str, arguments: list[str]) -> None:
                 prepared_lock_with_admission(command, options, admission)
             else:
                 warn_tolerated_entries(command, Path(options.path))
+            # An explicit file keeps its path. A changed spelling here is the entry selected from a Loaf directory.
+            from_directory = source.0 != options.path
             built = execute_records(
                 command,
                 source,
@@ -575,6 +577,7 @@ def records_command(command: str, arguments: list[str]) -> None:
                 admission,
                 unit_options,
                 options.output,
+                from_directory,
             )
             finish(command, records_library_graph(command, options, source, built), format)
 

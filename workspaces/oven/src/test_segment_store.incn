@@ -627,8 +627,8 @@ def publish_peer_replacements(root: Path) -> Result[None, str]:
 
 pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, str]:
     """
-    A lookup answers with a view of the value inside its segment: it copies out the same key and location bytes
-    whatever the value's size, and none of the value. Only `owned` copies a value, and it counts every byte it copies.
+    A lookup compares the frame key in place and returns a view of the value, copying only selected index metadata.
+    Only `owned` copies a value, and it counts every byte it copies.
     """
     scratch = scratch_directory()?
     mut lookup_copies: list[int] = []
@@ -640,8 +640,10 @@ pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, 
         )?
         latest = snapshot(root).map_err((error) => error.message())?
         before = read_counts()
+        index_copied = copied_index_bytes()
         found = lookup(latest, "value").map_err((error) => error.message())?
         after = read_counts()
+        assert after.copied - before.copied == copied_index_bytes() - index_copied, "a lookup copied the frame key"
         assert after.decoded == before.decoded, "a lookup decoded its value"
         assert after.bytes - before.bytes == 8 + 5 + size
         lookup_copies.append(after.copied - before.copied)

@@ -2,6 +2,7 @@
 lock, and connects again when the engine exits idle as it connects."""
 
 from core_process import executable
+from rust::std::os::unix::fs import symlink
 from rust::std::process import Command
 from rust::std::str import from_utf8
 from rust::std::thread import sleep, spawn
@@ -21,6 +22,7 @@ from engine_state import Identity, ServiceState
 from scratch import scratch_directory
 from engine_wire import joined
 from engine_protocol_fixtures import detail, json_text_is
+from store_path_conversion import snapshot
 
 
 pub def test_a_records_client_authenticates_its_bakery_once_before_submit() -> Result[None, str]:
@@ -44,6 +46,36 @@ pub def test_a_records_client_authenticates_its_bakery_once_before_submit() -> R
     println(f"work bakery manifest opens: {before} before Submit, {after} after Complete")
     assert before == 1, f"the same work bakery manifest was opened {before} times before Submit"
     assert after == 1, "the client must read the selected executable after Complete"
+    return check_enclosing_view_spelling(binary, root)
+
+
+def check_enclosing_view_spelling(binary: str, root: Path) -> Result[None, str]:
+    """Directory spellings reuse one selected project view while symbolic links and other roots stay distinct."""
+    project = root.joinpath("enclosing")
+    _ = client_project(project)?
+    store = root.joinpath("enclosing-bakery")
+    run_project_argument(binary, project, store, [])?
+    run_project_argument(binary, project, store, [])?
+    before = snapshot(store).map_err((error) => error.message())?
+    run_project_argument(binary, project, store, ["src"])?
+    equivalent = snapshot(store).map_err((error) => error.message())?
+    if equivalent.digest != before.digest:
+        stop_example_engine(binary, store)?
+        return Err(
+            f"equivalent project-directory spelling published generation {equivalent.generation} after {before.generation}"
+        )
+
+    linked = root.joinpath("enclosing-link")
+    symlink(project.0, linked.0).map_err((error) => str(error))?
+    run_project_argument(binary, root, store, [linked.0])?
+    through_link = snapshot(store).map_err((error) => error.message())?
+    other = root.joinpath("another-project")
+    _ = client_project(other)?
+    run_project_argument(binary, other, store, [])?
+    distinct = snapshot(store).map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    assert len(through_link.views.as_ref()) == len(before.views.as_ref()) + 1
+    assert len(distinct.views.as_ref()) == len(through_link.views.as_ref()) + 1
     return Ok(None)
 
 
@@ -68,10 +100,24 @@ def run_client_project(binary: str, source: Path, store: Path, trace: Option[Pat
     command.env_remove("INCAN_ENGINE_TRACE")
     if let Some(observation) = trace:
         command.env("INCAN_ENGINE_TRACE", observation.0)
+    return check_client_output(command)
+
+
+def run_project_argument(binary: str, project: Path, store: Path, arguments: list[str]) -> Result[None, str]:
+    """Invoke one directory spelling through the normal Records command."""
+    mut command = Command.new(binary)
+    command.arg("run").args(arguments).current_dir(project.0)
+    command.env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).env_remove("INCAN_ENGINE_TRACE")
+    return check_client_output(command)
+
+
+def check_client_output(mut command: BorrowedMut[Command]) -> Result[None, str]:
+    """Require the exact fixture output on both console streams."""
     outcome = command.output().map_err((error) => str(error))?
     if not outcome.status.success():
         return Err(str(from_utf8(outcome.stderr).map_err((error) => str(error))?))
     assert from_utf8(outcome.stdout).map_err((error) => str(error))? == "admitted\n"
+    assert outcome.stderr == b""
     return Ok(None)
 
 

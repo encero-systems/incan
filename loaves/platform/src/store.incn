@@ -40,6 +40,7 @@ commits nothing and adds no bytes.
 
 from rust::std::process import id
 from rust::std::rc import Rc
+from rust::std::str import from_utf8
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
 from std.primitives.locking import LockGuard
@@ -181,9 +182,9 @@ pub model ReadCounts:
     What this process read so far.
 
     `records` frames found, `bytes` frame bytes checked in place, `pages` index pages read and `checked` the index pages
-    mapped and hashed to check them against their digest; `copied` bytes copied out of mapped pages and frames by
-    lookups (keys compared and locations decoded, never a value); `decoded` bytes of found values copied into owned
-    bytes by `owned`; `listed` keys returned by whole and prefix listings. `index_bytes_checked` counts the bytes
+    mapped and hashed to check them against their digest; `copied` bytes copied out of mapped index pages by
+    lookups; `decoded` bytes of found values copied into owned bytes by `owned`; `listed` keys returned by whole
+    and prefix listings. `index_bytes_checked` counts the bytes
     checked on first access to immutable index pages. `digest_only_payload_bytes` and `digest_only_reads` count
     complete values hashed in place to answer payload-free binding queries.
     """
@@ -290,7 +291,7 @@ pub def read_counts() -> ReadCounts:
         records=counted.get("records", 0),
         bytes=counted.get("bytes", 0),
         pages=page_reads(),
-        copied=counted.get("copied", 0) + copied_index_bytes(),
+        copied=copied_index_bytes(),
         decoded=counted.get("decoded", 0),
         listed=counted.get("listed", 0),
         checked=pages_checked(),
@@ -627,7 +628,7 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
     """
     The frame an index entry names, mapped and checked in place against the entry's digest and full key.
 
-    Only the frame's key is copied out to compare; a found value stays a view inside the segment.
+    Compare the frame's key where it lies and keep a found value as a view inside the segment.
     """
     path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
     mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
@@ -659,10 +660,9 @@ def read_placed_frame(path: Path, mapped: Borrowed[MappedFile], key: str, locati
         None => return Err(failure("integrity", path.value, "malformed frame"))
 
     stored = part(path, frame.slice(8, size), "frame key runs past the frame")?
-    counted["copied"] = counted.get("copied", 0) + size
-    match decode_text(stored.to_bytes()):
-        None => return Err(failure("integrity", path.value, "frame key is not text"))
-        Some(found) =>
+    match from_utf8(stored.0.as_bytes()):
+        Err(_) => return Err(failure("integrity", path.value, "frame key is not text"))
+        Ok(found) =>
             if found != key:
                 return Err(failure("integrity", path.value, "frame holds another key"))
     if location.tombstone:
