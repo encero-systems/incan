@@ -37,12 +37,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, write_stderr
-from release_support import (
-    ReleaseTermination,
-    merge_release_terminations,
-    release_process_census,
-    stop_child_process_tree,
-)
+from release_support import ReleaseTermination, release_process_census, stop_child_process_tree
 from pub::incan_platform.probes import process_table
 
 const GIB: int = 1073741824
@@ -116,24 +111,6 @@ model Running:
     census_error: Option[str]
     # The worker project it runs in; empty when it has none.
     worker: str
-
-
-model ActiveSettlement:
-    """Owned invocations after polling reaches a stable pass, plus outcomes that forbid further admission."""
-
-    running: list[Running]
-    failed: list[int]
-    stopped: bool
-    errors: list[str]
-    completed: bool
-
-
-model Admission:
-    """The active and waiting invocations after one bounded admission step, plus any fully-drained start error."""
-
-    active: list[Running]
-    waiting: list[int]
-    errors: list[str]
 
 
 def main() -> None:
@@ -458,176 +435,91 @@ pub def run_all_failures(
     mut active: list[Running] = []
     mut failed: list[int] = []
     while len(waiting) > 0 or len(active) > 0:
-        settled = settle_active(active, ignored_prefix)
-        for position in settled.failed:
-            failed.append(position)
-        if len(settled.errors) > 0:
-            return Err("; ".join(settled.errors))
-        if settled.stopped:
+        chosen = admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
+        mut busy = [item.worker for item in active]
+        mut started: list[int] = []
+        for index in chosen:
+            worker = free_worker(planned[index].workers, busy)
+            if len(planned[index].workers) > 0 and worker == "":
+                continue
+            child = start(oven, planned[index], worker)?
+            root = int(child.id())
+            busy.append(worker)
+            started.append(index)
+            active.append(
+                Running(
+                    position=index,
+                    reservation=reservations[index],
+                    timeout_seconds=planned[index].timeout_seconds,
+                    started=Instant.now(),
+                    child=Rc.new(RefCell.new(child)),
+                    members=[root],
+                    census_error=None,
+                    worker=worker,
+                ),
+            )
+        waiting = [index for index in waiting if index not in started]
+        mut running: list[Running] = []
+        mut stop = false
+        for item in active:
+            root = int(item.child.borrow().id())
+            observed = release_process_census(process_table(), root)
+            custody = merged_custody(item.members, item.census_error, observed)
+            if stop:
+                stop_child_process_tree(item.child, custody, f"Oven test invocation {item.position}")?
+                continue
+            match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
+                Some(status) =>
+                    stop_child_process_tree(item.child, custody, f"Oven test invocation {item.position}")?
+                    if not status.success():
+                        failed.append(item.position)
+                        if item.position >= ignored_prefix:
+                            stop = true
+                None =>
+                    if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
+                        stop_child_process_tree(item.child, custody, f"Oven test invocation {item.position}")?
+                        failed.append(item.position)
+                        if item.position >= ignored_prefix:
+                            stop = true
+                    else:
+                        running.append(
+                            Running(
+                                position=item.position,
+                                reservation=item.reservation,
+                                timeout_seconds=item.timeout_seconds,
+                                started=item.started,
+                                child=item.child,
+                                members=custody.members,
+                                census_error=custody.census_error,
+                                worker=item.worker,
+                            ),
+                        )
+        if stop:
+            for item in running:
+                stop_child_process_tree(
+                    item.child,
+                    ReleaseTermination(members=item.members, census_error=item.census_error),
+                    f"Oven test invocation {item.position}",
+                )?
             return Ok(sorted(failed))
-
-        admission = start_waiting(oven, planned, reservations, waiting, settled.running, jobs, memory)
-        if len(admission.errors) > 0:
-            return Err("; ".join(admission.errors))
-        waiting = admission.waiting
-        active = admission.active
-        if len(active) > 0:
+        if len(running) == len(active):
             sleep(Duration.from_millis(20))
+        active = running
     return Ok(sorted(failed))
 
 
-def settle_active(active: list[Running], ignored_prefix: int) -> ActiveSettlement:
-    """Poll to a stable pass before admission, draining every owned tree after a failure or custody error."""
-    mut running = active
-    mut failed: list[int] = []
-    while len(running) > 0:
-        polled = poll_active_once(running, ignored_prefix)
-        for position in polled.failed:
-            failed.append(position)
-        if polled.stopped or len(polled.errors) > 0:
-            return ActiveSettlement(
-                running=polled.running,
-                failed=failed,
-                stopped=polled.stopped,
-                errors=polled.errors,
-                completed=polled.completed,
-            )
-        running = polled.running
-        if not polled.completed:
-            break
-    return ActiveSettlement(running=running, failed=failed, stopped=false, errors=[], completed=false)
-
-
-def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettlement:
-    """Take one prompt status pass, retaining live custody and recording rather than short-circuiting cleanup errors."""
-    mut running: list[Running] = []
-    mut failed: list[int] = []
-    mut errors: list[str] = []
-    mut stopped = false
-    mut completed = false
-    for item in active:
-        custody = running_custody(item)
-        if stopped:
-            if let Some(message) = stop_owned_child(item.child, custody, item.position):
-                errors.append(message)
-            completed = true
-            continue
-        match item.child.borrow_mut().try_wait():
-            Err(error) =>
-                errors.append(f"cannot poll Oven test invocation {item.position}: {error}")
-                if let Some(message) = stop_owned_child(item.child, custody, item.position):
-                    errors.append(message)
-                stopped = true
-                completed = true
-            Ok(Some(status)) =>
-                if let Some(message) = stop_owned_child(item.child, custody, item.position):
-                    errors.append(message)
-                    stopped = true
-                if not status.success():
-                    failed.append(item.position)
-                    if item.position >= ignored_prefix:
-                        stopped = true
-                completed = true
-            Ok(None) =>
-                if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
-                    if let Some(message) = stop_owned_child(item.child, custody, item.position):
-                        errors.append(message)
-                        stopped = true
-                    failed.append(item.position)
-                    if item.position >= ignored_prefix:
-                        stopped = true
-                    completed = true
-                else:
-                    running.append(
-                        Running(
-                            position=item.position,
-                            reservation=item.reservation,
-                            timeout_seconds=item.timeout_seconds,
-                            started=item.started,
-                            child=item.child,
-                            members=custody.members,
-                            census_error=custody.census_error,
-                            worker=item.worker,
-                        ),
-                    )
-    if stopped or len(errors) > 0:
-        for message in stop_owned_children(running):
-            errors.append(message)
-        running = []
-        stopped = true
-    return ActiveSettlement(running=running, failed=failed, stopped=stopped, errors=errors, completed=completed)
-
-
-def start_waiting(
-    oven: str,
-    planned: list[Invocation],
-    reservations: list[int],
-    waiting: list[int],
-    active: list[Running],
-    jobs: int,
-    memory: int,
-) -> Admission:
-    """Admit work only after settlement; one start error drains every child already owned by this scheduler."""
-    mut running = active
-    chosen = admitted(reservations, waiting, [item.reservation for item in running], jobs, memory)
-    mut busy = [item.worker for item in running]
-    mut started: list[int] = []
-    mut errors: list[str] = []
-    for index in chosen:
-        worker = free_worker(planned[index].workers, busy)
-        if len(planned[index].workers) > 0 and worker == "":
-            continue
-        match start(oven, planned[index], worker):
-            Err(message) =>
-                errors.append(f"Oven test invocation {index}: {message}")
-                break
-            Ok(child) =>
-                root = int(child.id())
-                busy.append(worker)
-                started.append(index)
-                running.append(
-                    Running(
-                        position=index,
-                        reservation=reservations[index],
-                        timeout_seconds=planned[index].timeout_seconds,
-                        started=Instant.now(),
-                        child=Rc.new(RefCell.new(child)),
-                        members=[root],
-                        census_error=None,
-                        worker=worker,
-                    ),
-                )
-    if len(errors) > 0:
-        for message in stop_owned_children(running):
-            errors.append(message)
-        running = []
-    remaining = [index for index in waiting if index not in started]
-    return Admission(active=running, waiting=remaining, errors=errors)
-
-
-def running_custody(item: &Running) -> ReleaseTermination:
-    """Merge one invocation's retained descendants with the operating system's current observation."""
-    root = int(item.child.borrow().id())
-    known = ReleaseTermination(members=item.members.clone(), census_error=item.census_error.clone())
-    observed = release_process_census(process_table(), root)
-    return merge_release_terminations(known, observed)
-
-
-def stop_owned_children(active: list[Running]) -> list[str]:
-    """Attempt to stop every owned invocation, retaining all cleanup failures instead of abandoning later children."""
-    mut errors: list[str] = []
-    for item in active:
-        custody = running_custody(item)
-        if let Some(message) = stop_owned_child(item.child, custody, item.position):
-            errors.append(message)
-    return errors
-
-
-def stop_owned_child(child: Rc[RefCell[Child]], custody: ReleaseTermination, position: int) -> Option[str]:
-    """Stop one owned process tree and convert its cleanup result into an accumulable diagnostic."""
-    match stop_child_process_tree(child, custody, f"Oven test invocation {position}"):
-        Ok(_) => return None
-        Err(message) => return Some(message)
+def merged_custody(known: list[int], prior_error: Option[str], observed: ReleaseTermination) -> ReleaseTermination:
+    """Retain every observed descendant and every process-census error until one invocation is fully reaped."""
+    mut members = known.clone()
+    for pid in observed.members:
+        if pid not in members:
+            members.append(pid)
+    mut census_error = prior_error.clone()
+    if let Some(message) = observed.census_error:
+        match census_error:
+            Some(prior) => census_error = Some(prior + "; " + message)
+            None => census_error = Some(message)
+    return ReleaseTermination(members=sorted(members), census_error=census_error)
 
 
 pub def free_worker(workers: list[str], busy: list[str]) -> str:

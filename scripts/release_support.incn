@@ -912,20 +912,6 @@ pub def release_process_census(census: Result[list[ProcessResource], str], root:
         Err(message) => return ReleaseTermination(members=[root], census_error=Some(message))
 
 
-pub def merge_release_terminations(known: ReleaseTermination, observed: ReleaseTermination) -> ReleaseTermination:
-    """Union observed process custody and retain every degraded-census diagnostic."""
-    mut members = known.members.clone()
-    for pid in observed.members:
-        if pid not in members:
-            members.append(pid)
-    mut census_error = known.census_error.clone()
-    if let Some(message) = observed.census_error:
-        match census_error:
-            Some(prior) => census_error = Some(prior + "; " + message)
-            None => census_error = Some(message)
-    return ReleaseTermination(members=sorted(members), census_error=census_error)
-
-
 def terminate_release_process_tree(root: int) -> ReleaseTermination:
     """Signal every observed owned process and process group, even when descendant census is degraded."""
     termination = release_process_census(process_table(), root)
@@ -951,12 +937,20 @@ pub def stop_child_process_tree(
     """Stop and reap one child plus every descendant captured while it ran or still visible at cancellation."""
     root = int(child.borrow().id())
     current = release_process_census(process_table(), root)
-    termination = merge_release_terminations(observed, current)
+    mut members = observed.members.clone()
+    for pid in current.members:
+        if pid not in members:
+            members.append(pid)
+    mut census_error = observed.census_error.clone()
+    if let Some(message) = current.census_error:
+        match census_error:
+            Some(prior) => census_error = Some(prior + "; " + message)
+            None => census_error = Some(message)
+    termination = ReleaseTermination(members=sorted(members), census_error=census_error)
     signal_release_termination(termination)
     reap_error = match child.borrow_mut().wait():
         Ok(_) => None
         Err(error) => Some(f"cannot reap {name}: {error}")
-
     require_release_termination(termination, reap_error)?
     return Ok(None)
 
