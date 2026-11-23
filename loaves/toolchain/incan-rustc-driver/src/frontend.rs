@@ -330,6 +330,74 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     })
 }
 
+#[cfg(test)]
+mod plan_record_option_tests {
+    use super::{UnitDescription, dependencies};
+
+    /// The independent digest is a single canonical capability option on a native report and products request.
+    #[test]
+    fn plan_selection_digest_requires_one_canonical_option_and_a_report() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let unit: UnitDescription = serde_json::from_value(serde_json::json!({
+            "schema": "incan.unit/1",
+            "source": root.path().join("main.incn"),
+            "project_root": root.path(),
+            "source_root": root.path(),
+            "package": "selection_probe",
+            "version": "0.1.0",
+            "profile": "debug",
+            "declared_features": [],
+            "active_features": [],
+            "loaves": [],
+            "rust_crates": [],
+            "contract_models": [],
+            "c_headers": [],
+            "externs": [],
+            "search": [],
+            "rust_abi": [],
+        }))?;
+        let products = root.path().join("products");
+        let report = root.path().join("report");
+        let scalar = [
+            "--plan-record-products".to_owned(),
+            products.to_string_lossy().into_owned(),
+            "--plan-record-report".to_owned(),
+            report.to_string_lossy().into_owned(),
+        ];
+        let legacy = dependencies(&unit, &scalar)?;
+        assert_eq!(legacy.plan_record_products.as_deref(), Some(products.as_path()));
+        assert_eq!(legacy.plan_record_report.as_deref(), Some(report.as_path()));
+
+        let digest = "ab".repeat(32);
+        let option = "--plan-module-selection-digest";
+        let mut pinned = scalar.to_vec();
+        pinned.extend([option.to_owned(), digest.clone()]);
+        let outcome = dependencies(&unit, &pinned);
+        assert!(
+            outcome.is_ok(),
+            "native compiler refused the canonical selection option: {:?}",
+            outcome.err()
+        );
+
+        let mut repeated = pinned.clone();
+        repeated.extend([option.to_owned(), digest.clone()]);
+        assert!(dependencies(&unit, &repeated).is_err());
+        assert!(dependencies(&unit, &pinned[2..]).is_err());
+        assert!(dependencies(&unit, &[&scalar[..2], &pinned[4..]].concat()).is_err());
+        assert!(dependencies(&unit, &pinned[..5]).is_err());
+        for malformed in [
+            "ab".repeat(31),
+            "AB".repeat(32),
+            format!("sha256:{digest}"),
+            "zz".repeat(32),
+        ] {
+            pinned[5] = malformed;
+            assert!(dependencies(&unit, &pinned).is_err());
+        }
+        Ok(())
+    }
+}
+
 /// Run one ordinary signature reader in the real compiler environment and publish only that owner's two Crumb values.
 pub(crate) fn check_ranked_reader(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let [unit, sysroot, demand_path, output, options @ ..] = arguments else {
