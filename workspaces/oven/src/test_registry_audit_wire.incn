@@ -8,7 +8,7 @@ from files import read, write
 from json_fields import required_items, required_text
 from lock_format import LockLoaf, LockToolchain, OvenLock, graph_identity, read_lock, write_lock
 from registry_advisory import audit_advisories
-from registry_audit_selection import NO_REGISTRY_ORIGIN, audit_locked_registries
+from registry_audit_selection import LockedRegistryAudit, NO_REGISTRY_ORIGIN, audit_json, audit_locked_registries, audit_text
 from registry_audit_wire import VerifiedAudit, verify_audit_document
 from registry_configuration import read_registries
 from registry_observation import retain_audit, retained_audit
@@ -239,6 +239,19 @@ pub def test_lock_projection_uses_the_recorded_registry_and_discloses_uncovered_
     assert len([row for row in after.coverage if row.covered]) == 1
     assert len(after.advisories) == 0
     assert read(lock_path)? == before
+    return Ok(None)
+
+
+pub def test_package_audit_output_names_all_uncovered_origin_providers() -> Result[None, str]:
+    """Name the unsupported template, mix and asset origins even when a package audit has no findings."""
+    report = LockedRegistryAudit(coverage=[], advisories=[])
+    text = audit_text(report)
+    document = parse(audit_json(report)?).map_err((error) => error.message())?
+    for origin in ["template", "mix", "asset"]:
+        assert f"{origin} origins: not covered" in text
+    coverage = document.require("origin_coverage").map_err((error) => error.message())?
+    for origin in ["template", "mix", "asset"]:
+        assert required_text(coverage, origin)? == "not covered"
     return Ok(None)
 
 

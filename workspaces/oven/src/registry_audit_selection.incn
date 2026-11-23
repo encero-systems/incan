@@ -1,5 +1,6 @@
 """Checked lock projection boundary for authenticated registry audit."""
 
+from std.json import JsonValue
 from lock_format import OvenLock
 from registry_advisory import VerifiedAdvisory
 from registry_audit_wire import VerifiedAudit
@@ -28,3 +29,13 @@ pub model LockedRegistryAudit:
 pub def audit_locked_registries(_lock: OvenLock, _audits: list[VerifiedAudit]) -> LockedRegistryAudit:
     """Provide no coverage until the checked lock's recorded sources can be projected."""
     return LockedRegistryAudit(coverage=[], advisories=[])
+
+
+pub def audit_text(_report: LockedRegistryAudit) -> str:
+    """The human report before its coverage records are available."""
+    return ""
+
+
+pub def audit_json(_report: LockedRegistryAudit) -> Result[str, str]:
+    """The JSON report before its coverage records are available."""
+    return JsonValue.object({}).to_json().map_err((error) => error.message())
