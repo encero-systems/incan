@@ -14,7 +14,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 
 | ID | Rule | Before | Real | Now |
 | --- | --- | ---: | ---: | ---: |
-| RS1 | `.unwrap()` / `.expect("…")` in Rust | 6 | 5 | 6 |
+| RS1 | `.unwrap()` / `.expect("…")` in Rust | 6 | 37 | 38 |
 | RS2 | `.expect()` spelled `unwrap_or_else(\|…\| panic!(…))` | 11 | 11 | 11 |
 | RS3 | `panic!` control flow (tests and production) | 284 | 284 | 284 |
 | RS4 | Wildcard `use …::*;` | 644 | 644 | 644 |
@@ -57,7 +57,7 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 
 - Source: `AGENTS.md`, "CRITICAL — NO `.unwrap()` / `.expect()` ANYWHERE"; `.agents/skills/review/SKILL.md`, Checklist 1.
 - Search: `rg -n '^\s*[^/\s].*(\.unwrap\(\)|\.expect\(")' -g '*.rs' -g '!**/fixtures/**'`
-- Real: the five `.expect("…")` calls in the tests of `loaves/compiler/incan_frontend/src/rust_abi_cache/strings.rs` (lines 707–724). The sixth hit is user-facing advice text in `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/types/mismatches_and_functions.rs:147` about Incan's own `.unwrap()`. The parser's `self.expect(&TokenKind…)` is its own `Result`-returning method and is not matched.
+- Now: 28 matched test lines in the lowering Loaf and nine in the primitives Loaf's Crumb sources. One additional line is advice text in `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/types/mismatches_and_functions.rs` about Incan's own `.unwrap()`. The parser's `self.expect(&TokenKind…)` is its own `Result`-returning method. The five former calls in the ABI string codec tests now propagate errors.
 
 ### RS2 `.expect()` spelled as `unwrap_or_else(|…| panic!(…))`
 

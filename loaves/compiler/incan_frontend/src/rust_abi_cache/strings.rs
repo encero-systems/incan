@@ -701,27 +701,33 @@ mod tests {
         }
     }
 
+    /// Two records keep their values while sharing one entry per distinct string.
     #[test]
-    fn records_round_trip_through_one_shared_table() {
+    fn records_round_trip_through_one_shared_table() -> Result<(), String> {
         let table = RefCell::new(StringTable::default());
-        let first = encode(&sample("std::vec::Vec"), &table).expect("first record encodes");
-        let second = encode(&sample("std::string::String"), &table).expect("second record encodes");
+        let first =
+            encode(&sample("std::vec::Vec"), &table).map_err(|error| format!("encoding the first record: {error}"))?;
+        let second = encode(&sample("std::string::String"), &table)
+            .map_err(|error| format!("encoding the second record: {error}"))?;
         let strings = table.into_inner().into_strings();
         assert_eq!(strings.len(), 4, "each distinct string is stored once: {strings:?}");
         assert_eq!(
-            decode::<Record>(&first, &strings).expect("first record decodes"),
+            decode::<Record>(&first, &strings).map_err(|error| format!("decoding the first record: {error}"))?,
             sample("std::vec::Vec")
         );
         assert_eq!(
-            decode::<Record>(&second, &strings).expect("second record decodes"),
+            decode::<Record>(&second, &strings).map_err(|error| format!("decoding the second record: {error}"))?,
             sample("std::string::String")
         );
+        Ok(())
     }
 
+    /// An encoded index is refused if its string table does not contain an entry for it.
     #[test]
-    fn an_index_outside_the_table_is_an_error() {
+    fn an_index_outside_the_table_is_an_error() -> Result<(), String> {
         let table = RefCell::new(StringTable::default());
-        let bytes = encode(&"text".to_owned(), &table).expect("a string encodes");
+        let bytes = encode("text", &table).map_err(|error| format!("encoding the test string: {error}"))?;
         assert!(decode::<String>(&bytes, &[]).is_err());
+        Ok(())
     }
 }
