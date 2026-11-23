@@ -672,6 +672,8 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
         first.was_demanded(),
         "the first session admitted no inventory before reading"
     );
+    let surface = first.executable_surface()?;
+    crate::loaf_index::settle_retained_loaves(true);
     let later = open()?;
     assert!(
         !later.was_demanded(),
@@ -684,6 +686,15 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
     assert!(
         !later.was_demanded(),
         "the admitted install digest must avoid a whole local manifest decode"
+    );
+    let warm_surface = later.executable_surface()?;
+    assert!(
+        !later.was_demanded(),
+        "unchanged executable admission demanded the whole path manifest again"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&surface, &warm_surface),
+        "unchanged executable admission rebuilt the same surface"
     );
 
     let full = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
@@ -712,6 +723,10 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
             .contains("the manifest changed after its inventory was admitted")),
         "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
     );
+    assert!(old_selection.executable_surface().is_err());
+    let changed_surface = open()?.executable_surface()?;
+    assert_eq!(changed_surface.version, "1.0.1");
+    assert!(!std::sync::Arc::ptr_eq(&surface, &changed_surface));
     let changed = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
     assert_eq!(changed.manifest.version, "1.0.1");
     assert_ne!(changed.identity.digest, full.identity.digest);
