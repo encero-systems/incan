@@ -14,6 +14,36 @@ pub const NAMESPACE_MODULE_PATH: &[u8] = b"\x81\x51\x94\x99\x5b\xb8";
 include!("namespace_schema/shapes_access_mode_to_primitive_type.rs");
 include!("namespace_schema/shapes_incan_type_to_type_ref.rs");
 
+/// Return the complete reference closure for one checked identity, including its physical provenance.
+pub fn canonical_symbol_descriptions() -> Vec<Description> {
+    vec![
+        shape_canonical_symbol_id(),
+        shape_hir_source_span(),
+        shape_scope_discriminant(),
+        shape_semantic_source_target_kind(),
+        shape_symbol_namespace(),
+        shape_symbol_origin(),
+    ]
+}
+
+/// Share the complete symbol and checked-type closure with graph executable rows.
+pub fn executable_type_descriptions(include_declarations: bool) -> Vec<Description> {
+    let mut descriptions = canonical_symbol_descriptions();
+    descriptions.extend([
+        shape_incan_callable_param(),
+        shape_incan_callable_param_kind(),
+        shape_incan_input_access(),
+        shape_incan_primitive_type(),
+        shape_incan_type(),
+        shape_numeric_type_id(),
+        shape_runtime_builtin_type(),
+    ]);
+    if include_declarations {
+        descriptions.push(shape_lifecycle_metadata());
+    }
+    descriptions
+}
+
 pub fn namespace_descriptions() -> Vec<Description> {
     vec![
         shape_access_mode(),

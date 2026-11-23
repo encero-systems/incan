@@ -227,3 +227,5 @@ pub from rust::internal_models_native import (
     encode_method_lookups,
     method_lookup_suffix,
 )
+
+pub from executable_body_wire import decode_executable_body, decode_executable_module, encode_executable_body, encode_executable_module
