@@ -10,6 +10,7 @@ mod borrowed_plans;
 mod borrowed_values;
 mod carriers;
 mod comparison;
+mod lowering_probe;
 mod equality;
 mod metadata;
 mod native_defaults;
