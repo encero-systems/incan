@@ -1,5 +1,7 @@
 //! A module's admitted plan record: the page a worker restores its functions from, and the note of what it restored.
 
+mod compact;
+
 use std::collections::HashMap;
 use std::io::Read;
 use std::ops::Deref;
@@ -17,6 +19,8 @@ use incan_mir_plan_native::{
 use sha2::{Digest, Sha256};
 
 use crate::resident_products::{ResidentPage, resident_full_page, resident_page};
+
+pub use compact::{AuthenticatedWholeAdmission, read_plan_module_admissions};
 
 /// The file of a staged directory naming every page Oven offers by the immutable store frame that holds it instead of
 /// a copy, one line per page: its file name, the segment file, the value's offset and length, and its content digest,
@@ -643,7 +647,7 @@ mod tests {
     }
 
     /// A fresh directory for one test.
-    fn directory(test: &str) -> PathBuf {
+    pub(super) fn directory(test: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("incan-plan-modules-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("directory");

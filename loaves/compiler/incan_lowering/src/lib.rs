@@ -187,7 +187,7 @@ mod value_enums;
 pub use incan_mir_plan_native::{Plan, PlanType, SourceSpan};
 pub use lowering::{UnitContinuation, UnitPlanning};
 pub use nominal_records::RecordedLayouts;
-pub use plan_modules::PlanModuleSelection;
+pub use plan_modules::{AuthenticatedWholeAdmission, PlanModuleSelection, read_plan_module_admissions};
 pub use runtime_requirements::{RefusalPlanning, RuntimeRequirement};
 pub use trace_channel::emit as emit_engine_trace;
 
