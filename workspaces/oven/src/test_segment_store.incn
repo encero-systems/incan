@@ -58,6 +58,7 @@ from compiler_graph_records import (
 )
 from pub::internal_models import ProducerRank, ProducerStage
 from pub::internal_models.records import (
+    PayloadSelection,
     PreparationEvidence,
     ReadReceipt,
     ReadScope,
@@ -477,16 +478,20 @@ pub def test_an_edited_declaration_s_edges_replace_their_keys_however_many_edits
 
 pub def test_an_edge_to_a_record_each_edit_replaces_is_written_in_place() -> Result[None, str]:
     """
-    Each edit evaluates a dependency in a new context, and one declaration's slot reads it. The reader's edge into the
-    dependency is keyed by the dependency's slot, not by the context the edit replaced, so after any number of edits the
-    edge indexes hold the one current edge in each direction, tombstones included. A reader lookup still names the
-    exact record read: the current dependency has the current reader, and an earlier context has none.
+    Each edit evaluates a dependency in a new context, and one declaration's slot reads it twice: its value, and a
+    payload range named by the dependency's context. The reader's edges into the dependency are keyed by the
+    dependency's slot and the read, not by the context the edit replaced, so after any number of edits the edge indexes
+    hold the two current edges in each direction, tombstones included. An incoming entry's value names the reading slot
+    and its outgoing edge, which no edit changes, so no edit after the first writes one. A reader lookup still names
+    the exact record read: the current dependency has the current reader, and an earlier context has none.
     """
     scratch = scratch_directory()?
     root = scratch.path().joinpath("store")
     mut earlier = graph_key("final", "function:helper", "checked")
     mut dependency = earlier
     mut reader = earlier
+    mut first: list[str] = []
+    mut written = 0
     for edit in range(12):
         earlier = dependency
         dependency = graph_key("final", "function:helper", f"checked {edit}")
@@ -494,10 +499,20 @@ pub def test_an_edge_to_a_record_each_edit_replaces_is_written_in_place() -> Res
         changed = put(begin(before), encode_record_key(dependency)?, f"helper {edit}".encode("utf-8"))
         selected = commit(changed).map_err((error) => error.message())?
         reader = graph_key("body-ir", "function:main", f"edit {edit}")
-        publish_reader(selected, reader, [RecordRequest(key=dependency, selection=RecordSelection.Field("value"))])?
+        payload = PayloadSelection(reference=dependency.context, offset=0, length=0)
+        reads = [
+            RecordRequest(key=dependency, selection=RecordSelection.Field("value")),
+            RecordRequest(key=dependency, selection=RecordSelection.Payload(payload)),
+        ]
+        publish_reader(selected, reader, reads)?
+        if edit == 0:
+            first = incoming_segments(root)?
+        elif incoming_segments(root)? != first:
+            written += 1
     latest = snapshot(root).map_err((error) => error.message())?
     edges = indexed_keys(root, latest, "incan.engine.edge-")?
-    assert len(edges) == 2, f"after 12 edits of a replaced dependency the edge indexes hold {len(edges)} entries"
+    held = f"after 12 edits of a replaced dependency the edge indexes hold {len(edges)} entries"
+    assert len(edges) == 4 and written == 0, f"{held}; {written} of 11 edits wrote an incoming entry of it"
     assert readers_of(latest, [dependency], "profile")? == [reader]
     assert readers_of(latest, [earlier], "profile")? == []
     return Ok(None)
