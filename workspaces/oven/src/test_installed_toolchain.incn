@@ -1,9 +1,11 @@
 """
-A home without this Oven's toolchain refuses by naming what is missing and how to install it, an installation whose
-standard Loaf is incomplete is refused at admission, and a zstd archive needs no `zstd`.
+A fresh home reports missing installation prerequisites, an installation whose standard Loaf is incomplete is refused
+at admission, and a zstd archive needs no `zstd`.
 """
 
+from rust::std::env import current_exe
 from rust::std::process import Command
+from std.environ import get_or
 from std.fs import Path
 from archive_decompression import plain_archive
 from files import make_directory, write as write_file
@@ -11,7 +13,7 @@ from freshness_fixtures import make_executable, write
 from home_paths import TOOLCHAIN
 from rust_target import decoded
 from scratch import scratch_directory
-from toolchain_archive import archive
+from toolchain_archive import archive, install_toolchain
 from toolchain import load_toolchain_at, prepare_installation
 from unit_publication import record_path, record_payload
 
@@ -122,6 +124,43 @@ pub def test_a_pack_publishes_its_archive_whole_or_not_at_all() -> Result[None, 
         Err(_) => pass
     assert not failed.exists()
     assert [entry.name() for entry in failed.parent().iterdir().map_err((error) => error.message())?] == []
+    return Ok(None)
+
+
+pub def test_install_checks_rust_prerequisites_before_staging() -> Result[None, str]:
+    """A local install without rustc-dev names the fix and creates zero staging directories."""
+    proof = get_or("INCAN_INSTALL_PREREQUISITE_PROOF", "")
+    if proof != "":
+        return check_missing_rust_component(Path(proof))
+    scratch = scratch_directory()?
+    fixture = scratch.path()
+    components = fixture.joinpath("rust/lib/rustlib")
+    make_directory(components)?
+    write_file(components.joinpath("components"), "rustc-aarch64-apple-darwin\n")?
+    home = fixture.joinpath("home")
+    make_directory(home)?
+
+    executable = current_exe().map_err((error) => str(error))?.to_string_lossy().into_owned()
+    mut command = Command.new(executable)
+    command.arg("--exact").arg("test_install_checks_rust_prerequisites_before_staging").arg("--nocapture")
+    command.env("INCAN_INSTALL_PREREQUISITE_PROOF", fixture.0).env("INCAN_HOME", home.0)
+    command.env("INCAN_SYSROOT", fixture.joinpath("rust").0).env_remove("INCAN_BAKERY")
+    output = command.output().map_err((error) => str(error))?
+    assert output.status.success(), decoded(output.stdout) + decoded(output.stderr)
+    assert "1 passed" in decoded(output.stdout), decoded(output.stdout)
+    written = home.iterdir().map_err((error) => error.message())?
+    assert len(written) == 0, f"the missing prerequisite created {len(written)} home entries"
+    return Ok(None)
+
+
+def check_missing_rust_component(fixture: Path) -> Result[None, str]:
+    """Invoke the install entry point with unreadable archive bytes so an early archive read changes the refusal."""
+    unavailable = fixture.joinpath("unavailable.tar")
+    match install_toolchain(unavailable):
+        Ok(_) => return Err("an install without rustc-dev succeeded")
+        Err(reason) =>
+            assert "missing required component rustc-dev" in reason, reason
+            assert "rustup component add --toolchain 1.98.0 rustc-dev" in reason, reason
     return Ok(None)
 
 
