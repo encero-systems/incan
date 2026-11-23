@@ -670,6 +670,9 @@ fn compile_unit(
         overflow_checks,
         library_facades,
         plan_record_report: dependencies.plan_record_report,
+        plan_record_products: dependencies
+            .plan_record_products
+            .map(|root| crate::rustc_process::PlanRecordProducts { root, selection: None }),
         tests: (kind == UnitKind::Test)
             .then(|| serde_json::to_vec(&tests))
             .transpose()?,

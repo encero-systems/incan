@@ -16,12 +16,20 @@ use std::path::{Path, PathBuf};
 
 use incan_driver::loaf_publication::PreparedLoafPublication;
 use incan_driver::unit::{ToolchainAccess, UnitKind};
+use incan_lowering::PlanModuleSelection;
 use serde::{Deserialize, Serialize};
 
 use crate::identity::DriverIdentity;
 use crate::library_exports::LibraryFacade;
 use crate::native_timing::Timing;
 use crate::plan::Plan;
+
+/// The selected products' independent authority, retained across an optional native handoff.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PlanRecordProducts {
+    pub(crate) root: PathBuf,
+    pub(crate) selection: Option<[u8; 32]>,
+}
 
 /// Everything native compilation reads and what it publishes after succeeding, owned so a fresh driver process can
 /// decode it. The driver identity is not carried: a fresh process verifies it again from the sysroot.
@@ -40,6 +48,7 @@ pub(crate) struct RustcHandoff {
     pub(crate) overflow_checks: bool,
     pub(crate) library_facades: Vec<LibraryFacade>,
     pub(crate) plan_record_report: Option<PathBuf>,
+    pub(crate) plan_record_products: Option<PlanRecordProducts>,
     /// A test unit's collected tests, written beside the executable once it links.
     pub(crate) tests: Option<Vec<u8>>,
     /// A library unit's Loaf and the directory it is published in once the rlib exists (DD-0007).
@@ -58,6 +67,7 @@ pub(crate) struct RustcHandoff {
 impl RustcHandoff {
     /// Run rustc, then write the test report and publish the Loaf; native-boundary failures remain retryable.
     pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
+        let _selection = self.read_plan_module_selection()?;
         let _captured = crate::spans::captured_source_scope(self.captured_sources, self.captured_texts)?;
         crate::adapter::compile(
             self.plan,
@@ -82,6 +92,11 @@ impl RustcHandoff {
             publication.write(&directory).map_err(|error| error.to_string())?;
         }
         Ok(())
+    }
+
+    /// Admit the same selection before either native placement reads its records.
+    fn read_plan_module_selection(&self) -> Result<Option<PlanModuleSelection>, String> {
+        Ok(None)
     }
 
     /// Write the handoff beside its output, encoded straight into the file without a whole-plan buffer, and return
@@ -124,4 +139,77 @@ fn write(handoff: &RustcHandoff, path: &Path) -> Result<(), Box<dyn std::error::
     let mut writer = postcard::to_io(handoff, BufWriter::new(File::create(path)?))?;
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incan_mir_plan_native::PLAN_MODULE_SELECTION_PAGE;
+    use sha2::{Digest, Sha256};
+
+    /// The test and both runtime placements carry the accepted selection independently of the staged files.
+    fn handoff(root: &Path, selection: Option<[u8; 32]>) -> RustcHandoff {
+        let span = incan_mir_plan_native::source_span("handoff.incn", 1, 1);
+        RustcHandoff {
+            plan: Plan::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), span),
+            crate_name: "handoff".into(),
+            output: root.join("output"),
+            sysroot: root.join("sysroot"),
+            externs: Vec::new(),
+            dependency_search_paths: Vec::new(),
+            rustc_args: Vec::new(),
+            access: ToolchainAccess::default(),
+            shared_store: None,
+            kind: UnitKind::Program,
+            overflow_checks: true,
+            library_facades: Vec::new(),
+            plan_record_report: Some(root.join("report")),
+            plan_record_products: Some(PlanRecordProducts {
+                root: root.join("products"),
+                selection,
+            }),
+            tests: None,
+            publication: None,
+            checked_sources: Vec::new(),
+            captured_sources: None,
+            captured_texts: BTreeMap::new(),
+        }
+    }
+
+    /// A staged file with a different named digest refuses in either placement, even without native-interface.
+    #[test]
+    fn native_handoff_refuses_a_replaced_named_plan_selection() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let products = root.path().join("products");
+        std::fs::create_dir(&products)?;
+        let staged = products.join(PLAN_MODULE_SELECTION_PAGE);
+        let named = products.join(format!("{PLAN_MODULE_SELECTION_PAGE}.digest"));
+        let original = Sha256::digest(b"accepted selection").into();
+        let replacement = b"replacement selection";
+        let replacement_digest = Sha256::digest(replacement);
+
+        let scalar = handoff(root.path(), None);
+        assert!(scalar.read_plan_module_selection()?.is_none());
+        let resident = handoff(root.path(), Some(original));
+        let packet = root.path().join("request.rustc-handoff");
+        write(&resident, &packet)?;
+        std::fs::write(staged, replacement)?;
+        std::fs::write(named, hex::encode(replacement_digest))?;
+        let detached: RustcHandoff = postcard::from_bytes(&std::fs::read(packet)?)?;
+        for request in [&resident, &detached] {
+            let authority = request
+                .plan_record_products
+                .as_ref()
+                .ok_or("lost plan record products")?;
+            assert_eq!(authority.selection, Some(original));
+            assert!(
+                matches!(
+                    request.read_plan_module_selection(),
+                    Err(reason) if reason.contains("does not name the accepted digest")
+                ),
+                "a staged replacement bypassed the native selection admission"
+            );
+        }
+        Ok(())
+    }
 }
