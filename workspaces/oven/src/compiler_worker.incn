@@ -6,10 +6,12 @@ inherited environment.
 from rust::std::env import vars_os
 from rust::std::ffi import OsString
 from rust::std::io import Error as IoError, Write, stderr, stdout
+from rust::std::marker import Send
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio, id
 from rust::std::string import String as RustString
-from rust::std::thread import available_parallelism, sleep
+from rust::std::sync import Arc, Mutex
+from rust::std::thread import available_parallelism, sleep, spawn
 from std.environ import get_or
 from rust::std::time import Duration
 from std.fs import Path
@@ -42,6 +44,9 @@ const READINESS_POLLS: int = 7500
 const WORKER_CEILING_BYTES: int = 4294967296
 # The pool size when physical memory cannot be read.
 const UNBOUNDED_WORKERS: int = 1024
+
+
+type WorkerChild = rusttype Arc[Mutex[Child]] with Send
 
 
 pub model Completion:
@@ -479,10 +484,26 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
                 document = receive_document(connected)?
                 ready(document, endpoint.generation, int(child.id()))?
                 trace(f"compiler worker: started pid {child.id()}")
+                reap_worker(child)
                 return Ok(None)
             None => pass
         if child.try_wait().map_err((error) => f"compiler worker readiness: {error}")? is not None:
             return Err("the compiler worker exited before readiness")
         sleep(Duration.from_millis(2))
     _ = child.kill()
+    _ = child.wait()
     return Err("the compiler worker did not acknowledge readiness")
+
+
+pub def reap_worker(child: Child) -> None:
+    """Give a detached resident worker an OS waiter, so retirement cannot leave a zombie child."""
+    worker: WorkerChild = Arc.new(Mutex.new(child))
+    _ = spawn(() => wait_for_worker(worker))
+
+
+def wait_for_worker(worker: WorkerChild) -> None:
+    """Block only the detached reaper thread until its exact child exits and is reaped."""
+    mut child = match worker.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+    _ = child.wait()

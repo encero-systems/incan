@@ -1,6 +1,7 @@
 """Engine control-channel boundaries reject malformed input before allocating or admitting work."""
 
 from core_process import Process, executable, spawn_detached
+from compiler_worker import reap_worker
 from rust::std::thread import sleep, spawn
 from rust::std::time import Duration
 from rust::std::string import String as RustString
@@ -16,7 +17,7 @@ from pub::incan_platform.store import Transaction, durable_commits, begin, put, 
 from store_path_conversion import compact, snapshot
 from engine_proofs import report
 from std.json import JsonValue, parse
-from rust::std::process import Child, Command
+from rust::std::process import Child, Command, Stdio
 from pub::incan_platform.ipc import Connection, dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid, connect_with
 from toolchain import load_toolchain, toolchain_directory
@@ -40,6 +41,27 @@ from engine_state import Identity, ServiceState
 from scratch import scratch_directory
 from engine_wire import Refusal, RefusalKind, zero_id, joined, scalar
 from trace_adapter import count_work, finish_counting
+
+
+pub def test_retired_compiler_workers_are_reaped() -> Result[None, str]:
+    """A detached resident worker has an OS waiter, so its exited process does not remain as a zombie."""
+    mut child = Command.new("/usr/bin/true").spawn().map_err((error) => str(error))?
+    pid = child.id()
+    reap_worker(child)
+    for _poll in range(500):
+        present = Command
+            .new("/bin/kill")
+            .arg("-0")
+            .arg(str(pid))
+            .stdout(Stdio.null())
+            .stderr(Stdio.null())
+            .status()
+            .map_err((error) => str(error))?
+            .success()
+        if not present:
+            return Ok(None)
+        sleep(Duration.from_millis(2))
+    return Err(f"retired compiler worker {pid} remained in the process table")
 
 
 pub def test_a_frame_read_waits_when_the_peer_would_block_between_parts() -> Result[None, str]:
