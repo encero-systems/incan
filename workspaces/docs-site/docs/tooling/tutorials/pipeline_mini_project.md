@@ -7,7 +7,7 @@ This tutorial is a lightweight, CI-friendly walkthrough for “step-based” aut
     <div><dt>Reader</dt><dd>Automation or pipeline developer</dd></div>
     <div><dt>Prerequisites</dt><dd>Getting Started and basic Result handling</dd></div>
     <div><dt>Time</dt><dd>15–20 minutes</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
     <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A deterministic typed workflow step</dd></div>
     <div><dt>Artifacts</dt><dd>Runnable step and focused tests</dd></div>

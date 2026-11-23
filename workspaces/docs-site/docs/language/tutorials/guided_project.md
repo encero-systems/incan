@@ -7,7 +7,7 @@ The Incan Book teaches language concepts in small programs. This guided spine gi
     <div><dt>Reader</dt><dd>Learner who wants continuity between Book chapters</dd></div>
     <div><dt>Prerequisites</dt><dd>Getting Started completed</dd></div>
     <div><dt>Time</dt><dd>1–2 focused sessions</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
     <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A deterministic typed workflow step</dd></div>
     <div><dt>Artifacts</dt><dd>Manifest, public step module, tests and native binary</dd></div>

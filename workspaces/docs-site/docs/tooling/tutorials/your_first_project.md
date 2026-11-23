@@ -6,7 +6,7 @@ Build a greeting module and test the same public functions your program calls.
 <div><dt>Reader</dt><dd>New project author</dd></div>
 <div><dt>Prerequisites</dt><dd>Getting started completed</dd></div>
 <div><dt>Time</dt><dd>15 minutes</dd></div>
-<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
 <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
 <div><dt>Outcome</dt><dd>A program and tests sharing a module</dd></div>
 <div><dt>Artifacts</dt><dd>Manifest, two modules and one test source</dd></div>

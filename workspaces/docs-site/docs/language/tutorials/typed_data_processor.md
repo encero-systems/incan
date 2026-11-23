@@ -7,7 +7,7 @@ This tutorial builds a small JSON-in/JSON-out order processor. It combines model
     <div><dt>Reader</dt><dd>Application or automation developer</dd></div>
     <div><dt>Prerequisites</dt><dd>Getting Started and basic functions</dd></div>
     <div><dt>Time</dt><dd>30–45 minutes</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
     <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A running typed JSON processor</dd></div>
     <div><dt>Artifacts</dt><dd>Models, transformation, tests, executable, and JSON report</dd></div>
