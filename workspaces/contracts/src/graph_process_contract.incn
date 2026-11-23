@@ -7,7 +7,7 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
 from graph_document import GraphDocument, document
-from files import optional_text as text
+from files import optional_text as text, parse_json
 from protocol_peer import Peer, decode, start
 
 
@@ -49,11 +49,11 @@ pub def check_process(incan: str, project: Path) -> Result[None, str]:
     if len(risks(graph(incan, project, false)?.records)) != 0:
         return Err("process observations escaped the explicit opt-in")
     # 3. Verify key separation and session-only feedback expiry.
-    check_package_keys(incan, project)?
-    return check_memory(incan, project)
+    foreign = check_package_keys(incan, project)?
+    return check_memory(incan, project, foreign)
 
 
-def check_package_keys(incan: str, project: Path) -> Result[None, str]:
+def check_package_keys(incan: str, project: Path) -> Result[str, str]:
     """The same authored source in a differently named package cannot reuse that package's declaration keys."""
     original = graph(incan, project, false)?
     manifest = project.joinpath("loaf.toml")
@@ -71,7 +71,7 @@ def check_package_keys(incan: str, project: Path) -> Result[None, str]:
     right = declaration_keys(after.records)
     if left == right:
         return Err("distinct package identities share the same declaration key set")
-    return Ok(None)
+    return Ok(text(after.records[0], "snapshot_id"))
 
 
 def declaration_keys(records: list[JsonValue]) -> list[str]:
@@ -79,8 +79,8 @@ def declaration_keys(records: list[JsonValue]) -> list[str]:
     return sorted([text(record, "stable_key") for record in records if text(record, "record") == "declaration"])
 
 
-def check_memory(incan: str, project: Path) -> Result[None, str]:
-    """Feedback stays in MCP, affects ranking, and expires on a changed snapshot or elapsed TTL."""
+def check_memory(incan: str, project: Path, foreign: str) -> Result[None, str]:
+    """Both current CLI modes record against the MCP snapshot and one task key."""
     records = graph(incan, project, false)?.records
     mut key = ""
     for record in records:
@@ -88,7 +88,9 @@ def check_memory(incan: str, project: Path) -> Result[None, str]:
             key = text(record, "stable_key")
     if key == "":
         return Err("feedback fixture has no proved helper identity")
-    snapshot = text(records[0], "snapshot_id")
+    checked = text(records[0], "snapshot_id")
+    tolerant = document(incan, project, "jsonl", allow_errors=true)?.records
+    tolerant_snapshot = text(tolerant[0], "snapshot_id")
     mut peer = start(incan, project, ["mcp", "."], "jsonl")?
     client = JsonValue.object({"name": JsonValue.string("graph-memory-contract"), "version": JsonValue.string("1")})
     initialization = JsonValue.object(
@@ -96,38 +98,101 @@ def check_memory(incan: str, project: Path) -> Result[None, str]:
     )
     peer.request(1, "initialize", initialization)?
     peer.notify("notifications/initialized", JsonValue.object({}))?
-    feedback = observation(key, snapshot, 3600)
-    tool(peer, 2, "record_feedback", feedback)?
-    retained = memory(peer, 3)?
-    if len(retained) != 1:
-        return Err("MCP did not retain explicit task feedback")
+    summary = parse_json(tool(peer, 2, "graph_summary", JsonValue.object({}))?)?
+    canonical = text(summary, "snapshot_id")
+    if canonical == "" or canonical != tolerant_snapshot or canonical == checked or foreign in [checked, canonical]:
+        return Err("feedback fixture did not select distinct checked, tolerant and foreign snapshot identities")
+    for identifier, snapshot in [(3, canonical), (4, tolerant_snapshot)]:
+        retained = parse_json(tool(peer, identifier, "record_feedback", observation(key, snapshot, 3600))?)?
+        if text(retained, "snapshot_id") != canonical:
+            return Err("MCP and explicit tolerant feedback did not share the canonical snapshot")
+    refuse_feedback(peer, 5, observation(key, foreign, 3600), "feedback snapshot is stale")?
     request = JsonValue.object({"task": JsonValue.string("helper"), "budget": JsonValue.int(4096)})
-    packed = tool(peer, 4, "context_for_task", request)?
-    if "session feedback" not in packed:
-        return Err("current feedback did not explain its context ranking")
+    if "session feedback" not in tool(peer, 6, "context_for_task", request)?:
+        return Err("tolerant feedback did not explain its context ranking")
+
+    accepted = tool(peer, 7, "record_feedback", observation(key, checked, 3600)).map_err(
+        (reason) => f"current checked CLI snapshot could not record feedback: {reason}",
+    )?
+    if text(parse_json(accepted)?, "snapshot_id") != canonical:
+        return Err("checked CLI feedback was stored under a different snapshot")
+    entries = memory(peer, 8)?
+    if len(entries) != 1 or text(entries[0], "snapshot_id") != canonical or text(entries[0], "stable_key") != key:
+        return Err("feedback aliases did not retain one canonical observation for the proved declaration")
+    if "session feedback" not in tool(peer, 9, "context_for_task", request)?:
+        return Err("checked CLI feedback did not explain its context ranking")
+    check_feedback_expiry(incan, project, peer, checked, canonical, key)?
+    tool(peer, 30, "process_risk", JsonValue.object({}))?
+    peer.finish()?
+    for record in graph(incan, project, false)?.records:
+        if text(record, "provenance") == "session_feedback":
+            return Err("session feedback escaped into compiler graph records")
+    return Ok(None)
+
+
+def check_feedback_expiry(
+    incan: str,
+    project: Path,
+    mut peer: Peer,
+    checked: str,
+    tolerant: str,
+    key: str,
+) -> Result[None, str]:
+    """Reject old or unproved observations and expire both actual current modes by TTL."""
     mut source = project.joinpath("src").joinpath("lib.rs")
     if not source.is_file():
         source = project.joinpath("src").joinpath("main.incn")
     before = source.read_text("utf-8", "strict").map_err((error) => error.message())?
     source.write_text(f"\n{before}", "utf-8", "strict", None).map_err((error) => error.message())?
-    expired = memory(peer, 5)
+    refuse_feedback(peer, 10, observation(key, checked, 3600), "feedback snapshot is stale")?
+    refuse_feedback(peer, 11, observation(key, tolerant, 3600), "feedback snapshot is stale")?
+    expired = memory(peer, 12)
     source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
     if len(expired?) != 0:
         return Err("changed source retained stale feedback")
     mut label = "provider::helper"
     if source.name().endswith(".rs"):
         label = "rust_relationships::provider::helper"
-    short = observation(label, snapshot, 1)
-    tool(peer, 6, "record_feedback", short)?
-    sleep(Duration.from_secs(2))
-    timed = memory(peer, 7)?
-    if len(timed) != 0:
-        return Err("feedback outlived its TTL")
-    tool(peer, 8, "process_risk", JsonValue.object({}))?
-    peer.finish()?
-    for record in graph(incan, project, false)?.records:
-        if text(record, "provenance") == "session_feedback":
-            return Err("session feedback escaped into compiler graph records")
+    else:
+        check_unproved_feedback(incan, project, peer, source, before, checked)?
+    for identifier, snapshot in [(16, checked), (18, tolerant)]:
+        tool(peer, identifier, "record_feedback", observation(label, snapshot, 1))?
+        sleep(Duration.from_secs(2))
+        if len(memory(peer, identifier + 1)?) != 0:
+            return Err("feedback outlived its TTL")
+    return Ok(None)
+
+
+def check_unproved_feedback(
+    incan: str,
+    project: Path,
+    mut peer: Peer,
+    source: Path,
+    before: str,
+    checked: str,
+) -> Result[None, str]:
+    """A current tolerant export can name a parseable declaration without conferring checked authority."""
+    broken = before + "\n\npub def feedback_unproved() -> int:\n    return missing_feedback_value\n"
+    source.write_text(broken, "utf-8", "strict", None).map_err((error) => error.message())?
+    records = document(incan, project, "jsonl", allow_errors=true)?.records
+    selected = [record for record in records if text(record, "record") == "declaration" and text(record, "name") == "feedback_unproved"]
+    if len(selected) != 1 or text(selected[0], "stable_key") != "":
+        return Err("feedback fixture did not produce one unproved declaration")
+    declaration = text(selected[0], "id")
+    current = text(records[0], "snapshot_id")
+    refuse_feedback(peer, 13, observation(declaration, checked, 3600), "feedback snapshot is stale")?
+    unproved = refuse_feedback(peer, 14, observation(declaration, current, 3600), "unique proved declaration")
+    source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    return unproved
+
+
+def refuse_feedback(mut peer: Peer, identifier: int, feedback: JsonValue, reason: str) -> Result[None, str]:
+    """Require the ordinary protocol tool to refuse an unauthenticated feedback request."""
+    match tool(peer, identifier, "record_feedback", feedback):
+        Ok(_) => return Err(f"MCP accepted feedback expected to refuse: {reason}")
+        Err(error) =>
+            if reason not in error:
+                return Err(error)
     return Ok(None)
 
 
