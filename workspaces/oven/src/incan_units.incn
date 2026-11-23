@@ -19,6 +19,7 @@ from rust::std::process import Command
 from std.fs import Path
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
+from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_INPUT
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Transaction
 from bakery import (
@@ -328,7 +329,9 @@ pub def obtain_executable(
             Some(ranked_pages) =>
                 pages.extend(ranked_pages)
                 selected_pages = Some(pages)
-            None => selected_pages = Some([])
+            None =>
+                # Keep the executable wire format while the compiler rebuilds all reusable data from source.
+                selected_pages = Some([page for page in pages if page.key == EXECUTABLE_GRAPH_INPUT])
     staged = staging(store, identity, prior_size(store, unit_name(unit)))?
     warning_file = staged.joinpath(".checked-warnings")
     mut staged_warnings: Option[Path] = None
