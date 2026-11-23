@@ -487,3 +487,66 @@ pub fn decode_callable_inventory(encoded: &[u8]) -> Result<NamespaceAtom, String
     }
     atom(&fields[1].value)
 }
+
+#[cfg(test)]
+mod executable_depth_tests {
+    use super::*;
+    use crate::crumb_rows::{ModelField, model_description};
+    use internal_models_bindings::{complete_view, mapped_bytes};
+
+    const ROOT: &[u8] = b"nestd_\0";
+    const CHILDREN: &[u8] = b"child_";
+    const LABEL: &[u8] = b"label_";
+
+    /// Build a finite chain in a recursive model, mirroring the named scopes in deeply nested Body IR.
+    fn nested_value(depth: usize) -> Result<NamespaceAtom, String> {
+        let children = selector_number(CHILDREN)?;
+        let label = selector_number(LABEL)?;
+        let node = |child| {
+            NamespaceAtom::Fields(vec![
+                NamespaceField {
+                    identity: children,
+                    value: NamespaceAtom::Items(child),
+                },
+                NamespaceField {
+                    identity: label,
+                    value: NamespaceAtom::Unsigned(7),
+                },
+            ])
+        };
+        Ok((0..depth).fold(node(Vec::new()), |child, _| node(vec![child])))
+    }
+
+    /// A deeper executable value must round-trip through both admission paths under the same finite budget.
+    #[test]
+    fn executable_projection_round_trips_nested_records() -> Result<(), String> {
+        let descriptions = vec![model_description(
+            ROOT,
+            "DeepExecutableFixture",
+            &[
+                ModelField::new(CHILDREN, "children", "list<record@6e657374645f>"),
+                ModelField::new(LABEL, "label", "u64"),
+            ],
+        )];
+        let expected = nested_value(60)?;
+        let encoded = encode_checked_projection(ROOT, &descriptions, &expected)?;
+        assert_eq!(decode_checked_projection(ROOT, &descriptions, &encoded)?, expected);
+
+        let encoded_again = encode_checked_projection(ROOT, &descriptions, &expected)?;
+        assert_eq!(encoded, encoded_again);
+        let reader = PreparedWireReader::create(ROOT, &descriptions, "deep executable fixture")?;
+        let mapped = mapped_bytes(&encoded)?;
+        let view = complete_view(&mapped).ok_or("deep executable fixture has no complete mapped view")?;
+        assert_eq!(
+            checked_projection_fields(&reader, &view, &[LABEL.to_vec()])?,
+            [NamespaceAtom::Unsigned(7)]
+        );
+        assert_eq!(decode_checked_projection_view(&reader, &view)?, expected);
+        assert!(write_wire(ROOT, &descriptions, logical(&expected)?).is_err());
+        let refused = encode_checked_projection(ROOT, &descriptions, &nested_value(176)?)
+            .err()
+            .ok_or("an over-depth executable frame was accepted")?;
+        assert!(refused.contains("depth"), "{refused}");
+        Ok(())
+    }
+}
