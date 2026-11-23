@@ -288,10 +288,8 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     model_constants: &'source HashMap<CanonicalSymbolId, model_constants::ModelConstant>,
     /// Checked local and published payload layouts indexed by their exact declaring identity.
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
-    /// Closed return carriers retained by a callable's providing module, keyed by its proven identity.
-    published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
-    /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
-    published_callable_defaults: &'source HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>>,
+    /// Return carriers and parameter defaults borrowed from selected callable declarations.
+    published_callables: &'source collect::PublishedCallables<'source>,
     /// Checked provider-method newtype results; conflicting declarations retain an explicit denial.
     published_newtype_returns: &'source HashMap<CanonicalSymbolId, Option<collect::PublishedNewtypeReturn>>,
     /// Exact checked provider storage types; a conflicting declaration records `None` and cannot authorize a global
@@ -402,10 +400,8 @@ struct BodyBuilder<'type_info, 'source> {
     model_constants: &'source HashMap<CanonicalSymbolId, model_constants::ModelConstant>,
     /// The same retained layouts used to close constructor destinations and pattern payload facts.
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
-    /// Provider-owned closed return carriers; a private import alias is never a consumer-side layout key.
-    published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
-    /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
-    published_callable_defaults: &'source HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>>,
+    /// Return carriers and parameter defaults borrowed from selected callable declarations.
+    published_callables: &'source collect::PublishedCallables<'source>,
     /// Exact provider-method return layouts, selected only by a checked method identity.
     published_newtype_returns: &'source HashMap<CanonicalSymbolId, Option<collect::PublishedNewtypeReturn>>,
     /// Owning declaration types for imported storage, selected only by the checked global identity.

@@ -524,7 +524,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             bound
                 .canonical
                 .as_ref()
-                .and_then(|identity| self.published_callable_returns.get(identity))
+                .and_then(|identity| self.published_callable_return(identity))
                 .filter(|ty| **ty != IncanType::Unknown)
                 .cloned()
                 .unwrap_or(checked_return)

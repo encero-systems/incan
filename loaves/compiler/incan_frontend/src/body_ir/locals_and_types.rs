@@ -3,6 +3,11 @@
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Borrow the providing declaration's closed return when published under this exact identity.
+    pub(super) fn published_callable_return(&self, identity: &CanonicalSymbolId) -> Option<&IncanType> {
+        self.published_callables.get(identity)?.return_type
+    }
+
     /// Start a fresh builder for one function body, with no locals, scopes, or accumulated facts yet.
     pub(super) fn new(lowering_facts: &BodyIrLoweringFacts<'type_info, 'source>, owner_return_type: IncanType) -> Self {
         Self {
@@ -10,8 +15,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             published_methods: lowering_facts.published_methods,
             model_constants: lowering_facts.model_constants,
             local_enum_declarations: lowering_facts.local_enum_declarations,
-            published_callable_returns: lowering_facts.published_callable_returns,
-            published_callable_defaults: lowering_facts.published_callable_defaults,
+            published_callables: lowering_facts.published_callables,
             published_newtype_returns: lowering_facts.published_newtype_returns,
             published_storage_types: lowering_facts.published_storage_types,
             type_info: lowering_facts.type_info,
