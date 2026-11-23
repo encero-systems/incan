@@ -1,4 +1,4 @@
-# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, parameter, helper chain, cursor, format, enum match, indexed list, indexed model field, builtin iteration and bodies with unrelated aggregates, results and closures without copying the tree; a parameter its body consumes on entry, by a model field, owned cursor, owned return or mutable local, receives a caller's last use by move without a copy; a conditional storing helper keeps its by-value input, so a value its caller keeps is copied once at the call on either path while a fresh value moves in on either path; an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable and to a walk over a reference parameter adds nothing; a helper handed the same tree twice borrows it twice; forwarding an explicit exclusive reference mutates the original tree without copying it
+# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, parameter, helper chain, cursor, format, enum match, indexed list, indexed model field, builtin iteration and bodies with unrelated aggregates, results and closures without copying the tree; a parameter its body consumes on entry, by a model field, owned cursor, owned return or mutable local, receives a caller's last use by move without a copy; a conditional storing helper keeps its by-value input, so a value its caller keeps is copied once at the call on either path while a fresh value moves in on either path; an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable and to a walk over a reference parameter adds nothing; a helper handed the same tree twice borrows it twice; a match that moves a payload out of its parameter keeps that parameter by value, so a kept tree is copied once at the call and a later last use moves; a native owner without Clone, such as a lock, is lent to a helper that only reads it, repeatedly; forwarding an explicit exclusive reference mutates the original tree without copying it
 # expect-stdout:
 #   observe true clones 0
 #   is_table true clones 0
@@ -33,9 +33,12 @@
 #   stored copy true original 0 clones 15
 #   fresh store true clones 15
 #   fresh skip true clones 15
+#   payload 1 1 clones 18
+#   lock false false clones 18
 
 # `Clone for Item` counts one per node it copies; `../README.md` derives every expected count.
 
+from rust::std::sync import Mutex
 from rust::borrow_fixture import Item, clones, document
 
 
@@ -282,6 +285,18 @@ def forward_clear_ref(mut item: &mut Item) -> None:
     clear_ref(item)
 
 
+def table_size(item: Item) -> int:
+    """Move a payload out of the matched parameter, which keeps that parameter's by-value input."""
+    match item:
+        Item.Table(children) => return children.len()
+        _ => return 0
+
+
+def lock_poisoned(lock: Mutex[int]) -> bool:
+    """Read a native owner without Clone through a plain parameter, which lends it."""
+    return lock.is_poisoned()
+
+
 def main() -> None:
     println(f"observe {observe(document())} clones {clones()}")
     holder = Holder.create(document())
@@ -354,3 +369,9 @@ def main() -> None:
     println(f"fresh store {fresh_stored} clones {clones()}")
     fresh_skipped = store_if(document(), false).is_none()
     println(f"fresh skip {fresh_skipped} clones {clones()}")
+    kept_table = document()
+    first_size = table_size(kept_table)
+    second_size = table_size(kept_table)
+    println(f"payload {first_size} {second_size} clones {clones()}")
+    lock = Mutex.new(7)
+    println(f"lock {lock_poisoned(lock)} {lock_poisoned(lock)} clones {clones()}")

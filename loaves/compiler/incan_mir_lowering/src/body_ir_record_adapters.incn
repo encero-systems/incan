@@ -670,6 +670,7 @@ pub def native_body_ir_module(module: CompilerBodyIrModule) -> Result[RustBodyIr
             value_enum_declarations=module.value_enum_declarations,
             trait_declarations=native_identities(module.trait_declarations)?,
             trait_implementations=module.trait_implementations,
+            published_callables=[],
             bodies=bodies,
         ),
     )

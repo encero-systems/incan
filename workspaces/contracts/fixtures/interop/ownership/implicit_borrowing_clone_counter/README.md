@@ -28,6 +28,8 @@ Each expected line of the program (`main.incn`) is a program step, the step's re
 | `stored copy` | the same helper stores its parameter, then the caller clears the original | +3 = 15 | the caller copies the three-node tree it keeps and the storing path moves that copy into the saved model |
 | `fresh store` | the helper called on its storing path with a fresh tree | 0 | the fresh tree moves into the by-value input and on into the saved model |
 | `fresh skip` | the helper called on its non-storing path with a fresh tree | 0 | the fresh tree moves into the by-value input and is dropped there |
+| `payload` | `table_size` matches `Item.Table(children)` and returns `children.len()`, called twice with a tree the caller keeps | +3 = 18 | moving the payload out of the parameter consumes it, so it keeps its by-value input as on the base: the first call copies the three-node tree the caller still needs and the second, its last use, moves it |
+| `lock` | `lock_poisoned` reads a `Mutex[int]` twice through a plain parameter | 0 | an instantiated native item that the body never consumes is lent, so a native owner without `Clone` needs no copy |
 
 `is_table` and `is_table_callback` are two functions on purpose: a classifier that escapes as a callable value uses an owned function-item adapter whose internal call lends the argument, while one that only a direct call reaches needs no adapter. One function cannot show both.
 

@@ -536,3 +536,60 @@ def read(item: Native) -> int:
     assert_eq!(actual, expected);
     Ok(())
 }
+
+/// A published callable's parameter passing is part of its signature, so it follows the base's read-only rule
+/// whatever its body does; only a callable nothing outside the module can name borrows a parameter its body never
+/// consumes. A published body that clones a field out of its input therefore keeps the by-value input that a Rust
+/// caller or another package was compiled against.
+#[test]
+fn published_callables_keep_the_read_only_rule() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Activation:
+    snapshot: list[int]
+
+pub def published_clone(activation: Activation) -> list[int]:
+    held = activation.snapshot
+    return held
+
+def private_clone(activation: Activation) -> list[int]:
+    held = activation.snapshot
+    return held
+
+pub def published_read(activation: Activation) -> int:
+    return len(activation.snapshot)
+
+model Reader:
+    count: int
+
+    pub def published_method(self, activation: Activation) -> list[int]:
+        held = activation.snapshot
+        return held
+
+    def private_method(self, activation: Activation) -> list[int]:
+        held = activation.snapshot
+        return held
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    let inferred = incan_semantics_core::IncanInputAccess::Inferred;
+    let shared = incan_semantics_core::IncanInputAccess::InferredShared;
+    let expected = vec![
+        ("published_clone", inferred),
+        ("private_clone", shared),
+        ("published_read", shared),
+        ("published_method", inferred),
+        ("private_method", shared),
+    ];
+    let mut actual = Vec::new();
+    for (name, _) in &expected {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == *name)
+            .ok_or("missing visibility body")?;
+        let input = body.params.last().ok_or("missing visibility input")?;
+        actual.push((*name, input.input_access));
+    }
+    assert_eq!(actual, expected);
+    Ok(())
+}

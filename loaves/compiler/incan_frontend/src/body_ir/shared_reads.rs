@@ -13,6 +13,7 @@ mod closure_reads;
 mod consumed_reads;
 mod derived_reads;
 mod match_reads;
+mod published_reads;
 mod string_parameter_reads;
 
 use derived_reads::{derived_temporaries_are_read_only, retain_shared_temporaries, temporary_is_read_only};
@@ -165,7 +166,15 @@ pub(super) fn retain_modules_with_selected(
         }
     }
 
-    let mut candidates = candidate_parameters(modules, selected);
+    // A published callable keeps the base's read-only rule under the base's own hypothesis; only the inputs of
+    // callables nothing outside the module can name follow the never-consumed rule.
+    let base = candidate_parameters(modules, selected, InputRule::Base);
+    let published = published_reads::read_only_parameters(modules, context, &field_types, base)
+        .into_iter()
+        .filter(|&(module_index, body_index, _)| published_body(modules, module_index, body_index))
+        .collect::<HashSet<_>>();
+    let mut candidates = candidate_parameters(modules, selected, InputRule::NeverConsumed);
+    candidates.extend(published);
     consumed_reads::refuse_consumed_parameters(modules, context, &field_types, &mut candidates);
 
     let signatures = collect_signatures(modules, context, &candidates);
@@ -216,13 +225,19 @@ fn retain_shared_parameter(
     }
 }
 
-/// Select every ordinary non-Copy input whose source contract leaves access inferred. Its frame receives shared
-/// storage because the binding is immutable; a move, store, return or owned call inside that frame materializes the
+/// Select every ordinary non-Copy input whose source contract leaves access inferred, under `rule`. The base rule
+/// selects every eligible callable's inputs for the published read-only fixed point (`published_reads`); the
+/// never-consumed rule selects only the inputs of callables nothing outside the module can name. Such a frame receives
+/// shared storage because the binding is immutable; a move, store, return or owned call inside it materializes the
 /// independent value at that operation, unless the body consumes the input on any path (`consumed_reads`). Open trait
 /// slots and their checked implementations keep the trait's authored ABI because an implementation body cannot refine
 /// that contract independently. A method targeted by a partial also keeps its authored ABI because the retained partial
 /// frame has already copied that parameter surface.
-fn candidate_parameters(modules: &[bir::BodyIrModule], selected: &HashSet<CanonicalSymbolId>) -> HashSet<Candidate> {
+fn candidate_parameters(
+    modules: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
+    rule: InputRule,
+) -> HashSet<Candidate> {
     let mut candidates = HashSet::new();
     for (module_index, module) in modules.iter().enumerate() {
         let trait_implementations = module
@@ -248,11 +263,11 @@ fn candidate_parameters(modules: &[bir::BodyIrModule], selected: &HashSet<Canoni
                     !trait_implementations.contains(identity) && !method_partial_targets.contains(identity)
                 })
                 && !has_open_trait_receiver(body);
-            if !eligible {
+            if !eligible || (rule == InputRule::NeverConsumed && published_body(modules, module_index, body_index)) {
                 continue;
             }
             for (parameter_index, parameter) in body.params.iter().enumerate() {
-                if parameter_is_candidate(body, parameter) {
+                if parameter_is_candidate(body, parameter, rule) {
                     candidates.insert((module_index, body_index, parameter_index));
                 }
             }
@@ -273,13 +288,45 @@ fn has_open_trait_receiver(body: &bir::Body) -> bool {
     })
 }
 
+/// Which rule selects an input for shared access: the base's read-only rule, which published callables keep, or the
+/// never-consumed rule of a callable nothing outside the module can name.
+#[derive(Clone, Copy, PartialEq)]
+enum InputRule {
+    Base,
+    NeverConsumed,
+}
+
+/// Whether this body's declaration is published (`pub`): another module, package or Rust caller can name it, so its
+/// parameter passing is part of its signature.
+pub(super) fn published_body(modules: &[bir::BodyIrModule], module_index: usize, body_index: usize) -> bool {
+    modules.get(module_index).is_some_and(|module| {
+        module
+            .bodies
+            .get(body_index)
+            .and_then(|body| body.canonical.as_ref())
+            .is_some_and(|identity| module.published_callables.contains(identity))
+    })
+}
+
 /// Keep receivers, rest packs, defaults, explicit modes, mutable inputs and Copy values on their established passing
-/// rules, and select only a checked type that lowering gives a shared executable form
-/// (`IncanType::has_shared_executable_form`). Every other type keeps its by-value input, including a generator the
-/// callee advances, an explicit reference carrier, callable storage and an open type parameter. Function-item adapters
-/// may borrow inside their forwarding body, but callable-valued parameters keep the by-value closure carrier that
-/// lowering supports. Defaults need a retained invocation owner before they can publish a borrowed parameter contract.
-fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam) -> bool {
+/// rules. Under the base rule every other type except an explicit reference carrier, callable storage and an open type
+/// parameter may borrow. Under the never-consumed rule only a checked type that lowering gives a shared executable
+/// form (`IncanType::has_shared_executable_form`) may, because lowering materializes its owned uses; every other type
+/// keeps its by-value input, including a generator the callee advances. Function-item adapters may borrow inside their
+/// forwarding body, but callable-valued parameters keep the by-value closure carrier that lowering supports. Defaults
+/// need a retained invocation owner before they can publish a borrowed parameter contract.
+fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam, rule: InputRule) -> bool {
+    let shareable = match rule {
+        InputRule::Base => !matches!(
+            parameter.ty,
+            IncanType::Ref(_)
+                | IncanType::RefMut(_)
+                | IncanType::Function { .. }
+                | IncanType::TypeVar(_)
+                | IncanType::SelfType
+        ),
+        InputRule::NeverConsumed => parameter.ty.has_shared_executable_form(),
+    };
     parameter.input_access == incan_semantics_core::IncanInputAccess::Inferred
         && parameter.kind == incan_semantics_core::IncanCallableParamKind::Normal
         && body
@@ -290,7 +337,7 @@ fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam) -> b
         && !parameter.mutable
         && !parameter.native_owned
         && !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
-        && parameter.ty.has_shared_executable_form()
+        && shareable
         && !body
             .locals
             .get(parameter.local.index())

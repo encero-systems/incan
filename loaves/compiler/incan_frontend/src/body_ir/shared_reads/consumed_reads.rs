@@ -1,12 +1,14 @@
 //! Keep the by-value input of a parameter its body consumes on any path. A caller that passes such a value at its
 //! last use moves it into the frame, so lending it would only turn that caller's free transfer into a copy inside the
 //! callee, on the paths that consume it. Only a parameter the body never consumes is shared: a caller then copies
-//! nothing for it, even when it keeps its value.
+//! nothing for it, even when it keeps its value. This rule decides only callables nothing outside the module can name;
+//! a published callable keeps the base's read-only rule (`published_reads`).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
-    Candidate, FieldTypes, ReadContext, Signatures, bir, closure_reads, collect_signatures, walk, walk_neighbors,
+    Candidate, FieldTypes, ReadContext, Signatures, bir, closure_reads, collect_signatures, pattern_is_read_only,
+    published_body, walk, walk_neighbors,
 };
 
 /// Refuse shared input to every candidate its body consumes on any path, to a decreasing fixed point. A callee that
@@ -46,7 +48,8 @@ pub(super) fn refuse_consumed_parameters(
     }
 }
 
-/// Resolve one candidate and prove whether its body consumes it under the current hypothesis.
+/// Resolve one candidate and prove whether its body consumes it under the current hypothesis. Published inputs keep
+/// the base rule's decision.
 fn consumed(
     modules: &[bir::BodyIrModule],
     candidate: Candidate,
@@ -55,6 +58,10 @@ fn consumed(
     candidates: &HashSet<Candidate>,
 ) -> bool {
     let (module_index, body_index, parameter_index) = candidate;
+    // A published input was settled by the base's read-only rule and is never refused here.
+    if published_body(modules, module_index, body_index) {
+        return false;
+    }
     let Some(body) = modules
         .get(module_index)
         .and_then(|module| module.bodies.get(body_index))
@@ -93,7 +100,8 @@ fn consumed_on_any_path(statements: &[bir::Statement], context: &ReadContext<'_>
                 derived: owner != context.local,
                 ..*context
             };
-            moves(statement, owner) && !closure_reads::shared_statement(statement, next, &owner_context)
+            (moves(statement, owner) && !closure_reads::shared_statement(statement, next, &owner_context))
+                || binds_payload(statement, owner)
         });
     });
     consumed
@@ -131,6 +139,28 @@ fn moves(statement: &bir::Statement, local: bir::LocalId) -> bool {
         },
         bir::StatementKind::Call { args, .. } => args.iter().any(element),
         bir::StatementKind::Return { value: Some(value) } => moved(value),
+        _ => false,
+    }
+}
+
+/// Whether a match or pattern test binds a payload of the whole local, or of one of its fields, by value: a moved,
+/// cloned or exclusively borrowed binding takes storage out of the subject, which needs the owned subject. Lowering
+/// cannot move a native enum's payload out of shared storage, and on the base such a match kept the subject owned.
+fn binds_payload(statement: &bir::Statement, local: bir::LocalId) -> bool {
+    let subject = |value: &bir::Operand| {
+        matches!(value, bir::Operand::Place(read)
+            if read.place.local_id() == Some(local)
+                && read.place.projection.iter().all(|step| matches!(step, bir::PlaceElem::Field { .. })))
+    };
+    match &statement.kind {
+        bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Match { scrutinee, arms },
+            ..
+        } => subject(scrutinee) && arms.iter().any(|arm| !pattern_is_read_only(&arm.pattern)),
+        bir::StatementKind::Assert {
+            kind: bir::AssertionKind::Pattern { scrutinee, pattern },
+            ..
+        } => subject(scrutinee) && !pattern_is_read_only(pattern),
         _ => false,
     }
 }
