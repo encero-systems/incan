@@ -535,4 +535,91 @@ mod tests {
         }
         Ok(())
     }
+
+    /// Refuse invalid selected evidence through each native entry before publishing any unit artifacts.
+    #[test]
+    fn native_admission_refusal_leaves_test_and_loaf_outputs_empty() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let identity = crate::identity::verify_loaded_test_sysroot()?;
+        for kind in [UnitKind::Test, UnitKind::Library] {
+            verify_unpublished_native_refusals(&fixture, &identity, kind)?;
+        }
+        Ok(())
+    }
+
+    /// Exercise the same reportless, replaced or omitted evidence before and after writing a handoff.
+    fn verify_unpublished_native_refusals(
+        fixture: &Fixture,
+        identity: &DriverIdentity,
+        kind: UnitKind,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let root = fixture.root.path();
+        let packet = root.join("refused.rustc-handoff");
+        for failure in ["missing report", "foreign selection", "missing note"] {
+            let (selection, notes) = fixture.stage_selection(SELECTION_A)?;
+            let [mut request, _] = fixture.requests(selection, Some(notes), true)?;
+            let output = tempfile::tempdir_in(root)?;
+            request.output = output.path().join("probe");
+            request.sysroot = identity.sysroot.clone();
+            request.kind = kind;
+            if kind == UnitKind::Test {
+                request.tests = Some(b"[]".to_vec());
+            } else {
+                request.publication = Some((output.path().to_path_buf(), prepare_probe_loaf(output.path())?));
+            }
+            if failure == "missing report" {
+                request.plan_record_report = None;
+            }
+            write(&request, &packet)?;
+            let expected = match failure {
+                "missing report" => "no native report directory",
+                "foreign selection" => {
+                    fixture.stage_selection(SELECTION_B)?;
+                    "does not name the accepted digest"
+                }
+                _ => {
+                    fs::remove_file(&fixture.note)?;
+                    "expected 1 notes, observed 0"
+                }
+            };
+            let check = |placement,
+                         outcome: Result<(), Box<dyn std::error::Error>>|
+             -> Result<(), Box<dyn std::error::Error>> {
+                let reason = outcome.err().map(|error| error.to_string()).unwrap_or_default();
+                assert!(
+                    reason.contains(expected),
+                    "{placement} did not give the expected {failure} refusal for {kind:?}: {reason}"
+                );
+                assert!(
+                    fs::read_dir(output.path())?.next().is_none(),
+                    "{placement} published a refused {kind:?}"
+                );
+                Ok(())
+            };
+            check("resident", request.compile(identity))?;
+            check("handoff", super::serve(&[packet.to_string_lossy().into_owned()]))?;
+            assert!(!packet.exists(), "the detached entry did not consume its handoff");
+        }
+        Ok(())
+    }
+
+    /// Prepare a real Loaf artifact set before testing that a failed native request keeps it private.
+    fn prepare_probe_loaf(directory: &Path) -> Result<PreparedLoafPublication, String> {
+        use incan_driver::loaf_publication::{prepare_executable_surface, prepare_loaf_publication};
+        use incan_frontend::library_manifest::LibraryManifest;
+        use incan_frontend::loaf_index::{LoafNativeClosure, NativeAnchors};
+
+        let manifest = LibraryManifest::new("probe", "0.1.0");
+        let surface = prepare_executable_surface(&manifest, &[], false).map_err(|error| error.message)?;
+        prepare_loaf_publication(
+            directory,
+            manifest,
+            surface.bytes,
+            &LoafNativeClosure::default(),
+            &NativeAnchors::default(),
+            None,
+            None,
+        )
+        .map_err(|error| error.message)
+    }
 }
