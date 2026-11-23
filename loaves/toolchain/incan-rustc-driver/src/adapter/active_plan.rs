@@ -1,6 +1,7 @@
 //! One compilation's record-backed native definitions and stable rustc definition index.
 
 use super::*;
+use incan_mir_plan_native::AdmittedDefinition;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use std::collections::HashMap;
@@ -48,10 +49,15 @@ impl PlanReader {
     pub(super) fn new(
         plan: Arc<Plan>,
         report: Option<&Path>,
-        _compact: Vec<incan_mir_plan_native::AdmittedDefinition>,
+        compact: Vec<AdmittedDefinition>,
     ) -> Result<Self, String> {
         let mut reader = Self::with_inputs(plan, HashMap::new(), HashMap::new());
+        let compact = reader.index_compact_definitions(compact)?;
+        let strict = !compact.is_empty();
         let Some(report) = report else {
+            if strict {
+                return Err("compact native definitions have no native report directory".into());
+            }
             return Ok(reader);
         };
         match std::fs::read(report.join(incan_mir_plan_native::native_interface_filename())) {
@@ -61,17 +67,20 @@ impl PlanReader {
                 if interface.plan.is_empty() {
                     return Err("native-interface record has no encoded plan".into());
                 }
-                reader.function_inputs = reader.read_function_inputs(report)?;
+                reader.function_inputs = reader.read_function_inputs(report, compact)?;
             }
             // Without the whole-unit interface, the report's events and definitions must name every active function;
             // otherwise the unit stays an ordinary compilation, ineligible for native incremental reuse.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => match reader.read_function_inputs(report) {
-                Ok(inputs) => reader.function_inputs = inputs,
-                Err(reason) => {
-                    tracing::debug!(target: "incan::invocation", %reason, "native incremental reuse unavailable");
-                    return Ok(reader);
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match reader.read_function_inputs(report, compact) {
+                    Ok(inputs) => reader.function_inputs = inputs,
+                    Err(reason) if strict => return Err(reason),
+                    Err(reason) => {
+                        tracing::debug!(target: "incan::invocation", %reason, "native incremental reuse unavailable");
+                        return Ok(reader);
+                    }
                 }
-            },
+            }
             Err(error) => return Err(format!("cannot read native-interface record: {error}")),
         }
         reader.alias_inputs = Self::layout_inputs(&reader.plan)?;
@@ -106,8 +115,28 @@ impl PlanReader {
         Self::with_inputs(plan, self.function_inputs.clone(), self.alias_inputs.clone())
     }
 
+    /// Validate each authenticated compact definition against the existing indexed active plan exactly once.
+    fn index_compact_definitions(
+        &self,
+        definitions: Vec<AdmittedDefinition>,
+    ) -> Result<HashMap<String, DefinitionInput>, String> {
+        let mut indexed = HashMap::with_capacity(definitions.len());
+        for definition in definitions {
+            let function = definition.function.clone();
+            let input = self.admitted_definition_input(definition)?;
+            if indexed.insert(function.clone(), input).is_some() {
+                return Err(format!("compact admission repeats native function {function}"));
+            }
+        }
+        Ok(indexed)
+    }
+
     /// Read authenticated function events and admitted definitions, requiring coverage of the active plan.
-    fn read_function_inputs(&self, report: &Path) -> Result<HashMap<String, DefinitionInput>, String> {
+    fn read_function_inputs(
+        &self,
+        report: &Path,
+        compact: HashMap<String, DefinitionInput>,
+    ) -> Result<HashMap<String, DefinitionInput>, String> {
         let mut paths = std::fs::read_dir(report)
             .map_err(|error| format!("cannot read native plan report: {error}"))?
             .map(|entry| entry.map(|value| value.path()).map_err(|error| error.to_string()))
@@ -165,13 +194,18 @@ impl PlanReader {
         self.read_admitted_definitions(
             report,
             incan_mir_plan_native::admitted_definitions_filename(),
+            &compact,
             &mut inputs,
         )?;
         self.read_admitted_definitions(
             report,
             incan_mir_plan_native::NATIVE_DEFINITIONS.to_owned(),
+            &compact,
             &mut inputs,
         )?;
+        for (function, input) in compact {
+            inputs.entry(function).or_insert(input);
+        }
         if inputs.len() != self.plan.functions.len()
             || self
                 .plan
@@ -191,6 +225,7 @@ impl PlanReader {
         &self,
         report: &Path,
         filename: String,
+        compact: &HashMap<String, DefinitionInput>,
         inputs: &mut HashMap<String, DefinitionInput>,
     ) -> Result<(), String> {
         let path = report.join(filename);
@@ -202,28 +237,37 @@ impl PlanReader {
         )
         .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
         for definition in definitions {
-            if inputs.contains_key(&definition.function) {
-                continue;
-            }
-            if !self.contains_active_function(&definition.function) {
+            if compact.contains_key(&definition.function) {
                 return Err(format!(
-                    "admitted function product is outside the active plan for {}",
+                    "native plan report repeats compact function {} as a scalar definition",
                     definition.function
                 ));
             }
-            let fingerprint =
-                incan_semantics_core::semantic_digest::semantic_digest(&vec![definition.key, definition.digest])
-                    .map_err(|error| format!("cannot fingerprint native function record: {error}"))?;
-            inputs.insert(
-                definition.function.clone(),
-                DefinitionInput {
-                    name: definition.function,
-                    identity: definition.identity,
-                    fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
-                },
-            );
+            if inputs.contains_key(&definition.function) {
+                continue;
+            }
+            let function = definition.function.clone();
+            inputs.insert(function, self.admitted_definition_input(definition)?);
         }
         Ok(())
+    }
+
+    /// Bind a scalar or compact product to the same exact active function and native fingerprint.
+    fn admitted_definition_input(&self, definition: AdmittedDefinition) -> Result<DefinitionInput, String> {
+        if !self.contains_active_function(&definition.function) {
+            return Err(format!(
+                "admitted function product is outside the active plan for {}",
+                definition.function
+            ));
+        }
+        let fingerprint =
+            incan_semantics_core::semantic_digest::semantic_digest(&vec![definition.key, definition.digest])
+                .map_err(|error| format!("cannot fingerprint native function record: {error}"))?;
+        Ok(DefinitionInput {
+            name: definition.function,
+            identity: definition.identity,
+            fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
+        })
     }
 
     /// Check one definition against the existing active function index.
