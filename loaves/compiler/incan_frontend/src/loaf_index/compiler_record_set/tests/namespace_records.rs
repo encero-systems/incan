@@ -55,5 +55,104 @@ fn a_consumer_reads_one_public_namespace_record_alone() -> Result<(), Box<dyn st
         !warm.was_demanded(),
         "namespace selection reread the whole path manifest"
     );
+    check_path_rust_reexport_without_manifest()?;
+    Ok(())
+}
+
+/// A path dependency carrying a Rust re-export must resolve from its named facts and the already checked Rust item.
+fn check_path_rust_reexport_without_manifest() -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::Arc;
+
+    use crate::api_metadata::{
+        CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        materialize_checked_api_public_namespaces,
+    };
+    use crate::library_manifest::{LibraryManifest, LibraryRustAbi};
+    use crate::loaf_index::LoafIndex;
+    use crate::typechecker::TypeChecker;
+    use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustVisibility};
+
+    let root = tempfile::tempdir()?;
+    let private = tempfile::tempdir()?;
+    let _home = super::super::super::manifest_input::select_test_home(private.path());
+    let _records = super::thread_selection::select(super::RecordSet::new(
+        root.path().join("unrelated-installation"),
+        Vec::new(),
+    ));
+    let item = RustItemMetadata {
+        canonical_path: "native::answer".into(),
+        definition_path: None,
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Function(RustFunctionSig {
+            receiver_contract: None,
+            type_params: Vec::new(),
+            bounds: Vec::new(),
+            params: Vec::new(),
+            return_type: "i64".into(),
+            is_async: false,
+            is_unsafe: false,
+        }),
+    };
+    let supply_native = |loaves: &mut LoafIndex| {
+        loaves.add_rust_facts(
+            &BTreeSet::new(),
+            BTreeMap::from([(item.canonical_path.clone(), item.clone())]),
+        );
+    };
+    let parse = |source: &str| -> Result<crate::ast::Program, String> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
+    };
+    let producer = parse("pub from rust::native import answer\n")?;
+    let path = vec!["keys".to_owned()];
+    let mut producer_index = LoafIndex::default();
+    supply_native(&mut producer_index);
+    let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(Some("probe".into()));
+    checker.set_current_module_path(Some(path.clone()));
+    checker.set_loaves(Arc::new(producer_index));
+    checker
+        .check_program(&producer)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let exports = crate::library_exports::collect_checked_public_exports(&producer, &checker);
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![collect_checked_api_metadata(&producer, &checker, path.clone())],
+        public_namespaces: Vec::new(),
+    };
+    materialize_checked_api_public_namespaces(&mut api)?;
+    let mut manifest = LibraryManifest::new("probe", "1.0.0");
+    manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports("probe", &api, &[(path, exports)])?;
+    manifest.contract_metadata.api = Some(api);
+    manifest.rust_abi = LibraryRustAbi::from_items(vec![item.clone()]);
+    let install = checker.loaf_install_record("probe", &manifest);
+    let publication = manifest.prepare_install_record(&install)?;
+    let content = manifest.to_json_string()?;
+    std::fs::write(root.path().join("probe.incnlib"), &content)?;
+    std::fs::write(
+        root.path().join("probe.incnfacts"),
+        manifest.encode_loaf_facts(&content, Some(publication))?,
+    )?;
+    let open = || LoafIndex::deferred([("probe".into(), "probe".into(), root.path().to_owned(), false)]);
+    let cold = open()?;
+    assert_eq!(cold.demanded_fixture_manifests(), ["probe"]);
+    let mut index = open()?;
+    supply_native(&mut index);
+    let loaves = Arc::new(index);
+    let mut checker = TypeChecker::new();
+    checker.set_loaves(Arc::clone(&loaves));
+    let program = parse("from pub::probe.keys import answer\n\ndef main() -> int:\n    return answer()\n")?;
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert!(
+        loaves.demanded_fixture_manifests().is_empty(),
+        "Rust alias demanded the whole path manifest"
+    );
     Ok(())
 }
