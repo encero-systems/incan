@@ -77,10 +77,13 @@ pub def compile_prepared_unit(
     3. Compile or replay a certified refusal under the complete source identity.
     """
     # 1. A rejected selection leaves every request input and output path intact.
+    mut plan_selection_digest: Option[str] = None
     let selected_records: Borrowed[Option[list[SelectedBodyPage]]] = graph_body_records
     match selected_records:
-        Some(records) => _ = selected_plan_module_digest(records)?
+        Some(records) => plan_selection_digest = selected_plan_module_digest(records)?
         None => pass
+    if plan_selection_digest is not None and not toolchain.supports_plan_module_selection_digest:
+        return Err("the installed driver cannot accept a plan module selection")
     mut key = Key(digest="", parts=[])
     match known_key:
         Some(value) =>
@@ -106,6 +109,8 @@ pub def compile_prepared_unit(
     )
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
+    if let Some(digest) = plan_selection_digest:
+        native += ["--plan-module-selection-digest", digest]
     if let Some(records) = graph_body_records:
         records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
         write_selected_records(records_path, unit, records)?
