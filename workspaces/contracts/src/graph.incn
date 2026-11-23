@@ -313,21 +313,25 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
     """
     A unit that fails checking is named in one warning and contributes only unchecked facts, never costing the others.
 
-    1. Add a function that does not type check to the context unit, and ask four questions about it.
+    1. Add a function that does not type check to the context unit and inspect the results.
     2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
     3. The failing unit's own facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
+    4. Raw JSONL names the author of the source quoted by the diagnostic, separately from its provenance.
     """
     source = project.joinpath("context").joinpath("src").joinpath("lib.incn")
     if not source.is_file():
         return Ok(None)
-    # 1. A function that does not type check is added to the context unit, and four questions are asked about it.
+    # 1. The bad return gives the diagnostic a workspace-authored spelling to quote.
     before = read(source)?
-    write(source, before + "\n\npub def refused() -> int:\n    return \"not an int\"\n")?
+    prefix = before + "\n\npub def refused() -> int:\n"
+    line = len(prefix.split("\n"))
+    write(source, prefix + "    return missing_context_fact\n")?
     query = ["inspect", "codegraph", ".", "--query", "defs"]
     sibling = invoke(incan, query + ["checked_helper"], project)?
     broken = invoke(incan, query + ["contextual_helper"], project)?
     repeated = invoke(incan, query + ["contextual_helper"], project)?
     strict = invoke(incan, query + ["contextual_helper", "--strict"], project)?
+    raw = invoke(incan, ["inspect", "codegraph", "context", "--allow-errors", "--format", "jsonl"], project)?
     write(source, before)?
     # 2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
     warnings = [line for line in sibling.stderr.split("\n") if line.startswith("warning:")]
@@ -344,6 +348,50 @@ def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
         return Err("a warm query dropped or changed the unchecked warning")
     if strict.code == Some(0) or "graph_context" not in strict.stderr:
         return Err(f"strict export accepted a unit that fails checking: {strict.stderr}")
+    # 4. The raw record retains the compiler's evidence and attributes the quoted source to the workspace.
+    return check_diagnostic_author(raw, source, line)
+
+
+def check_diagnostic_author(raw: Outcome, source: Path, line: int) -> Result[None, str]:
+    """Require one compiler diagnostic with its exact authored anchor and separate workspace author."""
+    if raw.code != Some(0):
+        return Err(f"tolerant raw diagnostic export failed: {raw.stderr}")
+    lines = raw.stdout.split("\n")
+    header = parse_json(lines[0])?
+    if string_field(header, "mode") != "allow_errors" or required(header, "degraded")?.as_bool() != Some(true):
+        return Err("tolerant raw diagnostic export is missing its degraded header")
+    mut diagnostics: list[JsonValue] = []
+    for json in lines[1:]:
+        if json.strip() == "":
+            continue
+        record = parse_json(json)?
+        if (
+            string_field(record, "record") == "diagnostic"
+            and string_field(record, "message") == "Unknown symbol 'missing_context_fact'"
+        ):
+            diagnostics.append(record)
+    if len(diagnostics) != 1:
+        return Err(f"expected one authored raw diagnostic, found {len(diagnostics)}")
+    diagnostic = diagnostics[0]
+    if (
+        string_field(diagnostic, "code") != "INCAN-T0001"
+        or string_field(diagnostic, "origin") != "typechecker"
+        or string_field(diagnostic, "provenance") != "diagnostic"
+        or required(diagnostic, "degraded")?.as_bool() != Some(true)
+    ):
+        return Err("raw diagnostic lost its compiler provenance or degraded state")
+    span = required(diagnostic, "primary_span")?
+    if (
+        string_field(span, "file") != source.0
+        or required(span, "start_line")?.as_int() != Some(line)
+        or required(span, "end_line")?.as_int() != Some(line)
+        or required(span, "start_column")?.as_int() != Some(12)
+        or required(span, "end_column")?.as_int() != Some(32)
+    ):
+        return Err(f"raw diagnostic lost the authored identifier's anchor at {source.0}:{line}:12")
+    author = diagnostic.get("author").unwrap_or(JsonValue.null())
+    if string_field(author, "kind") != "workspace":
+        return Err("raw diagnostic quotes missing_context_fact without a workspace author")
     return Ok(None)
 
 
