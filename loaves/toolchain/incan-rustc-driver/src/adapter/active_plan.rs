@@ -547,12 +547,26 @@ mod tests {
                 read(vec![compact.clone(), compact.clone()]),
                 Err(reason) if reason.contains("repeats native function")
             ));
-            let ordinary = encode_admitted_definitions(&[compact.clone()])?;
-            std::fs::write(report.path().join(admitted_definitions_filename()), ordinary)?;
+            let scalar_path = report.path().join(admitted_definitions_filename());
+            let mut scalar = compact.clone();
+            scalar.identity = "legacy::probe::run".into();
+            std::fs::write(&scalar_path, encode_admitted_definitions(&[scalar])?)?;
             assert!(matches!(
                 read(vec![compact.clone()]),
                 Err(reason) if reason.contains("repeats compact function")
             ));
+            std::fs::write(report.path().join(format!("{}.event", compact.key)), &member.event)?;
+            let legacy = read(Vec::new())?;
+            let input = legacy
+                .function_input("probe_run")
+                .ok_or("legacy event input was lost")?;
+            assert_eq!(input.identity(), "pub::probe::run");
+            assert_eq!(input.fingerprint(), fingerprint.trim_start_matches("sha256:"));
+            std::fs::remove_file(&scalar_path)?;
+            assert!(
+                matches!(read(vec![compact.clone()]), Err(reason) if reason.contains("as a changed event")),
+                "a changed event superseded an authenticated compact definition"
+            );
         }
         Ok(())
     }
