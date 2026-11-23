@@ -103,7 +103,9 @@ Every argument object rejects unknown fields. Fields listed below are required; 
 | `record_feedback` | `task: string`, `declaration: string`, `snapshot: string`, `ttl_seconds: integer` | The retained feedback object. Mutates only this MCP session. |
 | `task_memory` | `task: string` | JSON array of current feedback for that exact task. |
 
-Feedback requires a nonempty task, the current snapshot, a unique proved declaration and a TTL in `1..86400` seconds. The declaration selector accepts an exported ID, stable key or exact qualified label. The server retains at most 128 observations keyed by task and declaration; repeating that key replaces its observation. Each record carries `stable_key`, `snapshot_id`, `expires_at`, task and provenance `session_feedback`. Reads, writes and preference lookup automatically discard entries whose TTL elapsed or snapshot changed. Feedback never enters compiler graph records. All other tools are annotated read-only.
+Feedback requires a nonempty task, a unique proved declaration and a TTL in `1..86400` seconds. For `snapshot`, use the current ID from `graph_summary` or the exact current checked or tolerant export ID for the same selection. The server rejects stale snapshots, snapshots for another selection and IDs it cannot verify. The declaration selector accepts an exported ID, stable key or exact qualified label.
+
+The server stores feedback under its current snapshot ID from `graph_summary`. Both accepted export IDs use that identity for task memory, ranking and expiry. The server retains at most 128 observations keyed by task and declaration. Repeating that key replaces its observation. Each record carries `stable_key`, `snapshot_id`, `expires_at`, task and provenance `session_feedback`. Reads, writes and preference lookup automatically discard entries whose TTL elapsed or snapshot changed. Feedback never enters compiler graph records. All other tools are annotated read-only.
 
 ### Resources
 
