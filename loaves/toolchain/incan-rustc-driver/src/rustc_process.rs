@@ -126,6 +126,18 @@ impl RustcHandoff {
         };
         let selection = self.read_plan_module_selection()?;
         let whole = incan_lowering::read_plan_module_admissions(&products.root, selection.as_ref())?;
+        let observed = incan_mir_plan_native::compact_admission_pin(
+            whole
+                .iter()
+                .map(|admission| (admission.note.module.as_str(), admission.note_sha256)),
+        )?;
+        if products.compact_notes != observed {
+            let expected = products.compact_notes.map_or(0, |pin| pin.count);
+            let observed = observed.map_or(0, |pin| pin.count);
+            return Err(format!(
+                "native compact admission set differs from the settled publication (expected {expected} notes, observed {observed})"
+            ));
+        }
         Ok(whole.into_iter().flat_map(|admission| admission.definitions).collect())
     }
 
