@@ -55,6 +55,8 @@ A required method is written as a bare signature, `def render(self) -> str`. The
 
 Read more about [traits: domain capabilities](../tutorials/book/11_traits_and_derives.md).
 
+Custom types can participate in collection APIs by adopting the collection traits they support. Use named boolean state or explicit tests for `Option`, `Result`, and emptiness when those are the conditions the reader needs to see. `Bool` gives a type a common truthiness contract.
+
 Enums use the same adoption model when a closed set of variants should satisfy a protocol. The required behavior lives in the enum body, next to the variants it interprets:
 
 ```incan
@@ -150,6 +152,8 @@ A type may also adopt one generic trait several times, `with Convert[int], Conve
 When an operation should be available only for values with a capability, state that capability as a generic bound (`T with OrderedCollection[int]`) rather than hiding inherited trait methods. The bound is checked at every call, including through supertraits.
 
 Adopting one generic trait more than once fits a type that supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into several result types, or serializing through a generic format trait. When the argument types do not pick the instantiation, a typed binding (`as_float: float = reading.convert()`) is the most direct way to give the call its expected result type.
+
+Multiple `Into[T]` adoptions fit conversions distinguished by their target types. Use named methods such as `to_json()` and `to_yaml()` when callers need to distinguish the operations by name, or when the operations take different arguments.
 
 When two methods with the same name are both trait implementations, give each a method-level target (`def convert(self) for ToInt -> int`). Ordinary methods need no trait target; give their overloads distinct parameter surfaces instead.
 

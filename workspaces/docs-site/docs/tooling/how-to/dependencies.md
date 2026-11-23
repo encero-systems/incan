@@ -70,7 +70,7 @@ Require an unchanged committed graph in a build:
 oven build --locked .
 ```
 
-A missing or stale lock is refused and names `oven lock`. Ordinary run, build and test commands create or refresh the root lock silently.
+A missing or stale lock is refused and names `oven lock`. Ordinary run, build and test commands resolve a missing or stale graph in memory. Use `oven lock` to save it.
 
 ## Raise a requirement
 

@@ -4,9 +4,9 @@ Turn the project from [Getting started](getting_started.md) into a repeatable ch
 
 <aside class="inc-tutorial-meta" aria-label="Tutorial details"><dl>
 <div><dt>Reader</dt><dd>Project author configuring CI</dd></div>
-<div><dt>Prerequisites</dt><dd>A compatible runner with the matching dev.8 toolchain installed</dd></div>
+<div><dt>Prerequisites</dt><dd>A compatible runner with the matching Incan toolchain installed</dd></div>
 <div><dt>Time</dt><dd>15 minutes</dd></div>
-<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
 <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
 <div><dt>Outcome</dt><dd>A checked project and retained native executable</dd></div>
 <div><dt>Artifacts</dt><dd>Diagnostic JSON and debug binary</dd></div>
@@ -36,7 +36,7 @@ Retain the executable under `target/incan/debug/bin/` with your CI system's arti
 
 ## Use the same commands on a runner
 
-Install the archive for the runner's host with the matching Oven executable, and set `INCAN_HOME` and `INCAN_STDLIB` as in [Install and run](../how-to/install_and_run.md). Run the commands above from the checked-out project. The source checkout alone does not contain a prepared compiler or standard-package artifacts.
+Install the archive for the runner's host with the matching Incan executable as in [Install and run](../how-to/install_and_run.md). Set `INCAN_HOME` if the runner uses a separate installation. Run the commands above from the checked-out project. The source checkout alone does not contain a prepared compiler or standard-package artifacts.
 
 <section class="inc-learning-panel inc-learning-panel--complete" data-label="Complete" markdown="1">
 

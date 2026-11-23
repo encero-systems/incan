@@ -6,7 +6,8 @@ from std.fs import Path
 from std.regex import Regex
 from check_support import git, read, repository_root, source_lines, write_stderr
 
-const HELP: str = """usage: check_changed_rustdocs.py [-h] [--base BASE]
+const USAGE: str = "usage: incan run scripts/check_changed_rustdocs.incn -- [-h] [--base BASE]"
+const HELP: str = """
 
 Fail when changed Rust source files contain undocumented non-test functions or
 methods. By default, this checks both staged and unstaged `.rs` changes. Pass
@@ -61,12 +62,11 @@ def main() -> Result[None, str]:
 
 
 def command_base(arguments: list[str]) -> str:
-    """Preserve argparse's diagnostic stream and exit status for malformed options."""
+    """Print usage to stderr and exit with status 2 on a malformed option."""
     match comparison_base(arguments):
         Ok(base) => return base
         Err(message) =>
-            usage = "usage: check_changed_rustdocs.py [-h] [--base BASE]"
-            write_stderr(f"{usage}\ncheck_changed_rustdocs.py: error: {message}\n")
+            write_stderr(f"{USAGE}\ncheck_changed_rustdocs: error: {message}\n")
             exit(2)
 
 
@@ -76,7 +76,7 @@ def comparison_base(arguments: list[str]) -> Result[str, str]:
     mut index = 0
     while index < len(arguments):
         if arguments[index] == "--help" or arguments[index] == "-h":
-            println(HELP)
+            println(f"{USAGE}{HELP}")
             exit(0)
         elif arguments[index] == "--base":
             index += 1

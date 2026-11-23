@@ -7,7 +7,8 @@ from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, source_lines, write_stderr
 
-const HELP: str = """usage: check_doc_paths.py [-h] [--root ROOT] [--allow ALLOW] [--list]
+const USAGE: str = "usage: incan run scripts/check_doc_paths.incn -- [-h] [--root ROOT] [--allow ALLOW] [--list]"
+const HELP: str = """
 
 Check concrete repository paths in contributor Markdown against the current
 tree.
@@ -103,12 +104,11 @@ def run() -> Result[int, str]:
 
 
 def command_options(arguments: list[str]) -> Options:
-    """Preserve argparse's diagnostic stream and exit status for malformed options."""
+    """Print usage to stderr and exit with status 2 on a malformed option."""
     match parse_options(arguments):
         Ok(options) => return options
         Err(message) =>
-            usage = "usage: check_doc_paths.py [-h] [--root ROOT] [--allow ALLOW] [--list]"
-            write_stderr(f"{usage}\ncheck_doc_paths.py: error: {message}\n")
+            write_stderr(f"{USAGE}\ncheck_doc_paths: error: {message}\n")
             exit(2)
 
 
@@ -119,7 +119,7 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     while index < len(arguments):
         argument = arguments[index]
         if argument == "--help" or argument == "-h":
-            println(HELP)
+            println(f"{USAGE}{HELP}")
             exit(0)
         elif argument == "--list":
             options.list = True

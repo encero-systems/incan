@@ -1,34 +1,6 @@
-# Incan Code Style Guide
+# Incan source formatting
 
-This page is the canonical style guide for human-written `.incn` source files. It describes how Incan code is laid out, what spacing is expected, and which readability gaps are allowed.
-
-Use `incan fmt` to apply these formatting rules to source files. For formatter command usage and limits, see [Formatting with `incan fmt`](../../tooling/how-to/formatting.md).
-
-## Scope
-
-This guide is about source layout and readability:
-
-- indentation
-- blank lines
-- comments and docstrings
-- horizontal spacing
-- quoting and commas
-- naming conventions
-- line breaking for common constructs
-
-## Principles
-
-Incan formatting optimizes for a few stable outcomes:
-
-- code reads as intentional prose, not as minimally legal syntax
-- the same construct looks the same across projects
-- authors may use a small amount of vertical whitespace for readability
-- formatting rules stay simple enough that humans can follow them without memorizing formatter internals
-
-!!! note "The Zen of Incan"
-    --8<-- "_snippets/language/zen_of_incan.md"
-
-    This guide turns the Zen's style philosophy into concrete formatting and naming rules. You can print it with `incan run -c "import this"`.
+The canonical layout, spacing, and naming rules for human-written `.incn` source files. For command usage, see [Format Incan source](../../tooling/how-to/formatting.md).
 
 ## Required Baseline
 
@@ -195,7 +167,7 @@ Stand-alone comments are attached by scope and structure. They do not create ext
 ```incan
 type UserId = str
 
-# Validate before any network call.
+# accepted: attached to load_user
 def load_user(id: UserId) -> User:
     ...
 ```
@@ -242,8 +214,7 @@ user = User (name = "Alice", age = 30)
 
 ## Strings, Quotes, And Commas
 
-- Prefer double quotes for strings.
-- Existing single quotes may be preserved, but double quotes are the house style.
+- Double quotes are the canonical style. The formatter preserves existing single quotes in parseable literals.
 - Use trailing commas in multi-line constructs.
 
 ```incan
@@ -268,13 +239,10 @@ Stand-alone comments may sit inside the fluent continuation block when they desc
 
 ```incan
 enriched = orders
-    # Normalize user-facing text before deriving labels.
+    # accepted: attached to the next method call
     .with_column("region_norm", upper(trim(col("region"))))
     .with_column("status_norm", lower(trim(col("status"))))
 ```
-
-!!! tip "Coming from Python?"
-    Python usually needs parentheses, a backslash, or an open bracketed expression before a newline can continue a method chain. Incan accepts the indented leading `.` as the continuation marker, so fluent APIs can stay visually vertical without adding grouping syntax just to satisfy the parser.
 
 Short method-call chains can stay inline when they fit the line-length target. Do not add backslashes or dummy parentheses only to make a fluent chain parse; `incan fmt` uses leading-dot continuation when a method chain overflows.
 
@@ -320,9 +288,9 @@ match result:
 
 Do not insert extra blank lines immediately after `=>` or a suite header unless you genuinely intend one readability gap inside that block.
 
-## What The Formatter Should Preserve
+## Preserved structure
 
-`incan fmt` preserves legitimate authored structure rather than flattening everything into one style-less block. Today that specifically includes:
+`incan fmt` preserves these forms:
 
 - one blank line between logic groups inside indented code
 - one blank line between sibling statements after nested suites
@@ -331,7 +299,7 @@ Do not insert extra blank lines immediately after `=>` or a suite header unless 
 - brace/no-colon expression vocab blocks whose syntax is provided by active vocab metadata
 - actual string contents, including literal `\n` text
 
-## What The Formatter Should Normalize
+## Normalized structure
 
 `incan fmt` normalizes mechanical drift:
 
@@ -342,10 +310,6 @@ Do not insert extra blank lines immediately after `=>` or a suite header unless 
 - comment placement that would otherwise detach comments from the same-scope construct they describe
 
 Formatted files must end with exactly one trailing newline.
-
-## Tooling
-
-Use [Formatting with `incan fmt`](../../tooling/how-to/formatting.md) for command-line usage, CI integration, and formatter limitations.
 
 ## See Also
 

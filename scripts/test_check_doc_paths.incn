@@ -37,7 +37,7 @@ def test_discovers_ring_readmes_and_agent_docs_but_not_runtime_state() -> Result
 
 
 def test_shell_commands_and_diagrams_both_check_concrete_paths() -> Result[None, str]:
-    """Fenced commands and diagrams remain in the path audit's input."""
+    """Fenced commands and diagrams retain concrete paths, including the archive install command."""
     temporary = fixture()?
     root = temporary.path()
     write(root, "AGENTS.md", "```text\nsrc/diagram.rs\n```\n```sh\ncat src/missing.rs\n```\n")?
@@ -45,6 +45,7 @@ def test_shell_commands_and_diagrams_both_check_concrete_paths() -> Result[None,
     assert result.code == 1
     assert "AGENTS.md:5: src/missing.rs" in result.stdout
     assert "AGENTS.md:2: src/diagram.rs" in result.stdout
+    require_archive_command_match(root, repository_root()?)?
     return Ok(None)
 
 
@@ -152,3 +153,33 @@ def fixture() -> Result[TemporaryDirectory, str]:
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     write(temporary.path(), "scripts/check_doc_paths.allow", "")?
     return Ok(temporary)
+
+
+def require_archive_command_match(root: Path, repository: Path) -> Result[None, str]:
+    """Change only the README archive path and require the ordinary learning check to report the difference."""
+    relative = "workspaces/docs-site"
+    site = root.joinpath(relative)
+    source_site = repository.joinpath(relative)
+    for name in ["check_learning_journey.incn", "docs_check_support.incn"]:
+        write(site, f"scripts/{name}", read(source_site.joinpath(f"scripts/{name}"))?)?
+    for name in ["docs", "mkdocs.yml"]:
+        site.joinpath(name).symlink_to(source_site.joinpath(name)).map_err((error) => error.message())?
+    manifest = "workspaces/oven/loaf.toml"
+    write(root, manifest, read(repository.joinpath(manifest))?)?
+
+    readme = read(repository.joinpath("README.md"))?
+    archive_commands = [line for line in readme.split("\n") if line.startswith("incan toolchain install ")]
+    assert len(archive_commands) == 1
+    wrong_archive = "incan toolchain install ./wrong-archive.tar.zst"
+    write(root, "README.md", readme.replace(archive_commands[0], wrong_archive))?
+
+    executable: str = var("INCAN").unwrap_or("incan")
+    mut command = Command.new(executable)
+    command.current_dir(site.0).arg("run").arg("scripts/check_learning_journey.incn")
+    result = command.output().map_err((error) => f"cannot run the learning check: {error}")?
+    output = RustString.from_utf8(result.stdout).map_err((error) => f"invalid learning check output: {error}")?
+    stderr = RustString.from_utf8(result.stderr).map_err((error) => f"invalid learning check error output: {error}")?
+    assert result.status.code().unwrap_or(-1) == 1, stderr
+    expected = "README and install guide must use the same archive installation command"
+    assert expected in output, f"{output}\n{stderr}"
+    return Ok(None)

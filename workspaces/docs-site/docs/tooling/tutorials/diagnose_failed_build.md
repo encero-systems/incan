@@ -6,7 +6,7 @@ Introduce a type mismatch, capture its diagnostic and verify the repair.
 <div><dt>Reader</dt><dd>Project author</dd></div>
 <div><dt>Prerequisites</dt><dd>Getting started and jq</dd></div>
 <div><dt>Time</dt><dd>10 minutes</dd></div>
-<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
 <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
 <div><dt>Outcome</dt><dd>A diagnostic-to-repair workflow</dd></div>
 <div><dt>Artifacts</dt><dd>Diagnostic JSON and repaired executable</dd></div>
@@ -40,7 +40,7 @@ test "$check_status" -ne 0
 jq '.diagnostics[0] | {code, phase, message, primary_span, hints}' target/diagnostics.json
 ```
 
-Read the span and compared types: integer addition received a string. Dev.8 does not expose an `explain` command; read the diagnostic fields and the relevant [language reference](../../language/reference/index.md).
+Read the span and compared types: integer addition received a string. Read the diagnostic fields alongside the relevant [language reference](../../language/reference/index.md).
 
 ## Repair and verify
 

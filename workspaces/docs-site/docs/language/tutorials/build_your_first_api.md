@@ -5,9 +5,9 @@ This tutorial builds and runs the included web application, then traces one requ
 <aside class="inc-tutorial-meta" aria-label="Tutorial details">
   <dl>
     <div><dt>Reader</dt><dd>Service or application developer</dd></div>
-    <div><dt>Prerequisites</dt><dd>Getting started with compiled dev.8 web and async packages</dd></div>
+    <div><dt>Prerequisites</dt><dd>Getting started with the installed web and async packages</dd></div>
     <div><dt>Time</dt><dd>15–20 minutes</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
     <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A running native API with typed responses</dd></div>
     <div><dt>Artifacts</dt><dd>Native server and four route contracts</dd></div>
@@ -20,7 +20,7 @@ This tutorial builds and runs the included web application, then traces one requ
   <li><strong>Trace</strong>Follow typed responses</li>
 </ol>
 
-Prerequisite: [Install the dev.8 toolchain](../../tooling/how-to/install_and_run.md).
+Prerequisite: [Install the toolchain](../../tooling/how-to/install_and_run.md).
 
 ## Step 1: Run the hello web example
 
@@ -76,7 +76,7 @@ The home page returns its HTML, `/api/greet/World` returns `{"message":"Hello, W
 
 The example demonstrates:
 
-- `@route("/path")` for routes (imported from `std.web.routing`)
+- `@route("/path")` for routes (imported from `std.web`)
 - `Json[T]` for JSON responses
 - `@derive(json)` for response models
 - `async def` handlers (async/await)
