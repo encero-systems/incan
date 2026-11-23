@@ -585,12 +585,18 @@ pub fn checked_package_roots(
 
 /// Read the authenticated dependency closure and its reached package identities, allowing only exact checked
 /// source identities to satisfy local edges. Native linking consumes the same package set rather than treating
-/// every available ambient standard package as reached.
+/// every available ambient standard package as reached. Layout ranges may borrow earlier admissions from this request.
 pub fn load_loaf_modules(
     loaves: &LoafIndex,
     requested: &BTreeSet<CanonicalSymbolId>,
     checked_local: &BTreeSet<CanonicalSymbolId>,
+    layout_admissions: &incan_frontend::executable_resolution::LinkedLayoutAdmissions,
 ) -> Result<incan_frontend::executable_resolution::ResolvedExecutableModules, String> {
-    incan_frontend::executable_resolution::resolve_loaf_declarations(loaves, requested, checked_local)
-        .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
+    incan_frontend::executable_resolution::resolve_loaf_declarations_with_layouts(
+        loaves,
+        requested,
+        checked_local,
+        layout_admissions,
+    )
+    .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
 }

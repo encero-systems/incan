@@ -10,7 +10,9 @@ const DIGEST_PREFIX: &[u8] = b"sha256:";
 const DIGEST_BYTES: usize = DIGEST_PREFIX.len() + 64;
 
 /// Bytes contributed to a declaration range by its layout witness.
-pub const LINKED_LAYOUT_WITNESS_BYTES: usize = HEADER.len() + 2 * DIGEST_BYTES;
+pub const LINKED_LAYOUT_WITNESS_BYTES: usize = HEADER.len() + LINKED_LAYOUT_DIGEST_BYTES;
+/// Payload bytes retained in the two owned digest strings after decoding a witness.
+pub const LINKED_LAYOUT_DIGEST_BYTES: usize = 2 * DIGEST_BYTES;
 
 /// Append the producer's digest pair before any existing trait-field trailer.
 pub(super) fn append(
@@ -30,6 +32,7 @@ pub(super) fn append(
 pub(super) fn restore<'a>(
     declaration: &mut ExecutableDeclaration,
     bytes: &'a [u8],
+    admitted: Option<&crate::body_ir::LinkedLayoutWitness>,
 ) -> Result<&'a [u8], ExecutableRepresentationError> {
     if bytes.first() != HEADER.first() {
         return Ok(bytes);
@@ -37,16 +40,19 @@ pub(super) fn restore<'a>(
     let rest = bytes
         .strip_prefix(HEADER)
         .ok_or_else(|| malformed("unsupported linked-layout witness"))?;
-    let (specialization, rest) = rest
-        .split_at_checked(DIGEST_BYTES)
-        .ok_or_else(|| malformed("truncated linked-layout specialization"))?;
-    let (version, rest) = rest
-        .split_at_checked(DIGEST_BYTES)
+    let (encoded, rest) = rest
+        .split_at_checked(LINKED_LAYOUT_DIGEST_BYTES)
         .ok_or_else(|| malformed("truncated linked-layout version"))?;
-    let witness = Arc::new((
-        checked_digest(specialization)?.to_owned(),
-        checked_digest(version)?.to_owned(),
-    ));
+    let witness = match admitted {
+        Some(witness) => Arc::clone(witness),
+        None => {
+            let (specialization, version) = encoded.split_at(DIGEST_BYTES);
+            Arc::new((
+                checked_digest(specialization)?.to_owned(),
+                checked_digest(version)?.to_owned(),
+            ))
+        }
+    };
     if let Some(model) = declaration.nominal_mut() {
         model.linked_layout_witness = Some(witness);
     } else if let Some(enumeration) = declaration.enum_layout_mut() {

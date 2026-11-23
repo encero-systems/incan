@@ -1,3 +1,23 @@
+/// Invocation-local source context retained for strictly growing runtime dependency requests. No attempt publishes
+/// its partial plan, and imported declaration spans never acquire the entry source's text.
+pub(super) struct RuntimeDependencyContext {
+    pub(super) loaves: std::sync::Arc<LoafIndex>,
+    pub(super) requested: BTreeSet<CanonicalSymbolId>,
+    /// Why each requested root is requested: checked source, a selected default or a runtime operation.
+    pub(super) origins: BTreeMap<CanonicalSymbolId, RootOrigin>,
+    pub(super) checked_local: BTreeSet<CanonicalSymbolId>,
+    /// Exact selected versions from the authenticated executable-resolution closure.
+    pub(super) package_versions: BTreeMap<String, String>,
+    /// Authenticated provider layouts shared by the checked request's dependency passes.
+    pub(super) layout_admissions: incan_frontend::executable_resolution::LinkedLayoutAdmissions,
+    pub(super) package: String,
+    /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
+    pub(super) layout_modules: Vec<BodyIrModule>,
+    pub(super) sources: Vec<String>,
+    pub(super) files: Vec<String>,
+    pub(super) entry: usize,
+}
+
 // Completing a checked program's dependency context: selected defaults and native layouts, runtime requirements bound
 // to their generations, prepared layouts merged and dependency modules installed. Included by `checked_program.rs`.
 
@@ -38,7 +58,12 @@ pub(super) fn complete_dependency_context_in_place(
                 program.dependencies.origins.insert(identity, origin);
             }
         }
-        let resolved = load_loaf_modules(loaves, &requested, checked_local)?;
+        let resolved = load_loaf_modules(
+            loaves,
+            &requested,
+            checked_local,
+            &program.dependencies.layout_admissions,
+        )?;
         install_dependency_modules(program, resolved);
     }
     program.dependencies.requested = requested;
@@ -174,6 +199,7 @@ pub(super) fn prepare_runtime_requirements(
             &program.dependencies.checked_local,
             &next,
             requirements,
+            &program.dependencies.layout_admissions,
         )?);
     }
     Ok(PreparedRuntimeRequirements {
@@ -191,8 +217,9 @@ fn load_runtime_modules(
     checked_local: &BTreeSet<CanonicalSymbolId>,
     next: &BTreeSet<CanonicalSymbolId>,
     requirements: &[RuntimeRequirement],
+    layout_admissions: &incan_frontend::executable_resolution::LinkedLayoutAdmissions,
 ) -> Result<incan_frontend::executable_resolution::ResolvedExecutableModules, String> {
-    load_loaf_modules(loaves, next, checked_local).map_err(|error| {
+    load_loaf_modules(loaves, next, checked_local, layout_admissions).map_err(|error| {
         let sites = requirements
             .iter()
             .map(|requirement| {
@@ -329,7 +356,12 @@ pub(super) fn prepare_runtime_layouts(
         &program.dependencies.loaves,
         &requested,
         &program.dependencies.checked_local,
+        &program.dependencies.layout_admissions,
     )?;
+    program
+        .dependencies
+        .layout_admissions
+        .extend(resolved.layout_admissions);
     program.dependencies.package_versions.extend(resolved.package_versions);
     for mut module in resolved.modules {
         let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
@@ -344,6 +376,7 @@ pub(super) fn prepare_runtime_layouts(
         &program.dependencies.loaves,
         &program.dependencies.requested,
         &program.dependencies.checked_local,
+        &program.dependencies.layout_admissions,
     )?;
     install_dependency_modules(program, resolved);
     prepare_dependency_context(program)
@@ -357,6 +390,10 @@ fn install_dependency_modules(
     program: &mut CheckedProgram,
     resolved: incan_frontend::executable_resolution::ResolvedExecutableModules,
 ) {
+    program
+        .dependencies
+        .layout_admissions
+        .extend(resolved.layout_admissions);
     program.dependencies.package_versions.extend(resolved.package_versions);
     let mut previous = std::mem::take(&mut program.modules);
     let mut authored = previous.split_off(program.own);

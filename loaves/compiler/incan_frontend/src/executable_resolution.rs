@@ -20,17 +20,19 @@ use sha2::{Digest, Sha256};
 
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, StaticInitializer};
 use incan_semantics_core::executable_representation::{
-    DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, LINKED_LAYOUT_WITNESS_BYTES,
-    SurfaceIndex, require_supported_version,
+    AdmittedLayoutFrame, DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError,
+    LINKED_LAYOUT_DIGEST_BYTES, LINKED_LAYOUT_WITNESS_BYTES, SurfaceIndex, require_supported_version,
 };
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_identity};
 
 use crate::library_manifest::executable_ranges::{RangeHead, RangeRecord};
 use crate::library_manifest::executable_surface::ExecutableSurface;
-use crate::loaf_index::{LoafIndex, LoafIndexError};
+use crate::loaf_index::{LoafIdentity, LoafIndex, LoafIndexError};
 
 /// Bound temporary storage while verifying the selected executable artifact's content digest.
 const CONTENT_DIGEST_BUFFER_BYTES: usize = 64 * 1024;
+/// Bound the layout buffers retained across the resolution passes of a single compiler request.
+const RETAINED_LAYOUT_BYTES: u64 = 4 * 1024 * 1024;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -116,11 +118,52 @@ pub struct ResolvedExecutableModules {
     /// another package, its requester chain from that root. A package selected only by an explicitly uncovered root
     /// has no entry.
     pub entries: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
+    /// New authenticated frame buffers this resolution read and can transfer to the checked request.
+    pub layout_admissions: LinkedLayoutAdmissions,
+}
+
+/// The exact provider generation and canonical declarations already admitted in this compiler request.
+/// The resolver still admits current membership and coverage before borrowing any previous range.
+#[derive(Debug, Default)]
+pub struct LinkedLayoutAdmissions {
+    generations: BTreeMap<LoafIdentity, BTreeMap<CanonicalSymbolId, LayoutRange>>,
+    wire_bytes: u64,
+}
+
+/// One authenticated declaration address and its immutable producer bytes.
+#[derive(Debug)]
+struct LayoutRange {
+    absolute_offset: u64,
+    length: u64,
+    sealed_digest: Option<String>,
+    frame: AdmittedLayoutFrame,
+}
+
+impl LinkedLayoutAdmissions {
+    /// Move newly admitted frames into the request after it accepts the corresponding dependency selection.
+    pub fn extend(&mut self, additional: Self) {
+        self.wire_bytes += additional.wire_bytes;
+        for (generation, frames) in additional.generations {
+            self.generations.entry(generation).or_default().extend(frames);
+        }
+    }
+
+    /// Take the buffer already read for a new declaration. Each generation key is owned by its first frame.
+    fn remember(&mut self, generation: &LoafIdentity, identity: &CanonicalSymbolId, range: LayoutRange) {
+        self.wire_bytes += range.length;
+        if let Some(frames) = self.generations.get_mut(generation) {
+            frames.insert(identity.clone(), range);
+        } else {
+            self.generations
+                .insert(generation.clone(), BTreeMap::from([(identity.clone(), range)]));
+        }
+    }
 }
 
 /// One indexed Loaf's executable surface and governed-body file.
 struct PackageArtifact {
     key: String,
+    generation: LoafIdentity,
     range_head: Option<RangeHead>,
     surface: Arc<ExecutableSurface>,
     links_native: bool,
@@ -182,10 +225,31 @@ pub fn resolve_loaf_declarations(
     requested: &BTreeSet<CanonicalSymbolId>,
     checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
+    resolve_selected(loaves, requested, checked_local, None)
+}
+
+/// Resolve a checked request while borrowing its previously authenticated layout frames. Any newly read ranges
+/// travel with the result so a speculative runtime selection leaves the caller's request unchanged.
+pub fn resolve_loaf_declarations_with_layouts(
+    loaves: &LoafIndex,
+    requested: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
+    earlier: &LinkedLayoutAdmissions,
+) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
+    resolve_selected(loaves, requested, checked_local, Some(earlier))
+}
+
+/// Resolve one exact checked closure and commit its admission only after every selected demand validates.
+fn resolve_selected(
+    loaves: &LoafIndex,
+    requested: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
+    earlier: Option<&LinkedLayoutAdmissions>,
+) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     if requested.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    let resolved = resolve_from_catalog(loaves, &catalog(loaves)?, requested, checked_local, true)?;
+    let resolved = resolve_from_catalog(loaves, &catalog(loaves)?, requested, checked_local, true, earlier)?;
     loaves.validate_demands()?;
     Ok(resolved)
 }
@@ -236,8 +300,10 @@ fn demand_package<'a>(
     };
     let key = catalog.get(library).ok_or_else(unknown)?;
     let (surface, bodies, range_head) = loaves.executable_surface_artifact(key)?.ok_or_else(unknown)?;
+    let generation = loaves.package_identity(key)?.cloned().ok_or_else(unknown)?;
     Ok(slot.insert(PackageArtifact {
         key: key.clone(),
+        generation,
         surface,
         bodies,
         range_head,
@@ -252,6 +318,7 @@ fn resolve_from_catalog(
     required: &BTreeSet<CanonicalSymbolId>,
     checked_local: &BTreeSet<CanonicalSymbolId>,
     optional_roots: bool,
+    earlier: Option<&LinkedLayoutAdmissions>,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     let mut opened = BTreeMap::new();
     let mut packages = BTreeMap::new();
@@ -330,10 +397,20 @@ fn resolve_from_catalog(
             (dependency.clone(), same_package, false)
         }));
         let (offset, length) = (*offset, *length);
-        let declaration = surface.read(package, &identity, offset, length)?;
+        let (declaration, range_read) = surface.read(
+            package,
+            &identity,
+            offset,
+            length,
+            earlier,
+            &mut resolved.layout_admissions,
+        )?;
         package.require_producer_storage(&declaration)?;
-        if package.range_head.is_some() {
-            resolved.content_bytes_verified += length;
+        if range_read {
+            resolved.payload_bytes_read += length;
+            if package.range_head.is_some() {
+                resolved.content_bytes_verified += length;
+            }
         }
         if let ExecutableDeclaration::NominalWithTraits(_, implementations)
         | ExecutableDeclaration::EnumWithTraits(_, implementations)
@@ -358,7 +435,6 @@ fn resolve_from_catalog(
             .or_insert_with(|| BodyIrModule::declarations_only(owner));
         retain_declaration(module, declaration);
         resolved.decoded_declarations += 1;
-        resolved.payload_bytes_read += length;
     }
     resolved.entries = package_entries(&resolved.package_versions, &visited, &parents);
     for module in modules.values_mut() {
@@ -719,18 +795,44 @@ impl OpenSurface {
         Ok(())
     }
 
-    /// Range-read one selected fragment and validate its payload identity against its checked index key.
+    /// Read one selected fragment or borrow its earlier authenticated bytes for the same generation and address.
+    /// The result says whether this pass read a range. Whole-file verification has its own counter.
     fn read(
         &mut self,
         package: &PackageArtifact,
         identity: &CanonicalSymbolId,
         offset: u64,
         length: u64,
-    ) -> Result<ExecutableDeclaration, ExecutableResolutionError> {
+        earlier: Option<&LinkedLayoutAdmissions>,
+        additional: &mut LinkedLayoutAdmissions,
+    ) -> Result<(ExecutableDeclaration, bool), ExecutableResolutionError> {
         let absolute = self
             .payload_offset
             .checked_add(offset)
             .ok_or_else(|| package.unusable(malformed("fragment offset overflow")))?;
+        let sealed_digest = self.fragment_digests.get(identity).map(String::as_str);
+
+        // ---- An already authenticated range ----
+        let prior = earlier
+            .and_then(|earlier| earlier.generations.get(&package.generation))
+            .and_then(|generation| generation.get(identity));
+        if let Some(prior) = prior
+            && prior.absolute_offset == absolute
+            && prior.length == length
+            && prior.sealed_digest.as_deref() == sealed_digest
+        {
+            let declaration = self
+                .index
+                .decode_retained_layout(identity, &prior.frame)
+                .map_err(|error| package.unusable(error))?;
+            tracing::trace!(
+                target: "incan::invocation", phase = "linked_layout_reused", declaration = %identity.render_compact(),
+                fragment_bytes = length, bytes = 0u64, copied_bytes = 0u64,
+            );
+            return Ok((declaration, false));
+        }
+
+        // ---- A newly selected range ----
         self.file
             .seek(SeekFrom::Start(absolute))
             .map_err(|error| package.unreadable(self.path.clone(), error))?;
@@ -743,29 +845,49 @@ impl OpenSurface {
             .read_exact(&mut bytes)
             .map_err(|error| package.unreadable(self.path.clone(), error))?;
         if package.range_head.is_some() {
-            let digest = self
-                .fragment_digests
-                .get(identity)
-                .ok_or_else(|| package.unusable(malformed("sealed fragment has no digest")))?;
+            let digest = sealed_digest.ok_or_else(|| package.unusable(malformed("sealed fragment has no digest")))?;
             verify_fragment(&bytes, digest).map_err(|error| package.unusable(error))?;
         }
         tracing::trace!(
             target: "incan::invocation", phase = "body_fragment_read", path = %self.path.display(),
             loaf = %package.surface.name, identity = %incan_semantics_core::encode_incan_symbol_identity(identity),
             offset, absolute_offset = absolute, bytes = length, range_authenticated = package.range_head.is_some(),
-            fragment_digest = self.fragment_digests.get(identity).map(String::as_str).unwrap_or(""),
+            fragment_digest = sealed_digest.unwrap_or(""),
         );
-        let declaration = self
-            .index
-            .decode_declaration(identity, &bytes)
-            .map_err(|error| package.unusable(error))?;
+
+        // ---- The request's next dependency pass ----
+        let retain = prior.is_none()
+            && earlier.is_some_and(|earlier| {
+                length <= RETAINED_LAYOUT_BYTES.saturating_sub(earlier.wire_bytes + additional.wire_bytes)
+            });
+        let (declaration, frame) = if retain {
+            self.index.decode_retaining_layout(identity, bytes)
+        } else {
+            self.index
+                .decode_declaration(identity, &bytes)
+                .map(|declaration| (declaration, None))
+        }
+        .map_err(|error| package.unusable(error))?;
+        if let Some(frame) = frame {
+            additional.remember(
+                &package.generation,
+                identity,
+                LayoutRange {
+                    absolute_offset: absolute,
+                    length,
+                    sealed_digest: sealed_digest.map(ToOwned::to_owned),
+                    frame,
+                },
+            );
+        }
         if let Some(witness) = declaration.linked_layout_witness() {
             tracing::trace!(
                 target: "incan::invocation", phase = "linked_layout_read", declaration = %identity.render_compact(),
-                version = %witness.1, bytes = LINKED_LAYOUT_WITNESS_BYTES,
+                version = %witness.1, bytes = LINKED_LAYOUT_WITNESS_BYTES, fragment_bytes = length,
+                copied_bytes = LINKED_LAYOUT_DIGEST_BYTES,
             );
         }
-        Ok(declaration)
+        Ok((declaration, true))
     }
 }
 

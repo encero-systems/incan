@@ -139,24 +139,6 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
     std::fs::write(path, text)
 }
 
-/// Invocation-local source context retained for strictly growing runtime dependency requests. No attempt publishes
-/// its partial plan, and imported declaration spans never acquire the entry source's text.
-struct RuntimeDependencyContext {
-    loaves: std::sync::Arc<LoafIndex>,
-    requested: BTreeSet<CanonicalSymbolId>,
-    /// Why each requested root is requested: checked source, a selected default or a runtime operation.
-    origins: BTreeMap<CanonicalSymbolId, RootOrigin>,
-    checked_local: BTreeSet<CanonicalSymbolId>,
-    /// Exact selected versions from the authenticated executable-resolution closure.
-    package_versions: BTreeMap<String, String>,
-    package: String,
-    /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
-    layout_modules: Vec<BodyIrModule>,
-    sources: Vec<String>,
-    files: Vec<String>,
-    entry: usize,
-}
-
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
     /// Invocation-local producer evidence for self-contained scalar native function products.
