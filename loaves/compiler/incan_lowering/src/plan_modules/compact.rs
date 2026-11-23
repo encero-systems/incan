@@ -2,17 +2,21 @@
 
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::io::Read;
 use std::path::Path;
 
 use incan_mir_plan_native::{
     ADMITTED_MODULE_NOTE, AdmittedDefinition, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
-    POSITIONED_MODULE_PAGE, PlanSelectedModule, RequestModuleNote, WholeModuleAdmission, decode_request_module_note,
-    read_positioned_plan_members,
+    POSITIONED_MODULE_PAGE, PlanSelectedModule, RequestModuleNote, WHOLE_ADMISSION_SELECTOR, WholeModuleAdmission,
+    decode_request_module_note, read_positioned_plan_members,
 };
-use internal_models_bindings::{complete_view, mapped_bytes};
+use internal_models_bindings::{complete_view, mapped_bytes, single_row_reference_prefix};
 use sha2::{Digest, Sha256};
 
 use super::{FRAME_LIST, ListedFrame, PlanModuleSelection, framed_bytes, parse_frame_list, read_selection_file};
+
+// A row header, maximum encoded payload length, first reference and seven-byte selector fit in this prefix.
+const NOTE_PREFIX_BYTES: usize = 32;
 
 /// The exact emitted whole-module note and the member fingerprints it authorized under the staged selection.
 pub struct AuthenticatedWholeAdmission {
@@ -38,7 +42,8 @@ pub fn read_plan_module_admissions(
         Err(error) if selection.is_none() || error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(format!("cannot read compact module admissions: {error}")),
     };
-    let expected = selection.map(|selection| hex::encode(selection.digest()));
+    let pinned = selection.map(|selection| (selection, hex::encode(selection.digest())));
+    let selector = WHOLE_ADMISSION_SELECTOR.to_vec();
     let mut compact = BTreeMap::new();
     let mut scalar = BTreeSet::new();
     let frames = OnceCell::new();
@@ -52,27 +57,22 @@ pub fn read_plan_module_admissions(
         else {
             continue;
         };
-        let path = entry.path();
-        let (note, encoded) = match read_note(&entry) {
-            Ok(decoded) => decoded,
-            // Older native readers never consumed scalar diagnostics from this directory.
-            Err(_) if selection.is_none() => continue,
-            Err(error) => return Err(error),
+        let Some((selection, expected)) = &pinned else {
+            if note_prefix(&entry).is_some_and(|prefix| single_row_reference_prefix(&prefix, &selector)) {
+                return Err("whole-module admission has no independently accepted selection".into());
+            }
+            continue;
         };
+        let (note, encoded) = read_note(&entry)?;
         match note {
             RequestModuleNote::Scalar { module, complete } => {
-                if selection.is_some() {
-                    check_note_name(name, suffix, &module, complete)?;
-                }
+                check_note_name(name, suffix, &module, complete)?;
                 scalar.insert(module);
             }
             RequestModuleNote::Whole(note) => {
-                let Some((selection, expected)) = selection.zip(expected.as_deref()) else {
-                    return Err("whole-module admission has no independently accepted selection".into());
-                };
                 check_note_name(name, suffix, &note.module, true)?;
                 let selected = selected_positioned_module(selection, expected, &note)?;
-                no_sparse_placement(&path)?;
+                no_sparse_placement(&entry.path())?;
                 let definitions = selected_module_definitions(products, selected, &frames)?;
                 let module = note.module.clone();
                 let replaced = compact.insert(
@@ -93,6 +93,22 @@ pub fn read_plan_module_admissions(
         return Err("module has overlapping scalar and compact admissions".into());
     }
     Ok(compact.into_values().collect())
+}
+
+/// Read only the bytes needed to recognize a possible unsolicited compact note.
+fn note_prefix(entry: &std::fs::DirEntry) -> Option<Vec<u8>> {
+    if !entry.file_type().ok()?.is_file() {
+        return None;
+    }
+    let mut prefix = Vec::with_capacity(NOTE_PREFIX_BYTES);
+    std::fs::File::open(entry.path())
+        .ok()?
+        .take(NOTE_PREFIX_BYTES as u64)
+        .read_to_end(&mut prefix)
+        .ok()?;
+    #[cfg(test)]
+    PREFIX_BYTES.with(|read| read.set(read.get() + prefix.len()));
+    Some(prefix)
 }
 
 /// Decode one bounded note and retain exactly the bytes its settled fingerprint names.
@@ -225,7 +241,10 @@ mod tests {
     };
     use sha2::{Digest, Sha256};
 
-    use super::{AdmittedDefinition, DECODED_NOTES, PREFIX_BYTES, read_plan_module_admissions};
+    use super::{
+        AdmittedDefinition, DECODED_NOTES, NOTE_PREFIX_BYTES, PREFIX_BYTES, WHOLE_ADMISSION_SELECTOR,
+        read_plan_module_admissions,
+    };
     use crate::plan_modules::{FRAME_LIST, PlanModuleSelection, tests::directory};
 
     /// Build one native positioned page with an independently known definition and nonempty product.
@@ -434,7 +453,10 @@ mod tests {
             (0, 0),
             "an unpinned native request replayed legacy scalar diagnostics"
         );
-        assert_eq!(PREFIX_BYTES.with(std::cell::Cell::get), 2 * 32 + malformed.len());
+        assert_eq!(
+            PREFIX_BYTES.with(std::cell::Cell::get),
+            2 * NOTE_PREFIX_BYTES + malformed.len()
+        );
         write(&note, &whole_bytes)?;
         assert!(read_plan_module_admissions(&root, None).is_err());
         write(&note, &whole_bytes[..whole_bytes.len() - 1])?;
@@ -442,13 +464,12 @@ mod tests {
             read_plan_module_admissions(&root, None).is_err(),
             "an unpinned whole-module note with a damaged body was ignored"
         );
-        let selector = b"admwhl\0";
         let dictionary = whole_bytes
-            .windows(selector.len())
-            .position(|window| window == selector)
+            .windows(WHOLE_ADMISSION_SELECTOR.len())
+            .position(|window| window == WHOLE_ADMISSION_SELECTOR)
             .ok_or("whole module note omitted its reference selector")?;
         let mut damaged_digest = whole_bytes;
-        damaged_digest[dictionary + selector.len()] ^= 1;
+        damaged_digest[dictionary + WHOLE_ADMISSION_SELECTOR.len()] ^= 1;
         write(&note, &damaged_digest)?;
         assert!(
             read_plan_module_admissions(&root, None).is_err(),

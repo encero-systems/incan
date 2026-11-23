@@ -140,6 +140,33 @@ pub def binary_list_field_views(
     return Ok(result)
 
 
+pub def single_row_reference_prefix(prefix: bytes, selector: bytes) -> bool:
+    """Identify a complete first reference selector in a bounded row prefix without admitting its body."""
+    match referenced_prefix(prefix, selector):
+        Ok(declared) => return declared
+        Err(_) => return false
+
+
+def referenced_prefix(prefix: bytes, selector: bytes) -> Result[bool, BinaryError]:
+    owner = MappedFile.owned(prefix).map_err((_) => failure(BinaryFailure.Truncated, 0))?
+    view = match complete_view(owner):
+        Some(value) => value
+        None => return Ok(false)
+
+    mut budget = Budget.create(len(prefix) * 2, len(prefix), 1).map_err((_) => failure(BinaryFailure.LimitExceeded, 0))?
+    mut cursor = EncodingCursor.create(view)?
+    if cursor.take(4, budget)?.to_bytes() != b"CRMB" or cursor.length(budget)? != 1 or cursor.length(budget)? != 1:
+        return Ok(false)
+    if cursor.byte(budget)? > 1:
+        return Ok(false)
+    # Only the payload length and its first referenced selector are needed to recognize the note. The rest may be
+    # truncated or damaged. The result is a discriminator for refusal, never an admitted Crumb row.
+    _ = cursor.length(budget)?
+    if cursor.length(budget)? != 1 or cursor.byte(budget)? != 1:
+        return Ok(false)
+    return Ok(cursor.frame(budget)?.to_bytes() == selector)
+
+
 pub def crumb_message(error: CrumbError) -> str:
     """Return the standard Crumb diagnostic verbatim."""
     return error.message()

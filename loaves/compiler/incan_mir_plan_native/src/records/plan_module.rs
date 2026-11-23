@@ -352,7 +352,8 @@ pub fn decode_plan_module_selection(encoded: &[u8]) -> Result<PlanModuleSelectio
     Ok(PlanModuleSelectionRecord { scope, modules })
 }
 
-pub(crate) const WHOLE_ADMISSION_SELECTOR: &[u8] = b"admwhl\x00";
+/// The Crumb reference selector declared by a complete positioned module note.
+pub const WHOLE_ADMISSION_SELECTOR: &[u8] = b"admwhl\x00";
 pub(crate) static WHOLE_ADMISSION: Shape = Shape {
     selector: WHOLE_ADMISSION_SELECTOR,
     path: "incan.module-admission-whole/1",
