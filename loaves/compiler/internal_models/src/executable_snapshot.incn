@@ -67,7 +67,7 @@ pub def selected_executable_scope(selected: Borrowed[ExecutableSnapshot], module
         None => return Err("selected executable scope is missing")
 
 
-pub def select_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str], _retained: Borrowed[Option[bytes]]) -> Result[ExecutableScopeSelection, str]:
+pub def select_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str], _retained: Option[bytes]) -> Result[ExecutableScopeSelection, str]:
     """Select the scope by its full origin and module key in the pinned snapshot."""
     key = encode_record_key(executable_scope_key(selected.origin, module, digest)?)?
     location = match locate_value(selected.graph, key).map_err((error) => error.message())?:
