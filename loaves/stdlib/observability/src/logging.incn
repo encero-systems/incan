@@ -414,6 +414,26 @@ pub def basic_config(
     """
     Configure source-level logging policy for the current generated program.
 
+    Example:
+        Configure INFO-level JSON logging to standard output. The DEBUG event is filtered
+        out; the INFO event includes an `order_id` field. Configure logging in the
+        application entry point.
+
+        ```incan
+        from std.logging import Level, LogFormat, basic_config, get_logger
+
+
+        def main() -> None:
+            basic_config(
+                level=Level.INFO,
+                format=LogFormat.JSON,
+                target="stdout",
+            )
+            logger = get_logger("checkout")
+            logger.debug("This event is below the configured threshold")
+            logger.info("Order created", fields={"order_id": 42})
+        ```
+
     Args:
         level: Minimum event level to emit.
         format: Renderer format.
