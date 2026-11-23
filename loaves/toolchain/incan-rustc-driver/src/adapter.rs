@@ -245,10 +245,9 @@ pub fn compile(
     Ok(())
 }
 
-/// Give a program whose every function has a record input rustc's incremental session in its private unit directory,
-/// under a crate identity and output path that do not change between its builds. The returned private output, when
-/// one could be held, receives rustc's output until the executable is published. The session is named by the crates
-/// the program links (`linked`) as well, see [`incremental_session`].
+/// Use a stable crate identity for a program whose every function has a record input. Only the holder of its
+/// private output uses the associated incremental session. A contender still compiles to its requested output.
+/// The session is named by the crates the program links (`linked`) as well, see [`incremental_session`].
 fn native_incremental(
     args: &mut Vec<String>,
     crate_name: &str,
@@ -265,7 +264,6 @@ fn native_incremental(
         .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
     let compiler = compiler.trim_start_matches("sha256:");
     let private = PrivateOutput::acquire(parent, crate_name, compiler)?;
-    let incremental = incremental_session(parent, crate_name, compiler, linked, private.is_some())?;
     let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
         crate_name.to_owned(),
         toolchain.to_owned(),
@@ -274,9 +272,10 @@ fn native_incremental(
     .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
     args.push("-C".into());
     args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
-    args.push("-C".into());
-    args.push(format!("incremental={}", incremental.display()));
     if let Some(held) = &private {
+        let incremental = incremental_session(parent, crate_name, compiler, linked)?;
+        args.push("-C".into());
+        args.push(format!("incremental={}", incremental.display()));
         held.redirect(args);
     }
     Ok(private)
@@ -295,7 +294,6 @@ fn incremental_session(
     crate_name: &str,
     compiler: &str,
     linked: &[(String, PathBuf)],
-    held: bool,
 ) -> Result<PathBuf, DriverError> {
     let mut crates = linked
         .iter()
@@ -313,13 +311,11 @@ fn incremental_session(
         "{prefix}{}.rustc-incremental",
         &digest.trim_start_matches("sha256:")[..16]
     );
-    if held {
-        for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
-            let other = entry.file_name().to_string_lossy().into_owned();
-            let earlier = other != name && other.starts_with(&prefix) && other.ends_with(".rustc-incremental");
-            if earlier && !working(&entry.path()) {
-                let _ = std::fs::remove_dir_all(entry.path());
-            }
+    for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
+        let other = entry.file_name().to_string_lossy().into_owned();
+        let earlier = other != name && other.starts_with(&prefix) && other.ends_with(".rustc-incremental");
+        if earlier && !working(&entry.path()) {
+            let _ = std::fs::remove_dir_all(entry.path());
         }
     }
     let session = parent.join(name);
@@ -654,11 +650,11 @@ mod tests {
         let library = crates.path().join("libfacet.rlib");
         std::fs::write(&library, b"facet built under one metadata")?;
         let linked = vec![("facet".to_owned(), library.clone())];
-        let first = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        let first = incremental_session(units.path(), "oven", "abc", &linked)?;
         assert!(first.is_dir());
-        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked, true)?, first);
+        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked)?, first);
         std::fs::write(&library, b"facet built under another metadata")?;
-        let second = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        let second = incremental_session(units.path(), "oven", "abc", &linked)?;
         assert_ne!(second, first, "a changed linked crate kept the earlier session");
         assert!(second.is_dir());
         assert!(!first.exists(), "the session named for the earlier crates was kept");
