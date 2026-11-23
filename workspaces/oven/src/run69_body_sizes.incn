@@ -1,0 +1,16 @@
+"""Report the retained graph Body IR size for one exact owner."""
+
+from std.fs import Path
+from rust::incan_semantics_core::executable_representation import decode_owner
+
+
+def main() -> Result[None, str]:
+    directory = Path("/Volumes/Builds/incan-dev9-work/memory/lane/run33/repo/workspaces/oven/target/incan/units/a9f200c5fd92e1ad03ee95c8594ab4b3adf965fb0497a58c8f3531cf56a227c1.unit.json.graph-body-records")
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file() or not entry.0.endswith(".incnfunction"):
+            continue
+        encoded = entry.read_bytes().map_err((error) => error.message())?
+        owner = decode_owner(encoded).map_err((error) => str(error))?
+        if owner.identity.contains("source_security::hex_digit"):
+            println(f"{len(encoded)}\t{owner.identity}\t{entry.0}")
+    return Ok(None)

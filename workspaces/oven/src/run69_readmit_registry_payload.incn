@@ -1,0 +1,10 @@
+"""Re-admit one unchanged compiler-build registry payload after its shared installation moved."""
+
+from std.fs import Path
+from unit_publication import admit_payload
+
+
+def main() -> Result[None, str]:
+    return admit_payload(
+        Path("/Volumes/Builds/incan-dev9-work/memory/home/compiler-build/toolchains/0.6.0-dev.8/registry/entries/sha256-5b207baae01352b0b2efa8eb36c9a167fb3bb4364953db5d3786b5d9101a5a81/artifacts/libaxum-5b207baae01352b0b2efa8eb36c9a167fb3bb4364953db5d3786b5d9101a5a81.rlib")
+    )
