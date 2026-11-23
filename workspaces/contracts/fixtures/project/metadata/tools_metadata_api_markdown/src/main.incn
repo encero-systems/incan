@@ -1,4 +1,4 @@
-# behavior: `incan tools metadata api PATH --format markdown` renders the checked public API as the compact Markdown reference 0.5.1 printed (#3142).
+# behavior: `incan tools metadata api PATH --format markdown` renders compact checked signatures (#3142) and shows the type bounds that select overloads with different return types (#1033).
 # cli-commands:
 #   tools metadata api src/main.incn --format markdown
 # expect-stdout:
@@ -28,6 +28,18 @@
 #
 #   Add two numbers.
 #
+#   ### `convert`
+#
+#   ```incan
+#   pub def convert[T with Int](value: int) -> int
+#   ```
+#
+#   ### `convert`
+#
+#   ```incan
+#   pub def convert[T with Float](value: int) -> float
+#   ```
+#
 # expect-stderr:
 # expect-exit: 0
 
@@ -47,6 +59,14 @@ pub model Point:
 pub def add(a: int, b: int = 2) -> int:
     """Add two numbers."""
     return a + b
+
+
+pub def convert[T with Int](value: int) -> int:
+    return value
+
+
+pub def convert[T with Float](value: int) -> float:
+    return float(value)
 
 
 def main() -> None:
