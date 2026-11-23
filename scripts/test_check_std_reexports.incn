@@ -103,12 +103,16 @@ def require_late_import_inventory() -> Result[None, str]:
     mut fixture = "\"\"\"An example in the module docstring.\npub from crate.example import DocOnly\n\"\"\"\n"
     fixture += "from std.fs import Path\npub from crate.example import Early\npub def sample() -> None:\n"
     fixture += "    \"\"\"An example in the function docstring.\npub from crate.example import StillDocOnly\n"
-    fixture += "    \"\"\"\n    pass\npub from crate.example import Late\nfrom std.fs import File\n"
+    fixture += "    \"\"\"\n    pass\ndef quoted_text() -> str:\n    return '''An example in a fixture string.\n"
+    fixture += "from std.fs import FixtureOnly\n\"\"\"\nfrom std.fs import NestedExample\n\"\"\"\n"
+    fixture += "pub from crate.example import StillFixtureOnly\n'''\n"
+    fixture += "pub from crate.example import Late\nfrom std.fs import File\n"
     write(root, "sample.incn", fixture)?
-    assert late_imports(root, ["sample.incn"])? == [
-        "lateimport\tsample.incn:11:pub from crate.example import Late",
-        "lateimport\tsample.incn:12:from std.fs import File",
-    ]
+    findings = late_imports(root, ["sample.incn"])?
+    assert findings == [
+        "lateimport\tsample.incn:19:pub from crate.example import Late",
+        "lateimport\tsample.incn:20:from std.fs import File",
+    ], "\n".join(findings)
 
     primitives = repository.joinpath("loaves/stdlib/primitives/src/primitives")
     late = late_imports(root, [primitives.joinpath("async.incn").0, primitives.joinpath("io.incn").0])?
