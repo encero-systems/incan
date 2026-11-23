@@ -1,7 +1,0 @@
-{
-    "rust-analyzer.cargo.targetDir": true,
-    "chat.agentSkillsLocations": [
-        ".agents/skills"
-    ],
-    "chat.useAgentSkills": true
-}

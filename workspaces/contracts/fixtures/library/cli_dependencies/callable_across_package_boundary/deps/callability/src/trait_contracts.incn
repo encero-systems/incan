@@ -1,3 +1,0 @@
-"""Retain a standard trait's declaration through a local facade and package publication."""
-
-pub from std.traits.callable import Callable1 as ForwardedUnary

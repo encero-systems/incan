@@ -1,2 +1,0 @@
-pub def querykit_name() -> str:
-    return "querykit"

@@ -1,6 +1,0 @@
-[project]
-name = "styleforge_core"
-version = "0.1.0"
-
-[vocab]
-entry = "src/vocab.incn"

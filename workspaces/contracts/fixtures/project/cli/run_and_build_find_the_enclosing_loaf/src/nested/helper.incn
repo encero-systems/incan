@@ -1,5 +1,0 @@
-"""A module in a nested source directory."""
-
-
-def helper() -> int:
-    return 1

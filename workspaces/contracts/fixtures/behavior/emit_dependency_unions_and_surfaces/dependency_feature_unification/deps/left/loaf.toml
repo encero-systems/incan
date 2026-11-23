@@ -1,6 +1,0 @@
-[project]
-name = "left_consumer"
-version = "0.1.0"
-
-[dependencies]
-selected = { path = "../shared", default-features = false, features = ["alpha"] }

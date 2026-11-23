@@ -1,9 +1,0 @@
-from kinds import Settings
-
-
-pub enum Anchor(str):
-    Settings = "settings"
-
-
-pub def gate(settings: Settings) -> str:
-    return settings.name

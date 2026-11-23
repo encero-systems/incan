@@ -1,3 +1,0 @@
-example.Value = Record { value: decimal<10, 2> }
-
-example.Value << (value=19.90d)

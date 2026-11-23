@@ -1,3 +1,0 @@
-"""Expose an indirect self-activation attempt from a registration import."""
-
-from pub::self_vocab import marker

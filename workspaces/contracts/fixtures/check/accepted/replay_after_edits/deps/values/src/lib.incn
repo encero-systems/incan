@@ -1,6 +1,0 @@
-"""A path dependency whose function the checked program calls."""
-
-
-pub def value() -> int:
-    """Return a fixed value."""
-    return 7

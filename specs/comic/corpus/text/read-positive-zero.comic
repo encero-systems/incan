@@ -1,3 +1,0 @@
-example.Value = Record { value: fp64 }
-
-example.Value << (value=0.0)

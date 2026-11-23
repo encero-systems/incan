@@ -1,9 +1,0 @@
-[project]
-name = "legacy_vocab"
-version = "0.1.0"
-
-[project.scripts]
-main = "src/main.incn"
-
-[vocab]
-crate = "companion"

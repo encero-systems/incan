@@ -1,5 +1,0 @@
-pub def scale(value: int) -> int:
-    return value * 2
-
-
-pub scale_alias = alias scale

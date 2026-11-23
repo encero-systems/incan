@@ -1,5 +1,0 @@
-"""The beta member's program."""
-
-
-def main() -> None:
-    println("beta ran")

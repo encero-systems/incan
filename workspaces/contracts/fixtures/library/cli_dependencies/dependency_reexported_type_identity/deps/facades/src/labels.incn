@@ -1,5 +1,0 @@
-"""A second model named like a search model."""
-
-
-pub model Candidate:
-    pub label: str

@@ -1,8 +1,0 @@
-# behavior: an active feature activates the features it lists
-# expect-active-features:
-#   default
-#   full
-#   parsing
-
-def main() -> None:
-    println("features")

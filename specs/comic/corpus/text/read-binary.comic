@@ -1,3 +1,0 @@
-example.Value = Record { value: binary }
-
-example.Value << (value=b"A\x00\xff")

@@ -1,3 +1,0 @@
-example.Z = Record { z: i64, a: i64 }
-
-example.Z << (1, 2)

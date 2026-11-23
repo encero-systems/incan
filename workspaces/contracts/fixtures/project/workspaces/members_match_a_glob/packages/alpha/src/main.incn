@@ -1,3 +1,0 @@
-def main() -> None:
-    """A workspace member's program."""
-    pass

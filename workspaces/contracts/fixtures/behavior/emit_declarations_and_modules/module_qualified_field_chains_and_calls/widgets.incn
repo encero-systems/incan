@@ -1,5 +1,0 @@
-pub const DEFAULT_NAME: str = "gadget"
-
-
-pub def make_widget(name: str) -> str:
-    return f"widget:{name}"

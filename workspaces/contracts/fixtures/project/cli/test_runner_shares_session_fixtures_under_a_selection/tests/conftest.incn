@@ -1,7 +1,0 @@
-from std.testing import fixture
-
-
-@fixture(scope="session")
-def run_wide() -> int:
-    println("session setup")
-    return 10

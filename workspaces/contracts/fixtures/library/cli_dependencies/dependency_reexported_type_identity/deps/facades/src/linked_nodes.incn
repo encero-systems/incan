@@ -1,3 +1,0 @@
-"""Republish nominal types from a dependency Loaf."""
-
-pub from pub::linked_nodes import LinkedNode, LinkedState

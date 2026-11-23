@@ -1,3 +1,0 @@
-pub def greeting() -> str:
-    """The text both projects print."""
-    return "shared"

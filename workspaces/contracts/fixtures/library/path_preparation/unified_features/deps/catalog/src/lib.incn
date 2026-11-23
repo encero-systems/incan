@@ -1,6 +1,0 @@
-when feature("extra"):
-    from pub::units import one
-
-    pub def extra() -> int:
-        """The value provided by the optional dependency."""
-        return one()

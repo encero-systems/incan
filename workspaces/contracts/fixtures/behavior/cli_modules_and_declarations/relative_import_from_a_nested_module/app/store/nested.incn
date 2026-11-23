@@ -1,5 +1,0 @@
-from ...db.schema import Database
-
-
-pub def touch_nested(record: Database) -> str:
-    return f"nested:{record.id}"

@@ -1,5 +1,0 @@
-from super::db::schema import Database
-
-
-pub def touch_rust_style(record: Database) -> str:
-    return f"rust-style:{record.id}"

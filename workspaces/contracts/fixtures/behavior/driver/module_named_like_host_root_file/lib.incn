@@ -1,6 +1,0 @@
-"""A module whose name collides with the host language's library root filename."""
-
-
-pub def from_lib() -> str:
-    """Return the line the entrypoint prints."""
-    return "from lib"

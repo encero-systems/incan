@@ -1,3 +1,0 @@
-pub def unused() -> int:
-    """Make accidental compilation of an inactive optional dependency observable."""
-    return "this package is not selected"

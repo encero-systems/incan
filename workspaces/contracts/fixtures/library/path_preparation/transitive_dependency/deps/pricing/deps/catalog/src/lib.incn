@@ -1,3 +1,0 @@
-pub def amount() -> int:
-    """The catalog's base amount."""
-    return 40

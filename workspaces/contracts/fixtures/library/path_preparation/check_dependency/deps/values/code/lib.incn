@@ -1,3 +1,0 @@
-pub def answer() -> int:
-    """The library's answer."""
-    return 42

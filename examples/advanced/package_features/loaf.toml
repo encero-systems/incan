@@ -1,3 +1,0 @@
-[workspace]
-members = ["leaf", "producer", "consumer"]
-default-members = ["consumer"]

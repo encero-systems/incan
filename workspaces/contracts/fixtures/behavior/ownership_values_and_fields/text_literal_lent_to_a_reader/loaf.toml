@@ -1,9 +1,0 @@
-[project]
-name = "text_literal_lent_to_a_reader"
-version = "0.1.0"
-
-[project.scripts]
-main = "src/main.incn"
-
-[dependencies]
-drop_probe = { loaf = "drop_probe", path = "rust/drop_probe" }

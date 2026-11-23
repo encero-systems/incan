@@ -1,3 +1,0 @@
-"""Compatibility exports for foundational task primitives."""
-
-pub from std.primitives.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yield_now

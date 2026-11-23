@@ -1,3 +1,0 @@
-def main() -> None:
-    """The member the inspection lists."""
-    pass

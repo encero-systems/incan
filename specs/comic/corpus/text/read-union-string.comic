@@ -1,3 +1,0 @@
-example.Value = Record { value: i64 | string }
-
-example.Value << (value=string << "3")

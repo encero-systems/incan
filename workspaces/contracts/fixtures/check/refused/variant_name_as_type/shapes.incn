@@ -1,3 +1,0 @@
-pub enum Shape:
-    Circle(float)
-    Square(float)

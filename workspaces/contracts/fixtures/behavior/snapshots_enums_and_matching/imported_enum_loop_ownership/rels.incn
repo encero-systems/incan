@@ -1,4 +1,0 @@
-@derive(Clone)
-pub enum ConformanceRel:
-    Read
-    Filter

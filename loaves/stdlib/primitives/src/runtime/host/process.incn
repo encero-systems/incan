@@ -1,6 +1,0 @@
-"""
-Foundational `host.process` authority for `std.runtime`.
-"""
-
-pub capability spawn:
-    description = "Spawn a host process"
