@@ -370,6 +370,12 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
         true,
         Some(&request.products),
     )?;
+    assert!(
+        !Path::new(&request.products)
+            .join("admissions/6d.admitted.frames")
+            .is_file(),
+        "one redundant per-module frame sidecar was written"
+    );
     let unit = plan(vec![unit_function("main", 1), unit_function("helper", 2)], &[]);
     publish_plan_records(&unit, &request.products, &request.report)?;
     let definitions = decode_admitted_definitions(&read(&request.report(ADMITTED_DEFINITIONS))?)?;
