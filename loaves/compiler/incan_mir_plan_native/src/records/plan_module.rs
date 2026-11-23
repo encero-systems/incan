@@ -1,13 +1,15 @@
 //! A module's plan record: the plan function of every body of one module, as Bakery pages it for admission.
 
-use internal_models_bindings::MappedView;
+use std::collections::HashSet;
+
+use internal_models_bindings::{MappedView, view_len};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::records::lowering_events::AdmittedDefinition;
+use crate::records::lowering_events::{AdmittedDefinition, projected_definition};
 use crate::wire::{
-    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, boolean_value, decode_graph_row, encode_graph_row,
-    field, items, number, required, text, tuple_items,
+    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, admit_root_view, boolean_value, decode_graph_row,
+    encode_graph_row, field, items, number, required, text, tuple_items,
 };
 
 /// The family of a module's plan record.
@@ -86,11 +88,22 @@ crate::structural_debug!(PlanModuleValue, "PlanModuleValue", module, functions);
 
 /// Refuse an empty field, an empty event or a function out of strictly ascending owner and name order.
 fn ordered(function: &PlanModuleFunction, previous: &str) -> Result<String, String> {
-    let order = format!("{}\n{}", function.identity, function.function);
-    let empty = [&function.identity, &function.symbol, &function.function, &function.key]
-        .iter()
-        .any(|field| field.is_empty());
-    if empty || function.event.is_empty() || order.as_str() <= previous {
+    if function.event.is_empty() {
+        return Err("malformed plan-module record".into());
+    }
+    member_order(
+        &function.identity,
+        &function.symbol,
+        &function.function,
+        &function.key,
+        previous,
+    )
+}
+
+/// Give owned and projected Plan members the same canonical owner and function order.
+fn member_order(identity: &str, symbol: &str, function: &str, key: &str, previous: &str) -> Result<String, String> {
+    let order = format!("{identity}\n{function}");
+    if [identity, symbol, function, key].iter().any(|field| field.is_empty()) || order.as_str() <= previous {
         return Err("malformed plan-module record".into());
     }
     Ok(order)
@@ -214,10 +227,46 @@ pub struct PlanModuleSelectionRecord {
 
 /// Project the native definition inputs from one authenticated, positioned module page.
 pub fn read_positioned_plan_members(
-    _view: &MappedView,
-    _selected: &PlanSelectedModule,
+    view: &MappedView,
+    selected: &PlanSelectedModule,
 ) -> Result<Vec<AdmittedDefinition>, String> {
-    Err("positioned module members are unavailable".into())
+    validate_selected_modules(std::slice::from_ref(selected))?;
+    if !selected.positioned || view_len(view) > MAX_RECORD_BYTES {
+        return Err("selected Plan module lacks a bounded positioned page".into());
+    }
+    if format!("{:x}", Sha256::digest(view.0.as_bytes())) != selected.digest {
+        return Err("positioned Plan bytes do not match the selected page digest".into());
+    }
+    let mut page = admit_root_view(
+        view,
+        PLAN_MODULE_SELECTOR,
+        &PLAN_MODULE_SCHEMA,
+        "positioned Plan module",
+    )?;
+    let module = text(&page.row.read_field(b"module")?)?;
+    if module != selected.module {
+        return Err("positioned Plan page differs from its selected module name".into());
+    }
+    let functions = page.row.read_field(b"funcs_")?;
+    let fields = items(&functions)?.iter().map(text).collect::<Result<Vec<_>, _>>()?;
+    if fields.len() != selected.count as usize * FUNCTION_FIELDS {
+        return Err("positioned Plan declarations differ from the selected count".into());
+    }
+    let events = page.binary_list_views(b"events", selected.count)?;
+    let mut names = HashSet::with_capacity(events.len());
+    let mut definitions = Vec::with_capacity(events.len());
+    let mut previous = String::new();
+    for (member, event) in fields.chunks_exact(FUNCTION_FIELDS).zip(events) {
+        let [identity, symbol, function, key] = member else {
+            return Err("malformed positioned Plan module member".into());
+        };
+        previous = member_order(identity, symbol, function, key, &previous)?;
+        if !canonical_digest(key) || !names.insert(function) {
+            return Err("positioned Plan page repeats a function or has a malformed member key".into());
+        }
+        definitions.push(projected_definition(&event, &module, function, symbol, key)?);
+    }
+    Ok(definitions)
 }
 
 /// Accept only the canonical lowercase spelling of a raw SHA-256 digest.

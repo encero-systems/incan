@@ -69,7 +69,7 @@ pub use records::plan_module::{
     PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction,
     PlanModuleSelectionRecord, PlanModuleValue, PlanSelectedModule, PlanSelectionScope, REPOSITION_MODULE_PAGE,
     WholeModuleAdmission, compact_admission_pin, decode_plan_module, decode_plan_module_selection,
-    decode_whole_module_admission, encode_plan_module, encode_whole_module_admission,
+    decode_whole_module_admission, encode_plan_module, encode_whole_module_admission, read_positioned_plan_members,
 };
 pub use span_file::SpanFile;
 pub use types::{

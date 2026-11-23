@@ -4,9 +4,12 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+use internal_models_bindings::MappedView;
+
+use crate::records::plan_function::projected_product_digest;
 use crate::wire::{
-    Schema, Shape, ShapeBody, ShapeField, Wire, WireField, boolean_value, decode_graph_row, encode_graph_row, items,
-    number, required, text, tuple_items,
+    Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, boolean_value, decode_graph_row,
+    encode_graph_row, items, number, required, text, tuple_items,
 };
 
 const EVENT: &[u8] = b"lowevt\x00";
@@ -333,9 +336,7 @@ pub fn decode_lowering_event(encoded: &[u8]) -> Result<LoweringEvent, String> {
     let reused = boolean_value(&fields[9].value).map_err(|_| "lowering event has no reuse flag".to_owned())?;
     let role = text(&fields[10].value)?;
     let demand = text(&fields[1].value)?;
-    if (role != "" && role != "entry") || (role == "entry") != !demand.is_empty() {
-        return Err("invalid lowering event role or entry demand".into());
-    }
+    validate_event_role(&role, &demand)?;
     Ok(LoweringEvent {
         admitted,
         demand,
@@ -349,6 +350,42 @@ pub fn decode_lowering_event(encoded: &[u8]) -> Result<LoweringEvent, String> {
         reused,
         role,
         runtime_requirements: number(&fields[11].value)?,
+    })
+}
+
+/// Require the same ordinary or entry role and demand relationship on every event reader.
+fn validate_event_role(role: &str, demand: &str) -> Result<(), String> {
+    if (role != "" && role != "entry") || (role == "entry") != !demand.is_empty() {
+        return Err("invalid lowering event role or entry demand".into());
+    }
+    Ok(())
+}
+
+/// Read an authenticated positioned event's native fingerprint while its product bytes remain in the parent page.
+pub(crate) fn projected_definition(
+    view: &MappedView,
+    module: &str,
+    function: &str,
+    symbol: &str,
+    key: &str,
+) -> Result<AdmittedDefinition, String> {
+    let mut event = admit_root_view(view, EVENT, &EVENT_SCHEMA, "positioned lowering event")?;
+    if text(&event.row.read_field(b"module")?)? != module
+        || text(&event.row.read_field(b"funct_")?)? != function
+        || text(&event.row.read_field(b"identi")?)? != symbol
+        || text(&event.row.read_field(b"key___")?)? != key
+    {
+        return Err("positioned lowering event differs from its selected member".into());
+    }
+    let role = text(&event.row.read_field(b"role__")?)?;
+    let demand = text(&event.row.read_field(b"demand")?)?;
+    validate_event_role(&role, &demand)?;
+    let digest = projected_product_digest(&event.binary_view(b"produc")?)?;
+    Ok(AdmittedDefinition {
+        function: function.to_owned(),
+        identity: symbol.to_owned(),
+        key: key.to_owned(),
+        digest,
     })
 }
 
