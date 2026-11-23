@@ -85,6 +85,7 @@ impl TypeChecker {
             span,
             BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
         );
+        self.record_selected_clone_input_call(span);
         Some(inner.as_ref().clone())
     }
 
@@ -143,6 +144,7 @@ impl TypeChecker {
             span,
             BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
         );
+        self.record_selected_clone_input_call(span);
         Some(receiver.clone())
     }
 
@@ -171,6 +173,7 @@ impl TypeChecker {
             span,
             BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
         );
+        self.record_selected_clone_input_call(span);
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
