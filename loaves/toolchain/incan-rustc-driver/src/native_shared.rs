@@ -268,6 +268,7 @@ impl rustc_driver::Callbacks for Carrier {
             input: String::new(),
         };
         config.opts.search_paths = std::mem::take(&mut self.search);
+        config.override_queries = Some(|_session, providers| crate::native_exports::provide(providers));
         if self.root == "test" {
             // Only this source-free compiler-owned carrier imports libtest. No authored AST or source receives it.
             config.opts.unstable_features = rustc_feature::UnstableFeatures::Allow;

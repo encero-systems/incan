@@ -54,6 +54,7 @@ mod model_debug;
 mod model_emit;
 mod native_attributes;
 mod native_crates;
+mod native_exports;
 mod native_loans;
 mod native_plan_report;
 mod native_search;

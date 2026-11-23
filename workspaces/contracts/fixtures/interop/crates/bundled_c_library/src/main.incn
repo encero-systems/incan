@@ -1,0 +1,13 @@
+# behavior: generic functions of a registry crate reach the C library it bundles in the default profile
+# expect-stdout:
+#   round trip: 23
+
+"""Compress and decompress through zstd's generic stream functions, which call its bundled C library directly."""
+
+from rust::zstd::stream import decode_all, encode_all
+
+
+def main() -> None:
+    packed = encode_all(b"hello hello hello hello".as_slice(), 3).unwrap()
+    plain = decode_all(packed.as_slice()).unwrap()
+    println(f"round trip: {len(plain)}")
