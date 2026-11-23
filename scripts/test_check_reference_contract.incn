@@ -49,6 +49,15 @@ def test_ignores_code_links_and_see_also() -> Result[None, str]:
         + "## See also\n\n- [Rust types for Python developers](../how-to/rust.md)\n"
     )
     assert findings(text)? == []
+
+    nested = (
+        "````markdown\n```text\nYou should see literal text.\n```\n"
+        + "`````\nYou should also see literal text.\n`````\n"
+        + "~~~\nYou should see a literal tilde fence.\n~~~\n````\n\n"
+        + "You should see a real finding.\n"
+    )
+    reported = page_findings(nested, "tooling/reference/fences.md", [])?
+    assert [finding.text for finding in reported] == ["You should see a real finding."]
     return Ok(None)
 
 
