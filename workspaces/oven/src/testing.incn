@@ -4,7 +4,7 @@ test in its own process, every invocation afresh, under the runner options of on
 """
 
 from rust::std::cell import RefCell
-from rust::std::env import temp_dir
+from rust::std::env import temp_dir, var_os
 from rust::std::fs import File
 from rust::std::process import Child, Command, Stdio, id as process_id
 from rust::std::io import Write, stderr, stdout
@@ -512,6 +512,9 @@ def launch(test_case: TestCase, position: int, scratch: Path) -> Result[Running,
     command.arg("--exact").arg(test_case.native).arg("--nocapture")
     if test_case.project != "":
         command.current_dir(test_case.project)
+    if var_os("INCAN_TEST_ISOLATE_BAKERY").is_some():
+        command.env_remove("INCAN_BAKERY")
+        command.env_remove("INCAN_TEST_ISOLATE_BAKERY")
     command.stdin(Stdio.null())
     command.stdout(File.create(output.0).map_err((error) => f"{output.0}: {error}")?)
     command.stderr(File.create(errors.0).map_err((error) => f"{errors.0}: {error}")?)
@@ -696,6 +699,9 @@ def launch_group(selected: list[TestCase], members: list[int], scratch: Path) ->
     command.arg("--exact").arg(lead.native).arg("--nocapture").env("INCAN_TEST_CASES", cases)
     if lead.project != "":
         command.current_dir(lead.project)
+    if var_os("INCAN_TEST_ISOLATE_BAKERY").is_some():
+        command.env_remove("INCAN_BAKERY")
+        command.env_remove("INCAN_TEST_ISOLATE_BAKERY")
     command.stdin(Stdio.null())
     command.stdout(File.create(output.0).map_err((error) => f"{output.0}: {error}")?)
     command.stderr(File.create(errors.0).map_err((error) => f"{errors.0}: {error}")?)

@@ -208,9 +208,9 @@ pub def invocations(
     """
     Plan fixed-order invocations; each Oven source may run in any of one private worker project per job.
 
-    A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
-    the release units the release already built under the same identities, as the Rust facet tests do. The Oven
-    sources keep the installation's bakery, because their nested commands inherit the environment.
+    A nonempty `builder_bakery` is the release builder's bakery: release-profile source and Loaf tests ask it, so they
+    reuse the release units already built under the same identities, as the Rust facet tests do. Source tests mark
+    their native children to restore the installation bakery before nested commands run.
     """
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
@@ -220,12 +220,20 @@ pub def invocations(
     mut workers: list[str] = []
     for position in range(min([jobs, len(sources)])):
         workers.append(isolated_oven_project(root, evidence, position)?.0)
+    mut source_environment: Dict[str, str] = {}
+    mut source_profile: list[str] = []
+    if builder_bakery != "":
+        source_environment["INCAN_BAKERY"] = builder_bakery
+        source_environment["INCAN_TEST_ISOLATE_BAKERY"] = "1"
+        source_profile = ["--profile", "release"]
     for source in sources:
         if not source.is_file():
             return Err("Oven test sources are absent")
-        unit = ["test", f"src/{source.name()}"]
+        unit = ["test", f"src/{source.name()}"] + source_profile
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        planned.append(invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers))
+        mut planned_source = invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers)
+        planned_source.environment = source_environment
+        planned.append(planned_source)
     compiler = root.joinpath("loaves/compiler").0 + "/"
     mut shared: Dict[str, str] = {}
     if builder_bakery != "":
