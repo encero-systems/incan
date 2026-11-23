@@ -287,9 +287,9 @@ def restored_plans(
             return Err("two module functions have the same native name")
         stored[name] = index
     compact = note is None
-    scalar = match note:
-        Some(value) => value.functions
-        None => []
+    mut scalar: list[AdmittedFunction] = []
+    if let Some(value) = note:
+        scalar = value.functions
     mut members: list[tuple[int, Option[int]]] = []
     if compact:
         for index in range(len(page.functions)):

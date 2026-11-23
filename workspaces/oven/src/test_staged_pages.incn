@@ -7,6 +7,7 @@ from std.primitives.text import copy_frozen_bytes
 from pub::incan_mir_plan import PLAN_MODULE_SELECTION_PAGE
 from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT
 from scratch import scratch_directory
+from incan_units import obtain_executable
 from compiler_body_values import SelectedBodyPage
 from files import read, write
 from unit import UnitDescription
@@ -156,7 +157,8 @@ pub def test_compile_prepared_unit_passes_exactly_one_selection_digest_to_a_capa
     Count the exact selection option at the compiler's ordinary process boundary.
 
     1. Prepare the ordinary executable unit and the selected in-memory authority.
-    2. Run two scalar controls before checking that the selected request emits exactly one digest.
+    2. Run both scalar controls and check that the selected request emits and returns one exact digest.
+    3. Refuse the same selected input in a separate dispatch and require its failure to carry no authority.
     """
     # 1. The compact page carries the same digest that the invocation must supply.
     scratch = scratch_directory()?
@@ -179,12 +181,9 @@ pub def test_compile_prepared_unit_passes_exactly_one_selection_digest_to_a_capa
     mut capable = toolchain
     capable.supports_plan_module_selection_digest = true
     check_plan_selection_option(unit, capable, root.joinpath("capable-scalar"), [marker], None)?
+    check_plan_selection_option(unit, capable, root.joinpath("capable-selected"), [marker, selected], Some(digest))?
     return check_plan_selection_option(
-        unit,
-        capable,
-        root.joinpath("capable-selected"),
-        [marker, selected],
-        Some(digest),
+        unit, capable, root.joinpath("failed-selected"), [marker, selected], Some(digest), expected_exit=1,
     )
 
 
@@ -194,24 +193,31 @@ def check_plan_selection_option(
     root: Path,
     pages: list[SelectedBodyPage],
     expected: Option[str],
+    expected_exit: i32 = 0,
 ) -> Result[None, str]:
-    """Read the exact invocation received after the existing pre-submission resident fallback."""
+    """Observe the ordinary invocation and its completion without installing a driver fixture."""
     root.mkdir(true, true).map_err((error) => error.message())?
     mut receiving = toolchain
     receiving.driver = "/bin/echo"
+    if expected_exit != 0:
+        receiving.driver = "/usr/bin/false"
     receiving.worker_generation = fingerprint(["selected Plan argument observer", root.0])?[0:16]
     receiving.console = root.joinpath("driver").0
     identity = fingerprint(["selected Plan arguments", root.0])?
     key = Key(digest=identity, codegen=identity, parts=[], refusal="isolated argument control")
-    status = compile_prepared_unit(
-        unit,
-        receiving,
-        root.joinpath("program"),
-        Some(key),
-        graph_body_records=Some(pages),
-        records_directory=Some(root.joinpath("products")),
+    products = root.joinpath("products")
+    made = obtain_executable(
+        unit, receiving, root.joinpath("program"), key, graph_body_records=Some(pages), records_directory=Some(products),
     )?
-    assert status == 0, f"the argument observer exited {status}"
+    assert made.code == expected_exit, f"the argument observer exited {made.code}, expected {expected_exit}"
+    assert made.evaluations == 1, "the observer must exercise a new dispatch"
+    if expected_exit != 0:
+        staged = read(products.joinpath(PLAN_MODULE_SELECTION_PAGE + DIGEST_COMPANION))?
+        assert expected == Some(staged), "the failed dispatch must stage the exact selected digest"
+        assert made.plan_module_selection_digest is None, "a failed dispatch carried compact Plan authority"
+        assert not made.launch.exists(), "a failed dispatch produced an executable"
+        return Ok(None)
+    assert made.plan_module_selection_digest == expected, "the successful dispatch must return its exact authority"
     args = read(root.joinpath("driver.out"))?.strip().split(" ")
     assert args[0] == "--unit", "the observer must receive an ordinary unit invocation"
     mut options: list[str] = []

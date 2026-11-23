@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::record_types::RecordSpellings;
 use super::*;
 use crate::library_manifest::declaration_records::{DeclarationFacet, OVERLOAD_FIELD, restored_declaration};
-use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, LibraryIdentityGraph};
+use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, LibraryIdentityGraph, PackageInternalExports};
 
 impl TypeChecker {
     /// Bind `from <loaf>[.<path>] import <namespace>, …` from the Loaf's namespace records when every item names one of
@@ -251,6 +251,10 @@ impl TypeChecker {
         member: &str,
     ) -> Option<ResolvedPublicModuleSymbol> {
         let admitted = self.loaves.admitted(library)?;
+        if PackageInternalExports::opened_by(self.project_library.as_deref(), &admitted.name) {
+            // Public records omit the source defaults and member partials private to this project library.
+            return None;
+        }
         let members = self.record_namespace_members(library, module_path, member)?;
         let (found, overloads) = members.split_first()?;
         let source_path: Vec<String> = serde_json::from_value(found.get("source_path")?.clone()).ok()?;
