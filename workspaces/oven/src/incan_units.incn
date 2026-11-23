@@ -229,6 +229,7 @@ pub def obtain_executable(
 
     reaches = reached(store, [loaf.dir for loaf in unit.loaves])?
     if defer_publication:
+        sealing = begin_work()
         prepared = prepare_seal(
             store,
             identity,
@@ -238,6 +239,7 @@ pub def obtain_executable(
             reaches,
             f"incan {unit.kind} {unit.profile}",
         )?
+        record_work(Operation.EngineFactSeal, identity, sealing)
         view_executable(store, prepared.fact, output, unit.kind, shared)?
         return Ok(
             Made(
