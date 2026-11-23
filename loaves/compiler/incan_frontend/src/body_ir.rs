@@ -171,9 +171,11 @@ pub fn build_body_ir_module_unsettled(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
-    let mut module = build_module_seed(program, module_path, type_info, context);
+    let mut module = tracing::trace_span!(target: "incan::invocation", "incan_frontend::seed_body_ir_module")
+        .in_scope(|| build_module_seed(program, module_path, type_info, context));
     let selected = selected_body_identities(type_info);
-    retain_module_representations(&mut module, program, type_info, context.modules, &selected);
+    tracing::trace_span!(target: "incan::invocation", "incan_frontend::retain_body_ir_representations")
+        .in_scope(|| retain_module_representations(&mut module, program, type_info, context.modules, &selected));
     module
 }
 
