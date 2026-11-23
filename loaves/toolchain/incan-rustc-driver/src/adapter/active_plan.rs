@@ -105,12 +105,9 @@ impl PlanReader {
         Self::with_inputs(plan, self.function_inputs.clone(), self.alias_inputs.clone())
     }
 
-    /// Mask incompatible native fields and revalidate the plan before publishing it to the MIR queries.
+    /// Mask incompatible native fields in the exclusively held plan and revalidate before resuming MIR queries.
     pub(super) fn refine_opaque_fields(&mut self, fields: &[(usize, usize)]) -> Result<(), PlanError> {
-        let mut refined = self.plan.clone();
-        super::library_verification::apply_opaque_fields(&mut refined, fields)?;
-        self.plan = refined;
-        Ok(())
+        super::library_verification::apply_opaque_fields(&mut self.plan, fields)
     }
 
     fn read_function_inputs(report: &Path, plan: &Plan) -> Result<HashMap<String, DefinitionInput>, String> {
