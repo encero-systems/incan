@@ -1,5 +1,5 @@
 //! A Loaf's records read by name from the installed set (RFC 179): a consumer that needs one declaration's signature,
-//! layout or defaults, or one public namespace, opens that record of that family alone.
+//! layout or defaults, an admitted root layout, or one public namespace, opens that record of that family alone.
 
 use std::path::Path;
 use std::sync::PoisonError;
@@ -15,7 +15,7 @@ use crate::library_manifest::LibraryManifest;
 
 /// The record families a consumer reads by name: a declaration's own facts, a public namespace, the names an enum
 /// publishes at the package root and a module's type scope. A manifest projection never selects them.
-pub(super) const NAMED_FAMILIES: [&str; 7] = [
+pub(super) const NAMED_FAMILIES: [&str; 8] = [
     "declaration-signature",
     "layout",
     "default",
@@ -23,6 +23,7 @@ pub(super) const NAMED_FAMILIES: [&str; 7] = [
     "enum-variant",
     "type-scope",
     "runtime-binding",
+    "install-record",
 ];
 
 /// Read the `family` records named `declaration` (a declaration, or a public namespace by its path) in one installed
@@ -51,7 +52,8 @@ pub(super) fn read_declaration_in(
     family: &str,
     declaration: &str,
 ) -> Result<Option<(Vec<Value>, String)>, LoafIndexError> {
-    if !NAMED_FAMILIES.contains(&family) {
+    // Root exports also remain members of the complete manifest projection.
+    if !NAMED_FAMILIES.contains(&family) && !matches!(family, "model" | "class" | "enum" | "newtype" | "trait") {
         return Err(unreadable(
             dir,
             name,

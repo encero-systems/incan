@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 
 use super::declaration_records::{DeclarationFacet, declaration_facts};
 use super::executable_surface::{own_public_identities, runtime_bindings};
+use super::install_record::{LOAF_FACTS_SCHEMA, LoafInstallRecord, PublishedInstallRecord};
 use super::type_scope::module_type_scopes;
 use super::{LibraryManifest, LibraryManifestError};
 
@@ -81,6 +82,8 @@ pub enum RecordFamily {
     EnumVariant,
     /// One module's type scope: the type or trait declaration each spelling among its declarations names.
     TypeScope,
+    /// The checked interface installed before a consumer asks for any individual layout.
+    InstallRecord,
     RustAbi,
 }
 
@@ -115,6 +118,7 @@ impl RecordFamily {
             Self::PublicNamespace => "public-namespace",
             Self::EnumVariant => "enum-variant",
             Self::TypeScope => "type-scope",
+            Self::InstallRecord => "install-record",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -176,10 +180,69 @@ pub struct CompilerRecordSet {
 }
 
 impl LibraryManifest {
+    /// Encode the checked install value and bind its exact bytes to the manifest before publication.
+    pub fn prepare_install_record(
+        &mut self,
+        install: &LoafInstallRecord,
+    ) -> Result<CompilerRecord, LibraryManifestError> {
+        let record = record(RecordFamily::InstallRecord, 0, &self.name, install)?;
+        self.contract_metadata.install_record_digest = Some(sha256_hex(&record.value));
+        Ok(record)
+    }
+
+    /// Encode the facts sidecar for this exact manifest and its optional independently named install row.
+    pub fn encode_loaf_facts(
+        &self,
+        encoded: &str,
+        install: Option<CompilerRecord>,
+    ) -> Result<Vec<u8>, LibraryManifestError> {
+        let manifest_digest = sha256_hex(encoded.as_bytes());
+        let published = install.as_ref().map(PublishedInstallRecord::new);
+        let digests = self.compiler_records_with_install(&manifest_digest, install)?.digests;
+        let mut facts = Map::from_iter([
+            ("schema".to_owned(), LOAF_FACTS_SCHEMA.into()),
+            ("manifest_digest".to_owned(), manifest_digest.into()),
+            ("semantic_facts".to_owned(), digests.semantic_facts.into()),
+            ("record_content".to_owned(), digests.record_content.into()),
+        ]);
+        if let Some(record) = published {
+            facts.insert("install_record".to_owned(), json!(record));
+        }
+        serde_json::to_vec(&facts).map_err(|error| LibraryManifestError::Serialize(error.to_string()))
+    }
+
     /// Split this validated manifest into its installed compiler records; `manifest_digest` names the manifest file.
     pub fn compiler_records(&self, manifest_digest: &str) -> Result<CompilerRecordSet, LibraryManifestError> {
+        self.compiler_records_with_install(manifest_digest, None)
+    }
+
+    /// Project the compiler records with the exact install bytes selected by the manifest's sidecar descriptor.
+    pub fn compiler_records_with_install(
+        &self,
+        manifest_digest: &str,
+        install: Option<CompilerRecord>,
+    ) -> Result<CompilerRecordSet, LibraryManifestError> {
         let mut records = self.declaration_records()?;
-        let (contract_facts, documentation) = self.contract_metadata.split_documentation();
+        let (mut contract_facts, documentation) = self.contract_metadata.split_documentation();
+        // The row itself carries the install semantics. The descriptor binds the transport and includes source
+        // positions, so carrying it again would rekey consumers for documentation-only changes.
+        contract_facts.install_record_digest = None;
+        match (self.contract_metadata.install_record_digest.as_deref(), install) {
+            (Some(expected), Some(record))
+                if record.family == RecordFamily::InstallRecord
+                    && record.index == 0
+                    && record.name == self.name
+                    && sha256_hex(&record.value) == expected =>
+            {
+                records.push(record);
+            }
+            (None, None) => {}
+            _ => {
+                return Err(LibraryManifestError::Invalid(
+                    "install record disagrees with its manifest".into(),
+                ));
+            }
+        }
         records.push(record(RecordFamily::ContractMetadata, 0, &self.name, &contract_facts)?);
         // A consumer reads one declaration's signature, layout or defaults by name, never the whole checked API.
         if let Some(api) = &contract_facts.api {

@@ -99,6 +99,11 @@ pub def end_command() -> None:
 pub def admitted_identity(directory: Path) -> Result[Option[str], str]:
     """Name the immutable page admitted for an installation without opening that page or any installed input."""
     view = snapshot(installation_catalog()?).map_err((error) => error.message())?
+    return admitted_identity_at(directory, view)
+
+
+pub def admitted_identity_at(directory: Path, view: Snapshot) -> Result[Option[str], str]:
+    """Read an installation binding from the caller's already authenticated catalog view."""
     match get(view, binding(question(directory))).map_err((error) => error.message())?:
         None => return Ok(None)
         Some(value) =>

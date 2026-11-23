@@ -30,7 +30,7 @@ from observation import file_metadata, trace
 from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, begin, commit, fork, get, put, view_snapshot
 from store_path_conversion import ClientStoreAdmission, claim, snapshot, store_path
 from toolchain import load_toolchain, toolchain_directory
-from installation_page import admitted_identity
+from installation_page import admitted_identity_at
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
@@ -572,10 +572,16 @@ def physical_store_identity(store: Path) -> Result[str, str]:
 def installation_compiler(store: Path, view: str) -> Result[str, str]:
     """Admit a toolchain once per installation in `view` of `store`, independent of project or alternate stores."""
     directory = toolchain_directory()?
-    admission = selected_installation(directory)?
+    admission, catalog = selected_installation(directory)?
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
     key = f"incan.engine.installation\t{fingerprint([directory.0, admission] + configuration)?}"
-    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
+    # The same immutable catalog and view already authenticate both the installation binding and compiler row.
+    mut known: Option[str] = None
+    if catalog.root.value == store_path(store).value and catalog.view == view:
+        known = admitted_compiler(catalog, key, admission)?
+    else:
+        known = admitted_installation(store, view, key, admission)?
+    if let Some(compiler) = known:
         return Ok(compiler)
     _held = claim(store, f"incan.engine.installation\t{view}").map_err((error) => error.message())?
     if let Some(compiler) = admitted_installation(store, view, key, admission)?:
@@ -609,13 +615,16 @@ pub def record_installation(store: Path, view: str, key: str, admission: str, co
     return Ok(compiler)
 
 
-def selected_installation(directory: Path) -> Result[str, str]:
-    """Return the selected installation-page identity, admitting a missing installation once."""
-    if let Some(identity) = admitted_identity(directory)?:
-        return Ok(identity)
+def selected_installation(directory: Path) -> Result[tuple[str, Snapshot], str]:
+    """Return the installation identity and its catalog view, reopening only after a missing page is admitted."""
+    store = installation_catalog()?
+    catalog = snapshot(store).map_err((error) => error.message())?
+    if let Some(identity) = admitted_identity_at(directory, catalog)?:
+        return Ok((identity, catalog))
     _ = load_toolchain()?
-    match admitted_identity(directory)?:
-        Some(identity) => return Ok(identity)
+    admitted = snapshot(store).map_err((error) => error.message())?
+    match admitted_identity_at(directory, admitted)?:
+        Some(identity) => return Ok((identity, admitted))
         None => return Err("toolchain installation did not publish its admitted page")
 
 

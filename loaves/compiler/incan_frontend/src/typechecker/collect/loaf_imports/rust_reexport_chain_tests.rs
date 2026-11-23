@@ -58,7 +58,7 @@ pub(super) fn native_items() -> Vec<RustItemMetadata> {
 
 /// Check `source` as the module `module` of `package` against `loaves` and publish it as that package's manifest, with
 /// `rust_abi` as the Rust items the package ships.
-fn published_module(
+pub(super) fn published_module(
     package: &str,
     module: &str,
     source: &str,

@@ -11,6 +11,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
 from files import discard_file
+from home_paths import installation_catalog
 from lowering_record_fixtures import proof_count, stop_example_engine
 from engine_client import service_generation, service_identity
 from pub::incan_platform.ipc import Listener, listen
@@ -46,6 +47,10 @@ pub def test_a_records_client_authenticates_its_bakery_once_before_submit() -> R
     println(f"work bakery manifest opens: {before} before Submit, {after} after Complete")
     assert before == 1, f"the same work bakery manifest was opened {before} times before Submit"
     assert after == 1, "the client must read the selected executable after Complete"
+    catalog = installation_catalog()?.resolve().map_err((error) => error.message())?
+    catalog_reads = client_admission_catalog_reads(rows, catalog)?
+    println(f"installation catalog manifest opens in compiler admission: {catalog_reads}")
+    assert catalog_reads == 1, f"compiler admission opened the same installation catalog manifest {catalog_reads} times"
     return check_enclosing_view_spelling(binary, root)
 
 
@@ -132,6 +137,27 @@ def client_submission_trace(trace: Path) -> Result[list[JsonValue], str]:
                     rows.append(parse(line).map_err((error) => error.message())?)
             return Ok(rows)
     return Err("the client emitted no submission span")
+
+
+def client_admission_catalog_reads(rows: list[JsonValue], catalog: Path) -> Result[int, str]:
+    """Count catalog manifest opens during compiler admission, excluding the later capture probe."""
+    mut start = 0
+    mut finish = 0
+    for row in rows:
+        if json_text_is(row, "operation", "engine_admission"):
+            assert start == 0, "the client admitted its compiler twice"
+            start = proof_count(row, "start_ns")?
+            finish = proof_count(row, "end_ns")?
+    assert start > 0 and finish > start
+    mut count = 0
+    snapshots = catalog.joinpath("snapshots").0 + "/"
+    for row in rows:
+        if json_text_is(row, "operation", "store_manifest_read"):
+            key = row.require("key").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+            if key.startswith(snapshots):
+                if proof_count(row, "start_ns")? >= start and proof_count(row, "end_ns")? <= finish:
+                    count += 1
+    return Ok(count)
 
 
 def client_submission_reads(rows: list[JsonValue], store: Path) -> Result[tuple[int, int], str]:
