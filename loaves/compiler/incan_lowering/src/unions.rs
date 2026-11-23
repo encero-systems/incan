@@ -26,7 +26,7 @@ pub fn collect_unions(module: &BodyIrModule) -> Vec<IncanType> {
     let mut added = BTreeSet::new();
     let retained = BTreeSet::new();
     for ty in declaration_storage(module) {
-        retain_union(&mut unions, &retained, &mut added, &ty);
+        retain_union(&mut unions, &retained, &mut added, ty);
     }
     for delegation in &module.loaf_callables {
         if !delegation.type_parameters.is_empty() {
