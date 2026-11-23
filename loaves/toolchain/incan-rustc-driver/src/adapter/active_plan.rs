@@ -57,19 +57,17 @@ impl PlanReader {
                 if interface.plan.is_empty() {
                     return Err("native-interface record has no encoded plan".into());
                 }
-                reader.function_inputs = Self::read_function_inputs(report, &reader.plan)?;
+                reader.function_inputs = reader.read_function_inputs(report)?;
             }
             // Without the whole-unit interface, the report's events and definitions must name every active function;
             // otherwise the unit stays an ordinary compilation, ineligible for native incremental reuse.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                match Self::read_function_inputs(report, &reader.plan) {
-                    Ok(inputs) => reader.function_inputs = inputs,
-                    Err(reason) => {
-                        tracing::debug!(target: "incan::invocation", %reason, "native incremental reuse unavailable");
-                        return Ok(reader);
-                    }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => match reader.read_function_inputs(report) {
+                Ok(inputs) => reader.function_inputs = inputs,
+                Err(reason) => {
+                    tracing::debug!(target: "incan::invocation", %reason, "native incremental reuse unavailable");
+                    return Ok(reader);
                 }
-            }
+            },
             Err(error) => return Err(format!("cannot read native-interface record: {error}")),
         }
         reader.alias_inputs = Self::layout_inputs(&reader.plan)?;
@@ -105,7 +103,7 @@ impl PlanReader {
     }
 
     /// Read authenticated function events and admitted definitions, requiring coverage of the active plan.
-    fn read_function_inputs(report: &Path, plan: &Plan) -> Result<HashMap<String, DefinitionInput>, String> {
+    fn read_function_inputs(&self, report: &Path) -> Result<HashMap<String, DefinitionInput>, String> {
         let mut paths = std::fs::read_dir(report)
             .map_err(|error| format!("cannot read native plan report: {error}"))?
             .map(|entry| entry.map(|value| value.path()).map_err(|error| error.to_string()))
@@ -140,11 +138,7 @@ impl PlanReader {
                 product.digest.clone(),
             ])
             .map_err(|error| format!("cannot fingerprint native function record: {error}"))?;
-            if !plan.functions.iter().any(|value| {
-                #[cfg(test)]
-                tests::record_active_function_probe();
-                value.name == event.function
-            }) {
+            if !self.contains_active_function(&event.function) {
                 return Err(format!(
                     "native function product is outside the active plan for {}",
                     event.function
@@ -164,19 +158,22 @@ impl PlanReader {
                 return Err(format!("native plan report repeats function {}", event.function));
             }
         }
-        Self::read_admitted_definitions(
+        self.read_admitted_definitions(
             report,
-            plan,
             incan_mir_plan_native::admitted_definitions_filename(),
             &mut inputs,
         )?;
-        Self::read_admitted_definitions(
+        self.read_admitted_definitions(
             report,
-            plan,
             incan_mir_plan_native::NATIVE_DEFINITIONS.to_owned(),
             &mut inputs,
         )?;
-        if inputs.len() != plan.functions.len() || plan.functions.iter().any(|value| !inputs.contains_key(&value.name))
+        if inputs.len() != self.plan.functions.len()
+            || self
+                .plan
+                .functions
+                .iter()
+                .any(|value| !inputs.contains_key(&value.name))
         {
             return Err("native plan report does not cover every active function".into());
         }
@@ -187,8 +184,8 @@ impl PlanReader {
     /// admitted module plan records, and the native definitions of helper frames and generated functions. A function
     /// that also reported an event keeps the input its event authenticated.
     fn read_admitted_definitions(
+        &self,
         report: &Path,
-        plan: &Plan,
         filename: String,
         inputs: &mut HashMap<String, DefinitionInput>,
     ) -> Result<(), String> {
@@ -204,11 +201,7 @@ impl PlanReader {
             if inputs.contains_key(&definition.function) {
                 continue;
             }
-            if !plan.functions.iter().any(|value| {
-                #[cfg(test)]
-                tests::record_active_function_probe();
-                value.name == definition.function
-            }) {
+            if !self.contains_active_function(&definition.function) {
                 return Err(format!(
                     "admitted function product is outside the active plan for {}",
                     definition.function
@@ -227,6 +220,13 @@ impl PlanReader {
             );
         }
         Ok(())
+    }
+
+    /// Check one definition against the existing active function index.
+    fn contains_active_function(&self, name: &str) -> bool {
+        #[cfg(test)]
+        tests::record_active_function_probe();
+        self.by_name.contains_key(name)
     }
 
     fn layout_inputs(plan: &Plan) -> Result<HashMap<String, DefinitionInput>, String> {
