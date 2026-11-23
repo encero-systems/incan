@@ -179,6 +179,7 @@ pub struct UnitInputs<'a> {
     pub record_report: Option<String>,
     /// Producer-owned native exports chosen before lowering the Loaf.
     pub linked_static_exports: &'a BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
+    pub recorded_layouts: &'a Arc<crate::RecordedLayouts>,
 }
 
 /// Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here.
@@ -223,6 +224,7 @@ pub fn program_context(
         overflow_checks,
         observe_work: std::env::var_os("INCAN_NATIVE_TIMING").is_some(),
         described: Arc::default(),
+        recorded: Arc::default(),
     })
 }
 
@@ -296,6 +298,7 @@ fn lowered_plan(
         trace,
         &mut inventories,
     )?;
+    program.recorded = Arc::clone(inputs.recorded_layouts);
     let mut emitted_frames = no_emitted_frames();
     // 2. Lower ordinary frames and static initializers exactly once.
     let instance_products = instance_transport(

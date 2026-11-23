@@ -5,9 +5,10 @@ use incan_mir_plan_native::{
     describe_nominals, encode_checked_layout, product_nominals, unit_nominals,
 };
 use incan_semantics_core::CanonicalSymbolId;
-use incan_semantics_core::body_ir::StaticDeclaration;
+use incan_semantics_core::body_ir::{EnumDeclaration as SourceEnum, NominalDeclaration, StaticDeclaration};
 use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness, semantic_digest};
 use incan_semantics_core::stable_identity::StableDeclarationId;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -20,11 +21,65 @@ use crate::symbols::model_symbol;
 ///
 /// A program's tables only grow within one planning (`retain_nominal_tables`, `extend_program_context`), so a row
 /// stays the description of its position, and a table described again describes only the rows it gained.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct DescribedNominals {
     models: Vec<(ProductNominal, String)>,
     enums: Vec<(ProductNominal, String)>,
     statics: Vec<ProductNominal>,
+}
+
+/// The layout witnesses a program's namespaces recorded when they were checked and published, by declaration
+/// identity. A source declaration is described from its namespace's record instead of being digested again; a
+/// specialization lowering closes, which carries its type arguments, is always digested.
+#[derive(Clone, Debug, Default)]
+pub struct RecordedLayouts {
+    models: HashMap<CanonicalSymbolId, (String, String)>,
+    enums: HashMap<CanonicalSymbolId, (String, String)>,
+}
+
+impl RecordedLayouts {
+    /// Record the layout witness, its specialization and version digests, of the model declared at `canonical`.
+    pub fn record_model(&mut self, canonical: CanonicalSymbolId, witness: (String, String)) {
+        self.models.insert(canonical, witness);
+    }
+
+    /// Record the layout witness, its specialization and version digests, of the enum declared at `canonical`.
+    pub fn record_enum(&mut self, canonical: CanonicalSymbolId, witness: (String, String)) {
+        self.enums.insert(canonical, witness);
+    }
+
+    /// The witness recorded for a source model, which carries no type arguments.
+    fn model(&self, declaration: &NominalDeclaration) -> Option<(String, String)> {
+        if !declaration.native_type_arguments.is_empty() {
+            return None;
+        }
+        self.models.get(&declaration.canonical).cloned()
+    }
+
+    /// The witness recorded for a source enum, which carries no type arguments.
+    fn enumeration(&self, declaration: &SourceEnum) -> Option<(String, String)> {
+        if !declaration.native_type_arguments.is_empty() {
+            return None;
+        }
+        self.enums.get(&declaration.canonical).cloned()
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static COMPUTED_WITNESSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many layout witnesses this thread has digested; a test counts them.
+#[cfg(test)]
+pub fn computed_layout_witnesses() -> usize {
+    COMPUTED_WITNESSES.with(std::cell::Cell::get)
+}
+
+/// Count one digested layout witness for a test.
+fn count_witness() {
+    #[cfg(test)]
+    COMPUTED_WITNESSES.with(|count| count.set(count.get() + 1));
 }
 
 /// How many model, enum and static rows of the program are described.
@@ -62,6 +117,7 @@ pub fn unit_product_nominals(program: &mut ProgramContext, intrinsics: &[EnumDec
 /// cannot occur within one planning; such a table is described afresh.
 fn describe_new_rows(program: &mut ProgramContext) {
     let (nominals, enums, statics) = (program.nominals.clone(), program.enums.clone(), program.statics.clone());
+    let recorded = program.recorded.clone();
     let current = &program.described;
     if current.models.len() == nominals.len()
         && current.enums.len() == enums.len()
@@ -77,13 +133,25 @@ fn describe_new_rows(program: &mut ProgramContext) {
         *described = DescribedNominals::default();
     }
     for declaration in &nominals[described.models.len()..] {
-        let witness = model_layout_witness(declaration).map_err(|error| error.to_string());
+        let witness = recorded.model(declaration).map_or_else(
+            || {
+                count_witness();
+                model_layout_witness(declaration).map_err(|error| error.to_string())
+            },
+            Ok,
+        );
         let row = source_nominal(NominalKind::Model, &declaration.canonical, witness);
         described.models.push((row, model_symbol(&declaration.name)));
     }
     for declaration in &enums[described.enums.len()..] {
         let carrier = declaration.carrier_name();
-        let witness = enum_layout_witness(declaration).map_err(|error| error.to_string());
+        let witness = recorded.enumeration(declaration).map_or_else(
+            || {
+                count_witness();
+                enum_layout_witness(declaration).map_err(|error| error.to_string())
+            },
+            Ok,
+        );
         let row = source_nominal(NominalKind::Enum, &declaration.canonical, witness);
         described.enums.push((row, model_symbol(&carrier)));
     }

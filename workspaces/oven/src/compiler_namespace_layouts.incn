@@ -1,0 +1,107 @@
+"""Select layouts beside their namespaces and publish new companions in the same graph transaction."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot, Transaction
+from pub::internal_models import CompiledNamespaceValue, ProducerRank
+from pub::internal_models.namespace_references import (
+    NAMESPACE_IDENTITY_PROFILE,
+    NamespaceReference,
+    namespace_layout_key,
+    namespace_layout_output_directory,
+)
+from pub::internal_models.records import ReadScope, RecordRequest
+from compiler_graph_records import EditCutoff, OutputSlots, reusable_family_records, prepare_evaluation
+from compiler_prepared_records import PreparedBodyRecordSource
+
+
+pub def select_layout_references(
+    selected: Snapshot,
+    profile: str,
+    origin: str,
+    frames: Borrowed[list[NamespaceReference]],
+    invalid: list[str],
+) -> Result[tuple[list[NamespaceReference], list[NamespaceReference]], str]:
+    """
+    Offer layout candidates with enough evidence for the compiler to admit them.
+
+    1. Select companions for the offered and rechecked namespaces.
+    2. For each rechecked candidate, offer the namespace it was produced beside.
+    """
+    # 1. The compiler checks the companion against the selected namespace digest.
+    offered = [frame.key.identity for frame in frames] + invalid
+    layout_slots = OutputSlots(origin=origin, identity_profile=NAMESPACE_IDENTITY_PROFILE, included=Some(offered))
+    layouts = prior_references(selected, "namespace-layout", profile, layout_slots)?
+
+    # 2. A rebuilt namespace must prove each previous layout against its current checked declaration.
+    candidates = set([layout.key.identity for layout in layouts])
+    prior_slots = OutputSlots(
+        origin=origin,
+        identity_profile=NAMESPACE_IDENTITY_PROFILE,
+        included=Some([module for module in invalid if module in candidates]),
+    )
+    previous = prior_references(selected, "namespace", profile, prior_slots)?
+    return Ok((layouts, previous))
+
+
+pub def read_compiled_layouts(
+    output: Path, namespaces: Borrowed[list[CompiledNamespaceValue]],
+) -> Result[Dict[str, bytes], str]:
+    """Read bounded companions only for namespace outputs this invocation actually produced."""
+    directory = output.joinpath(namespace_layout_output_directory())
+    mut layouts: Dict[str, bytes] = {}
+    if not directory.exists():
+        return Ok(layouts)
+    if not directory.is_dir():
+        return Err("compiled namespace layouts are not a row directory")
+    for namespace in namespaces:
+        name = hexlify(sha256.digest(namespace.module.encode("utf-8")))
+        path = directory.joinpath(name)
+        if not path.exists():
+            continue
+        size = path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        if not path.is_file() or size <= 0 or size > 67108864:
+            return Err("compiled namespace layout record exceeds its bound")
+        layouts[namespace.module] = path.read_bytes().map_err((error) => error.message())?
+    return Ok(layouts)
+
+
+pub def stage_namespace_layout(
+    mut transaction: Transaction,
+    mut source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    layouts: Borrowed[Dict[str, bytes]],
+    origin: str,
+    module: str,
+    reads: list[RecordRequest],
+    rank: ProducerRank,
+    certificate: str,
+) -> Result[None, str]:
+    """Commit the compiler's layout companion under the same ranked input receipt as its namespace frame."""
+    if module in layouts:
+        key = namespace_layout_key(origin, module)
+        receipt = source.receipt(scope, key, reads, certificate)?
+        _ = prepare_evaluation(transaction, "compiled-namespace-layout-" + module, rank, layouts[module], receipt)?
+    return Ok(None)
+
+
+def prior_references(
+    selected: Snapshot, family: str, profile: str, slots: OutputSlots,
+) -> Result[list[NamespaceReference], str]:
+    """Read completed frame addresses from the pinned graph before current-source validation."""
+    mut references: list[NamespaceReference] = []
+    prior_values = EditCutoff(active=true)
+    for record in reusable_family_records(selected, family, profile, Some(slots), true, prior_values)?:
+        if let Some(location) = record.location:
+            references.append(
+                NamespaceReference(
+                    key=record.key,
+                    segment=location.segment,
+                    offset=location.offset,
+                    length=location.length,
+                    frame_digest=location.digest,
+                    value_digest=record.value_digest,
+                ),
+            )
+    return Ok(references)

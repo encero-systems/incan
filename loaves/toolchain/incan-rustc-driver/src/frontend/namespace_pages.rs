@@ -10,8 +10,10 @@ use incan_semantics_core::body_ir::BodyIrModule;
 use internal_models::{GraphNamespaceView, NamespaceReference};
 use sha2::{Digest, Sha256};
 
+use super::CheckedProgram;
 use super::namespace_admission::{FrameAccess, admit_header};
 use super::namespace_crumb;
+use super::namespace_layout_pages::{LayoutPages, admit_layouts, reference_for};
 
 const RETAINED_BODY_BYTES: usize = 128 * 1024 * 1024;
 const RETAINED_NAMESPACES: usize = 512;
@@ -78,6 +80,7 @@ pub(super) struct NamespacePages {
     references: Vec<NamespaceReference>,
     /// The header beside each offered frame, sorted like `references`; empty when Oven offers none.
     headers: Vec<NamespaceReference>,
+    layouts: Option<LayoutPages>,
     access: Option<FrameAccess>,
     scope: Option<ProgramScope>,
     checked: Mutex<HashMap<String, SelectedBody>>,
@@ -91,31 +94,45 @@ impl NamespacePages {
         project: &Path,
         retain_bodies: bool,
     ) -> Result<Self, String> {
-        let path = directory.join(internal_models::namespace_reference_filename());
-        let metadata = match std::fs::metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::with_selection(Vec::new(), None, bakery, project, retain_bodies));
-            }
-            Err(error) => return Err(format!("cannot inspect namespace frame references: {error}")),
+        use internal_models_native::{
+            namespace_header_key, namespace_header_reference_filename, namespace_key,
+            namespace_layout_candidate_filename, namespace_layout_key, namespace_layout_reference_filename,
         };
-        if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
-            return Err("namespace frame references require a bakery and a bounded regular page".into());
+        let frames = read_references(
+            directory,
+            &internal_models::namespace_reference_filename(),
+            namespace_key,
+        )?;
+        let layouts = read_references(directory, &namespace_layout_reference_filename(), namespace_layout_key)?;
+        if frames.is_none() && layouts.is_none() {
+            return Ok(Self::with_selection(Vec::new(), None, bakery, project, retain_bodies));
         }
         let bakery = bakery
             .and_then(Path::to_str)
             .ok_or("namespace frame references require a UTF-8 Bakery anchor")?;
-        let access = Some(FrameAccess::new(incan_worker_host_native::namespace_frame_reader(
-            bakery,
-        )));
-        let bytes = std::fs::read(path).map_err(|error| format!("cannot read namespace frame references: {error}"))?;
-        let mut references = internal_models::decode_namespace_references(&bytes)?;
-        references.sort_unstable_by(|left, right| left.key.identity.cmp(&right.key.identity));
-        let mut selection = Self::with_selection(references, access, Some(Path::new(bakery)), project, retain_bodies);
-        selection.headers = read_header_references(directory)?;
+        let access = FrameAccess::new(incan_worker_host_native::namespace_frame_reader(bakery));
+        let mut selection = Self::with_selection(
+            frames.unwrap_or_default(),
+            Some(access.clone()),
+            Some(Path::new(bakery)),
+            project,
+            retain_bodies,
+        );
+        selection.headers = read_references(directory, &namespace_header_reference_filename(), namespace_header_key)?
+            .unwrap_or_default();
+        if let Some(layouts) = layouts {
+            let previous =
+                read_references(directory, &namespace_layout_candidate_filename(), namespace_key)?.unwrap_or_default();
+            selection.layouts = Some(LayoutPages {
+                layouts,
+                previous,
+                access,
+            });
+        }
         Ok(selection)
     }
 
+    /// Retain decoded Body IR only under the exact addresses selected for this request.
     fn with_selection(
         references: Vec<NamespaceReference>,
         access: Option<FrameAccess>,
@@ -150,6 +167,7 @@ impl NamespacePages {
         Self {
             references,
             headers: Vec::new(),
+            layouts: None,
             access,
             scope,
             checked: Mutex::default(),
@@ -297,6 +315,46 @@ impl NamespacePages {
         );
     }
 
+    /// Resolve the layout companion for each reached project module. Only a module freshly produced in this request
+    /// may publish a new companion. Admitted modules use the exact value digest of their selected namespace frame.
+    pub(super) fn prepare_layouts(
+        &self,
+        program: &CheckedProgram,
+        project: &Path,
+        output: &Path,
+    ) -> Result<Arc<incan_lowering::RecordedLayouts>, String> {
+        let Some(layouts) = &self.layouts else {
+            return Ok(Arc::default());
+        };
+        let project = project.canonicalize().map_err(|error| error.to_string())?;
+        let checked = self
+            .checked
+            .lock()
+            .map_err(|_| "checked namespace selections are poisoned")?;
+        let mut recorded = incan_lowering::RecordedLayouts::default();
+        for (ir, path) in program.modules[program.own..].iter().zip(&program.files[program.own..]) {
+            if ir.nominal_declarations.is_empty() && ir.enum_declarations.is_empty() {
+                continue;
+            }
+            let Ok(source) = Path::new(path).strip_prefix(&project) else {
+                continue;
+            };
+            let source = source.to_string_lossy();
+            let Some(current) = checked.get(source.as_ref()) else {
+                continue;
+            };
+            if current.digest.frame.is_none() {
+                layouts.publish(&source, ir, current.digest.value.clone(), output, &mut recorded)?;
+            } else if let Some(namespace) = reference_for(&self.references, &source)
+                && current.digest.matches(namespace)
+                && let Some(layout) = layouts.read(&source, namespace)
+            {
+                admit_layouts(ir, layout, &mut recorded);
+            }
+        }
+        Ok(Arc::new(recorded))
+    }
+
     pub(super) fn retains(&self, source: &str) -> bool {
         self.scope.is_some() && self.checked.lock().is_ok_and(|checked| checked.contains_key(source))
     }
@@ -357,28 +415,29 @@ impl NamespacePages {
     }
 }
 
-/// The header references Oven offers beside the frame references, sorted by source; none from an Oven that offers no
-/// headers. Each must name a namespace header record.
-fn read_header_references(directory: &Path) -> Result<Vec<NamespaceReference>, String> {
-    let path = directory.join(internal_models_native::namespace_header_reference_filename());
+/// Read one bounded transport page, confined to its expected record family and sorted by source.
+fn read_references(
+    directory: &Path,
+    filename: &str,
+    expected_key: impl Fn(&str, &str) -> internal_models_native::records::RecordKey,
+) -> Result<Option<Vec<NamespaceReference>>, String> {
+    let path = directory.join(filename);
     let metadata = match std::fs::metadata(&path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("cannot inspect namespace header references: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot inspect {filename}: {error}")),
     };
     if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
-        return Err("namespace header references require a bounded regular page".into());
+        return Err(format!("{filename} requires a bounded regular page"));
     }
-    let bytes = std::fs::read(path).map_err(|error| format!("cannot read namespace header references: {error}"))?;
+    let bytes = std::fs::read(path).map_err(|error| format!("cannot read {filename}: {error}"))?;
     let mut headers = internal_models::decode_namespace_references(&bytes)?;
-    let header_key = |reference: &NamespaceReference| {
-        internal_models_native::namespace_header_key(&reference.key.origin, &reference.key.identity)
-    };
-    if headers.iter().any(|reference| reference.key != header_key(reference)) {
-        return Err("namespace header references name another record family".into());
+    let key = |reference: &NamespaceReference| expected_key(&reference.key.origin, &reference.key.identity);
+    if headers.iter().any(|reference| reference.key != key(reference)) {
+        return Err(format!("{filename} references another record family"));
     }
     headers.sort_unstable_by(|left, right| left.key.identity.cmp(&right.key.identity));
-    Ok(headers)
+    Ok(Some(headers))
 }
 
 /// Report a schema refusal identically for both namespace transports.

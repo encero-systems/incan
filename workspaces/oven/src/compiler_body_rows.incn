@@ -4,6 +4,7 @@ from std.fs import Path
 from pub::internal_models.namespace_order import IMPORT_ORDER_FILE, NamespaceOrder, certified_namespace_order, ranked_output_suffix, read_import_closures
 
 from pub::internal_models.overload_members import LOOKUP_FILE, MethodReads, method_lookup_suffix, read_method_lookups
+from pub::internal_models.namespace_references import namespace_layout_output_directory
 from pub::internal_models import (
     CompiledBodyFallback,
     CompiledBodyOutput,
@@ -48,7 +49,8 @@ pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, st
     """Read one bounded Crumb row per sidecar file while retaining only decoded semantic values."""
     if not path.is_dir():
         return Err("compiled body output is not a row directory")
-    entries = sorted([entry.0 for entry in path.iterdir().map_err((error) => error.message())?])
+    layout_directory = path.joinpath(namespace_layout_output_directory()).0
+    entries = sorted([entry.0 for entry in path.iterdir().map_err((error) => error.message())? if entry.0 != layout_directory])
     order_file = path.joinpath(IMPORT_ORDER_FILE).0
     has_order = path.0.endswith(ranked_output_suffix()) and order_file in entries
     mut row_count = len(entries)

@@ -11,7 +11,7 @@ use incan_semantics_core::body_ir::{
 
 use crate::body_index::{BodyIndex, empty_body_index, extend_body_index};
 use crate::native_type_identity::{ConstructorIndex, extend_constructor_index};
-use crate::nominal_records::DescribedNominals;
+use crate::nominal_records::{DescribedNominals, RecordedLayouts};
 
 /// One validated source body or SDK item rendering a retained nominal through a shared receiver.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,6 +42,8 @@ pub struct ProgramContext {
     pub observe_work: bool,
     /// The rows of these tables a product nominal table has described, shared by the contexts that copy this one.
     pub described: Arc<DescribedNominals>,
+    /// The layout witnesses the program's namespaces recorded, which describe their declarations without a digest.
+    pub recorded: Arc<RecordedLayouts>,
 }
 
 /// Module storage but no dispatch mappings for external-only synthetic frames.
@@ -60,6 +62,7 @@ pub fn synthetic_program_context(module: &BodyIrModule, constructors: Arc<Constr
         overflow_checks: true,
         observe_work: std::env::var_os("INCAN_NATIVE_TIMING").is_some(),
         described: Arc::default(),
+        recorded: Arc::default(),
     }
 }
 

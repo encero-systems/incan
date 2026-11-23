@@ -7,6 +7,10 @@ pub from rust::internal_models_native import (
     namespace_key,
     namespace_header_key,
     namespace_header_reference_filename,
+    namespace_layout_candidate_filename,
+    namespace_layout_key,
+    namespace_layout_output_directory,
+    namespace_layout_reference_filename,
     encode_namespace_references,
     decode_namespace_references,
 )
