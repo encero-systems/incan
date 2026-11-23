@@ -811,7 +811,7 @@ def test_release_trace_uses_invocation_records_and_phase_parent_links() -> Resul
 
 
 def test_release_scratch_reclamation_is_exact_and_retains_peak_evidence() -> Result[None, str]:
-    """Only selected scratch roots are removed, with reclaimed bytes and the largest tree sample retained."""
+    """Reclaim scratch and record only its own bytes, leaving linked targets and retained artifacts in place."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path().joinpath("release")
     scratch = root.joinpath("scratch")
@@ -820,12 +820,27 @@ def test_release_scratch_reclamation_is_exact_and_retains_peak_evidence() -> Res
     retained.mkdir(true, true).map_err((error) => error.message())?
     scratch.joinpath("large").write_bytes(b"12345").map_err((error) => error.message())?
     retained.joinpath("artifact").write_bytes(b"abc").map_err((error) => error.message())?
+    empty = root.joinpath("empty")
+    empty.mkdir(true, true).map_err((error) => error.message())?
+    absent = root.joinpath("absent")
+    linked = scratch.joinpath("linked-bundle")
+    linked.symlink_to(retained).map_err((error) => error.message())?
+    scratch.joinpath("linked-artifact").symlink_to(retained.joinpath("artifact")).map_err((error) => error.message())?
+    scratch.joinpath("dangling").symlink_to(absent).map_err((error) => error.message())?
+    owned = tree_bytes(scratch)?
+    assert owned == 5, f"scratch has 5 owned bytes, counted {owned}"
+    assert tree_bytes(linked)? == 0
+    assert tree_bytes(empty)? == 0
+    assert tree_bytes(absent)? == 0
+    match tree_bytes(scratch.joinpath("large")):
+        Ok(_) => return Err("a regular file was accepted as a release tree")
+        Err(message) => assert "large" in message
     evidence = root.joinpath("tree-samples.tsv")
-    assert record_tree_sample(root, evidence, "before")? >= 8
+    assert record_tree_sample(root, evidence, "before")? == 8
     assert reclaim_paths([scratch])? == 5
     after = record_tree_sample(root, evidence, "after")?
     assert not scratch.exists()
-    assert retained.joinpath("artifact").is_file()
+    assert retained.joinpath("artifact").read_bytes().map_err((error) => error.message())? == b"abc"
     peak = int(root.joinpath("tree-peak.txt").read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
     assert peak >= after
     assert evidence.read_text("utf-8", "strict").map_err((error) => error.message())?.contains("before\t")
