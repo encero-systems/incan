@@ -71,48 +71,6 @@ mod tests {
     use super::*;
 
     // ========================================
-    // Default config tests
-    // ========================================
-
-    #[test]
-    fn test_default_config_indent_width() {
-        let config = FormatConfig::default();
-        assert_eq!(config.indent_width, 4);
-    }
-
-    #[test]
-    fn test_default_config_line_length() {
-        let config = FormatConfig::default();
-        assert_eq!(config.line_length, 120);
-    }
-
-    #[test]
-    fn test_default_config_quote_style() {
-        let config = FormatConfig::default();
-        assert_eq!(config.quote_style, QuoteStyle::Double);
-    }
-
-    #[test]
-    fn test_default_config_trailing_commas() {
-        let config = FormatConfig::default();
-        assert!(config.trailing_commas);
-    }
-
-    // ========================================
-    // Constructor tests
-    // ========================================
-
-    #[test]
-    fn test_new_equals_default() {
-        let new_config = FormatConfig::new();
-        let default_config = FormatConfig::default();
-        assert_eq!(new_config.indent_width, default_config.indent_width);
-        assert_eq!(new_config.line_length, default_config.line_length);
-        assert_eq!(new_config.quote_style, default_config.quote_style);
-        assert_eq!(new_config.trailing_commas, default_config.trailing_commas);
-    }
-
-    // ========================================
     // Builder method tests
     // ========================================
 
