@@ -233,7 +233,12 @@ pub fn decode_graph_field(encoded: &[u8], description: &Description, field: &[u8
 
 /// Use the same bound whether materializing a graph row or projecting a single field.
 pub fn graph_read_budget() -> Result<Budget, String> {
-    create_budget(MAX_GRAPH_RECORD_BYTES * 4, 4_194_304, 128).map_err(|error| crumb_message(&error))
+    graph_read_budget_at_depth(128)
+}
+
+/// Share the graph byte and element limits with formats that need a different nesting bound.
+pub(crate) fn graph_read_budget_at_depth(depth: i64) -> Result<Budget, String> {
+    create_budget(MAX_GRAPH_RECORD_BYTES * 4, 4_194_304, depth).map_err(|error| crumb_message(&error))
 }
 
 /// Authenticate the sole dictionary schema before exposing any logical fields. The reference default maximum is
