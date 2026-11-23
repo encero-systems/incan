@@ -14,6 +14,10 @@ pub const IDENTITY_ADAPTER_SOURCE: str = "incan_semantics_core identities at exe
 pub const IDENTITY_ADAPTER_GENERATION: int = 1
 pub const IDENTITY_ADAPTER_REMOVAL_GATE: str = "remove only after every direct native identity and source-span consumer accepts the Incan-owned declarations"
 
+# A lowering event for a closed instance of a toolchain runtime generic names that generic behind this prefix. The
+# generic is no authored graph owner, so Bakery stages its plan without an authored Body IR read.
+pub const RUNTIME_INSTANCE_IDENTITY: str = "runtime:"
+
 
 @derive(Eq)
 pub enum SymbolNamespace:

@@ -1,0 +1,42 @@
+"""A runtime generic's plan product keeps the Rust functions its body calls, named by their Incan import identity."""
+
+from _plan import ExternalFunction, Function
+from _types import PlanType, source_span
+from _body import BasicBlock, Local, Terminator, TerminatorKind
+from function_records import decode_product, encode_product, product_nominals
+from nominal_identities import ProductNominal
+
+
+pub def test_product_keeps_a_rust_external() -> Result[None, str]:
+    """A Rust standard-library call, as `lists.append_list` makes, round-trips through its product unchanged."""
+    span = source_span(file="lists.incn", line=44, column=1)
+    instance = Function(
+        name="append_list_3_105_110_116",
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[Local(ty=PlanType.Unit, span=span)],
+        blocks=[
+            BasicBlock(
+                statements=[],
+                terminator=Terminator(kind=TerminatorKind.Return, span=span),
+                cleanup=false,
+                span=span,
+            ),
+        ],
+        span=span,
+    )
+    push = ExternalFunction(
+        path="std::vec::Vec::push",
+        type_arguments=[PlanType.Int],
+        parameters=[PlanType.Int],
+        return_type=PlanType.Unit,
+        span=span,
+    )
+    runtime = [push]
+    no_nominals: list[ProductNominal] = []
+    references = product_nominals(instance, runtime)?
+    product = encode_product(instance, runtime, no_nominals)?
+    restored, restored_runtime = decode_product(product, references)?
+    assert restored == instance, "the instance did not survive its product"
+    assert restored_runtime == runtime, "the Rust external did not survive its product"
+    return Ok(None)
