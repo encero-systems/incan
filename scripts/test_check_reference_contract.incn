@@ -10,6 +10,9 @@ from check_support import git, repository_root
 from check_test_support import Outcome
 
 
+const FULL_REFERENCE_SCAN: str = "incan run scripts/check_reference_contract.incn -- --all"
+
+
 def test_flags_each_rule_in_prose() -> Result[None, str]:
     """Every lexical rule reports a violating source line."""
     for rule, text in [
@@ -68,17 +71,24 @@ def test_changed_pages_include_untracked_reference_pages() -> Result[None, str]:
 
 
 def test_make_checks_every_reference_page() -> Result[None, str]:
-    """Check both reference gates and the commands printed by the repository checkers."""
+    """Both verification targets run the full reference scan, even if a comment mentions it."""
     root = repository_root()?
     for target in ["docs", "pre-commit"]:
-        output = Command.new("make").current_dir(root.0).arg("-n").arg(target).output().map_err(
-            (error) => error.to_string(),
-        )?
+        mut command = Command.new("make")
+        command.current_dir(root.0).arg("-n").arg(target).arg("INCAN=incan")
+        output = command.output().map_err((error) => f"cannot inspect make {target}: {error}")?
         assert output.status.success()
         commands = RustString.from_utf8(output.stdout).map_err((error) => error.to_string())?
-        assert "run scripts/check_reference_contract.incn -- --all" in commands, target
+        assert invokes_full_reference_scan(commands), target
+    comment = "# " + FULL_REFERENCE_SCAN
+    assert not invokes_full_reference_scan(comment), "a commented recipe cannot run the reference scan"
     check_repository_checker_usage(root)?
     return Ok(None)
+
+
+def invokes_full_reference_scan(commands: str) -> bool:
+    """Identify the executable full-scan command in a Make dry-run transcript."""
+    return FULL_REFERENCE_SCAN in [line.strip() for line in commands.split("\n")]
 
 
 def check_repository_checker_usage(root: Path) -> Result[None, str]:
