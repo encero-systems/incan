@@ -138,6 +138,10 @@ impl RustcHandoff {
             (None, Some(_)) => return Err("settled compact admission outcome has no plan module selection".into()),
             (_, expected) => expected,
         };
+        // An empty settled result still has a report directory when the optional native interface is absent.
+        if expected.is_some_and(|pin| pin.count == 0) && !self.plan_record_report.as_deref().is_some_and(Path::is_dir) {
+            return Err("plan module selection has no native report directory".into());
+        }
         let whole = incan_lowering::read_plan_module_admissions(&products.root, selection.as_ref())?;
         if let Some(expected) = expected {
             let observed = incan_mir_plan_native::compact_admission_pin(
