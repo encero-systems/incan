@@ -92,6 +92,7 @@ impl RustcHandoff {
             self.overflow_checks,
             self.library_facades,
             self.plan_record_report.as_deref(),
+            Vec::new(),
         )
         .map_err(|error| error.to_string())?;
         if let Some(tests) = self.tests {
