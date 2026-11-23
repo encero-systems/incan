@@ -7,8 +7,8 @@ use incan_semantics_core::{
 use sha2::{Digest, Sha256};
 
 use super::{
-    BodyIrModule, CarrierPass, CarrierSignatures, ConstructorIndex, EnumDeclaration, IncanType, NamedCallableTarget,
-    generic,
+    BodyIrModule, CarrierPass, CarrierSignatures, ClosedCarrierSignatures, ConstructorIndex, EnumDeclaration,
+    IncanType, NamedCallableTarget, generic,
 };
 use crate::body_index::{BodyIndex, body_index, extend_body_index};
 use crate::tests::bodies::empty_body;
@@ -95,7 +95,14 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
     let body_indices = body_index(&module);
     let signatures = CarrierSignatures::new(&body_indices, &module);
     let mut layouts = Vec::new();
-    let mut pass = CarrierPass::new(&constructors, &module, &mut layouts, "src/main.incn", Some(&signatures));
+    let mut pass = CarrierPass::new(
+        &constructors,
+        &module,
+        &mut layouts,
+        "src/main.incn",
+        Some(&signatures),
+        None,
+    );
     let started = std::time::Instant::now();
     pass.retain_call(&target)?;
     let mut same_target = target.clone();
@@ -130,7 +137,14 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
     linked.type_parameters.clear();
     let signatures = CarrierSignatures::new(&body_indices, &module);
     let mut layouts = Vec::new();
-    let mut pass = CarrierPass::new(&constructors, &module, &mut layouts, "src/main.incn", Some(&signatures));
+    let mut pass = CarrierPass::new(
+        &constructors,
+        &module,
+        &mut layouts,
+        "src/main.incn",
+        Some(&signatures),
+        None,
+    );
     assert_eq!(
         pass.retain_call(&target),
         Err("the standard library carrier type argument count is unsupported".into())
@@ -148,6 +162,7 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
 struct SignatureContinuation {
     constructors: ConstructorIndex,
     body_indices: BodyIndex,
+    closed_signatures: ClosedCarrierSignatures,
 }
 
 impl SignatureContinuation {
@@ -159,7 +174,14 @@ impl SignatureContinuation {
     ) -> Result<(usize, usize, usize), String> {
         extend_body_index(&mut self.body_indices, module)?;
         let signatures = CarrierSignatures::new(&self.body_indices, module);
-        let mut pass = CarrierPass::new(&self.constructors, module, layouts, "src/main.incn", Some(&signatures));
+        let mut pass = CarrierPass::new(
+            &self.constructors,
+            module,
+            layouts,
+            "src/main.incn",
+            Some(&signatures),
+            Some(&mut self.closed_signatures),
+        );
         for target in targets {
             pass.retain_call(target)?;
         }

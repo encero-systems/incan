@@ -89,6 +89,7 @@ fn body_refusals(modules: &[BodyIrModule], inputs: &CensusInputs<'_>) -> Result<
         &source_files,
         inputs.package_versions,
         Vec::new(),
+        None,
     )?;
     let constructors = Arc::new(with_generic_constructor_arities(
         constructor_table,

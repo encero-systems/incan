@@ -97,6 +97,7 @@ fn complete_runtime_plan(
         mut unions,
         nominal_instances: mut retained_nominals,
         intrinsic_layouts: mut intrinsics,
+        mut closed_carrier_signatures,
         layout_inputs_grew,
         models,
         enums,
@@ -169,6 +170,7 @@ fn complete_runtime_plan(
             &entry_file,
             intrinsics,
             "continuation",
+            Some(&mut closed_carrier_signatures),
         )?;
     }
     resume_plan_roots(
@@ -215,6 +217,7 @@ fn complete_runtime_plan(
                 unions,
                 nominal_instances: retained_nominals,
                 intrinsic_layouts: intrinsics,
+                closed_carrier_signatures,
                 layout_inputs_grew: false,
                 models: inventories.models,
                 enums: inventories.enums,
@@ -242,6 +245,7 @@ fn complete_runtime_plan(
             entry_owner,
             entry_file,
             intrinsics,
+            closed_carrier_signatures,
             inventories,
             emitted_frames,
             statics,
