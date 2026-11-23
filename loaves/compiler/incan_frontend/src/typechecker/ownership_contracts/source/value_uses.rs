@@ -622,7 +622,9 @@ impl Builder<'_> {
             super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
         ) && call.owner.as_ref() == Some(&self.owner)
             && crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
-            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
+            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| {
+                owned.is_none() || owned.is_some() && contract.is_some_and(|contract| contract.result_source.is_none())
+            })
             && if tried {
                 matches!(self.checker.type_info.expr_type(call_expression.span),
                     Some(ResolvedType::Generic(name, arguments))
