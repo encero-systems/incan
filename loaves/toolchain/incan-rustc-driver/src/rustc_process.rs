@@ -513,15 +513,18 @@ mod tests {
             }
         }
         let root = fixture.root.path();
-        let [mut without_report, _] = fixture.requests(selection, Some(empty), false)?;
-        without_report.plan_record_report = None;
-        let packet = root.join("no-report.rustc-handoff");
-        write(&without_report, &packet)?;
-        let detached: RustcHandoff = postcard::from_bytes(&fs::read(packet)?)?;
-        for request in [&without_report, &detached] {
-            assert!(
-                matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no native report directory"))
-            );
+        for report in [None, Some(root.join("missing-native-report"))] {
+            let [mut without_report, _] = fixture.requests(selection, Some(empty), false)?;
+            without_report.plan_record_report = report;
+            let packet = root.join("no-report.rustc-handoff");
+            write(&without_report, &packet)?;
+            let detached: RustcHandoff = postcard::from_bytes(&fs::read(packet)?)?;
+            for request in [&without_report, &detached] {
+                assert!(
+                    matches!(request.read_compact_definitions(), Err(reason) if reason.contains("no native report directory")),
+                    "a selected empty outcome accepted an absent report directory"
+                );
+            }
         }
         let mut scalar = handoff(root, None);
         scalar.plan_record_report = None;
