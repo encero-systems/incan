@@ -476,12 +476,11 @@ pub def run_all_failures(
     return Ok(sorted(failed))
 
 
-def settle_active(active: list[Running], ignored_prefix: int) -> ActiveSettlement:
+def settle_active(mut active: list[Running], ignored_prefix: int) -> ActiveSettlement:
     """Poll to a stable pass before admission, draining every owned tree after a failure or custody error."""
-    mut running = active
     mut failed: list[int] = []
-    while len(running) > 0:
-        polled = poll_active_once(running, ignored_prefix)
+    while len(active) > 0:
+        polled = poll_active_once(active, ignored_prefix)
         for position in polled.failed:
             failed.append(position)
         if polled.stopped or len(polled.errors) > 0:
@@ -492,10 +491,10 @@ def settle_active(active: list[Running], ignored_prefix: int) -> ActiveSettlemen
                 errors=polled.errors,
                 completed=polled.completed,
             )
-        running = polled.running
+        active = polled.running
         if not polled.completed:
             break
-    return ActiveSettlement(running=running, failed=failed, stopped=false, errors=[], completed=false)
+    return ActiveSettlement(running=active, failed=failed, stopped=false, errors=[], completed=false)
 
 
 def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettlement:
@@ -563,14 +562,13 @@ def start_waiting(
     planned: list[Invocation],
     reservations: list[int],
     waiting: list[int],
-    active: list[Running],
+    mut active: list[Running],
     jobs: int,
     memory: int,
 ) -> Admission:
     """Admit work only after settlement; one start error drains every child already owned by this scheduler."""
-    mut running = active
-    chosen = admitted(reservations, waiting, [item.reservation for item in running], jobs, memory)
-    mut busy = [item.worker for item in running]
+    chosen = admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
+    mut busy = [item.worker for item in active]
     mut started: list[int] = []
     mut errors: list[str] = []
     for index in chosen:
@@ -585,7 +583,7 @@ def start_waiting(
                 root = int(child.id())
                 busy.append(worker)
                 started.append(index)
-                running.append(
+                active.append(
                     Running(
                         position=index,
                         reservation=reservations[index],
@@ -598,11 +596,11 @@ def start_waiting(
                     ),
                 )
     if len(errors) > 0:
-        for message in stop_owned_children(running):
+        for message in stop_owned_children(active):
             errors.append(message)
-        running = []
+        active = []
     remaining = [index for index in waiting if index not in started]
-    return Admission(active=running, waiting=remaining, errors=errors)
+    return Admission(active=active, waiting=remaining, errors=errors)
 
 
 def running_custody(item: &Running) -> ReleaseTermination:
