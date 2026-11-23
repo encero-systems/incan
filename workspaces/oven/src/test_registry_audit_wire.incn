@@ -1,9 +1,10 @@
 """Signed RFC 125 audit documents from independent fixture keys."""
 
+from std.encoding.base64 import b64decode, b64encode
 from std.encoding.hex import unhexlify
 from std.fs import Path
 from std.json import JsonValue, parse
-from json_fields import required_items
+from json_fields import required_items, required_text
 from registry_advisory import audit_advisories
 from registry_audit_wire import VerifiedAudit, verify_audit_document
 from registry_trust import Key, KeyKind, Root, pin
@@ -51,12 +52,16 @@ pub def test_incomplete_reordered_and_tampered_signed_logs_are_refused() -> Resu
     refused(verify_audit_document(root, event_list(document, [events[1], events[0]])?, None, FIXTURE_NOW), "event sequence")?
 
     # 2. An exact commitment is insufficient when the signing authority is missing.
-    tampered = document.replace(
-        '"kind": "delegate",\n      "key_kind": "ed25519"',
-        '"kind": "delegate",\n      "key_kind": "ecdsa-p256"',
-    )
+    encoded = required_text(events[1], "payload")?
+    payload = b64decode(encoded).map_err((error) => error.message())?
+    text = payload.decode("utf-8", "strict").map_err((_) => "the fixture payload is not UTF-8")?
+    changed = text.replace("fixture vulnerability", "different vulnerability")
+    tampered = document.replace(encoded, b64encode(changed.encode("utf-8")))
     assert tampered != document
-    refused(verify_audit_document(root, tampered, None, FIXTURE_NOW), "signing key is malformed")?
+    refused(verify_audit_document(root, tampered, None, FIXTURE_NOW), "statement signature does not verify")?
+    other = root_for("0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67",
+        "c84248d610c216a70ac930c7cbf36b3a3c8c84f8aa9472ca522344f5360d5b85")?
+    refused(verify_audit_document(other, document, None, FIXTURE_NOW), "does not match the pinned registry")?
     refused(
         verify_audit_document(root, fixture("revoked-checkpoint")?, None, FIXTURE_NOW),
         "checkpoint signing key is revoked",
@@ -97,8 +102,13 @@ def fixture(name: str) -> Result[str, str]:
 
 def fixture_root() -> Result[Root, str]:
     """Pin the fixture root separately from the response it authorizes."""
-    raw = unhexlify(ROOT).map_err((error) => error.message())?
-    return pin(REGISTRY, Key(kind=KeyKind.Ed25519, material=raw))
+    return root_for(REGISTRY, ROOT)
+
+
+def root_for(identity: str, material: str) -> Result[Root, str]:
+    """Pin a fixture's digest and raw Ed25519 key independently of response bytes."""
+    raw = unhexlify(material).map_err((error) => error.message())?
+    return pin(identity, Key(kind=KeyKind.Ed25519, material=raw))
 
 
 def event_list(text: str, values: list[JsonValue]) -> Result[str, str]:

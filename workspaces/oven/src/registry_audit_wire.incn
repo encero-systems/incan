@@ -1,23 +1,291 @@
-"""Verification boundary for the signed RFC 125 audit document."""
+"""Verification boundary for the append-only RFC 125 audit document."""
 
-from registry_advisory import VerifiedAdvisory
-from registry_checkpoint import Checkpoint
-from registry_trust import Root
+from std.encoding.base64 import b64decode, b64encode
+from std.encoding.hex import hexlify, unhexlify
+from std.hash import sha256
+from std.json import JsonValue, parse
+from json_fields import required_items, required_text
+from loaf_identity import validate_loaf_identity
+from registry_advisory import AdvisoryAction, VerifiedAdvisory
+from registry_checkpoint import Checkpoint, DEFAULT_MAX_AGE_SECONDS, verify_checkpoint
+from registry_revocation import RevocationKind, VerifiedRevocation
+from registry_trust import (
+    Key,
+    KeyKind,
+    Root,
+    Signature,
+    StatementKind,
+    Trust,
+    VerifiedStatement,
+    delegate,
+    delegation_payload,
+    root_revocation_payload,
+    statement_payload,
+    verify_root_revocation,
+    verify_statement,
+)
+from semver_req import parse_version
+
+const AUDIT_SCHEMA: str = "loaves.pub/audit/1"
+const INITIAL_HEAD: str = "0000000000000000000000000000000000000000000000000000000000000000"
 
 
 pub model VerifiedAudit:
-    """The authenticated checkpoint and advisories admitted by the audit document."""
+    """The authenticated checkpoint, advisories and revocations admitted by the audit document."""
 
     pub checkpoint: Checkpoint
     pub advisories: list[VerifiedAdvisory]
+    pub revocations: list[VerifiedRevocation]
+
+
+model AuditLog:
+    """Authorities active at the current position and authenticated findings accumulated so far."""
+
+    pub signers: Dict[str, Trust]
+    pub revoked: Dict[str, str]
+    pub advisories: list[VerifiedAdvisory]
+    pub revocations: list[VerifiedRevocation]
 
 
 pub def verify_audit_document(
-    _root: Root,
-    _text: str,
-    _observed: Option[Checkpoint],
-    _now: int,
-    _online: bool = true,
+    root: Root,
+    text: str,
+    observed: Option[Checkpoint],
+    now: int,
+    online: bool = true,
+    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> Result[VerifiedAudit, str]:
-    """Refuse audit documents until signed log admission is implemented."""
-    return Err("signed registry audit documents are not yet admitted")
+    """
+    Authenticate one complete audit log under the configured root.
+
+    1. Check the wire schema, pinned registry identity and announced event count.
+    2. Walk the ordered events, admitting only keys active at their position, and recompute the log commitments.
+    3. Verify the final checkpoint, freshness and ancestry before releasing any audit facts.
+    """
+    # 1. The response names the authority selected by configuration and commits to its complete event array.
+    document = parse(text).map_err((error) => error.message())?
+    require_fields(document, ["schema", "registry", "checkpoint", "events"], "audit document")?
+    if required_text(document, "schema")? != AUDIT_SCHEMA:
+        return Err("unsupported registry audit schema")
+    if required_text(document, "registry")? != root.registry:
+        return Err("the audit document does not match the pinned registry")
+    header = document.require("checkpoint").map_err((error) => error.message())?
+    require_fields(header, ["head", "length", "timestamp", "key", "signature"], "checkpoint")?
+    checkpoint = Checkpoint(
+        head=required_text(header, "head")?,
+        length=integer_field(header, "length")?,
+        timestamp=integer_field(header, "timestamp")?,
+    )
+    events = required_items(document, "events")?
+    if len(events) != checkpoint.length:
+        return Err("the returned audit events do not match the signed log length")
+
+    # 2. Sequence alone gives ordering, while the exact signed bytes form the commitment at each position.
+    mut log = AuditLog(signers={}, revoked={}, advisories=[], revocations=[])
+    mut head: str = INITIAL_HEAD
+    mut prefix: str = INITIAL_HEAD
+    for index in range(len(events)):
+        sequence = index + 1
+        signed = admit_event(root, events[index], sequence, log)?
+        head = append_head(head, sequence, signed)
+        if let Some(previous) = observed:
+            if sequence == previous.length:
+                prefix = head
+
+    # 3. A valid fresh signature cannot authenticate a shortened or rewritten extension of an observed log.
+    signer = active_signer(log, required_text(header, "key")?, "checkpoint")?
+    verified = verify_checkpoint(
+        signer, checkpoint, signature_field(header)?, observed, now, max_age_seconds=max_age_seconds, online=online,
+    )?
+    if head != verified.head:
+        return Err("the returned audit events do not match the signed log head")
+    if let Some(previous) = observed:
+        if prefix != previous.head:
+            return Err("the registry checkpoint conflicts with the observed log prefix")
+    return Ok(VerifiedAudit(checkpoint=verified, advisories=log.advisories, revocations=log.revocations))
+
+
+def admit_event(root: Root, event: JsonValue, sequence: int, mut log: BorrowedMut[AuditLog]) -> Result[bytes, str]:
+    """Admit one event at the expected position and return the preimage that the registry signed."""
+    if integer_field(event, "sequence")? != sequence:
+        return Err(f"the registry audit event sequence must be {sequence}")
+    kind = required_text(event, "kind")?
+    signature = signature_field(event)?
+    match kind:
+        "delegate" =>
+            require_fields(event, ["sequence", "kind", "key_kind", "key", "signature"], "delegation")?
+            key = Key(kind=key_kind(required_text(event, "key_kind")?)?, material=hex_field(event, "key")?)
+            signer = delegate(root, key, signature)?
+            if signer.key_id == root.registry:
+                return Err("the registry root cannot be a delegated signing key")
+            if log.revoked.get(signer.key_id).is_some():
+                return Err(f"registry signing key {signer.key_id} is permanently revoked")
+            if log.signers.get(signer.key_id).is_some():
+                return Err(f"duplicate delegation for registry signing key {signer.key_id}")
+            log.signers[signer.key_id] = signer
+            return Ok(delegation_payload(root.registry, key))
+        "revoke-key" =>
+            require_fields(event, ["sequence", "kind", "key", "reason", "signature"], "key revocation")?
+            identity = required_text(event, "key")?
+            _ = active_signer(log, identity, "revocation target")?
+            reason = required_text(event, "reason")?
+            verify_root_revocation(root, identity, sequence, reason, signature)?
+            log.revoked[identity] = reason
+            return Ok(root_revocation_payload(root.registry, identity, sequence, reason))
+        "statement" =>
+            require_fields(event, ["sequence", "kind", "key", "payload", "signature"], "statement")?
+            signer = active_signer(log, required_text(event, "key")?, "event")?
+            payload = payload_bytes(event)?
+            verified = verify_statement(signer, StatementKind.Event, sequence, payload, signature)?
+            project_event(log, verified, payload)?
+            return Ok(statement_payload(root.registry, verified.key_id, verified.kind, sequence, verified.payload_digest))
+        _ => return Err(f"unsupported registry audit event kind {kind}")
+
+
+def active_signer(log: Borrowed[AuditLog], identity: str, role: str) -> Result[Trust, str]:
+    """Find the exact key delegated so far and refuse any permanently revoked key."""
+    if let Some(reason) = log.revoked.get(identity):
+        return Err(f"the registry {role} signing key is revoked: {reason}")
+    match log.signers.get(identity):
+        Some(signer) => return Ok(signer)
+        None => return Err(f"the registry {role} signing key has no active root delegation")
+
+
+def append_head(previous: str, sequence: int, signed: bytes) -> str:
+    """Advance the log commitment by the exact bytes authenticated for one position."""
+    digest = hexlify(sha256.digest(signed))
+    preimage = (
+        "incan-registry-log-v1\n" +
+        f"sequence={sequence}\n" +
+        f"previous={previous}\n" +
+        f"signed-sha256={digest}\n"
+    )
+    return hexlify(sha256.digest(preimage.encode("utf-8")))
+
+
+def project_event(mut log: BorrowedMut[AuditLog], statement: VerifiedStatement, raw: bytes) -> Result[None, str]:
+    """Project only the canonical signed domain, preserving other recognized event kinds in the commitment."""
+    text = raw.decode("utf-8", "strict").map_err((_) => "the registry event payload is not UTF-8")?
+    if text.startswith("incan-registry-advisory-v1\n"):
+        log.advisories.append(advisory_event(statement, text)?)
+    elif text.startswith("incan-registry-revocation-v1\n"):
+        log.revocations.append(revocation_event(statement, text)?)
+    else:
+        require_ordinary_event(text)?
+    return Ok(None)
+
+
+def advisory_event(statement: VerifiedStatement, text: str) -> Result[VerifiedAdvisory, str]:
+    """Read the exact tuple and action from an authenticated advisory payload."""
+    values = line_fields(text, ["id=", "package=", "version=", "action=", "reason="])?
+    validate_loaf_identity(values[1])?
+    _ = parse_version(values[2])?
+    action = match values[3]:
+        "publish" => AdvisoryAction.Publish
+        "withdraw" => AdvisoryAction.Withdraw
+        _ => return Err("unsupported registry advisory action")
+    return Ok(VerifiedAdvisory(
+        registry=statement.registry, identifier=values[0], package=values[1], version=values[2],
+        action=action, reason=values[4], sequence=statement.sequence,
+    ))
+
+
+def revocation_event(statement: VerifiedStatement, text: str) -> Result[VerifiedRevocation, str]:
+    """Read the publisher or artifact identity from an authenticated revocation payload."""
+    values = line_fields(text, ["kind=", "target=", "reason="])?
+    kind = match values[0]:
+        "publisher" => RevocationKind.Publisher
+        "artifact" => RevocationKind.Artifact
+        _ => return Err("unsupported delegated registry revocation kind")
+    return Ok(VerifiedRevocation(
+        registry=statement.registry, kind=kind, target=values[1], reason=values[2], sequence=statement.sequence,
+    ))
+
+
+def line_fields(text: str, fields: list[str]) -> Result[list[str], str]:
+    """Read single-line event fields in canonical order, including one final LF."""
+    lines = text.split("\n")
+    if len(lines) != len(fields) + 2 or lines[len(lines) - 1] != "" or "\r" in text:
+        return Err("the registry event payload is malformed")
+    mut values: list[str] = []
+    for index in range(len(fields)):
+        name = fields[index]
+        line = lines[index + 1]
+        if not line.startswith(name) or len(line) == len(name):
+            return Err(f"the registry event payload is malformed at {name}")
+        values.append(line[len(name):])
+    return Ok(values)
+
+
+def require_ordinary_event(text: str) -> Result[None, str]:
+    """Admit the signed ordinary event body without allowing a second spelling of security events."""
+    event = parse(text).map_err((_) => "unsupported registry audit statement payload")?
+    schema = required_text(event, "schema")?
+    if schema != "loaves.pub/event/1" and schema != "incan.pub/event/1":
+        return Err(f"unsupported registry event schema {schema}")
+    kind = required_text(event, "kind")?
+    if kind not in [
+        "publish", "adopt", "fact", "attest", "asset", "retire", "yank", "unyank",
+        "ownership", "trusted-publisher", "supersede", "reference", "reference-check",
+    ]:
+        return Err(f"unsupported registry JSON event kind {kind}")
+    if event.get("id").is_some() or event.get("signature").is_some():
+        return Err("the signed registry JSON event must be its body without id or signature")
+    if event.to_json().map_err((error) => error.message())? != text:
+        return Err("the signed registry JSON event body is not canonical")
+    return Ok(None)
+
+
+def require_fields(value: JsonValue, names: list[str], label: str) -> Result[None, str]:
+    """Reject fields outside the selected registry wire record shape."""
+    if sorted(value.keys()) != sorted(names):
+        return Err(f"the registry {label} has unexpected or missing fields")
+    return Ok(None)
+
+
+def integer_field(value: JsonValue, name: str) -> Result[int, str]:
+    """Read a nonnegative integral wire number without coercion."""
+    field = value.require(name).map_err((error) => error.message())?
+    number = field.expect_int().map_err((error) => error.message())?
+    if number < 0:
+        return Err(f"the registry {name} must be nonnegative")
+    return Ok(number)
+
+
+def key_kind(value: str) -> Result[KeyKind, str]:
+    """Recognize the exact public names of the three supported registry key algorithms."""
+    match value:
+        "ed25519" => return Ok(KeyKind.Ed25519)
+        "ecdsa-p256" => return Ok(KeyKind.EcdsaP256)
+        "ecdsa-p384" => return Ok(KeyKind.EcdsaP384)
+        _ => return Err(f"unsupported registry key kind {value}")
+
+
+def signature_field(value: JsonValue) -> Result[Signature, str]:
+    """Read the canonical raw or ECDSA signature fields without changing their signed representation."""
+    signature = value.require("signature").map_err((error) => error.message())?
+    require_fields(signature, ["raw", "r", "s"], "signature")?
+    raw = hex_field(signature, "raw")?
+    r = hex_field(signature, "r")?
+    s = hex_field(signature, "s")?
+    if (len(r) > 0 and int(r[0]) == 0) or (len(s) > 0 and int(s[0]) == 0):
+        return Err("the registry ECDSA signature has a noncanonical integer")
+    return Ok(Signature(raw=raw, r=r, s=s))
+
+
+def hex_field(value: JsonValue, name: str) -> Result[bytes, str]:
+    """Decode one lowercase hexadecimal field without folding case."""
+    text = required_text(value, name)?
+    data = unhexlify(text).map_err((error) => error.message())?
+    if hexlify(data) != text:
+        return Err(f"the registry {name} must use lowercase hexadecimal")
+    return Ok(data)
+
+
+def payload_bytes(event: JsonValue) -> Result[bytes, str]:
+    """Decode and require the wire spelling of the standard padded base64 event payload."""
+    text = required_text(event, "payload")?
+    data = b64decode(text).map_err((error) => error.message())?
+    if b64encode(data) != text:
+        return Err("the registry event payload has noncanonical base64")
+    return Ok(data)
