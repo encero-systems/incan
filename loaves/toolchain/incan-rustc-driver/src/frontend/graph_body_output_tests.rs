@@ -186,6 +186,15 @@ fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<
     assert!(output.values.iter().all(|value| value.body_ir.starts_with(b"CRMB")));
     assert_eq!(output.namespaces.len(), 1);
     assert!(output.namespaces[0].body_ir.starts_with(b"CRMB"));
+    assert!(!output.scope_values.is_empty());
+    assert_eq!(
+        output.namespaces[0]
+            .executable_scopes
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        output.scope_values.keys().collect(),
+        "the resident namespace must authenticate every scope its executable frame references",
+    );
     assert!(output.values.iter().any(|value| value.name == "route"));
     std::fs::remove_dir_all(&scratch)?;
     Ok(())

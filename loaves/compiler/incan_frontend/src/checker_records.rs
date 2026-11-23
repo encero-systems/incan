@@ -103,8 +103,15 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
         Ok(None)
     }
 
-    /// Register a freshly published namespace's exact durable value and owned checked metadata.
-    fn publish_namespace(&self, _header: Arc<GraphNamespaceHeader>, _value: String, _body_ir: Vec<u8>) {}
+    /// Register a freshly published namespace and the immutable scope values its body depends on.
+    fn publish_namespace(
+        &self,
+        _header: Arc<GraphNamespaceHeader>,
+        _value: String,
+        _body_ir: Vec<u8>,
+        _executable_scopes: Vec<String>,
+    ) {
+    }
 
     /// Whether this activation already owns the exact header needed to keep a decoded body.
     fn retains_namespace(&self, _source: &str) -> bool {
@@ -485,10 +492,16 @@ impl GraphBodyRecords {
             .ok_or_else(|| format!("restored namespace has no settled call witness: {source}"))
     }
 
-    /// Register new complete output so the next saved activation can recognize it by its selected value digest.
-    pub fn publish_namespace(&self, header: Arc<GraphNamespaceHeader>, value: String, body_ir: Vec<u8>) {
+    /// Register complete output so the next activation can authenticate the selected value and its scope suppliers.
+    pub fn publish_namespace(
+        &self,
+        header: Arc<GraphNamespaceHeader>,
+        value: String,
+        body_ir: Vec<u8>,
+        executable_scopes: Vec<String>,
+    ) {
         if let Some(reader) = &self.source {
-            reader.publish_namespace(header, value, body_ir);
+            reader.publish_namespace(header, value, body_ir, executable_scopes);
         }
     }
 

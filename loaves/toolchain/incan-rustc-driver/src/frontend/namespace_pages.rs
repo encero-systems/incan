@@ -380,8 +380,14 @@ impl NamespacePages {
         }
     }
 
-    /// Record the exact value produced by today's compiler. The next selected reference supplies its frame seal.
-    pub(super) fn publish(&self, header: Arc<GraphNamespaceHeader>, value: String, body_ir: Vec<u8>) {
+    /// Record the compiler's exact value and scope witnesses. The next selected reference supplies its frame seal.
+    pub(super) fn publish(
+        &self,
+        header: Arc<GraphNamespaceHeader>,
+        value: String,
+        body_ir: Vec<u8>,
+        executable_scopes: Vec<String>,
+    ) {
         let source = header.source.clone();
         self.note(
             &source,
@@ -390,7 +396,7 @@ impl NamespacePages {
                 header,
                 interface_digest: None,
                 wire_bytes: body_ir.len(),
-                executable_scopes: Vec::new(),
+                executable_scopes,
                 authored: Some(body_ir),
             },
         );

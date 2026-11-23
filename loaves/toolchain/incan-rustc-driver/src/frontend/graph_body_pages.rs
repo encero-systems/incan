@@ -215,8 +215,9 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         header: std::sync::Arc<incan_frontend::checker_records::GraphNamespaceHeader>,
         value: String,
         body_ir: Vec<u8>,
+        executable_scopes: Vec<String>,
     ) {
-        self.namespaces.publish(header, value, body_ir);
+        self.namespaces.publish(header, value, body_ir, executable_scopes);
     }
 
     fn retains_namespace(&self, source: &str) -> bool {

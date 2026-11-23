@@ -672,6 +672,7 @@ fn checked_attempt(
         CheckedProgram {
             cacheable_bodies,
             retained_namespaces,
+            authored_callable_start: None,
             dependencies: RuntimeDependencyContext {
                 loaves: std::sync::Arc::clone(session.loaves()),
                 requested: requested.clone(),
@@ -784,6 +785,7 @@ pub(super) struct RetainedNamespaceBody {
     source: String,
     offset: usize,
     scopes: Vec<incan_semantics_core::body_ir::SharedIdentities>,
+    callables: std::ops::Range<usize>,
     entry_union_count: Option<usize>,
 }
 
@@ -798,15 +800,18 @@ fn retained_namespace_bodies(
     project: &Path,
     entry: usize,
 ) -> Vec<RetainedNamespaceBody> {
+    let mut callable_end = 0;
     modules
         .iter()
         .zip(authored)
         .enumerate()
         .filter_map(|(offset, (source, module))| {
+            let start = callable_end;
+            callable_end += module.loaf_callables.len();
+            let callables = start..callable_end;
             let relative = source.file_path.strip_prefix(project).ok()?.to_str()?;
             if !records.retains_namespace(relative)
                 || (restored.contains(relative) && rebound.contains(&source.file_path))
-                || !module.loaf_callables.is_empty()
                 || module
                     .nominal_declarations
                     .iter()
@@ -845,6 +850,7 @@ fn retained_namespace_bodies(
                 source: relative.to_owned(),
                 offset,
                 scopes,
+                callables,
                 entry_union_count,
             })
         })
@@ -856,6 +862,20 @@ pub(super) fn return_retained_namespaces(
     program: &mut CheckedProgram,
     records: &incan_frontend::checker_records::GraphBodyRecords,
 ) {
+    let Some(start) = program.authored_callable_start.take() else {
+        return;
+    };
+    let Some(last) = program.retained_namespaces.last() else {
+        return;
+    };
+    let Some(entry) = program.modules.get_mut(program.entry) else {
+        return;
+    };
+    if start + last.callables.end > entry.loaf_callables.len() {
+        return;
+    }
+    let mut callables = std::mem::take(&mut entry.loaf_callables).into_iter().skip(start);
+    let mut cursor = 0;
     for retained in program.retained_namespaces.drain(..) {
         let Some(module) = program.modules.get_mut(program.own + retained.offset) else {
             continue;
@@ -872,7 +892,16 @@ pub(super) fn return_retained_namespaces(
             module.runtime_callable_bindings.clear();
             module.runtime_binding_scopes.clear();
             module.string_conversion_contract = incan_semantics_core::body_ir::StringConversionContract::Unselected;
-            module.loaf_callables.clear();
+        }
+        module.loaf_callables = callables
+            .by_ref()
+            .skip(retained.callables.start - cursor)
+            .take(retained.callables.len())
+            .collect();
+        cursor = retained.callables.end;
+        if !module.loaf_callables.is_empty() {
+            tracing::trace!(target: "incan::invocation", source = retained.source, callables = module.loaf_callables.len(),
+                "retained namespace with declared callables");
         }
         for (body, scope) in module.bodies.iter_mut().zip(retained.scopes) {
             body.named_type_identities = scope;
@@ -886,11 +915,20 @@ include!("checked_program/dependency_context.rs");
 /// Replace standalone package bodies with linked contracts. Body IR keeps governed templates, including defaults
 /// with an open Self receiver, available for checked adopter specialization. Move existing contracts into the
 /// returned inventory so joining declaration modules cannot publish the same compiled callable twice.
-pub(super) fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) -> Vec<LoafCallable> {
-    let mut loaf_callables = modules
-        .iter_mut()
-        .flat_map(|module| std::mem::take(&mut module.loaf_callables))
-        .collect::<Vec<_>>();
+/// Track the authored tables or the previous catalogue at their exact placement in the new inventory.
+pub(super) fn retain_linked_loaf_declarations(
+    modules: &mut [BodyIrModule],
+    linked: usize,
+    track_module: usize,
+) -> (Vec<LoafCallable>, usize) {
+    let mut loaf_callables = Vec::new();
+    let mut position = 0;
+    for (index, module) in modules.iter_mut().enumerate() {
+        if index == track_module {
+            position = loaf_callables.len();
+        }
+        loaf_callables.extend(std::mem::take(&mut module.loaf_callables));
+    }
     for module in modules.iter_mut().take(linked) {
         for declaration in &mut module.nominal_declarations {
             if let Some(item) = incan_frontend::body_ir::linked_model_item(declaration) {
@@ -925,7 +963,7 @@ pub(super) fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], link
             }
         });
     }
-    loaf_callables
+    (loaf_callables, position)
 }
 
 /// Move metadata-selected native layouts to their physical declaration scopes, deduplicating identical selections
@@ -1111,8 +1149,59 @@ mod shared_identity_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::canonical_lowering_inputs;
-    use incan_semantics_core::CompilerNodeId;
+    use super::{canonical_lowering_inputs, retain_linked_loaf_declarations};
+    use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable};
+    use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, SemanticSourceTargetKind};
+
+    /// Create distinct declaration markers to test callable order without needing executable bodies.
+    fn catalogue_fixture(module: &str, names: &[&str]) -> BodyIrModule {
+        let mut body = BodyIrModule::declarations_only(module.into());
+        body.loaf_callables = names
+            .iter()
+            .map(|name| LoafCallable {
+                canonical: CanonicalSymbolId::module_declaration(
+                    vec![module.into()],
+                    *name,
+                    SemanticSourceTargetKind::Function,
+                    HirSourceSpan::new(0, 1),
+                ),
+                item: (*name).into(),
+                parameters: Vec::new(),
+                return_type: IncanType::Unknown,
+                type_parameters: Vec::new(),
+                native_type_arguments: Vec::new(),
+                native_callable_parameters: Vec::new(),
+                parameter_defaults: Vec::new(),
+                declaration_frame: None,
+            })
+            .collect();
+        body
+    }
+
+    /// A runtime retry may prepend new dependencies, but cannot change authored callable order or ownership.
+    #[test]
+    fn callable_catalogue_tracks_original_authored_ranges_across_retries() {
+        let mut modules = [
+            catalogue_fixture("loaded", &["dependency"]),
+            catalogue_fixture("helper", &["first", "second"]),
+            catalogue_fixture("main", &["entry"]),
+        ];
+        let (initial, first_offset) = retain_linked_loaf_declarations(&mut modules, 1, 1);
+        assert_eq!(first_offset, 1);
+        assert!(modules.iter().all(|module| module.loaf_callables.is_empty()));
+        modules[2].loaf_callables = initial;
+        modules[0] = catalogue_fixture("loaded", &["runtime-one", "runtime-two"]);
+        let (retried, previous_offset) = retain_linked_loaf_declarations(&mut modules, 1, 2);
+        let start = first_offset + previous_offset;
+        assert_eq!(start, 3);
+        assert_eq!(
+            retried[start..start + 3]
+                .iter()
+                .map(|value| value.item.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second", "entry"]
+        );
+    }
 
     /// Callable and namespace products may repeat one witness, but may not disagree about an owner.
     #[test]
