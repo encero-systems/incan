@@ -9,8 +9,45 @@ from unit_freshness import fingerprint
 
 
 pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Result[str, str]:
+    """Identify one snapshot under the selected export mode."""
+    return snapshot_digest(root, strict, snapshot_parts(units, root)?)
+
+
+pub def current_status_snapshot(
+    units: list[GraphUnit],
+    root: str,
+    expected: str,
+    checked_available: bool,
+) -> Result[str, str]:
+    """Match either available export mode for bare CLI status, using one authenticated graph inventory."""
+    tolerant, matched = current_snapshot_match(units, root, expected, checked_available)?
+    if matched:
+        return Ok(expected)
+    return Ok(tolerant)
+
+
+pub def current_snapshot_match(
+    units: list[GraphUnit],
+    root: str,
+    expected: str,
+    checked_available: bool,
+) -> Result[tuple[str, bool], str]:
+    """Return the tolerant snapshot and whether either available export mode matches the claimed identity."""
+    parts = snapshot_parts(units, root)?
+    tolerant = snapshot_digest(root, false, parts)?
+    matched = tolerant == expected or (checked_available and snapshot_digest(root, true, parts)? == expected)
+    return Ok((tolerant, matched))
+
+
+def snapshot_digest(root: str, strict: bool, parts: list[str]) -> Result[str, str]:
+    """Salt the same ordered graph facts with the export mode."""
+    digest = fingerprint(["incan.graph.snapshot/1", root, str(strict)] + parts)?
+    return Ok(f"snapshot:{digest}")
+
+
+def snapshot_parts(units: list[GraphUnit], root: str) -> Result[list[str], str]:
     """
-    Hash exact exports and anchor roots, including unchecked notes, in deterministic order.
+    Observe exact exports and anchor roots, including unchecked notes, in deterministic order.
 
     Published Loaves identify their published facts; an unbuilt edit to their source does not change that artifact.
     Source-backed units have already been refreshed against current inputs by the ordinary inspection preparation.
@@ -18,7 +55,7 @@ pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Re
     1. Load artifact observations owned by the requesting project, shared across consumer homes.
     2. Retain each unit's exported digest and source root.
     3. Include current source observations for every distinct source root.
-    4. Save artifact observations and hash the same sorted inputs under the snapshot schema.
+    4. Save artifact observations and return the sorted hash inputs.
     """
     # 1. Different homes can reuse artifact digests without writing into dependencies or toolchain artifacts.
     mut ledger = artifact_observations(root)
@@ -35,7 +72,7 @@ pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Re
         parts.append(fingerprint(tree_inputs(Path(source))?)?)
     # 4. Observations only avoid hashing unchanged bytes; their metadata never enters the identity.
     save_observations(ledger)
-    return Ok(f"snapshot:{fingerprint(['incan.graph.snapshot/1', root, str(strict)] + sorted(parts))?}")
+    return Ok(sorted(parts))
 
 
 pub def artifact_observations(root: str) -> Ledger:
