@@ -356,6 +356,12 @@ impl LanguageServer for IncanLanguageServer {
 
     async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
+        if engine_overlay::selected() {
+            return Ok(self
+                .engine_document_symbols(uri)
+                .await
+                .map(DocumentSymbolResponse::Nested));
+        }
         let docs = self.documents.read().await;
         let doc = match docs.get(uri) {
             Some(doc) => doc,

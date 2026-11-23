@@ -91,6 +91,56 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     return Ok(None)
 
 
+pub def test_document_symbols_match_the_current_editor_answer_from_the_buffer_projection() -> Result[None, str]:
+    """Document symbols come from overlay declaration records and retain today's names, details, kinds and spans."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    program = scratch.path().joinpath("symbols")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    source = program.joinpath("main.incn")
+    text = "const LIMIT: int = 3\n\ndef value(scale: int = 2) -> int:\n    return scale * LIMIT\n\nmodel Point:\n    x: int\n\nenum Mode(str):\n    Fast = \"fast\"\n\ntype Count = int\n\ntype Token = newtype str\n"
+    write(source, text)?
+    store = scratch.path().joinpath("store")
+    answered = overlay_with(binary, source, source, store, ["--document-symbols"])
+    if store.exists():
+        stop_engine(binary, store)?
+    answer = answered?
+    encoded = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("schema").map_err((error) => error.message())?.expect_str().map_err(
+        (error) => error.message(),
+    )? == "incan.overlay-document-symbols/1", encoded
+    symbols = answer.require("symbols").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    assert len(symbols) == 6, encoded
+    expected = [
+        ["LIMIT", "const LIMIT: int", "constant"],
+        ["value", "def value(scale: int = 2) -> int", "function"],
+        ["Point", "model Point", "struct"],
+        ["Mode", "enum Mode(str)", "enum"],
+        ["Count", "type Count = int", "type_parameter"],
+        ["Token", "newtype Token = str", "struct"],
+    ]
+    mut previous_end = -1
+    for index in range(len(symbols)):
+        symbol = symbols[index]
+        assert symbol.require("name").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )? == expected[index][0], encoded
+        assert symbol.require("detail").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )? == expected[index][1], encoded
+        assert symbol.require("kind").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )? == expected[index][2], encoded
+        start = count(symbol, "start")?
+        end = count(symbol, "end")?
+        assert start > previous_end and end > start, encoded
+        assert text[start:end].contains(expected[index][0]), encoded
+        previous_end = end
+    return Ok(None)
+
+
 pub def test_a_keystroke_checks_only_the_function_it_edits() -> Result[None, str]:
     """After a build, an overlay that edits one function's body checks that body and restores every other one."""
     scratch = scratch_directory()?

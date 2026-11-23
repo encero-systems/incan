@@ -1,0 +1,267 @@
+"""Document symbols projected from the editor's unsaved buffer by the records engine."""
+
+from std.json import JsonValue
+from std.fs import Path
+from compiler_source_projection import SourceProjectionRecord, project_source, signature_record
+from overlay_hover import program_origin
+
+
+pub enum OverlaySymbolKind(str):
+    """The closed LSP symbol kinds the current editor answer uses for top-level Incan declarations."""
+
+    Constant = "constant"
+    Function = "function"
+    Struct = "struct"
+    Class = "class"
+    Interface = "interface"
+    Enum = "enum"
+    TypeParameter = "type_parameter"
+
+
+pub model OverlayDocumentSymbol:
+    """One top-level declaration's current editor display and exact byte span in the unsaved buffer."""
+
+    pub name: str
+    pub detail: str
+    pub kind: OverlaySymbolKind
+    pub start: int
+    pub end: int
+
+    pub def to_json(self) -> JsonValue:
+        """Encode the engine-owned symbol answer consumed by incan-lsp."""
+        return JsonValue.object(
+            {"name": JsonValue.string(self.name), "detail": JsonValue.string(self.detail), "kind": JsonValue.string(
+                self.kind.value(),
+            ), "start": JsonValue.int(self.start), "end": JsonValue.int(self.end)},
+        )
+
+
+pub def overlay_document_symbols(
+    program: Path,
+    entry: Path,
+    document: str,
+    text: str,
+) -> Result[list[OverlayDocumentSymbol], str]:
+    """Project the buffer's top-level symbols in source order, including type declarations held by the module header."""
+    origin = program_origin(program, entry)?
+    projection = project_source(origin, document, text)?
+    mut owners: list[OverlayDocumentSymbol] = []
+    for owner in projection.owners:
+        if let Some(symbol) = owner_symbol(owner, text):
+            owners.append(symbol)
+    return Ok(merge_symbols(owners, type_symbols(text)))
+
+
+def owner_symbol(owner: &SourceProjectionRecord, source: str) -> Option[OverlayDocumentSymbol]:
+    """Translate one body-owning source-projection record into today's document-symbol shape."""
+    facet = owner.key.facet
+    if facet.startswith("field:") or facet.startswith("default:") or facet.startswith("alias:"):
+        return None
+    start, end = content_span(source, owner.start, owner.end)
+    if ":" not in facet:
+        return Some(
+            OverlayDocumentSymbol(
+                name=facet,
+                detail=callable_detail(owner),
+                kind=OverlaySymbolKind.Function,
+                start=start,
+                end=end,
+            ),
+        )
+    pieces = facet.split(":")
+    kind = pieces[0]
+    name = pieces[len(pieces) - 1]
+    if kind == "const":
+        return Some(
+            OverlayDocumentSymbol(
+                name=name,
+                detail=assigned_header(owner.text, "const"),
+                kind=OverlaySymbolKind.Constant,
+                start=start,
+                end=end,
+            ),
+        )
+    if kind == "static":
+        return Some(
+            OverlayDocumentSymbol(
+                name=name,
+                detail=assigned_header(owner.text, "static"),
+                kind=OverlaySymbolKind.Constant,
+                start=start,
+                end=end,
+            ),
+        )
+    if kind == "partial":
+        return Some(
+            OverlayDocumentSymbol(
+                name=name,
+                detail=plain_header(owner.text),
+                kind=OverlaySymbolKind.Function,
+                start=start,
+                end=end,
+            ),
+        )
+    if kind == "model":
+        return Some(
+            OverlayDocumentSymbol(name=name, detail="model " + name, kind=OverlaySymbolKind.Struct, start=start, end=end),
+        )
+    if kind == "class":
+        return Some(
+            OverlayDocumentSymbol(name=name, detail="class " + name, kind=OverlaySymbolKind.Class, start=start, end=end),
+        )
+    if kind == "trait":
+        return Some(
+            OverlayDocumentSymbol(
+                name=name,
+                detail="trait " + name,
+                kind=OverlaySymbolKind.Interface,
+                start=start,
+                end=end,
+            ),
+        )
+    if kind == "enum":
+        return Some(
+            OverlayDocumentSymbol(
+                name=name,
+                detail=enum_detail(owner.text),
+                kind=OverlaySymbolKind.Enum,
+                start=start,
+                end=end,
+            ),
+        )
+    if kind == "newtype":
+        return Some(
+            OverlayDocumentSymbol(
+                name=name,
+                detail=legacy_newtype_detail(owner.text, name),
+                kind=OverlaySymbolKind.Struct,
+                start=start,
+                end=end,
+            ),
+        )
+    return None
+
+
+def type_symbols(source: str) -> list[OverlayDocumentSymbol]:
+    """Project top-level `type` aliases, newtypes and rusttypes, which the reusable-body projection keeps in its header."""
+    mut symbols: list[OverlayDocumentSymbol] = []
+    mut offset = 0
+    for line in source.split("\n"):
+        content = line.strip()
+        mut header = without_public(content)
+        if not line.startswith(" ") and not line.startswith("\t") and header.startswith("type ") and " = " in header:
+            assignment = header[5:].split(" = ")
+            name = assignment[0].strip()
+            target = " = ".join(assignment[1:]).strip()
+            mut kind = OverlaySymbolKind.TypeParameter
+            mut detail = "type " + name + " = " + without_trailing_colon(target)
+            if target.startswith("newtype "):
+                kind = OverlaySymbolKind.Struct
+                detail = "newtype " + name + " = " + nominal_target(target[8:])
+            elif target.startswith("rusttype "):
+                kind = OverlaySymbolKind.Struct
+                detail = "rusttype " + name + " = " + nominal_target(target[9:])
+            symbols.append(
+                OverlayDocumentSymbol(name=name, detail=detail, kind=kind, start=offset, end=offset + len(line)),
+            )
+        offset += len(line) + 1
+    return symbols
+
+
+def merge_symbols(
+    owners: list[OverlayDocumentSymbol],
+    types: list[OverlayDocumentSymbol],
+) -> list[OverlayDocumentSymbol]:
+    """Merge the independently source-ordered owner and module-header symbols by byte offset."""
+    mut merged: list[OverlayDocumentSymbol] = []
+    mut owner = 0
+    mut declared_type = 0
+    while owner < len(owners) or declared_type < len(types):
+        if declared_type >= len(types) or (owner < len(owners) and owners[owner].start < types[declared_type].start):
+            merged.append(owners[owner])
+            owner += 1
+        else:
+            merged.append(types[declared_type])
+            declared_type += 1
+    return merged
+
+
+def callable_detail(owner: &SourceProjectionRecord) -> str:
+    """Normalize a projected callable header to the single-line signature today's LSP displays."""
+    mut lines: list[str] = []
+    for line in signature_record(owner).text.strip().split("\n"):
+        content = line.strip()
+        if content != "" and not content.startswith("@"):
+            lines.append(content)
+    mut detail = without_public(" ".join(lines))
+    if detail.endswith(":"):
+        detail = detail[:-1]
+    return detail
+
+
+def plain_header(source: str) -> str:
+    """Return the first declaration line without visibility or a trailing block colon."""
+    for line in source.split("\n"):
+        content = line.strip()
+        if content != "" and not content.startswith("@"):
+            mut detail = without_public(content)
+            if detail.endswith(":"):
+                detail = detail[:-1]
+            return detail
+    return ""
+
+
+def assigned_header(source: str, kind: str) -> str:
+    """Return a const or static declaration without its initializer, matching today's editor detail."""
+    header = plain_header(source)
+    if " = " in header:
+        return header.split(" = ")[0]
+    if header.startswith(kind + " "):
+        return header
+    return kind
+
+
+def enum_detail(source: str) -> str:
+    """Return an enum's name and optional scalar backing type without its block colon."""
+    return plain_header(source)
+
+
+def legacy_newtype_detail(source: str, name: str) -> str:
+    """Return the current detail for the legacy `newtype Name = Target` spelling."""
+    header = plain_header(source)
+    if " = " in header:
+        return "newtype " + name + " = " + nominal_target(" = ".join(header.split(" = ")[1:]))
+    return "newtype " + name
+
+
+def nominal_target(target: str) -> str:
+    """Drop a nominal declaration's derived traits and optional block colon from its underlying type display."""
+    mut selected = without_trailing_colon(target.strip())
+    if " with " in selected:
+        selected = selected.split(" with ")[0].strip()
+    return selected
+
+
+def without_public(header: str) -> str:
+    """Drop source visibility because today's document-symbol details omit it."""
+    if header.startswith("pub "):
+        return header[4:]
+    return header
+
+
+def without_trailing_colon(text: str) -> str:
+    """Drop a declaration block's trailing colon without changing a type's other punctuation."""
+    if text.endswith(":"):
+        return text[:-1].strip()
+    return text
+
+
+def content_span(source: str, first: int, last: int) -> tuple[int, int]:
+    """Trim projection-owned surrounding whitespace while preserving every declaration byte."""
+    mut start = first
+    mut end = last
+    while start < end and source[start] in " \t\r\n":
+        start += 1
+    while end > start and source[end - 1] in " \t\r\n":
+        end -= 1
+    return (start, end)

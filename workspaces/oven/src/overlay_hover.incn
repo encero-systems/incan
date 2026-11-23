@@ -94,7 +94,7 @@ def imported_path(document: str, module: str) -> str:
     return directory + "/" + relative
 
 
-def program_origin(program: Path, entry: Path) -> Result[str, str]:
+pub def program_origin(program: Path, entry: Path) -> Result[str, str]:
     """The record origin of the program: its package's name, or a manifest-free entry's file stem."""
     if program.joinpath("loaf.toml").is_file():
         project = read_project(program, ManifestReader()).map_err((error) => error.message())?

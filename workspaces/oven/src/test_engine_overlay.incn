@@ -130,6 +130,11 @@ pub def test_a_served_request_is_one_line_naming_document_buffer_and_version() -
     request = parse_served(line, "release")?
     assert request.source == "/program/main.incn" and request.buffer == "/tmp/buffer"
     assert request.version == 7 and request.profile == "release"
+    symbols = parse_served(
+        "{\"source\": \"/program/main.incn\", \"buffer\": \"/tmp/buffer\", \"version\": 8, \"document_symbols\": true}",
+        "debug",
+    )?
+    assert symbols.document_symbols and symbols.version == 8
     negative = "{\"source\": \"/program/main.incn\", \"buffer\": \"/tmp/buffer\", \"version\": -1}"
     assert parse_served(negative, "debug").is_err(), "a negative document version was accepted"
     assert parse_served("{\"source\": \"/program/main.incn\"}", "debug").is_err(), "a request without a buffer was read"

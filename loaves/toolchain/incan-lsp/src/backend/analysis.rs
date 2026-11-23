@@ -8,6 +8,17 @@ use incan_driver::modules::{collect_document_modules, entry_module_segments};
 use incan_driver::unit::UnitDescription;
 
 impl IncanLanguageServer {
+    /// On the engine route, project the latest buffer's top-level declarations into the current document-symbol
+    /// contract without reading the LSP-local AST.
+    pub(super) async fn engine_document_symbols(&self, uri: &Url) -> Option<Vec<DocumentSymbol>> {
+        let path = uri.to_file_path().ok()?;
+        let source = self.pending_sources.read().await.get(uri).cloned()?;
+        tokio::task::spawn_blocking(move || engine_overlay::document_symbols(&path, &source))
+            .await
+            .ok()?
+            .ok()
+    }
+
     /// On the engine route, the signature the editor view answers for the declaration at `position` of the latest
     /// buffer; `None` leaves hover to the in-process analysis.
     pub(super) async fn engine_hover(&self, uri: &Url, position: Position) -> Option<String> {

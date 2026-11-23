@@ -11,12 +11,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
+use tower_lsp::lsp_types::{
+    Diagnostic, DiagnosticSeverity, DocumentSymbol, NumberOrString, Position, Range, SymbolKind,
+};
+
+use crate::diagnostics::span_to_range;
 
 /// The environment selection that routes diagnostics through the engine's overlay request.
 pub(super) const ENGINE_SELECTION: &str = "INCAN_LSP_ENGINE";
 /// The document an overlay request answers with.
 const OVERLAY_SCHEMA: &str = "incan.overlay-diagnostics/1";
+/// The engine-owned document-symbol answer schema.
+const DOCUMENT_SYMBOLS_SCHEMA: &str = "incan.overlay-document-symbols/1";
 /// How long typing must pause before the in-process analysis behind hover and navigation runs on the overlay route.
 pub(super) const ANALYSIS_PAUSE_MS: u64 = 300;
 /// Requests of one program share its editor view's overlay root, so this server sends them one at a time; the lock
@@ -101,11 +107,86 @@ pub(super) fn hover(path: &Path, source: &str, line: u32, column: u32) -> Result
     Ok(answered["hover"].as_str().map(str::to_string))
 }
 
+/// Return the top-level symbols projected from the unsaved buffer by the engine, preserving the current LSP display
+/// details and converting the engine's byte spans to UTF-16 protocol ranges.
+pub(super) fn document_symbols(path: &Path, source: &str) -> Result<Vec<DocumentSymbol>, String> {
+    let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let buffer = buffer_path(path);
+    std::fs::write(&buffer, source)
+        .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
+    let answered = if per_process() {
+        process_answer(path, &buffer, 0, &Ask::DocumentSymbols)
+    } else {
+        served_answer(&mut server, path, &buffer, 0, &Ask::DocumentSymbols)
+    };
+    let _ = std::fs::remove_file(&buffer);
+    let answered = answered?;
+    if let Some(reason) = answered["error"].as_str() {
+        return Err(reason.to_string());
+    }
+    if answered["schema"] != DOCUMENT_SYMBOLS_SCHEMA {
+        return Err("overlay document-symbol answer names another schema".into());
+    }
+    let entries = answered["symbols"]
+        .as_array()
+        .ok_or("overlay document-symbol answer has no symbols")?;
+    let mut symbols = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let name = entry["name"]
+            .as_str()
+            .ok_or("overlay document symbol has no name")?
+            .to_string();
+        let detail = entry["detail"]
+            .as_str()
+            .ok_or("overlay document symbol has no detail")?
+            .to_string();
+        let kind = symbol_kind(entry["kind"].as_str().unwrap_or_default())?;
+        let start = entry["start"]
+            .as_u64()
+            .ok_or("overlay document symbol has no start")?
+            .try_into()
+            .map_err(|_| "overlay document symbol start exceeds this platform")?;
+        let end = entry["end"]
+            .as_u64()
+            .ok_or("overlay document symbol has no end")?
+            .try_into()
+            .map_err(|_| "overlay document symbol end exceeds this platform")?;
+        let range = span_to_range(source, start, end);
+        #[allow(deprecated)]
+        symbols.push(DocumentSymbol {
+            name,
+            detail: Some(detail),
+            kind,
+            tags: None,
+            deprecated: None,
+            range,
+            selection_range: range,
+            children: None,
+        });
+    }
+    Ok(symbols)
+}
+
+/// Translate the engine's closed document-symbol kind vocabulary to the protocol constants used by today's answer.
+fn symbol_kind(kind: &str) -> Result<SymbolKind, String> {
+    match kind {
+        "constant" => Ok(SymbolKind::CONSTANT),
+        "function" => Ok(SymbolKind::FUNCTION),
+        "struct" => Ok(SymbolKind::STRUCT),
+        "class" => Ok(SymbolKind::CLASS),
+        "interface" => Ok(SymbolKind::INTERFACE),
+        "enum" => Ok(SymbolKind::ENUM),
+        "type_parameter" => Ok(SymbolKind::TYPE_PARAMETER),
+        other => Err(format!("overlay document symbol has unknown kind `{other}`")),
+    }
+}
+
 /// What one overlay request asks the engine for.
 enum Ask {
     Diagnostics,
     Build,
     Hover(u32, u32),
+    DocumentSymbols,
 }
 
 /// One answer from the persistent Oven, starting it when none runs and once more if it stopped answering.
@@ -121,6 +202,7 @@ fn served_answer(
         Ask::Diagnostics => {}
         Ask::Build => request["build"] = serde_json::json!(true),
         Ask::Hover(line, column) => request["hover"] = serde_json::json!([line, column]),
+        Ask::DocumentSymbols => request["document_symbols"] = serde_json::json!(true),
     }
     let request = request.to_string();
     let mut last = String::new();
@@ -198,6 +280,9 @@ fn process_answer(path: &Path, buffer: &Path, version: i32, ask: &Ask) -> Result
         }
         Ask::Hover(line, column) => {
             command.arg("--hover").arg(format!("{line}:{column}"));
+        }
+        Ask::DocumentSymbols => {
+            command.arg("--document-symbols");
         }
     }
     let output = command
