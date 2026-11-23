@@ -16,11 +16,12 @@ mod shared_loans;
 
 use baselines::{assert_free_function_input_baseline, assert_settled_function_seeds, capture_module_baseline};
 use carriers::{
-    assert_builtin_method_identities, assert_frozen_literal_bound_method_identity,
-    assert_generic_newtype_provider_methods, assert_generic_view_carrier_storage,
-    assert_independently_retained_newtype_return, assert_module_bodies_share_one_identity_map,
-    assert_native_provider_field_layout, assert_nested_generic_static_call_arguments,
-    assert_nested_generic_static_call_bound_mismatch, assert_nominal_carrier_maps_stay_shared,
+    assert_builtin_method_identities, assert_checked_serde_derive_selection,
+    assert_frozen_literal_bound_method_identity, assert_generic_newtype_provider_methods,
+    assert_generic_view_carrier_storage, assert_independently_retained_newtype_return,
+    assert_module_bodies_share_one_identity_map, assert_native_provider_field_layout,
+    assert_nested_generic_static_call_arguments, assert_nested_generic_static_call_bound_mismatch,
+    assert_nominal_carrier_maps_stay_shared, assert_package_provider_declaration_retains_own_carrier,
 };
 use comparison::assert_same_module;
 use equality::assert_equality_contract;
@@ -133,6 +134,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_lent_and_moved_read()?;
     assert_equality_contract()?;
     assert_builtin_method_identities()?;
+    assert_checked_serde_derive_selection()?;
     assert_generic_view_carrier_storage()?;
     assert_nested_generic_static_call_arguments()?;
     assert_frozen_literal_bound_method_identity()?;
@@ -142,6 +144,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_generic_newtype_provider_methods()?;
     assert_nested_generic_static_call_bound_mismatch()?;
     assert_nominal_carrier_maps_stay_shared()?;
+    assert_package_provider_declaration_retains_own_carrier()?;
     assert_module_bodies_share_one_identity_map()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {

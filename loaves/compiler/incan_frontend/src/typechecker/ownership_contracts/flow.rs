@@ -225,6 +225,8 @@ pub(in crate::typechecker) enum ValueUseKind {
 /// Current-source value classifications must name exact compatible events and cannot share one event.
 fn validate_value_uses(graph: &Graph) -> Result<(), InvalidGraph> {
     let mut retained = BTreeSet::new();
+    let mut map_err_invocations = BTreeSet::new();
+    let mut map_err_callbacks = BTreeSet::new();
     for (span, value_use) in &graph.value_uses {
         if value_use.kind == ValueUseKind::CallResult && !value_use.accesses.is_empty() {
             return Err(InvalidGraph("independent call result retains stored access"));
@@ -237,17 +239,26 @@ fn validate_value_uses(graph: &Graph) -> Result<(), InvalidGraph> {
             return Err(InvalidGraph("stored value use retains a callback"));
         }
         if let Some(map_err) = value_use.result_map_err {
+            graph
+                .invocations
+                .get(span)
+                .ok_or(InvalidGraph("map_err value use has no exact receiver invocation"))?;
             let invocation = graph
                 .invocations
                 .get(&map_err.invocation)
                 .ok_or(InvalidGraph("map_err value use has no exact invocation"))?;
+            let [argument] = invocation.arguments.as_slice() else {
+                return Err(InvalidGraph("map_err invocation has no exact callback argument"));
+            };
             if map_err.receiver != *span
-                || !invocation.arguments.iter().any(|argument| {
-                    argument.span == map_err.callback
-                        && argument.access == incan_semantics_core::IncanInputAccess::Inferred
-                        && argument.loan.is_none()
-                        && argument.source.is_none()
-                })
+                || !map_err_invocations.insert(map_err.invocation)
+                || !map_err_callbacks.insert(map_err.callback)
+                || argument.span != map_err.callback
+                || argument.slot != 0
+                || argument.written_position != 0
+                || argument.access != incan_semantics_core::IncanInputAccess::Inferred
+                || argument.loan.is_some()
+                || argument.source.is_some()
             {
                 return Err(InvalidGraph("map_err value use differs from its invocation tuple"));
             }

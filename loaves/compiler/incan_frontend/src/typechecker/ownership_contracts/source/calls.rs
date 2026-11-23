@@ -792,6 +792,27 @@ impl Builder<'_> {
                 reason: "invocation has more than one checked argument binding".into(),
             });
         }
+        if selected_result_map_err {
+            let receiver = receiver.ok_or(Unavailable {
+                span,
+                reason: "call has no selected explicit input access facts".into(),
+            })?;
+            if super::call_results::retained_result_map_err(
+                &self.checker.type_info,
+                &self.owner,
+                receiver,
+                span,
+                arguments,
+                &self.graph,
+            )
+            .is_none()
+            {
+                return Err(Unavailable {
+                    span,
+                    reason: "call has no selected explicit input access facts".into(),
+                });
+            }
+        }
         Ok(incoming)
     }
 

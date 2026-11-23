@@ -12,6 +12,7 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
     EnumDeclaration as RustEnumDeclaration,
+    NOMINAL_CARRIER_KEY_PREFIX,
     nominal_carrier_key,
 )
 from pub::incan_mir_plan import Carrier
@@ -66,12 +67,39 @@ pub def model_type(
         RustType.RustInteropPath(path) => return Err(f"unsupported Body IR type RustInteropPath {path}")
         RustType.Named(name) =>
             retained_name = str(name)
-            mut index = 0
+            carrier_query = retained_name.startswith(NOMINAL_CARRIER_KEY_PREFIX)
+            mut canonical_owner_count = 0
+            mut authenticated_owner_count = 0
+            mut authenticated_owner = -1
+            mut legacy_owner_count = 0
+            mut legacy_owner = -1
             for declaration_position in range(len(declarations)):
                 declaration = borrowed_at(declarations, declaration_position)
-                if declaration.name == retained_name:
-                    return Ok(PlanType.Model(index, model_symbol(retained_name)))
-                index += 1
+                if carrier_query:
+                    mut canonical_owner = false
+                    match nominal_carrier_key(declaration.canonical):
+                        Some(key) => canonical_owner = str(key) == retained_name
+                        None => pass
+                    if not canonical_owner:
+                        continue
+                    canonical_owner_count += 1
+                    if len(declaration.type_parameters) != 0 or declaration.type_parameter_count != 0:
+                        continue
+                    if declaration.carrier_name() != retained_name:
+                        continue
+                    authenticated_owner_count += 1
+                    authenticated_owner = declaration_position
+                elif declaration.name == retained_name:
+                    legacy_owner_count += 1
+                    legacy_owner = declaration_position
+            mut owner = -1
+            if carrier_query and canonical_owner_count == 1 and authenticated_owner_count == 1:
+                owner = authenticated_owner
+            elif not carrier_query and legacy_owner_count == 1:
+                owner = legacy_owner
+            if owner >= 0:
+                declaration = borrowed_at(declarations, owner)
+                return Ok(PlanType.Model(owner, model_symbol(str(declaration.name))))
             source_name = rejected_nominal_name(declarations, retained_name)
             return Err(f"unsupported Body IR nominal type {source_name}")
         RustType.Primitive(primitive) => return primitive_type(primitive)

@@ -101,7 +101,7 @@ pub def lower_function(
     record_lowering(program.observe_work, body, selected_name, type_arguments, file)
     cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
     validate_callable_representation(body)?
-    validate_result_requirements(body)?
+    validate_result_requirements(body, nominals, enums)?
     mut declared_carrier = PlanType.Unit
     match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics, file):
         Ok(carrier) => declared_carrier = carrier

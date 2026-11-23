@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{InputCall, InputCallKind, InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
@@ -34,39 +34,20 @@ impl CheckedInputBody<'_> {
     pub(super) fn capture_free_result_map_err_callback(
         &self,
         invocation_span: incan_semantics_core::HirSourceSpan,
-        receiver_span: incan_semantics_core::HirSourceSpan,
-        callback: incan_semantics_core::HirSourceSpan,
+        receiver: &crate::ast::Spanned<crate::ast::Expr>,
+        arguments: &[crate::ast::CallArg],
     ) -> bool {
-        self.graph.value_uses.get(&receiver_span).is_some_and(|value_use| {
-            value_use.kind == flow::ValueUseKind::CallResult
-                && value_use.result_map_err
-                    == Some(flow::ResultMapErrUse {
-                        invocation: invocation_span,
-                        receiver: receiver_span,
-                        callback,
-                    })
-        }) && self.graph.invocations.get(&invocation_span).is_some_and(|invocation| {
-            let Some(call) = self.facts.protocols.explicit_input_calls.get(&invocation_span) else {
-                return false;
-            };
-            call.callee == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
-                && call.receiver == Some(crate::ast::Receiver::Immutable)
-                && self.facts.resolved_builtin_method_call(invocation_span)
-                    == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
-                        incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
-                    ))
-                && invocation.callee == call.callee
-                && invocation.arguments.iter().any(|argument| {
-                    argument.span == callback
-                        && argument.access == IncanInputAccess::Inferred
-                        && argument.loan.is_none()
-                        && argument.source.is_none()
-                        && call.parameters.get(argument.slot).is_some_and(|parameter| {
-                            matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
-                                if parameters.len() == 1)
-                        })
-                })
-        })
+        let [crate::ast::CallArg::Positional(callback) | crate::ast::CallArg::Named(_, callback)] = arguments else {
+            return false;
+        };
+        super::source::call_results::retained_result_map_err(
+            self.facts,
+            &self.owner,
+            receiver,
+            invocation_span,
+            arguments,
+            self.graph,
+        ) == Some(callback.span)
     }
 
     /// Whether the invocation argument written at `span` passes a closure local to a parameter its callee only calls.

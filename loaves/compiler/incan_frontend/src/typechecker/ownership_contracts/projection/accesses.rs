@@ -319,7 +319,7 @@ impl SourceAccesses<'_, '_> {
     fn invocation_arguments(
         &mut self,
         invocation_span: HirSourceSpan,
-        receiver_span: Option<HirSourceSpan>,
+        receiver: Option<&Spanned<Expr>>,
         invocation: &flow::Invocation,
         arguments: &[CallArg],
     ) -> Result<(), &'static str> {
@@ -337,9 +337,9 @@ impl SourceAccesses<'_, '_> {
             }
             if argument.access == IncanInputAccess::Inferred
                 && matches!(value.node, Expr::Closure(..))
-                && receiver_span.is_some_and(|receiver| {
+                && receiver.is_some_and(|receiver| {
                     self.proof
-                        .capture_free_result_map_err_callback(invocation_span, receiver, value.span)
+                        .capture_free_result_map_err_callback(invocation_span, receiver, arguments)
                 })
             {
                 continue;
@@ -605,13 +605,13 @@ impl SourceAccesses<'_, '_> {
             .ok_or("source access method call has no checked invocation")?;
         if invocation.receiver_owned {
             self.expression(receiver, true)?;
-            return self.invocation_arguments(expression.span, Some(receiver.span), invocation, arguments);
+            return self.invocation_arguments(expression.span, Some(receiver), invocation, arguments);
         }
         if invocation.receiver.is_none() {
-            return self.invocation_arguments(expression.span, Some(receiver.span), invocation, arguments);
+            return self.invocation_arguments(expression.span, Some(receiver), invocation, arguments);
         }
         self.fresh_method_receiver(receiver, invocation)?;
-        self.invocation_arguments(expression.span, Some(receiver.span), invocation, arguments)
+        self.invocation_arguments(expression.span, Some(receiver), invocation, arguments)
     }
 
     /// Claim a builtin access over a computed receiver only when the graph ties it to that exact temporary or to a

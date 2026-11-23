@@ -426,6 +426,82 @@ def main() -> Result[None, str]:
     Ok(())
 }
 
+/// Exact named and owned-list Result obligations survive Body IR publication at the source call anchor. Direct
+/// match, builtin map_err and `?` all retain the same conditional input fact instead of inferring independence.
+#[test]
+fn concrete_result_profile_retains_named_and_owned_list_requirements() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Fault:
+    Bad
+
+enum Value:
+    Text(str)
+
+def produce_value(seed: Borrowed[int]) -> Result[Value, Fault]:
+    return Ok(Value.Text("value"))
+
+def produce_rows(seed: Borrowed[int]) -> Result[list[bytes], str]:
+    return Ok([b"row"])
+
+def direct(seed: Borrowed[int]) -> Result[Value, Fault]:
+    value = produce_value(seed)?
+    return Ok(value)
+
+def mapped(seed: Borrowed[int]) -> Result[list[bytes], str]:
+    rows = produce_rows(seed).map_err((fault) => fault)?
+    return Ok(rows)
+
+def matched(seed: Borrowed[int]) -> int:
+    match produce_rows(seed):
+        Ok(rows) => return len(rows)
+        Err(_) => return 0
+"#;
+    let (_, _, seed) = checked_seed(source)?;
+    for (body_name, call_source) in [
+        ("direct", "produce_value(seed)"),
+        ("mapped", "produce_rows(seed)"),
+        ("matched", "produce_rows(seed)"),
+    ] {
+        let body = seed
+            .bodies
+            .iter()
+            .find(|body| body.name == body_name)
+            .ok_or_else(|| format!("missing {body_name} body"))?;
+        let profile = body
+            .checked_input_profile
+            .as_ref()
+            .ok_or_else(|| format!("missing {body_name} profile"))?;
+        assert_eq!(profile.version, 4);
+        let (anchor, requirement) = profile
+            .result_requirements
+            .iter()
+            .find(|(anchor, _)| source.get(anchor.start..anchor.end) == Some(call_source))
+            .ok_or_else(|| format!("missing {body_name} requirement at {call_source}"))?;
+        assert_eq!(source.get(anchor.start..anchor.end), Some(call_source));
+        assert!(matches!(requirement,
+            super::IncanType::Generic { base, args }
+                if base == "Result" && args.len() == 2
+                    && (body_name == "direct"
+                        || matches!(&args[0], super::IncanType::Generic { base, args }
+                            if base == "List" && args.as_slice()
+                                == [super::IncanType::Primitive(super::IncanPrimitiveType::Bytes)])
+                            && args[1] == super::IncanType::Primitive(super::IncanPrimitiveType::Str))
+        ));
+        if body_name == "direct" {
+            let super::IncanType::Generic { args, .. } = requirement else {
+                return Err("direct requirement is not Result".into());
+            };
+            for argument in args {
+                let super::IncanType::Named(name) = argument else {
+                    return Err("direct nominal requirement lost its Named leaves".into());
+                };
+                assert!(body.named_type_identities.contains_key(name));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Only an input whose checked type has a shared executable form borrows at entry. A generator that the callee
 /// advances and a dictionary that a standard method reads keep their by-value inputs, while the model, text, bytes
 /// and list inputs beside them borrow.
