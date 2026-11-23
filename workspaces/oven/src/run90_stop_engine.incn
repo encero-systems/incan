@@ -1,0 +1,30 @@
+"""Stop one run-90 records engine through its authenticated Bakery and binary identity."""
+
+from rust::std::env import args
+from std.fs import Path
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+
+
+def main() -> Result[None, str]:
+    arguments = [argument for argument in args()]
+    if len(arguments) != 3:
+        return Err("usage: run90_stop_engine.incn STORE BINARY")
+    store = Path(arguments[1])
+    binary = arguments[2]
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err((error) => error.detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="run 90 measurement complete"))).map_err(
+        (error) => error.detail,
+    )?
+    stopped = channel.receive().map_err((error) => error.detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            if value.status != "Stopping":
+                return Err(f"records service returned stop status {value.status}")
+        _ => return Err("records service did not acknowledge stop")
+    _ = channel.transport.close()
+    return Ok(None)

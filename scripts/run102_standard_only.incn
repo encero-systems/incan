@@ -1,0 +1,54 @@
+"""Complete run 102's standard rebuild after its exact lowering/release driver was installed."""
+
+from rust::std::process import exit
+from std.fs import Path
+from check_support import write_stderr
+from native_build import (
+    StandardGeneration,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    publish_support,
+    readmit_build_home,
+    require_unique_runtime_root,
+    standard_profiles,
+)
+from relink_driver import Relink, standard_context, withdraw_installed_providers
+
+
+def run() -> Result[None, str]:
+    """Run only the standard continuation that follows run 102's installed exact-tree driver."""
+    root = Path("/Volumes/Builds/incan-dev9-work/b4/lane/run90/repo-r70")
+    home = Path("/Volumes/Builds/incan-dev9-work/b4/home-r92-run102")
+    relink = Relink(
+        repo=root,
+        bootstrap=Path("/Volumes/Builds/incan-dev9-work/b4/lane/run102/relink/bootstrap"),
+        toolchain_home=home,
+        builder="/Volumes/Builds/incan-dev9-work/b4/home-r92-run102/bin/incan",
+        stdlib=root.joinpath("loaves/stdlib").0,
+        profile="release",
+        refresh=false,
+        log=Path("/Volumes/Builds/incan-dev9-work/b4/lane/run102/relink-driver-fresh-home.log"),
+        readmit=true,
+        standard=true,
+        helper_home=home.0,
+    )
+    context = standard_context(relink)?
+    helper = Path(
+        "/Volumes/Builds/incan-dev9-work/b4/lane/run101/relink/support-build/workspaces/oven/target/incan/release/bin/oven",
+    )
+    withdraw_installed_providers(home)?
+    readmit_build_home(context, helper, "relink-driver-readmit")?
+    publish_support(context, helper)?
+    interfaces = build_source_interfaces(context, helper, "relink-")?
+    _ = build_runtime(context, helper, Some(interfaces), true, "relink-")?
+    require_unique_runtime_root(context)?
+    return build_standard_packages(context, helper, "relink-", standard_profiles(StandardGeneration.Candidate))
+
+
+def main() -> None:
+    match run():
+        Ok(_) => exit(0)
+        Err(message) =>
+            write_stderr(f"{message}\n")
+            exit(1)

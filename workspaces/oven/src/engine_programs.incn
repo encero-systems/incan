@@ -16,6 +16,7 @@ from compiler_body_publication import (
     prepare_compiled_bodies,
     source_origin,
 )
+from compiler_body_frontier import prepare_checking_frontier
 from compiler_body_values import (
     SelectedBodyRecord,
     body_owners_reading,
@@ -336,9 +337,28 @@ pub def obtain(
     graph = selection.graph
     projected = selection.projected
     invalid = selection.invalid
+    mut request_transaction = projected.transaction
     origin = source_origin(ready)
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
-    retained_bodies = selection.retained
+    mut frontier_applied = false
+    mut frontier_body_evaluations = 0
+    mut frontier_body_ir_evaluations = 0
+    mut retained_bodies = selection.retained
+    if not listing_refusals and len(invalid) > 0:
+        frontier = prepare_checking_frontier(
+            graph,
+            request_transaction,
+            ready,
+            toolchain,
+            compiled_key,
+            projected.keys,
+        )?
+        request_transaction = frontier.transaction
+        if frontier.applied:
+            frontier_applied = true
+            frontier_body_evaluations = frontier.checking_evaluations
+            frontier_body_ir_evaluations = frontier.body_ir_evaluations
+            retained_bodies = frontier.records
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     selected_bodies.extend(select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?)
     # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
@@ -356,12 +376,16 @@ pub def obtain(
             reading_plan_sidecars,
         )
     if produced.code != 0:
+        mut failed_body_evaluations = len(invalid)
+        if frontier_applied:
+            failed_body_evaluations = frontier_body_evaluations
         return Ok(
             ProgramOutcome(
                 code=produced.code,
                 evaluations=produced.evaluations,
-                body_evaluations=len(invalid),
+                body_evaluations=failed_body_evaluations,
                 body_page_writes=len(retained_bodies),
+                body_ir_evaluations=frontier_body_ir_evaluations,
                 console=console,
                 epoch_reads=epoch_reads,
                 plan_function_evaluations=plan_counts.plan_evaluations,
@@ -379,14 +403,13 @@ pub def obtain(
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
     record_work(Operation.EngineInputVerification, epoch.roots[0], verifying_inputs)
-    mut request_transaction = projected.transaction
     mut native = produced.transaction
     if not editor:
-        request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+        request_transaction = merge_request_transaction(produced.transaction, request_transaction)
         native = None
-    mut body_evaluations = 0
+    mut body_evaluations = frontier_body_evaluations
     mut body_reuses = 0
-    mut body_ir_evaluations = 0
+    mut body_ir_evaluations = frontier_body_ir_evaluations
     mut checker_counts = CheckerRecordCounts()
     if produced.native_bakes == 1:
         # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
@@ -407,9 +430,9 @@ pub def obtain(
             checker_counts.restored,
         )?
         request_transaction = bodies.transaction
-        body_evaluations = bodies.checking_evaluations
+        body_evaluations += bodies.checking_evaluations
         body_reuses = bodies.body_reuses
-        body_ir_evaluations = bodies.body_ir_evaluations
+        body_ir_evaluations += bodies.body_ir_evaluations
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
     supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?

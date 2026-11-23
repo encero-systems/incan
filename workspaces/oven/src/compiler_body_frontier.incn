@@ -1,0 +1,191 @@
+"""Run changed checker owners as an output-sensitive, dependency-ordered production frontier."""
+
+from pub::incan_platform.store import Snapshot, Transaction
+from pub::internal_models import CompiledBodyValue, record_root
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import RecordKey
+from compiler_body_keys import body_key
+from compiler_body_publication import prepare_compiled_bodies, read_compiled_body_outputs, source_origin
+from compiler_body_values import (
+    SelectedBodyRecord,
+    body_owners_reading,
+    encode_body_inventory,
+    select_body_inventory,
+)
+from compiler_graph_records import readers_of
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_compiler import compile_body_frontier_owner
+from unit_freshness import Key
+
+
+pub model BodyFrontierOutcome:
+    """One staged checker frontier and its complete current body inventory for final lowering."""
+
+    pub transaction: Transaction
+    pub records: list[SelectedBodyRecord]
+    pub checking_evaluations: int
+    pub body_ir_evaluations: int
+    pub applied: bool = false
+
+
+pub def prepare_checking_frontier(
+    selected: Snapshot,
+    transaction: Transaction,
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    key: Key,
+    changed: list[RecordKey],
+) -> Result[BodyFrontierOutcome, str]:
+    """Check the earliest current owner, publish its value, and admit only later readers when its bytes differ."""
+    invalid = body_owners_reading(selected, changed, CHECKER_PROFILE)?
+    if len(invalid) == 0:
+        return Ok(not_applied(transaction))
+    mut current = select_body_inventory(selected, CHECKER_PROFILE)?
+    mut pending: list[SelectedBodyRecord] = []
+    for identity in invalid:
+        match body_record(current, identity):
+            Some(record) =>
+                if record.name == "" or record.module == "":
+                    return Ok(not_applied(transaction))
+                pending.append(record)
+            None => return Ok(not_applied(transaction))
+    if not acyclic(pending):
+        return Ok(not_applied(transaction))
+    mut prepared = transaction
+    mut evaluated: set[str] = set()
+    mut evaluations = 0
+    while len(pending) > 0:
+        index = earliest(pending)
+        if index < 0:
+            return Err("rank frontier lost its certified dependency order")
+        prior = pending[index]
+        pending = [pending[position] for position in range(len(pending)) if position != index]
+        retained = [record for record in current if record.identity != prior.identity]
+        output = compile_body_frontier_owner(unit, toolchain, key, prior.name, encode_body_inventory(retained)?)?
+        decoded = read_compiled_body_outputs(output)?
+        if len(decoded.values) != 1 or len(decoded.fallbacks) != 0 or decoded.values[0].identity != prior.identity:
+            return Err("rank frontier activation did not produce exactly its selected owner")
+        produced = decoded.values[0]
+        changed_outputs = changed_output_keys(source_origin(unit), prior, produced)?
+        staged = prepare_compiled_bodies(prepared, unit, output, selected=Some(selected), retained=retained)?
+        prepared = staged.transaction
+        fresh = refreshed_record(prior, produced)
+        mut replaced: list[SelectedBodyRecord] = []
+        for record in current:
+            if record.identity == prior.identity:
+                replaced.append(fresh)
+            else:
+                replaced.append(record)
+        current = replaced
+        evaluated.add(prior.identity)
+        evaluations += 1
+        if len(changed_outputs) > 0:
+            pending = enqueue_later_readers(selected, current, pending, evaluated, fresh, changed_outputs)?
+    return Ok(
+        BodyFrontierOutcome(
+            transaction=prepared,
+            records=current,
+            checking_evaluations=evaluations,
+            body_ir_evaluations=evaluations,
+            applied=true,
+        ),
+    )
+
+
+def not_applied(transaction: Transaction) -> BodyFrontierOutcome:
+    """Return an untouched transaction so an unsupported frontier can use the conservative whole-unit path."""
+    return BodyFrontierOutcome(transaction=transaction, records=[], checking_evaluations=0, body_ir_evaluations=0)
+
+
+def earliest(records: list[SelectedBodyRecord]) -> int:
+    """Return the first owner with no dependency still pending, or `-1` for a cycle."""
+    for index in range(len(records)):
+        mut blocked = false
+        for candidate in records:
+            if logical_owner(candidate) in records[index].dependencies:
+                blocked = true
+        if not blocked:
+            return index
+    return -1
+
+
+def acyclic(records: list[SelectedBodyRecord]) -> bool:
+    """Prove the complete initial frontier can be drained before executing any producer."""
+    mut pending = records
+    while len(pending) > 0:
+        index = earliest(pending)
+        if index < 0:
+            return false
+        pending = [pending[position] for position in range(len(pending)) if position != index]
+    return true
+
+
+def enqueue_later_readers(
+    selected: Snapshot,
+    current: list[SelectedBodyRecord],
+    pending: list[SelectedBodyRecord],
+    evaluated: set[str],
+    produced: SelectedBodyRecord,
+    changed: list[RecordKey],
+) -> Result[list[SelectedBodyRecord], str]:
+    """Add only unevaluated body readers whose authenticated direct dependency places them after the producer."""
+    mut queued = pending
+    for reader in readers_of(selected, changed, CHECKER_PROFILE)?:
+        if reader.family not in ["local", "final", "body-ir"] or reader.identity in evaluated:
+            continue
+        if body_record(queued, reader.identity) is not None:
+            continue
+        match body_record(current, reader.identity):
+            None => return Err("rank frontier reader has no current body record")
+            Some(record) =>
+                if logical_owner(produced) not in record.dependencies:
+                    return Err("rank frontier refused an equal or backward reader edge")
+                queued.append(record)
+    return Ok(queued)
+
+
+def changed_output_keys(origin: str, prior: SelectedBodyRecord, fresh: CompiledBodyValue) -> Result[list[RecordKey], str]:
+    """Name only prior outputs whose newly checked bytes differ, preserving their reverse-edge lookup keys."""
+    mut changed: list[RecordKey] = []
+    if fresh.local != prior.local:
+        changed.append(body_key("local", origin, prior.identity, "checked", root(prior.local)?))
+    if fresh.final != prior.final:
+        changed.append(body_key("final", origin, prior.identity, "checked", root(prior.final)?))
+    if fresh.body_ir != prior.body_ir:
+        changed.append(body_key("body-ir", origin, prior.identity, "checked", root(prior.final)?))
+    return Ok(changed)
+
+
+def refreshed_record(prior: SelectedBodyRecord, fresh: CompiledBodyValue) -> SelectedBodyRecord:
+    """Replace one owner's semantic products while retaining its authenticated dependency-order inputs."""
+    return SelectedBodyRecord(
+        identity=fresh.identity,
+        local=fresh.local,
+        final=fresh.final,
+        body_ir=fresh.body_ir,
+        module=fresh.module,
+        name=fresh.name,
+        dependencies=prior.dependencies,
+    )
+
+
+def body_record(records: list[SelectedBodyRecord], identity: str) -> Option[SelectedBodyRecord]:
+    """Find one current logical owner without accepting two authorities for it."""
+    mut found: Option[SelectedBodyRecord] = None
+    for record in records:
+        if record.identity == identity:
+            if found is not None:
+                return None
+            found = Some(record)
+    return found
+
+
+def logical_owner(record: SelectedBodyRecord) -> str:
+    """Join the source projection coordinates used by direct signature reads."""
+    return record.module + "\n" + record.name
+
+
+def root(encoded: bytes) -> Result[str, str]:
+    """Map checker codec faults at the frontier boundary."""
+    return record_root(encoded).map_err((error) => f"frontier checker root refused: {error:?}")

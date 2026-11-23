@@ -779,6 +779,15 @@ impl LoafIndex {
         Some(entry)
     }
 
+    /// The admitted Loaf with this exact artifact identity, independently of its consumer binding key.
+    pub fn selected_loaf(&self, identity: &LoafIdentity) -> Option<&LoafEntry> {
+        self.entries
+            .values()
+            .filter(|entry| &entry.summary.identity == identity)
+            .filter_map(|entry| entry.demand().ok())
+            .find(|entry| &entry.artifact.identity == identity)
+    }
+
     /// The public nominal export of `canonical` in its declaring Loaf: its shortest public path.
     pub fn public_nominal(&self, canonical: &CanonicalSymbolId) -> Option<(&LoafEntry, &ExportIdentity)> {
         let entry = self.declaring_loaf(canonical)?;

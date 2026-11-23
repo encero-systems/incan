@@ -360,7 +360,7 @@ pub(super) enum DependencyMemberResolutionFailure {
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
 /// by their exact selected instance and canonical declaration. Legacy metadata without canonical evidence retains
 /// its provider-local source path; a consumer route is used only by metadata-only compatibility adapters.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PublicLibraryTypeIdentity {
     dependency_key: String,
     source_path: Vec<String>,

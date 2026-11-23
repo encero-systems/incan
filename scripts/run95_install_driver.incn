@@ -1,0 +1,26 @@
+"""Run 95 helper: install the already-built driver through the repository's canonical installer."""
+
+from rust::std::process import exit
+from std.fs import Path
+from check_support import write_stderr
+from relink_driver import install_driver
+
+
+def run() -> Result[None, str]:
+    toolchain = Path("/Volumes/Builds/incan-dev9-work/b4/home-r76-s95/toolchains/0.6.0-dev.9")
+    built = Path(
+        "/Volumes/Builds/incan-dev9-work/b4/lane/run90/repo-r70/loaves/toolchain/"
+        + "incan-rustc-driver/target/incan/rust/release/bin/incan-rustc-driver",
+    )
+    sysroot = "/Volumes/Builds/incan-dev9-work/b4/home-r76-s95/toolchains/0.6.0-dev.9/sysroot"
+    driver, removed = install_driver(toolchain, built, sysroot)?
+    println(f"installed {driver.0}; retired {len(removed)} compiler files")
+    return Ok(None)
+
+
+def main() -> None:
+    match run():
+        Ok(_) => exit(0)
+        Err(message) =>
+            write_stderr(f"{message}\n")
+            exit(1)
