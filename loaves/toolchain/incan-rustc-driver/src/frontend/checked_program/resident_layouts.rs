@@ -34,13 +34,17 @@ impl AuthoredRustLayouts {
     }
 }
 
+/// A native layout's checked owner and storage in the planning and retained namespace inventories.
 pub(super) trait RustLayout: Sized + PartialEq {
     const CONFLICT: &'static str;
 
+    /// Select the linked item of a Rust-owned declaration.
     fn native_item(&self) -> Option<&str>;
 
+    /// Access the module's ordered declarations of this layout kind.
     fn declarations(module: &mut BodyIrModule) -> &mut Vec<Self>;
 
+    /// Access this layout kind's original positions and temporary custody in the namespace record.
     fn retained(namespace: &mut RetainedNamespaceBody) -> &mut Vec<RetainedLayout<Self>>;
 }
 
@@ -176,6 +180,7 @@ fn restore<T>(
     Some(())
 }
 
+/// Borrow exactly the layouts that planning must return from the prepared prefix.
 fn prepared_names<T>(layouts: &[RetainedLayout<T>]) -> impl Iterator<Item = &Arc<str>> {
     layouts.iter().filter_map(|layout| match &layout.value {
         LayoutValue::Prepared(name) => Some(name),
