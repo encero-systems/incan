@@ -276,6 +276,9 @@ impl rustc_driver::Callbacks for Callbacks {
     /// Snapshot dynamic library generations after analysis, before codegen and linking can publish an executable.
     fn after_analysis(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         self.timing.mark("rustc_analysis");
+        if let Err(error) = crate::native_plan_report::write(&self.plan, tcx) {
+            tcx.dcx().fatal(error);
+        }
         if self.development {
             self.loaded = match crate::native_shared::loaded(tcx) {
                 Ok(loaded) => loaded,

@@ -97,7 +97,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     2. Build the source support closure without an installed runtime provider.
     3. Build and select the candidate compiler, runtime, and standard Loaves.
     4. Build and pack the shipped Oven and language server plus the contract runner.
-    5. Measure cold project, standard-package, contract-runner and floor builds without gating their footprint yet.
+    5. Measure cold project, standard-package, contract-runner and floor builds, gating the two release-owned workloads.
     6. Compare the candidate census with the seed census and committed PASS baseline.
     7. Install the bundle into a second home and repeat installed verification.
     8. When requested, rebuild DD-0010's six named artifacts and require byte identity.
@@ -122,7 +122,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     phase(run, "bundle")?
     candidate = build_bundle(run, candidate)?
 
-    # 5. The first checked-in measurement records the budget evidence before a later stage makes it a gate.
+    # 5. Oven remains evidence; the standard package and contract runner must fit the process-tree budget.
     phase(run, "memory-budget")?
     measure_memory(run, candidate)?
 

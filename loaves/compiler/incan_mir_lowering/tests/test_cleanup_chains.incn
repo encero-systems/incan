@@ -1,0 +1,150 @@
+"""Cleanup lowering shares exact states and their predecessor tails without changing drop order."""
+
+from rust::std::collections import BTreeMap, BTreeSet
+from rust::std::sync import Arc
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    StaticDeclaration,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
+    ValueEnumDeclaration,
+    DecoratedBinding,
+)
+from pub::incan_mir_plan import (
+    BasicBlock,
+    EnumDeclaration,
+    ExternalFunction,
+    Function,
+    Local,
+    PlanType,
+    Projection,
+    TerminatorKind,
+    TupleElement,
+    Unwind,
+    source_span,
+)
+from body_index import empty_body_index
+from frame import Builder, cleanup_exit
+from native_type_identity import ConstructorIndex
+from program_context import DisplayFunction, ProgramContext
+
+
+def empty_program_context() -> ProgramContext:
+    """Build the immutable empty declaration owner needed by a cleanup-only test frame."""
+    displays: list[DisplayFunction] = []
+    statics: list[StaticDeclaration] = []
+    comparisons: list[list[str]] = []
+    unions: BTreeSet[RustType] = BTreeSet.new()
+    nominals: list[NominalDeclaration] = []
+    named: BTreeMap[str, list[int]] = BTreeMap.new()
+    constructors = ConstructorIndex(owners={}, generic_owners={}, named=named, count=0)
+    enums: list[RustEnumDeclaration] = []
+    value_enums: list[ValueEnumDeclaration] = []
+    bindings: list[DecoratedBinding] = []
+    return ProgramContext(
+        body_indices=empty_body_index(),
+        display_functions=Arc.new(displays),
+        statics=Arc.new(statics),
+        comparison_functions=Arc.new(comparisons),
+        union_types=Arc.new(unions),
+        nominals=Arc.new(nominals),
+        constructors=Arc.new(constructors),
+        enums=Arc.new(enums),
+        value_enums=Arc.new(value_enums),
+        decorated_bindings=Arc.new(bindings),
+    )
+
+
+def cleanup_builder() -> Builder:
+    """Create a frame whose eight owned strings expose cleanup-prefix duplication directly."""
+    span = source_span(file="cleanup_chains.incn", line=1, column=1)
+    mut locals = [Local(ty=PlanType.Unit, span=span)]
+    for _owner in range(8):
+        locals.append(Local(ty=PlanType.String, span=span))
+    empty_unions: list[RustType] = []
+    empty_type_arguments: list[RustType] = []
+    return Builder(
+        program=empty_program_context(),
+        locals=locals,
+        parameter_count=0,
+        blocks=[],
+        current=0,
+        source="",
+        file=str(span.file),
+        module_identity="test_cleanup_chains",
+        callable_identity=None,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[],
+        closed=[],
+        iterators=[],
+        borrowed_items=[],
+        in_place_items=[],
+        partial_callables=[],
+        scalar_closures=[],
+        unproven_closures=[],
+        unions=empty_unions,
+        local_offset=0,
+        consuming_closure_frame=false,
+        intrinsics=[],
+        generator_handle=-1,
+        instances=[],
+        type_parameters=[],
+        type_arguments=empty_type_arguments,
+        function_pointer_locals=[],
+        name="test_cleanup_chains",
+        synthesized=[],
+        moved_tuple_fields=[],
+    )
+
+
+pub def test_cleanup_chains_share_predecessor_tails() -> Result[None, str]:
+    """Growing owner states share tails while a partially moved tuple keeps reverse initialized-field order."""
+    span = source_span(file="cleanup_chains.incn", line=1, column=1)
+    mut builder = cleanup_builder()
+    mut final_root = -1
+    for owner in range(1, 9):
+        builder.owned.append(owner)
+        final_root = cleanup_exit(builder, span)
+        for _call in range(8):
+            assert cleanup_exit(builder, span) == final_root
+    assert len(builder.blocks) == 9
+    assert len(builder.cleanup_chains) == 9
+
+    mut current = final_root
+    for expected in range(8, 0, -1):
+        match builder.blocks[current].terminator.kind:
+            TerminatorKind.Drop(place, target, action) =>
+                assert place.local == expected
+                assert place.projection == Projection.Whole
+                assert action == Unwind.Terminate
+                current = target
+            _ => assert false
+    assert builder.blocks[current].terminator.kind == TerminatorKind.UnwindResume
+
+    builder.locals.append(
+        Local(ty=PlanType.Tuple([TupleElement.String, TupleElement.String, TupleElement.String]), span=span),
+    )
+    builder.owned.append(9)
+    builder.moved_tuple_fields.append((9, 1))
+    partial_root = cleanup_exit(builder, span)
+    for _call in range(8):
+        assert cleanup_exit(builder, span) == partial_root
+    assert len(builder.blocks) == 11
+    assert len(builder.cleanup_chains) == 10
+    match builder.blocks[partial_root].terminator.kind:
+        TerminatorKind.Drop(place, target, action) =>
+            assert place.local == 9
+            assert place.projection == Projection.Field(2, PlanType.String)
+            assert action == Unwind.Terminate
+            current = target
+        _ => assert false
+    match builder.blocks[current].terminator.kind:
+        TerminatorKind.Drop(place, target, action) =>
+            assert place.local == 9
+            assert place.projection == Projection.Field(0, PlanType.String)
+            assert action == Unwind.Terminate
+            assert target == final_root
+        _ => assert false
+    return Ok(None)

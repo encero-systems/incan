@@ -489,7 +489,7 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
 
 
 def measure_memory(installation: Installation) -> Result[None, str]:
-    """Record one cold footprint run per release command through the relocated installed toolchain."""
+    """Record one cold footprint run per command and enforce release-owned budgets through the installed toolchain."""
     return require_step(
         Step(
             name="memory-budget",

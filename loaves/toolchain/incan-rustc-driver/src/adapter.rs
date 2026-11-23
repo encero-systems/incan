@@ -79,8 +79,8 @@ struct Callbacks {
 /// is used: the unstable features and toolchain libraries a unit uses are the ones its description declares (`access`).
 /// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
 /// validation. A library supplies its already checked public facades as compact aliases of canonical native items,
-/// without retaining its frontend manifest. Executables leave debug information in their object files instead of
-/// packing a macOS bundle during each edit.
+/// without retaining its frontend manifest. Development executables retain debug information for edit-time
+/// diagnostics; release executables omit it, while libraries retain metadata for their downstream consumers.
 /// A development store derives shared carriers from those same native identities and records loader witnesses;
 /// ordinary builds and release compilation do not select that policy.
 /// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
@@ -204,6 +204,7 @@ fn compilation_arguments(
     overflow_checks: bool,
 ) -> Vec<String> {
     let overflow = if overflow_checks { "yes" } else { "no" };
+    let debuginfo = debuginfo(kind, overflow_checks);
     let mut args = vec![
         "incan-rustc-driver".into(),
         "--sysroot".into(),
@@ -219,7 +220,7 @@ fn compilation_arguments(
         "-C".into(),
         "opt-level=3".into(),
         "-C".into(),
-        "debuginfo=2".into(),
+        format!("debuginfo={debuginfo}"),
         "-o".into(),
         output.to_string_lossy().into_owned(),
         // A named input is never read: the callback installs the source-free root without consuming stdin. Its name
@@ -232,10 +233,20 @@ fn compilation_arguments(
     if kind == UnitKind::Test {
         args.push("--test".into());
     }
-    if kind != UnitKind::Library {
+    if kind != UnitKind::Library && debuginfo != "0" {
         args.push("-Csplit-debuginfo=unpacked".into());
     }
     args
+}
+
+/// Select full debug metadata for libraries and development executables, but omit metadata stripped from release
+/// executables.
+fn debuginfo(kind: UnitKind, overflow_checks: bool) -> &'static str {
+    if kind == UnitKind::Library || overflow_checks {
+        "2"
+    } else {
+        "0"
+    }
 }
 
 /// The unstable features a unit's description declares, each a Rust identifier the crate root enables.
@@ -300,4 +311,18 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
         }
     }
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UnitKind, debuginfo};
+
+    /// Release executables omit debug metadata while development executables and libraries retain it.
+    #[test]
+    fn debug_metadata_follows_unit_contract() {
+        assert_eq!(debuginfo(UnitKind::Program, false), "0");
+        assert_eq!(debuginfo(UnitKind::Test, false), "0");
+        assert_eq!(debuginfo(UnitKind::Program, true), "2");
+        assert_eq!(debuginfo(UnitKind::Library, false), "2");
+    }
 }
