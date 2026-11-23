@@ -3,6 +3,9 @@
 
 use super::*;
 
+mod resident_layouts;
+use resident_layouts::{AuthoredRustLayouts, ReturnedRustLayouts, take_rust_layouts};
+
 /// Recover the declaration that supplies each generated member reachable from the program.
 ///
 /// Checked bodies retain the checker's ownership facts. A whole admitted namespace retains its package roots and
@@ -784,6 +787,7 @@ pub(super) struct RetainedNamespaceBody {
     scopes: Vec<incan_semantics_core::body_ir::SharedIdentities>,
     callables: std::ops::Range<usize>,
     entry_union_count: Option<usize>,
+    rust_layouts: AuthoredRustLayouts,
 }
 
 /// A restored module can return its exact compiled Body IR once planning drops the invocation's native context.
@@ -809,14 +813,6 @@ fn retained_namespace_bodies(
             let relative = source.file_path.strip_prefix(project).ok()?.to_str()?;
             if !records.retains_namespace(relative)
                 || (restored.contains(relative) && rebound.contains(&source.file_path))
-                || module
-                    .nominal_declarations
-                    .iter()
-                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
-                || module
-                    .enum_declarations
-                    .iter()
-                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
             {
                 return None;
             }
@@ -849,6 +845,7 @@ fn retained_namespace_bodies(
                 scopes,
                 callables,
                 entry_union_count,
+                rust_layouts: AuthoredRustLayouts::default(),
             })
         })
         .collect()
@@ -873,6 +870,7 @@ pub(super) fn return_retained_namespaces(
     }
     let mut callables = std::mem::take(&mut entry.loaf_callables).into_iter().skip(start);
     let callable_count = callables.len();
+    let mut rust_layouts = ReturnedRustLayouts::take(&mut program.modules[..program.own], &program.retained_namespaces);
     for retained in program.retained_namespaces.drain(..) {
         let Some(module) = program.modules.get_mut(program.own + retained.offset) else {
             continue;
@@ -889,6 +887,14 @@ pub(super) fn return_retained_namespaces(
             module.runtime_callable_bindings.clear();
             module.runtime_binding_scopes.clear();
             module.string_conversion_contract = incan_semantics_core::body_ir::StringConversionContract::Unselected;
+        }
+        let native_layouts = retained.rust_layouts.len();
+        if rust_layouts.restore(module, retained.rust_layouts).is_none() {
+            tracing::trace!(target: "incan::invocation", source = retained.source, "prepared Rust layout could not return to the resident namespace");
+            continue;
+        }
+        if native_layouts != 0 {
+            tracing::trace!(target: "incan::invocation", source = retained.source, layouts = native_layouts, "returned native layouts to their authored namespace");
         }
         // Collecting an empty range can leave the preceding skip unevaluated. Count only elements actually moved.
         let cursor = callable_count - callables.len();
@@ -954,29 +960,6 @@ pub(super) fn retain_linked_loaf_declarations(
         );
     }
     (loaf_callables, position)
-}
-
-/// Move metadata-selected native layouts to their physical declaration scopes, deduplicating identical selections
-/// across source modules. Conflicting layouts cannot authorize construction or projection.
-pub(super) fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclaration>, String> {
-    let mut layouts = std::collections::BTreeMap::<String, NominalDeclaration>::new();
-    for module in modules {
-        for declaration in module.nominal_declarations.extract_if(.., |declaration| {
-            matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
-        }) {
-            if let Some(previous) = layouts.get(&declaration.native_item) {
-                if previous != &declaration {
-                    return Err(format!(
-                        "conflicting native field layouts for {}",
-                        declaration.native_item
-                    ));
-                }
-            } else {
-                layouts.insert(declaration.native_item.clone(), declaration);
-            }
-        }
-    }
-    Ok(layouts.into_values().collect())
 }
 
 /// Read each selected Loaf's published native union table, preserving its semantic carrier and physical variant
@@ -1063,30 +1046,6 @@ pub(super) fn rust_value_modules(
             .push(declaration);
     }
     owners.into_values().collect()
-}
-
-/// Hoist checked native enum layouts once per foreign owner, refusing conflicting templates from separate modules.
-pub(super) fn take_rust_enums(
-    modules: &mut [BodyIrModule],
-) -> Result<Vec<incan_semantics_core::body_ir::EnumDeclaration>, String> {
-    let mut layouts = std::collections::BTreeMap::new();
-    for module in modules {
-        for declaration in module.enum_declarations.extract_if(.., |declaration| {
-            matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
-        }) {
-            if let Some(previous) = layouts.get(&declaration.native_item) {
-                if previous != &declaration {
-                    return Err(format!(
-                        "conflicting native enum layouts for {}",
-                        declaration.native_item
-                    ));
-                }
-            } else {
-                layouts.insert(declaration.native_item.clone(), declaration);
-            }
-        }
-    }
-    Ok(layouts.into_values().collect())
 }
 
 #[cfg(test)]
@@ -1217,6 +1176,7 @@ mod tests {
                     scopes: Vec::new(),
                     callables: 1..1,
                     entry_union_count: None,
+                    rust_layouts: Default::default(),
                 },
                 RetainedNamespaceBody {
                     source: "src/cached.incn".into(),
@@ -1224,6 +1184,7 @@ mod tests {
                     scopes: Vec::new(),
                     callables: 1..3,
                     entry_union_count: None,
+                    rust_layouts: Default::default(),
                 },
             ],
             authored_callable_start: Some(start),
