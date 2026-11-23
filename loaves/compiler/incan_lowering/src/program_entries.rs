@@ -25,7 +25,7 @@ use crate::generators::append_generator_constructor;
 use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
-use crate::plan_modules::{AdmittedProduct, ModulePage, admitted_page, report_admitted};
+use crate::plan_modules::{AdmittedProduct, ModulePage, PlanAdmissions, admitted_page, report_admitted};
 use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, producer_generation};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
@@ -95,14 +95,15 @@ pub fn lower_ordinary_bodies(
     scalar_products: Option<String>,
     scalar_bodies: &BTreeMap<CompilerNodeId, String>,
     overflow_checks: bool,
-    record_report: Option<String>,
+    record_report: Option<&str>,
+    admitted_records: &mut PlanAdmissions,
 ) -> Result<(), String> {
     let _ = (source_context, source_files, package_versions, overflow_checks);
     let directory = scalar_products.as_deref();
     let mut keyed = KeyedProducts {
         directory,
         admitted: scalar_bodies,
-        report: record_report.as_deref(),
+        report: record_report,
         generation: producer_generation(directory),
         nominals: product_nominal_table(program, intrinsics, directory),
         linked: linked_crates(context),
@@ -206,10 +207,11 @@ pub fn lower_ordinary_bodies(
             merge_indexed(&mut inventories.externals, &mut signatures, runtime)?;
         }
         report_admitted(
-            keyed.report,
+            admitted_records,
+            record_report,
             owner,
-            &admission.restored,
-            &admission.products,
+            admission.restored,
+            admission.products,
             ordinary,
             page.inspect_placement,
             keyed.directory,

@@ -2,7 +2,7 @@
 
 mod compact;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -10,10 +10,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use incan_mir_plan_native::{
-    ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
-    PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleSelectionRecord, PlanModuleValue,
-    PlanSelectedModule, PlanSelectionScope, REPOSITION_MODULE_PAGE, decode_plan_module, decode_plan_module_selection,
-    encode_module_note, read_module_admission, write_module_placement,
+    ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, MAX_PLAN_MODULE_SELECTION_BYTES,
+    PARTIAL_MODULE_NOTE, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction,
+    PlanModuleSelectionRecord, PlanModuleValue, PlanSelectedModule, PlanSelectionScope,
+    REPOSITION_MODULE_PAGE, decode_plan_module, decode_plan_module_selection, encode_module_note,
+    write_module_placement,
 };
 
 use sha2::{Digest, Sha256};
@@ -105,7 +106,9 @@ fn parse_frame_list(text: &str) -> Option<HashMap<String, ListedFrame>> {
 fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
     match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => framed_bytes(&listed_frame(path)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            framed_bytes(&listed_frame(path)?)
+        }
         Err(_) => None,
     }
 }
@@ -114,10 +117,14 @@ fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
 /// companion names, which is read only with the content digest the page is named by and only when it matches.
 pub(crate) fn staged_page(path: &Path) -> Result<Vec<u8>, String> {
     count_staged_read(path);
-    let bytes = staged_bytes(path).ok_or_else(|| format!("cannot read staged page {}", path.display()))?;
+    let bytes =
+        staged_bytes(path).ok_or_else(|| format!("cannot read staged page {}", path.display()))?;
     match named_content(path) {
         Some(content) if <[u8; 32]>::from(Sha256::digest(&bytes)) == content => Ok(bytes),
-        Some(_) => Err(format!("staged page {} differs from its named digest", path.display())),
+        Some(_) => Err(format!(
+            "staged page {} differs from its named digest",
+            path.display()
+        )),
         None if path.is_file() => Ok(bytes),
         None => Err(format!(
             "staged page {} is offered by its frame without a digest",
@@ -132,7 +139,8 @@ pub(crate) fn staged_page(path: &Path) -> Result<Vec<u8>, String> {
 pub(crate) fn admitted_plan_page(path: &Path) -> Result<Arc<PlanModuleValue>, String> {
     let read = || {
         let bytes = staged_page(path)?;
-        let page = decode_plan_module(&bytes).map_err(|error| format!("admitted plan module refused: {error:?}"))?;
+        let page = decode_plan_module(&bytes)
+            .map_err(|error| format!("admitted plan module refused: {error:?}"))?;
         Ok((page, bytes.len() as u64))
     };
     match named_content(path) {
@@ -251,7 +259,11 @@ impl ModulePage {
 
 /// Read a page's bytes into `cell` once, from its copy or its store frame, keeping them only when their digest is
 /// `content`.
-fn page_bytes<'a>(cell: &'a OnceLock<Option<Vec<u8>>>, path: &Path, content: &[u8; 32]) -> Option<&'a [u8]> {
+fn page_bytes<'a>(
+    cell: &'a OnceLock<Option<Vec<u8>>>,
+    path: &Path,
+    content: &[u8; 32],
+) -> Option<&'a [u8]> {
     cell.get_or_init(|| {
         let bytes = staged_bytes(path)?;
         (<[u8; 32]>::from(Sha256::digest(&bytes)) == *content).then_some(bytes)
@@ -314,14 +326,17 @@ impl PlanModuleSelection {
     /// Resolve one module in the canonical name order the decoder already verified.
     pub fn module(&self, module: &str) -> Option<&PlanSelectedModule> {
         let modules = &self.record.modules;
-        let position = modules.binary_search_by(|row| row.module.as_str().cmp(module)).ok()?;
+        let position = modules
+            .binary_search_by(|row| row.module.as_str().cmp(module))
+            .ok()?;
         modules.get(position)
     }
 }
 
 /// Bound the request-private descriptor and its named digest before allocating their byte buffers.
 fn read_selection_file(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
     let metadata = file
         .metadata()
         .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
@@ -445,7 +460,27 @@ fn note_suffix(complete: bool) -> &'static str {
     }
 }
 
+/// Settled module admissions from a single compilation request.
+#[derive(Default)]
+pub struct PlanAdmissions {
+    modules: BTreeMap<String, SettledModule>,
+}
+
+impl PlanAdmissions {
+    /// Borrow the exact module admissions established by lowering.
+    pub(crate) fn modules(&self) -> &BTreeMap<String, SettledModule> {
+        &self.modules
+    }
+}
+
+/// A module's exact admission note and the native inputs established for its functions, in the same order.
+pub(crate) struct SettledModule {
+    pub note: AdmittedModule,
+    pub products: Vec<AdmittedProduct>,
+}
+
 /// The exact product identity and helper inventory established while admitting one native function.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct AdmittedProduct {
     pub key: String,
@@ -453,144 +488,136 @@ pub(crate) struct AdmittedProduct {
     pub helpers: Vec<String>,
 }
 
-/// Report each restored function; only a request that restored all ordinary bodies records a whole module.
-/// Product evidence stays in the existing private companion, aligned with the functions it authenticates.
+/// Publish the Oven note for a restored module and transfer its checked native inputs to this request's publisher.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn report_admitted(
+    admissions: &mut PlanAdmissions,
     report: Option<&str>,
     module: &str,
-    functions: &[AdmittedFunction],
-    evidence: &[AdmittedProduct],
+    functions: Vec<AdmittedFunction>,
+    evidence: Vec<AdmittedProduct>,
     ordinary: usize,
     inspected: bool,
     products: Option<&str>,
 ) -> Result<(), String> {
-    let (Some(root), Some(directory)) = (report, products) else {
+    let (Some(report), Some(directory)) = (report, products) else {
         return Ok(());
     };
-    if evidence.len() != functions.len() {
+    validate_admitted_products(module, &functions, &evidence)?;
+    let basename = hex::encode(module.as_bytes());
+    let complete = functions.len() == ordinary;
+    let selected = note_suffix(complete);
+    let private = Path::new(directory).join("admissions");
+    let root = Path::new(report);
+    for suffix in [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE] {
+        if suffix != selected || functions.is_empty() {
+            let path = private.join(format!("{basename}{suffix}"));
+            for stale in [
+                placement_path(&path),
+                path,
+                root.join(format!("{basename}{suffix}")),
+            ] {
+                if stale.is_file() {
+                    std::fs::remove_file(&stale).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+    }
+    if functions.is_empty() {
+        admissions.modules.remove(module);
+        return Ok(());
+    }
+    let name = format!("{basename}{selected}");
+    let note = AdmittedModule {
+        module: module.to_owned(),
+        complete,
+        functions,
+        inspected,
+    };
+    write_admitted_note(&private.join(&name), &root.join(&name), &note)?;
+    admissions.modules.insert(
+        module.to_owned(),
+        SettledModule {
+            note,
+            products: evidence,
+        },
+    );
+    Ok(())
+}
+
+/// Reject an incomplete or ambiguous module admission before either consumer sees it.
+fn validate_admitted_products(
+    module: &str,
+    functions: &[AdmittedFunction],
+    products: &[AdmittedProduct],
+) -> Result<(), String> {
+    if products.len() != functions.len() {
         return Err("admitted products are not aligned with the restored functions".into());
     }
-    let basename = hex::encode(module.as_bytes());
-    let selected = note_suffix(functions.len() == ordinary);
-    let private = Path::new(directory).join("admissions");
-    for suffix in [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE] {
-        let path = private.join(format!("{basename}{suffix}"));
-        let diagnostic = Path::new(root).join(format!("{basename}{suffix}"));
-        if suffix == selected && !functions.is_empty() {
-            let note = AdmittedModule {
-                module: module.to_owned(),
-                complete: selected == ADMITTED_MODULE_NOTE,
-                functions: functions.to_vec(),
-                inspected,
-            };
-            write_admitted_note(&path, &diagnostic, &note, evidence)?;
-            continue;
-        }
-        for stale in [frames_path(&path), path, diagnostic] {
-            if stale.is_file() {
-                std::fs::remove_file(&stale).map_err(|error| error.to_string())?;
-            }
+    let mut names = HashSet::new();
+    for (function, product) in functions.iter().zip(products) {
+        if function.function.is_empty()
+            || !names.insert(&function.function)
+            || !product_hex(&product.key)
+            || !product
+                .digest
+                .strip_prefix("sha256:")
+                .is_some_and(product_hex)
+            || function
+                .placement
+                .as_ref()
+                .is_some_and(|placement| placement.key != product.key)
+        {
+            return Err(format!(
+                "admitted products of {module} disagree with its note"
+            ));
         }
     }
     Ok(())
 }
 
-/// Publish the current plan positions and the evidence already established by native reuse.
+/// Write the request-local note Oven reads, with its sparse positions and the shared descriptor's diagnostic copy.
 fn write_admitted_note(
     path: &Path,
     diagnostic: &Path,
     note: &AdmittedModule,
-    evidence: &[AdmittedProduct],
 ) -> Result<(), String> {
     let encoded = encode_module_note(note)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    write_module_placement(&format!("{}.placement", path.display()), note)?;
-    let mut listed = String::new();
-    for (function, product) in note.functions.iter().zip(evidence) {
-        listed.push_str(&function.function);
-        listed.push('\t');
-        listed.push_str(&product.key);
-        listed.push('\t');
-        listed.push_str(&product.digest);
-        for frame in &product.helpers {
-            listed.push('\t');
-            listed.push_str(frame);
-        }
-        listed.push('\n');
-    }
-    std::fs::write(frames_path(path), listed).map_err(|error| error.to_string())?;
+    write_module_placement(&placement_path(path).to_string_lossy(), note)?;
     std::fs::write(path, &encoded).map_err(|error| error.to_string())?;
-    // The usual descriptor-scoped note is retained for external observers. Publication reads the private files above.
     std::fs::write(diagnostic, &encoded).map_err(|error| error.to_string())
 }
 
-/// The private evidence beside a module note contains each restored function, its product key, digest and helpers.
-fn frames_path(note: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.frames", note.display()))
-}
-
-/// Read the private proof of each product once so the native publisher can reuse the settled definition.
-pub(crate) fn admitted_products(
-    directory: &Path,
-    note: &AdmittedModule,
-) -> Result<HashMap<String, AdmittedProduct>, String> {
-    let path = frames_path(&directory.join(format!(
-        "{}{}",
-        hex::encode(note.module.as_bytes()),
-        note_suffix(note.complete)
-    )));
-    let listed =
-        std::fs::read_to_string(&path).map_err(|error| format!("cannot read admitted helper frames {error}"))?;
-    let refuse = || format!("admitted products of {} disagree with its note", note.module);
-    let mut products = HashMap::with_capacity(note.functions.len());
-    for line in listed.lines() {
-        let mut fields = line.split('\t');
-        let (Some(function), Some(key), Some(digest)) = (fields.next(), fields.next(), fields.next()) else {
-            return Err(refuse());
-        };
-        if function.is_empty() || !product_hex(key) || !digest.strip_prefix("sha256:").is_some_and(product_hex) {
-            return Err(refuse());
-        }
-        let product = AdmittedProduct {
-            key: key.to_owned(),
-            digest: digest.to_owned(),
-            helpers: fields.map(str::to_owned).collect(),
-        };
-        if products.insert(function.to_owned(), product).is_some() {
-            return Err(refuse());
-        }
-    }
-    if products.len() != note.functions.len()
-        || note.functions.iter().any(|function| {
-            products.get(&function.function).is_none_or(|product| {
-                function
-                    .placement
-                    .as_ref()
-                    .is_some_and(|placement| placement.key != product.key)
-            })
-        })
-    {
-        return Err(refuse());
-    }
-    Ok(products)
+/// The coordinates beside the note Oven reads.
+fn placement_path(note: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.placement", note.display()))
 }
 
 /// Match a complete lowercase SHA-256 representation used by native product keys and digests.
 fn product_hex(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Read every module note of a plan report, in name order.
-pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
+/// Read the module notes the request made available to Oven.
+#[cfg(test)]
+fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
     let mut notes = Vec::new();
     if !directory.is_dir() {
         return Ok(notes);
     }
     let mut paths: Vec<PathBuf> = std::fs::read_dir(directory)
         .map_err(|error| error.to_string())?
-        .map(|entry| entry.map(|entry| entry.path()).map_err(|error| error.to_string()))
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path())
+                .map_err(|error| error.to_string())
+        })
         .collect::<Result<_, _>>()?;
     paths.sort_by_key(|path| path.to_string_lossy().into_owned());
     for path in paths {
@@ -598,9 +625,15 @@ pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
         if !text.ends_with(ADMITTED_MODULE_NOTE) && !text.ends_with(PARTIAL_MODULE_NOTE) {
             continue;
         }
-        let note = read_module_admission(&path.to_string_lossy())?;
-        let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
-        let expected = format!("{}{}", hex::encode(note.module.as_bytes()), note_suffix(note.complete));
+        let note = incan_mir_plan_native::read_module_admission(&path.to_string_lossy())?;
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        let expected = format!(
+            "{}{}",
+            hex::encode(note.module.as_bytes()),
+            note_suffix(note.complete)
+        );
         if name.as_deref() != Some(expected.as_str()) {
             return Err("module admission note disagrees with its filename".into());
         }
@@ -615,14 +648,15 @@ mod tests {
     use std::sync::Arc;
 
     use incan_mir_plan_native::{
-        AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, Function, Local, LoweringEvent,
-        MAX_PLAN_MODULE_SELECTION_BYTES, PLAN_MODULE_SELECTION_PAGE, PlanModuleFunction, PlanModuleValue, PlanType,
-        TerminatorKind, block, encode_plan_module, encode_product, source_span,
+        AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, Function, Local,
+        LoweringEvent, MAX_PLAN_MODULE_SELECTION_BYTES, PLAN_MODULE_SELECTION_PAGE,
+        PlanModuleFunction, PlanModuleValue, PlanType, TerminatorKind, block, encode_plan_module,
+        encode_product, source_span,
     };
 
     use super::{
-        AdmittedProduct, FRAME_LIST, PlanModuleSelection, admitted_page, admitted_plan_page, admitted_products,
-        read_admitted, report_admitted, staged_page, staged_page_reads,
+        AdmittedProduct, FRAME_LIST, PlanAdmissions, PlanModuleSelection, admitted_page,
+        admitted_plan_page, read_admitted, report_admitted, staged_page, staged_page_reads,
     };
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
@@ -631,8 +665,17 @@ mod tests {
 
     /// Offer the page at `path` by a frame range of `segment` in its directory's frame list, named by `digest`,
     /// replacing any line the list had for it.
-    fn list_frame(path: &Path, segment: &Path, offset: usize, length: usize, digest: &[u8]) -> Result<(), String> {
-        let list = path.parent().ok_or("page has no directory")?.join(FRAME_LIST);
+    fn list_frame(
+        path: &Path,
+        segment: &Path,
+        offset: usize,
+        length: usize,
+        digest: &[u8],
+    ) -> Result<(), String> {
+        let list = path
+            .parent()
+            .ok_or("page has no directory")?
+            .join(FRAME_LIST);
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -653,7 +696,8 @@ mod tests {
 
     /// A fresh directory for one test.
     pub(super) fn directory(test: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("incan-plan-modules-{test}-{}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("incan-plan-modules-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("directory");
         path
@@ -704,25 +748,29 @@ mod tests {
         std::fs::create_dir_all(&report).map_err(|error| error.to_string())?;
         let module = "lone_alpha";
         let basename = hex::encode(module);
-        let (report_text, products_text) = (report.to_string_lossy(), products.to_string_lossy());
-        let partial = [restored("a", false)];
+        let mut request = PlanAdmissions::default();
+        let report_text = report.to_string_lossy();
+        let products_text = products.to_string_lossy();
+        let partial = vec![restored("a", false)];
         report_admitted(
+            &mut request,
             Some(&report_text),
             module,
-            &partial,
-            &[evidence(&[])],
+            partial,
+            vec![evidence(&[])],
             2,
             false,
             Some(&products_text),
         )?;
         assert_eq!(names(&report), [format!("{basename}.partially-admitted")]);
-        let whole = [restored("a", false), restored("b", true)];
-        let carried = [evidence(&[]), evidence(&["helper"])];
+        let whole = vec![restored("a", false), restored("b", true)];
+        let carried = vec![evidence(&[]), evidence(&["helper"])];
         report_admitted(
+            &mut request,
             Some(&report_text),
             module,
-            &whole,
-            &carried,
+            whole.clone(),
+            carried.clone(),
             2,
             true,
             Some(&products_text),
@@ -733,7 +781,6 @@ mod tests {
             names(&admissions),
             [
                 format!("{basename}.admitted"),
-                format!("{basename}.admitted.frames"),
                 format!("{basename}.admitted.placement")
             ]
         );
@@ -741,11 +788,38 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert!(notes[0].complete && notes[0].inspected);
         assert_eq!(notes[0].functions, whole);
-        let products = admitted_products(&admissions, &notes[0])?;
-        assert_eq!(products.get("a"), Some(&carried[0]));
-        assert_eq!(products.get("b"), Some(&carried[1]));
-        assert!(report_admitted(Some(&report_text), module, &whole, &[], 2, true, Some(&products_text)).is_err());
-        report_admitted(Some(&report_text), module, &[], &[], 2, true, Some(&products_text))?;
+        {
+            let stored = request
+                .modules()
+                .get(module)
+                .ok_or("request did not retain its admission")?;
+            assert_eq!(stored.note.functions, whole);
+            assert_eq!(stored.products, carried);
+        }
+        assert!(
+            report_admitted(
+                &mut request,
+                Some(&report_text),
+                module,
+                whole,
+                Vec::new(),
+                2,
+                true,
+                Some(&products_text)
+            )
+            .is_err()
+        );
+        report_admitted(
+            &mut request,
+            Some(&report_text),
+            module,
+            Vec::new(),
+            Vec::new(),
+            2,
+            true,
+            Some(&products_text),
+        )?;
+        assert!(request.modules().is_empty());
         assert!(names(&report).is_empty());
         assert!(read_admitted(&admissions)?.is_empty());
         let _ = std::fs::remove_dir_all(&root);
@@ -757,12 +831,15 @@ mod tests {
         let root = directory("renamed");
         let (report, products) = (root.join("report"), root.join("products"));
         std::fs::create_dir_all(&report).map_err(|error| error.to_string())?;
-        let (report_text, products_text) = (report.to_string_lossy(), products.to_string_lossy());
+        let mut request = PlanAdmissions::default();
+        let report_text = report.to_string_lossy();
+        let products_text = products.to_string_lossy();
         report_admitted(
+            &mut request,
             Some(&report_text),
             "lone_alpha",
-            &[restored("a", false)],
-            &[evidence(&[])],
+            vec![restored("a", false)],
+            vec![evidence(&[])],
             1,
             false,
             Some(&products_text),
@@ -794,18 +871,34 @@ mod tests {
         };
         let encoded = encode_plan_module(&page).expect("page");
         let basename = hex::encode("lone_alpha");
-        std::fs::write(root.join(format!("{basename}.incnmodule.reposition")), &encoded).expect("write");
-        assert!(admitted_page(Some(&products), "lone_alpha", None).events.is_empty());
+        std::fs::write(
+            root.join(format!("{basename}.incnmodule.reposition")),
+            &encoded,
+        )
+        .expect("write");
+        assert!(
+            admitted_page(Some(&products), "lone_alpha", None)
+                .events
+                .is_empty()
+        );
         let admitted = admitted_page(Some(&products), "lone_alpha", Some("profile"));
         assert!(admitted.inspect_placement);
         assert_eq!(
             admitted.event("a").map(|event| event.key.clone()),
             Some("ef".repeat(32))
         );
-        std::fs::write(root.join(format!("{basename}.incnmodule.positioned")), &encoded).expect("write");
+        std::fs::write(
+            root.join(format!("{basename}.incnmodule.positioned")),
+            &encoded,
+        )
+        .expect("write");
         assert!(!admitted_page(Some(&products), "lone_alpha", Some("profile")).inspect_placement);
         let other = hex::encode("lone_beta");
-        std::fs::write(root.join(format!("{other}.incnmodule.positioned")), &encoded).expect("write");
+        std::fs::write(
+            root.join(format!("{other}.incnmodule.positioned")),
+            &encoded,
+        )
+        .expect("write");
         assert!(
             admitted_page(Some(&products), "lone_beta", Some("profile"))
                 .events
@@ -817,12 +910,23 @@ mod tests {
     /// A placed product for a restored page entry, its requests and the event it came from.
     fn restored_payload() -> Result<AdmittedPayload, String> {
         let owner = source_span("resident.incn", 10, 1);
-        let exit = block(Vec::new(), TerminatorKind::Return, &source_span("resident.incn", 11, 5));
+        let exit = block(
+            Vec::new(),
+            TerminatorKind::Return,
+            &source_span("resident.incn", 11, 5),
+        );
         let locals = vec![Local {
             ty: PlanType::Unit,
             span: owner.clone(),
         }];
-        let function = Function::new("a".into(), Vec::new(), PlanType::Unit, locals, vec![exit], owner);
+        let function = Function::new(
+            "a".into(),
+            Vec::new(),
+            PlanType::Unit,
+            locals,
+            vec![exit],
+            owner,
+        );
         let wire = encode_product(&function, &[], &[], &[])?;
         let stored = indexed_product(&wire, &[(0, 1), (1, 5)], "resident.incn", 10)?;
         let placed = placed_record(&stored, &[(0, 1), (1, 5)], "resident.incn", 30)?;
@@ -879,7 +983,10 @@ mod tests {
         assert!(first.event("a").is_some_and(|event| event.event.is_empty()));
         assert_eq!(again.event_bytes("a"), Some([2_u8].as_slice()));
         // The same bytes under another module name stay refused, and placed bytes are another page.
-        let other = root.join(format!("{}.incnmodule.positioned", hex::encode("resident_delta")));
+        let other = root.join(format!(
+            "{}.incnmodule.positioned",
+            hex::encode("resident_delta")
+        ));
         std::fs::write(&other, &encoded).map_err(|error| error.to_string())?;
         assert!(
             admitted_page(Some(&products), "resident_delta", Some("profile"))
@@ -945,9 +1052,14 @@ mod tests {
             }],
         };
         let encoded = encode_plan_module(&page)?;
-        let path = root.join(format!("{}.incnmodule.reposition", hex::encode("named_epsilon")));
+        let path = root.join(format!(
+            "{}.incnmodule.reposition",
+            hex::encode("named_epsilon")
+        ));
         let named = PathBuf::from(format!("{}.digest", path.display()));
-        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        let write = |path: &Path, bytes: &[u8]| {
+            std::fs::write(path, bytes).map_err(|error| error.to_string())
+        };
         write(&path, &encoded)?;
         write(&named, hex::encode(Sha256::digest(&encoded)).as_bytes())?;
         let first = admitted_page(Some(&products), "named_epsilon", Some("profile"));
@@ -961,7 +1073,10 @@ mod tests {
         );
         assert_eq!(again.event_bytes("a"), None);
         // A name that does not match the bytes on a first read admits nothing.
-        let other = root.join(format!("{}.incnmodule.reposition", hex::encode("named_zeta")));
+        let other = root.join(format!(
+            "{}.incnmodule.reposition",
+            hex::encode("named_zeta")
+        ));
         write(
             &other,
             &encode_plan_module(&PlanModuleValue {
@@ -988,7 +1103,9 @@ mod tests {
     #[test]
     fn a_worker_reads_and_hashes_one_page_for_one_changed_page() -> Result<(), String> {
         let root = directory("resident-full-pages");
-        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        let write = |path: &Path, bytes: &[u8]| {
+            std::fs::write(path, bytes).map_err(|error| error.to_string())
+        };
         let page = |module: &str, event: u8| PlanModuleValue {
             module: module.into(),
             functions: vec![PlanModuleFunction {
@@ -1000,17 +1117,32 @@ mod tests {
             }],
         };
         let offer = |name: &str, encoded: &[u8]| -> Result<PathBuf, String> {
-            let segment = root.join(format!("{name}-{}.seg", hex::encode(&Sha256::digest(encoded)[..4])));
+            let segment = root.join(format!(
+                "{name}-{}.seg",
+                hex::encode(&Sha256::digest(encoded)[..4])
+            ));
             let mut stored = b"key prefix".to_vec();
             let offset = stored.len();
             stored.extend_from_slice(encoded);
             write(&segment, &stored)?;
             let path = root.join(format!("{}.incnmodule.positioned", hex::encode(name)));
-            list_frame(&path, &segment, offset, encoded.len(), &Sha256::digest(encoded))?;
+            list_frame(
+                &path,
+                &segment,
+                offset,
+                encoded.len(),
+                &Sha256::digest(encoded),
+            )?;
             Ok(path)
         };
-        let first = offer("resident_kappa", &encode_plan_module(&page("resident_kappa", 1))?)?;
-        let second = offer("resident_lambda", &encode_plan_module(&page("resident_lambda", 2))?)?;
+        let first = offer(
+            "resident_kappa",
+            &encode_plan_module(&page("resident_kappa", 1))?,
+        )?;
+        let second = offer(
+            "resident_lambda",
+            &encode_plan_module(&page("resident_lambda", 2))?,
+        )?;
         let reads = || staged_page_reads(&first) + staged_page_reads(&second);
         for path in [&first, &second] {
             admitted_plan_page(path)?;
@@ -1021,7 +1153,10 @@ mod tests {
         }
         assert_eq!(reads(), 2, "a page the worker holds was read again");
         // One page changes: the next request reads and hashes that page alone.
-        let changed = offer("resident_lambda", &encode_plan_module(&page("resident_lambda", 3))?)?;
+        let changed = offer(
+            "resident_lambda",
+            &encode_plan_module(&page("resident_lambda", 3))?,
+        )?;
         assert_eq!(changed, second);
         assert_eq!(admitted_plan_page(&first)?.functions[0].event, vec![1]);
         assert_eq!(admitted_plan_page(&second)?.functions[0].event, vec![3]);
@@ -1037,7 +1172,9 @@ mod tests {
         let path = root.join(PLAN_MODULE_SELECTION_PAGE);
         let companion = root.join(format!("{PLAN_MODULE_SELECTION_PAGE}.digest"));
         let expected = [0x55; 32];
-        let write = |path: &Path, value: &[u8]| std::fs::write(path, value).map_err(|error| error.to_string());
+        let write = |path: &Path, value: &[u8]| {
+            std::fs::write(path, value).map_err(|error| error.to_string())
+        };
         write(&companion, hex::encode(expected).as_bytes())?;
         let descriptor = std::fs::File::create(&path).map_err(|error| error.to_string())?;
         descriptor
@@ -1061,9 +1198,12 @@ mod tests {
     /// functions, reads a page Oven offers by its store frame from the segment range, checked against the digest the
     /// page is named by; a copied page is read as before, and a frame without its digest, or with another, is refused.
     #[test]
-    fn every_reader_of_a_staged_page_reads_a_frame_offered_page_checked_by_its_digest() -> Result<(), String> {
+    fn every_reader_of_a_staged_page_reads_a_frame_offered_page_checked_by_its_digest()
+    -> Result<(), String> {
         let root = directory("frame-reader");
-        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        let write = |path: &Path, bytes: &[u8]| {
+            std::fs::write(path, bytes).map_err(|error| error.to_string())
+        };
         let segment = root.join("one.seg");
         write(&segment, b"prefix page bytes suffix")?;
         let framed = root.join("framed.incnmodule.positioned");
@@ -1092,7 +1232,9 @@ mod tests {
     fn a_page_offered_by_its_store_frame_is_read_from_the_segment() -> Result<(), String> {
         let root = directory("framed");
         let products = root.to_string_lossy().into_owned();
-        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        let write = |path: &Path, bytes: &[u8]| {
+            std::fs::write(path, bytes).map_err(|error| error.to_string())
+        };
         let offer = |module: &str, encoded: &[u8], named: &[u8]| -> Result<PathBuf, String> {
             // The page sits inside a store segment between other frames, as a value does.
             let segment = root.join(format!("{module}.seg"));
@@ -1102,7 +1244,13 @@ mod tests {
             stored.extend_from_slice(b"the next frame");
             write(&segment, &stored)?;
             let path = root.join(format!("{}.incnmodule.reposition", hex::encode(module)));
-            list_frame(&path, &segment, offset, encoded.len(), &Sha256::digest(named))?;
+            list_frame(
+                &path,
+                &segment,
+                offset,
+                encoded.len(),
+                &Sha256::digest(named),
+            )?;
             Ok(path)
         };
         let page = |module: &str| PlanModuleValue {

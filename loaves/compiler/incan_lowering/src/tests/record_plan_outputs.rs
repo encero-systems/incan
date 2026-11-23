@@ -10,7 +10,7 @@ use incan_mir_plan_native::{
     encode_lowering_refusal, product_nominals, read_module_admission, source_span,
 };
 
-use crate::plan_modules::{AdmittedProduct, report_admitted};
+use crate::plan_modules::{AdmittedProduct, PlanAdmissions, report_admitted};
 use crate::record_plan_outputs::publish_plan_records;
 use crate::scalar_store::{ProductEvent, record_scalar_inputs, report_scalar, retain_scalar};
 
@@ -19,6 +19,7 @@ struct Request {
     root: PathBuf,
     products: String,
     report: String,
+    admissions: PlanAdmissions,
 }
 
 impl Request {
@@ -32,6 +33,7 @@ impl Request {
         Ok(Request {
             products: products.to_string_lossy().into_owned(),
             report: report.to_string_lossy().into_owned(),
+            admissions: PlanAdmissions::default(),
             root,
         })
     }
@@ -143,7 +145,7 @@ fn fresh_keyed_plan_retains_the_whole_program_function() -> Result<(), String> {
     let whole = unit_function("main", 1);
     let unit = plan(vec![whole.clone()], &[]);
     let key = retain_product(&request, &unit_function("main", 2), false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert_eq!(request.interface_plan()?, unit);
     let reported = decode_lowering_event(&read(&request.report(&format!("{key}.event")))?)?;
     let retained = read(&Path::new(&request.products).join(format!("{key}.incnfunction")))?;
@@ -166,7 +168,7 @@ fn runtime_retry_keeps_current_requests_product_fresh() -> Result<(), String> {
     )?;
     assert!(!decode_lowering_event(&read(&path)?)?.reused);
     let unit = plan(vec![unit_function("main", 1)], &["main"]);
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert_eq!(request.interface_plan()?, unit);
     Ok(())
 }
@@ -184,7 +186,7 @@ fn reused_keyed_plan_must_equal_whole_program_plan() -> Result<(), String> {
     std::fs::write(request.report("helper.refusal"), encode_lowering_refusal(&refusal)?)
         .map_err(|error| error.to_string())?;
     retain_product(&request, &unit_function("main", 2), true)?;
-    match publish_plan_records(&unit, &request.products, &request.report) {
+    match publish_plan_records(&unit, &request.products, &request.report, &request.admissions) {
         Ok(()) => panic!("a reused keyed plan that differs from the whole-program plan was accepted"),
         Err(message) => assert!(
             message.contains("plan-function main differs from the whole-program plan"),
@@ -231,7 +233,7 @@ fn keyed_plan_naming_a_model_publishes_its_interface() -> Result<(), String> {
         Some(&request.report),
         &event(&request, &inputs, &function.name, false, &references),
     )?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert_eq!(request.interface_plan()?, unit);
     Ok(())
 }
@@ -249,7 +251,7 @@ fn keyed_plan_carrying_a_frame_refuses_the_interface() -> Result<(), String> {
         Some(&request.report),
         &event(&request, &inputs, &caller.name, false, &[]),
     )?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         !request.report(INTERFACE_REPORT).is_file(),
         "a unit with a carried frame published an interface"
@@ -272,7 +274,7 @@ fn keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -> Result<(
     let adapter = unit_function("__incan_module_runtime_assert__runtime_frame", 2);
     let unit = plan(vec![caller.clone(), adapter.clone()], &[]);
     retain_product(&request, &caller, false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         !request.report(INTERFACE_REPORT).is_file(),
         "an unwitnessed runtime frame published an interface"
@@ -297,7 +299,7 @@ fn keyed_plan_with_a_returning_main_refuses_the_interface() -> Result<(), String
     main.return_type = PlanType::Int;
     let unit = plan(vec![main.clone()], &[]);
     retain_product(&request, &main, false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         !request.report(INTERFACE_REPORT).is_file(),
         "a main the entry record cannot bind published an interface"
@@ -327,7 +329,7 @@ fn keyed_plan_calling_a_linked_crate_publishes_the_interface() -> Result<(), Str
         span: keyed_span(),
     }];
     retain_product(&request, &main, false)?;
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     assert!(
         request.report(INTERFACE_REPORT).is_file(),
         "a unit inventory naming a linked crate published no interface"
@@ -354,7 +356,7 @@ fn plan_evidence() -> AdmittedProduct {
 /// An incomplete interface can publish native fingerprints from admitted evidence without reopening its plan page.
 #[test]
 fn admitted_definition_publication_uses_settled_products_without_reading_pages() -> Result<(), String> {
-    let request = Request::new("retain-admitted-native-definition")?;
+    let mut request = Request::new("retain-admitted-native-definition")?;
     let owner = AdmittedFunction {
         function: "main".into(),
         identity: "stable.main".into(),
@@ -362,10 +364,11 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
         placement: None,
     };
     report_admitted(
+        &mut request.admissions,
         Some(&request.report),
         "m",
-        &[owner],
-        &[plan_evidence()],
+        vec![owner],
+        vec![plan_evidence()],
         1,
         true,
         Some(&request.products),
@@ -377,7 +380,7 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
         "one redundant per-module frame sidecar was written"
     );
     let unit = plan(vec![unit_function("main", 1), unit_function("helper", 2)], &[]);
-    publish_plan_records(&unit, &request.products, &request.report)?;
+    publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
     let definitions = decode_admitted_definitions(&read(&request.report(ADMITTED_DEFINITIONS))?)?;
     assert_eq!(definitions.len(), 1);
     assert_eq!(definitions[0].function, "main");
@@ -387,7 +390,7 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
     assert!(!request.report(INTERFACE_REPORT).is_file());
     // A complete interface must still read actual product bytes and refuse a missing page.
     let complete = plan(vec![unit_function("main", 1)], &[]);
-    assert!(publish_plan_records(&complete, &request.products, &request.report).is_err());
+    assert!(publish_plan_records(&complete, &request.products, &request.report, &request.admissions).is_err());
     Ok(())
 }
 
@@ -410,10 +413,11 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
         };
         let products = attempt.join("products").to_string_lossy().into_owned();
         report_admitted(
+            &mut PlanAdmissions::default(),
             Some(&root_text),
             "m",
-            &[owner],
-            &[plan_evidence()],
+            vec![owner],
+            vec![plan_evidence()],
             1,
             true,
             Some(&products),
@@ -473,7 +477,7 @@ fn every_function_without_an_event_has_a_native_input() -> Result<(), String> {
             &event(&request, &inputs, &caller.name, false, &[]),
         )?;
         let unit = plan(vec![caller.clone(), frame.clone(), adapter.clone()], &[]);
-        publish_plan_records(&unit, &request.products, &request.report)?;
+        publish_plan_records(&unit, &request.products, &request.report, &request.admissions)?;
         assert!(!request.report(INTERFACE_REPORT).is_file());
         let named = native_inputs(&request)?;
         let key = std::fs::read_dir(&request.report)
@@ -517,7 +521,7 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
         POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, encode_lowering_event, encode_plan_module,
     };
 
-    let request = Request::new("complete-admitted-interface")?;
+    let mut request = Request::new("complete-admitted-interface")?;
     let function = unit_function("main", 1);
     let key = retain_product(&request, &function, false)?;
     let event_path = request.report(&format!("{key}.event"));
@@ -549,16 +553,17 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
         helpers: Vec::new(),
     };
     report_admitted(
+        &mut request.admissions,
         Some(&request.report),
         "m",
-        std::slice::from_ref(&owner),
-        std::slice::from_ref(&evidence),
+        vec![owner.clone()],
+        vec![evidence.clone()],
         1,
         false,
         Some(&request.products),
     )?;
     let whole = plan(vec![function], &[]);
-    publish_plan_records(&whole, &request.products, &request.report)?;
+    publish_plan_records(&whole, &request.products, &request.report, &request.admissions)?;
     let produced = postcard::to_allocvec(&request.interface_plan()?).map_err(|error| error.to_string())?;
     let expected = postcard::to_allocvec(&whole).map_err(|error| error.to_string())?;
     assert_eq!(produced, expected);
@@ -567,15 +572,16 @@ fn complete_admitted_interface_matches_the_whole_plan_bytes() -> Result<(), Stri
 
     evidence.digest = format!("sha256:{}", "ef".repeat(32));
     report_admitted(
+        &mut request.admissions,
         Some(&request.report),
         "m",
-        &[owner],
-        &[evidence],
+        vec![owner],
+        vec![evidence],
         1,
         false,
         Some(&request.products),
     )?;
-    match publish_plan_records(&whole, &request.products, &request.report) {
+    match publish_plan_records(&whole, &request.products, &request.report, &request.admissions) {
         Err(error) if error.contains("digest differs from its settled product") => Ok(()),
         Err(error) => Err(error),
         Ok(()) => Err("a changed admission digest was accepted".into()),

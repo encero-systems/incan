@@ -39,6 +39,7 @@ use crate::native_type_identity::{
 };
 use crate::nominal_instances::{NominalInstance, specialize_nominals_with_instances};
 use crate::options::intrinsic_declarations;
+use crate::plan_modules::PlanAdmissions;
 use crate::program_context::{ProgramContext, extend_program_context};
 use crate::program_entries::{
     EmittedFrames, collected_test_entries, comparison_bridge_instances, loaf_exports, lower_ordinary_bodies,
@@ -191,6 +192,7 @@ pub fn unit_plan(
     modules: &[BodyIrModule],
     inputs: &UnitInputs<'_>,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
     let kind = inputs.kind;
     if kind != "program" && kind != "library" && kind != "test" {
@@ -200,7 +202,7 @@ pub fn unit_plan(
     for (identity, witness) in inputs.scalar_bodies {
         scalar_index.insert(identity.clone(), witness.clone());
     }
-    lowered_plan(modules, inputs, scalar_index, published)
+    lowered_plan(modules, inputs, scalar_index, published, admissions)
 }
 
 /// Freeze program dispatch mappings after layout admission, copying storage once from the still-borrowed module.
@@ -252,6 +254,7 @@ fn lowered_plan(
     inputs: &UnitInputs<'_>,
     scalar_bodies: BTreeMap<CompilerNodeId, String>,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
     let trace = traced("INCAN_TRACE_LOWERING");
     let sources = inputs.sources;
@@ -337,7 +340,8 @@ fn lowered_plan(
         inputs.scalar_products.clone(),
         &scalar_bodies,
         inputs.overflow_checks,
-        inputs.record_report.clone(),
+        inputs.record_report.as_deref(),
+        admissions,
     )?;
     let statics = lower_computed_statics(
         &context,
