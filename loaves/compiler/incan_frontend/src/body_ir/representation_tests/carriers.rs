@@ -827,3 +827,28 @@ pub model LocalRecord:
     );
     Ok(())
 }
+
+#[test]
+fn list_iterator_takes_ownership_of_a_fresh_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def probe(values: list[int]) -> int:\n    first = values.iter().sum()\n    second = values.clone().iter().sum()\n    return first + second\n";
+    let (_, _, module) = checked_seed(source)?;
+    let receivers = module
+        .bodies
+        .iter()
+        .flat_map(|body| &body.block.stmts)
+        .filter_map(|stmt| match &stmt.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.is_builtin_list_iter() => args.first()?.as_one(),
+            _ => None,
+        })
+        .filter_map(|operand| match operand {
+            bir::Operand::Place(read) => Some(read.fact),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(receivers, [bir::OwnershipFact::Borrow, bir::OwnershipFact::Move]);
+    Ok(())
+}
