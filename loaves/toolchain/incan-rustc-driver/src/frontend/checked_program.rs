@@ -872,7 +872,7 @@ pub(super) fn return_retained_namespaces(
         return;
     }
     let mut callables = std::mem::take(&mut entry.loaf_callables).into_iter().skip(start);
-    let mut cursor = 0;
+    let callable_count = callables.len();
     for retained in program.retained_namespaces.drain(..) {
         let Some(module) = program.modules.get_mut(program.own + retained.offset) else {
             continue;
@@ -890,12 +890,13 @@ pub(super) fn return_retained_namespaces(
             module.runtime_binding_scopes.clear();
             module.string_conversion_contract = incan_semantics_core::body_ir::StringConversionContract::Unselected;
         }
+        // Collecting an empty range can leave the preceding skip unevaluated. Count only elements actually moved.
+        let cursor = callable_count - callables.len();
         module.loaf_callables = callables
             .by_ref()
             .skip(retained.callables.start - cursor)
             .take(retained.callables.len())
             .collect();
-        cursor = retained.callables.end;
         if !module.loaf_callables.is_empty() {
             tracing::trace!(target: "incan::invocation", source = retained.source, callables = module.loaf_callables.len(),
                 "retained namespace with declared callables");
@@ -1138,7 +1139,11 @@ mod shared_identity_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_lowering_inputs, retain_linked_loaf_declarations};
+    use super::{
+        CheckedProgram, RetainedNamespaceBody, RuntimeDependencyContext, canonical_lowering_inputs,
+        retain_linked_loaf_declarations, return_retained_namespaces,
+    };
+    use incan_frontend::checker_records::GraphBodyRecords;
     use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable};
     use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, SemanticSourceTargetKind};
 
@@ -1190,6 +1195,69 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["first", "second", "entry"]
         );
+    }
+
+    /// An empty retained namespace cannot consume the skipped callables of an intervening namespace.
+    #[test]
+    fn empty_retained_namespace_does_not_shift_the_next_callable_range() {
+        let mut modules = vec![
+            catalog_fixture("dependency", &["linked"]),
+            catalog_fixture("uncached", &["discarded"]),
+            catalog_fixture("empty", &[]),
+            catalog_fixture("cached", &["first", "second"]),
+            catalog_fixture("main", &["entry"]),
+        ];
+        let (callables, start) = retain_linked_loaf_declarations(&mut modules, 1, 1);
+        modules[4].loaf_callables = callables;
+        let mut program = CheckedProgram {
+            retained_namespaces: vec![
+                RetainedNamespaceBody {
+                    source: "src/empty.incn".into(),
+                    offset: 1,
+                    scopes: Vec::new(),
+                    callables: 1..1,
+                    entry_union_count: None,
+                },
+                RetainedNamespaceBody {
+                    source: "src/cached.incn".into(),
+                    offset: 2,
+                    scopes: Vec::new(),
+                    callables: 1..3,
+                    entry_union_count: None,
+                },
+            ],
+            authored_callable_start: Some(start),
+            modules,
+            entry: 4,
+            own: 1,
+            dependency_modules: 1,
+            dependencies: RuntimeDependencyContext {
+                loaves: Default::default(),
+                requested: Default::default(),
+                origins: Default::default(),
+                checked_local: Default::default(),
+                package_versions: Default::default(),
+                layout_admissions: Default::default(),
+                package: String::new(),
+                layout_modules: Vec::new(),
+            },
+            cacheable_bodies: Vec::new(),
+            sources: Vec::new(),
+            files: Vec::new(),
+            captured_source_paths: Default::default(),
+            reached_loaves: Default::default(),
+            manifest: None,
+            graph: None,
+            tests: Vec::new(),
+        };
+        return_retained_namespaces(&mut program, &GraphBodyRecords::default());
+        assert!(program.modules[2].loaf_callables.is_empty());
+        let kept: Vec<_> = program.modules[3]
+            .loaf_callables
+            .iter()
+            .map(|value| value.item.as_str())
+            .collect();
+        assert_eq!(kept, ["first", "second"]);
     }
 
     /// Callable and namespace products may repeat one witness, but may not disagree about an owner.
