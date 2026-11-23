@@ -1,0 +1,61 @@
+{
+  "schema": "loaves.pub/audit/1",
+  "registry": "8822a599af5b58bc7b2e535cfe9ef02ba5389c510ffb4c736f550c20857454cd",
+  "checkpoint": {
+    "head": "e60a8e4d41c227555c14d185008c264ced5e8f96cf282234cbf9cb62c60fe04a",
+    "length": 4,
+    "timestamp": 1795392090,
+    "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+    "signature": {
+      "raw": "b150f30787a689e8c111069b2569f198b137cab379e0857db6cf2cc42c89d6420dfdf23ad66888f09aaa91f5a0e32c07d40527270039e519b1b8a5f107fbfd03",
+      "r": "",
+      "s": ""
+    }
+  },
+  "events": [
+    {
+      "sequence": 1,
+      "kind": "delegate",
+      "key_kind": "ed25519",
+      "key": "6ab4606181888122999031722f79f8a715e4658f3b00c3dc5ef73b25b5e650b1",
+      "signature": {
+        "raw": "7d183a0291a29d3f31ff83483ffbb8a7175df523e47d993111471c1a8874aab14f168eb651acc6dcedb9b32dc9b30ebe98e1797ef91b24a474f7cd76c9a04c07",
+        "r": "",
+        "s": ""
+      }
+    },
+    {
+      "sequence": 2,
+      "kind": "statement",
+      "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+      "payload": "aW5jYW4tcmVnaXN0cnktYWR2aXNvcnktdjEKaWQ9SU5DQU4tMjAyNi0wMDEwCnBhY2thZ2U9ZXhhbXBsZS9sb2FmCnZlcnNpb249MS4yLjMKYWN0aW9uPXB1Ymxpc2gKcmVhc29uPWZpeHR1cmUgdnVsbmVyYWJpbGl0eQo=",
+      "signature": {
+        "raw": "79e8f5ade7b3c9ef7c265b88738d9d055092b7a2f55ca813632e8b56d1d0f1d69b54247f869d8908ec49d2825f9b914a33bcac4b6bd8b848af02f01c28b68d08",
+        "r": "",
+        "s": ""
+      }
+    },
+    {
+      "sequence": 3,
+      "kind": "statement",
+      "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+      "payload": "aW5jYW4tcmVnaXN0cnktYWR2aXNvcnktdjEKaWQ9SU5DQU4tMjAyNi0wMDEwCnBhY2thZ2U9ZXhhbXBsZS9sb2FmCnZlcnNpb249MS4yLjMKYWN0aW9uPXdpdGhkcmF3CnJlYXNvbj1maXh0dXJlIHdpdGhkcmF3YWwK",
+      "signature": {
+        "raw": "5ac9cb79e6832d00a6172682aa6f4934bcf9560706a75ec4046dcf6e4cf61c54a3db3d244e21313992828d179fbb62e1d0fd0ad6327fa0b72b1cfde7fefa660e",
+        "r": "",
+        "s": ""
+      }
+    },
+    {
+      "sequence": 4,
+      "kind": "revoke-key",
+      "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+      "reason": "fixture key retirement",
+      "signature": {
+        "raw": "e2479d6657d11058de3d0b130b737298b8f898d9de715848744960b37fb9f76e3802ab4f665249ff6437e7967f8723c5cf210c8e7dba28d3035e8223a25d7b0c",
+        "r": "",
+        "s": ""
+      }
+    }
+  ]
+}

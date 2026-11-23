@@ -1,0 +1,23 @@
+"""Verification boundary for the signed RFC 125 audit document."""
+
+from registry_advisory import VerifiedAdvisory
+from registry_checkpoint import Checkpoint
+from registry_trust import Root
+
+
+pub model VerifiedAudit:
+    """The authenticated checkpoint and advisories admitted by the audit document."""
+
+    pub checkpoint: Checkpoint
+    pub advisories: list[VerifiedAdvisory]
+
+
+pub def verify_audit_document(
+    _root: Root,
+    _text: str,
+    _observed: Option[Checkpoint],
+    _now: int,
+    _online: bool = true,
+) -> Result[VerifiedAudit, str]:
+    """Refuse audit documents until signed log admission is implemented."""
+    return Err("signed registry audit documents are not yet admitted")

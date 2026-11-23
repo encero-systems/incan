@@ -1,0 +1,116 @@
+"""Signed RFC 125 audit documents from independent fixture keys."""
+
+from std.encoding.hex import unhexlify
+from std.fs import Path
+from std.json import JsonValue, parse
+from json_fields import required_items
+from registry_advisory import audit_advisories
+from registry_audit_wire import VerifiedAudit, verify_audit_document
+from registry_trust import Key, KeyKind, Root, pin
+
+const REGISTRY: str = "8822a599af5b58bc7b2e535cfe9ef02ba5389c510ffb4c736f550c20857454cd"
+const ROOT: str = "89c8c566218f4277ad6cb5751e29676bacaab7027f724bbf725a6a17740f2d3d"
+const FIXTURE_NOW: int = 1795392150
+const STALE_NOW: int = 1795996951
+
+
+pub def test_the_complete_signed_log_controls_a_locked_version() -> Result[None, str]:
+    """
+    1. Authenticate a publication and report it against the exact locked version.
+    2. Authenticate its signed withdrawal as an advancing prefix and clear that finding.
+    """
+    # 1. The complete publication log drives the finding and leaves other versions clear.
+    root = fixture_root()?
+    published = verify_audit_document(root, fixture("published")?, None, FIXTURE_NOW)?
+    assert published.checkpoint.length == 2
+    assert len(published.advisories) == 1
+    match audit_advisories("example/loaf", "1.2.3", published.advisories):
+        Err(reason) => assert reason == "example/loaf 1.2.3 has advisory INCAN-2026-0010: fixture vulnerability"
+        Ok(_) => return Err("the signed publication passed audit")
+    assert audit_advisories("example/loaf", "1.2.4", published.advisories).is_ok()
+
+    # 2. An authenticated append clears the issue for the original target.
+    withdrawn = verify_audit_document(root, fixture("withdrawn")?, Some(published.checkpoint), FIXTURE_NOW)?
+    assert withdrawn.checkpoint.length == 3
+    assert len(withdrawn.advisories) == 2
+    assert audit_advisories("example/loaf", "1.2.3", withdrawn.advisories).is_ok()
+    return Ok(None)
+
+
+pub def test_incomplete_reordered_and_tampered_signed_logs_are_refused() -> Result[None, str]:
+    """
+    1. Refuse fewer events than committed and events in the wrong order.
+    2. Refuse changed signed bytes and a checkpoint signer revoked by the root.
+    """
+    root = fixture_root()?
+    document = fixture("published")?
+    events = required_items(parse(document).map_err((error) => error.message())?, "events")?
+
+    # 1. Omitting or reordering entries leaves the original signed checkpoint intact.
+    refused(verify_audit_document(root, event_list(document, [events[0]])?, None, FIXTURE_NOW), "log length")?
+    refused(verify_audit_document(root, event_list(document, [events[1], events[0]])?, None, FIXTURE_NOW), "event sequence")?
+
+    # 2. An exact commitment is insufficient when the signing authority is missing.
+    tampered = document.replace(
+        '"kind": "delegate",\n      "key_kind": "ed25519"',
+        '"kind": "delegate",\n      "key_kind": "ecdsa-p256"',
+    )
+    assert tampered != document
+    refused(verify_audit_document(root, tampered, None, FIXTURE_NOW), "signing key is malformed")?
+    refused(
+        verify_audit_document(root, fixture("revoked-checkpoint")?, None, FIXTURE_NOW),
+        "checkpoint signing key is revoked",
+    )?
+    return Ok(None)
+
+
+pub def test_an_advancing_signed_fork_and_a_stale_online_head_are_refused() -> Result[None, str]:
+    """
+    1. An independently signed, complete fork is rejected after the original prefix is observed.
+    2. Offline age exception still refuses rollback and preserves signature verification.
+    """
+    root = fixture_root()?
+    base = fixture("published")?
+    published = verify_audit_document(root, base, None, FIXTURE_NOW)?
+    observed = Some(published.checkpoint)
+
+    # 1. Both logs verify in isolation. Their prefixes disagree at the observed extent.
+    fork = fixture("advancing-fork")?
+    assert verify_audit_document(root, fork, None, FIXTURE_NOW).is_ok()
+    refused(verify_audit_document(root, fork, observed, FIXTURE_NOW), "observed log prefix")?
+
+    # 2. Offline verification permits the old timestamp but continues to enforce ancestry.
+    refused(verify_audit_document(root, base, None, STALE_NOW), "freshness bound")?
+    assert verify_audit_document(root, base, None, STALE_NOW, false).is_ok()
+    refused(verify_audit_document(root, fork, observed, STALE_NOW, false), "observed log prefix")?
+    withdrawn = verify_audit_document(root, fixture("withdrawn")?, observed, FIXTURE_NOW)?
+    refused(verify_audit_document(root, base, Some(withdrawn.checkpoint), STALE_NOW, false), "rolls back")?
+    return Ok(None)
+
+
+def fixture(name: str) -> Result[str, str]:
+    """Read the exact public signed HTTP document as UTF-8."""
+    return Path("tests/fixtures/registry-audit").joinpath(name + ".json").read_text("utf-8", "strict").map_err(
+        (error) => error.message(),
+    )
+
+
+def fixture_root() -> Result[Root, str]:
+    """Pin the fixture root separately from the response it authorizes."""
+    raw = unhexlify(ROOT).map_err((error) => error.message())?
+    return pin(REGISTRY, Key(kind=KeyKind.Ed25519, material=raw))
+
+
+def event_list(text: str, values: list[JsonValue]) -> Result[str, str]:
+    """Change the returned event list without changing its signed checkpoint."""
+    mut fields = parse(text).map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
+    fields["events"] = JsonValue.array(values)
+    return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def refused(result: Result[VerifiedAudit, str], expected: str) -> Result[None, str]:
+    """Require a refusal for the asserted security invariant."""
+    match result:
+        Ok(_) => return Err(f"admitted a document that should refuse `{expected}`")
+        Err(message) => assert expected in message, message
+    return Ok(None)
