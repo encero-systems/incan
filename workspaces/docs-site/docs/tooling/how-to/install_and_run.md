@@ -1,6 +1,6 @@
 # Install and run Incan
 
-Use the `0.6.0-dev.8` Oven executable with a matching toolchain archive for your host. These instructions require the archive and executable to be available; they do not imply that the development release has been published.
+Use an Incan 0.6 executable with a toolchain archive from the same build for your host.
 
 ## Install a toolchain archive
 
@@ -21,7 +21,7 @@ Create `loaf.toml`, `src/main.incn` and `tests/test_main.incn` as shown in [Gett
 ## Pack an installed toolchain
 
 ```bash
-incan toolchain pack incan-0.6.0-dev.8.tar.zst
+incan toolchain pack toolchain.tar.zst
 ```
 
 Packing includes the installed driver, Rust ABI caches, native dependencies, standard Loaves and registry closure. It rewrites paths for relocation and excludes the local sysroot. The destination extension selects tar, gzip or zstd compression.
