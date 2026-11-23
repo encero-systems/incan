@@ -57,8 +57,8 @@ pub use records::lowering_events::{
     EventReference, INTERFACE_REPORT, LoweringEvent, LoweringRefusal, NATIVE_DEFINITIONS, NativeInterface,
     admitted_definitions_filename, decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal,
     decode_module_note, decode_native_interface, encode_admitted_definitions, encode_lowering_event,
-    encode_lowering_refusal, encode_module_note, encode_native_interface, native_interface_filename, placed_admission,
-    read_module_admission, write_module_placement,
+    encode_lowering_refusal, encode_module_note, encode_native_interface, native_interface_filename,
+    place_admitted_event, placed_admission, read_module_admission, write_module_placement,
 };
 pub use records::plan_function::{
     LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,

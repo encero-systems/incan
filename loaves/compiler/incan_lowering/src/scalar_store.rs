@@ -504,10 +504,14 @@ pub fn finalized_plan_product(
     Ok((last, whole, positioned))
 }
 
-/// A product restored from a module's admitted page: the product read once and placed at the body's positions, the
-/// generic instance requests its lowering made, the event it came from without its product bytes or node positions,
-/// and whether the body's nodes are where the event recorded them.
-pub type AdmittedPayload = (PlacedRecord, Vec<Vec<u8>>, LoweringEvent, bool);
+/// A product restored once from its selected module page and its exact native publication identity.
+pub struct AdmittedPayload {
+    pub function: PlacedRecord,
+    pub requests: Vec<Vec<u8>>,
+    pub event: LoweringEvent,
+    pub coordinates_match: bool,
+    pub digest: String,
+}
 
 /// Read the product of a body from the final event of its module's admitted plan record.
 ///
@@ -543,7 +547,13 @@ pub fn admitted_payload(
         .map_err(|_| "its page product does not place at the body's nodes")?;
     let recorded = event_nodes(&positions) == decoded.positions;
     decoded.positions = Vec::new();
-    Ok((placed, record.requests, decoded, recorded))
+    Ok(AdmittedPayload {
+        function: placed,
+        requests: record.requests,
+        event: decoded,
+        coordinates_match: recorded,
+        digest: record.digest,
+    })
 }
 
 /// Name the first records-key input in which an admitted product differs from the body it would restore.

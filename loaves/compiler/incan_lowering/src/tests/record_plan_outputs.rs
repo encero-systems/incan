@@ -3,14 +3,14 @@
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    AdmittedFunction, AdmittedPlacement, EventPosition, ExternalFunction, Function, INTERFACE_REPORT, Local,
-    LoweringRefusal, ModelDeclaration, NATIVE_DEFINITIONS, NominalKind, Parameter, Plan, PlanType, ProductNominal,
-    SourceSpan, TerminatorKind, block, decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal,
-    decode_native_interface, decode_plan_function_record, decode_record_plan, encode_lowering_refusal,
-    product_nominals, read_module_admission, source_span,
+    ADMITTED_DEFINITIONS, AdmittedFunction, AdmittedPlacement, EventPosition, ExternalFunction, Function,
+    INTERFACE_REPORT, Local, LoweringRefusal, ModelDeclaration, NATIVE_DEFINITIONS, NominalKind, Parameter, Plan,
+    PlanType, ProductNominal, SourceSpan, TerminatorKind, block, decode_admitted_definitions, decode_lowering_event,
+    decode_lowering_refusal, decode_native_interface, decode_plan_function_record, decode_record_plan,
+    encode_lowering_refusal, product_nominals, read_module_admission, source_span,
 };
 
-use crate::plan_modules::report_admitted;
+use crate::plan_modules::{AdmittedProduct, report_admitted};
 use crate::record_plan_outputs::publish_plan_records;
 use crate::scalar_store::{ProductEvent, record_scalar_inputs, report_scalar, retain_scalar};
 
@@ -342,6 +342,49 @@ fn keyed_plan_calling_a_linked_crate_publishes_the_interface() -> Result<(), Str
     Ok(())
 }
 
+/// Supply the exact key and digest fields written after a selected plan product has been admitted.
+fn plan_evidence() -> AdmittedProduct {
+    AdmittedProduct {
+        key: "ab".repeat(32),
+        digest: format!("sha256:{}", "cd".repeat(32)),
+        helpers: Vec::new(),
+    }
+}
+
+/// An incomplete interface can publish native fingerprints from admitted evidence without reopening its plan page.
+#[test]
+fn admitted_definition_publication_uses_settled_products_without_reading_pages() -> Result<(), String> {
+    let request = Request::new("retain-admitted-native-definition")?;
+    let owner = AdmittedFunction {
+        function: "main".into(),
+        identity: "stable.main".into(),
+        references: Vec::new(),
+        placement: None,
+    };
+    report_admitted(
+        Some(&request.report),
+        "m",
+        &[owner],
+        &[plan_evidence()],
+        1,
+        true,
+        Some(&request.products),
+    )?;
+    let unit = plan(vec![unit_function("main", 1), unit_function("helper", 2)], &[]);
+    publish_plan_records(&unit, &request.products, &request.report)?;
+    let definitions = decode_admitted_definitions(&read(&request.report(ADMITTED_DEFINITIONS))?)?;
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].function, "main");
+    assert_eq!(definitions[0].identity, "stable.main");
+    assert_eq!(definitions[0].key, plan_evidence().key);
+    assert_eq!(definitions[0].digest, plan_evidence().digest);
+    assert!(!request.report(INTERFACE_REPORT).is_file());
+    // A complete interface must still read actual product bytes and refuse a missing page.
+    let complete = plan(vec![unit_function("main", 1)], &[]);
+    assert!(publish_plan_records(&complete, &request.products, &request.report).is_err());
+    Ok(())
+}
+
 /// Two overlapping requests have the same visible description, scalar, symbol and number of nodes.
 #[test]
 fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String> {
@@ -355,12 +398,20 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
             identity: "stable.symbol".into(),
             references: Vec::new(),
             placement: Some(AdmittedPlacement {
-                key: "same-normalized-product".into(),
+                key: "ab".repeat(32),
                 positions: vec![EventPosition { line, column: 3 }],
             }),
         };
         let products = attempt.join("products").to_string_lossy().into_owned();
-        report_admitted(Some(&root_text), "m", &[owner], &[Vec::new()], 1, true, Some(&products))?;
+        report_admitted(
+            Some(&root_text),
+            "m",
+            &[owner],
+            &[plan_evidence()],
+            1,
+            true,
+            Some(&products),
+        )?;
     }
     for (line, attempt) in (8..).zip(&attempts) {
         let note = read_module_admission(
