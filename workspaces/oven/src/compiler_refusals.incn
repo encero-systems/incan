@@ -22,7 +22,7 @@ from std.primitives.locking import LockGuard
 from pub::incan_platform.store import Transaction
 from bakery import claim, fact_file, find, lookup, prepare_seal, seal, staging, unit_name
 from driver_command import driver_command
-from compiler_worker import Completion, captured_resident
+from compiler_worker import Completion, captured_resident, observe_plan_module_dispatch
 from files import json_text, open_stream
 from observation import trace
 from owner_client import status_code
@@ -274,6 +274,7 @@ def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Comple
     clock = begin()
     result = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
     record(Operation.DriverSpawn, invocation_key(arguments), clock)
+    observe_plan_module_dispatch(arguments, "cold")
     mut code: i32 = 1
     mut exited = false
     if let Some(status) = result.status.code():
