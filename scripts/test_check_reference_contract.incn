@@ -2,10 +2,12 @@
 
 from rust::std::process import Command
 from rust::std::string import String as RustString
+from std.environ import get_or
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from check_reference_contract import page_findings, changed_pages
 from check_support import git, repository_root
+from check_test_support import Outcome
 
 
 def test_flags_each_rule_in_prose() -> Result[None, str]:
@@ -66,7 +68,7 @@ def test_changed_pages_include_untracked_reference_pages() -> Result[None, str]:
 
 
 def test_make_checks_every_reference_page() -> Result[None, str]:
-    """Each verification target checks the full reference inventory in a clean checkout."""
+    """Check both reference gates and the commands printed by the repository checkers."""
     root = repository_root()?
     for target in ["docs", "pre-commit"]:
         output = Command.new("make").current_dir(root.0).arg("-n").arg(target).output().map_err(
@@ -75,7 +77,34 @@ def test_make_checks_every_reference_page() -> Result[None, str]:
         assert output.status.success()
         commands = RustString.from_utf8(output.stdout).map_err((error) => error.to_string())?
         assert "run scripts/check_reference_contract.incn -- --all" in commands, target
+    check_repository_checker_usage(root)?
     return Ok(None)
+
+
+def check_repository_checker_usage(root: Path) -> Result[None, str]:
+    """Require accurate help and malformed-option output from the normal checker entry points."""
+    mut mismatches: list[str] = []
+    for name in ["check_changed_rustdocs", "check_doc_paths", "check_reference_contract", "check_us_english"]:
+        invocation = f"usage: incan run scripts/{name}.incn --"
+        help = invoke_checker(root, name, "--help")?
+        if help.code != 0 or invocation not in help.stdout:
+            mismatches.append(f"{name} help exited {help.code} or did not name the current invocation")
+        refused = invoke_checker(root, name, "--unknown-option")?
+        expected_error = f"{name}: error: unrecognized arguments: --unknown-option"
+        if refused.code != 2 or invocation not in refused.stderr or expected_error not in refused.stderr:
+            mismatches.append(f"{name} did not report the invalid option with its current invocation")
+    assert mismatches == [], "\n".join(mismatches)
+    return Ok(None)
+
+
+def invoke_checker(root: Path, name: str, flag: str) -> Result[Outcome, str]:
+    """Run one checker from the checkout and capture its exit status and both text streams."""
+    mut command = Command.new(get_or("INCAN", "incan"))
+    command.current_dir(root.0).arg("run").arg(f"scripts/{name}.incn").arg("--").arg(flag)
+    output = command.output().map_err((error) => f"cannot run {name}: {error}")?
+    stdout = RustString.from_utf8(output.stdout).map_err((error) => f"invalid {name} stdout: {error}")?
+    stderr = RustString.from_utf8(output.stderr).map_err((error) => f"invalid {name} stderr: {error}")?
+    return Ok(Outcome(code=output.status.code().unwrap_or(-1), stdout=stdout, stderr=stderr))
 
 
 def findings(text: str, page: str = "language/reference/sample.md") -> Result[list[str], str]:
