@@ -118,16 +118,16 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     scope_key = encode_record_key(executable_scope_key("fixture", "src/provider.incn", digest)?)?
     base = store_snapshot(memory_root()).map_err((error) => error.message())?
     origin = commit(put(begin(base), scope_key, scope)).map_err((error) => error.message())?
-    first = select_executable_scope(ExecutableSnapshot(graph=origin, origin="fixture"), "src/provider.incn", digest, None)?
+    initial_scope = select_executable_scope(ExecutableSnapshot(graph=origin, origin="fixture"), "src/provider.incn", digest, None)?
     edited = commit(put(begin(origin), "unrelated", b"new")).map_err((error) => error.message())?
     before = read_counts()
-    bound = select_executable_scope(ExecutableSnapshot(graph=edited, origin="fixture"), "src/provider.incn", digest, Some(first.revision.clone()))?
+    bound = select_executable_scope(ExecutableSnapshot(graph=edited, origin="fixture"), "src/provider.incn", digest, Some(initial_scope.revision.clone()))?
     after = read_counts()
     assert after.records == before.records and after.bytes == before.bytes, "resident scope read its frame again"
-    assert bound.revision == first.revision and bound.value is None
-    changed = commit(put(begin(edited), scope_key, b"changed scope")).map_err((error) => error.message())?
-    replaced = select_executable_scope(ExecutableSnapshot(graph=changed, origin="fixture"), "src/provider.incn", digest, Some(first.revision.clone()))?
-    assert replaced.revision != first.revision and replaced.value is not None
-    assert select_executable_scope(ExecutableSnapshot(graph=changed, origin="other"), "src/provider.incn", digest, Some(first.revision.clone())).is_err()
+    assert bound.revision == initial_scope.revision and bound.value is None
+    changed_graph = commit(put(begin(edited), scope_key, b"changed scope")).map_err((error) => error.message())?
+    replaced = select_executable_scope(ExecutableSnapshot(graph=changed_graph, origin="fixture"), "src/provider.incn", digest, Some(initial_scope.revision.clone()))?
+    assert replaced.revision != initial_scope.revision and replaced.value is not None
+    assert select_executable_scope(ExecutableSnapshot(graph=changed_graph, origin="other"), "src/provider.incn", digest, Some(initial_scope.revision.clone())).is_err()
     print(f"typed namespace with nested function, schema and canonical declaration identity: {len(encoded)} bytes")
     return Ok(None)
