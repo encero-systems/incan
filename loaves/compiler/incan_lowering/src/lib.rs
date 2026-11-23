@@ -210,6 +210,20 @@ pub struct SourceInputs {
     pub recorded_layouts: std::sync::Arc<RecordedLayouts>,
 }
 
+/// Borrow the current checked runtime delta without copying the entry module or its source into a retry.
+pub struct RecordedRuntimeInputs<'a> {
+    pub modules: &'a [BodyIrModule],
+    pub sources: &'a [String],
+    pub files: &'a [String],
+    pub selected: &'a [usize],
+    pub entry: usize,
+    pub kind: &'a str,
+    pub tests: &'a [String],
+    pub package_versions: &'a BTreeMap<String, String>,
+    /// The producer-owned static bindings selected for this unit before lowering.
+    pub linked_static_exports: &'a BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
+}
+
 impl SourceInputs {
     /// Borrow the checked layout witnesses and linked static exports for one lowering attempt.
     fn unit<'a>(&'a self, entry: i64, kind: &'a str) -> lowering::UnitInputs<'a> {
@@ -255,6 +269,16 @@ pub fn resume_unit_plan(
     unit.scalar_products = None;
     unit.record_report = None;
     lowering::resume_unit_plan(continuation, modules, &unit, published)
+}
+
+/// Complete a recorded runtime batch within the current request's lowering attempt. The driver authenticated
+/// the batch against the current Loaf closure and confirmed it was exactly the selection of the ordinary frames.
+pub fn complete_recorded_runtime_plan(
+    continuation: UnitContinuation,
+    inputs: &RecordedRuntimeInputs<'_>,
+    published: &mut Vec<NativeUnionDeclaration>,
+) -> Result<UnitPlanning, String> {
+    lowering::complete_recorded_runtime_plan(continuation, inputs, published)
 }
 
 /// Collect every body's first refusal, or all of one selected body's, for the refusal census.

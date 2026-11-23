@@ -798,8 +798,8 @@ pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
 
 
 pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]:
-    """A list program's runtime instances keep products: an unrelated edit reuses them, and the interface publishes."""
-    edited, cold = unrelated_edit_reports("lists", list_source(), "4\nb\n42", "4\nb\n43")?
+    """A list program keeps its runtime roots and products, and an unrelated edit lowers in one attempt."""
+    edited, cold = unrelated_edit_reports("lists", list_source(), "4\nb\n4\n42", "4\nb\n4\n43", count_attempts=true)?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(cold, "native_interface_evaluations")? == 1, cold.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
@@ -810,7 +810,9 @@ pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]
     return Ok(None)
 
 
-def unrelated_edit_reports(name: str, text: str, before: str, after: str) -> Result[tuple[JsonValue, JsonValue], str]:
+def unrelated_edit_reports(
+    name: str, text: str, before: str, after: str, count_attempts: bool = false,
+) -> Result[tuple[JsonValue, JsonValue], str]:
     """
     Build `text`, then its `unrelated` edit in the same store, then the edited source in a fresh store.
 
@@ -821,31 +823,95 @@ def unrelated_edit_reports(name: str, text: str, before: str, after: str) -> Res
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     source = root.joinpath(f"{name}.incn")
     warm_store = root.joinpath("warm-store")
+    mut warm_trace: Option[Path] = None
+    mut cold_trace: Option[Path] = None
+    if count_attempts:
+        warm_trace = Some(attempt_trace(root, "warm-trace")?)
+        cold_trace = Some(attempt_trace(root, "cold-trace")?)
     write(source, text)?
-    _ = lowering_example_run(binary, source, warm_store, before)?
+    _ = lowering_example_run(binary, source, warm_store, before, trace=warm_trace)?
+    previous = lowering_attempts(warm_trace)?
     write(source, text.replace("value + 1", "value + 2"))?
-    edited = lowering_example_run(binary, source, warm_store, after)?
+    edited = lowering_example_run(binary, source, warm_store, after, trace=warm_trace)?
+    warm_attempts = lowering_attempts(warm_trace)? - previous
     binary_path = f"target/incan/release/bin/{name}"
     plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
     executable = root.joinpath(binary_path).read_bytes().map_err((error) => error.message())?
     stop_example_engine(binary, warm_store)?
     root.joinpath("target").remove_tree().map_err((error) => error.message())?
     cold_store = root.joinpath("cold-store")
-    cold = lowering_example_run(binary, source, cold_store, after)?
+    cold = lowering_example_run(binary, source, cold_store, after, trace=cold_trace)?
     cold_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
     cold_executable = root.joinpath(binary_path).read_bytes().map_err((error) => error.message())?
     stop_example_engine(binary, cold_store)?
     assert plan == cold_plan, f"warm and cold plans differ after the unrelated edit of {name}"
     assert executable == cold_executable, f"warm and cold executables differ after the unrelated edit of {name}"
+    if count_attempts:
+        cold_attempts = lowering_attempts(cold_trace)?
+        assert cold_attempts == 2, f"independently cold lowering attempts: {cold_attempts}"
+        assert warm_attempts == 1, f"steady lowering attempts: {warm_attempts}"
+        removed = text.replace(utf8_demand(), "").replace("value + 1", "value + 2")
+        _ = compare_runtime_demand_edit(binary, source, warm_store, removed, "4\nb\n43", "removed")?
+        added = text.replace("value + 1", "value + 3")
+        attempts = compare_runtime_demand_edit(binary, source, warm_store, added, "4\nb\n4\n44", "added")?
+        assert attempts == 2, f"new runtime demand lowering attempts: {attempts}"
     return Ok((edited, cold))
 
 
+def attempt_trace(root: Path, name: str) -> Result[Path, str]:
+    """Prepare a separate compiler trace for a measured lowering arm."""
+    path = root.joinpath(name)
+    path.mkdir(true, true).map_err((error) => error.message())?
+    return Ok(path)
+
+
+def lowering_attempts(trace: Option[Path]) -> Result[int, str]:
+    """Count entry to the driver lowering attempt in the selected fixture's cumulative trace."""
+    mut attempts = 0
+    if let Some(directory) = trace:
+        for path in directory.iterdir().map_err((error) => error.message())?:
+            if not path.name().startswith("engine-compiler-"):
+                continue
+            text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+            for line in text.split("\n"):
+                if "\"kind\":\"begin\"" in line and "\"function\":\"incan_rustc_driver::lower_program\"" in line:
+                    attempts += 1
+    return Ok(attempts)
+
+
+def compare_runtime_demand_edit(
+    binary: str, source: Path, store: Path, text: str, output: str, label: str,
+) -> Result[int, str]:
+    """An edit that changes the runtime closure must publish the fresh plan and executable."""
+    root = source.parent()
+    trace = Some(attempt_trace(root, label + "-trace")?)
+    plan = root.joinpath("native.plan")
+    native = root.joinpath("target/incan/release/bin/lists")
+    write(source, text)?
+    _ = lowering_example_run(binary, source, store, output, trace=trace)?
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    warm_native = native.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = root.joinpath(label + "-store")
+    _ = lowering_example_run(binary, source, fresh, output)?
+    stop_example_engine(binary, fresh)?
+    assert warm_plan == plan.read_bytes().map_err((error) => error.message())?, label
+    assert warm_native == native.read_bytes().map_err((error) => error.message())?, label
+    return lowering_attempts(trace)
+
+
+def utf8_demand() -> str:
+    """An implicit lowering-time demand for the standard primitive's UTF-8 encoder."""
+    return "    println(len(\"text\".encode(\"utf-8\")))\n"
+
+
 def list_source() -> str:
-    """Lists of `int` and `str` beside an unrelated function, so lowering requests the runtime Loaf's list instances."""
+    """List instances and an implicit UTF-8 encoder demand beside one unrelated function."""
     unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
     lists = "    mut items = [1, 2, 3]\n    items.append(4)\n    names = [\"a\", \"b\"]\n"
-    entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n    println(unrelated(41))\n"
-    return unrelated + entry
+    entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n" + utf8_demand()
+    return unrelated + entry + "    println(unrelated(41))\n"
 
 
 def generic_source(index: str) -> str:

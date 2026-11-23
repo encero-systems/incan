@@ -21,6 +21,7 @@ from compiler_body_publication import (
     source_origin,
 )
 from compiler_body_values import (
+    SelectedBodyPage,
     SelectedBodyRecord,
     body_owners_reading,
     encode_body_inventory,
@@ -69,6 +70,7 @@ from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_ranked_build import RankedBuildInputs
 from compiler_reopened_peers import selection as reopen_selection
+from compiler_runtime_requirements import RUNTIME_REQUIREMENTS, RUNTIME_REQUIREMENTS_REPORT, runtime_requirements_key
 
 pub model SealedProgram:
     """A baked executable's fact, the path of its view and whether it was linked against shared carriers."""
@@ -416,6 +418,10 @@ pub def obtain(
     record_work(Operation.EngineSelect, "plan-inventory", selecting)
     selected_bodies.extend(scalar_plans.pages)
     selected_bodies.extend(plan_modules.pages)
+    runtime_key = runtime_requirements_key(origin, ready.source, ready.profile)
+    if not listing_refusals:
+        if let Some(requirements) = get(graph, runtime_key).map_err((error) => error.message())?:
+            selected_bodies.append(SelectedBodyPage(key=RUNTIME_REQUIREMENTS, value=requirements))
     # The descriptor is shared across source edits and stores. Each active compile owns its selected pages and
     # admission notes until Bakery has read them, even if another request replaces the diagnostic report.
     plan_report.parent().mkdir(true, true).map_err((error) => error.message())?
@@ -468,6 +474,10 @@ pub def obtain(
     mut checker_counts = CheckerRecordCounts()
     mut demand_work = LoweringDemandWork()
     if produced.native_bakes == 1:
+        runtime_report = records.joinpath(RUNTIME_REQUIREMENTS_REPORT)
+        if runtime_report.is_file():
+            requirements = runtime_report.read_bytes().map_err((error) => error.message())?
+            stage_put(request_transaction, runtime_key, requirements)
         # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
         reading_checker_sidecar = begin_work()
         checker_counts = checker_record_counts(ready, compiled_key, toolchain.unit_descriptor_crumb)?

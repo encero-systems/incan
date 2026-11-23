@@ -91,7 +91,9 @@ pub(super) fn complete_dependency_context_in_place(
 
 /// Complete only a selected path whose canonical declaration does not yet exist in the planning context.
 fn bind_runtime_requirement(
-    program: &mut CheckedProgram,
+    loaves: &LoafIndex,
+    bindings: &mut Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>,
+    scopes: &mut [(String, Vec<String>)],
     requirement: &RuntimeRequirement,
 ) -> Result<Option<CanonicalSymbolId>, String> {
     if let Some(identity) = &requirement.canonical {
@@ -101,18 +103,11 @@ fn bind_runtime_requirement(
         .path
         .split_once("::")
         .ok_or("runtime requirement does not name its package")?;
-    let binding = program
-        .dependencies
-        .loaves
+    let binding = loaves
         .runtime_binding(package, &requirement.path)
         .map_err(|error| error.to_string())?;
-    let entry = program
-        .modules
-        .get_mut(program.entry)
-        .ok_or("selected Body IR entry is missing")?;
     let Some(binding) = binding else {
-        let (_, native_paths) = entry
-            .runtime_binding_scopes
+        let (_, native_paths) = scopes
             .iter_mut()
             .find(|(name, _)| name == package)
             .ok_or_else(|| format!("runtime request outside selected package: {}", requirement.path))?;
@@ -126,67 +121,132 @@ fn bind_runtime_requirement(
         return Ok(None);
     };
     let identity = binding.canonical.clone();
-    if !entry.runtime_callable_bindings.contains(&binding) {
-        entry.runtime_callable_bindings.push(binding);
+    if !bindings.contains(&binding) {
+        bindings.push(binding);
     }
     Ok(Some(identity))
 }
 
-/// Resolve a nonempty set selected by lowering, then reconstruct layout context from the active authored suffix.
-/// The canonical root set must grow on every retry; a repeated missing body is an invalid producer contract.
+/// Authenticated runtime inputs, prepared against the current checked context but installed only for live demands.
+pub(super) struct PreparedRuntimeRequirements {
+    bindings: Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>,
+    scopes: Vec<(String, Vec<String>)>,
+    identities: Vec<Option<CanonicalSymbolId>>,
+    next: BTreeSet<CanonicalSymbolId>,
+    resolved: Option<incan_frontend::executable_resolution::ResolvedExecutableModules>,
+}
+
+/// Authenticate a runtime batch without letting unconfirmed recorded demands change the checked program.
+pub(super) fn prepare_runtime_requirements(
+    program: &CheckedProgram,
+    loaves: &LoafIndex,
+    requirements: &[RuntimeRequirement],
+) -> Result<PreparedRuntimeRequirements, String> {
+    if requirements.is_empty() {
+        return Err("runtime planning requested an empty dependency set".to_owned());
+    }
+    let entry = program
+        .modules
+        .get(program.entry)
+        .ok_or("selected Body IR entry is missing")?;
+    // Only these compact entry tables are copied. Authored Body IR remains owned by the current checked program.
+    let mut bindings = entry.runtime_callable_bindings.clone();
+    let mut scopes = entry.runtime_binding_scopes.clone();
+    let mut next = program.dependencies.requested.clone();
+    let mut identities = Vec::with_capacity(requirements.len());
+    for requirement in requirements {
+        let linked = bind_runtime_requirement(loaves, &mut bindings, &mut scopes, requirement)?;
+        if let Some(identity) = &linked {
+            if program.dependencies.requested.contains(identity) && requirement.canonical.is_some() {
+                return Err(format!(
+                    "runtime declaration `{}` remained unavailable after resolution at {}:{}:{}",
+                    requirement.path, requirement.span.file, requirement.span.line, requirement.span.column,
+                ));
+            }
+            next.insert(identity.clone());
+        }
+        identities.push(linked);
+    }
+    let mut resolved = None;
+    if next != program.dependencies.requested {
+        resolved = Some(load_runtime_modules(
+            loaves,
+            &program.dependencies.checked_local,
+            &next,
+            requirements,
+        )?);
+    }
+    Ok(PreparedRuntimeRequirements {
+        bindings,
+        scopes,
+        identities,
+        next,
+        resolved,
+    })
+}
+
+/// Load the grown authenticated closure, retaining the requesting source sites in a refusal.
+fn load_runtime_modules(
+    loaves: &LoafIndex,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
+    next: &BTreeSet<CanonicalSymbolId>,
+    requirements: &[RuntimeRequirement],
+) -> Result<incan_frontend::executable_resolution::ResolvedExecutableModules, String> {
+    load_loaf_modules(loaves, next, checked_local).map_err(|error| {
+        let sites = requirements
+            .iter()
+            .map(|requirement| {
+                format!(
+                    "{} at {}:{}:{}",
+                    requirement.path, requirement.span.file, requirement.span.line, requirement.span.column
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{error}; selected runtime operations: {sites}")
+    })
+}
+
+/// Install only the batch lowering selected, with its current requesting source sites.
+pub(super) fn apply_runtime_requirements(
+    program: &mut CheckedProgram,
+    requirements: &[RuntimeRequirement],
+    prepared: PreparedRuntimeRequirements,
+) -> Result<Vec<usize>, String> {
+    let previous = runtime_module_generations(&program.modules)?;
+    let entry = program
+        .modules
+        .get_mut(program.entry)
+        .ok_or("selected Body IR entry is missing")?;
+    entry.runtime_callable_bindings = prepared.bindings;
+    entry.runtime_binding_scopes = prepared.scopes;
+    let Some(resolved) = prepared.resolved else {
+        return changed_runtime_module_indices(program, &previous);
+    };
+    install_dependency_modules(program, resolved);
+    let context = &mut program.dependencies;
+    for (requirement, linked) in requirements.iter().zip(prepared.identities) {
+        if let Some(identity) = linked {
+            context.origins.entry(identity).or_insert_with(|| RootOrigin::Runtime {
+                path: requirement.path.clone(),
+                file: requirement.span.file.to_string(),
+                line: requirement.span.line,
+                column: requirement.span.column,
+            });
+        }
+    }
+    context.requested = prepared.next;
+    prepare_dependency_context(program)?;
+    changed_runtime_module_indices(program, &previous)
+}
+
+/// Resolve an unrecorded batch on demand before resuming opaque ordinary-frame work.
 pub(super) fn satisfy_runtime_requirements(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
 ) -> Result<Vec<usize>, String> {
-    let previous = runtime_module_generations(&program.modules)?;
-    let mut next = program.dependencies.requested.clone();
-    let mut resolved_requirements = Vec::new();
-    for requirement in &requirements {
-        let Some(identity) = bind_runtime_requirement(program, requirement)? else {
-            continue;
-        };
-        if program.dependencies.requested.contains(&identity) && requirement.canonical.is_some() {
-            return Err(format!(
-                "runtime declaration `{}` remained unavailable after resolution at {}:{}:{}",
-                requirement.path, requirement.span.file, requirement.span.line, requirement.span.column,
-            ));
-        }
-        next.insert(identity.clone());
-        resolved_requirements.push((requirement, identity));
-    }
-    if requirements.is_empty() {
-        return Err("runtime planning requested an empty dependency set".to_owned());
-    }
-    if next == program.dependencies.requested {
-        return changed_runtime_module_indices(program, &previous);
-    }
-    let resolved = load_loaf_modules(&program.dependencies.loaves, &next, &program.dependencies.checked_local)
-        .map_err(|error| {
-            let sites = requirements
-                .iter()
-                .map(|requirement| {
-                    format!(
-                        "{} at {}:{}:{}",
-                        requirement.path, requirement.span.file, requirement.span.line, requirement.span.column
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{error}; selected runtime operations: {sites}")
-        })?;
-    install_dependency_modules(program, resolved);
-    let context = &mut program.dependencies;
-    for (requirement, identity) in resolved_requirements {
-        context.origins.entry(identity).or_insert_with(|| RootOrigin::Runtime {
-            path: requirement.path.clone(),
-            file: requirement.span.file.to_string(),
-            line: requirement.span.line,
-            column: requirement.span.column,
-        });
-    }
-    context.requested = next;
-    prepare_dependency_context(program)?;
-    changed_runtime_module_indices(program, &previous)
+    let prepared = prepare_runtime_requirements(program, &program.dependencies.loaves, &requirements)?;
+    apply_runtime_requirements(program, &requirements, prepared)
 }
 
 /// Record the compact monotonic tables that dependency reconstruction can extend between lowering attempts.
@@ -249,8 +309,17 @@ pub(super) fn prepare_runtime_layouts(
         return Ok(());
     }
     let mut requested = BTreeSet::new();
+    let entry = program
+        .modules
+        .get_mut(program.entry)
+        .ok_or("selected Body IR entry is missing")?;
     for requirement in &requirements {
-        requested.extend(bind_runtime_requirement(program, requirement)?);
+        requested.extend(bind_runtime_requirement(
+            &program.dependencies.loaves,
+            &mut entry.runtime_callable_bindings,
+            &mut entry.runtime_binding_scopes,
+            requirement,
+        )?);
     }
     if requested.is_empty() {
         return Ok(());
