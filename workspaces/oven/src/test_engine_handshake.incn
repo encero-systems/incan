@@ -1,0 +1,57 @@
+"""A client's handshake waits for an engine that is inside another client's long request."""
+
+from rust::std::thread import sleep, spawn
+from rust::std::time import Duration
+from pub::incan_platform.ipc import Connection, dial, listen, session_id
+from engine_channel import Channel, SendOutcome
+from engine_endpoint import HANDSHAKE_SECONDS, handshake, owner_uid
+from engine_messages import Message
+from engine_state import Identity, ServiceState
+from engine_wire import zero_id
+from scratch import scratch_directory
+
+
+pub def test_a_client_waits_for_an_engine_inside_a_long_request() -> Result[None, str]:
+    """
+    The engine serves one request at a time and greets no one while it does, so a second client's Welcome comes when
+    that request settles. A client that arrives during a request longer than the handshake bound still connects.
+    """
+    scratch = scratch_directory()?
+    socket = scratch.path().joinpath("engine.sock")
+    identity = Identity(
+        store_id="store",
+        profile="profile",
+        service_generation="service",
+        compiler_generation="compiler",
+        uid=owner_uid(scratch.path()).map_err((refusal) => refusal.detail)?,
+    )
+    mut listener = listen(socket.0, true)?
+    arriving = dial(socket.0)?
+    accepted = listener.accept()?
+    busy = HANDSHAKE_SECONDS + 1u64
+    engine = spawn(() => greet_after(accepted, identity, busy))
+    connected = handshake(Channel(transport=arriving), identity)
+    match engine.join():
+        Ok(outcome) => outcome?
+        Err(_) => return Err("the engine thread panicked")
+    match connected:
+        Ok(_) => return Ok(None)
+        Err(refusal) => return Err(f"the client gave up on a busy engine: {refusal.detail}")
+
+
+def greet_after(accepted: Connection, identity: Identity, busy_seconds: u64) -> Result[None, str]:
+    """Answer Hello with Welcome as the service does, after `busy_seconds` inside another client's request."""
+    sleep(Duration.from_secs(busy_seconds))
+    mut channel = Channel(transport=accepted)
+    first = channel.receive().map_err((refusal) => refusal.detail)?
+    match first.message:
+        Message.Hello(hello) =>
+            state = ServiceState(identity=identity, last_active=0)
+            welcome = state.negotiate(hello, identity.uid).map_err((refusal) => refusal.detail)?
+            channel.session = session_id()?
+            match channel.send(zero_id(), Message.Welcome(welcome)).map_err((refusal) => refusal.detail)?:
+                SendOutcome.Blocked => return Err("no credit for Welcome")
+                SendOutcome.Sent(_) => pass
+            channel.acknowledge(first).map_err((refusal) => refusal.detail)?
+            return Ok(None)
+        _ => return Err("the client did not open with Hello")
