@@ -431,8 +431,15 @@ pub def obtain(
     invalid_plans = sorted([owner for owner in plan_reads.keys()])
     positioned = set([key.identity for key in projected.keys if key.family == "source-positioned" and key.origin == origin])
     plan_modules = select_plan_modules(
-        graph, origin, invalid_namespaces, invalid + invalid_plans, namespaces.complete, positioned, cutoff,
+        graph,
+        origin,
+        invalid_namespaces,
+        invalid + invalid_plans,
+        namespaces.complete,
+        positioned,
+        cutoff,
         reachable_modules=modules,
+        compact_authority=toolchain.supports_plan_module_selection_digest,
     )?
     covered = plan_modules.covered
     record_work(Operation.EngineSelect, "plan-modules", selecting)
@@ -456,6 +463,8 @@ pub def obtain(
     record_work(Operation.EngineSelect, "plan-inventory", selecting)
     selected_bodies.extend(scalar_plans.pages)
     selected_bodies.extend(plan_modules.pages)
+    if let Some(authority) = plan_modules.authority:
+        selected_bodies.append(authority)
     runtime_key = runtime_requirements_key(origin, ready.source, ready.profile)
     if not listing_refusals:
         if let Some(requirements) = get(graph, runtime_key).map_err((error) => error.message())?:

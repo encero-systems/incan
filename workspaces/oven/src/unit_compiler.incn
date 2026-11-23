@@ -3,7 +3,12 @@
 from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
-from pub::incan_mir_plan import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
+from pub::incan_mir_plan import (
+    INTERFACE_REPORT,
+    PLAN_MODULE_SELECTION_PAGE,
+    decode_lowering_event,
+    decode_native_interface,
+)
 pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
@@ -32,6 +37,7 @@ from unit_transport import captured_source_arguments, descriptor_path, publish_u
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
 from compiler_body_values import SelectedBodyPage
+from compiler_plan_values import canonical_digest
 
 
 pub model PlanRecordCounts:
@@ -65,12 +71,19 @@ pub def compile_prepared_unit(
     """
     Compile one prepared unit without dependency selection or recursive preparation.
 
-    1. Publish the description under its reconciled identity and prepare the output directory.
+    1. Validate the selected Plan authority, publish the description, and prepare the output directory.
     2. Select profile flags, the native-closure anchors a capable driver takes and any requested shared development
        linkage.
     3. Compile or replay a certified refusal under the complete source identity.
     """
-    # 1. The compiler reads the selected inputs and a generation-witnessed description.
+    # 1. A rejected selection leaves every request input and output path intact.
+    mut plan_selection_digest: Option[str] = None
+    let selected_records: Borrowed[Option[list[SelectedBodyPage]]] = graph_body_records
+    match selected_records:
+        Some(records) => plan_selection_digest = selected_plan_module_digest(records)?
+        None => pass
+    if plan_selection_digest is not None and not toolchain.supports_plan_module_selection_digest:
+        return Err("the installed driver cannot accept a plan module selection")
     mut key = Key(digest="", parts=[])
     match known_key:
         Some(value) =>
@@ -96,6 +109,8 @@ pub def compile_prepared_unit(
     )
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
+    if let Some(digest) = plan_selection_digest:
+        native += ["--plan-module-selection-digest", digest]
     if let Some(records) = graph_body_records:
         records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
         write_selected_records(records_path, unit, records)?
@@ -117,6 +132,20 @@ pub def compile_prepared_unit(
     if code == 0 and executable:
         normalize_release_executable(output, unit.profile)?
     return Ok(code)
+
+
+pub def selected_plan_module_digest(records: Borrowed[list[SelectedBodyPage]]) -> Result[Option[str], str]:
+    """Return the current request's one compact Plan selection SHA, when present in the selected pages."""
+    mut selected: Option[str] = None
+    for page in records:
+        if page.key != PLAN_MODULE_SELECTION_PAGE:
+            continue
+        if selected is not None:
+            return Err("request names more than one plan module selection")
+        if not canonical_digest(page.digest):
+            return Err("a plan module selection requires a canonical SHA-256 digest")
+        selected = Some(page.digest)
+    return Ok(selected)
 
 
 pub def executable_warnings(

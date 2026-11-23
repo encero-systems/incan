@@ -65,8 +65,11 @@ pub use records::plan_function::{
     encode_plan_function_record, plan_function_digest, verify_entry_record,
 };
 pub use records::plan_module::{
-    ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE,
-    PlanModuleFunction, PlanModuleValue, REPOSITION_MODULE_PAGE, decode_plan_module, encode_plan_module,
+    ADMITTED_MODULE_NOTE, CompactAdmissionPin, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
+    PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction,
+    PlanModuleSelectionRecord, PlanModuleValue, PlanSelectedModule, PlanSelectionScope, REPOSITION_MODULE_PAGE,
+    WholeModuleAdmission, compact_admission_pin, decode_plan_module, decode_plan_module_selection,
+    decode_whole_module_admission, encode_plan_module, encode_whole_module_admission,
 };
 pub use span_file::SpanFile;
 pub use types::{
