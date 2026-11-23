@@ -5601,7 +5601,7 @@ pub(crate) mod tests {
             })
         });
         assert!(matches!(error, Err(OvenStoreError::Io { .. })));
-        assert_eq!(calls, [child.clone()]);
+        assert_eq!(calls, std::slice::from_ref(&child));
         calls.clear();
         super::sync_directory_tree_with(root.path(), &mut |path| {
             calls.push(path);
@@ -5726,7 +5726,7 @@ pub(crate) mod tests {
         write_project(project.path())?;
         let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
         let first = store.publish(&request(project.path(), "capacity-first", b"first")?)?;
-        let held = store.select_payloads_for_execution(&[first.identity.clone()])?;
+        let held = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
         let second = store.publish(&request(project.path(), "capacity-second", b"second")?)?;
         let before = super::retained_store_manifests(&store.entries_root())?;
         store.prune_for_admission(&first.domain, 1, 1)?;
@@ -8653,7 +8653,10 @@ pub(crate) mod tests {
         };
         let before = immutable()?;
         assert_eq!(store.publish(&original)?, published);
-        assert_eq!(store.publish_batch(&[original.clone()])?, vec![published.clone()]);
+        assert_eq!(
+            store.publish_batch(std::slice::from_ref(&original))?,
+            vec![published.clone()]
+        );
         // The dev-line fixture project is a frozen Cargo package, so its receipt identity moves with the locked
         // sources rather than with an arbitrary file in the directory. The lock is a source input and not a
         // build-unit fact, which is exactly the shape these tests need: a different receipt for the same unit.

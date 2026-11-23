@@ -2324,11 +2324,16 @@ name = "oven-cli"
 version = "0.6.0-dev.6"
 dependencies = [
  "clap",
+ "hex",
  "incan_driver",
+ "incan_format",
  "incan_frontend",
  "incan_lang",
  "incan_oven_facet",
  "incan_provider",
+ "incan_semantics_core",
+ "incan_test_support",
+ "incan_vocab",
  "oven_cargo_compat",
  "oven_interop",
  "oven_model",
@@ -5364,9 +5369,9 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
 name = "xxhash-rust"
-version = "0.8.15"
+version = "0.8.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
+checksum = "4d93c89cdc2d3a63c3ec48ffe926931bdc069eafa8e4402fe6d8f790c9d1e576"
 
 [[package]]
 name = "xz2"

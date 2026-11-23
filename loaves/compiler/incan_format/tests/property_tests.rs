@@ -5,8 +5,6 @@
 
 use incan_test_support as support;
 
-use std::collections::BTreeSet;
-
 use incan_format::format_source;
 use proptest::prelude::*;
 
@@ -103,46 +101,6 @@ def greet(name: str) -> str:
         Ok(())
     }
 
-    /// Examples the formatter cannot yet round trip, with the reason each one is here.
-    ///
-    /// None of these is source corruption: the two `refuses to format` entries are the formatter's comment-loss
-    /// guard doing its job, and the two `not a fixed point` entries produce output that still parses and still has
-    /// the same declarations — a comment moves between passes rather than any code changing. Three genuinely
-    /// destructive defects that this walk found were fixed rather than listed: an `enum`'s dropped `with <Trait>`
-    /// adoption, an unescaped quote in a byte literal, and a match guard written before an arrow the parser then
-    /// rejected — the last fixed in the grammar, by letting both arm spellings carry a guard, rather than by
-    /// teaching the formatter to avoid one of them.
-    ///
-    /// Comment reattachment stability is the remaining work and is tracked separately; it is a different subsystem
-    /// (`loaves/compiler/incan_format/src/comments/`) from the declaration and literal writers fixed here.
-    const EXPECTED_ROUND_TRIP_FAILURES: &[(&str, &str)] = &[
-        (
-            "advanced/function_references/main.incn",
-            "comment reattachment is not a fixed point",
-        ),
-        (
-            "advanced/nested_project/src/main.incn",
-            "comment reattachment is not a fixed point",
-        ),
-        (
-            "advanced/package_features/consumer/src/main.incn",
-            "comment reattachment is not a fixed point",
-        ),
-        (
-            "advanced/package_features/leaf/src/lib.incn",
-            "comment reattachment is not a fixed point",
-        ),
-        (
-            "advanced/package_features/producer/src/lib.incn",
-            "comment reattachment is not a fixed point",
-        ),
-        (
-            "advanced/using_rust_crates.incn",
-            "formatter refuses: would drop comments",
-        ),
-        ("pro/rust_interop_pro.incn", "formatter refuses: would drop comments"),
-    ];
-
     /// Property: formatting every committed example preserves parseability and is a fixed point.
     ///
     /// The generated-input properties above exercise shapes the strategies know how to build. Real programs use
@@ -159,6 +117,7 @@ def greet(name: str) -> str:
         use incan_syntax::{lexer, parser};
         use std::path::{Path, PathBuf};
 
+        /// Collect committed Incan examples while excluding generated Cargo target trees.
         fn collect(dir: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
             let entries = std::fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
             for entry in entries {
@@ -227,22 +186,10 @@ def greet(name: str) -> str:
             "no example parsed as ordinary Incan, so nothing was round-tripped"
         );
 
-        // Exact, not a floor, following the capability-coverage suite's reasoning: a floor lets a number sit at its
-        // starting value forever without anything saying so. Membership changing in either direction is a reviewed
-        // event — a new entry is a regression, and a departing one is a fix that should update this list.
-        let known: BTreeSet<&str> = EXPECTED_ROUND_TRIP_FAILURES.iter().map(|(file, _)| *file).collect();
-        let actual: BTreeSet<&str> = failures.iter().map(|f| f.split(':').next().unwrap_or(f)).collect();
-
-        let regressed: Vec<&&str> = actual.difference(&known).collect();
-        let fixed: Vec<&&str> = known.difference(&actual).collect();
         assert!(
-            regressed.is_empty(),
-            "example(s) newly failed to round trip: {regressed:?}\n\nfull detail:\n{}",
+            failures.is_empty(),
+            "example round-trip failures:\n{}",
             failures.join("\n")
-        );
-        assert!(
-            fixed.is_empty(),
-            "example(s) now round trip and should be removed from EXPECTED_ROUND_TRIP_FAILURES: {fixed:?}"
         );
         Ok(())
     }

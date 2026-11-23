@@ -300,13 +300,16 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
         .ok_or("ordinary dependencies absent")?;
     assert!(
         owners
-            .physical_native_dependencies(input.session().provider_plan(), &[core_dependency.clone()])?
+            .physical_native_dependencies(input.session().provider_plan(), std::slice::from_ref(&core_dependency))?
             .is_empty()
     );
     let mut changed_dependency = core_dependency;
     changed_dependency.features.push("unadmitted".into());
     assert_eq!(
-        owners.physical_native_dependencies(input.session().provider_plan(), &[changed_dependency.clone()])?,
+        owners.physical_native_dependencies(
+            input.session().provider_plan(),
+            std::slice::from_ref(&changed_dependency)
+        )?,
         vec![changed_dependency]
     );
     assert!(matches!(

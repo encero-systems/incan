@@ -249,13 +249,13 @@ fn ordinary_native_public_demands_require_exact_checked_owners() -> Result<(), B
         .to_dependency_spec();
     assert!(
         owners
-            .physical_native_dependencies(&plan, &[package_projection.clone()])?
+            .physical_native_dependencies(&plan, std::slice::from_ref(&package_projection))?
             .is_empty()
     );
     let mut changed_projection = package_projection.clone();
     changed_projection.features.push("unadmitted".into());
     assert_eq!(
-        owners.physical_native_dependencies(&plan, &[changed_projection.clone()])?,
+        owners.physical_native_dependencies(&plan, std::slice::from_ref(&changed_projection))?,
         vec![changed_projection]
     );
     assert!(
@@ -577,7 +577,7 @@ fn ordinary_admitted_session_refuses_alias_or_coordinate_substitution() -> Resul
 #[test]
 fn ordinary_admission_refuses_missing_original_dependency_owner() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, mut input) = checked_package()?;
-    let baseline = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let baseline = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let owner = &baseline.nodes.values().next().ok_or("fixture owner absent")?.metadata;
     let mut recipe = owner.recipe().clone();
     recipe.dependencies.insert(
@@ -713,7 +713,7 @@ fn ordinary_admission_shares_exact_owner_across_aliases() -> Result<(), Box<dyn 
 #[test]
 fn ordinary_admission_refuses_stale_checked_generation() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, mut input) = checked_package()?;
-    let admitted = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let admitted = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let metadata = &admitted.nodes.values().next().ok_or("metadata absent")?.metadata;
     fs::write(
         root.path().join("src/lib.incn"),
@@ -734,7 +734,7 @@ fn ordinary_admission_refuses_stale_checked_generation() -> Result<(), Box<dyn s
     package.source_authority_digest = current;
     write_packaged_library_loaf_manifest(&artifact.crate_root, &package)?;
     input.handoff_digest = handoff_digest(&artifact)?;
-    assert!(PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits()).is_err());
+    assert!(PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits()).is_err());
     fs::remove_file(root.path().join("loaf.toml"))?;
     fs::remove_file(root.path().join("src/lib.incn"))?;
     assert!(PreparedLibraryDependencies::admit(&[input], TARGET, TOOLCHAIN, limits()).is_err());
@@ -885,7 +885,7 @@ fn ordinary_alias_sharing_refuses_different_physical_owners() -> Result<(), Box<
         fs::canonicalize(&second_artifact.crate_root)?,
     );
     let original = PreparedLibraryDependencies::admit(std::slice::from_ref(&first), TARGET, TOOLCHAIN, limits())?;
-    let transported = PreparedLibraryDependencies::admit(&[second.clone()], TARGET, TOOLCHAIN, limits())?;
+    let transported = PreparedLibraryDependencies::admit(std::slice::from_ref(&second), TARGET, TOOLCHAIN, limits())?;
     assert_eq!(
         original.nodes.keys().collect::<Vec<_>>(),
         transported.nodes.keys().collect::<Vec<_>>()
@@ -906,7 +906,7 @@ fn ordinary_alias_sharing_refuses_different_physical_owners() -> Result<(), Box<
 fn ordinary_generation_refuses_substitution_and_missing_authority() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, mut input) = checked_package()?;
     let (_other_root, _other_artifact, other_input) = checked_package()?;
-    let first = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let first = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let other = PreparedLibraryDependencies::admit(&[other_input], TARGET, TOOLCHAIN, limits())?;
     let first_node = first.nodes.values().next().ok_or("first node absent")?;
     let other_node = other.nodes.values().next().ok_or("other node absent")?;
@@ -931,7 +931,7 @@ fn ordinary_generation_refuses_substitution_and_missing_authority() -> Result<()
         package.checked_generation = replacement;
         write_packaged_library_loaf_manifest(&artifact.crate_root, &package)?;
         input.handoff_digest = handoff_digest(&artifact)?;
-        assert!(PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits()).is_err());
+        assert!(PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits()).is_err());
     }
     fs::remove_file(root.path().join("loaf.toml"))?;
     fs::remove_file(root.path().join("src/lib.incn"))?;
