@@ -1,0 +1,19 @@
+"""Relink run 77's driver and changed lowering through the release-53 compiler."""
+
+from std.fs import Path
+from relink_driver import Relink, run as relink
+
+
+def main() -> Result[None, str]:
+    return relink(
+        Relink(
+            repo=Path("/Volumes/Builds/incan-dev9-work/b4/lane/run77/repo"),
+            bootstrap=Path("/Volumes/Builds/incan-dev9-work/b4/lane/run77/bootstrap"),
+            toolchain_home=Path("/Volumes/Builds/incan-dev9-work/b4/lane/run78/parent-home"),
+            builder="/Volumes/Builds/incan-dev9-work/release/bundle-round53/incan",
+            stdlib="/Volumes/Builds/incan-dev9-work/b4/lane/run77/repo/loaves/stdlib",
+            profile="release",
+            refresh=true,
+            log=Path("/Volumes/Builds/incan-dev9-work/b4/lane/run77/relink-driver.log"),
+        ),
+    )

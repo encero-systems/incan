@@ -1,0 +1,54 @@
+"""Install run 78's already-built driver into the selected proof home."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+
+
+const BUILT: str = "/Volumes/Builds/incan-dev9-work/b4/lane/run78/incan-rustc-driver-c5e76fe77209"
+const TOOLCHAIN: str = "/Volumes/Builds/incan-dev9-work/b4/home-r53/toolchains/0.6.0-dev.8"
+
+
+def main() -> Result[None, str]:
+    """Install the driver and its matching standard ABI cache, then atomically select both in the manifest."""
+    built = Path(BUILT)
+    toolchain = Path(TOOLCHAIN)
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    driver = toolchain.joinpath(f"bin/incan-rustc-driver-{digest[:12]}")
+    _ = built.copy(driver, true, true).map_err((error) => error.message())?
+    sysroot = toolchain.joinpath("sysroot")
+    abi = toolchain.joinpath(f"rust-abi/std-{driver.name()}.rustabi")
+    mut command = Command.new(driver.0)
+    output = command
+        .arg("--rust-abi")
+        .arg(sysroot.0)
+        .arg(abi.0)
+        .arg("std")
+        .arg("core")
+        .arg("alloc")
+        .env_remove("RUSTC_BOOTSTRAP")
+        .output()
+        .map_err((error) => error.to_string())?
+    if not output.status.success():
+        return Err(RustString.from_utf8_lossy(output.stderr).into_owned())
+    manifest = toolchain.joinpath("toolchain.json")
+    mut fields = JsonValue
+        .parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+        .expect_object()
+        .map_err((error) => error.message())?
+    fields["driver"] = JsonValue.string(driver.0)
+    fields["rust_abi"] = JsonValue.array([JsonValue.string(abi.0)])
+    fields["compiler_records"] = JsonValue.parse(
+        "{\"digest\":\"f9c1612e8335741f236de94002c8bfa2789792d5e7910126d4119ab335dd88bd\",\"root\":\"compiler-records\"}",
+    ).map_err((error) => error.message())?
+    staged = toolchain.joinpath(".toolchain-run78.next")
+    staged
+        .write_text(JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    _ = staged.replace(manifest).map_err((error) => error.message())?
+    println(driver.0)
+    return Ok(None)

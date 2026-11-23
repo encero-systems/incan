@@ -1,0 +1,53 @@
+"""Refresh run 77's source-matched proof generation in the release-53 proof home."""
+
+from std.fs import Path
+from std.json import JsonValue
+from native_build import (
+    NativeContext,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    publish_support,
+    standard_profiles,
+)
+from native_build import StandardGeneration
+
+
+const REPO: str = "/Volumes/Builds/incan-dev9-work/b4/lane/run77/repo"
+const LANE: str = "/Volumes/Builds/incan-dev9-work/b4/lane/run77"
+const HOME: str = "/Volumes/Builds/incan-dev9-work/b4/home-r53"
+const BUILDER: str = "/Volumes/Builds/incan-dev9-work/release/bundle-round53/incan"
+const HELPER: str = "/Volumes/Builds/incan-dev9-work/b4/lane/run74/support-build/workspaces/oven/target/incan/release/bin/oven"
+
+
+def main() -> Result[None, str]:
+    """Rebuild interfaces, runtime and standard providers against current facet sources."""
+    context = NativeContext(
+        repo=Path(REPO),
+        lane=Path(LANE),
+        home=Path(HOME),
+        builder=BUILDER,
+        stdlib=REPO + "/loaves/stdlib",
+        evidence=Path(LANE + "/proof-evidence"),
+        timings=Path(LANE + "/proof-timings.tsv"),
+        jobs=1,
+        memory=8589934592,
+        timeout_seconds=600,
+    )
+    helper = Path(HELPER)
+    manifest = Path(HOME + "/toolchains/0.6.0-dev.8/toolchain.json")
+    mut fields = JsonValue
+        .parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+        .expect_object()
+        .map_err((error) => error.message())?
+    fields["externs"] = JsonValue.array([])
+    fields["search"] = JsonValue.array([])
+    manifest
+        .write_text(JsonValue.object(fields).to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    publish_support(context, helper)?
+    interfaces = build_source_interfaces(context, helper)?
+    _ = build_runtime(context, helper, Some(interfaces), true, "run77-")?
+    build_standard_packages(context, helper, "run77-", standard_profiles(StandardGeneration.SourceClosure))?
+    return Ok(None)
