@@ -1,7 +1,7 @@
 """
-The compact Markdown reference `incan tools metadata api --format markdown` prints from checked API metadata, as
-0.5.1 rendered it: a title, the package version, then each module's declarations as signatures. Functions keep their
-docstrings, and partials name their target and presets.
+The compact Markdown reference `incan tools metadata api --format markdown` prints from checked API metadata: a
+title, the package version, then each module's declarations as signatures. Functions keep their type parameters,
+bounds, and docstrings, and partials name their target and presets.
 """
 
 from std.json import JsonValue
@@ -29,7 +29,9 @@ def declaration_markdown(declaration: JsonValue) -> Result[str, str]:
     kind = text_or(declaration.get("kind"), "")
     name = text_or(declaration.get("name"), "")
     if kind == "function":
-        signature = f"pub def {name}({parameters(declaration)?}) -> {type_name(field(declaration, "return_type"))?}"
+        generics = type_parameters(declaration)?
+        returned = type_name(field(declaration, "return_type"))?
+        signature = f"pub def {name}{generics}({parameters(declaration)?}) -> {returned}"
         mut section = signature_section(name, signature)
         docstring = text_or(declaration.get("docstring"), "").strip()
         if docstring != "":
@@ -73,6 +75,30 @@ def summary(kind: str, name: str, declaration: JsonValue) -> Result[Option[str],
 def signature_section(name: str, signature: str) -> str:
     """A declaration heading and its signature in an Incan code block."""
     return f"### `{name}`\n\n```incan\n{signature}\n```\n\n"
+
+
+def type_parameters(callable: JsonValue) -> Result[str, str]:
+    """The checked type parameters and bounds that select a callable signature."""
+    mut spelled: list[str] = []
+    for parameter in items(callable.get("type_params"))?:
+        name = text_or(parameter.get("name"), "")
+        bounds = [type_bound(bound)? for bound in items(parameter.get("bounds"))?]
+        if len(bounds) == 0:
+            spelled.append(name)
+        else:
+            spelled.append(f"{name} with {", ".join(bounds)}")
+    if len(spelled) == 0:
+        return Ok("")
+    return Ok(f"[{", ".join(spelled)}]")
+
+
+def type_bound(bound: JsonValue) -> Result[str, str]:
+    """Spell a checked bound with its type arguments, when present."""
+    name = text_or(bound.get("source_name"), text_or(bound.get("name"), ""))
+    arguments = type_names(bound.get("type_args"))?
+    if arguments == "":
+        return Ok(name)
+    return Ok(f"{name}[{arguments}]")
 
 
 def parameters(callable: JsonValue) -> Result[str, str]:
