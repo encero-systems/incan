@@ -1,0 +1,216 @@
+"""
+The engine's whole-unit producers: the requests the record producers do not serve yet.
+
+A request with unit options (features, program entries, an interop target), a unit with vocabulary, contract models,
+foreign headers or Cloves, and a library build are each produced whole by the unit compiler, inside the request the
+engine captured. No checked body is restored from records and none is published; the native unit is claimed, baked and
+selected exactly as the record producer's is.
+"""
+
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Command, Stdio
+from std.fs import Path
+from core_process import executable
+from engine_capture import BuildEpoch, SelectedHome
+from engine_programs import (
+    CheckOutcome,
+    NativeUnit,
+    ProgramOutcome,
+    SealedProgram,
+    captured_file_current,
+    executable_payload,
+    frozen_path,
+    prepared_for,
+    produced_fact,
+    program_home,
+    program_view,
+    read_program,
+    restore_program,
+)
+from engine_request_options import RequestOptions
+from features import FeatureRequest
+from files import open_stream
+from graph_incan import inspect_prepared, publish_prepared_graph
+from home import StandardPackage, dependency_artifact_dir
+from incan_units import check_prepared, obtain_executable, program_binary
+from shared_link import development_link, linkage_key
+from toolchain import Toolchain, toolchain_directory
+from unit import UnitDescription, describe, with_c_abi_target
+from unit_compiler import crate_name
+from unit_freshness import unit_key
+from unit_rust import compile_library_unit
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
+
+
+pub def obtain_whole(
+    store: Path,
+    handle: str,
+    console: str,
+    epoch: BuildEpoch,
+    selected_home: SelectedHome,
+    options: RequestOptions,
+) -> Result[ProgramOutcome, str]:
+    """
+    Produce one captured program whole, with the request's options.
+
+    1. Read a previously finalized native descriptor of this exact request.
+    2. Otherwise describe and prepare the unit and finalize its identity.
+    3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
+    4. Return the descriptor after checking capture; the caller selects it and views a unit baked here after its commit.
+    """
+    # 1. The handle names the captured epoch, which names the options.
+    match read_program(store, handle)?:
+        Some(unit) =>
+            if restore_program(store, unit)?:
+                return Ok(ProgramOutcome(code=0, unit=Some(unit)))
+        None => pass
+    # 2. The unit compiler describes every unit shape; nothing is refused here for its shape.
+    preparing = begin_work()
+    home = program_home(Some(selected_home))?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    described = described_unit(epoch, options, toolchain, home.standard)?
+    if described.kind != "program":
+        return Err(f"{epoch.roots[0]}: only a program is run or built to an executable")
+    ready = prepared_for(program_view(handle)?, described, toolchain)?
+    native_key = unit_key(ready, toolchain)?
+    if native_key.refusal != "":
+        return Err(native_key.refusal)
+    key = linkage_key(native_key, development_link(ready, true))?
+    binary = program_binary(ready)
+    record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
+    # 3. Exactly one producer owns claiming and publishing a native unit.
+    produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, None)?
+    if produced.code != 0:
+        return Ok(ProgramOutcome(code=produced.code, evaluations=produced.evaluations, console=console))
+    # 4. Source edits cannot certify a native unit for a different captured epoch.
+    verifying_inputs = begin_work()
+    installed = toolchain_directory()?.0
+    for input in epoch.inputs:
+        if frozen_path(input.path, installed, toolchain.sysroot):
+            continue
+        if not captured_file_current(Path(input.path), input.metadata):
+            return Err("captured inputs changed before native selection; submit a new request")
+    record_work(Operation.EngineInputVerification, epoch.roots[0], verifying_inputs)
+    fact = produced_fact(produced.fact)?
+    unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    mut sealed: Option[SealedProgram] = None
+    if produced.transaction is not None:
+        sealed = Some(SealedProgram(fact=fact, binary=binary.0, shared=development_link(ready, true)))
+    return Ok(
+        ProgramOutcome(
+            code=0,
+            unit=Some(unit),
+            evaluations=produced.evaluations,
+            native_bakes=produced.native_bakes,
+            console=console,
+            transaction=produced.transaction,
+            claim=produced.claim,
+            sealed=sealed,
+        ),
+    )
+
+
+pub def check_whole(
+    view: str,
+    console: str,
+    epoch: BuildEpoch,
+    selected_home: SelectedHome,
+    options: RequestOptions,
+) -> Result[CheckOutcome, str]:
+    """Check one captured unit whole, with the request's options; the compiler writes the report to the console."""
+    home = program_home(Some(selected_home))?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    ready = prepared_for(view, described_unit(epoch, options, toolchain, home.standard)?, toolchain)?
+    checked = check_prepared(ready, toolchain, options.format)?
+    return Ok(
+        CheckOutcome(
+            code=checked.code,
+            console=console,
+            body_evaluations=checked.bodies.checked,
+            body_reuses=checked.bodies.reused,
+            body_page_decodes=checked.bodies.decoded,
+        ),
+    )
+
+
+pub def build_library(
+    view: str,
+    console: str,
+    epoch: BuildEpoch,
+    selected_home: SelectedHome,
+    options: RequestOptions,
+) -> Result[i32, str]:
+    """
+    Build the captured library into its artifact directory, and publish its code graph when the request asks for it.
+    Returns the compiler's exit code.
+    """
+    home = program_home(Some(selected_home))?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    mut library = described_unit(epoch, options, toolchain, home.standard)?
+    library.kind = "library"
+    directory = dependency_artifact_dir(library.project_root, library.package, library.profile)
+    output = directory.joinpath(f"lib{crate_name(library)}.rlib")
+    ready = prepared_for(view, library, toolchain)?
+    status = compile_library_unit(ready, toolchain, output)?
+    if status != 0 or not options.codegraph:
+        return Ok(status)
+    graph = inspect_prepared(ready, toolchain)?
+    if not publish_prepared_graph(ready, toolchain, directory, graph)?:
+        return Err(f"{ready.package}: native publication changed while exporting its graph; retry the build")
+    return Ok(0)
+
+
+def described_unit(
+    epoch: BuildEpoch,
+    options: RequestOptions,
+    toolchain: Toolchain,
+    standard: Option[list[StandardPackage]],
+) -> Result[UnitDescription, str]:
+    """Describe the captured root with the request's features, interop target and program entries."""
+    if len(epoch.roots) == 0:
+        return Err("unit records require a root")
+    request = FeatureRequest(
+        features=options.features,
+        default_features=options.default_features,
+        all_features=options.all_features,
+    )
+    described = describe(
+        Path(epoch.roots[0]),
+        epoch.selection.profile,
+        request,
+        selected_toolchain=Some(toolchain),
+        selected_standard=standard,
+    )?
+    mut unit = with_c_abi_target(described, options.interop_target)?
+    unit.program_entries = options.program_entries
+    return Ok(unit)
+
+
+pub def build_rust_project(
+    console: str,
+    directory: str,
+    epoch: BuildEpoch,
+    options: RequestOptions,
+) -> Result[i32, str]:
+    """
+    Build the captured Rust project in a process of its own, as the command named `options.surface` would report it:
+    its progress and `binary:` lines go to the request's console output, its diagnostics to the console's errors.
+    Returns that process's exit code.
+    """
+    program = executable()?
+    mut command = Command.new(program)
+    _ = command.arg0(options.surface)
+    command.arg("--internal-rust-build").arg(epoch.roots[0]).arg(epoch.selection.profile).arg(options.encoded()?)
+    if directory != "":
+        command.current_dir(directory)
+    command.stdin(Stdio.null())
+    command.stdout(Stdio.from(open_stream(f"{console}.out")?))
+    command.stderr(Stdio.from(open_stream(f"{console}.err")?))
+    status = command.status().map_err((error) => f"cannot start the Rust-project build: {error}")?
+    match status.code():
+        Some(code) => return Ok(code)
+        None => return Ok(1)

@@ -54,6 +54,28 @@ from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
 
 const SCHEMA: str = "incan.engine.native-unit/1"
+# The refusal of a unit the record producers do not serve; the engine then produces it whole (`engine_units.incn`).
+pub const ORDINARY_PROGRAMS_ONLY: str = "unit records currently support ordinary program units without vocabulary or foreign headers"
+
+
+def records_program(unit: UnitDescription) -> bool:
+    """
+    Whether the record producer represents this unit shape. Provider Loaves, vocabulary providers, contract models,
+    foreign headers and Cloves keep their established whole-unit compiler path inside the records engine.
+    """
+    if (
+        unit.kind != "program"
+        or unit.vocabulary
+        or unit.vocab_entry is not None
+        or len(unit.contract_models) > 0
+        or len(unit.c_headers) > 0
+        or len(unit.cloves) > 0
+    ):
+        return false
+    for loaf in unit.loaves:
+        if loaf.is_dependency():
+            return false
+    return true
 
 
 @derive(Eq)
@@ -150,11 +172,11 @@ pub model BodySelection:
     pub retained: list[SelectedBodyRecord]
 
 
-model ProgramHome:
+pub model ProgramHome:
     """The request-owned compiler and standard packages used to describe and build one program."""
 
-    toolchain: Toolchain
-    standard: Option[list[StandardPackage]] = None
+    pub toolchain: Toolchain
+    pub standard: Option[list[StandardPackage]] = None
 
 
 pub model NativeSelection:
@@ -192,13 +214,8 @@ pub def check_program(
         selected_toolchain=Some(toolchain),
         selected_standard=home.standard,
     )?
-    if (
-        described.kind != "program"
-        or described.vocabulary
-        or len(described.contract_models) > 0
-        or len(described.c_headers) > 0
-    ):
-        return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
+    if not records_program(described):
+        return Err(str(ORDINARY_PROGRAMS_ONLY))
     ready = prepared_for(view, described, toolchain)?
     # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
     reading = body_reading(store, view, ready, epoch.inputs)?
@@ -217,7 +234,7 @@ pub def check_program(
     )
 
 
-def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+pub def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
     """
     Prepare a request's unit. An editor's overlay request was never asked for by its user, so it is unattended: it
     stops before compile-time code that no trust entry covers, and the stop names what lacks trust (RFC 117).
@@ -319,14 +336,8 @@ pub def obtain(
         selected_toolchain=Some(toolchain),
         selected_standard=home.standard,
     )?
-    if (
-        described.kind != "program"
-        or described.vocabulary
-        or len(described.contract_models) > 0
-        or len(described.c_headers) > 0
-        or len(described.cloves) > 0
-    ):
-        return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
+    if not records_program(described):
+        return Err(str(ORDINARY_PROGRAMS_ONLY))
     ready = prepared_for(program_view(handle)?, described, toolchain)?
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":
@@ -478,7 +489,7 @@ pub def view_sealed(store: Path, sealed: Option[SealedProgram]) -> Result[None, 
         Some(program) => return view_executable(store, program.fact, Path(program.binary), "program", program.shared)
 
 
-def program_home(selected: Option[SelectedHome]) -> Result[ProgramHome, str]:
+pub def program_home(selected: Option[SelectedHome]) -> Result[ProgramHome, str]:
     """Use a request's selected installation, or load one for direct producer callers."""
     match selected:
         Some(home) => return Ok(ProgramHome(toolchain=home.toolchain, standard=Some(home.standard)))
@@ -555,7 +566,7 @@ pub def selected_program(selected: Snapshot, handle: str) -> Result[Option[Nativ
         Some(text) => return Ok(Some(decoded_program(text)?))
 
 
-def program_view(handle: str) -> Result[str, str]:
+pub def program_view(handle: str) -> Result[str, str]:
     """Decode only the bounded view locator of an opaque handle; it is never a compilation identity input."""
     if len(handle) < 74 or not handle.startswith("program:") or handle[72:73] != ":":
         return Err("invalid native program handle")
@@ -618,7 +629,7 @@ def required_unit(store: Path, identity: str) -> Result[Fact, str]:
         None => return Err("selected native unit record is missing")
 
 
-def executable_payload(fact: Fact, name: str) -> Result[str, str]:
+pub def executable_payload(fact: Fact, name: str) -> Result[str, str]:
     """The payload identity of the descriptor's executable, excluding sidecars and debug files."""
     for file in fact.files:
         if file.path == name and file.program:
@@ -631,26 +642,26 @@ def program_key(handle: str) -> str:
     return f"incan.engine.native-unit\t{handle}"
 
 
-def captured_file_current(path: Path, recorded: FileMetadata) -> bool:
+pub def captured_file_current(path: Path, recorded: FileMetadata) -> bool:
     """Refuse a file replaced while compilation ran; this observation never enters compilation identity."""
     match file_metadata(path):
         Ok(Some(found)) => return found == recorded
         _ => return false
 
 
-def frozen_path(path: str, installed: str, sysroot: str) -> bool:
+pub def frozen_path(path: str, installed: str, sysroot: str) -> bool:
     """Whether an obsolete captured row belongs to an installation already admitted as immutable."""
     return path == installed or path.startswith(installed + "/") or path == sysroot or path.startswith(sysroot + "/")
 
 
-def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch], handle: str) -> Result[BuildEpoch, str]:
+pub def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch], handle: str) -> Result[BuildEpoch, str]:
     """Use this activation's captured inputs, or open a previously committed capture."""
     match captured:
         Some(epoch) => return Ok(epoch)
         None => return load_epoch(store, revision, program_view(handle)?)
 
 
-def produced_fact(found: Option[Fact]) -> Result[Fact, str]:
+pub def produced_fact(found: Option[Fact]) -> Result[Fact, str]:
     """A successful native producer must return its exact staged or committed fact."""
     match found:
         Some(fact) => return Ok(fact)

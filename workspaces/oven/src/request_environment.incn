@@ -1,0 +1,48 @@
+"""
+The environment of the command that makes an engine request, as its `Submit` carries it.
+
+A request is captured and settled as the command itself would have done it: with the command's environment, whatever
+environment the engine was started with. The engine gives each request a worker that was started with exactly these
+entries (`engine_workers.incn`).
+"""
+
+from rust::std::env import vars_os
+from compiler_worker import incidental_environment
+
+# Entries are separated by a byte no environment entry can hold.
+const SEPARATOR: str = "\u{0}"
+
+
+pub def caller_environment() -> str:
+    """This process's environment as sorted `NAME=VALUE` entries; an entry that is not Unicode is left out."""
+    mut entries: list[str] = []
+    for key, value in vars_os():
+        match key.into_string():
+            Ok(name) =>
+                match value.into_string():
+                    Ok(text) => entries.append(f"{name}={text}")
+                    Err(_) => pass
+            Err(_) => pass
+    return str(SEPARATOR).join(sorted(entries))
+
+
+pub def environment_entries(carried: str) -> Dict[str, str]:
+    """The entries a carried environment holds, by name."""
+    mut entries: Dict[str, str] = {}
+    if carried == "":
+        return entries
+    for entry in carried.split(str(SEPARATOR)):
+        parts = entry.split("=")
+        if len(parts) >= 2 and parts[0] != "":
+            entries[parts[0]] = "=".join(parts[1:])
+    return entries
+
+
+pub def environment_key(carried: str) -> str:
+    """
+    What makes two carried environments one worker's: every entry but the shell's own bookkeeping, which changes with
+    each command and directory while each request carries its actual working directory.
+    """
+    entries = environment_entries(carried)
+    names = sorted([name for name in entries.keys() if not incidental_environment(name)])
+    return str(SEPARATOR).join([f"{name}={entries[name]}" for name in names])

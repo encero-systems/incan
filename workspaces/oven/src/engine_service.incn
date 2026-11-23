@@ -197,22 +197,25 @@ def handle(
             state.stopping = true
             _ = flush_trace()
             return deliver(session.client, request, Message.Event(Event(status="Stopping", trace_handle="")))
-        Message.Submit(_) =>
+        Message.Submit(submit) =>
             if state.draining or state.stopping:
                 return Err(Refusal(kind=RefusalKind.Draining, detail="engine is draining"))
             session.open.append(request)
-            return to_worker(session, workers, frame)
-        Message.Resolve(_) => return to_worker(session, workers, frame)
+            return to_worker(session, workers, frame, submit.environment)
+        Message.Resolve(_) => return to_worker(session, workers, frame, "")
         Message.Cancel(_) => return to_held_worker(session, frame)
         Message.Pin(_) => return to_held_worker(session, frame)
         Message.Release(_) => return to_held_worker(session, frame)
         _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
 
 
-def to_worker(mut session: Session, mut workers: Workers, frame: Envelope) -> Result[None, Refusal]:
-    """Carry a request to the client's worker, taking a worker for the client's first one."""
+def to_worker(mut session: Session, mut workers: Workers, frame: Envelope, environment: str) -> Result[None, Refusal]:
+    """
+    Carry a request to the client's worker. The client's first request takes a worker of the command's environment,
+    which holds every later request of that client.
+    """
     if session.lane is None:
-        socket, lane = workers.take()?
+        socket, lane = workers.take(environment)?
         session.worker = socket
         session.lane = Some(lane)
     return to_held_worker(session, frame)

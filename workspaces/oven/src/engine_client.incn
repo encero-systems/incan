@@ -12,7 +12,9 @@ from compiler_worker import collect_console, relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
 from engine_epochs import record_text, prepare_submit
-from engine_messages import Complete, CompletionStatus, Message, Release, Submit
+from engine_messages import BindingOutcome, Complete, CompletionStatus, Message, Release, Submit
+from engine_request_options import RequestOptions
+from request_environment import caller_environment
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
 from overlay_request import OverlayRequest, parse_served
@@ -196,7 +198,7 @@ def built_overlay(editor: str, target: Path, request: OverlayRequest) -> Result[
     console_capture["capturing"] = "yes"
     console_capture["captured"] = ""
     console_capture["errors"] = ""
-    built = execute_in("build", target, request.profile, [], None, "", false, editor, None)
+    built = execute_in("build", target, request.profile, [], None, "", false, editor, None, "")
     console_capture["capturing"] = ""
     code = built?
     none: list[JsonValue] = []
@@ -227,6 +229,7 @@ def submit_check(
         options="json",
         observation_policy=policy,
         directory=working_directory().unwrap_or(""),
+        environment=caller_environment(),
     )
     send(channel, request, Message.Submit(submit))?
     console_capture["capturing"] = "yes"
@@ -293,11 +296,13 @@ pub def execute(
     profile: str,
     arguments: list[str],
     argv0: Option[str],
-    format: str,
+    options: RequestOptions,
     proofs: bool,
+    output: str = "",
 ) -> Result[i32, str]:
     """
-    Build or run one file through the selected engine, without a legacy fallback.
+    Build, run or check one root through the engine, with the request's unit options; a build with `output` also
+    places a fresh copy of its executable there.
 
     1. Discover the physical store's compatible engine and submit the program root.
     2. Wait for accepted capture and caller-specific completion, relaying diagnostic bytes separately.
@@ -308,9 +313,13 @@ pub def execute(
     mut view_profile = profile
     if command == "check":
         view_profile = profile + "+check"
+    # A request with unit options is a view of its own too: its results are another selection.
+    sent = options.encoded()?
+    if not options.plain():
+        view_profile = view_profile + "+" + fingerprint([sent])?[:16]
     bound = selected_home_view()?
     view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"))?
-    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound)
+    return execute_in(command, absolute, profile, arguments, argv0, sent, proofs, view, bound, output)
 
 
 def view_scope(bound: Option[str]) -> Result[str, str]:
@@ -329,10 +338,11 @@ def execute_in(
     profile: str,
     arguments: list[str],
     argv0: Option[str],
-    format: str,
+    options: str,
     proofs: bool,
     view: str,
     bound: Option[str],
+    output: str,
 ) -> Result[i32, str]:
     """Run one records request in `view`, forking it from the home view `bound` names when it does not exist yet."""
     source = absolute
@@ -349,8 +359,19 @@ def execute_in(
         # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
         if let Some(found) = bound:
             fork_project_view(store, found, view)?
-    elif not proofs and command != "check":
-        if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
+    elif not proofs and command != "check" and absolute.is_file():
+        if let Some(code) = execute_local(
+            store,
+            selected,
+            compiler,
+            command,
+            absolute,
+            profile,
+            arguments,
+            argv0,
+            options,
+            output,
+        )?:
             return Ok(code)
     request = session_id()?
     identity = identity_for(store, compiler)?
@@ -368,9 +389,10 @@ def execute_in(
                 view=view,
                 input_selection=profile,
                 requested_roots=absolute.0,
-                options=format,
+                options=options,
                 observation_policy=policy,
                 directory=working_directory().unwrap_or(""),
+                environment=caller_environment(),
             ),
         ),
     )?
@@ -381,7 +403,8 @@ def execute_in(
         println(report(store, complete.observation_handle)?)
     if complete.status != CompletionStatus.Success:
         return Ok(1)
-    if command == "check":
+    # A check, a library build and a Rust-project build select no executable.
+    if command == "check" or complete.binding_outcome == BindingOutcome.NotSelected:
         _ = channel.transport.close()
         return Ok(0)
     mut binary = ""
@@ -395,6 +418,8 @@ def execute_in(
             program = unit.identity
     # 3. Complete already holds this caller's execution lease, and the run leases the unit in the bakery until the
     # program exits; the engine never runs or retries user code.
+    if command == "build":
+        deliver_output(Path(binary), output)?
     executing = begin_work()
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
@@ -428,6 +453,8 @@ def execute_local(
     profile: str,
     arguments: list[str],
     argv0: Option[str],
+    options: str,
+    output: str,
 ) -> Result[Option[i32], str]:
     """An unchanged local capture of an existing project view and its selected native record need no service request."""
     view = selected.view
@@ -439,7 +466,7 @@ def execute_local(
             view=view,
             input_selection=profile,
             requested_roots=source.0,
-            options="",
+            options=options,
             observation_policy="",
         ),
     )?
@@ -466,12 +493,28 @@ def execute_local(
             trace(
                 f"engine local: encodings={captured.encodings} publications={captured.commits} reads={captured.counters.in_reach.reads} hashes={captured.counters.in_reach.hashes}",
             )
+            if command == "build":
+                deliver_output(Path(unit.binary), output)?
             if command == "run":
                 executing = begin_work()
                 code = run_program(Path(unit.binary), arguments, argv0, true, unit.identity)?
                 record_work(Operation.EngineChild, source.0, executing)
                 return Ok(Some(code))
             return Ok(Some(0))
+
+
+def deliver_output(binary: Path, output: str) -> Result[None, str]:
+    """After a successful program build, place a fresh copy of the executable in OUTPUT_DIR, as 0.5.1's build did."""
+    if output == "":
+        return Ok(None)
+    directory = Path(output)
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    destination = directory.joinpath(binary.name())
+    # A new file rather than one rewritten in place, so a program that ran from it is never replaced under itself.
+    if destination.exists():
+        destination.unlink().map_err((error) => f"cannot {error.message()}")?
+    _ = binary.copy(destination, true, true).map_err((error) => f"cannot {error.message()}")?
+    return Ok(None)
 
 
 pub def service_identity(store: Path) -> Result[Identity, str]:

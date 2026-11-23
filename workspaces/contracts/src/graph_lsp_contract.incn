@@ -158,7 +158,6 @@ def check_vocabulary(incan: str, binary: str, project: Path) -> Result[None, str
 def prepare(incan: str, project: Path) -> Result[None, str]:
     """Prepare the consumer's declared Loaves through Oven before a live session reads their compiled interfaces."""
     mut command = Command.new(incan)
-    command.env("OVEN_OWNER", "off")
     command.arg("build").arg("src/main.incn").current_dir(project.0)
     output = command.output().map_err((error) => str(error))?
     if not output.status.success():

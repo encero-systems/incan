@@ -117,8 +117,8 @@ pub def launch(
     """
     Start one child with separate captured streams; the caller owns waiting and collection.
 
-    Disposable case projects never retain resident owners. `environment` holds `NAME=value` settings added to the
-    inherited environment, as a case's `environment:` block declares them, and may explicitly override that default.
+    `environment` holds `NAME=value` settings added to the inherited environment, as a case's `environment:` block
+    declares them.
     When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
     A command runs with the tracing channel off unless its settings name one: a case that reads its trace asks for
     its channel with `traced_setting`, so tracing costs no other case its time.
@@ -129,7 +129,6 @@ pub def launch(
     # Every command starts with the case's `target/incan` in place, as cases that write below `target/` expect.
     trace_file(project).parent().mkdir(true, true).map_err((error) => error.message())?
     command.env("INCAN_ENGINE_TRACE", "")
-    command.env("OVEN_OWNER", "off")
     for setting in environment:
         name, value = environment_setting(setting)?
         command.env(name, value)

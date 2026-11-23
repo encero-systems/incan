@@ -70,3 +70,20 @@ pub def status_code(code: int) -> i32:
     for step in range(code):
         status += 1
     return status
+
+
+pub def spawn_detached_in(
+    executable: str,
+    arguments: list[str],
+    environment: dict[str, str],
+) -> Result[Process, str]:
+    """Start an internal service with exactly `environment`, its own group and no command console streams."""
+    mut command = Command.new(executable)
+    for argument in arguments:
+        command.arg(argument)
+    command.env_clear()
+    for name in sorted([key for key in environment.keys()]):
+        command.env(name, environment[name])
+    command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null()).process_group(0)
+    child = command.spawn().map_err((error) => f"cannot start service: {error}")?
+    return Ok(Process.from_child(child))

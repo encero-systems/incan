@@ -3,23 +3,30 @@ The request workers of one engine: processes that each settle one client's reque
 
 A request's capture and settlement use process-wide state, and one compiler activation runs at a time in a process.
 So the engine settles nothing itself: it gives each client a worker of its own for as long as the client stays
-connected, and independent requests progress together. A worker a client has left serves the next client.
+connected, and independent requests progress together.
+
+A worker is started with exactly the environment of the command it serves, so a request is captured and settled as
+that command would have done it, whatever environment the engine itself has. A worker a client has left serves the
+next client whose command has the same environment.
 """
 
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from pub::incan_platform.ipc import dial
-from core_process import Process, executable, running, spawn_detached, terminate
+from core_process import Process, executable, running, spawn_detached, spawn_detached_in, terminate
 from engine_channel import Channel
 from engine_endpoint import handshake, transport, worker_socket
 from engine_messages import Message, Stop
 from engine_state import Identity
 from engine_wire import Refusal, zero_id
+from request_environment import environment_entries, environment_key
 
 const STARTUP_POLLS: int = 2500
 # A worker whose last connection closed has lost its engine, and leaves this many seconds later.
 const ORPHAN_SECONDS: int = 2
+# Workers no client holds that the engine keeps for the next client; an older one is told to leave.
+const SPARE_WORKERS: int = 4
 
 
 class Worker:
@@ -27,6 +34,8 @@ class Worker:
 
     pub process: Process
     pub socket: str
+    # What the worker's environment is one worker's for (`environment_key`); empty for the engine's own environment.
+    pub environment: str
     # The engine's connection: it keeps the worker from leaving as an orphan, and carries its Stop.
     pub control: Channel
     # Whether a client holds this worker.
@@ -41,16 +50,17 @@ pub class Workers:
     pub members: list[Worker] = []
     pub started: int = 0
 
-    pub def take(mut self) -> Result[tuple[str, Channel], Refusal]:
+    pub def take(mut self, environment: str) -> Result[tuple[str, Channel], Refusal]:
         """
-        A connection to a worker no client holds, named by the worker's socket. A worker that left is forgotten, and
-        one is started when every worker is held.
+        A connection to a worker of `environment` that no client holds, named by the worker's socket. A worker that
+        left is forgotten, and one is started when no such worker is free.
         """
+        key = environment_key(environment)
         mut gone: list[str] = []
         mut taken: Option[tuple[str, Channel]] = None
         for index in range(len(self.members)):
             mut member = self.members[index]
-            if member.held:
+            if member.held or member.environment != key:
                 continue
             match connected(member.socket, self.identity):
                 Ok(channel) =>
@@ -66,7 +76,7 @@ pub class Workers:
             self.members = [member for member in self.members if member.socket not in gone]
         if let Some(found) = taken:
             return Ok(found)
-        mut worker = self.start()?
+        mut worker = self.start(environment, key)?
         channel = connected(worker.socket, self.identity)?
         worker.held = true
         socket = worker.socket
@@ -74,19 +84,28 @@ pub class Workers:
         return Ok((socket, channel))
 
     pub def release(mut self, socket: str) -> None:
-        """The client that held the worker at `socket` left; the worker serves the next one."""
+        """
+        The client that held the worker at `socket` left; the worker serves the next one. Beyond the spare bound, the
+        workers that have been free longest are told to leave.
+        """
+        mut spare: list[str] = []
         for index in range(len(self.members)):
             mut member = self.members[index]
             if member.socket == socket:
                 member.held = false
                 self.members[index] = member
+            if not member.held:
+                spare.append(member.socket)
+        # Members are kept in the order they started, so the first spare ones are the oldest.
+        for position in range(len(spare) - SPARE_WORKERS):
+            self.dismiss(spare[position])
 
     pub def dismiss(mut self, socket: str) -> None:
-        """The client that held the worker at `socket` left in the middle of a request; the worker leaves after it."""
+        """Tell the worker at `socket` to leave once the request it settles, if any, has completed."""
         for index in range(len(self.members)):
             mut member = self.members[index]
             if member.socket == socket:
-                _ = member.control.send(zero_id(), Message.Stop(Stop(reason="its client left")))
+                _ = member.control.send(zero_id(), Message.Stop(Stop(reason="the engine has no client for it")))
         self.members = [member for member in self.members if member.socket != socket]
 
     pub def retire(mut self) -> None:
@@ -96,7 +115,7 @@ pub class Workers:
             _ = member.control.send(zero_id(), Message.Stop(Stop(reason="the engine is leaving")))
         self.members = []
 
-    def start(mut self) -> Result[Worker, Refusal]:
+    def start(mut self, environment: str, key: str) -> Result[Worker, Refusal]:
         """Start one worker in this executable's request role and connect to it once it listens."""
         program = executable().map_err(transport)?
         self.started += 1
@@ -111,16 +130,26 @@ pub class Workers:
             socket,
             str(ORPHAN_SECONDS),
         ]
-        mut process = spawn_detached(program, arguments, {}).map_err(transport)?
+        mut process = worker_process(program, arguments, environment).map_err(transport)?
         for _poll in range(STARTUP_POLLS):
             match connected(socket, self.identity):
-                Ok(control) => return Ok(Worker(process=process, socket=socket, control=control))
+                Ok(control) => return Ok(Worker(process=process, socket=socket, environment=key, control=control))
                 Err(_) => pass
             if not running(process).map_err(transport)?:
                 return Err(transport("engine request worker exited before Welcome"))
             sleep(Duration.from_millis(2))
         terminate(process).map_err(transport)?
         return Err(transport("engine request worker did not acknowledge startup"))
+
+
+def worker_process(program: str, arguments: list[str], environment: str) -> Result[Process, str]:
+    """
+    Start a worker process with exactly the carried environment, so the compiler it starts runs as the command's
+    own would; without a carried environment it has the engine's.
+    """
+    if environment == "":
+        return spawn_detached(program, arguments, {})
+    return spawn_detached_in(program, arguments, environment_entries(environment))
 
 
 def connected(socket: str, identity: Identity) -> Result[Channel, Refusal]:

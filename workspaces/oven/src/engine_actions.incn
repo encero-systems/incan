@@ -6,17 +6,27 @@ from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
 from request_directory import serve_from, served
-from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection, view_sealed
+from engine_programs import (
+    ORDINARY_PROGRAMS_ONLY,
+    CheckOutcome,
+    ProgramOutcome,
+    check_program,
+    obtain,
+    prepare_selection,
+    view_sealed,
+)
+from engine_request_options import RequestOptions, request_options
+from engine_units import build_library, build_rust_project, check_whole, obtain_whole
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
 from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts
 from observation import trace
 from jec import begin, record
-from pub::incan_platform.trace import Operation
 from installation_page import begin_command, end_command
-from trace_adapter import count_frozen_work, finish_frozen_counting
+from trace_adapter import count_frozen_work, finish_frozen_counting, flush as flush_trace
 from toolchain import toolchain_directory
 from home import standard_library_dir
+from pub::incan_platform.trace import Operation
 
 
 pub model Pending:
@@ -30,7 +40,8 @@ pub model Pending:
     pub producer: str
     pub handle: str
     pub command: str
-    pub format: str
+    # The request's options as `Submit.options` carried them (`engine_request_options.incn`).
+    pub options: str
     # The directory the client's command ran in; its compilations are for that directory.
     pub directory: str = ""
 
@@ -59,6 +70,8 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     ready = settled_request(store, pending)
     served()
     end_command()
+    # A request worker persists for later clients. Flush this request's observations before its client reads them.
+    _ = flush_trace()
     return ready
 
 
@@ -74,22 +87,20 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     run = hexlify(pending.request)
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    options = request_options(pending.command, pending.options)?
     if pending.command == "check":
-        return settled_check(store, pending, directory.joinpath(run).0)
+        return settled_check(store, pending, options, directory.joinpath(run).0)
+    root = Path(pending.capture.epoch.roots[0])
+    if pending.command == "build" and root.is_dir():
+        return settled_rust_project(pending, options, directory.joinpath(run).0)
+    if pending.command == "build" and root.name() == "lib.incn":
+        return settled_library(store, pending, options, directory.joinpath(run).0)
     producing = begin()
     toolchain = toolchain_directory()?.0 + "/"
     standard = standard_library_dir()?.0 + "/"
     count_frozen_work([toolchain, standard])
     reading = read_counts()
-    produced_result = obtain(
-        store,
-        pending.capture.revision,
-        pending.handle,
-        directory.joinpath(run).0,
-        Some(pending.capture.epoch),
-        pending.producer,
-        Some(pending.capture.selected),
-    )
+    produced_result = produced_program(store, pending, options, directory.joinpath(run).0)
     frozen = finish_frozen_counting()
     read = read_counts()
     mut produced = produced_result?
@@ -169,26 +180,130 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
             )
 
 
-def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
-    """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
-    checking = begin()
-    outcome = check_program(
-        store,
-        pending.capture.revision,
-        console,
-        pending.format,
-        Some(pending.capture.epoch),
-        Some(pending.capture.selected),
-        pending.view,
-    )?
-    record(Operation.EngineUnit, pending.capture.revision, checking)
+def produced_program(
+    store: Path,
+    pending: Pending,
+    options: RequestOptions,
+    console: str,
+) -> Result[ProgramOutcome, str]:
+    """
+    Produce the captured program: from records when the request has no unit options and the record producers serve
+    the unit, otherwise whole.
+    """
+    if options.plain():
+        match obtain(
+            store,
+            pending.capture.revision,
+            pending.handle,
+            console,
+            Some(pending.capture.epoch),
+            pending.producer,
+            Some(pending.capture.selected),
+        ):
+            Ok(produced) => return Ok(produced)
+            Err(reason) =>
+                if not whole_unit_boundary(reason):
+                    return Err(reason)
+    return obtain_whole(store, pending.handle, console, pending.capture.epoch, pending.capture.selected, options)
+
+
+def checked_program(store: Path, pending: Pending, options: RequestOptions, console: str) -> Result[CheckOutcome, str]:
+    """Check the captured unit: with the view's records when the record producers serve it, otherwise whole."""
+    if options.plain():
+        match check_program(
+            store,
+            pending.capture.revision,
+            console,
+            options.format,
+            Some(pending.capture.epoch),
+            Some(pending.capture.selected),
+            pending.view,
+        ):
+            Ok(checked) => return Ok(checked)
+            Err(reason) =>
+                if not whole_unit_boundary(reason):
+                    return Err(reason)
+    return check_whole(pending.view, console, pending.capture.epoch, pending.capture.selected, options)
+
+
+def whole_unit_boundary(reason: str) -> bool:
+    """
+    Whether the record producer reached a checked shape it does not represent and the engine must produce the same
+    captured unit whole. These are producer boundaries, not compiler refusals: a whole compile still reports any real
+    source refusal to the caller.
+    """
+    if reason == ORDINARY_PROGRAMS_ONLY or reason == "records lowering requires the complete compiler context":
+        return true
+    if reason == "successful graph-enabled compile did not publish body output rows":
+        return true
+    if reason.startswith("compiled body output has no matching owner source:"):
+        return true
+    return reason.startswith("checked namespace declaration `") and reason.endswith(" has no canonical identity")
+
+
+def settled_library(store: Path, pending: Pending, options: RequestOptions, console: str) -> Result[Ready, str]:
+    """Build the captured library, publish its capture, and return no native selection or execution lease."""
+    building = begin()
+    code = build_library(pending.view, console, pending.capture.epoch, pending.capture.selected, options)?
+    record(Operation.EngineUnit, pending.capture.revision, building)
+    return unselected(pending, code, console, "")
+
+
+def settled_rust_project(pending: Pending, options: RequestOptions, console: str) -> Result[Ready, str]:
+    """
+    Build the captured Rust project and return no native selection or execution lease. Its capture is not published:
+    the build decides its own freshness, and nothing later reads this request's epoch.
+    """
+    building = begin()
+    code = build_rust_project(console, pending.directory, pending.capture.epoch, options)?
+    record(Operation.EngineUnit, pending.capture.revision, building)
+    mut status = CompletionStatus.Success
+    if code != 0:
+        status = CompletionStatus.Failed
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot=pending.capture.snapshot.digest,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=status,
+                observation_handle="",
+            ),
+            console=console,
+        ),
+    )
+
+
+def unselected(pending: Pending, code: i32, console: str, observation: str) -> Result[Ready, str]:
+    """Publish a request's capture and complete it with the producer's status and no native selection."""
     captured = after_projection(pending.capture)?
     mut snapshot = captured.snapshot.digest
     if let Some(transaction) = captured.transaction:
         snapshot = commit(transaction).map_err((error) => error.message())?.digest
     mut status = CompletionStatus.Success
-    if outcome.code != 0:
+    if code != 0:
         status = CompletionStatus.Failed
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot=snapshot,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=status,
+                observation_handle=observation,
+            ),
+            console=console,
+        ),
+    )
+
+
+def settled_check(store: Path, pending: Pending, options: RequestOptions, console: str) -> Result[Ready, str]:
+    """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
+    checking = begin()
+    outcome = checked_program(store, pending, options, console)?
+    record(Operation.EngineUnit, pending.capture.revision, checking)
     # A requested report shows that a check produced no unit, no plans and no native bake, and which bodies it checked.
     mut observation = ""
     if pending.proofs:
@@ -200,19 +315,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
             body_page_decodes=outcome.body_page_decodes,
         )
         observation = retain(store, hexlify(pending.request), pending.capture.counters, checked)?
-    return Ok(
-        Ready(
-            message=Complete(
-                snapshot=snapshot,
-                admission_proof="",
-                result_handles="",
-                binding_outcome=BindingOutcome.NotSelected,
-                status=status,
-                observation_handle=observation,
-            ),
-            console=outcome.console,
-        ),
-    )
+    return unselected(pending, outcome.code, outcome.console, observation)
 
 
 def required_pin(pin: Option[Rc[LockGuard]]) -> Result[Rc[LockGuard], str]:

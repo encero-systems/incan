@@ -36,6 +36,8 @@ pub model Submit:
     pub observation_policy: str
     # The directory the client's command ran in, which its compilations are for; never the engine's own.
     pub directory: str = ""
+    # The command's environment (`request_environment.incn`); empty selects the engine's own.
+    pub environment: str = ""
 
 
 pub model Accepted:

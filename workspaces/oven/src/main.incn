@@ -6,6 +6,7 @@ from rust::std::process import exit
 from rust::std::string import String as RustString
 from std.fs import Path
 from engine_client import execute as execute_records, execute_overlay, serve_overlays
+from engine_request_options import RequestOptions, request_options
 from overlay_request import parse_overlay, parse_serve
 from engine_proofs import report as proof_report
 from engine_requests import serve_requests as serve_engine_requests
@@ -22,7 +23,7 @@ from unit import describe, project_root_of, retired_refusal, with_c_abi_target
 from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
-from rust_units import scheduled_unit
+from rust_units import build_rust, scheduled_unit
 from rust_lint import lint_rust
 from rust_build import RustBuild
 from rust_registry import read_registry_units
@@ -59,6 +60,7 @@ from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
+from features import FeatureRequest
 from unit_options import Options, parse_options, program_arguments
 from surfaces import INSPECT_OVEN_MOVED, INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
 from trust_commands import trust_command
@@ -224,6 +226,9 @@ def dispatch(command: str, rest: list[str]) -> None:
         match serve_engine(rest):
             Ok(_) => return
             Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return
+    if command == "--internal-rust-build":
+        rust_project_build(rest)
         return
     if command == "--internal-engine-requests":
         match serve_engine_requests(rest):
@@ -471,7 +476,7 @@ def fail(message: str, code: i32) -> None:
 
 
 def records_command(command: str, arguments: list[str]) -> None:
-    """Dispatch only connected records capabilities; unsupported commands are refused at this boundary."""
+    """Dispatch a routed command to the engine; `test` and `describe-unit` compile through the unit compiler here."""
     if command == "inspect" and len(arguments) == 3 and arguments[0] == "run" and arguments[2] == "--proofs":
         match bakery().and_then((store) => proof_report(store, arguments[1])):
             Ok(text) => println(text)
@@ -496,35 +501,109 @@ def records_command(command: str, arguments: list[str]) -> None:
                 format = selected[1]
     else:
         own, passed = program_arguments(arguments)
-    match parse_options(own, "."):
+    match parse_options(own, ".", command == "build"):
         Err(reason) => syntax_error(command, reason)
         Ok(parsed) =>
             options = records_validated(command, located(command, parsed))
-            if (
-                options.feature_options
-                or len(options.substitutes) > 0
-                or len(options.program_entries) > 0
-                or options.interop_target != ""
-            ):
-                fail(
-                    f"{invoked()} {command}: unit records do not implement feature, substitution, program-entry or interop-target options",
-                    1,
-                )
             if command == "build" and (len(passed) > 0 or options.argv0 is not None):
                 syntax_error(command, "program arguments and --argv0 require run")
+            # A directory with no Incan entry names a Rust project, which only `build` takes.
             mut source = Path(options.path)
+            mut program = true
             match entry_source(source, options.manifests):
                 Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
-                Ok(None) => fail(f"{invoked()} {command}: records engine requires an Incan program", 1)
-                Ok(Some(selected)) => source = selected
+                Ok(None) =>
+                    if command != "build":
+                        mut purpose = "run"
+                        if command == "check":
+                            purpose = "check"
+                        fail(
+                            f"{invoked()} {command}: {source.0}: the Loaf has no Incan entry to {purpose}; name a source file",
+                            1,
+                        )
+                    program = false
+                Ok(Some(selected)) =>
+                    source = selected
+                    program = selected.name() != "lib.incn" or command != "build"
+            if options.output != "" and not program:
+                fail(f"{invoked()} {command}: OUTPUT_DIR requires an Incan program build", 1)
             # Check observes one source reach without mutating a project lock.
             if command != "check":
                 prepared_lock(command, options)
+            else:
+                warn_tolerated_entries("check", Path(options.path))
             finish(
                 command,
-                execute_records(command, source, options.profile, passed, options.argv0, format, options.engine_report),
+                execute_records(
+                    command,
+                    source,
+                    options.profile,
+                    passed,
+                    options.argv0,
+                    engine_options(options, format, source),
+                    options.engine_report,
+                    options.output,
+                ),
                 format,
             )
+
+
+def rust_project_build(arguments: list[str]) -> None:
+    """
+    The engine's Rust-project build, in a process of its own: compile the project at the first argument for the profile
+    at the second with the request options at the third, and print the path of each binary it built.
+    """
+    if len(arguments) != 3:
+        fail("the internal Rust-project build requires a project, a profile and request options", 2)
+    match request_options("build", arguments[2]):
+        Err(reason) => fail(f"{invoked()} build: {reason}", 1)
+        Ok(selected) =>
+            options = Options(
+                path=arguments[0],
+                profile=arguments[1],
+                request=FeatureRequest(
+                    features=selected.features,
+                    default_features=selected.default_features,
+                    all_features=selected.all_features,
+                ),
+                substitutes=selected.substitutes,
+            )
+            match rust_request(options).and_then((request) => build_rust(request)):
+                Err(reason) => fail(f"{invoked()} build: {reason}", 1)
+                Ok(binaries) =>
+                    for binary in binaries:
+                        println(f"binary: {binary}")
+
+
+def engine_options(options: Options, format: str, root: Path) -> RequestOptions:
+    """
+    The unit options a routed command sends with its request; paths are made absolute for the engine. A directory
+    root is a Rust project, whose build reports under this command's name.
+    """
+    mut surface = ""
+    if root.is_dir():
+        surface = invoked()
+    mut substitutes: Dict[str, str] = {}
+    for name in options.substitutes.keys():
+        substitutes[name] = absolute_path(options.substitutes[name])
+    return RequestOptions(
+        format=format,
+        features=options.request.features,
+        default_features=options.request.default_features,
+        all_features=options.request.all_features,
+        substitutes=substitutes,
+        program_entries=[absolute_path(entry) for entry in options.program_entries],
+        interop_target=options.interop_target,
+        codegraph=options.codegraph,
+        surface=surface,
+    )
+
+
+def absolute_path(path: str) -> str:
+    """`path` from the root; one that cannot be resolved is sent as it was given, and the engine reports it."""
+    match Path(path).absolute():
+        Ok(found) => return found.0
+        Err(_) => return path
 
 
 def records_validated(command: str, options: Options) -> Options:

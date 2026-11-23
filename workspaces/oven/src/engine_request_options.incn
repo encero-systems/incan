@@ -1,0 +1,134 @@
+"""
+The unit options of one engine request, as the client sends them in `Submit.options` and the engine reads them back.
+
+A request with none of them keeps the plain spellings: nothing for `run` and `build`, the report format for `check`.
+Any other request sends one canonical JSON document, so equal options spell one text: the captured epoch and the
+request's view are named from it.
+"""
+
+from std.json import JsonValue, parse
+from files import json_text
+from json_fields import required_items, required_text, string_value
+
+const SCHEMA: str = "incan.engine.request-options/1"
+const FORMATS: FrozenList[str] = ["text", "json"]
+
+
+@derive(Eq)
+pub model RequestOptions:
+    """What a request selects besides its root and profile."""
+
+    # A check's report format; empty for every other command.
+    pub format: str = ""
+    pub features: list[str] = []
+    pub default_features: bool = true
+    pub all_features: bool = false
+    # Rust-project substitutions, by crate name.
+    pub substitutes: Dict[str, str] = {}
+    pub program_entries: list[str] = []
+    pub interop_target: str = ""
+    # A library build also publishes its code graph.
+    pub codegraph: bool = false
+    # The command name a Rust-project build reports under (`oven` or `incan`); empty for every other request.
+    pub surface: str = ""
+
+    pub def plain(self) -> bool:
+        """Whether the request selects nothing beyond a root, a profile and a check's format."""
+        return (
+            len(self.features) == 0
+            and self.default_features
+            and not self.all_features
+            and len(self.substitutes) == 0
+            and len(self.program_entries) == 0
+            and self.interop_target == ""
+            and not self.codegraph
+            and self.surface == ""
+        )
+
+    pub def encoded(self) -> Result[str, str]:
+        """The options as `Submit.options` carries them: the plain spelling, or one canonical document."""
+        if self.plain():
+            return Ok(self.format)
+        names = sorted([name for name in self.substitutes.keys()])
+        fields = {
+            "schema": JsonValue.string(SCHEMA),
+            "format": JsonValue.string(self.format),
+            "features": JsonValue.array([JsonValue.string(name) for name in sorted(self.features)]),
+            "default_features": JsonValue.bool(self.default_features),
+            "all_features": JsonValue.bool(self.all_features),
+            "substitutes": JsonValue.array(
+                [JsonValue.string(f"{name}={self.substitutes[name]}") for name in names],
+            ),
+            "program_entries": JsonValue.array([JsonValue.string(entry) for entry in self.program_entries]),
+            "interop_target": JsonValue.string(self.interop_target),
+            "codegraph": JsonValue.bool(self.codegraph),
+            "surface": JsonValue.string(self.surface),
+        }
+        return json_text(JsonValue.object(fields))
+
+
+pub def request_options(command: str, text: str) -> Result[RequestOptions, str]:
+    """
+    Read a request's options for `command`, refusing what the command does not take.
+
+    1. A plain spelling is the check's format, or nothing.
+    2. Anything else is the canonical document.
+    3. A check names its format; no other command has one.
+    """
+    mut options = RequestOptions()
+    # 1. and 2. The document is recognized by its first byte; a format never starts with a brace.
+    if text.startswith("{"):
+        options = decoded(text)?
+    else:
+        options.format = text
+    # 3. The format belongs to check alone.
+    if command == "check":
+        if options.format not in FORMATS:
+            return Err("unit records check requires a text or json report format")
+    elif options.format != "":
+        return Err("unit records run and build accept no report format")
+    return Ok(options)
+
+
+def decoded(text: str) -> Result[RequestOptions, str]:
+    """The options one canonical document states."""
+    document = parse(text).map_err((error) => f"request options: {error.message()}")?
+    if required_text(document, "schema")? != SCHEMA:
+        return Err("request options have another schema")
+    mut substitutes: Dict[str, str] = {}
+    for item in required_items(document, "substitutes")?:
+        parts = string_value(item)?.split("=")
+        if len(parts) < 2 or parts[0] == "":
+            return Err("request options name a substitution without a crate")
+        substitutes[parts[0]] = "=".join(parts[1:])
+    return Ok(
+        RequestOptions(
+            format=required_text(document, "format")?,
+            features=texts(document, "features")?,
+            default_features=flag(document, "default_features")?,
+            all_features=flag(document, "all_features")?,
+            substitutes=substitutes,
+            program_entries=texts(document, "program_entries")?,
+            interop_target=required_text(document, "interop_target")?,
+            codegraph=flag(document, "codegraph")?,
+            surface=required_text(document, "surface")?,
+        ),
+    )
+
+
+def texts(document: JsonValue, key: str) -> Result[list[str], str]:
+    """A required array of strings."""
+    mut found: list[str] = []
+    for item in required_items(document, key)?:
+        found.append(string_value(item)?)
+    return Ok(found)
+
+
+def flag(document: JsonValue, key: str) -> Result[bool, str]:
+    """A required Boolean field."""
+    match document.get(key):
+        Some(value) =>
+            match value.as_bool():
+                Some(found) => return Ok(found)
+                None => return Err(f"request options: `{key}` is not a Boolean")
+        None => return Err(f"request options: `{key}` is missing")

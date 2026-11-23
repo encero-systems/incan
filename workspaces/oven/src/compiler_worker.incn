@@ -427,7 +427,7 @@ def environment() -> Result[list[str], str]:
     return Ok(sorted(entries))
 
 
-def incidental_environment(name: str) -> bool:
+pub def incidental_environment(name: str) -> bool:
     """
     Exclude console routing, the removed bootstrap switch and the shell's own bookkeeping from compiler configuration
     identity. A shell rewrites `_`, `PWD`, `OLDPWD` and `SHLVL` for every command and directory; each request carries
