@@ -85,8 +85,10 @@ def type_parameters(callable: JsonValue) -> Result[str, str]:
         bounds = [type_bound(bound)? for bound in items(parameter.get("bounds"))?]
         if len(bounds) == 0:
             spelled.append(name)
+        elif len(bounds) == 1:
+            spelled.append(f"{name} with {bounds[0]}")
         else:
-            spelled.append(f"{name} with {", ".join(bounds)}")
+            spelled.append(f"{name} with ({", ".join(bounds)})")
     if len(spelled) == 0:
         return Ok("")
     return Ok(f"[{", ".join(spelled)}]")
