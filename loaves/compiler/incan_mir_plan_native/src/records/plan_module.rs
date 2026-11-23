@@ -1,10 +1,11 @@
 //! A module's plan record: the plan function of every body of one module, as Bakery pages it for admission.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::wire::{
     MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, boolean_value, decode_graph_row, encode_graph_row,
-    items, number, required, text, tuple_items,
+    field, items, number, required, text, tuple_items,
 };
 
 /// The family of a module's plan record.
@@ -292,6 +293,20 @@ pub fn decode_plan_module_selection(encoded: &[u8]) -> Result<PlanModuleSelectio
     Ok(PlanModuleSelectionRecord { scope, modules })
 }
 
+const WHOLE_ADMISSION_SELECTOR: &[u8] = b"admwhl\x00";
+static WHOLE_ADMISSION: Shape = Shape {
+    selector: WHOLE_ADMISSION_SELECTOR,
+    path: "incan.module-admission-whole/1",
+    body: ShapeBody::Record(&[
+        field(b"count_", "count", "i64"),
+        field(b"digest", "digest", "string"),
+        field(b"module", "module", "string"),
+        field(b"output", "output", "string"),
+        field(b"select", "selection", "string"),
+    ]),
+};
+static WHOLE_ADMISSION_SCHEMA: Schema = Schema::new(&[&WHOLE_ADMISSION]);
+
 /// A lowering outcome that names the entire current positioned module selected by this compile request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WholeModuleAdmission {
@@ -302,14 +317,49 @@ pub struct WholeModuleAdmission {
     pub selection: String,
 }
 
+impl WholeModuleAdmission {
+    /// Check the wire fields before joining this outcome to its independent selection and staged page.
+    fn validate(&self) -> Result<(), String> {
+        if self.module.is_empty()
+            || self.output.is_empty()
+            || !canonical_digest(&self.digest)
+            || !canonical_digest(&self.selection)
+            || !(1..=MAX_PLAN_MODULE_FUNCTIONS as i64).contains(&self.count)
+        {
+            return Err("malformed whole-module Plan admission".into());
+        }
+        Ok(())
+    }
+}
+
 /// Encode one versioned complete admission, without repeating function identities or placement.
-pub fn encode_whole_module_admission(_note: &WholeModuleAdmission) -> Result<Vec<u8>, String> {
-    Err("whole-module Plan admission has no engaged writer".into())
+pub fn encode_whole_module_admission(note: &WholeModuleAdmission) -> Result<Vec<u8>, String> {
+    note.validate()?;
+    encode_graph_row(
+        WHOLE_ADMISSION_SELECTOR,
+        &WHOLE_ADMISSION_SCHEMA,
+        vec![
+            required(b"count_", Wire::Signed(i128::from(note.count))),
+            required(b"digest", Wire::Text(note.digest.clone())),
+            required(b"module", Wire::Text(note.module.clone())),
+            required(b"output", Wire::Text(note.output.clone())),
+            required(b"select", Wire::Text(note.selection.clone())),
+        ],
+    )
 }
 
 /// Decode the exact whole-admission row. A caller must still bind its selection and positioned module page.
-pub fn decode_whole_module_admission(_encoded: &[u8]) -> Result<WholeModuleAdmission, String> {
-    Err("whole-module Plan admission has no engaged reader".into())
+pub fn decode_whole_module_admission(encoded: &[u8]) -> Result<WholeModuleAdmission, String> {
+    let fields = decode_graph_row(encoded, WHOLE_ADMISSION_SELECTOR, &WHOLE_ADMISSION_SCHEMA, 5)?;
+    let note = WholeModuleAdmission {
+        count: number(&fields[0].value)?,
+        digest: text(&fields[1].value)?,
+        module: text(&fields[2].value)?,
+        output: text(&fields[3].value)?,
+        selection: text(&fields[4].value)?,
+    };
+    note.validate()?;
+    Ok(note)
 }
 
 /// The exact set of compact admission notes published by a request, carried through native handoff.
@@ -321,9 +371,30 @@ pub struct CompactAdmissionPin {
 
 /// Pin the exact emitted notes in strictly ascending UTF-8 module order, without reopening their encoded bytes.
 pub fn compact_admission_pin<'a>(
-    _notes: impl IntoIterator<Item = (&'a str, [u8; 32])>,
+    notes: impl IntoIterator<Item = (&'a str, [u8; 32])>,
 ) -> Result<Option<CompactAdmissionPin>, String> {
-    Ok(None)
+    let mut hash = Sha256::new();
+    hash.update(b"incan.plan-compact-admissions/1\x00");
+    let mut count = 0u64;
+    let mut previous = "";
+    for (module, note_digest) in notes {
+        if module <= previous {
+            return Err("compact admissions repeat a module or differ from canonical name order".into());
+        }
+        hash.update((module.len() as u64).to_be_bytes());
+        hash.update(module.as_bytes());
+        hash.update(note_digest);
+        count += 1;
+        previous = module;
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+    hash.update(count.to_be_bytes());
+    Ok(Some(CompactAdmissionPin {
+        count,
+        digest: hash.finalize().into(),
+    }))
 }
 
 #[cfg(test)]
