@@ -346,6 +346,29 @@ fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Linked declarations keep the checked frame allocation and immediately retire its implementation statements.
+#[test]
+fn linked_callable_moves_its_frame_without_copying_implementation() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::body_ir::LoafCallable;
+
+    let mut function = Box::new(body("compiled", 1));
+    function.type_parameters.clear();
+    function.block.stmts.push(call(identity("callee", 2)));
+    let original = std::ptr::from_ref(function.as_ref());
+    assert_eq!(
+        LoafCallable::compiled_identity(&function),
+        Some(&identity("compiled", 1))
+    );
+    let callable = LoafCallable::from_owned_frame(function).ok_or("compiled callable contract missing")?;
+    let frame = callable
+        .declaration_frame()
+        .ok_or("compiled declaration frame missing")?;
+    assert_eq!(std::ptr::from_ref(frame), original);
+    assert_eq!(frame.block.stmts.capacity(), 0);
+    assert_eq!(frame.canonical.as_ref(), Some(&callable.canonical));
+    Ok(())
+}
+
 /// Native implementations stay outside compiled frames; governed calls require a retained checked native selection.
 #[test]
 fn compiled_contract_excludes_native_implementation() -> Result<(), Box<dyn std::error::Error>> {

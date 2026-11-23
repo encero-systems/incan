@@ -13,9 +13,6 @@ pub(super) struct RuntimeDependencyContext {
     pub(super) package: String,
     /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
     pub(super) layout_modules: Vec<BodyIrModule>,
-    pub(super) sources: Vec<String>,
-    pub(super) files: Vec<String>,
-    pub(super) entry: usize,
 }
 
 // Completing a checked program's dependency context: selected defaults and native layouts, runtime requirements bound
@@ -392,8 +389,7 @@ pub(super) fn prepare_runtime_layouts(
 
 /// Move prepared and authored modules between contexts while replacing only reached dependencies.
 ///
-/// Every preparation splits the authored suffix from the active program and retains its prepared layout prefix while
-/// discarding only the prior reached dependency prefix. The retry therefore needs no second authored Body IR copy.
+/// Keep the authored Body IR and its source buffers together while replacing the reached dependency prefix.
 fn install_dependency_modules(
     program: &mut CheckedProgram,
     resolved: incan_frontend::executable_resolution::ResolvedExecutableModules,
@@ -403,14 +399,14 @@ fn install_dependency_modules(
         .layout_admissions
         .extend(resolved.layout_admissions);
     program.dependencies.package_versions.extend(resolved.package_versions);
+    let original_own = program.own;
+    let authored_entry = program.entry - original_own;
     let mut previous = std::mem::take(&mut program.modules);
-    let mut authored = previous.split_off(program.own);
+    let mut authored = previous.split_off(original_own);
     let mut prepared = previous.split_off(program.dependency_modules);
     // A comparison default can extend the reached set before layout preparation supplies its modules.
     // Consume only the layouts this pass actually received; earlier empty passes cannot suppress them.
     prepared.append(&mut program.dependencies.layout_modules);
-    program.files.clear();
-    program.sources.clear();
     let mut modules = resolved.modules;
     let dependency_modules = modules.len();
     for module in prepared {
@@ -425,14 +421,16 @@ fn install_dependency_modules(
         .iter()
         .map(|module| module.module_id.path().to_owned())
         .collect::<Vec<_>>();
-    files.extend(program.dependencies.files.iter().cloned());
+    files.extend(program.files.drain(original_own..));
     let mut sources = vec![String::new(); own];
-    sources.extend(program.dependencies.sources.iter().cloned());
+    sources.extend(program.sources.drain(original_own..));
+    tracing::trace!(target: "incan::invocation", modules = authored.len(),
+        bytes = sources[own..].iter().map(String::len).sum::<usize>(), "moved authored source buffers across dependency retry");
     modules.append(&mut authored);
     program.modules = modules;
     program.files = files;
     program.sources = sources;
-    program.entry = own + program.dependencies.entry;
+    program.entry = own + authored_entry;
     program.own = own;
     program.dependency_modules = dependency_modules;
     program.reached_loaves = resolved.entries;

@@ -519,6 +519,10 @@ fn compile_unit(
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
     if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
+        let _publication = tracing::trace_span!(
+            target: "incan::invocation", "incan_rustc_driver::publish_plan_records",
+        )
+        .entered();
         incan_lowering::publish_plan_records(
             &plan,
             products.to_string_lossy().into_owned(),

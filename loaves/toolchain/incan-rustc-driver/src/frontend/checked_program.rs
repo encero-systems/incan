@@ -685,9 +685,6 @@ fn checked_attempt(
                 layout_admissions,
                 package: package_identity.to_owned(),
                 layout_modules: Vec::new(),
-                sources: sources[loaf_modules..].to_vec(),
-                files: files[loaf_modules..].to_vec(),
-                entry: entry - loaf_modules,
             },
             modules: bodies,
             sources,
@@ -946,22 +943,14 @@ pub(super) fn retain_linked_loaf_declarations(
             .filter(|body| module.body_requires_instantiation(body))
             .filter_map(|body| body.canonical.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        module.bodies.retain(|body| {
-            if body
-                .canonical
-                .as_ref()
-                .is_some_and(|identity| governed.contains(identity))
-            {
-                return true;
-            }
-            match incan_semantics_core::body_ir::LoafCallable::from_body(body) {
-                Some(callable) => {
-                    loaf_callables.push(callable);
-                    false
-                }
-                None => true,
-            }
-        });
+        loaf_callables.extend(
+            module
+                .bodies
+                .extract_if(.., |body| {
+                    LoafCallable::compiled_identity(body).is_some_and(|identity| !governed.contains(identity))
+                })
+                .filter_map(|body| LoafCallable::from_owned_frame(Box::new(body))),
+        );
     }
     (loaf_callables, position)
 }
