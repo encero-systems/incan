@@ -31,6 +31,15 @@ pub(crate) struct PlanRecordProducts {
     pub(crate) selection: Option<[u8; 32]>,
 }
 
+impl PlanRecordProducts {
+    /// Open the staged selection under the digest the caller passed independently from those files.
+    pub(crate) fn read_selection(&self) -> Result<Option<PlanModuleSelection>, String> {
+        self.selection
+            .map(|digest| PlanModuleSelection::read(&self.root, digest))
+            .transpose()
+    }
+}
+
 /// Everything native compilation reads and what it publishes after succeeding, owned so a fresh driver process can
 /// decode it. The driver identity is not carried: a fresh process verifies it again from the sysroot.
 #[derive(Serialize, Deserialize)]
@@ -67,7 +76,7 @@ pub(crate) struct RustcHandoff {
 impl RustcHandoff {
     /// Run rustc, then write the test report and publish the Loaf; native-boundary failures remain retryable.
     pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
-        let _selection = self.read_plan_module_selection()?;
+        let _ = self.read_plan_module_selection()?;
         let _captured = crate::spans::captured_source_scope(self.captured_sources, self.captured_texts)?;
         crate::adapter::compile(
             self.plan,
@@ -96,7 +105,13 @@ impl RustcHandoff {
 
     /// Admit the same selection before either native placement reads its records.
     fn read_plan_module_selection(&self) -> Result<Option<PlanModuleSelection>, String> {
-        Ok(None)
+        let Some(products) = &self.plan_record_products else {
+            return Ok(None);
+        };
+        if products.selection.is_some() && self.plan_record_report.is_none() {
+            return Err("plan module selection has no native report directory".into());
+        }
+        products.read_selection()
     }
 
     /// Write the handoff beside its output, encoded straight into the file without a whole-plan buffer, and return
