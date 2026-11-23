@@ -361,11 +361,11 @@ mod tests {
         ])
     }
 
-    fn encoded_description() -> Vec<u8> {
+    fn encoded_description() -> Result<Vec<u8>, &'static str> {
         let mut budget = Budget::new(u64::MAX, u64::MAX, u64::MAX);
         let mut encoded = Vec::new();
-        rows::encode_metadata(&metadata(), &mut encoded, &mut budget).expect("D encoding");
-        encoded
+        rows::encode_metadata(&metadata(), &mut encoded, &mut budget)?;
+        Ok(encoded)
     }
 
     fn node(request: &mut RowWriteRequest, code: i64, count: i64, data: &[u8], text: &str) {
@@ -383,23 +383,23 @@ mod tests {
         );
     }
 
-    fn request(sealed: bool) -> RowWriteRequest {
+    fn request(sealed: bool) -> Result<RowWriteRequest, &'static str> {
         let mut request = RowWriteRequest::new(sealed);
-        request.description(encoded_description(), true);
+        request.description(encoded_description()?, true);
         request.record(b"record\0".to_vec());
         node(&mut request, 14, 1, &[], "");
         node(&mut request, 18, 0, b"field1", "required");
         node(&mut request, 3, 0, &[], "");
         request.allow(1_048_576, 1_048_576, 64);
-        request
+        Ok(request)
     }
 
     #[test]
-    fn a_write_request_returns_complete_sealed_bytes_and_exact_charges() {
-        let written = request(true).write();
+    fn a_write_request_returns_complete_sealed_bytes_and_exact_charges() -> Result<(), &'static str> {
+        let written = request(true)?.write();
         assert!(written.category.is_empty(), "write refused: {}", written.category);
         assert_eq!(&written.data[..7], b"CRMB\x01\x01\x01");
-        let mut exact = request(true);
+        let mut exact = request(true)?;
         exact.allow(written.bytes_charged, written.elements_charged, 64);
         let repeated = exact.write();
         assert!(
@@ -408,17 +408,18 @@ mod tests {
             repeated.category
         );
         assert_eq!(repeated.data, written.data);
-        let mut short = request(true);
+        let mut short = request(true)?;
         short.allow(written.bytes_charged, written.elements_charged - 1, 64);
         let refused = short.write();
         assert_eq!(
             (refused.category.as_str(), refused.cause.as_str()),
             ("limit_exceeded", "elements")
         );
+        Ok(())
     }
 
     #[test]
-    fn malformed_descriptions_streams_and_shape_mismatches_are_typed_refusals() {
+    fn malformed_descriptions_streams_and_shape_mismatches_are_typed_refusals() -> Result<(), &'static str> {
         let negative_zero = (-0.0f64).to_bits().to_be_bytes();
         assert_eq!(float64_bits(64, &negative_zero), Ok(negative_zero.to_vec()));
 
@@ -428,15 +429,16 @@ mod tests {
         assert_eq!(malformed.write().category, "invalid_description");
 
         let mut stream = RowWriteRequest::new(false);
-        stream.description(encoded_description(), true);
+        stream.description(encoded_description()?, true);
         stream.record(b"record\0".to_vec());
         node(&mut stream, 14, 1, &[], "");
         stream.allow(1_048_576, 1_048_576, 64);
         assert_eq!(stream.write().category, "invalid_value_stream");
 
-        let mut shape = request(false);
+        let mut shape = request(false)?;
         shape.locked().nodes.pop();
         node(&mut shape, 7, 0, &[], "wrong");
         assert_eq!(shape.write().category, "invalid_cell");
+        Ok(())
     }
 }
