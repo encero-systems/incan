@@ -147,6 +147,8 @@ struct CheckedProgram {
     /// Invocation-local producer evidence for self-contained scalar native function products.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     retained_namespaces: Vec<checked_program::RetainedNamespaceBody>,
+    /// Position of the original authored callables in the entry module's current linked catalogue.
+    authored_callable_start: Option<usize>,
     dependencies: RuntimeDependencyContext,
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,

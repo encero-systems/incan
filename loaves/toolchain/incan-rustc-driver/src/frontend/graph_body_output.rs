@@ -9,7 +9,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use incan_frontend::checker_records::{GraphBodyRecords, GraphNamespaceHeader, GraphNamespaceInterface};
+use incan_frontend::checker_records::{
+    ExecutableScopeWitness, GraphBodyRecords, GraphNamespaceHeader, GraphNamespaceInterface,
+};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::typechecker::executable_frames::{
@@ -64,6 +66,7 @@ struct PendingNamespaceValue {
     call_reads: Vec<internal_models::SettledCallRead>,
     call_contracts: Option<Vec<internal_models::SettledCallContract>>,
     body_ir: Vec<u8>,
+    executable_scopes: Vec<ExecutableScopeWitness>,
     dependencies: Vec<String>,
     lowering_inputs: Vec<Vec<String>>,
 }
@@ -331,6 +334,7 @@ impl GraphBodyOutput {
                 call_reads: Vec::new(),
                 call_contracts: None,
                 body_ir: Vec::new(),
+                executable_scopes: Vec::new(),
                 dependencies: dependencies.to_vec(),
                 lowering_inputs: Vec::new(),
             });
@@ -496,7 +500,8 @@ impl GraphBodyOutput {
             })
             .transpose()?;
             let mut referenced_scopes = std::collections::BTreeSet::new();
-            if let Some(namespace) = namespaces.remove(&module_path) {
+            let mut namespace = namespaces.remove(&module_path);
+            if let Some(namespace) = namespace.as_deref_mut() {
                 namespace.call_reads = call_reads
                     .get(&module_path)
                     .into_iter()
@@ -510,7 +515,6 @@ impl GraphBodyOutput {
                     .collect();
                 namespace.body_ir = match &scopes {
                     Some(scopes) => {
-                        referenced_scopes.extend(scopes.digests.iter().flatten().cloned());
                         encode_graph_executable_namespace(&module_path, lowered, &scopes.digests, &scopes.slots)
                             .map_err(|error| format!("checked executable namespace {module_path}: {error}"))?
                     }
@@ -634,7 +638,9 @@ impl GraphBodyOutput {
                     };
                 if let Some(scopes) = &scopes {
                     let scope_digest = scopes.digests[scopes.slots[body_index]].as_deref();
-                    referenced_scopes.extend(scope_digest.map(str::to_owned));
+                    if namespace.is_none() {
+                        referenced_scopes.extend(scope_digest.map(str::to_owned));
+                    }
                     let physical_inputs = pending.physical_inputs.filter(|_| {
                         body.nominal_instantiation.is_empty()
                             && body.trait_default_instantiation.is_none()
@@ -688,11 +694,23 @@ impl GraphBodyOutput {
                 }
             }
             if let Some(mut scopes) = scopes {
-                for digest in referenced_scopes {
-                    let value = scopes
-                        .values
-                        .remove(&digest)
-                        .ok_or("missing compiler-produced executable scope")?;
+                if let Some(namespace) = namespace {
+                    // The complete namespace references every packed scope. Move their exact witnesses into it.
+                    namespace.executable_scopes = scopes
+                        .digests
+                        .into_iter()
+                        .zip(scopes.bindings)
+                        .filter_map(|(digest, bindings)| {
+                            digest.map(|digest| ExecutableScopeWitness { digest, bindings })
+                        })
+                        .collect();
+                } else {
+                    scopes.values.retain(|digest, _| referenced_scopes.contains(digest));
+                    if scopes.values.len() != referenced_scopes.len() {
+                        return Err("missing compiler-produced executable scope".into());
+                    }
+                }
+                for (digest, value) in scopes.values {
                     match self.scope_values.entry(digest) {
                         std::collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(value);
@@ -1008,7 +1026,7 @@ impl PendingNamespaceValue {
             let owners = &header.lowering_inputs;
             if !owners.windows(2).any(|pair| pair[0].0.path() == pair[1].0.path()) {
                 let value_digest = hex::encode(Sha256::digest(&published_record));
-                selected.publish_namespace(header, value_digest, value.body_ir);
+                selected.publish_namespace(header, value_digest, value.body_ir, self.executable_scopes);
             }
         }
         Ok(internal_models::CompiledNamespaceValue {

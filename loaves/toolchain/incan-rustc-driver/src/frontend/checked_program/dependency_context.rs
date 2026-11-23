@@ -67,7 +67,15 @@ pub(super) fn complete_dependency_context_in_place(
         install_dependency_modules(program, resolved);
     }
     program.dependencies.requested = requested;
-    let loaf_callables = retain_linked_loaf_declarations(&mut program.modules, program.own);
+    let boundary = if program.authored_callable_start.is_some() {
+        program.entry
+    } else {
+        program.own
+    };
+    let (loaf_callables, preceding) = retain_linked_loaf_declarations(&mut program.modules, program.own, boundary);
+    if !program.retained_namespaces.is_empty() {
+        program.authored_callable_start = Some(program.authored_callable_start.unwrap_or_default() + preceding);
+    }
     program
         .modules
         .get_mut(program.entry)
