@@ -8,7 +8,9 @@ use incan_codegraph::{
 use rustc_interface::interface;
 use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::print::{with_no_trimmed_paths, with_no_visible_paths, with_resolve_crate_name};
+use rustc_serialize::Encodable;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -52,7 +54,7 @@ fn run(arguments: &[String], codegen: bool) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// Give rustc's incremental code-generation members content-derived names before the rlib is fingerprinted or baked.
+/// Give rustc's code-generation members and their link metadata matching stable names before baking.
 fn canonicalize_rlib(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let Some(path) = rlib_output(arguments)? else {
         return Ok(());
@@ -99,15 +101,30 @@ fn rlib_output(arguments: &[String]) -> Result<Option<PathBuf>, Box<dyn std::err
     ))
 }
 
-/// Rename BSD extended-name code-generation members in place without changing archive offsets or payload bytes.
+const ARCHIVE_MAGIC: &[u8] = b"!<arch>\n";
+const LINK_METADATA_NAME: &[u8] = b"lib.rmeta-link";
+
+/// One size-preserving replacement in a rustc-produced archive.
+struct ArchivePatch {
+    offset: u64,
+    replacement: Vec<u8>,
+}
+
+/// Canonicalize the Rust object names and the linker metadata that points at them. Both replacements preserve the
+/// member sizes and offsets used by the Darwin archive symbol table.
 fn canonicalize_archive(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut archive = OpenOptions::new().read(true).write(true).open(path)?;
     let mut magic = [0_u8; 8];
     archive.read_exact(&mut magic)?;
-    if magic != *b"!<arch>\n" {
+    if magic.as_slice() != ARCHIVE_MAGIC {
         return Err("rlib has no archive magic".into());
     }
+
+    // ---- Member names and link metadata extent ----
+    let mut names = BTreeMap::new();
+    let mut link = None;
     loop {
+        let member_start = archive.stream_position()?;
         let mut header = [0_u8; 60];
         if archive.read(&mut header[..1])? == 0 {
             break;
@@ -118,35 +135,121 @@ fn canonicalize_archive(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
         let size = std::str::from_utf8(&header[48..58])?.trim().parse::<u64>()?;
         let data_start = archive.stream_position()?;
-        let name_field = std::str::from_utf8(&header[..16])?.trim();
-        if let Some(length) = name_field.strip_prefix("#1/") {
-            let length = length.trim().parse::<usize>()?;
-            if length as u64 > size {
-                return Err("rlib member name exceeds its member size".into());
-            }
-            let mut name = vec![0_u8; length];
-            archive.read_exact(&mut name)?;
-            let visible = name
-                .iter()
-                .rposition(|byte| *byte != 0)
-                .map_or(&name[..0], |end| &name[..=end]);
-            if visible.ends_with(b".rcgu.o") {
-                let digest = member_digest(&mut archive, size - length as u64)?;
-                let canonical = canonical_member_name(length, &digest)?;
-                if name != canonical {
-                    archive.seek(SeekFrom::Start(data_start))?;
-                    archive.write_all(&canonical)?;
-                }
-            }
-        }
         let next = data_start
             .checked_add(size)
             .and_then(|end| end.checked_add(size % 2))
             .ok_or("rlib member offset overflow")?;
+        let name_field = std::str::from_utf8(&header[..16])?.trim();
+        let extended = name_field.strip_prefix("#1/");
+        let mut stored_name = Vec::new();
+        let name = if let Some(length) = extended {
+            let length = length.trim().parse::<usize>()?;
+            if u64::try_from(length)? > size {
+                return Err("rlib member name exceeds its member size".into());
+            }
+            stored_name.resize(length, 0);
+            archive.read_exact(&mut stored_name)?;
+            stored_name
+                .iter()
+                .rposition(|byte| *byte != 0)
+                .map_or(&stored_name[..0], |end| &stored_name[..=end])
+        } else {
+            name_field.trim_end_matches('/').as_bytes()
+        };
+        if name == LINK_METADATA_NAME {
+            if link.replace((member_start, next - member_start)).is_some() {
+                return Err("rlib repeats its link metadata member".into());
+            }
+        } else if extended.is_some() && name.ends_with(b".rcgu.o") {
+            let digest = member_digest(&mut archive, size - u64::try_from(stored_name.len())?)?;
+            let replacement = canonical_member_name(name.len(), &digest)?;
+            if replacement != name {
+                let original = std::str::from_utf8(name)?.to_owned();
+                if names
+                    .insert(
+                        original,
+                        ArchivePatch {
+                            offset: data_start,
+                            replacement,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err("rlib repeats a Rust object name".into());
+                }
+            }
+        }
         archive.seek(SeekFrom::Start(next))?;
+    }
+
+    // ---- Complete the name mapping before writing any member ----
+    if names.is_empty() {
+        return Ok(());
+    }
+    let link_patch = link
+        .map(|(start, bytes)| link_name_patch(&mut archive, path, start, bytes, &names))
+        .transpose()?;
+    for patch in names.into_values().chain(link_patch) {
+        archive.seek(SeekFrom::Start(patch.offset))?;
+        archive.write_all(&patch.replacement)?;
     }
     archive.sync_all()?;
     Ok(())
+}
+
+/// Read just the bounded metadata member through the pinned compiler's archive/section parser. Its encoded name
+/// vector is replaced in place, so the surrounding object format and the archive symbol offsets stay intact.
+fn link_name_patch(
+    archive: &mut std::fs::File,
+    path: &Path,
+    start: u64,
+    length: u64,
+    names: &BTreeMap<String, ArchivePatch>,
+) -> Result<ArchivePatch, Box<dyn std::error::Error>> {
+    let end = start.checked_add(length).ok_or("rlib link metadata range overflow")?;
+    if end > archive.metadata()?.len() {
+        return Err("rlib link metadata extends past the end of its archive".into());
+    }
+    let length = usize::try_from(length)?
+        .checked_add(ARCHIVE_MAGIC.len())
+        .ok_or("rlib link metadata length overflow")?;
+    let mut member = ARCHIVE_MAGIC.to_vec();
+    member.resize(length, 0);
+    archive.seek(SeekFrom::Start(start))?;
+    archive.read_exact(&mut member[ARCHIVE_MAGIC.len()..])?;
+    let mut linked = rustc_codegen_ssa::back::rmeta_link::read_from_data(&member, path)
+        .ok_or("cannot decode rustc link metadata from its archive member")?;
+    let original = encode_link_names(&linked.rust_object_files);
+    for name in &mut linked.rust_object_files {
+        if let Some(patch) = names.get(name) {
+            *name = std::str::from_utf8(&patch.replacement)?.to_owned();
+        }
+    }
+    let replacement = encode_link_names(&linked.rust_object_files);
+    if original.len() != replacement.len() {
+        return Err("canonical names change the encoded rustc link metadata length".into());
+    }
+    let mut matches = member[ARCHIVE_MAGIC.len()..]
+        .windows(original.len())
+        .enumerate()
+        .filter(|(_, window)| *window == original.as_slice());
+    let (within_member, _) = matches.next().ok_or("encoded rustc link metadata is missing")?;
+    if matches.next().is_some() {
+        return Err("encoded rustc link metadata is ambiguous".into());
+    }
+    let offset = start
+        .checked_add(u64::try_from(within_member)?)
+        .ok_or("rlib link metadata offset overflow")?;
+    Ok(ArchivePatch { offset, replacement })
+}
+
+/// Encode the name vector and trailer using the pinned compiler's own link metadata format.
+fn encode_link_names(names: &[String]) -> Vec<u8> {
+    let mut encoder = rustc_serialize::opaque::mem_encoder::MemEncoder::new();
+    names.encode(&mut encoder);
+    let mut encoded = encoder.finish();
+    encoded.extend_from_slice(rustc_serialize::opaque::MAGIC_END_BYTES);
+    encoded
 }
 
 /// Hash exactly one archive member payload, excluding its unstable extended filename.
