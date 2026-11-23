@@ -63,10 +63,10 @@ pub def specialized_enum_layouts(module: &BodyIrModule) -> Result[list[EnumDecla
     return Ok(layouts)
 
 
-pub def install_specialized_enums(mut module: BodyIrModule, layouts: list[EnumDeclaration]) -> BodyIrModule:
-    """Replace a module's enum declarations, generic templates included, with its closed layouts."""
-    module.enum_declarations = layouts
-    return module
+pub def specialize_enums(mut module: &mut BodyIrModule) -> Result[None, str]:
+    """Replace generic enum templates in place with every closed layout selected from the joined context."""
+    module.enum_declarations = specialized_enum_layouts(module)?
+    return Ok(None)
 
 
 def collect_type(

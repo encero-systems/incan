@@ -1,4 +1,4 @@
-# behavior: dependency types construct through their published surface: a class with a private required field and a defaulted public field is built under an import alias from all its fields, a same-named class from another dependency stays its own, a model with a private defaulted field is built from its public fields alone, a model with a phantom type parameter is built with explicit type arguments, and a model and a defaulted class reached through a published module namespace construct by named field and by default
+# behavior: dependency types construct through their published surface: a class with private required state is built under an import alias through a public provider factory, a validated model publishes its generated checked constructor, and same-named classes and models retain their identities through the remaining constructor surfaces (#2811; RFC 149: private fields reserve construction and hide data; RFC 122: inaccessible private state cannot be bound through another construction path)
 # expect-stdout:
 #   sealed:42
 #   named:7
@@ -8,15 +8,17 @@
 #   12
 #   3
 #   3
+#   4 published
+#   dependency value too large
 
-from pub::sealed import Vault as PublicVault, Envelope, Columns
+from pub::sealed import Checked, Vault as PublicVault, Envelope, Columns
 from pub::decoy import Vault as DecoyVault
 from pub::modulelib import hyperquant
 
 
 def main() -> None:
-    println(PublicVault(secret=42).reveal())
-    println(PublicVault(secret=7, label="named").reveal())
+    println(PublicVault.create(secret=42).reveal())
+    println(PublicVault.create(secret=7, label="named").reveal())
     println(DecoyVault(unrelated=true).reveal())
     println(Envelope(label="public").describe())
     columns = Columns[int, str](sql="q1", sample="sample")
@@ -26,3 +28,9 @@ def main() -> None:
     builder = hyperquant.IndexBuilder()
     println(builder.size)
     println(builder.build().size)
+    match Checked.new(value=4):
+        Ok(value) => println(f"{value.value} {value.label}")
+        Err(error) => println(error)
+    match Checked.new(value=14):
+        Ok(_value) => println("accepted")
+        Err(error) => println(error)

@@ -1,0 +1,133 @@
+"""Writer-only chosen-encoding comparisons against unchanged independent column vectors."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_block_write import write_block
+from std.primitives.crumb.column_data_write import write_column
+from std.primitives.crumb.column_value_dictionary import ColumnDictionary, build_keys, encode_keys
+from std.primitives.crumb.column_presence import cell_type
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.description_dictionary import admit_dictionary
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.selectors import parse_type
+from std.primitives.crumb.types import AbsentPolicy
+from std.primitives.hex import hexlify
+from case_data import CaseOperation, CaseStatus, ExpectedStatus, array, absence, expected_status, field, hex_bytes, text
+from column_case_data import choices, encoding, key_values
+from corpus import Corpus
+from execute import RunReport
+from fixture_adapter import integer, logical_items, metadata, record_value
+
+
+pub def run_column_writers(corpus: Corpus, plans: JsonValue) -> RunReport:
+    """Only accepted cases are writer inputs; all negative decoder cases remain unexecuted here."""
+    mut results: list[JsonValue] = []
+    mut passed = 0
+    mut failed = 0
+    for example in corpus.cases:
+        if not example.id.startswith("columns-"):
+            continue
+        expected = example.document.get("expected")
+        if not is_accepted(expected):
+            continue
+        mut result: dict[str, JsonValue] = {}
+        result["id"] = JsonValue.string(example.id)
+        match check_writer(example.document, plans):
+            Ok(true) =>
+                passed += 1
+                result["status"] = JsonValue.string(CaseStatus.Passed.value())
+            Ok(false) =>
+                failed += 1
+                result["status"] = JsonValue.string(CaseStatus.Failed.value())
+                result["detail"] = JsonValue.string("chosen encoding differs from independent literal bytes")
+            Err(error) =>
+                failed += 1
+                result["status"] = JsonValue.string(CaseStatus.Failed.value())
+                result["detail"] = JsonValue.string(error)
+        results.append(JsonValue.object(result))
+    mut report: dict[str, JsonValue] = {}
+    report["schema"] = JsonValue.string("comic.column-writer-receipt/1")
+    report["manifest_sha256"] = JsonValue.string(corpus.manifest_digest)
+    report["selected"] = JsonValue.int(len(results))
+    report["passed"] = JsonValue.int(passed)
+    report["failed"] = JsonValue.int(failed)
+    report["decoding_executed"] = JsonValue.bool(false)
+    report["cases"] = JsonValue.array(results)
+    mut code: i32 = 0
+    if failed != 0 or passed != 52:
+        code = 1
+    return RunReport(document=JsonValue.object(report), exit_code=code)
+
+
+def is_accepted(expected: Option[JsonValue]) -> bool:
+    """Select an explicit accepted case; malformed expected data cannot masquerade as a success."""
+    match expected:
+        Some(value) =>
+            match expected_status(value):
+                Ok(status) => return status == ExpectedStatus.Accepted
+                Err(_) => return false
+        None => return false
+
+
+def check_writer(example: JsonValue, plans: JsonValue) -> Result[bool, str]:
+    """Compare a real encoder output with the original literal, using only logical values and choices as input."""
+    mut budget = Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    operation = match CaseOperation.from_value(text(example, "operation")?):
+        Some(selected) => selected
+        None => return Err("unknown column writer operation")
+
+    if operation == CaseOperation.BinaryDecode:
+        return envelope(example, plans, registry, budget)
+    dictionary = admit_dictionary([], registry, budget).map_err((e) => e.message())?
+    name = text(example, "type")?
+    node = parse_type(name, budget).map_err((e) => e.message())?
+    expected = field(example, "expected")?
+    mut absent = AbsentPolicy.Required
+    if let Some(value) = example.get("absent"):
+        absent = absence(value.expect_str().map_err((e) => e.message())?)?
+    stored_type = cell_type(node, absent, budget).map_err((e) => e.message())?
+    mut encoded: bytes = b""
+    match operation:
+        CaseOperation.ColumnDictionary =>
+            values = key_values(expected, name, "keys_hex", "values")?
+            keys = build_keys(node, values, dictionary, budget).map_err((e) => e.message())?
+            encoded = encode_keys(node, keys, dictionary, budget).map_err((e) => e.message())?
+        CaseOperation.ColumnBlock =>
+            values = logical_items(array(expected, "values")?)?
+            mut keys: Option[ColumnDictionary] = None
+            input_keys = key_values(example, name, "dictionary_keys_hex", "dictionary_values")?
+            if len(input_keys) != 0:
+                keys = Some(build_keys(stored_type, input_keys, dictionary, budget).map_err((e) => e.message())?)
+            selected = encoding(integer(expected, "encoding")?)?
+            encoded = write_block(node, absent, values, selected, keys, dictionary, budget).map_err((e) => e.message())?
+        CaseOperation.ColumnData =>
+            values = logical_items(array(expected, "values")?)?
+            selected = choices(plans, text(example, "id")?)?
+            if len(selected) != 1 or len(selected[0].columns) != 1:
+                return Err("column fixture plan shape")
+            encoded = write_column(node, absent, values, selected[0].columns[0], dictionary, budget).map_err(
+                (e) => e.message(),
+            )?
+        _ => return Err("unknown column writer operation")
+    return Ok(hexlify(encoded) == text(example, "input_hex")?)
+
+
+def envelope(example: JsonValue, plans: JsonValue, registry: KindRegistry, mut budget: Budget) -> Result[bool, str]:
+    """Reference descriptions and independently authored logical records feed the complete writer."""
+    mut source: list[JsonValue] = []
+    if example.get("supplied_descriptions").is_some():
+        source = array(example, "supplied_descriptions")?
+    mut descriptions: list[Description] = []
+    for item in source:
+        descriptions.append(Description(metadata=metadata(item)?, mode=DescriptionMode.Reference))
+    expected = field(example, "expected")?
+    mut records: list[RowRecord] = []
+    for record in array(expected, "records")?:
+        records.append(RowRecord(key=hex_bytes(text(record, "selector_hex")?)?, value=record_value(record, source)?))
+    selected = choices(plans, text(example, "id")?)?
+    sealed = field(expected, "sealed")?.expect_bool().map_err((e) => e.message())?
+    encoded = write_columns(descriptions, records, registry, sealed, selected, budget).map_err((e) => e.message())?
+    return Ok(hexlify(encoded) == text(example, "input_hex")?)

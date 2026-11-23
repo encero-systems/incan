@@ -103,7 +103,7 @@ pub def check_reader(project: Path) -> Result[None, str]:
 def read_document(path: Path, format: str) -> Result[GraphDocument, str]:
     """Feed bounded byte chunks so a UTF-8 scalar split across reads is decoded only with its complete record."""
     file = path.open("rb").map_err((error) => error.message())?
-    mut reader = GraphReader(array=format == "json")
+    mut reader = GraphReader.new(array=format == "json")
     reader.begin()
     while true:
         chunk = file.read_bytes(65536).map_err((error) => error.message())?
@@ -134,6 +134,11 @@ class GraphReader:
     records: list[JsonValue] = []
     roots: list[str] = []
     hasher: Sha256Hasher = sha256.new()
+
+    @staticmethod
+    pub def new(array: bool) -> GraphReader:
+        """Create a reader while keeping its framing state private to the class."""
+        return GraphReader(array=array)
 
     pub def begin(mut self) -> None:
         """Initialize framing and canonical array hashing without exposing mutable reader state."""

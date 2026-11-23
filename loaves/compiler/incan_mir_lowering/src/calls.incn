@@ -173,11 +173,12 @@ def lower_delegated_call(
                 builder.unions,
                 instantiated,
                 builder.intrinsics,
+                builder.file,
             )?,
         )
     match delegation.declaration_frame():
         Some(frame) =>
-            validate_source_input_call(builder, frame)?
+            validate_source_input_call(module, builder, frame)?
             parameters = []
             for index in range(len(frame.params)):
                 parameters.append(call_parameter_type(builder, frame, frame.params[index])?)
@@ -191,6 +192,7 @@ def lower_delegated_call(
         builder.unions,
         returned,
         builder.intrinsics,
+        builder.file,
     )?
     match delegation.declaration_frame():
         Some(frame) => result = return_representation(frame, result)?
@@ -208,6 +210,7 @@ def lower_delegated_call(
                 builder.unions,
                 argument,
                 builder.intrinsics,
+                builder.file,
             )?,
         )
     if checked_rust:

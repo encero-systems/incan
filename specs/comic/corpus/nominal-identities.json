@@ -1,0 +1,27 @@
+{
+  "operation": "nominal_identity",
+  "cases": [
+    {
+      "id": "nominal-crm",
+      "registry": "registry.example",
+      "package": "example/crm",
+      "earliest_path": "customers.Customer",
+      "expected": {
+        "preimage_hex": "72656769737472792e6578616d706c65006578616d706c652f63726d00637573746f6d6572732e437573746f6d657200",
+        "sha256": "1ddb0b3ce6d3156e7c50e7d63b0c2bc2a753c46b90bd734fdf70e0f4af609142",
+        "identity_hex": "1ddb0b3ce6d3"
+      }
+    },
+    {
+      "id": "nominal-billing",
+      "registry": "registry.example",
+      "package": "example/billing",
+      "earliest_path": "customers.Customer",
+      "expected": {
+        "preimage_hex": "72656769737472792e6578616d706c65006578616d706c652f62696c6c696e6700637573746f6d6572732e437573746f6d657200",
+        "sha256": "dc09c4bb0cd5afa58de7e2d4f0055f48e1ea9f790a965a96a7c1e84f47644e4a",
+        "identity_hex": "dc09c4bb0cd5"
+      }
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 """Prepare the native metadata Rust checking needs and check authored Incan units separately."""
 
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue
@@ -27,6 +28,7 @@ from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitLoaf
 from unit_rust import compile_incan_library
 from unit_freshness import artifact_identity, compiler_fingerprint, fingerprint, native_identities
+from compile_time_trust import combine as combine_trust, decide, decide_registry
 
 # The version of the key native preparation is cached under; changing it discards every cached preparation.
 const NATIVE_DOMAIN: str = "incan.graph.native/2"
@@ -207,7 +209,7 @@ def prepare_project_graph(
     facets = ordered(local_facets(demand, target_configuration(rustc)?, substitutes, reader)?)?
     trace(f"graph unit discovery {root.0}: {started.elapsed().as_millis()} ms")
     prepared = Instant.now()
-    request = RustBuild(
+    mut request = RustBuild(
         project=root.0,
         profile=profile,
         rustc=rustc,
@@ -221,7 +223,13 @@ def prepare_project_graph(
         compiler=compiler_fingerprint(toolchain)?,
         incan_compiler=Some(compile_incan_library),
         manifests=reader,
+        unattended=true,
     )
+    local_trust = decide(facets, root.0, true, reader)?
+    trust = combine_trust(local_trust, decide_registry(request.registry, root.0, true)?)
+    request.covered_by = trust.covered_by
+    if len(trust.missing) > 0:
+        return Err(trust.stop())
     # 3. Native libraries exist before the Incan units are checked, and each unit is checked after its dependencies.
     mut built: Dict[str, BuiltUnit] = {}
     if requires_vocabulary_execution(facets, reader)?:
@@ -429,7 +437,7 @@ def compiled_directory(
         mut directory = candidate
         if let Some(fact) = viewed_fact(candidate)?:
             directory = fact
-        if directory.joinpath(f"{package}.incnlib").is_file() and directory.joinpath(f"{package}.incngraph").is_file():
+        if directory.joinpath(f"{artifact_stem(package)}.incnlib").is_file() and directory.joinpath(f"{artifact_stem(package)}.incngraph").is_file():
             verify_compiled_loaf(directory, package, version, features)?
             return Ok(Some(directory))
     return Ok(None)
@@ -444,15 +452,15 @@ def verify_compiled_loaf(directory: Path, package: str, version: str, features: 
     3. Its active features are the ones selected.
     """
     # 1. A graph beside a partial artifact set would let a consumer rely on a Loaf that cannot be linked.
-    for name in [f"lib{package.replace("-", "_")}.rlib", f"{package}.incnbody", f"{package}.native.json"]:
+    for name in [f"lib{native_crate_name(package)}.rlib", f"{artifact_stem(package)}.incnbody", f"{artifact_stem(package)}.native.json"]:
         if not directory.joinpath(name).is_file():
             return Err(f"{package}: incomplete compiled Loaf beside its graph")
     # 2. The Loaf is the package and version selected, and carries the native ABI cache it declares.
-    manifest = parse_json(read(directory.joinpath(f"{package}.incnlib"))?)?
+    manifest = parse_json(read(directory.joinpath(f"{artifact_stem(package)}.incnlib"))?)?
     if text(manifest, "name") != package or text(manifest, "version") != version:
         return Err(f"{package}: compiled Loaf identity differs from the selected dependency")
     declares_cache = text(nested(manifest, "rust_abi"), "cache_digest") != ""
-    if declares_cache and not directory.joinpath(f"{package}.rustabi").is_file():
+    if declares_cache and not directory.joinpath(f"{artifact_stem(package)}.rustabi").is_file():
         return Err(f"{package}: missing native ABI cache beside its manifest")
     # 3. The Loaf was built for the features this consumer selects, so its graph describes the code it will link.
     if sorted(active_features(manifest)?) != sorted(features):
@@ -507,7 +515,7 @@ def checked_units(
             match published:
                 Some(directory) =>
                     interfaces[package] = directory
-                    graph = directory.joinpath(f"{package}.incngraph")
+                    graph = directory.joinpath(f"{artifact_stem(package)}.incngraph")
                     root = Path(facet.project)
                     paths.append(GraphUnit(path=graph, root=root, package=package, version=declared.version))
                     continue

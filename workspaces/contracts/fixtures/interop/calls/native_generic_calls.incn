@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, take an impl binder from a borrowed Option receiver before projecting copied's owned result, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place, pass a `str` constant to a generic Rust parameter as a `str` value passes, select an implicit native trait method through its bound, and infer a source generic from a native slice view (#2256, #2432, #2434, #2436, #2481, #2590)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, take an impl binder from a borrowed Option receiver before projecting copied's owned result, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return, an annotated place and nested Arc and Mutex constructors, pass a `str` constant to a generic Rust parameter as a `str` value passes, select an implicit native trait method through its bound, and infer a source generic from a native slice view (#2256, #2432, #2434, #2436, #2481, #2590)
 # expect-stdout:
 #   7
 #   leaf
@@ -30,6 +30,7 @@
 #   1
 #   1
 #   2
+#   false
 #   7
 #   42
 #   false
@@ -80,6 +81,12 @@ model Entry:
     """One model element retained through an Arc slice view."""
 
     value: int
+
+
+model NestedGenericCache:
+    """Hold a source-keyed native map behind nested synchronization constructors."""
+
+    values: Arc[Mutex[HashMap[str, int]]]
 
 
 def render[T with (Display, ToString)](value: T) -> str:
@@ -338,6 +345,12 @@ def show_copied_option_payload() -> None:
     println(current + 1)
 
 
+def show_nested_generic_constructor_context() -> None:
+    """Carry the model field's map arguments through the enclosing Arc and Mutex constructors."""
+    cache = NestedGenericCache(values=Arc.new(Mutex.new(HashMap.new())))
+    println(cache.values.as_ref().is_poisoned())
+
+
 def show_nonreturning_call() -> None:
     """Print the result of the selected Rust function, then end the program through a nonreturning one."""
     println(panicking())
@@ -356,7 +369,7 @@ def main() -> None:
     2. Exercise text references and typed native factories.
     3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
     4. Observe projected binders, frozen text arguments and owner arguments fixed by a local's first use.
-    5. Observe native trait and slice-bound source generics.
+    5. Observe nested constructor context, native trait and slice-bound source generics.
     6. Observe a native nonreturning call, which ends the program.
     """
     # 1. Exercise generic instantiations and scalar references.
@@ -374,7 +387,8 @@ def main() -> None:
     show_frozen_text_arguments()
     show_first_use_arguments()
     show_copied_option_payload()
-    # 5. Observe native trait and slice-bound source generics.
+    # 5. Observe nested constructor context, native trait and slice-bound source generics.
+    show_nested_generic_constructor_context()
     show_bound_native_values()
     # 6. Observe a native nonreturning call, which ends the program.
     show_nonreturning_call()

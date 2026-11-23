@@ -146,7 +146,11 @@ Each `FieldInfo` record contains:
 | `description` | `Option[FrozenStr]` | Documentation string, if set via `[description="..."]` |
 | `wire_name` | `FrozenStr` | Effective wire name (alias if present, else declared name) |
 | `type_name` | `FrozenStr` | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`) |
+| `stored_type` | `Option[FrozenStr]` | Canonical stored-type selector from the checked field type; absent when a nested type has no persistent representation |
 | `has_default` | `bool` | Whether the field has a default value |
+| `default_is_empty` | `bool` | Whether the declared default is a literal empty collection |
+| `position` | `int` | Original zero-based field slot, before visibility filtering |
+| `renamed_from_lifecycle` | `Option[LifecycleInfo]` | Optional descriptive labels on the rename block |
 | `extra` | `FrozenDict[FrozenStr, FrozenStr]` | Empty metadata dictionary |
 
 Notes:

@@ -1,0 +1,3 @@
+example.Event = Record { id: i64, seen [canonical = false]: string, note: string? = None }
+
+example.Event << (1, "now")

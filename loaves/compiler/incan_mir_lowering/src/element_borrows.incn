@@ -82,7 +82,7 @@ def is_shared_list_path(mut builder: Builder, source: &RustPlace) -> Result[bool
     return Ok(indexed)
 
 
-def shared_list_element(mut builder: Builder, container: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
+pub def shared_list_element(mut builder: Builder, container: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
     """Call the checked runtime accessor returning a shared element reference, with no owned element read."""
     leaf, depth = require_list_shape(place_type(builder.locals, container), "invalid shared list loan")?
     element = list_element(leaf, depth)

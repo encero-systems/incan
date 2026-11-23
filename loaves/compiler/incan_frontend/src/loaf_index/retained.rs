@@ -3,6 +3,7 @@
 //! unsupported observations keep the ordinary reader. Each reading is bounded in size; a store holds every current
 //! reading and drops, one by one, the readings whose files have changed or gone.
 
+use incan_loaf_names::artifact_stem;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -97,8 +98,8 @@ fn observe(paths: &[PathBuf]) -> Option<Inputs> {
 /// Reuse a Loaf's validated manifest and authenticated ABI only while both current files match their reading.
 pub(super) fn artifact(dir: &Path, name: &str) -> Result<LoafArtifact, LoafIndexError> {
     let canonical = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
-    let key = canonical.join(format!("{name}.incnlib"));
-    let paths = [key.clone(), canonical.join(format!("{name}.rustabi"))];
+    let key = canonical.join(format!("{}.incnlib", artifact_stem(name)));
+    let paths = [key.clone(), canonical.join(format!("{}.rustabi", artifact_stem(name)))];
     let before = observe(&paths);
     let store = ARTIFACTS.get_or_init(Mutex::default);
     if let Some(inputs) = &before

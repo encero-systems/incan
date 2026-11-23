@@ -2,36 +2,50 @@
 
 use super::*;
 
-/// Only an authenticated SDK native bridge gains a source carrier key; equal names remain distinct owners.
+/// Primitive metadata records use source-owned layouts; neither their package nor an equal name creates a bridge.
 #[test]
-fn sdk_native_carrier_key_preserves_source_identity() -> Result<(), String> {
+fn primitive_metadata_keeps_source_ownership() -> Result<(), String> {
     let mut sdk = crate::CanonicalSymbolId::module_declaration(
-        vec!["reflection".into()],
+        vec!["primitives".into(), "reflection".into()],
         "FieldInfo",
-        crate::SemanticSourceTargetKind::Class,
+        crate::SemanticSourceTargetKind::Model,
         crate::HirSourceSpan::new(52, 423),
     );
     sdk.origin = crate::SymbolOrigin::Package {
         library: "incan_stdlib_primitives".into(),
-        module_path: vec!["reflection".into()],
+        module_path: vec!["primitives".into(), "reflection".into()],
     };
-    let key = super::nominal_carrier_key(&sdk).ok_or("missing SDK source carrier")?;
-    assert!(!key.contains("::"));
+    assert!(super::native_nominal_item(&sdk).is_none());
+    assert!(super::nominal_carrier_key(&sdk).is_some());
+    let compiled = super::loaf_item_path(&sdk).ok_or("missing compiled provider identity")?;
+    let symbol = compiled
+        .strip_prefix("incan_stdlib_primitives::")
+        .ok_or("metadata layout belongs to the wrong native crate")?;
     assert_eq!(
-        super::native_nominal_item(&sdk).as_deref(),
-        Some("incan_std_primitives::reflection::FieldInfo")
+        crate::decode_incan_symbol_identity(symbol).map_err(|error| error.to_string())?,
+        Some(sdk.clone())
     );
     let mut local = sdk.clone();
     local.origin = crate::SymbolOrigin::Package {
         library: "application".into(),
         module_path: vec!["reflection".into()],
     };
-    assert_ne!(super::nominal_carrier_key(&local), Some(key));
+    assert!(super::nominal_carrier_key(&local).is_some());
     assert!(super::native_nominal_item(&local).is_none());
-    let mut ordinary = sdk;
-    ordinary.declaration_name = "OtherRecord".into();
-    assert!(super::nominal_carrier_key(&ordinary).is_none());
-    assert!(super::native_nominal_item(&ordinary).is_none());
+    for package in ["alpha/catalog", "beta/catalog", "scope-a/catalog", "scope/a-catalog"] {
+        let mut scoped = sdk.clone();
+        scoped.origin = crate::SymbolOrigin::Package {
+            library: package.to_owned(),
+            module_path: vec!["types".to_owned()],
+        };
+        let path = super::loaf_item_path(&scoped).ok_or("missing scoped native path")?;
+        let (native, symbol) = path.split_once("::").ok_or("missing native crate separator")?;
+        assert_eq!(native, incan_loaf_names::native_crate_name(package));
+        assert_eq!(
+            crate::decode_incan_symbol_identity(symbol).map_err(|error| error.to_string())?,
+            Some(scoped)
+        );
+    }
     Ok(())
 }
 
@@ -197,6 +211,7 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
     body.params[0].input_access = crate::IncanInputAccess::Shared;
     assert!(body.first_representation_gap().is_some());
     let profile = super::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner: body.canonical.clone().ok_or("missing owner")?,
         owned_initializers: Vec::new(),
@@ -222,6 +237,12 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
         .ok_or("profile is not an object")?
         .remove("owned_initializers");
     assert!(serde_json::from_value::<super::CheckedInputProfile>(old_profile).is_err());
+    let mut missing_requirements = serde_json::to_value(&profile)?;
+    missing_requirements
+        .as_object_mut()
+        .ok_or("profile is not an object")?
+        .remove("result_requirements");
+    assert!(serde_json::from_value::<super::CheckedInputProfile>(missing_requirements).is_err());
     let assignment = HirSourceSpan::new(10, 30).with_expansion(Some([7; 32]));
     let initializer = super::CheckedOwnedInitializer {
         source: CanonicalSymbolId::module_declaration(
@@ -239,9 +260,14 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
         assignment,
     };
     // Initializer transfers travel with both profiles; only the conditional profile may execute them.
-    for version in [1, 2] {
+    for version in [1, 2, 3, 4] {
         body.checked_input_profile = Some(super::CheckedInputProfile {
             version,
+            result_requirements: if version >= 3 {
+                vec![(body.span, IncanType::Primitive(IncanPrimitiveType::Int))]
+            } else {
+                Vec::new()
+            },
             owned_initializers: vec![initializer.clone()],
             ..profile.clone()
         });
@@ -249,7 +275,7 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
         assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
         assert_eq!(
             decoded.first_representation_gap().is_some(),
-            version == 1,
+            matches!(version, 1 | 3),
             "profile {version} with an initializer transfer"
         );
     }
@@ -263,6 +289,7 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
     assert!(legacy.first_representation_gap().is_some());
     for invalid in [
         super::CheckedInputProfile {
+            result_requirements: Vec::new(),
             version: 3,
             ..profile.clone()
         },
@@ -312,6 +339,7 @@ fn explicit_calls_require_persisted_caller_authority() -> Result<(), Box<dyn std
     );
     caller.canonical = Some(owner.clone());
     caller.checked_input_profile = Some(super::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner,
         owned_initializers: Vec::new(),

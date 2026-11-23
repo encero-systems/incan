@@ -65,7 +65,7 @@ impl TypeChecker {
                 self.explicit_ownership_value_type(&resolved).unwrap_or(resolved)
             }
             TypeInfo::Enum(enum_info) => {
-                let resolved = Self::resolve_nominal_enum_field_type(type_name, type_args, field, enum_info)?;
+                let resolved = self.resolve_nominal_enum_field_type(type_name, type_args, field, enum_info)?;
                 let identity = enum_info.variant_identities.get(field).cloned();
                 if let Some(identity) = identity {
                     self.type_info.record_resolved_identity(span, identity);
@@ -85,17 +85,19 @@ impl TypeChecker {
             TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
                 let underlying = nt.underlying.clone();
                 // The wrapped slot belongs to the newtype's declaration, including one a library returned without
-                // the consumer importing it.
+                // the consumer importing it. A checked carrier key retains that same owner even though it is not a
+                // source symbol-table binding.
                 let owner = self
                     .symbols
                     .lookup(type_name)
                     .and_then(|symbol| self.symbols.identity_of(symbol))
                     .or_else(|| self.public_library_type_identities.get(type_name)?.canonical.as_ref())
-                    .cloned();
+                    .cloned()
+                    .or_else(|| self.checked_nominal_type_identities().get(type_name).cloned());
                 if let Some(owner) = owner {
                     self.type_info.record_resolved_identity(span, owner);
                 }
-                return Some(underlying);
+                return Some(self.explicit_ownership_value_type(&underlying).unwrap_or(underlying));
             }
             _ => return None,
         };
@@ -108,6 +110,7 @@ impl TypeChecker {
     /// The caller records a variant's identity after this borrow ends, retaining only the selected facts rather than
     /// cloning the enum's complete declaration metadata.
     pub(super) fn resolve_nominal_enum_field_type(
+        &self,
         type_name: &str,
         type_args: Option<&[ResolvedType]>,
         field: &str,
@@ -131,6 +134,10 @@ impl TypeChecker {
             if fields.is_empty() {
                 return Some(enum_ty);
             }
+            fields = fields
+                .into_iter()
+                .map(|field| self.explicit_ownership_value_type(&field).unwrap_or(field))
+                .collect();
             return Some(ResolvedType::Function(
                 fields.into_iter().map(CallableParam::positional).collect(),
                 Box::new(enum_ty),
@@ -612,6 +619,7 @@ impl TypeChecker {
             || !owner.type_params.is_empty()
             || !method.impl_type_params.is_empty()
             || !method.signature.type_params.is_empty()
+            || !Self::rust_signature_const_parameters(&method.signature).is_empty()
         {
             return None;
         }

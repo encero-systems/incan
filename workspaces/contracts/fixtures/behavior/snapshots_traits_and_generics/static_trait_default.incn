@@ -1,4 +1,4 @@
-# behavior: trait defaults dispatch through static and instance receivers, Self satisfies its own matching generic trait bound (#2774), and Self is an associated call head in trait and nominal methods (RFC 173)
+# behavior: trait defaults dispatch through static and instance receivers, Self satisfies its own matching generic trait bound (#2774), Self is an associated call head in trait and nominal methods (RFC 173), and nested generic static calls retain their checked error type through two enclosing models (#2808)
 # expect-stdout:
 #   42
 #   point 1
@@ -13,6 +13,9 @@
 #   leaf
 #   trait Self 17
 #   owner Self 18
+#   6
+#   7
+#   8
 
 from std.traits.convert import From
 
@@ -177,6 +180,28 @@ model RebuiltNumber with Reconstruct:
         return Self.__reconstruct__(source)
 
 
+model RebuiltOuter with Reconstruct:
+    """Hold a number reconstructed through a nested generic static call."""
+
+    number: RebuiltNumber
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltOuter, E]:
+        """Reconstruct the nested number with this call's checked error type."""
+        return Ok(RebuiltOuter(number=RebuiltNumber.__reconstruct__(source)?))
+
+
+model RebuiltEnvelope with Reconstruct:
+    """Hold two levels of nested generic static reconstruction."""
+
+    outer: RebuiltOuter
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltEnvelope, E]:
+        """Reconstruct the nested outer model with this call's checked error type."""
+        return Ok(RebuiltEnvelope(outer=RebuiltOuter.__reconstruct__(source)?))
+
+
 def make(x: int) -> Point:
     """Return a point as a call result."""
     return Point(x=x)
@@ -228,4 +253,13 @@ def main() -> None:
         Err(message) => println(message)
     match RebuiltNumber.through_owner(IntSource(value=18)):
         Ok(value) => println(f"owner Self {value.value}")
+        Err(message) => println(message)
+    match RebuiltNumber.__reconstruct__(IntSource(value=6)):
+        Ok(value) => println(value.value)
+        Err(message) => println(message)
+    match RebuiltOuter.__reconstruct__(IntSource(value=7)):
+        Ok(value) => println(value.number.value)
+        Err(message) => println(message)
+    match RebuiltEnvelope.__reconstruct__(IntSource(value=8)):
+        Ok(value) => println(value.outer.number.value)
         Err(message) => println(message)

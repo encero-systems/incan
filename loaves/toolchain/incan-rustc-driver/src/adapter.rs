@@ -57,11 +57,11 @@ pub enum DriverError {
 }
 
 /// Inject the prevalidated declarations after parsing an empty Incan crate root.
-struct Callbacks<'manifest> {
+struct Callbacks {
     /// The unstable features the unit's description declares; this session enables them and no others.
     features: Vec<String>,
     plan: Arc<Plan>,
-    manifest: Option<&'manifest incan_frontend::library_manifest::LibraryManifest>,
+    library_facades: Vec<crate::library_exports::LibraryFacade>,
     search: Vec<rustc_session::search_paths::SearchPath>,
     shared: Vec<String>,
     development: bool,
@@ -78,8 +78,9 @@ struct Callbacks<'manifest> {
 /// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
 /// is used: the unstable features and toolchain libraries a unit uses are the ones its description declares (`access`).
 /// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
-/// validation. A library manifest lends its already checked public facade names for aliases of the canonical native
-/// items. Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
+/// validation. A library supplies its already checked public facades as compact aliases of canonical native items,
+/// without retaining its frontend manifest. Development executables retain debug information for edit-time
+/// diagnostics; release executables omit it, while libraries retain metadata for their downstream consumers.
 /// A development store derives shared carriers from those same native identities and records loader witnesses;
 /// ordinary builds and release compilation do not select that policy.
 /// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
@@ -96,7 +97,7 @@ pub fn compile(
     shared_store: Option<&Path>,
     kind: UnitKind,
     overflow_checks: bool,
-    manifest: Option<&incan_frontend::library_manifest::LibraryManifest>,
+    library_facades: Vec<crate::library_exports::LibraryFacade>,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
@@ -167,7 +168,7 @@ pub fn compile(
     let mut callbacks = Callbacks {
         features,
         plan,
-        manifest,
+        library_facades,
         search,
         shared: shared.iter().map(|(name, _)| name.clone()).collect(),
         development: shared_store.is_some(),
@@ -203,6 +204,7 @@ fn compilation_arguments(
     overflow_checks: bool,
 ) -> Vec<String> {
     let overflow = if overflow_checks { "yes" } else { "no" };
+    let debuginfo = debuginfo(kind, overflow_checks);
     let mut args = vec![
         "incan-rustc-driver".into(),
         "--sysroot".into(),
@@ -218,7 +220,7 @@ fn compilation_arguments(
         "-C".into(),
         "opt-level=3".into(),
         "-C".into(),
-        "debuginfo=2".into(),
+        format!("debuginfo={debuginfo}"),
         "-o".into(),
         output.to_string_lossy().into_owned(),
         // A named input is never read: the callback installs the source-free root without consuming stdin. Its name
@@ -231,10 +233,20 @@ fn compilation_arguments(
     if kind == UnitKind::Test {
         args.push("--test".into());
     }
-    if kind != UnitKind::Library {
+    if kind != UnitKind::Library && debuginfo != "0" {
         args.push("-Csplit-debuginfo=unpacked".into());
     }
     args
+}
+
+/// Select full debug metadata for libraries and development executables, but omit metadata stripped from release
+/// executables.
+fn debuginfo(kind: UnitKind, overflow_checks: bool) -> &'static str {
+    if kind == UnitKind::Library || overflow_checks {
+        "2"
+    } else {
+        "0"
+    }
 }
 
 /// The unstable features a unit's description declares, each a Rust identifier the crate root enables.
@@ -299,4 +311,18 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
         }
     }
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UnitKind, debuginfo};
+
+    /// Release executables omit debug metadata while development executables and libraries retain it.
+    #[test]
+    fn debug_metadata_follows_unit_contract() {
+        assert_eq!(debuginfo(UnitKind::Program, false), "0");
+        assert_eq!(debuginfo(UnitKind::Test, false), "0");
+        assert_eq!(debuginfo(UnitKind::Program, true), "2");
+        assert_eq!(debuginfo(UnitKind::Library, false), "2");
+    }
 }

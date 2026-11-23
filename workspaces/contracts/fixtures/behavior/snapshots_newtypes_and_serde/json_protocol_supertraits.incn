@@ -22,7 +22,7 @@ model Payload with Loggable:
 
 
 class Record with Loggable:
-    value: int
+    pub value: int
 
 
 trait Named:

@@ -20,6 +20,7 @@ from rust::hmac import Hmac, Mac
 from rust::incan_std_primitives::errors import raise_value_error
 from rust::sha2 import Sha256
 
+
 type _HmacSha256 = rusttype Hmac[Sha256]
 
 
@@ -51,39 +52,34 @@ pub class HmacSha256Signer:
 
     handle: _HmacSha256
 
+    @staticmethod
+    pub def new(key: bytes) -> HmacSha256Signer:
+        """Create an incremental signer keyed with `key`."""
+        return HmacSha256Signer(handle=_must_keyed(key))
+
     pub def update(mut self, chunk: bytes) -> None:
-        """
-        Add `chunk` to the authenticated byte stream.
-        """
+        """Add `chunk` to the authenticated byte stream."""
         self.handle.update(chunk.as_slice())
 
     pub def finalize_bytes(mut self) -> bytes:
-        """
-        Return the tag for the bytes supplied so far, resetting the handle for the next stream.
-        """
+        """Return the tag for the bytes supplied so far, resetting the handle for the next stream."""
         return self.handle.finalize_reset().into_bytes().to_vec()
 
 
 pub class hmac_sha256:
-    """
-    HMAC-SHA256 namespace with one-shot and incremental authentication.
-    """
+    """HMAC-SHA256 namespace with one-shot and incremental authentication."""
 
     @staticmethod
     pub def digest(key: bytes, data: bytes) -> bytes:
-        """
-        Return the HMAC-SHA256 tag for `data` under `key`.
-        """
+        """Return the HMAC-SHA256 tag for `data` under `key`."""
         mut signer = hmac_sha256.new(key)
         signer.update(data)
         return signer.finalize_bytes()
 
     @staticmethod
     pub def new(key: bytes) -> HmacSha256Signer:
-        """
-        Create an incremental signer keyed with `key`.
-        """
-        return HmacSha256Signer(handle=_must_keyed(key))
+        """Create an incremental signer keyed with `key`."""
+        return HmacSha256Signer.new(key)
 
     @staticmethod
     pub def verify(key: bytes, data: bytes, tag: bytes) -> bool:

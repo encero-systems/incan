@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "The Incan language server: diagnostics, hover, definitions and semantic tokens over stdio"
 
 [dependencies]
+incan_loaf_names = { loaf = "incan_loaf_names", path = "../../kernel/incan_loaf_names" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver" }

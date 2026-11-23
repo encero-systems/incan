@@ -572,6 +572,15 @@ impl TypeChecker {
             ResolvedType::Bool
         } else if (is_str_like)(&left_ty) && (is_str_like)(&right_ty) {
             ResolvedType::Bool
+        } else if matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+            && left_ty.option_inner_type().is_some_and(is_str_like)
+            && right_ty.option_inner_type().is_some_and(is_str_like)
+        {
+            // Equality observes text contents symmetrically; it does not assign or freeze either optional payload.
+            ResolvedType::Bool
+        } else if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) && frozen_list_contents_comparable(&left_ty, &right_ty) {
+            // Shared content equality does not require either list's element type to accept the other's storage.
+            ResolvedType::Bool
         } else if decimal_shape(&left_ty).is_some() && decimal_shape(&right_ty).is_some() {
             // Decimal values compare by value, whatever precision and scale each side declares (#1810);
             // assignability between the two shapes does not enter into it.
@@ -717,5 +726,83 @@ impl TypeChecker {
             span,
         ));
         ResolvedType::Bool
+    }
+}
+
+/// Admit equal-depth lists of frozen/owned text or bytes symmetrically, without broadening assignment or ordering.
+fn frozen_list_contents_comparable(left: &ResolvedType, right: &ResolvedType) -> bool {
+    let (ResolvedType::Generic(left_name, left_args), ResolvedType::Generic(right_name, right_args)) = (left, right)
+    else {
+        return false;
+    };
+    if collection_type_id(left_name.as_str()) != Some(CollectionTypeId::List)
+        || collection_type_id(right_name.as_str()) != Some(CollectionTypeId::List)
+        || left_args.len() != 1
+        || right_args.len() != 1
+    {
+        return false;
+    }
+    let first = &left_args[0];
+    let second = &right_args[0];
+    (is_str_like(first) && is_str_like(second))
+        || matches!(
+            (first, second),
+            (ResolvedType::Bytes, ResolvedType::FrozenBytes) | (ResolvedType::FrozenBytes, ResolvedType::Bytes)
+        )
+        || frozen_list_contents_comparable(first, second)
+}
+
+#[cfg(test)]
+mod optional_text_tests {
+    /// Equality accepts both directions of optional owned/frozen text without changing either payload type.
+    #[test]
+    fn optional_text_equality_is_symmetric() -> Result<(), String> {
+        let source = "def same(left: Option[FrozenStr], right: Option[str]) -> bool:\n    return left == right and right == left and not (left != right) and not (right != left)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        Ok(())
+    }
+
+    /// Lists compare frozen and ordinary contents in both directions, including nested list shapes.
+    #[test]
+    fn frozen_list_equality_is_symmetric() -> Result<(), String> {
+        for (left, right) in [
+            ("list[FrozenStr]", "list[str]"),
+            ("list[FrozenBytes]", "list[bytes]"),
+            ("list[list[FrozenBytes]]", "list[list[bytes]]"),
+        ] {
+            let source = format!(
+                "def same(left: {left}, right: {right}) -> bool:\n    return left == right and right == left and not (left != right) and not (right != left)\n"
+            );
+            let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let mut checker = crate::typechecker::TypeChecker::new();
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("{errors:?}"))?;
+        }
+        Ok(())
+    }
+
+    /// Text equality does not admit a different optional payload family or optional text ordering.
+    #[test]
+    fn optional_text_comparison_keeps_other_refusals() -> Result<(), String> {
+        for source in [
+            "def mixed(left: list[FrozenStr], right: list[int]) -> bool:\n    return left == right\n",
+            "def mixed(left: list[FrozenBytes], right: list[str]) -> bool:\n    return left == right\n",
+            "def ordered(left: list[str], right: list[FrozenStr]) -> bool:\n    return left < right\n",
+            "def mixed(left: Option[FrozenStr], right: Option[int]) -> bool:\n    return left == right\n",
+            "def ordered(left: Option[str], right: Option[FrozenStr]) -> bool:\n    return left < right\n",
+        ] {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let mut checker = crate::typechecker::TypeChecker::new();
+            assert!(checker.check_program(&program).is_err());
+        }
+        Ok(())
     }
 }

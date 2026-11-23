@@ -1,0 +1,4 @@
+[project]
+name = "reflection-protocol"
+version = "0.1.0"
+description = "Handwritten typed-value protocol acceptance"

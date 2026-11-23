@@ -179,10 +179,8 @@ pub mod rust {
 
     // Compiler-provided Incan reflection capabilities
     pub const INCAN_CLASS_NAME: &str = "incan_std_primitives::reflection::HasClassName";
-    pub const INCAN_FIELD_METADATA: &str = "incan_std_primitives::reflection::HasFieldMetadata";
     pub const INCAN_FIELD_VALUE_REFLECTION: &str = "incan_std_primitives::reflection::HasFieldValueReflection";
     pub const INCAN_TYPE_CLASS_NAME: &str = "incan_std_primitives::reflection::HasTypeClassName";
-    pub const INCAN_TYPE_FIELD_METADATA: &str = "incan_std_primitives::reflection::HasTypeFieldMetadata";
 }
 
 /// Look up the Rust trait path for an Incan trait bound name.

@@ -270,6 +270,18 @@ pub class LocalFacetSession:
     selections: list[FacetSelection] = []
     by_owner: Dict[str, int] = {}
 
+    @staticmethod
+    pub def start(
+        configuration: TargetConfiguration,
+        substitutes: Dict[str, str] = {},
+        reader: ManifestReader = ManifestReader(),
+    ) -> LocalFacetSession:
+        """Own one reconciled context while constructing the mutable activation registries inside the session."""
+        mut owned_substitutes: Dict[str, str] = {}
+        for name in sorted([name for name in substitutes.keys()]):
+            owned_substitutes[name] = substitutes[name]
+        return LocalFacetSession(configuration=configuration, substitutes=owned_substitutes, reader=reader)
+
     pub def facets(
         mut self,
         root: LocalDemand,
@@ -353,7 +365,7 @@ pub def local_facet_session(
     reader: ManifestReader = ManifestReader(),
 ) -> LocalFacetSession:
     """Own a fixed reconciled context whose exact activations may be shared across independent root closures."""
-    return LocalFacetSession(configuration=configuration, substitutes=substitutes, reader=reader)
+    return LocalFacetSession.start(configuration, substitutes, reader)
 
 
 def canonical_demand(demand: LocalDemand) -> LocalDemand:

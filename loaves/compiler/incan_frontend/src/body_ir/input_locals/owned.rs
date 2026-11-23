@@ -71,7 +71,7 @@ impl BodyBuilder<'_, '_> {
                 || place
                     .local_id()
                     .and_then(|id| self.locals.get(id.index()))
-                    .and_then(|local| local.identity.as_ref())
+                    .and_then(|local| local.identity.as_deref())
                     != Some(identity)
             {
                 return Err("owned initializer destination differs from its checked declaration".into());

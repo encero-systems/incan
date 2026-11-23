@@ -39,7 +39,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
     assert_help(
         "incan",
         [
-            ("run", "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("run", "incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
             ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
             ("explain", "incan explain CODE"),
             ("test", "incan test PATH [UNIT OPTIONS]"),
@@ -59,8 +59,9 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("run", "oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
             ("check", "oven check PATH [--format text|json] [UNIT OPTIONS]"),
             ("lock", "oven lock [--versions lowest|lowest-direct|newest] [PATH]"),
+            ("trust", "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"),
             ("test", "oven test PATH [UNIT OPTIONS]"),
-            ("describe-unit", "oven describe-unit PATH [UNIT OPTIONS]"),
+            ("describe-unit", "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"),
             ("build", "oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
             ("owner stop", "oven owner stop"),
             ("bakery status", "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
@@ -79,6 +80,16 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
     assert command_help("incan", "nonexistent", ["--help"]) == None
     assert command_help("oven", "owner", ["nonexistent", "--help"]) == None
     assert command_help("oven", "bakery", ["status", "--format", "--help"]) == None
+    incan_run = command_help("incan", "run", ["--help"])
+    oven_run = command_help("oven", "run", ["--help"])
+    match incan_run:
+        None => fail("incan run help is missing")
+        Some(text) =>
+            assert "--direct" in text
+    match oven_run:
+        None => fail("oven run help is missing")
+        Some(text) =>
+            assert "--direct" not in text
     selected = mcp_options([".", "--profile", "release"])?
     assert selected.path.0 == "." and selected.profile == "release"
     assert mcp_options(["."]).map((selected) => selected.profile) == Ok("debug")
@@ -91,7 +102,7 @@ pub def test_each_surface_runs_only_its_own_commands() -> None:
     `oven` names the `incan` command that runs a language command. The project commands run on both, and `--version`
     names the invoked surface.
     """
-    for command in [["describe-unit"], ["owner", "stop"], ["bakery", "status"], ["lock"]]:
+    for command in [["describe-unit"], ["owner", "stop"], ["bakery", "status"], ["lock"], ["trust", "list"]]:
         assert command_help("incan", command[0], command[1:] + ["--help"]) == None
         assert misplaced("incan", command[0], command[1:]) == Some(f"incan: unknown command `{command[0]}`")
         assert misplaced("oven", command[0], command[1:]) == None

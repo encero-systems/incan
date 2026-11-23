@@ -1,0 +1,14 @@
+# behavior: reading a scalar field through a list still reports the canonical bounds failure (#2845).
+# expect-exit: 101
+# expect-stderr-contains:
+#   IndexError
+#   index 1 out of range for list of length 1
+
+model Entry:
+    pub metadata: list[str]
+    pub tag: int
+
+
+def main() -> None:
+    entries = [Entry(metadata=["kept"], tag=7)]
+    println(entries[1].tag)

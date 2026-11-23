@@ -1,0 +1,13 @@
+[project]
+name = "scoped_native_provider_identities"
+version = "1.0.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+first = { path = "deps/first" }
+second = { path = "deps/second" }
+folded_left = { path = "deps/folded_left" }
+folded_right = { path = "deps/folded_right" }
+longest = { path = "deps/longest" }

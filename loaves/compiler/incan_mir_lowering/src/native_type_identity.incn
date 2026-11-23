@@ -1,6 +1,7 @@
 """Native nominal representation identities retain physical callable inputs without source binding metadata."""
 
 from rust::incan_semantics_core import (
+    CanonicalSymbolId,
     IncanType as RustType,
     IncanCallableParam as RustCallableParam,
     SymbolOrigin,
@@ -10,7 +11,7 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
-from rust::std::collections import BTreeMap
+from rust::std::collections import BTreeMap, BTreeSet
 from rust::std::sync import Arc
 from table_views import borrowed_at
 
@@ -23,22 +24,53 @@ pub model ConstructorIndex:
     Declaration positions for one nominal inventory, without copied declaration facts.
 
     `owners` and `generic_owners` keep the first match by carrier key. `named` keeps every position by declaration
-    name in table order, since a carrier key can differ from the name. `count` is the inventory length indexed so far.
+    name in table order, since a carrier key can differ from the name. `source_files` and `package_versions` retain the
+    authenticated project inputs needed when a checked trait identity becomes an authored Plan fact.
+    `validated_constructors` admits generated Validate calls without rescanning every declaration at every call site.
+    `count` is the inventory length indexed so far.
     """
 
     pub owners: dict[str, int]
     pub generic_owners: dict[str, int]
     pub named: BTreeMap[str, list[int]]
+    pub source_files: BTreeMap[str, str]
+    pub package_versions: BTreeMap[str, str]
+    pub validated_constructors: BTreeSet[CanonicalSymbolId]
     pub count: int
 
 
 pub def constructor_index(declarations: list[NominalDeclaration]) -> ConstructorIndex:
     """Index each retained constructor once, preserving independent all-row and generic-row first-match order."""
     named: BTreeMap[str, list[int]] = BTreeMap.new()
+    validated_constructors: BTreeSet[CanonicalSymbolId] = BTreeSet.new()
     # The new index is built through the same mutable borrow that extends a shared one, so one path indexes rows.
-    mut constructors = Arc.new(ConstructorIndex(owners={}, generic_owners={}, named=named, count=0))
+    versions: BTreeMap[str, str] = BTreeMap.new()
+    files: BTreeMap[str, str] = BTreeMap.new()
+    mut constructors = Arc.new(
+        ConstructorIndex(
+            owners={},
+            generic_owners={},
+            named=named,
+            source_files=files,
+            package_versions=versions,
+            validated_constructors=validated_constructors,
+            count=0,
+        ),
+    )
     extend_constructor_index(Arc.make_mut(constructors), declarations)
     return Arc.unwrap_or_clone(constructors)
+
+
+pub def constructor_index_with_packages(
+    declarations: list[NominalDeclaration],
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> ConstructorIndex:
+    """Index retained constructors and copy authenticated module files and package selections once for Plan facts."""
+    mut constructors = constructor_index(declarations)
+    constructors.source_files = source_files.clone()
+    constructors.package_versions = package_versions.clone()
+    return constructors
 
 
 pub def extend_constructor_index(
@@ -57,6 +89,9 @@ pub def extend_constructor_index(
         if declaration.type_parameter_count != 0 and constructors.generic_owners.get(base) == None:
             constructors.generic_owners[base] = position
         constructors.named.entry(str(declaration.name)).or_insert([]).push(position)
+        match declaration.validated_constructor:
+            Some(contract) => _ = constructors.validated_constructors.insert(contract.constructor.clone())
+            None => pass
     constructors.count = len(declarations)
 
 

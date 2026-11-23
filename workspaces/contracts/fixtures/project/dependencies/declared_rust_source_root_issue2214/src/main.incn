@@ -1,6 +1,7 @@
-# behavior: a custom source root links a Rust dependency whose artifact path contains equals (#2214)
+# behavior: a custom source root links a Rust dependency whose artifact path contains equals, while direct run bypasses its Loaf (#2214, RFC 118)
 # cli-commands:
 #   run app=source/code/main.incn
+#   run --direct src/main.incn
 # expect-stdout:
 #   42
 

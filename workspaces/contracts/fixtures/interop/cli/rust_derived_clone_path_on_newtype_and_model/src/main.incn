@@ -14,6 +14,10 @@ class _Native:
     """Own a Clone native state that has no Debug implementation."""
     handle: Xxh32
 
+    @staticmethod
+    pub def create(handle: Xxh32) -> _Native:
+        return _Native(handle=handle)
+
     pub def digest(self) -> u32:
         """Read the native state through its checked shared receiver."""
         return self.handle.digest()
@@ -22,6 +26,10 @@ class _Native:
 class _Plain:
     """Keep automatic Debug when all fields are source values."""
     handle: int
+
+    @staticmethod
+    pub def create(handle: int) -> _Plain:
+        return _Plain(handle=handle)
 
 
 @rust.derive("std::clone::Clone")
@@ -46,10 +54,10 @@ def show_derived_clone() -> None:
 
 def show_private_class_derives() -> None:
     """Clone a private class over native state without Debug, and keep Debug on a source-only private class."""
-    value = _Native(handle=Xxh32.default())
+    value = _Native.create(Xxh32.default())
     cloned = value.clone()
     assert value.digest() == cloned.digest()
-    assert f"{_Plain(handle=7):?}" == "_Plain(handle=7)"
+    assert f"{_Plain.create(7):?}" == "_Plain(handle=7)"
 
 
 def show_f32_argument() -> None:

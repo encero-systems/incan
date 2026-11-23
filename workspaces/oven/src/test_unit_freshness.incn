@@ -21,7 +21,8 @@ from rust_build import linking
 from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
 from unit import UnitDescription, UnitLoaf
-from unit_compiler import described_by, write_unit
+from unit_reading import read_unit
+from unit_compiler import crate_name, described_by, write_unit
 from unit_publication import admit_payload, published_identity, record_path, record_payload
 from unit_freshness import Key, artifact_files, reusable, record, description_digest, staleness
 from freshness_fixtures import Fixture, fixture, make_executable, reconcile, unit_key, write
@@ -49,6 +50,7 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     verify_project_entries(scratch.path().joinpath("project-entries"))?
     verify_invocation_identity(setup)?
     verify_declared_access(setup)?
+    verify_record_identity()?
     verify_descriptor_selection(setup)?
     verify_published_identity(scratch.path().joinpath("publication"))?
     return Ok(None)
@@ -785,3 +787,26 @@ def started_test(binary: str, project: Path, name: str) -> Result[Child, str]:
     command.arg("test").arg(project.joinpath(f"tests/test_{name}.incn").0).current_dir(project.0)
     command.env("OVEN_OWNER", "off").stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
     return command.spawn().map_err((error) => f"cannot start {binary}: {error}")
+
+
+def verify_record_identity() -> Result[None, str]:
+    """Registry identity changes the compiler request while absent identity preserves existing unit keys."""
+    mut unit = ordinary_unit()
+    original = description_digest(unit)?
+    assert original == ORDINARY_DIGEST
+    assert unit.to_json().get("registry_id") == None
+    assert read_unit(unit.to_json())?.registry_id == None
+    unit.registry_id = Some("sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0")
+    declared = description_digest(unit)?
+    assert declared != original
+    assert read_unit(unit.to_json())?.registry_id == unit.registry_id
+    unit.registry_id = Some("sha256:0000000000000000000000000000000000000000000000000000000000000000")
+    assert description_digest(unit)? != declared
+    unit.package = "scope-a/catalog"
+    left = crate_name(unit)
+    unit.package = "scope/a-catalog"
+    assert crate_name(unit) != left
+    files = artifact_files(Path("/not-present"), unit.package)?
+    assert files[0].name() == f"lib{crate_name(unit)}.rlib"
+    assert files[1].name() == f"{crate_name(unit)}.incnlib"
+    return Ok(None)

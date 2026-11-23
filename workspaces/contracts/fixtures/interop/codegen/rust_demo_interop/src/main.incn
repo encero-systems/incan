@@ -187,6 +187,10 @@ pub def encode_packet(packet: Packet) -> int:
 pub class Signer:
     handle: Engine
 
+    @staticmethod
+    pub def create(handle: Engine) -> Signer:
+        return Signer(handle=handle)
+
     pub def update(mut self, chunk: bytes) -> None:
         Mac.update(self.handle, chunk.as_slice())
 
@@ -198,7 +202,7 @@ pub class Signer:
 
 
 pub def sign_field(chunk: bytes) -> str:
-    mut signer = Signer(handle=Engine.default())
+    mut signer = Signer.create(Engine.default())
     signer.update(chunk)
     return f"{len(chunk)} {signer.is_ready()} {len(signer.finish())}"
 

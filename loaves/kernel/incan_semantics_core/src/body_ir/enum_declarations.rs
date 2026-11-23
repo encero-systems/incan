@@ -75,6 +75,9 @@ pub struct FieldlessEnumDeclaration {
 /// Canonical payload layout of a checked source, SDK or native enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
+    /// Declared persistent namespace of the source producer; absent for runtime or unscoped declarations.
+    #[serde(default)]
+    pub record_package_identity: Option<crate::record_identity::RecordPackageIdentity>,
     /// The compiled item a linked Loaf declares this enum as (DD-0007); empty for an enum this compilation declares.
     #[serde(default)]
     pub native_item: String,
@@ -157,6 +160,7 @@ pub fn native_enum_declaration(
         })
         .collect::<Option<Vec<_>>>()?;
     Some(EnumDeclaration {
+        record_package_identity: None,
         native_item: path.to_owned(),
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
         canonical,

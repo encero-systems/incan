@@ -485,6 +485,8 @@ impl TypeChecker {
                         record_identity: field.hydrated_record_identity(),
                         record_canonical: field.record_canonical,
                         renamed_from: field.renamed_from.clone(),
+                        renamed_from_lifecycle: field.renamed_from_lifecycle.clone(),
+                        default_is_empty: field.default_is_empty,
                         ty: resolved_type_from_manifest_type_ref(&field.ty),
                         surface_type_name: field.surface_type_name.clone(),
                         visibility: match field.visibility {

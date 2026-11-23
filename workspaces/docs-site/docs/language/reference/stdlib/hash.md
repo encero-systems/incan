@@ -57,6 +57,8 @@ Integer finalizers are intentionally absent from cryptographic namespaces. Use d
 
 `Sha256Hasher.update_view(view: MappedView) -> None` adds the bytes of a [`std.fs`](fs.md) mapped view where they lie; no byte is copied out of the mapping.
 
+`Sha256Hasher.new() -> Sha256Hasher` constructs empty incremental SHA-256 state. `sha256.new()` delegates to this class-owned factory.
+
 `Sha256Hasher`, `ByteDigestHasher`, and `sha256` are declared by `std.primitives`. `std.hash` reexports the same declarations, so values cross the lower-level and higher-level import paths without conversion:
 
 ```incan
@@ -111,6 +113,7 @@ from std.primitives.hmac import HmacSha256Signer, hmac_sha256
 | `hmac_sha256.digest(key: bytes, data: bytes)` | `bytes` | 32-byte HMAC-SHA256 tag. |
 | `hmac_sha256.verify(key: bytes, data: bytes, tag: bytes)` | `bool` | Returns false for a mismatched or incorrectly sized tag. Uses the native constant-time comparison instead of comparing tag bytes with `==`. |
 | `hmac_sha256.new(key: bytes)` | `HmacSha256Signer` | Incremental signer keyed with `key`. |
+| `HmacSha256Signer.new(key: bytes)` | `HmacSha256Signer` | Class-owned factory for an incremental signer keyed with `key`. |
 
 | Hasher family | Methods |
 | --- | --- |

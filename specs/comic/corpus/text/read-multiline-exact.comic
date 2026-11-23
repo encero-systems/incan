@@ -1,0 +1,5 @@
+example.Value = Record { value: string }
+
+example.Value << (value="""
+  hello
+""")

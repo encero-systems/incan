@@ -249,15 +249,7 @@ pub enum Rvalue {
     ///
     /// The target is not a runtime operand. Keeping this operation distinct prevents an executor from reparsing a
     /// source type name or treating arbitrary type expressions as first-class runtime values.
-    IsInstance {
-        value: Operand,
-        /// Alias-expanded checked type of the tested value.
-        ///
-        /// This lets a bounded executor validate the whole admitted type-test profile before effects instead of
-        /// accidentally accepting every runtime carrier that happens to produce `false` for one primitive target.
-        value_ty: IncanType,
-        target: IsInstanceTarget,
-    },
+    IsInstance(Box<IsInstanceRvalue>),
     /// Build a tuple, list, or nominal-constructor value from its element/field operands.
     Aggregate(AggregateKind, Vec<ArgumentElement>),
     /// `{k: v, ...}` dict literal, as an ordered list of entries.
@@ -364,6 +356,23 @@ pub enum Rvalue {
     },
 }
 
+/// Checked operands and target for the rare [`Rvalue::IsInstance`] operation.
+///
+/// The allocation keeps this operation's large type payload out of every [`Rvalue`]. `Box` is transparent to Serde,
+/// so executable-representation bytes retain the established enum discriminant and field sequence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IsInstanceRvalue {
+    /// Runtime value tested against the retained target.
+    pub value: Operand,
+    /// Alias-expanded checked type of the tested value.
+    ///
+    /// This lets a bounded executor validate the whole admitted type-test profile before effects instead of
+    /// accidentally accepting every runtime carrier that happens to produce `false` for one primitive target.
+    pub value_ty: IncanType,
+    /// Checker-resolved target type and canonical identity required to authenticate the test.
+    pub target: IsInstanceTarget,
+}
+
 impl Rvalue {
     /// Render a deterministic maintainer-facing spelling for this rvalue.
     pub(super) fn render_snapshot(&self) -> String {
@@ -373,16 +382,12 @@ impl Rvalue {
             Self::BinaryOp(op, lhs, rhs) => {
                 format!("{} {} {}", lhs.render_snapshot(), op.as_str(), rhs.render_snapshot())
             }
-            Self::IsInstance {
-                value,
-                value_ty,
-                target,
-            } => {
+            Self::IsInstance(payload) => {
                 format!(
                     "isinstance({}: {}, {})",
-                    value.render_snapshot(),
-                    value_ty,
-                    target.render_snapshot()
+                    payload.value.render_snapshot(),
+                    payload.value_ty,
+                    payload.target.render_snapshot()
                 )
             }
             Self::Dict(entries) => {

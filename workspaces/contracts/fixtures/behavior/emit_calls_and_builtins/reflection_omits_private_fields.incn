@@ -12,9 +12,26 @@
 #   Vault
 #   1
 
+model FieldInfo:
+    """An ordinary local name must not replace the primitive metadata carrier."""
+
+    pub own_value: int
+
+
 pub model Vault:
     secret: str = "sealed"
     pub label as "wire_label": str
+
+
+pub model DefaultFacts:
+    """Reflect literal defaults and original slots without constructing a value."""
+
+    hidden: int = 9
+    pub required: list[int]
+    pub empty: list[int] = []
+    pub populated: list[int] = [1]
+    pub mapping: dict[str, int] = {}
+    pub text: str = ""
 
 
 def make_vault() -> Vault:
@@ -40,6 +57,20 @@ def column_count[T]() -> int:
 
 def main() -> None:
     """Print visible fields and generated class names, including one effectful receiver."""
+    local = FieldInfo(own_value=7)
+    assert local.own_value == 7
+    assert str(FieldInfo.__fields__()[0].name) == "own_value"
+    facts = DefaultFacts.__fields__()
+    assert len(facts) == 5
+    assert facts[0].position == 1
+    assert not facts[0].default_is_empty
+    assert facts[1].position == 2
+    assert facts[1].default_is_empty
+    assert not facts[2].default_is_empty
+    assert facts[3].default_is_empty
+    assert not facts[4].default_is_empty
+    assert facts[1].renamed_from_lifecycle.is_none()
+    assert Vault.__fields__()[0].position == 1
     vault = Vault(label="public")
     for info in vault.__fields__():
         println(info.name)

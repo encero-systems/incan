@@ -698,8 +698,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// the canonical identity, and when that method is declared in this module its declaration span is the
     /// `direct_call_id` the method's own [`bir::Body`] carries. A selection that is not a method (an enum variant
     /// constructor, say, or a member the checker did not resolve) refuses rather than being called by its spelling.
-    /// An applied receiver already carries its owner arguments, so its checked method instantiation supplies only
-    /// method binders. Bare factory receivers still need the supplemental checked owner frame.
+    /// The checker's complete call-site instantiation supplies every inferred or explicit method binder independently
+    /// of receiver shape. An applied receiver carries its owner arguments separately, while a bare factory receiver
+    /// still needs the supplemental checked owner frame.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_static_method_call(
         &mut self,
@@ -732,12 +733,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         };
         let receiver_type = self.static_receiver_type(recv, span);
-        let method_arguments = self
-            .type_info
-            .calls
-            .call_site_monomorph_type_args
-            .get(&span)
-            .filter(|_| matches!(receiver_type, Some(IncanType::Generic { .. })));
+        let method_arguments = self.type_info.calls.call_site_monomorph_type_args.get(&span);
         let resolved_type_args = match method_arguments
             .map(|arguments| {
                 Ok(arguments

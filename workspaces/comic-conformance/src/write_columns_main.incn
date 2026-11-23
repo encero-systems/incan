@@ -1,0 +1,31 @@
+"""Keep physical column writer verification separate from real decoder conformance."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from std.json import parse
+from corpus import load
+from column_writer_cases import run_column_writers
+
+
+def run(manifest: str, choices: str) -> Result[i32, str]:
+    """Read immutable expected corpus data and the explicit chosen-encoding input fixture."""
+    corpus = load(Path(manifest))?
+    source = Path(choices).read_text("utf-8", "strict").map_err((e) => e.message())?
+    plans = parse(source).map_err((e) => e.message())?
+    report = run_column_writers(corpus, plans)
+    println(report.document.to_json().map_err((e) => e.message())?)
+    return Ok(report.exit_code)
+
+
+def main() -> None:
+    """Exit zero only when every one of the 52 accepted chosen-encoding controls matches."""
+    arguments = [argument for argument in args()]
+    if len(arguments) != 3:
+        println("usage: comic-column-writer MANIFEST ENCODING_CHOICES")
+        exit(2)
+    match run(arguments[1], arguments[2]):
+        Ok(code) => exit(code)
+        Err(error) =>
+            println("FAILED: " + error)
+            exit(1)

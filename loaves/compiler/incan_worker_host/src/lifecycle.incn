@@ -72,6 +72,11 @@ pub class Lifecycle:
     pub strikes: int = 0
     last_activity: Instant
 
+    @staticmethod
+    pub def start(baseline: int, bounds: Bounds) -> Lifecycle:
+        """Start a worker policy now while keeping its activity clock private to the class."""
+        return Lifecycle(bounds=bounds, baseline=baseline, last_activity=Instant.now())
+
     def touch(mut self) -> None:
         """A request was answered: the idle period starts again."""
         self.last_activity = Instant.now()
@@ -121,4 +126,4 @@ pub class Lifecycle:
 
 pub def lifecycle(baseline: int, bounds: Bounds) -> Lifecycle:
     """A worker's policy state, its idle period starting now."""
-    return Lifecycle(bounds=bounds, baseline=baseline, last_activity=Instant.now())
+    return Lifecycle.start(baseline, bounds)

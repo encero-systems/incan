@@ -88,23 +88,28 @@ fn needs_total_comparison(derive: DeriveId) -> bool {
     matches!(derive, DeriveId::Eq | DeriveId::Ord | DeriveId::Hash)
 }
 
-/// Whether an enum payload type lets the enum take lowering's automatic `PartialEq`: a number, `bool`, `str` or
-/// `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those. A declared type never does, whatever it
-/// derives, since lowering decides on the lowered payload type alone.
-fn payload_defaults_partial_eq(ty: &ResolvedType) -> bool {
+/// Whether an enum payload type lets the enum take lowering's automatic equality derive.
+///
+/// `PartialEq` admits floating-point payloads while `Eq` does not. A declared type never supplies an automatic derive,
+/// whatever it derives itself, because lowering decides this default from the lowered payload type alone.
+fn payload_defaults_equality(ty: &ResolvedType, derive: DeriveId) -> bool {
+    let allows_float = derive == DeriveId::PartialEq;
+    if !matches!(derive, DeriveId::Eq | DeriveId::PartialEq) {
+        return false;
+    }
     match ty {
         ResolvedType::Unit
         | ResolvedType::Bool
         | ResolvedType::Int
-        | ResolvedType::Float
-        | ResolvedType::Numeric(_)
         | ResolvedType::Str
         | ResolvedType::Bytes
         | ResolvedType::FrozenStr
         | ResolvedType::FrozenBytes => true,
-        ResolvedType::Tuple(items) => items.iter().all(payload_defaults_partial_eq),
+        ResolvedType::Float => allows_float,
+        ResolvedType::Numeric(id) => allows_float || !numerics::is_binary_float(*id),
+        ResolvedType::Tuple(items) => items.iter().all(|item| payload_defaults_equality(item, derive)),
         ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
-            payload_defaults_partial_eq(inner)
+            payload_defaults_equality(inner, derive)
         }
         ResolvedType::Generic(name, args) => {
             if numerics::decimal_constructor_from_str(name).is_some() {
@@ -112,12 +117,12 @@ fn payload_defaults_partial_eq(ty: &ResolvedType) -> bool {
             }
             match collection_type_id(name) {
                 Some(CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Option) => {
-                    args.len() == 1 && args.iter().all(payload_defaults_partial_eq)
+                    args.len() == 1 && args.iter().all(|arg| payload_defaults_equality(arg, derive))
                 }
                 Some(CollectionTypeId::Dict | CollectionTypeId::Result) => {
-                    args.len() == 2 && args.iter().all(payload_defaults_partial_eq)
+                    args.len() == 2 && args.iter().all(|arg| payload_defaults_equality(arg, derive))
                 }
-                Some(CollectionTypeId::Tuple) => args.iter().all(payload_defaults_partial_eq),
+                Some(CollectionTypeId::Tuple) => args.iter().all(|arg| payload_defaults_equality(arg, derive)),
                 _ => false,
             }
         }

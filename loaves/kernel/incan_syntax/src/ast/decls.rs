@@ -37,6 +37,10 @@ pub struct FieldMetadata {
     pub renamed_from: Vec<Spanned<String>>,
     /// Whether `renamed_from` used the authored list spelling, including a one-item list.
     pub renamed_from_was_list: bool,
+    /// Whether the author used a nested block, including a block with names only.
+    pub renamed_from_was_block: bool,
+    /// Optional descriptive facts from the rename block, without executable behavior or authority.
+    pub renamed_from_lifecycle: Option<LifecycleMetadata>,
     /// Source span of the `renamed_from` key when present.
     pub renamed_from_key_span: Option<Span>,
     /// Whether this field participates in a canonical stored hash, when explicitly written.
@@ -47,6 +51,18 @@ pub struct FieldMetadata {
     pub made_private: Option<MadePrivateMetadata>,
     /// Source span of the `made_private` key when present.
     pub made_private_key_span: Option<Span>,
+}
+
+/// Shared descriptive lifecycle labels retained with their exact source spans.
+///
+/// These strings do not select code, confer authority or change declaration identity.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
+pub struct LifecycleMetadata {
+    pub since: Option<Spanned<String>>,
+    pub retire_in: Option<Spanned<String>>,
+    pub message: Option<Spanned<String>>,
+    pub by: Option<Spanned<String>>,
+    pub issue: Option<Spanned<String>>,
 }
 
 /// Checked-safe lifecycle facts attached to a member that used to be public.

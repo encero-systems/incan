@@ -6,6 +6,68 @@ The compiler's shared record contracts, one module per contract; none names Oven
 `from pub::internal_models.checker_records import encode_record`, or the read and producer contracts from this facade.
 """
 
+pub from compiler_records import (
+    IDENTITY_ADAPTER_PROFILE,
+    IDENTITY_ADAPTER_SOURCE,
+    IDENTITY_ADAPTER_GENERATION,
+    IDENTITY_ADAPTER_REMOVAL_GATE,
+    SymbolNamespace,
+    PackageIdentity,
+    SymbolOrigin,
+    DeclarationKind,
+    HirSourceSpan,
+    PlanSourceSpanRecord,
+    CanonicalSymbolId,
+    DeclarationSignature,
+    StableDeclarationComponent,
+    StableDeclarationLocation,
+    StableDeclarationId,
+    valid_hir_source_span,
+    valid_canonical_symbol_id,
+    valid_stable_declaration_id,
+)
+pub from checked_types import (
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedInputAccess,
+    CheckedCallableParamKind,
+    CheckedRuntimeBuiltin,
+    CheckedCallableParam,
+    CheckedType,
+    valid_checked_type,
+)
+pub from body_ir_values import (
+    CompilerBlock,
+    CompilerCallee,
+    CompilerRvalue,
+    CompilerStatement,
+    CompilerStatementKind,
+)
+pub from body_ir_declarations import (
+    BODY_IR_ADAPTER_PROFILE,
+    BODY_IR_ADAPTER_SOURCE,
+    BODY_IR_ADAPTER_GENERATION,
+    BODY_IR_ADAPTER_REMOVAL_GATE,
+    NamedTypeIdentity,
+    TraitTypeArgument,
+    TraitDefaultInstantiation,
+    TraitFieldWitness,
+    CompilerTraitAdoption,
+    CompilerBody,
+    CompilerNominalDeclaration,
+    CompilerLoafCallable,
+    CompilerBodyCoverage,
+    CompilerDeclarationSet,
+    CompilerBodyIrModule,
+    valid_compiler_body,
+    valid_optional_body,
+    valid_nominal_declaration,
+    valid_loaf_callable,
+    covered_body_count,
+    valid_invocation_view,
+    valid_published_expanded_body,
+    invalidate_owned_callable_fields,
+)
 pub from records import (
     RecordKey,
     ReadScope,

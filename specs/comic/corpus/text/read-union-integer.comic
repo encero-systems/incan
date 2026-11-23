@@ -1,0 +1,3 @@
+example.Value = Record { value: i64 | string }
+
+example.Value << (value=i64 << 3)

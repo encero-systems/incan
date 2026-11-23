@@ -24,21 +24,10 @@ The checker needs Rust facts for `rust::` imports: types, generics, methods, fie
 
 ## Decision
 
-1. **One extractor.** The native driver extracts facts from linked rustc metadata through public paths, using the checker's metadata shape; each nonstandard root requires one explicit extern artifact in the unit's closure, with missing/conflicting artifacts refused and search paths limited to transitive dependencies.
-2. **ABI caches are the primary source.**
-   - **Contents:** an ABI cache holds the facts of every public item of one or more compiled Rust crates, plus restricted type and trait dependencies needed to interpret that API. Restricted facts support compiler-selected calls and adjustments but never make a private path importable or source-nameable.
-   - **Who writes them:** the same extractor, run as `incan-rustc-driver --rust-abi`, when a crate is compiled or a toolchain is installed.
-   - **Coverage:** the toolchain ships the cache of `std`, `core` and `alloc`. A compiled Rust unit carries its own cache, from loaves.pub's bake or Oven's build.
-   - **How they reach the compiler:** Oven passes the caches with the unit's native closure (`--rust-abi`).
-3. **Check-time extraction is the fallback.** Lookup is ordered: the Loaf's shipped ABI, caches, then the same extractor over the unit's crates; covered paths are never re-extracted. For a crate the unit declares, private indexed Loaf facts yield to the unit's own caches and extraction; explicit dependency reexports retain their declared ABI. Selected public layouts include transitive records through Options and collections, while method-signature expansion is independently bounded.
-   Bounded fallback results may be retained in the same indexed layout for the exact request and native generation, including absent paths; they remain separate from shipped complete-crate caches and grant no crate-wide coverage.
-   Loaf publication does not republish private foreign-trait snapshots from the producer's closure; those lookups use the consumer's own native closure, which may add implementations and associated definitions.
-4. **Storage.**
-   - **Layout:** a version comes first, then three Snappy-compressed sections: an index naming each path's block and range, the string table the records share, and the directory of record blocks. The records follow in Snappy-compressed blocks of about 64 KiB, each record postcard with its strings stored as table indexes. Crate facts repeat a few hundred thousand distinct strings and many identical signatures across items: the toolchain's own caches shrink from 904 MiB in the plain postcard layout (cache version 9) to 42 MiB (version 10), and a cold lookup stays near 0.1 ms.
-   - **Reading:** a reader decodes the sections once, and decompresses a block only when checking asks for one of its items; it keeps the eight most recently used blocks.
-   - **Ownership:** the cache codec belongs to the compiler frontend, not the kernel vocabulary, so the compressor never enters a compiled program's dependency closure.
-   - **Shape:** JSON and binary storage serialize every metadata field identically, preserving native widths, references, owner binders, and enum payloads independently of source normalization. Facts retain conditional impl templates on owners and traits, associated definitions, function/supertrait projection predicates, edition-2024 prelude membership, callable inputs/output equalities, and opaque async futures' logical outputs. Extension traits supplement older owner caches without replacing them. Conditional impls remain candidates subject to rustc signature/predicate validation; callable predicates never authorize guessed closure signatures.
-5. **Clients without rustc use caches only.** Editor analysis shares checking's compilation context and shipped caches without an in-process fallback; missing declared dependency caches are extracted by the installed toolchain's own driver using exact extern aliases and transitive search paths, never an independently selected rustc. Per-unit caches belong to that toolchain and are keyed by layout version, driver/shipped-cache contents, sysroot path, extern aliases/artifact contents, and search paths; unchanged identities permit reuse, while rebuilt dependencies invalidate it. Extraction is serialized per identity and publication is atomic and limited to complete, decodable caches; failure produces document diagnostics rather than untyped acceptance.
+1. **One extractor owns Rust facts.** The native driver derives them from the exact linked rustc metadata. Missing or conflicting native inputs are refused; a source spelling or hand-maintained table is not an alternative authority.
+2. **Shipped ABI caches are the primary source.** They cover public API and the restricted dependencies needed to interpret it, without granting access to private paths. Uncovered queries use the same extractor against the consumer's selected native closure; bounded results do not claim complete-crate coverage.
+3. **Storage preserves meaning and supports selective reads.** The cache has a versioned, indexed encoding and retains the structural facts checking requires. The compiler frontend owns the codec so its dependencies do not enter compiled applications. Layout changes require cache regeneration.
+4. **Editor clients share the same facts.** They consume caches and request missing extraction through the selected toolchain's driver, never an independently chosen rustc. Reuse is tied to the exact native generation; incomplete or invalid results are not published, and extraction failures remain diagnostics.
 
 ## Consequences
 
@@ -50,6 +39,10 @@ The checker needs Rust facts for `rust::` imports: types, generics, methods, fie
 
 - Receiver contracts (returned borrows); a missing contract authorizes no inferred borrowing.
 - How calls on Rust values lower to the plan is DD-0006's.
+
+## Supporting design
+
+[Rust metadata extraction and cache design](../contributing/explanation/rust_metadata_cache_design.md) records the mechanisms and supporting evidence. Changes to those mechanisms do not change this decision unless they alter its stated boundaries or guarantees.
 
 ## Revisit condition
 

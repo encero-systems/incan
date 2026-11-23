@@ -22,7 +22,7 @@ model Count with collection.Iterator[int]:
 
 
 class Words with coll.Iterator[str]:
-    left: int
+    pub left: int
 
     def __next__(mut self) -> Option[str]:
         if self.left <= 0:

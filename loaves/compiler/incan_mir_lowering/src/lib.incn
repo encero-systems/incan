@@ -6,9 +6,11 @@ from async_ import future_type, validate_futures, construct_future, await_future
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
 pub from closures import owned_capture
-pub from runtime_requirements import RuntimeRequirement, UnitPlanning, RefusalPlanning
-pub from lowering import BodyIrModule
-from lowering import unit_plan as checked_unit_plan
+pub from runtime_requirements import RuntimeRequirement, RefusalPlanning
+pub from runtime_calls import layout_runtime_requirements
+pub from lowering import BodyIrModule, UnitContinuation, UnitPlanning
+from lowering import unit_plan as checked_unit_plan, resume_unit_plan as checked_resume_unit_plan
+from rust::std::collections import BTreeMap
 from program_refusals import program_refusals as checked_program_refusals
 # The record contracts live in internal_models; these names remain importable from the lowering as before.
 pub from pub::internal_models import (
@@ -30,6 +32,29 @@ pub from pub::internal_models import (
     ReadCounters,
     PreparationEvidence,
     READ_SCHEMA,
+)
+pub from body_ir_record_adapters import (
+    BodyIrRecordProvenance,
+    authored_block,
+    native_block,
+    authored_body,
+    native_body,
+    authored_body_ir_module,
+    native_body_ir_module,
+    authored_callee,
+    native_callee,
+    authored_loaf_callable,
+    native_loaf_callable,
+    authored_nominal_declaration,
+    native_nominal_declaration,
+    authored_rvalue,
+    native_rvalue,
+    authored_statement,
+    native_statement,
+    authored_statement_kind,
+    native_statement_kind,
+    authored_trait_adoption,
+    native_trait_adoption,
 )
 pub from pub::internal_models import (
     RECORD_SERVICE_SCHEMA,
@@ -66,6 +91,7 @@ pub from pub::incan_mir_plan import (
     ForeignFunction,
     FieldProjection,
     FieldMetadata,
+    FieldLifecycle,
     FallibleIteratorMethods,
     IteratorMethods,
     Constant,
@@ -118,6 +144,7 @@ pub model SourceInputs:
     pub sources: list[str]
     pub files: list[str]
     pub tests: list[str]
+    pub package_versions: BTreeMap[str, str]
     # Ordinary integer operations follow the selected unit's profile; explicit helpers keep their own policies.
     pub overflow_checks: bool = true
 
@@ -138,6 +165,30 @@ pub def unit_plan(
         str(kind),
         inputs.tests,
         published,
+        inputs.package_versions,
+        inputs.overflow_checks,
+    )
+
+
+pub def resume_unit_plan(
+    continuation: UnitContinuation,
+    modules: list[BodyIrModule],
+    inputs: SourceInputs,
+    entry: int,
+    kind: &str,
+    mut published: list[NativeUnionDeclaration],
+) -> Result[UnitPlanning, str]:
+    """Resume preserved ordinary-frame work after the frontend resolves the exact requested runtime declarations."""
+    return checked_resume_unit_plan(
+        continuation,
+        modules,
+        inputs.sources,
+        inputs.files,
+        entry,
+        str(kind),
+        inputs.tests,
+        published,
+        inputs.package_versions,
         inputs.overflow_checks,
     )
 
@@ -159,6 +210,7 @@ pub def program_refusals(
         progress,
         str(selection),
         str(kind),
+        inputs.package_versions,
         inputs.overflow_checks,
     )
 

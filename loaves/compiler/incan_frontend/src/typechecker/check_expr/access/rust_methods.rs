@@ -247,10 +247,12 @@ impl TypeChecker {
         span: Span,
     ) -> HashMap<String, ResolvedType> {
         let refreshed_types = self.rust_method_argument_types_after_context(args, arg_types);
+        let mut inference_parameters = native_parameters.to_vec();
+        inference_parameters.extend(Self::rust_signature_const_parameters(&method.signature));
         let mut bindings = self.infer_rust_signature_bindings(
             &method.signature,
             path,
-            native_parameters,
+            &inference_parameters,
             args,
             &refreshed_types,
             Some(result),

@@ -1,0 +1,18 @@
+# behavior: a model deriving Validate can be built only through its generated new method, and that method accepts only fields without defaults (#2811)
+# expect-diagnostic: INCAN-T0001
+
+@derive(Validate)
+model Guarded:
+    value: int
+    label: str = "default"
+
+    def validate(self) -> Result[Guarded, str]:
+        return Ok(self)
+
+
+def raw() -> Guarded:
+    return Guarded(value=1, label="raw")
+
+
+def overridden_default() -> Result[Guarded, str]:
+    return Guarded.new(value=1, label="override")

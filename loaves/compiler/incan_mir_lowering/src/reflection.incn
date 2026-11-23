@@ -45,6 +45,7 @@ from checked_values import scalar_place
 from sequence_builtins import text_argument
 from formatting import display_plan_value
 from list_values import append_list_value
+from reflection_carriers import is_field_metadata_carrier
 
 
 pub def lower_reflection(
@@ -208,12 +209,12 @@ pub def emit_field_metadata(
     destination: Option[RustPlace],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Share the value/type hook's immutable declaration records and exact SDK result carrier."""
+    """Share immutable declaration records using the checked Incan primitive carrier."""
     match builder.nominals[owner].reflection_metadata:
         None => return Err("unsupported Body IR field metadata declaration")
         Some(_fields) => pass
     for info in range(len(builder.nominals)):
-        if builder.nominals[info].native_item != "incan_std_primitives::reflection::FieldInfo":
+        if not is_field_metadata_carrier(builder.nominals[info]):
             continue
         ty = PlanType.FrozenCollection("FrozenList", [PlanType.Model(info, str(builder.nominals[info].name))])
         mut output = temporary(builder, ty, span)

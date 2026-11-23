@@ -1,0 +1,346 @@
+"""Stage 3 controls for complete Body IR coverage and every mandatory skipped-field disposition."""
+
+from body_ir_declarations import (
+    CompilerBody,
+    CompilerBodyCoverage,
+    CompilerBodyIrModule,
+    CompilerDeclarationSet,
+    CompilerLoafCallable,
+    CompilerNominalDeclaration,
+    CompilerTraitAdoption,
+    CompilerValidatedConstructor,
+    NamedTypeIdentity,
+    TraitDefaultInstantiation,
+    TraitFieldWitness,
+    TraitTypeArgument,
+    covered_body_count,
+    invalidate_owned_callable_fields,
+    valid_compiler_body,
+    valid_invocation_view,
+    valid_loaf_callable,
+    valid_nominal_declaration,
+    valid_published_expanded_body,
+)
+from body_ir_values import CompilerBlock
+from checked_types import CheckedPrimitiveType, CheckedType
+from compiler_records import CanonicalSymbolId, DeclarationKind, HirSourceSpan, SymbolNamespace, SymbolOrigin
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    CompilerNodeId,
+    HirSourceSpan as RustHirSourceSpan,
+    SemanticSourceTargetKind as RustDeclarationKind,
+)
+from rust::incan_semantics_core::body_ir import (
+    NativeAttribute,
+    NewtypeDeserialize,
+    NewtypeStringConversion,
+    RuntimeCallableBinding,
+    StringConversionContract,
+)
+
+
+pub def test_covered_empty_is_not_uncovered() -> None:
+    """Keep an authenticated declaration with zero bodies distinct from one whose coverage is unknown."""
+    assert covered_body_count(CompilerBodyCoverage.Covered([])) == Some(0)
+    assert covered_body_count(CompilerBodyCoverage.Uncovered("not retained")) is None
+
+
+pub def test_trait_method_coverage_keeps_none_and_some_empty_distinct() -> None:
+    """Keep missing method metadata distinct from an authenticated marker trait with no method slots."""
+    owner = identity("Packet", DeclarationKind.Model)
+    empty_methods: list[CanonicalSymbolId] = []
+    missing = adoption(owner, None, [])
+    marker = adoption(owner, Some(empty_methods), [])
+    assert missing.methods is None
+    match marker.methods:
+        Some(methods) =>
+            assert len(methods) == 0
+        None =>
+            assert false
+
+
+pub def test_runtime_bindings_are_invocation_only() -> None:
+    """Mark runtime bindings as an invocation view so a persistent provider record cannot smuggle them."""
+    mut module = empty_module()
+    assert not valid_invocation_view(module.clone())
+    module.runtime_callable_bindings = [
+        RuntimeCallableBinding(path="runtime::print", canonical=native_identity("print", RustDeclarationKind.Function)),
+    ]
+    assert valid_invocation_view(module)
+
+
+pub def test_program_entrypoints_are_invocation_only() -> None:
+    """Mark selected mains as an invocation view and keep an ordinary dependency module unselected."""
+    mut module = empty_module()
+    module.program_entrypoints = [identity("main", DeclarationKind.Function)]
+    assert valid_invocation_view(module)
+    module.program_entrypoints = []
+    assert not valid_invocation_view(module)
+
+
+pub def test_nominal_instantiation_keeps_ordered_owner_arguments() -> None:
+    """Retain a closed owner's ordered substitutions rather than recovering binders from their display names."""
+    mut body = empty_body("render")
+    body.nominal_instantiation = [
+        TraitTypeArgument(parameter="T", argument=CheckedType.Named("Invoice")),
+        TraitTypeArgument(parameter="U", argument=CheckedType.Named("Line")),
+    ]
+    assert len(body.nominal_instantiation) == 2
+    assert body.nominal_instantiation[0].parameter == "T"
+    assert body.nominal_instantiation[1].argument == CheckedType.Named("Line")
+
+
+pub def test_trait_default_instantiation_keeps_binder_scopes_separate() -> None:
+    """Retain the selected adoption's receiver and trait binder independently of same-named method binders."""
+    mut body = empty_body("render")
+    body.type_parameters = ["T"]
+    body.trait_default_instantiation = Some(
+        TraitDefaultInstantiation(
+            receiver_type=CheckedType.Named("Invoice"),
+            arguments=[TraitTypeArgument(parameter="T", argument=CheckedType.Named("Money"))],
+        ),
+    )
+    assert body.type_parameters == ["T"]
+    match body.trait_default_instantiation:
+        Some(selected) =>
+            assert selected.arguments[0].parameter == "T"
+            assert selected.arguments[0].argument == CheckedType.Named("Money")
+        None =>
+            assert false
+
+
+pub def test_native_attributes_are_pre_expansion_witnesses() -> None:
+    """Permit selected macro inputs before expansion and refuse them in an already-expanded published body."""
+    mut body = empty_body("route")
+    body.native_attributes = [NativeAttribute(path="web::route", arguments=[])]
+    assert not valid_published_expanded_body(body.clone())
+    body.native_attributes = []
+    assert valid_published_expanded_body(body)
+
+
+pub def test_trait_field_witnesses_belong_to_the_adoption() -> None:
+    """Retain required and implementing field identities with their adopter and refuse a forged enclosing owner."""
+    owner = identity("Packet", DeclarationKind.Model)
+    witness = TraitFieldWitness(
+        requirement=identity("value", DeclarationKind.Field),
+        implementation=identity("payload", DeclarationKind.Field),
+    )
+    empty_methods: list[CanonicalSymbolId] = []
+    checked = adoption(owner.clone(), Some(empty_methods), [witness])
+    valid = nominal(owner, [checked], false)
+    assert valid_nominal_declaration(valid)
+    forged = nominal(
+        identity("Other", DeclarationKind.Model),
+        [adoption(identity("Packet", DeclarationKind.Model), Some(empty_methods), [])],
+        false,
+    )
+    assert not valid_nominal_declaration(forged)
+
+
+pub def test_owned_callable_fields_are_invalidated_before_rewrite() -> None:
+    """Reject stale callable and validation slots before a field-type rewrite can publish invalid indexes."""
+    owner = identity("Packet", DeclarationKind.Model)
+    mut declaration = nominal(owner, [], false)
+    declaration.owned_callable_fields = [0]
+    assert len(invalidate_owned_callable_fields(declaration.clone()).owned_callable_fields) == 0
+    declaration.owned_callable_fields = [1]
+    assert not valid_nominal_declaration(declaration)
+    mut validation = nominal(identity("Packet", DeclarationKind.Model), [], false)
+    validation.validated_constructor = Some(
+        CompilerValidatedConstructor(
+            constructor=identity("new", DeclarationKind.Method),
+            validator=identity("validate", DeclarationKind.Method),
+            required_fields=[0],
+        ),
+    )
+    assert valid_nominal_declaration(validation.clone())
+    validation.validated_constructor = Some(
+        CompilerValidatedConstructor(
+            constructor=identity("new", DeclarationKind.Method),
+            validator=identity("validate", DeclarationKind.Method),
+            required_fields=[0, 0],
+        ),
+    )
+    assert not valid_nominal_declaration(validation)
+
+
+pub def test_declaration_frame_is_authenticated_and_declaration_only() -> None:
+    """Accept one empty frame from the exact callable body and refuse a fabricated differently owned frame."""
+    callable_identity = identity("render", DeclarationKind.Function)
+    mut frame = empty_body("render")
+    frame.canonical = Some(callable_identity.clone())
+    valid = CompilerLoafCallable(
+        canonical=callable_identity.clone(),
+        item="packet::render",
+        parameters=[],
+        return_type=CheckedType.Primitive(CheckedPrimitiveType.Unit),
+        type_parameters=[],
+        native_type_arguments=[],
+        native_callable_parameters=[],
+        parameter_defaults=[],
+        declaration_frame=[frame.clone()],
+    )
+    assert valid_loaf_callable(valid)
+    frame.canonical = Some(identity("other", DeclarationKind.Function))
+    invalid = CompilerLoafCallable(
+        canonical=callable_identity,
+        item="packet::render",
+        parameters=[],
+        return_type=CheckedType.Primitive(CheckedPrimitiveType.Unit),
+        type_parameters=[],
+        native_type_arguments=[],
+        native_callable_parameters=[],
+        parameter_defaults=[],
+        declaration_frame=[frame],
+    )
+    assert not valid_loaf_callable(invalid)
+
+
+pub def test_retired_rust_facade_tombstone_refuses_nonempty_data() -> None:
+    """Reject legacy facade payloads instead of silently discarding or interpreting the retired positional slot."""
+    mut body = empty_body("render")
+    body.retired_rust_facade_wire = Some(("provider", "method"))
+    assert not valid_compiler_body(body)
+
+
+pub def test_async_defaults_and_private_implementations_remain_explicit() -> None:
+    """Retain async declaration state, a nonempty field-default frame and private implementation dependencies."""
+    mut implementation = empty_body("private_render")
+    implementation.is_async = true
+    private = CompilerDeclarationSet(public_roots=[], private_implementations=[implementation.clone()])
+    assert private.public_roots == []
+    assert private.private_implementations[0].is_async
+    owner = identity("Packet", DeclarationKind.Model)
+    declaration = nominal(owner, [], true)
+    assert declaration.has_field_defaults
+    assert len(declaration.field_default_body) == 1
+    assert valid_nominal_declaration(declaration)
+
+
+def empty_body(name: str) -> CompilerBody:
+    """Build one complete scalar authored Body for focused record-policy controls."""
+    return CompilerBody(
+        nominal_instantiation=[],
+        trait_default_instantiation=None,
+        type_parameters=[],
+        declaration_id=CompilerNodeId.declaration("app", name),
+        direct_call_id=CompilerNodeId.declaration_span("app", 0, 10),
+        canonical=Some(identity(name, DeclarationKind.Function)),
+        name=str(name),
+        span=HirSourceSpan(file="src/main.incn", start=0, end=10),
+        return_type=CheckedType.Primitive(CheckedPrimitiveType.Unit),
+        callable_representation=None,
+        checked_input_profile=None,
+        explicit_input_bindings=[],
+        returned_view=None,
+        named_type_identities=[NamedTypeIdentity(name="Packet", identity=identity("Packet", DeclarationKind.Model))],
+        locals=[],
+        params=[],
+        param_locals=[],
+        scopes=[],
+        block=CompilerBlock(scope=0, statements=[]),
+        runtime_requirements=[],
+        panic_facts=[],
+        is_async=false,
+        retired_rust_facade_wire=None,
+        native_attributes=[],
+    )
+
+
+def nominal(
+    canonical: CanonicalSymbolId,
+    adoptions: list[CompilerTraitAdoption],
+    with_default: bool,
+) -> CompilerNominalDeclaration:
+    """Build one private single-field nominal with optional nonempty default evidence."""
+    mut defaults: list[CompilerBody] = []
+    if with_default:
+        defaults = [empty_body("field_default")]
+    return CompilerNominalDeclaration(
+        trait_adoptions=adoptions,
+        native_item="",
+        class_inheritance=None,
+        native_type_arguments=[],
+        direct_declaration_id=CompilerNodeId.declaration_span("app", 0, 10),
+        canonical=canonical,
+        name="Packet",
+        fields=["payload"],
+        field_identities=[identity("payload", DeclarationKind.Field)],
+        field_types=[CheckedType.Primitive(CheckedPrimitiveType.Int)],
+        owned_callable_fields=[],
+        field_public=[false],
+        field_aliases=[None],
+        reflection_fields=None,
+        reflection_metadata=None,
+        comparison_equality=None,
+        public=false,
+        has_field_defaults=with_default,
+        field_default_body=defaults,
+        validated_constructor=None,
+        method_partial_defaults=[],
+        display_method=None,
+        newtype_deserialize=NewtypeDeserialize.Unselected,
+        newtype_string_conversion=NewtypeStringConversion.Unselected,
+        derives=[],
+        named_type_identities=[],
+        type_parameters=[],
+        type_parameter_count=0,
+        record_package_identity=None,
+    )
+
+
+def adoption(
+    adopter: CanonicalSymbolId,
+    methods: Option[list[CanonicalSymbolId]],
+    fields: list[TraitFieldWitness],
+) -> CompilerTraitAdoption:
+    """Build one marker-trait adoption with an explicit coverage state and required-field witness list."""
+    return CompilerTraitAdoption(
+        adopter=adopter,
+        trait_identity=identity("Readable", DeclarationKind.Trait),
+        arguments=[],
+        methods=methods,
+        fields=fields,
+        primitive_adapter=None,
+    )
+
+
+def empty_module() -> CompilerBodyIrModule:
+    """Build one complete module record with no invocation selection or declarations."""
+    return CompilerBodyIrModule(
+        runtime_callable_bindings=[],
+        decorated_bindings=[],
+        entrypoint_effects=[],
+        program_entrypoints=[],
+        string_conversion_contract=StringConversionContract.Unselected,
+        constant_declarations=[],
+        type_alias_declarations=[],
+        enum_declarations=[],
+        loaf_callables=[],
+        native_union_declarations=[],
+        static_declarations=[],
+        module_id=CompilerNodeId.module("app"),
+        nominal_declarations=[],
+        fieldless_enum_declarations=[],
+        value_enum_declarations=[],
+        trait_declarations=[],
+        trait_implementations=[],
+        bodies=[],
+    )
+
+
+def identity(name: str, kind: DeclarationKind) -> CanonicalSymbolId:
+    """Build one authored module declaration identity with complete source provenance."""
+    return CanonicalSymbolId(
+        namespace=SymbolNamespace.OrdinaryLexical,
+        origin=SymbolOrigin.Module(["app"]),
+        declaration_name=str(name),
+        kind=kind,
+        scope_discriminant=None,
+        declaration_span=HirSourceSpan(file="src/main.incn", start=0, end=10),
+    )
+
+
+def native_identity(name: str, kind: RustDeclarationKind) -> RustCanonicalSymbolId:
+    """Build the transitional native identity required by an invocation-only runtime binding leaf."""
+    return RustCanonicalSymbolId.module_declaration(["app"], name, kind, RustHirSourceSpan.new(0, 10))

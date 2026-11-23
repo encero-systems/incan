@@ -20,9 +20,14 @@ impl TypeChecker {
             return None;
         }
         let canonical = info.variant_aliases.get(variant).map(String::as_str).unwrap_or(variant);
-        info.variant_fields
-            .get(canonical)
-            .map(|fields| fields.iter().cloned().map(CallableParam::positional).collect())
+        info.variant_fields.get(canonical).map(|fields| {
+            fields
+                .iter()
+                .cloned()
+                .map(|field| self.explicit_ownership_value_type(&field).unwrap_or(field))
+                .map(CallableParam::positional)
+                .collect()
+        })
     }
 
     /// Record the identity already attached to the active direct callee binding.

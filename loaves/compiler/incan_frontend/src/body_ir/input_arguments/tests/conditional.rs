@@ -274,12 +274,12 @@ fn conditional_profiles_retain_exact_owned_initializer_authority() -> Result<(),
             let source = body
                 .locals
                 .iter()
-                .find(|local| local.identity.as_ref() == Some(&initializer.source))
+                .find(|local| local.identity.as_deref() == Some(&initializer.source))
                 .ok_or("missing source")?;
             let destination = body
                 .locals
                 .iter()
-                .find(|local| local.identity.as_ref() == Some(&initializer.destination))
+                .find(|local| local.identity.as_deref() == Some(&initializer.destination))
                 .ok_or("missing destination")?;
             assert_eq!(source.name.as_deref(), Some("value"));
             assert_eq!(destination.name.as_deref(), Some("held"));

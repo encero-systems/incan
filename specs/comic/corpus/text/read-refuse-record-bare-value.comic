@@ -1,0 +1,5 @@
+example.Line = Record { sku: string, quantity: i64 }
+
+example.Order = Record { id: i64, lines: list<example.Line> }
+
+example.Order << 7

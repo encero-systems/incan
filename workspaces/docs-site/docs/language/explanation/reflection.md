@@ -52,3 +52,15 @@ fallback: ColumnExpr = cast(col("amount"), "decimal(10,2)")
 ```
 
 Each overload declares its result type. A symbol alias such as `safe_cast = alias cast` preserves that overload set without wrapper functions. By contrast, `cast[T](expr)` has one declared result type; explicit type arguments alone do not give it a different result declaration for each `T`. A broader union is possible where that is the intended API. A future type-level return mapping would be a separate capability, not a consequence of these tokens.
+
+## Handwritten traversal and compiler-generated metadata
+
+The typed `Walk` and `Reconstruct` protocols let a library use the adopter's own code to visit or restore its stored representation. They are distinct from public-field inspection. Importing the protocols does not generate those members or make scalars and containers adopt them. Automatic adoption and complete stored-field generation are separate compiler work. The public [protocol reference](../reference/stdlib/reflection.md#handwritten-typed-value-protocols) lists the handwritten API.
+
+The primitive protocol uses the Incan-owned `FieldInfo` declaration. The compiler does not yet produce its proposed `stored_type`, `default_is_empty`, `position` and `renamed_from_lifecycle` extensions; a consumer must not invent those facts. A handwritten shape must describe the representation it actually visits, not claim that generated metadata already exists. DecimalValue preserves exact coefficient and declared scale; automatic decimal adaptation likewise belongs to that later compiler work.
+
+## Metadata ownership
+
+The primitive reflection package owns the Incan declarations of `FieldInfo`, `ShapeInfo`, `VariantInfo`, `LifecycleInfo` and `DecimalValue`. The convenient `std.reflection` imports re-export those declarations. Generated field metadata uses the same `FieldInfo` layout as an explicit constructor or a record returned from another Loaf; the native support library does not define a second carrier.
+
+This ownership change preserves the public inspection view: `__fields__()` still omits private fields, retains declaration order and does not run constructors or default factories. It does not itself implement the complete stored shapes or automatic traversal hooks.

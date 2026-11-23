@@ -1,7 +1,7 @@
 """Materialize explicit input contracts without legacy repair copies or ownership inference."""
 
 from rust::incan_semantics_core import IncanInputAccess
-from rust::incan_semantics_core::body_ir import CallableParam, OwnershipFact, Body as RustBody
+from rust::incan_semantics_core::body_ir import BodyIrModule, CallableParam, OwnershipFact, Body as RustBody
 from pub::incan_mir_plan import Local, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, FieldProjection
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, place_type, dereferenced_place
@@ -20,7 +20,7 @@ pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
     return None
 
 
-pub def validate_source_input_call(builder: &Builder, callee: &RustBody) -> Result[None, str]:
+pub def validate_source_input_call(module: &BodyIrModule, builder: &Builder, callee: &RustBody) -> Result[None, str]:
     """Authenticate source-authored input modes; compiler-inferred shared access needs no source permission."""
     # A returned view obliges its caller to alias the substituted place under a checked profile.
     mut explicit = callee.returned_view.is_some()
@@ -35,7 +35,7 @@ pub def validate_source_input_call(builder: &Builder, callee: &RustBody) -> Resu
             match builder.program.body_indices.unique(identity):
                 None => return Err("unsupported Body IR explicit source call without a unique checked caller")
                 Some(index) =>
-                    caller = body_at(builder.program.bodies.as_ref(), index)
+                    caller = body_at(module.bodies, index)
                     if caller.canonical != Some(identity.clone()):
                         return Err("unsupported Body IR explicit source caller identity mismatch")
                     match caller.input_call_profile_gap(callee):

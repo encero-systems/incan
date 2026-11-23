@@ -16,6 +16,14 @@ name = "hello"
 version = "0.1.0"
 ```
 
+### `registry-id`
+
+Optional string containing `sha256:` followed by exactly 64 lowercase hexadecimal digits. It declares the identity of the package's registry root key. Oven validates the spelling without contacting a registry or authenticating the declaration. A malformed or non-string value is refused at `[project].registry-id`.
+
+Oven carries this value with the package's own `name` to the compiler and includes it in the compilation key. A compiled library retains the producer's pair; a consumer's dependency alias does not replace it. A persistent record namespace requires a scoped name such as `example/catalog` as well as a registry identity. A bare project name or standalone source has no persistent record namespace.
+
+Omitting the key preserves the existing unit key and records no explicit registry identity. No default registry identity is synthesized when the key is absent. These retained package facts do not by themselves provide generated record walking or stored-type selectors.
+
 ### `[project.scripts]`
 
 Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library is refused. Source commands still require an explicit path; a `main` script does not supply an omitted argument.

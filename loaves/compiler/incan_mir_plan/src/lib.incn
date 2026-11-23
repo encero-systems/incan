@@ -6,7 +6,7 @@ order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
 location, including operands and places, so native diagnostics retain provenance.
 """
 
-from rust::incan_semantics_core import IncanType as SemanticType
+from pub::internal_models.checked_types import CheckedType as SemanticType
 pub from _types import (
     TupleElement,
     SourceSpan,
@@ -43,6 +43,7 @@ pub from _body import (
     Terminator,
     BasicBlock,
     FieldMetadata,
+    FieldLifecycle,
     place,
     integer,
     copy,
@@ -297,6 +298,8 @@ pub model ModelDeclaration:
     pub checked_deserialize: str = ""
     # None grants no generated hook; an empty list is an authorized empty metadata surface.
     pub reflection_metadata: Option[list[FieldMetadata]] = None
+    # The checked primitive declaration owns generated field records. Equal-spelled user records do not gain this role.
+    pub field_metadata_carrier: bool = false
     # Exact source comparison symbols: equality alone, or equality followed by lt/le/gt/ge. Empty grants no bridge.
     pub comparison_methods: list[str] = []
     # A source adoption grants native authority only after every standard slot and the poll ABI are checked.
@@ -331,7 +334,7 @@ pub model ExternalFunction:
 pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) -> bool:
     """Compare a retained carrier's exact checked type without reconstructing identity from diagnostic text."""
     match declaration.semantic_key:
-        Some(retained) => return retained == ty
+        Some(retained) => return retained == ty.clone()
         None => return false
 
 
@@ -356,6 +359,9 @@ pub model EnumDeclaration:
     pub variants: list[EnumVariant]
     pub derives: list[str]
     pub span: SourceSpan
+    # Source-owned enum payloads retain one native lifetime parameter for each reference in source variant order.
+    # Zero keeps the ordinary owned-layout declaration.
+    pub view_lifetime_count: int = 0
     # Standard carriers use their concrete type arguments from the variant fields.
     pub carrier: Carrier = Carrier.Declared
     # The exact checked carrier witness is used for identity; source_type remains diagnostic presentation only.

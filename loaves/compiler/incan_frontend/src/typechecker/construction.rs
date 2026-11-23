@@ -8,6 +8,7 @@ impl TypeChecker {
     /// Native queries, statement-block tracking and hash-key inference each initialize their own empty state.
     pub fn new() -> Self {
         Self {
+            record_package_identity: None,
             #[cfg(test)]
             legacy_body_checking: false,
             #[cfg(test)]
@@ -107,8 +108,10 @@ impl TypeChecker {
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
+            view_type_cache: RefCell::new(HashMap::new()),
             visibility_point: VisibilityPoint::default(),
             dependency_exports: HashMap::new(),
+            selected_dependency_interfaces: Vec::new(),
             dependency_member_symbols: HashMap::new(),
             dependency_member_type_aliases: HashMap::new(),
             dependency_registry_definitions: HashMap::new(),
@@ -134,6 +137,7 @@ impl TypeChecker {
             local_derive_facts: HashMap::new(),
             hash_key_inference: HashKeyInferenceState::default(),
             loaves: Arc::new(LoafIndex::default()),
+            not_prepared_loaves: HashSet::new(),
             standard_traits: HashMap::new(),
             transitive_pub_types: HashMap::new(),
             public_library_type_identities: NominalInventory::default(),
@@ -142,6 +146,7 @@ impl TypeChecker {
             foreign_pub_type_remappings: HashMap::new(),
             pub_library_declaration_scopes: HashMap::new(),
             dependency_semantics_pending: false,
+            dependency_method_input_contracts: Default::default(),
             current_module_path: None,
             source_import_targets: HashMap::new(),
             declared_crate_names: None,
@@ -168,6 +173,13 @@ impl TypeChecker {
         self.loaves = loaves;
     }
 
+    /// Name dependency bindings whose manifests are unavailable because unattended preparation stopped before
+    /// untrusted compile-time code. Imports from these bindings remain opaque and report one stable informational
+    /// diagnostic instead of being misclassified as unknown packages.
+    pub fn set_not_prepared_loaves(&mut self, names: HashSet<String>) {
+        self.not_prepared_loaves = names;
+    }
+
     /// Mark the program being checked as the standard package `policy` names.
     pub fn set_own_standard_package(&mut self, policy: &'static StandardPackageNamespacePolicy) {
         self.own_standard_package = Some(policy);
@@ -185,6 +197,14 @@ impl TypeChecker {
     /// Set the defining package for declarations checked for a compiled-library artifact.
     pub fn set_current_package_identity(&mut self, package_identity: Option<String>) {
         self.symbols.set_package_identity(package_identity);
+    }
+
+    /// Install the already admitted owning package fact without changing symbol ownership or asking a registry.
+    pub fn set_record_package_identity(
+        &mut self,
+        identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
+    ) {
+        self.record_package_identity = identity;
     }
 
     /// Return accumulated non-fatal diagnostics (warnings/lints) from the last check.

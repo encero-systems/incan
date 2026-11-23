@@ -9,6 +9,7 @@ use incan_driver::error::{CliError, CliResult};
 use incan_driver::rust_abi::cached_rust_facts;
 use incan_driver::session::CompilationSession;
 use incan_driver::unit::UnitDescription;
+use incan_loaf_names::{artifact_stem, native_crate_name};
 
 type Generation = Vec<(PathBuf, Option<String>)>;
 
@@ -72,9 +73,9 @@ fn artifact_paths(unit: &UnitDescription) -> BTreeSet<PathBuf> {
     paths.extend(unit.search_index.iter().cloned());
     paths.extend(unit.vocab.iter().cloned());
     for loaf in &unit.loaves {
-        paths.insert(loaf.dir.join(format!("lib{}.rlib", loaf.name.replace('-', "_"))));
+        paths.insert(loaf.dir.join(format!("lib{}.rlib", native_crate_name(&loaf.name))));
         for extension in ["incnlib", "incnbody", "native.json", "rustabi", "incngraph"] {
-            paths.insert(loaf.dir.join(format!("{}.{extension}", loaf.name)));
+            paths.insert(loaf.dir.join(format!("{}.{extension}", artifact_stem(&loaf.name))));
         }
         paths.insert(loaf.dir.join("vocab-worker"));
     }

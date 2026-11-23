@@ -1,4 +1,4 @@
-# behavior: loop values retain their result payloads and enclosing model owners survive repeated and nested reads (#2256)
+# behavior: loop values retain their result payloads and enclosing model owners survive repeated and nested reads (#2256); wrapped scalar projections borrow their input while owned payloads remain independent (#2850)
 # expect-stdout:
 #   ["b", "2"]
 #   2
@@ -67,7 +67,80 @@ def show(outcome: Result[list[str], str]) -> None:
         Err(message) => println(message)
 
 
+model Packet:
+    """Keep unrelated owned data beside the scalar selected by a wrapper."""
+
+    pub value: int
+    pub slots: dict[str, int]
+    pub metadata: list[str]
+
+
+def ok_field(packet: Packet) -> Result[int, str]:
+    """Wrap a scalar field without requiring its containing owner."""
+    return Ok(packet.value)
+
+
+def err_field(packet: Packet) -> Result[int, int]:
+    """The error side has the same scalar-read contract."""
+    return Err(packet.value)
+
+
+def some_field(packet: Packet) -> Option[int]:
+    """An optional scalar is independent of its source model."""
+    return Some(packet.value)
+
+
+def ok_index(packet: Packet) -> Result[int, str]:
+    """Keep the dictionary owner shared while copying the selected integer."""
+    return Ok(packet.slots["key"])
+
+
+def whole_ok(packet: Packet) -> Result[Packet, str]:
+    """A payload containing the model retains ordinary value semantics."""
+    return Ok(packet)
+
+
+def owned_ok(packet: Packet) -> Result[list[str], str]:
+    """An owned list payload does not become a shared view."""
+    return Ok(packet.metadata)
+
+
+def owned_some(packet: Packet) -> Option[list[str]]:
+    """Option retains the same owned-field boundary."""
+    return Some(packet.metadata)
+
+
+def check_wrapped_reads() -> None:
+    """Observe all scalar variants, then mutate returned owners independently."""
+    packet = Packet(value=7, slots={"key": 11}, metadata=["original"])
+    assert ok_field(packet).unwrap_or(0) == 7
+    assert ok_index(packet).unwrap_or(0) == 11
+    match err_field(packet):
+        Err(value) => assert value == 7
+        Ok(_) => assert false
+    match some_field(packet):
+        Some(value) => assert value == 7
+        None => assert false
+    match whole_ok(packet):
+        Ok(value) => assert value.metadata == ["original"]
+        Err(_) => assert false
+    match owned_ok(packet):
+        Ok(values) =>
+            mut selected = values
+            selected.append("independent")
+            assert len(selected) == 2
+        Err(_) => assert false
+    match owned_some(packet):
+        Some(values) =>
+            mut selected = values
+            selected.append("independent")
+            assert len(selected) == 2
+        None => assert false
+    assert packet.metadata == ["original"]
+
+
 def main() -> None:
+    check_wrapped_reads()
     rows = [["a", "1"], ["b", "2"]]
     show(find(rows, "b"))
     println(len(rows))

@@ -1,0 +1,36 @@
+"""Exhaustive runtime construction for the native declaration-kind source enum."""
+
+from compiler_records import DeclarationKind
+
+
+pub def test_declaration_kinds() -> None:
+    """Construct every native declaration-kind disposition, including the carried gap marker."""
+    kinds = [
+        DeclarationKind.Function,
+        DeclarationKind.Model,
+        DeclarationKind.Class,
+        DeclarationKind.Newtype,
+        DeclarationKind.Rusttype,
+        DeclarationKind.Enum,
+        DeclarationKind.TypeAlias,
+        DeclarationKind.Partial,
+        DeclarationKind.Variant,
+        DeclarationKind.Trait,
+        DeclarationKind.Capability,
+        DeclarationKind.Field,
+        DeclarationKind.Method,
+        DeclarationKind.Property,
+        DeclarationKind.Const,
+        DeclarationKind.Static,
+        DeclarationKind.Local,
+        DeclarationKind.Parameter,
+        DeclarationKind.Receiver,
+        DeclarationKind.GenericBinder,
+        DeclarationKind.Module,
+        DeclarationKind.RustItem,
+        DeclarationKind.Builtin,
+        DeclarationKind.Other("future"),
+    ]
+    assert len(kinds) == 24
+    for kind in kinds:
+        assert kind == kind

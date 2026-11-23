@@ -19,7 +19,12 @@ pub(in crate::typechecker) fn direct_function_boundary(function: &FunctionDecl) 
 /// Concrete methods share the function frame boundary; generic binders and defaults preserve it, while the receiver
 /// remains a borrowed slot of its own checked with the method's receiver mode.
 pub(in crate::typechecker) fn direct_method_boundary(method: &MethodDecl) -> bool {
-    method.body.is_some() && method.decorators.is_empty() && statically_bound_parameters(&method.params)
+    method.body.is_some() && method_input_header(method)
+}
+
+/// Abstract trait slots declare the same input obligations as concrete methods, without claiming an executable body.
+pub(in crate::typechecker) fn method_input_header(method: &MethodDecl) -> bool {
+    method.decorators.is_empty() && statically_bound_parameters(&method.params)
 }
 
 /// Every parameter has one statically known slot; omission through a default does not change that slot identity.

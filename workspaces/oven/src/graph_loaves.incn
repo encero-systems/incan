@@ -1,5 +1,6 @@
 """Read published standard and registry Loaf graphs; legacy source-backed packages have one cached export."""
 
+from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.toml import TomlValue
 from files import parse_json
@@ -84,7 +85,7 @@ def standard_graph(
     2. Otherwise export the package's own source through the home-wide checked export path.
     """
     # 1. A package compiled with a graph is read from the graph it published.
-    graph = standard_artifact_dir(package, profile)?.joinpath(f"{package}.incngraph")
+    graph = standard_artifact_dir(package, profile)?.joinpath(f"{artifact_stem(package)}.incngraph")
     if graph.is_file():
         return Ok(GraphUnit(path=graph, root=Path(f"@std/{package}"), package=package))
     # 2. Any other is exported from its source once per content identity in the home bakery.

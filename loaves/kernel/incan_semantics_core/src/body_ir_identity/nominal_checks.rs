@@ -3,15 +3,44 @@
 use super::*;
 
 impl BodyIrModule {
+    /// Admit declared record namespaces only for source models/enums and retain package ownership when it is known.
+    pub(super) fn record_package_matches_owner(
+        package: Option<&crate::record_identity::RecordPackageIdentity>,
+        owner: &CanonicalSymbolId,
+    ) -> bool {
+        let Some(package) = package else {
+            return true;
+        };
+        if package.validate().is_err()
+            || !matches!(
+                owner.kind,
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Enum
+            )
+        {
+            return false;
+        }
+        match &owner.origin {
+            crate::SymbolOrigin::Module(_) => true,
+            crate::SymbolOrigin::Package { library, .. } => library == &package.scoped_name,
+            _ => false,
+        }
+    }
+
     /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts
     /// either match a fixed carrier or extend an opaque skeleton with public metadata-selected fields, whose exact
     /// native types rustc verifies. A linked Loaf's item must encode its canonical declaration. A selected native
     /// equality witness must be a member of its model; lowering separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
+        if !Self::record_package_matches_owner(declaration.record_package_identity.as_ref(), &declaration.canonical) {
+            return false;
+        }
         if !Self::nominal_trait_adoptions_are_well_formed(declaration) {
             return false;
         }
         if !Self::nominal_reflection_metadata_matches_fields(declaration) {
+            return false;
+        }
+        if !Self::validated_constructor_is_well_formed(declaration) {
             return false;
         }
         if !declaration.native_item.is_empty()
@@ -123,6 +152,34 @@ impl BodyIrModule {
                 })
     }
 
+    /// Require a validated constructor to belong to this model, select one enclosed validator, and name each required
+    /// field slot once in declaration order. Default availability is checked when the declaration-owned default frame
+    /// is attached, because collection deliberately records that frame after the nominal layout.
+    fn validated_constructor_is_well_formed(declaration: &NominalDeclaration) -> bool {
+        let Some(contract) = &declaration.validated_constructor else {
+            return true;
+        };
+        declaration.canonical.kind == SemanticSourceTargetKind::Model
+            && declaration.derives.iter().any(|derive| {
+                derive == incan_lang::lang::derives::as_str(incan_lang::lang::derives::DeriveId::Validate)
+            })
+            && contract.constructor
+                == declaration.canonical.generated_member(
+                    incan_lang::lang::conventions::NEW_METHOD,
+                    SemanticSourceTargetKind::Method,
+                )
+            && contract.validator.namespace == SymbolNamespace::Member
+            && contract.validator.kind == SemanticSourceTargetKind::Method
+            && contract.validator.declaration_name == incan_lang::lang::conventions::VALIDATE_METHOD
+            && contract.validator.origin == declaration.canonical.origin
+            && declares_member(&declaration.canonical, &contract.validator)
+            && contract
+                .required_fields
+                .iter()
+                .all(|slot| *slot < declaration.fields.len())
+            && contract.required_fields.windows(2).all(|pair| pair[0] < pair[1])
+    }
+
     /// Require each retained reflection record to name its selected physical field in the same order.
     pub(super) fn nominal_reflection_metadata_matches_fields(declaration: &NominalDeclaration) -> bool {
         let Some(metadata) = &declaration.reflection_metadata else {
@@ -134,6 +191,9 @@ impl BodyIrModule {
         slots.len() == metadata.len()
             && slots.iter().zip(metadata).all(|(slot, record)| {
                 declaration.fields.get(*slot) == Some(&record.name)
+                    && record.position == *slot
+                    && (!record.default_is_empty || record.has_default)
+                    && (record.renamed_from_lifecycle.is_none() || !record.renamed_from.is_empty())
                     && Self::reflection_record_identity_is_well_formed(record)
             })
     }

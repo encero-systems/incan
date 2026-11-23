@@ -30,8 +30,9 @@ impl LanguageServer for IncanLanguageServer {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string(), "[".to_string()]),
                     ..Default::default()
                 }),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: vec![EMIT_CONTRACT_MODEL_COMMAND.to_string()],
+                    commands: vec![EMIT_CONTRACT_MODEL_COMMAND.to_string(), ADD_TRUST_COMMAND.to_string()],
                     ..Default::default()
                 }),
                 // Semantic highlighting for the whole language, including RFC 081 embedded-fragment ownership.
@@ -64,6 +65,9 @@ impl LanguageServer for IncanLanguageServer {
 
     /// Handle editor commands that need checked metadata not otherwise exposed by standard LSP requests.
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        if params.command == ADD_TRUST_COMMAND {
+            return self.execute_add_trust(params.arguments).await;
+        }
         if params.command != EMIT_CONTRACT_MODEL_COMMAND {
             self.client
                 .log_message(
@@ -104,6 +108,24 @@ impl LanguageServer for IncanLanguageServer {
             Ok(Ok(payload)) => Ok(Some(payload)),
             Ok(Err(error)) => Ok(Some(json!({ "error": error }))),
             Err(error) => Ok(Some(json!({ "error": format!("model emission failed: {error}") }))),
+        }
+    }
+
+    /// Offer one reviewed trust command for each entry Oven named in this document's unattended stop.
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let requests_trust = params.context.diagnostics.iter().any(diagnostic_is_not_trusted);
+        if !requests_trust {
+            return Ok(None);
+        }
+        let documents = self.documents.read().await;
+        let Some(document) = documents.get(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        let actions = document.trust_entries.iter().map(trust_code_action).collect::<Vec<_>>();
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(actions))
         }
     }
 

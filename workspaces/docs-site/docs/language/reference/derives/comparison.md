@@ -7,7 +7,7 @@ A comparison operator is available on a type through a derive below, an adopted 
 ## Eq
 
 - **Provides**: `==` and `!=`. A type that implements `Eq` and `Hash` can be a `set` element or `dict` key.
-- **Provided by**: `@derive(Eq)` or `@derive(Ord)`; `Eq` or `Ord` in `@rust.derive(...)`; adopting `std.derives.comparison.Eq` and defining `__eq__`; adopting `std.derives.comparison.Ord` and defining `__eq__` and `__lt__`.
+- **Provided by**: `@derive(Eq)` or `@derive(Ord)`; `Eq` or `Ord` in `@rust.derive(...)`; adopting `std.derives.comparison.Eq` and defining `__eq__`; adopting `std.derives.comparison.Ord` and defining `__eq__` and `__lt__`; a fieldless or value `enum`, or an `enum` whose payloads have the automatic `Eq` shapes listed under [automatic derives](../derives_and_traits.md#automatic-derives).
 - **Behavior**: two values are equal when every field is equal.
 - **Dunder**: `__eq__(self, other: Self) -> bool` defines `==`, and `__ne__(self, other: Self) -> bool` defines `!=`. Adopting `Eq` supplies `__ne__` as `not self.__eq__(other)`.
 - **Requires**: every field type implements `Eq`. A type does not both define `__eq__` and derive `Eq` (`INCAN-T0001`).

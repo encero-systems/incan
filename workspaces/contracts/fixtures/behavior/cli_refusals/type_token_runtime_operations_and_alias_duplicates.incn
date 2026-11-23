@@ -1,4 +1,4 @@
-# behavior: primitive and trait type tokens refuse comparison, hashing, serialization, pattern matching, field and method access; bare traits remain compile-time names; and overloads whose transparent aliases normalize to one token key are duplicate declarations (#1033)
+# behavior: primitive and trait type tokens refuse comparison, hashing, serialization, pattern matching, field and method access; bare traits remain compile-time names; overloads whose transparent aliases normalize to one token key are duplicate declarations; and method declarations whose accepted argument ranges and types overlap are refused (#1033; RFC 174)
 # expect-diagnostic: INCAN-T0001
 
 type Count = int
@@ -17,6 +17,14 @@ def choose(value: Type[Count]) -> str:
 
 def choose(value: Type[Total]) -> str:
     return "total"
+
+
+class ConflictingWriter:
+    def write(self, value: int) -> int:
+        return value
+
+    def write(self, value: int, radix: int = 10) -> int:
+        return value + radix
 
 
 def refuse_operations(token: Type[int]) -> None:

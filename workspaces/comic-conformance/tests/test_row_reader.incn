@@ -1,0 +1,26 @@
+"""Finite reader boundaries are checked before any record or retained field view becomes available."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_reader import read_rows
+from std.primitives.crumb.encoding_errors import BinaryFailure
+from std.primitives.views import MappedFile
+
+
+def test_empty_envelope_and_exact_boundary() -> Result[None, str]:
+    """An empty dictionary and record list are complete; a byte beyond that envelope is trailing data."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    owner = MappedFile.owned(b"CRMB\x01\x01\x00\x02\x00\x00")?
+    match owner.view(0, owner.len()):
+        None => return Err("missing test view")
+        Some(view) =>
+            rows = read_rows(view, [], registry, false, budget).map_err((e) => e.message())?
+            assert rows.len() == 0
+            assert not rows.is_sealed()
+            result = read_rows(view, [], registry, true, budget)
+            match result:
+                Ok(_) => return Err("required seal was ignored")
+                Err(error) =>
+                    assert error.kind == BinaryFailure.SealRequired
+    return Ok(None)

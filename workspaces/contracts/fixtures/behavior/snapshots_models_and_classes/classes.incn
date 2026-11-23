@@ -1,4 +1,4 @@
-# behavior: classes with public fields, methods, self-mutating methods, list-backed state and composition run and print their state, and every declared method answers and every field is read
+# behavior: classes with public fields, methods, self-mutating methods, list-backed state, composition and an inherited static constructor run and print their state, and every declared method answers and every field is read (#2885)
 # expect-stdout:
 #   Point: (10, 20)
 #   Rectangle: 5x10
@@ -13,6 +13,7 @@
 #   BasicCalc: 5 - 3 = 2, 5 * 3 = 15
 #   Alice is 30
 #   Hello, I'm Alice (ID: 12345)
+#   1
 
 """Test class definitions, initialization, and methods"""
 
@@ -30,7 +31,7 @@ class Rectangle:
 
 # Class with regular methods
 class Circle:
-    radius: float
+    pub radius: float
 
     pub def area(self) -> float:
         return 3.14159 * self.radius * self.radius
@@ -41,7 +42,7 @@ class Circle:
 
 # Classes with self parameter usage and mutable methods (self mutation)
 class Counter:
-    count: int
+    pub count: int
 
     pub def increment(mut self) -> None:
         self.count += 1
@@ -57,7 +58,7 @@ class Counter:
 
 
 class Stack:
-    items: list[int]
+    pub items: list[int]
 
     pub def push(mut self, item: int) -> None:
         self.items.append(item)
@@ -76,7 +77,7 @@ class Stack:
 
 # Class with static-like methods (no self mutation)
 class Calculator:
-    name: str
+    pub name: str
 
     pub def add(self, a: int, b: int) -> int:
         return a + b
@@ -93,8 +94,8 @@ class Calculator:
 
 # Composition examples
 class Person:
-    name: str
-    age: int
+    pub name: str
+    pub age: int
 
     pub def greet(self) -> str:
         return f"Hello, I'm {self.name}"
@@ -104,12 +105,24 @@ class Person:
 
 
 class Employee:
-    person: Person
-    employee_id: int
+    pub person: Person
+    pub employee_id: int
 
     pub def get_info(self) -> str:
         greeting: str = self.person.greet()
         return f"{greeting} (ID: {self.employee_id})"
+
+
+class Parent:
+    pub value: int
+
+
+class Child extends Parent:
+    pub other: int
+
+    @staticmethod
+    pub def new(value: int, other: int) -> Child:
+        return Child(value=value, other=other)
 
 
 def main() -> None:
@@ -164,3 +177,5 @@ def main() -> None:
     emp: Employee = Employee(person=alice, employee_id=12345)
     info: str = emp.get_info()
     print(info)
+    child = Child.new(value=1, other=2)
+    println(child.value)

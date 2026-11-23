@@ -1,0 +1,55 @@
+{
+  "operation": "member_identity",
+  "cases": [
+    {
+      "id": "member-01",
+      "earliest_name": "email",
+      "expected": "82244417f956"
+    },
+    {
+      "id": "member-02",
+      "earliest_name": "customer",
+      "expected": "b6c45863875e"
+    },
+    {
+      "id": "member-03",
+      "earliest_name": "name",
+      "expected": "82a3537ff0db"
+    },
+    {
+      "id": "member-04",
+      "earliest_name": "age",
+      "expected": "013f54400c82"
+    },
+    {
+      "id": "member-05",
+      "earliest_name": "nickname",
+      "expected": "a0fb3f1159c9"
+    },
+    {
+      "id": "member-06",
+      "earliest_name": "legacy_code",
+      "expected": "7a7397df215f"
+    },
+    {
+      "id": "member-07",
+      "earliest_name": "fieldbbea15ef9eff",
+      "expected": "38dd14b42a9a"
+    },
+    {
+      "id": "member-08",
+      "earliest_name": "field3d4624c2d3a2",
+      "expected": "38dd14b42a9a"
+    },
+    {
+      "id": "member-09",
+      "earliest_name": "é",
+      "expected": "4a99557e4033"
+    },
+    {
+      "id": "member-10",
+      "earliest_name": "é",
+      "expected": "bf12767b0f2a"
+    }
+  ]
+}

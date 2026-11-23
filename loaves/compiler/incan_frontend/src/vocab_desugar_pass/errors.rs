@@ -3,6 +3,9 @@
 use crate::ast::Span;
 use crate::vocab_ast_bridge::VocabAstBridgeError;
 
+/// Stable diagnostic used when unattended analysis retains a vocabulary block without executing its provider.
+pub(super) const NOT_TRUSTED_CODE: &str = "INCAN-T0134";
+
 /// Desugaring failures become node-local diagnostics; none is a compiler panic.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum VocabDesugarPassError {
@@ -27,6 +30,12 @@ pub enum VocabDesugarPassError {
     UnsupportedOutput {
         /// The parsed vocabulary keyword.
         keyword: String,
+    },
+    /// Unattended analysis reached a provider not covered by user or organization trust.
+    #[error("vocabulary provider `{provider}` is not trusted for unattended analysis")]
+    NotTrusted {
+        /// The providing Loaf named by the resolved vocabulary artifact.
+        provider: String,
     },
     /// A native worker was denied, failed, exceeded its deadline or returned invalid public syntax.
     #[error("vocabulary provider `{provider}`: {message}")]

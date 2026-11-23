@@ -1,6 +1,6 @@
 # RFC 109: Receiver chain combinators (`tap` and `then`)
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-06-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,79 +10,33 @@
     - RFC 068 (protocol hooks for core language syntax)
     - RFC 070 (result combinators for `Result[T, E]`)
     - RFC 088 (iterator adapter surface)
-- **Issue:** —
+    - RFC 108 (import-scoped extensions)
+    - RFC 110 (`Ordering.then`)
+    - RFC 128 (callable types)
+    - RFC 129 (binding and `mut` parameters)
+    - RFC 154 (retained capturing callables)
+- **Issue:** [#2661](https://github.com/encero-systems/incan/issues/2661)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
 
 ## Summary
 
-This RFC proposes two standard receiver-chain combinators, `tap` and `then`, so ordinary values can be observed, configured, and transformed in left-to-right chains without losing Incan's explicit mutability, callable typing, and compile-time ownership guarantees.
-
-The north star is the ergonomic shape Ruby popularized with `tap` and `then`, but specified as a typed Incan surface: receiver evaluation is explicit and single-pass, callbacks are statically typed, read-only observation must not force `Clone`, and mutation is visible at the callback parameter.
+`value.then(f)` passes a value to a function and returns the result, and `value.tap(f)` lets a function look at or change a value and then hands the same value on. Both are available on every value with no import, so a value can flow left to right through small steps without temporary variables. They are ordinary library code: an extension in `std.chain` that the standard prelude activates, with no compiler knowledge of the names. A member a type authors itself always takes precedence.
 
 ## Core model
 
-1. **`then` transforms the receiver:** `value.then(f)` evaluates `value`, passes the receiver value to `f`, and returns `f(value)`.
-2. **`tap` preserves the receiver:** `value.tap(f)` evaluates `value`, lets `f` observe or mutate that receiver, requires `f` to return `None`, and returns the same receiver value after the callback.
-3. **Read-only taps borrow:** `tap` may adapt a callback to a borrowed receiver boundary, using the same ownership planning already used by `Result.inspect`, so observing a non-`Clone` value does not clone it.
-4. **Mutating taps are explicit:** `value.tap((mut x) => x.normalize())` gives the callback mutable access to the receiver and returns the mutated receiver. There is no separate `tap_mut` spelling.
-5. **Callbacks are ordinary callables where possible:** named functions, closures, callable objects, and future callable presets should use the same function-value model as the rest of Incan, subject to the borrow and mutability contracts in this RFC.
-6. **Container-specific combinators stay distinct:** `Result.inspect`, `Result.and_then`, and iterator `.inspect()` keep their branch-local or item-local semantics; general `tap` and `then` operate on the receiver itself.
+1. **`then` transforms.** `value.then(f)` evaluates `value`, passes it to `f` and returns what `f` returns.
+2. **`tap` preserves.** `value.tap(f)` evaluates `value`, gives `f` access to it, and returns the same value. `f` must return `None`.
+3. **Looking does not clone.** A read-only `tap` borrows, so observing a value that is not `Clone` works.
+4. **Changing is visible.** `value.tap((mut x) => x.normalize())` says so at the callback's parameter, and there is no `tap_mut`.
+5. **Always available, not special.** `std.chain` is library code, and the prelude activates it, as the prelude makes `Eq` and `Clone` available.
+6. **Authored members win.** A type's own `tap` or `then` is never overridden.
+7. **Container combinators stay distinct.** `Result.inspect`, `Result.and_then` and iterator `.inspect()` work on a branch or an item, while `tap` and `then` work on the whole value.
 
 ## Motivation
 
-Python code often uses temporary variables to inspect or configure an intermediate value before passing it onward. That style is explicit, but it interrupts the value flow and makes simple construction pipelines longer than the work they perform. Rust has a strong combinator culture for `Option`, `Result`, and iterators, and Incan already adopted that direction for `Result` in RFC 070, but Rust does not give every ordinary value a standard `tap` or `then` method. Ruby's `tap` and `then` are strong prior art for the receiver-chain ergonomics; Incan should take the readability lesson without adopting Ruby's dynamic dispatch model.
-
-Incan already has first-class function references, closures, borrowed callable lowering for observer-style combinators, `Result` combinators, iterator adapters, and explicit receiver mutability in method signatures. A small receiver-chain surface can reuse those ingredients. The goal is not to make every program point-free or to hide side effects. The goal is to let authors keep a clear left-to-right flow when an intermediate value needs a small observer, configuration step, or final transformation.
-
-## Goals
-
-- Add a standard `then` combinator for receiver-to-callback transformation.
-- Add a standard `tap` combinator for observer/configuration steps that return the original receiver.
-- Preserve explicit mutability through callback parameter spelling instead of adding `tap_mut`.
-- Preserve non-`Clone` values through observer borrowing where possible.
-- State the calling syntax and temporary-variable equivalence clearly enough that `tap` does not become runtime magic.
-- Keep `tap` and `then` visually and semantically distinct from `Result.and_then`, `Result.inspect`, and iterator `.inspect()`.
-- Define evaluation order, callback typing, return behavior, and diagnostics clearly enough for compiler, stdlib, LSP, and docs support.
-
-## Non-Goals
-
-- This RFC does not add a new pipe operator; RFC 028 already defines operator hooks for `|>` and `<|`.
-- This RFC does not replace `Result.map`, `Result.and_then`, `Result.inspect`, iterator adapters, or `?`.
-- This RFC does not add statement-bodied closures.
-- This RFC does not allow implicit mutation inside `tap`; mutation must remain visible through existing mutability rules.
-- This RFC does not require fallible observer helpers such as `try_tap`, although the design should leave room for them.
-- This RFC does not require users to rewrite straightforward local-variable code into chains.
-
-## Guide-level explanation
-
-Use `then` when the receiver should become the input to the next operation:
-
-```incan
-user = load_user(id)?
-    .then(normalize_user)
-    .then(save_user)?
-```
-
-That chain is equivalent in intent to:
-
-```incan
-loaded = load_user(id)?
-normalized = normalize_user(loaded)
-user = save_user(normalized)?
-```
-
-Use `tap` when a value should be observed or configured while the chain keeps the same value:
-
-```incan
-saved = User(name="Danny")
-    .tap((mut user) => user.activate())
-    .tap((user) => log.info(user.summary))
-    .then(save_user)?
-```
-
-That chain is equivalent in intent to binding the intermediate value, mutating or observing it, and then passing it onward:
+Code often needs one small step on an intermediate value, such as configuring it, logging it or passing it on, and a temporary variable interrupts the flow for that step:
 
 ```incan
 mut user = User(name="Danny")
@@ -91,102 +45,68 @@ log.info(user.summary)
 saved = save_user(user)?
 ```
 
-The mutability is visible at the callback parameter. There is no separate `tap_mut` spelling because Incan already has a source-level way to say that a value is being mutated.
+Ruby's `tap` and `then` show the readability gain. Rust shows how to keep it typed, with explicit mutability and observers such as `inspect` that preserve their receiver. Incan already has the parts: closures, callable types and `mut` in function types.
 
-Short closures are useful when the observer is local to the chain:
+## Goals
+
+- Provide `then` and `tap` on every value with no import.
+- Keep mutation visible at the callback's parameter.
+- Let a read-only `tap` work on values that are not `Clone`.
+- Keep them as library code, with no compiler knowledge of the names.
+- Keep them distinct from branch-local and item-local combinators.
+
+## Non-Goals
+
+- A new pipe operator. RFC 028 defines the hooks for `|>` and `<|`.
+- Replacing `Result.map`, `Result.and_then`, `Result.inspect`, iterator adapters or `?`.
+- Statement-bodied closures.
+- Fallible observers. A fallible step uses `then`.
+- Asking anyone to rewrite straightforward local-variable code into chains.
+
+## Guide-level explanation
+
+Use `then` when a value should become the input to the next step:
 
 ```incan
-config = Config.default()
-    .tap((mut c) => c.enable_cache())
-    .tap((c) => log.info(c.summary))
-    .then(validate_config)?
+user = load_user(id)?
+    .then(normalize_user)
+    .then(save_user)?
 ```
 
-Named functions should also work when their callable shape fits the tap contract:
+Use `tap` when a step should keep the value:
+
+```incan
+saved = User(name="Danny")
+    .tap((mut user) => user.activate())
+    .tap((user) => log.info(user.summary))
+    .then(save_user)?
+```
+
+`mut` on the parameter is how you say the step changes the value. Named functions work too, read-only or mutating:
 
 ```incan
 def log_config(config: Config) -> None:
     log.info(config.summary)
 
+def enable_cache(mut config: Config) -> None:
+    config.cache = true
+
 config = Config.default()
+    .tap(enable_cache)
     .tap(log_config)
     .then(validate_config)?
 ```
 
-For read-only taps, the implementation may borrow the receiver while calling the observer so the original value can keep moving through the chain without `Clone`. This matches the existing ownership policy used by observer-style `Result` combinators.
+A callback may capture what it needs, under RFC 154, because it finishes within the call.
 
-`tap` operates on the receiver itself. This is different from `Result.inspect`, which observes only the `Ok` payload while preserving the original `Result`:
-
-```incan
-result.inspect(log_success)   # observes Ok(T)
-result.tap(log_result)        # observes Result[T, E] itself
-```
-
-Likewise, iterator `.inspect()` observes each item in a lazy sequence, while `tap` observes the iterator value itself.
-
-## Reference-level explanation
-
-### Standard surface
-
-The user-facing surface is ordinary method-call syntax:
+`tap` works on the whole value, unlike the combinators that look inside one:
 
 ```incan
-value.then(transform)
-value.tap(observer)
-value.tap((mut value) => value.normalize())
+result.inspect(log_success)   # observes the Ok payload
+result.tap(log_result)        # observes the Result itself
 ```
 
-The exact declaration form may use traits, compiler-recognized stdlib methods, a future method-extension mechanism, or a desugared form backed by stdlib callables. The RFC does not require hard-coding magic names into the parser. Whatever implementation path is chosen, the source behavior must match the semantic contracts below.
-
-Semantic shape:
-
-```text
-then[T, U](self: T, transform: consumes T -> U) -> U
-tap[T](self: T, observer: observes T -> None) -> T
-tap[T](mut self: T, observer: mutates T -> None) -> T
-```
-
-The `text` block is intentionally not final Incan declaration syntax. Today's public function type spelling, `(T) -> U`, is enough for simple consuming transforms and for read-only observers after borrowed callable adaptation, but it does not by itself describe mutable receiver access. The RFC therefore treats the exact public callable spelling for mutating tap callbacks as a design decision rather than pretending the simple `(T) -> None` signature carries every case.
-
-### `then` semantics
-
-`value.then(f)` must evaluate `value` exactly once, evaluate `f` exactly once, call `f(value)`, and return the callback result. The receiver is passed as the callback argument according to ordinary Incan ownership and lowering rules for function calls.
-
-If `f` returns `Result[U, E]`, then `value.then(f)` returns `Result[U, E]` and callers may use `?` in the ordinary way:
-
-```incan
-validated = config.then(validate_config)?
-```
-
-`then` does not inspect `Result` or `Option` branches. Calling `result.then(f)` passes the entire `Result` to `f`. Branch-local fallible chaining remains `result.and_then(f)`.
-
-### `tap` semantics
-
-`value.tap(f)` must evaluate `value` exactly once, evaluate `f` exactly once, call `f` with access to the receiver, and return the receiver after the callback completes.
-
-The callback must return `None`. If the callback returns another value, the compiler must reject the call or require an explicit discard form if a future RFC introduces one. This avoids silently dropping meaningful callback results.
-
-For non-mutating observers, `tap` should pass the value by observer borrow when the original value must remain available afterward. A conforming implementation must not require `T with Clone` merely because `tap` observes `T` and returns it. This is the same lowering policy described for observer-style helper functions in the duckborrowing docs and already used by `Result.inspect` / `Result.inspect_err`.
-
-For mutating observers, the callback parameter must make mutation visible:
-
-```incan
-value.tap((mut x) => x.normalize())
-```
-
-This must lower like an explicit mutable binding followed by a mutating method call on that binding, then returning the binding:
-
-```text
-mut x = value
-x.normalize()
-return x
-```
-
-A mutating tap must not be specified as "pass `T` by value into an arbitrary callback and return the original anyway"; that would be incoherent for owned non-`Copy` values. The callback needs mutable access to the receiver that `tap` will return. Inline closures are the clearest source form for this. Named callables should be accepted only when their callable shape can receive the same mutable receiver access without moving the value away from `tap`.
-
-### Error behavior
-
-`tap` is not fallible by default. A callback returning `Result[None, E]` does not match `tap` unless a future callable-conversion rule explicitly permits it. Authors who need a fallible observer can use `then` with an explicit function that returns the original value on success:
+A step that can fail is a `then` that returns the value:
 
 ```incan
 def log_and_keep(user: User) -> Result[User, LogError]:
@@ -196,122 +116,116 @@ def log_and_keep(user: User) -> Result[User, LogError]:
 user = user.then(log_and_keep)?
 ```
 
-A future `try_tap` helper may be useful, but it should be specified as a separate receiver-preserving fallible combinator rather than smuggling fallibility into ordinary `tap`.
+A type's own member takes precedence, so `cmp(a, b).then(cmp(c, d))` calls RFC 110's `Ordering.then`. When a member shadows the combinator, the plain functions still work: `std.chain.then(value, transform)`.
 
-### Evaluation order
+## Reference-level explanation
 
-Receiver evaluation must happen before callback evaluation. The callback must run before `tap` returns the receiver or before `then` returns the transformed value. Early returns, `?` propagation, and panics inside the callback follow ordinary function-call behavior.
+### Availability
 
-### Diagnostics
+1. `std.chain` must provide `then` and `tap` as an RFC 108 extension, and as plain functions `then(value, transform)` and `tap(value, observer)`.
+2. The standard prelude must activate the extension in every module. It must not need an import, and the compiler must have no knowledge of the names beyond extensions and the prelude.
+3. A member a type defines, including through an adopted trait, must take precedence over the extension, under RFC 108. A shadowed call must not be reported as a conflict.
 
-The compiler should diagnose:
+### `then`
 
-- unknown `tap` or `then` when the standard surface is not active;
-- callback arity mismatch;
-- callback return type mismatch for `tap`;
-- attempts to mutate through a non-mut callback parameter;
-- mutating tap callbacks whose callable shape would move the receiver away from `tap`;
-- attempted branch-local use where `Result.and_then`, `Result.inspect`, or iterator `.inspect()` is likely intended;
-- ambiguous resolution if a type defines its own incompatible `tap` or `then` member.
+4. `value.then(f)` must evaluate `value` once, then `f`, call `f` once with `value` under ordinary ownership rules, and return the result.
+5. `then` must not look inside a `Result` or an `Option`. `result.then(f)` passes the whole `Result`, and `?` applies to what `f` returns in the ordinary way.
+
+### `tap`
+
+6. `value.tap(f)` must evaluate `value` once, then `f`, call `f` once with access to the value, and return the value.
+7. `f` must return `None`. Any other return type must be refused with a diagnostic pointing at a named function or `then`. `Result[None, E]` is not `None`.
+8. A read-only `f`, `Callable[(T) -> None]`, must borrow the value, and `tap` must not require `T with Clone`.
+9. A mutating `f`, `Callable[(mut T) -> None]`, whether a closure with a `mut` parameter or a named function declaring one, must change the value `tap` returns. Changing the value through a parameter not marked `mut` must be refused.
+
+### Failure and order
+
+10. The receiver must be evaluated before the callback runs, and the callback must finish before the result is returned. A `return`, `?` or panic inside a callback follows ordinary rules for a function call.
+
+### Diagnostics and tooling
+
+11. Diagnostics must cover arity and return-type mismatches, changing a value through a non-`mut` parameter, and `then` or `tap` where `Result.and_then`, `Result.inspect` or iterator `.inspect()` was likely meant.
+12. Completion and hover must show that these come from `std.chain`, and must explain the difference from those combinators. The formatter must treat them as ordinary method chains.
+
+### Conformance workloads
+
+| Workload | Required evidence |
+| --- | --- |
+| Availability | `then` and `tap` work on models, classes, enums, primitives, `Result` and generic values, with no import. |
+| Ownership | A read-only `tap` works on a value that is not `Clone`, and a mutating `tap` returns the changed value. |
+| Callables | Closures, named functions, bound methods, callable objects and capturing closures all work, read-only and mutating. |
+| Precedence | A type's own `then`, including `Ordering.then`, wins, and `std.chain.then` still reaches the combinator. |
+| Refusals | A non-`None` observer and a change through a non-`mut` parameter are refused with their diagnostics. |
+| Control flow | `?` on a `then` result, and a panic in a callback, behave as in an ordinary call. |
+| Single evaluation | The receiver and callback are each evaluated once. |
 
 ## Design details
 
-### Syntax
+### Why they are always available
 
-This RFC uses ordinary method-call syntax:
+An import to use something as small as `tap` is friction at the moment it would help, and these names are meant as a general way of writing code rather than a specialized library. The prelude is how Incan makes such things available. Activating an ordinary extension there gives that with no compiler knowledge of the names.
 
-```incan
-value.tap(observer)
-value.then(transform)
-```
+### A possible implementation
 
-No new parser token is required unless the final method-extension mechanism requires one. The feature is intended to feel like ordinary Incan method chaining, not a special form.
-
-### Calling syntax
-
-The intended calling syntax is:
+Non-normatively, the extension could read:
 
 ```incan
-value.then(named_transform)
-value.then((x) => transform(x))
-value.tap(named_observer)
-value.tap((x) => log.info(x.summary))
-value.tap((mut x) => x.normalize())
+# std/chain.incn
+pub extension chain:
+    def then[T, U](self: T, transform: Callable[(T) -> U]) -> U:
+        return transform(self)
+
+    def tap[T](self: T, observer: Callable[(T) -> None]) -> T:
+        observer(self)
+        return self
+
+    def tap[T](mut self: T, observer: Callable[(mut T) -> None]) -> T:
+        observer(self)
+        return self
 ```
 
-The named-function forms are ordinary function values. The closure forms are often clearer when the observer is local, when mutation is involved, or when the compiler must infer a borrowed callback boundary.
+### Relationship to other surfaces
 
-### Semantics
-
-`then` is a receiver-threading transform. `tap` is a receiver-preserving observer/configuration step. The two names should remain small and orthogonal. Libraries should not overload `tap` to transform values or `then` to ignore callback results.
-
-### Activation and method resolution
-
-The final prelude/import policy is unresolved. The strongest language-level shape is that `tap` and `then` are standard receiver combinators available on all ordinary values once the relevant stdlib/prelude surface is active.
-
-If a type defines its own concrete member named `tap` or `then`, ordinary member resolution should prefer the concrete member because it is part of the type's authored API. The standard combinator should be available through a function fallback, such as `std.chain.tap(value, observer)` or `std.chain.then(value, transform)`, if the method name is shadowed or ambiguous. The exact fallback path is a design decision, but the RFC should not require silent override of user-authored members.
-
-### Relationship to future extension mechanisms
-
-RFC 108 explores import-scoped extension properties, and Incan may later grow a broader extension-method or `vocab` authoring story. RFC 109 should not block that direction. `tap` and `then` may eventually be authored through the same mechanism that lets libraries add statically typed receiver vocabulary, but this RFC is about the standard combinator semantics and calling surface, not about making arbitrary extension methods available for every library.
-
-### Interaction with existing `Result` combinators
-
-`Result.map`, `Result.map_err`, `Result.and_then`, `Result.or_else`, `Result.inspect`, and `Result.inspect_err` remain the branch-aware API for `Result`. `tap` and `then` operate on the whole receiver, so they compose with `Result` but do not replace its branch-aware methods.
-
-### Interaction with iterator adapters
-
-Iterator `.inspect()` remains an item observer in a lazy pipeline. `iterator.tap(f)` observes the iterator object itself before it is consumed or transformed.
-
-### Interaction with pipe operators
-
-RFC 028 defines `|>` and `<|` operator hooks for libraries that want pipeline-like operators. `then` is the method-chain spelling for ordinary receiver threading. The two surfaces may coexist, but this RFC does not require `a.then(f)` and `a |> f` to be aliases.
+RFC 028's `|>` remains a hook for libraries that want the operator, and is not an alias of `then`. RFC 122's fieldmethods work on a model being constructed, while `tap` and `then` work on finished values.
 
 ### Prior art
 
-Ruby provides the most direct prior art for the names and fluent reading style: `tap` observes/configures while returning the receiver, and `then` threads the receiver into a block and returns the block result. Rust provides the stronger safety precedent through owned method receivers, explicit mutable receivers, `Result`/`Option`/iterator combinators, and observer helpers such as `inspect` that preserve the original container. Incan should deliberately combine Ruby's readability with Rust-shaped static guarantees.
+Ruby provides the names and the reading style: `tap` observes and returns its receiver, and `then` passes it to a block. Rust provides the safety precedent, with explicit mutable receivers and observers such as `inspect`. Kotlin's `also` and `let` are the same pair, available on every value through its standard library.
 
-### Compatibility and migration
+### Compatibility
 
-This RFC is additive. Existing values and methods are unaffected unless a user-defined type already exposes a member named `tap` or `then`. If a type defines an incompatible member, ordinary member resolution and diagnostics must make the conflict visible rather than silently selecting the standard combinator.
+This RFC is additive. A type with its own `tap` or `then` keeps it.
 
 ## Alternatives considered
 
-1. **Temporary variables only.** This is explicit and already works, but it makes simple observer/configuration flows noisier than necessary.
-2. **Only a pipe operator.** A pipe operator can thread values through functions, but it does not solve receiver-preserving observation as directly as `tap`.
-3. **Separate `tap` and `tap_mut`.** This makes mutation obvious but duplicates a distinction Incan already expresses through `mut` parameters.
-4. **Use `inspect` as the universal name.** This collides with established branch-local and iterator-item semantics. `tap` is clearer for the receiver-preserving operation.
-5. **Allow callback results to be silently ignored.** This follows Ruby more closely but is less safe in a typed language because accidentally returning meaningful data would disappear.
-6. **Model `tap` as an ordinary consuming function only.** This would be simpler to type, but it would either require cloning for read-only observation or make mutating taps incoherent for owned non-`Copy` values.
+- **Temporary variables only:** explicit and already works, but noisy for small steps.
+- **An explicit import:** hides a general-purpose feature behind a line that has to be remembered.
+- **Compiler-recognized methods:** would need special handling for two library names, when an extension activated by the prelude needs none.
+- **Only a pipe operator:** threads values through functions but has no answer for keeping the value.
+- **Separate `tap` and `tap_mut`:** duplicates what `mut` on the parameter already says.
+- **`inspect` as the universal name:** already means branch-local and item-local observation.
+- **Ignoring callback results:** a meaningful return value would silently disappear.
+- **A `try_tap`:** `then` with a function returning the value already says it.
+- **Treating `a |> f` as `a.then(f)`:** `|>` is defined by its hook, which a library may give another meaning.
 
 ## Drawbacks
 
-- Universal-looking methods increase the standard surface that users must learn.
-- `tap` can encourage side-effect-heavy chains if style guidance is weak.
-- Borrow-preserving and mutating `tap` require careful lowering so non-`Clone` values remain ergonomic without hiding moves.
-- The relationship between method chaining, pipe operators, and container-specific combinators must be documented clearly.
-- The names `tap` and `then` are short enough that shadowing by user-authored methods is plausible.
+Every type gains two names in completion lists, and short names like these are plausible for a type to define with another meaning, as `Ordering.then` does. `tap` can encourage long side-effecting chains if style guidance is weak. The extension depends on RFC 108 supporting methods and receivers of any type.
 
 ## Layers affected
 
-- **Typechecker / Symbol resolution:** the standard surface must resolve `tap` and `then` for ordinary receiver values while respecting user-defined members and conflicts.
-- **Callable typing:** callbacks must typecheck with receiver, mutability, arity, and return-type contracts.
-- **Ownership planning / duckborrowing:** read-only taps must preserve receiver ownership through borrowed callable adaptation instead of clone requirements.
-- **IR Lowering:** `tap` must preserve receiver ownership while allowing observer borrowing and explicit mutable callback access.
-- **Emission:** generated code must evaluate the receiver and callback once and preserve the specified control-flow behavior.
-- **Stdlib / Runtime (`loaves/stdlib/`):** the standard library should provide the user-facing combinator declarations, traits, or fallback functions chosen by the final design.
-- **Formatter:** chained `tap` and `then` calls should format like ordinary method chains.
-- **LSP / Tooling:** completion and hover should explain the difference between `tap`, `then`, `Result.inspect`, `Result.and_then`, and iterator `.inspect()`.
+- **Standard library:** `std.chain` and activation in the prelude.
+- **Extensions:** RFC 108's methods, generic receivers and prelude activation.
+- **Ownership:** borrowing for read-only observers and access for mutating ones, under RFC 129.
+- **Formatter:** ordinary method-chain layout.
+- **Language server:** completion and hover.
+- **Documentation:** guidance on when a chain helps and when a local variable reads better.
 
-## Unresolved questions
+## Design Decisions
 
-- Should `tap` and `then` be prelude methods on all values, explicitly imported stdlib extension methods, compiler-recognized methods backed by the stdlib, or authored through a future extension-method mechanism?
-- What exact callable type spelling should represent mutable callback access in the public reference docs?
-- Should named mutable callables be accepted for mutating `tap`, or should mutating tap initially require inline closures until callable borrow spelling is explicit?
-- Should this RFC include `try_tap` for fallible observers, or should fallible observation remain an explicit `then` pattern?
-- Should `a |> f` be documented as equivalent to `a.then(f)` for simple function application, or should pipe operators remain fully library-defined?
-- Should `tap` allow observer callbacks that return `None` only, or should there be an explicit discard marker for intentionally ignored results?
-- What fallback path should expose the standard combinator when a type already has an authored `tap` or `then` member?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Availability:** on every value with no import. `std.chain` is library code, activated by the prelude, and the compiler has no knowledge of the names.
+- **Shadowing:** a type's own member always wins, and `std.chain.then` and `std.chain.tap` remain available as plain functions.
+- **Callable spelling:** `Callable[(T) -> None]` observes and `Callable[(mut T) -> None]` changes, and named functions work for both.
+- **Observers return `None`:** no discard marker. Anything else is a named function or `then`.
+- **No `try_tap`:** a fallible step is a `then`.
+- **`|>` stays separate:** it is a library hook, not an alias.

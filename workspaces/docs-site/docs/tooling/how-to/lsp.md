@@ -17,6 +17,14 @@ The path is passed directly to process creation. It does not expand shell variab
 
 Open the editor's Incan output channel to verify the selected executable. Restart the language server after changing its path.
 
+## Review compile-time trust stops
+
+The language server prepares projects in unattended mode. When a dependency would run a procedural macro, vocabulary registration, or a vocabulary worker without covering user or organization trust, the editor continues code-free analysis and shows `INCAN-T0134` as an informational diagnostic. Its vocabulary blocks remain not yet checked; no provider process starts for them, including from unsaved text.
+
+Review the named provider before accepting the diagnostic's quick fix. The editor shows the exact publisher, Loaf, or project entry proposed by Oven and asks for confirmation before it runs `oven trust add`. The command changes user configuration, not the project. Reanalyze or reopen the document after adding trust so Oven can prepare the provider and the language server can expand the current buffer.
+
+To inspect or reverse the resulting entry outside the editor, use `oven trust list` or `oven trust remove KIND VALUE`. An explicit `incan check`, build, run, or test remains an explicit request and is not widened by editor trust.
+
 ## Check source independently
 
 ```bash

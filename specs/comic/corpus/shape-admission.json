@@ -1,0 +1,131 @@
+{
+  "operation": "shape_admission",
+  "cases": [
+    {
+      "id": "ordered-members",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "expected": {
+        "status": "accepted"
+      }
+    },
+    {
+      "id": "duplicate-member",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "expected": {
+        "status": "refused",
+        "kind": "DuplicateIdentity",
+        "path": "/fields/82244417f956"
+      }
+    },
+    {
+      "id": "unsorted-members",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "expected": {
+        "status": "refused",
+        "kind": "IdentityOrder",
+        "path": "/fields"
+      }
+    },
+    {
+      "id": "bad-identity-width",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "expected": {
+        "status": "refused",
+        "kind": "IdentityWidth",
+        "path": "/fields/0/id"
+      }
+    },
+    {
+      "id": "different-names-same-identity",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "38dd14b42a9a",
+            "name": "fieldbbea15ef9eff",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "38dd14b42a9a",
+            "name": "field3d4624c2d3a2",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "expected": {
+        "status": "refused",
+        "kind": "DuplicateIdentity",
+        "path": "/fields/38dd14b42a9a"
+      }
+    }
+  ]
+}

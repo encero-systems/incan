@@ -64,6 +64,7 @@ mod control_contexts;
 mod declaration_validation;
 mod declaration_views;
 mod decorated_method_receivers;
+mod dependency_interface;
 mod dependency_members;
 mod dependency_registry;
 mod derive_contract;
@@ -157,6 +158,7 @@ use incan_lang::interop::{
     RustTypeShape, render_rust_type_shape_path, rust_display_is_owned_string, split_top_level_rust_args,
     strip_rust_borrow_lifetimes,
 };
+
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
@@ -175,6 +177,15 @@ use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+
+pub use dependency_interface::{ModuleDependencyInterface, ModuleDependencyInterfaceSnapshot};
+
+/// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the
+/// dependency AST closure.
+///
+/// The driver builds each value once per parsed module. Each checker retains its exact dependency-key set and lookup
+/// order while sharing the read-only export slices used by import visibility checks.
+pub type DependencyExportInterfaces = HashMap<String, Arc<[ExportedSymbol]>>;
 
 /// The kind of loop enclosing a `break` or `continue`, which decides whether `break` may yield a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -470,6 +481,7 @@ struct AnnotationOwner {
 
 /// A callable's original type templates, retained before imports, receiver arguments, or partial application specialize
 /// them. Type-parameter positions never grant a declaration-owned nominal identity to a caller's substitution.
+#[derive(Clone, Debug)]
 struct DeclarationCallableTypes {
     /// Parameter templates in declaration order, including their source binding labels.
     params: Vec<CallableParam>,
@@ -502,6 +514,8 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
+    /// The active source package's declared persistent-record namespace; compiler ownership remains separate.
+    record_package_identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
     /// Test-only cold baseline bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,
@@ -755,10 +769,20 @@ pub struct TypeChecker {
     pub const_eval_cache: HashMap<String, const_eval::ConstEvalResult>,
     /// Reusable typechecker output for downstream stages.
     pub type_info: TypeCheckInfo,
+    /// Concrete source types already classified by the current program's complete nominal storage graph.
+    ///
+    /// The graph is immutable after declaration collection. Caching its transitive view-type result prevents every
+    /// callable, field and constructor from recursively rescanning the same cyclic declaration closure.
+    view_type_cache: RefCell<HashMap<(ResolvedType, bool), bool>>,
     /// Current source-order boundary for borrowed declaration/environment readers.
     visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.
-    pub dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    pub dependency_exports: DependencyExportInterfaces,
+    /// Exact immutable provider interfaces selected by driver dependency indexes for the next check.
+    ///
+    /// This staging slot is consumed after the legacy oracle has populated its comparison state. It never widens the
+    /// closure and is empty for direct API callers that still exercise legacy dependency collection.
+    selected_dependency_interfaces: Vec<Arc<ModuleDependencyInterface>>,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
     ///
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as
@@ -857,6 +881,8 @@ pub struct TypeChecker {
     hash_key_inference: HashKeyInferenceState,
     /// The compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
     pub loaves: Arc<LoafIndex>,
+    /// Dependency keys and package names whose artifacts unattended preparation could not safely prepare.
+    not_prepared_loaves: HashSet<String>,
     /// Builtin traits' standard declarations by trait name, read once from the standard package owning each.
     pub(in crate::typechecker) standard_traits: HashMap<String, TraitInfo>,
     /// Internal semantic type cache for dependency exports referenced transitively by imported signatures.
@@ -891,6 +917,10 @@ pub struct TypeChecker {
         HashMap<String, HashMap<Vec<String>, HashMap<String, String>>>,
     /// Whether a manual [`Self::import_module`] call prepared dependency-only semantics for the next program check.
     dependency_semantics_pending: bool,
+    /// Header-only ownership facts from imported source modules. Replayed into a fresh program check separately
+    /// from body proofs; each dependency refresh replaces its own entries and a new import set clears the cache.
+    dependency_method_input_contracts:
+        std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
     /// Module path for the program being checked (if known).
     pub current_module_path: Option<Vec<String>>,
     /// Source import aliases with declaration origins known from the dependency import graph.

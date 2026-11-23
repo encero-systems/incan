@@ -58,6 +58,7 @@ model Reader:
         """Decode a row in the versioned field order; booleans have exactly two encodings."""
         loaf = self.text()?
         version = self.text()?
+        registry = self.text()?
         domain = self.text()?
         directory = self.text()?
         features = self.texts()?
@@ -68,16 +69,17 @@ model Reader:
         if recorded > 1:
             return Err("registry page recorded flag is not a boolean")
         return Ok(RegistryUnit(
-            loaf=loaf, version=version, domain=domain, directory=directory, features=features, entry=entry,
+            loaf=loaf, version=version, registry=registry, domain=domain, directory=directory, features=features, entry=entry,
             dependencies=dependencies, profile=profile, recorded=recorded == 1,
             name=self.text()?, crate_hash=self.text()?, refusal=self.text()?, artifact=self.text()?, kind=self.text()?,
+            source_archive=self.text()?, source_digest=self.text()?,
         ))
 
 
 pub def decode(view: MappedView) -> Result[Catalog, str]:
     """Read a versioned table, refusing unknown versions, truncated rows, duplicate entries and trailing bytes."""
     mut reader = Reader(view=view)
-    if reader.text()? != "incan.registry-page/1":
+    if reader.text()? != "incan.registry-page/2":
         return Err("unsupported registry page version")
     count = reader.number()?
     if count > (view.len() - reader.offset) // 128:
@@ -104,7 +106,7 @@ pub def encode(catalog: Catalog) -> Result[bytes, str]:
     if len(catalog.units) != len(catalog.listings) or len(catalog.units) != len(catalog.artifacts):
         return Err("registry page observation rows differ from its units")
     buffer = BytesIO(b"")
-    put_text(buffer, "incan.registry-page/1")?
+    put_text(buffer, "incan.registry-page/2")?
     put_number(buffer, len(catalog.units))?
     for index in range(len(catalog.units)):
         put_unit(buffer, catalog.units[index])?
@@ -115,7 +117,7 @@ pub def encode(catalog: Catalog) -> Result[bytes, str]:
 
 def put_unit(buffer: _BytesIO, unit: RegistryUnit) -> Result[None, str]:
     """Write exactly the fields the typed row reader consumes, preserving source order and exact entries."""
-    for value in [unit.loaf, unit.version, unit.domain, unit.directory]:
+    for value in [unit.loaf, unit.version, unit.registry, unit.domain, unit.directory]:
         put_text(buffer, value)?
     put_texts(buffer, unit.features)?
     put_text(buffer, unit.entry)?
@@ -125,7 +127,9 @@ def put_unit(buffer: _BytesIO, unit: RegistryUnit) -> Result[None, str]:
     if unit.recorded:
         recorded = 1
     put_number(buffer, recorded)?
-    for value in [unit.name, unit.crate_hash, unit.refusal, unit.artifact, unit.kind]:
+    for value in [
+        unit.name, unit.crate_hash, unit.refusal, unit.artifact, unit.kind, unit.source_archive, unit.source_digest,
+    ]:
         put_text(buffer, value)?
     return Ok(None)
 

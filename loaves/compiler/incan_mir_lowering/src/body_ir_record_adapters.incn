@@ -1,0 +1,947 @@
+"""
+Reversible adapters between native Body IR carriers and the selected Incan-owned compiler-record families.
+
+The provenance maps come from the same aligned source/module and selected-package inputs used by native lowering.
+Every canonical identity and checked type is completed through that authority; diagnostic spellings are never parsed.
+Typed native leaves outside the selected Stage 3 families are copied explicitly until their own family migrates.
+"""
+
+from pub::internal_models.body_ir_values import (
+    CompilerBlock,
+    CompilerCallee,
+    CompilerRvalue,
+    CompilerStatement,
+    CompilerStatementKind,
+)
+from pub::internal_models.body_ir_declarations import (
+    CompilerBody,
+    CompilerBodyIrModule,
+    CompilerLoafCallable,
+    CompilerNominalDeclaration,
+    CompilerTraitAdoption,
+    CompilerValidatedConstructor,
+    NamedTypeIdentity,
+    TraitDefaultInstantiation,
+    TraitFieldWitness,
+    TraitTypeArgument,
+    valid_compiler_body,
+    valid_loaf_callable,
+    valid_nominal_declaration,
+)
+from pub::internal_models.compiler_records import CanonicalSymbolId
+from pub::internal_models.checked_types import CheckedType
+from rust::std::collections import BTreeMap
+from rust::std::boxed import Box
+from rust::std::sync import Arc
+from rust::incan_semantics_core import CanonicalSymbolId as RustCanonicalSymbolId, IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    Block as RustBlock,
+    Body as RustBody,
+    BodyIrModule as RustBodyIrModule,
+    Callee as RustCallee,
+    IsInstanceRvalue as RustIsInstanceRvalue,
+    LoafCallable as RustLoafCallable,
+    LocalId,
+    NominalDeclaration as RustNominalDeclaration,
+    Rvalue as RustRvalue,
+    ScopeId,
+    Statement as RustStatement,
+    StatementKind as RustStatementKind,
+    TraitAdoption as RustTraitAdoption,
+    TraitDefaultInstantiation as RustTraitDefaultInstantiation,
+    TraitFieldImplementation as RustTraitFieldImplementation,
+    TraitTypeArgument as RustTraitTypeArgument,
+    ValidatedConstructor as RustValidatedConstructor,
+)
+from compiler_record_adapters import (
+    authored_plan_checked_type,
+    authored_plan_symbol_id,
+    hir_source_span,
+    native_canonical_symbol_id,
+    native_checked_type,
+    native_hir_source_span,
+)
+
+
+pub model BodyIrRecordProvenance:
+    """Authenticated declaration files and selected package versions used to complete every authored semantic fact."""
+
+    pub fallback_source_file: str
+    pub source_files: BTreeMap[str, str]
+    pub package_versions: BTreeMap[str, str]
+
+
+pub def authored_callee(callee: &RustCallee) -> CompilerCallee:
+    """Project every Callee alternative without changing its already checked target payload."""
+    match callee:
+        RustCallee.Function(target) => return CompilerCallee.Function(target.clone())
+        RustCallee.Method(target) => return CompilerCallee.Method(target.clone())
+        RustCallee.Helper(operation) => return CompilerCallee.Helper(operation)
+        RustCallee.ProviderOperation(plan) => return CompilerCallee.ProviderOperation(plan.clone())
+        RustCallee.TypeMetadata(target) => return CompilerCallee.TypeMetadata(target.clone())
+        RustCallee.CheckedForeign(target) => return CompilerCallee.CheckedForeign(target.clone())
+        RustCallee.CheckedBridge(target) => return CompilerCallee.CheckedBridge(target.clone())
+
+
+pub def native_callee(callee: CompilerCallee) -> RustCallee:
+    """Restore every authored Callee alternative without spelling-based target reconstruction."""
+    match callee:
+        CompilerCallee.Function(target) => return RustCallee.Function(target)
+        CompilerCallee.Method(target) => return RustCallee.Method(target)
+        CompilerCallee.Helper(operation) => return RustCallee.Helper(operation)
+        CompilerCallee.ProviderOperation(plan) => return RustCallee.ProviderOperation(plan)
+        CompilerCallee.TypeMetadata(target) => return RustCallee.TypeMetadata(target)
+        CompilerCallee.CheckedForeign(target) => return RustCallee.CheckedForeign(target)
+        CompilerCallee.CheckedBridge(target) => return RustCallee.CheckedBridge(target)
+
+
+pub def authored_rvalue(value: &RustRvalue, provenance: &BodyIrRecordProvenance) -> Result[CompilerRvalue, str]:
+    """Project every Rvalue alternative and author the one checked type stored directly by this family."""
+    match value:
+        RustRvalue.Use(operand) => return Ok(CompilerRvalue.Use(operand.clone()))
+        RustRvalue.UnaryOp(operation, operand) => return Ok(CompilerRvalue.UnaryOp(operation, operand.clone()))
+        RustRvalue.BinaryOp(operation, left, right) =>
+            return Ok(CompilerRvalue.BinaryOp(operation, left.clone(), right.clone()))
+        RustRvalue.IsInstance(payload) =>
+            return Ok(
+                CompilerRvalue.IsInstance(
+                    payload.value.clone(),
+                    authored_type(payload.value_ty, provenance)?,
+                    payload.target.clone(),
+                ),
+            )
+        RustRvalue.Aggregate(kind, elements) =>
+            return Ok(CompilerRvalue.Aggregate(kind.clone(), [element.clone() for element in elements]))
+        RustRvalue.Dict(entries) => return Ok(CompilerRvalue.Dict([entry.clone() for entry in entries]))
+        RustRvalue.ValueEnumVariant(target) => return Ok(CompilerRvalue.ValueEnumVariant(target.clone()))
+        RustRvalue.FieldlessEnumVariant(target) => return Ok(CompilerRvalue.FieldlessEnumVariant(target.clone()))
+        RustRvalue.ResultVariant(variant) => return Ok(CompilerRvalue.ResultVariant(variant.clone()))
+        RustRvalue.Format(parts) => return Ok(CompilerRvalue.Format([part.clone() for part in parts]))
+        RustRvalue.Closure(params=params, captured_operands=captures, body=body) =>
+            return Ok(
+                CompilerRvalue.Closure(
+                    [parameter.clone() for parameter in params],
+                    [capture.clone() for capture in captures],
+                    body.clone(),
+                ),
+            )
+        RustRvalue.Generator(source=source, captured_operands=captures, body=body) =>
+            return Ok(CompilerRvalue.Generator(source.clone(), [capture.clone() for capture in captures], body.clone()))
+        RustRvalue.Match(scrutinee=scrutinee, arms=arms) =>
+            return Ok(CompilerRvalue.Match(scrutinee.clone(), [arm.clone() for arm in arms]))
+
+
+pub def native_rvalue(value: CompilerRvalue) -> Result[RustRvalue, str]:
+    """Restore every authored Rvalue alternative and validate its authored checked type before crossing the boundary."""
+    match value:
+        CompilerRvalue.Use(operand) => return Ok(RustRvalue.Use(operand))
+        CompilerRvalue.UnaryOp(operation, operand) => return Ok(RustRvalue.UnaryOp(operation, operand))
+        CompilerRvalue.BinaryOp(operation, left, right) => return Ok(RustRvalue.BinaryOp(operation, left, right))
+        CompilerRvalue.IsInstance(value, ty, target) =>
+            payload = RustIsInstanceRvalue(
+                value=value,
+                value_ty=native_checked_type(ty)?,
+                target=target,
+            )
+            return Ok(RustRvalue.IsInstance(payload))
+        CompilerRvalue.Aggregate(kind, elements) => return Ok(RustRvalue.Aggregate(kind, elements))
+        CompilerRvalue.Dict(entries) => return Ok(RustRvalue.Dict(entries))
+        CompilerRvalue.ValueEnumVariant(target) => return Ok(RustRvalue.ValueEnumVariant(target))
+        CompilerRvalue.FieldlessEnumVariant(target) => return Ok(RustRvalue.FieldlessEnumVariant(target))
+        CompilerRvalue.ResultVariant(variant) => return Ok(RustRvalue.ResultVariant(variant))
+        CompilerRvalue.Format(parts) => return Ok(RustRvalue.Format(parts))
+        CompilerRvalue.Closure(params, captures, body) =>
+            return Ok(RustRvalue.Closure(params=params, captured_operands=captures, body=body))
+        CompilerRvalue.Generator(source, captures, body) =>
+            return Ok(RustRvalue.Generator(source=source, captured_operands=captures, body=body))
+        CompilerRvalue.Match(scrutinee, arms) => return Ok(RustRvalue.Match(scrutinee=scrutinee, arms=arms))
+pub def authored_statement_kind(
+    kind: &RustStatementKind,
+    provenance: &BodyIrRecordProvenance,
+) -> Result[CompilerStatementKind, str]:
+    """Project every normalized statement alternative, recursively authoring all nested control-flow blocks."""
+    match kind:
+        RustStatementKind.UnsafeRegion(acknowledgment=acknowledgment, body=body) =>
+            return Ok(CompilerStatementKind.UnsafeRegion(acknowledgment.clone(), authored_block(body, provenance)?))
+        RustStatementKind.Assign(place=place, rvalue=value) =>
+            return Ok(CompilerStatementKind.Assign(place.clone(), authored_rvalue(value, provenance)?))
+        RustStatementKind.Call(destination=destination, callee=callee, args=args, may_panic=may_panic) =>
+            return Ok(
+                CompilerStatementKind.Call(
+                    destination.clone(),
+                    authored_callee(callee),
+                    [argument.clone() for argument in args],
+                    may_panic,
+                ),
+            )
+        RustStatementKind.Drop(local=local) => return Ok(CompilerStatementKind.Drop(local))
+        RustStatementKind.If(cond=condition, then_block=then_block, else_block=else_block) =>
+            return Ok(
+                CompilerStatementKind.If(
+                    condition.clone(),
+                    authored_block(then_block, provenance)?,
+                    authored_optional_block(else_block, provenance)?,
+                ),
+            )
+        RustStatementKind.Loop(body=body) => return Ok(CompilerStatementKind.Loop(authored_block(body, provenance)?))
+        RustStatementKind.Break(value=value) => return Ok(CompilerStatementKind.Break(value.clone()))
+        RustStatementKind.Continue => return Ok(CompilerStatementKind.Continue)
+        RustStatementKind.Return(value=value) => return Ok(CompilerStatementKind.Return(value.clone()))
+        RustStatementKind.Await(destination=destination, awaited=awaited) =>
+            return Ok(CompilerStatementKind.Await(destination.clone(), awaited.clone()))
+        RustStatementKind.Race(destination=destination, arms=arms) =>
+            return Ok(CompilerStatementKind.Race(destination.clone(), [arm.clone() for arm in arms]))
+        RustStatementKind.Yield(value=value) => return Ok(CompilerStatementKind.Yield(value.clone()))
+        RustStatementKind.Assert(kind=assertion, message=message, may_panic=may_panic) =>
+            return Ok(CompilerStatementKind.Assert(assertion.clone(), message.clone(), may_panic))
+        RustStatementKind.Expr(value=value) => return Ok(CompilerStatementKind.Expr(value.clone()))
+        RustStatementKind.TryPropagate(destination=destination, operand=operand, error_routing=routing) =>
+            return Ok(CompilerStatementKind.TryPropagate(destination.clone(), operand.clone(), routing.clone()))
+        RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=protocol) =>
+            return Ok(CompilerStatementKind.IterNext(destination.clone(), iterator.clone(), protocol.clone()))
+        RustStatementKind.Unsupported(description=description) =>
+            return Ok(CompilerStatementKind.Unsupported(str(description)))
+
+
+pub def native_statement_kind(kind: CompilerStatementKind) -> Result[RustStatementKind, str]:
+    """Restore every normalized statement alternative and reject malformed optional block arity."""
+    match kind:
+        CompilerStatementKind.UnsafeRegion(acknowledgment, body) =>
+            return Ok(RustStatementKind.UnsafeRegion(acknowledgment=acknowledgment, body=native_block(body)?))
+        CompilerStatementKind.Assign(place, value) =>
+            return Ok(RustStatementKind.Assign(place=place, rvalue=native_rvalue(value)?))
+        CompilerStatementKind.Call(destination, callee, args, may_panic) =>
+            return Ok(
+                RustStatementKind.Call(
+                    destination=destination,
+                    callee=native_callee(callee),
+                    args=args,
+                    may_panic=may_panic,
+                ),
+            )
+        CompilerStatementKind.Drop(local) => return Ok(RustStatementKind.Drop(local=local))
+        CompilerStatementKind.If(condition, then_block, else_block) =>
+            return Ok(
+                RustStatementKind.If(
+                    cond=condition,
+                    then_block=native_block(then_block)?,
+                    else_block=native_optional_block(else_block)?,
+                ),
+            )
+        CompilerStatementKind.Loop(body) => return Ok(RustStatementKind.Loop(body=native_block(body)?))
+        CompilerStatementKind.Break(value) => return Ok(RustStatementKind.Break(value=value))
+        CompilerStatementKind.Continue => return Ok(RustStatementKind.Continue)
+        CompilerStatementKind.Return(value) => return Ok(RustStatementKind.Return(value=value))
+        CompilerStatementKind.Await(destination, awaited) =>
+            return Ok(RustStatementKind.Await(destination=destination, awaited=awaited))
+        CompilerStatementKind.Race(destination, arms) =>
+            return Ok(RustStatementKind.Race(destination=destination, arms=arms))
+        CompilerStatementKind.Yield(value) => return Ok(RustStatementKind.Yield(value=value))
+        CompilerStatementKind.Assert(assertion, message, may_panic) =>
+            return Ok(RustStatementKind.Assert(kind=assertion, message=message, may_panic=may_panic))
+        CompilerStatementKind.Expr(value) => return Ok(RustStatementKind.Expr(value=value))
+        CompilerStatementKind.TryPropagate(destination, operand, routing) =>
+            return Ok(RustStatementKind.TryPropagate(destination=destination, operand=operand, error_routing=routing))
+        CompilerStatementKind.IterNext(destination, iterator, protocol) =>
+            return Ok(RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=protocol))
+        CompilerStatementKind.Unsupported(description) =>
+            return Ok(RustStatementKind.Unsupported(description=str(description)))
+
+
+pub def authored_statement(
+    statement: &RustStatement,
+    provenance: &BodyIrRecordProvenance,
+) -> Result[CompilerStatement, str]:
+    """Project one statement with the same provenance used for nested checked facts."""
+    return Ok(
+        CompilerStatement(
+            kind=authored_statement_kind(statement.kind, provenance)?,
+            span=hir_source_span(statement.span, provenance.fallback_source_file),
+        ),
+    )
+
+
+pub def native_statement(statement: CompilerStatement) -> Result[RustStatement, str]:
+    """Restore one statement after validating its authored source span."""
+    return Ok(RustStatement(kind=native_statement_kind(statement.kind)?, span=native_hir_source_span(statement.span)?))
+
+
+pub def authored_block(block: &RustBlock, provenance: &BodyIrRecordProvenance) -> Result[CompilerBlock, str]:
+    """Project a complete ordered block and recurse through every direct nested statement."""
+    mut statements: list[CompilerStatement] = []
+    for statement in block.stmts.iter():
+        statements.append(authored_statement(statement, provenance)?)
+    return Ok(CompilerBlock(scope=int(block.scope.0), statements=statements))
+
+
+pub def native_block(block: CompilerBlock) -> Result[RustBlock, str]:
+    """Restore a complete ordered block and refuse a scope index outside the native u32 range."""
+    scope: u32 = block.scope.wrapping_resize()
+    if int(scope) != block.scope:
+        return Err("authored Body IR scope exceeds the native u32 range")
+    mut statements: list[RustStatement] = []
+    for statement in block.statements:
+        statements.append(native_statement(statement)?)
+    return Ok(RustBlock(scope=ScopeId(scope), stmts=statements))
+
+
+def authored_optional_block(
+    block: &Option[RustBlock],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[CompilerBlock], str]:
+    """Represent an optional recursive block as an exact zero-or-one authored list."""
+    match block:
+        Some(value) => return Ok([authored_block(value, provenance)?])
+        None => return Ok([])
+
+
+def native_optional_block(blocks: list[CompilerBlock]) -> Result[Option[RustBlock], str]:
+    """Restore an optional recursive block and reject ambiguous list tails."""
+    if len(blocks) == 0:
+        return Ok(None)
+    if len(blocks) != 1:
+        return Err("authored optional Body IR block must contain zero or one value")
+    return Ok(Some(native_block(blocks[0])?))
+
+
+def authored_type(ty: &RustType, provenance: &BodyIrRecordProvenance) -> Result[CheckedType, str]:
+    """Complete one checked type using authenticated owning files and package versions."""
+    return authored_plan_checked_type(
+        ty,
+        provenance.fallback_source_file,
+        provenance.source_files,
+        provenance.package_versions,
+    )
+
+
+def authored_identity(
+    identity: &RustCanonicalSymbolId,
+    provenance: &BodyIrRecordProvenance,
+) -> Result[CanonicalSymbolId, str]:
+    """Complete one canonical identity using authenticated owning files and package versions."""
+    return authored_plan_symbol_id(
+        identity,
+        provenance.fallback_source_file,
+        provenance.source_files,
+        provenance.package_versions,
+    )
+
+
+pub def authored_body(body: &RustBody, provenance: &BodyIrRecordProvenance) -> Result[CompilerBody, str]:
+    """
+    Project every live Body field, including the three skipped semantic facts and an independent identity map.
+
+    The retired wire slot is copied only so validation can refuse a nonempty value; it grants no behavior.
+    """
+    authored = CompilerBody(
+        nominal_instantiation=authored_trait_arguments(body.nominal_instantiation, provenance)?,
+        trait_default_instantiation=authored_trait_default(body.trait_default_instantiation, provenance)?,
+        type_parameters=[str(parameter) for parameter in body.type_parameters.iter()],
+        declaration_id=body.decl_id.clone(),
+        direct_call_id=body.direct_call_id.clone(),
+        canonical=authored_optional_identity(body.canonical, provenance)?,
+        name=str(body.name),
+        span=hir_source_span(body.span, provenance.fallback_source_file),
+        return_type=authored_type(body.return_type, provenance)?,
+        callable_representation=body.callable_representation.clone(),
+        checked_input_profile=body.checked_input_profile.clone(),
+        explicit_input_bindings=[binding.clone() for binding in body.explicit_input_bindings.iter()],
+        returned_view=body.returned_view.clone(),
+        named_type_identities=authored_shared_identities(body.named_type_identities, provenance)?,
+        locals=[local.clone() for local in body.locals.iter()],
+        params=[parameter.clone() for parameter in body.params.iter()],
+        param_locals=[int(local.0) for local in body.param_locals.iter()],
+        scopes=[scope.clone() for scope in body.scopes.iter()],
+        block=authored_block(body.block, provenance)?,
+        runtime_requirements=[requirement.clone() for requirement in body.runtime_requirements.iter()],
+        panic_facts=[fact.clone() for fact in body.panic_facts.iter()],
+        is_async=body.is_async,
+        retired_rust_facade_wire=body.retired_rust_facade_wire.clone(),
+        native_attributes=[attribute.clone() for attribute in body.native_attributes.iter()],
+    )
+    if not valid_compiler_body(authored.clone()):
+        return Err("native Body contains a nonempty retired Rust-facade wire slot")
+    return Ok(authored)
+
+
+pub def native_body(body: CompilerBody) -> Result[RustBody, str]:
+    """Restore all 24 Body fields after validating tombstone, identity-map and recursive statement invariants."""
+    if not valid_compiler_body(body.clone()):
+        return Err("authored Body contains a nonempty retired Rust-facade wire slot")
+    return Ok(
+        RustBody(
+            nominal_instantiation=native_trait_arguments(body.nominal_instantiation)?,
+            trait_default_instantiation=native_trait_default(body.trait_default_instantiation)?,
+            type_parameters=[str(parameter) for parameter in body.type_parameters],
+            decl_id=body.declaration_id,
+            direct_call_id=body.direct_call_id,
+            canonical=native_optional_identity(body.canonical)?,
+            name=str(body.name),
+            span=native_hir_source_span(body.span)?,
+            return_type=native_checked_type(body.return_type)?,
+            callable_representation=body.callable_representation,
+            checked_input_profile=body.checked_input_profile,
+            explicit_input_bindings=body.explicit_input_bindings,
+            returned_view=body.returned_view,
+            named_type_identities=native_shared_identities(body.named_type_identities)?,
+            locals=body.locals,
+            params=body.params,
+            param_locals=native_local_ids(body.param_locals)?,
+            scopes=body.scopes,
+            block=native_block(body.block)?,
+            runtime_requirements=body.runtime_requirements,
+            panic_facts=body.panic_facts,
+            is_async=body.is_async,
+            retired_rust_facade_wire=None,
+            native_attributes=body.native_attributes,
+        ),
+    )
+
+
+pub def authored_trait_adoption(
+    adoption: &RustTraitAdoption,
+    adopter: &RustCanonicalSymbolId,
+    provenance: &BodyIrRecordProvenance,
+) -> Result[CompilerTraitAdoption, str]:
+    """Attach the concrete adopter and carry methods None versus Some empty plus every required-field witness."""
+    return Ok(
+        CompilerTraitAdoption(
+            adopter=authored_identity(adopter, provenance)?,
+            trait_identity=authored_identity(adoption.trait_identity, provenance)?,
+            arguments=authored_types(adoption.arguments, provenance)?,
+            methods=authored_optional_identities(adoption.methods, provenance)?,
+            fields=authored_trait_fields(adoption.fields, provenance)?,
+            primitive_adapter=adoption.primitive_adapter.clone(),
+        ),
+    )
+
+
+pub def native_trait_adoption(
+    adoption: CompilerTraitAdoption,
+    adopter: &CanonicalSymbolId,
+) -> Result[RustTraitAdoption, str]:
+    """Restore an adoption only when its embedded adopter agrees with the enclosing nominal declaration."""
+    if adoption.adopter != adopter:
+        return Err("authored trait adoption belongs to a different nominal declaration")
+    return Ok(
+        RustTraitAdoption(
+            trait_identity=native_canonical_symbol_id(adoption.trait_identity)?,
+            arguments=native_checked_types(adoption.arguments)?,
+            methods=native_optional_identities(adoption.methods)?,
+            fields=native_trait_fields(adoption.fields)?,
+            primitive_adapter=adoption.primitive_adapter,
+        ),
+    )
+
+
+def authored_validated_constructor(
+    contract: &Option[RustValidatedConstructor],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[Option[CompilerValidatedConstructor], str]:
+    """Project the checked validation targets and preserve the canonical order of required field slots."""
+    match contract:
+        Some(value) =>
+            return Ok(
+                Some(
+                    CompilerValidatedConstructor(
+                        constructor=authored_identity(value.constructor, provenance)?,
+                        validator=authored_identity(value.validator, provenance)?,
+                        required_fields=[int(slot) for slot in value.required_fields],
+                    ),
+                ),
+            )
+        None => return Ok(None)
+
+
+def native_validated_constructor(
+    contract: Option[CompilerValidatedConstructor],
+) -> Result[Option[RustValidatedConstructor], str]:
+    """Restore the checked validation targets and reject required field slots that do not fit native indexes."""
+    match contract:
+        Some(value) =>
+            return Ok(
+                Some(
+                    RustValidatedConstructor(
+                        constructor=native_canonical_symbol_id(value.constructor)?,
+                        validator=native_canonical_symbol_id(value.validator)?,
+                        required_fields=native_indexes(value.required_fields)?,
+                    ),
+                ),
+            )
+        None => return Ok(None)
+
+
+pub def authored_nominal_declaration(
+    declaration: &RustNominalDeclaration,
+    provenance: &BodyIrRecordProvenance,
+) -> Result[CompilerNominalDeclaration, str]:
+    """Project every live nominal field and retain default frames, adoption witnesses and callable ownership slots."""
+    authored_canonical = authored_identity(declaration.canonical, provenance)?
+    mut adoptions: list[CompilerTraitAdoption] = []
+    for adoption in declaration.trait_adoptions.iter():
+        adoptions.append(authored_trait_adoption(adoption, declaration.canonical, provenance)?)
+    mut owned_callable_fields: list[int] = []
+    for slot in declaration.owned_callable_fields:
+        owned_callable_fields.append(int(slot))
+    authored = CompilerNominalDeclaration(
+        trait_adoptions=adoptions,
+        native_item=str(declaration.native_item),
+        class_inheritance=declaration.class_inheritance.clone(),
+        native_type_arguments=authored_types(declaration.native_type_arguments, provenance)?,
+        direct_declaration_id=declaration.direct_declaration_id.clone(),
+        canonical=authored_canonical,
+        name=str(declaration.name),
+        fields=[str(field) for field in declaration.fields.iter()],
+        field_identities=authored_identities(declaration.field_identities, provenance)?,
+        field_types=authored_types(declaration.field_types, provenance)?,
+        owned_callable_fields=owned_callable_fields,
+        field_public=[value for value in declaration.field_public.iter()],
+        field_aliases=[alias.clone() for alias in declaration.field_aliases.iter()],
+        reflection_fields=authored_optional_indexes(declaration.reflection_fields),
+        reflection_metadata=declaration.reflection_metadata.clone(),
+        comparison_equality=authored_optional_identity(declaration.comparison_equality, provenance)?,
+        public=declaration.public,
+        has_field_defaults=declaration.has_field_defaults,
+        field_default_body=authored_optional_boxed_body(declaration.field_default_body, provenance)?,
+        validated_constructor=authored_validated_constructor(declaration.validated_constructor, provenance)?,
+        method_partial_defaults=[value.clone() for value in declaration.method_partial_defaults.iter()],
+        display_method=authored_optional_identity(declaration.display_method, provenance)?,
+        newtype_deserialize=declaration.newtype_deserialize.clone(),
+        newtype_string_conversion=declaration.newtype_string_conversion.clone(),
+        derives=[str(value) for value in declaration.derives.iter()],
+        named_type_identities=authored_identity_map(declaration.named_type_identities, provenance)?,
+        type_parameters=[str(parameter) for parameter in declaration.type_parameters.iter()],
+        type_parameter_count=int(declaration.type_parameter_count),
+        record_package_identity=declaration.record_package_identity.clone(),
+    )
+    if not valid_nominal_declaration(authored.clone()):
+        return Err("native nominal declaration has inconsistent parallel field or adoption facts")
+    return Ok(authored)
+
+
+pub def native_nominal_declaration(declaration: CompilerNominalDeclaration) -> Result[RustNominalDeclaration, str]:
+    """Restore all 29 nominal fields and refuse stale slots, malformed defaults or a mismatched adoption owner."""
+    if not valid_nominal_declaration(declaration.clone()):
+        return Err("authored nominal declaration has inconsistent parallel field or adoption facts")
+    canonical = declaration.canonical.clone()
+    mut adoptions: list[RustTraitAdoption] = []
+    for adoption in declaration.trait_adoptions:
+        adoptions.append(native_trait_adoption(adoption, canonical)?)
+    return Ok(
+        RustNominalDeclaration(
+            trait_adoptions=adoptions,
+            native_item=str(declaration.native_item),
+            class_inheritance=declaration.class_inheritance,
+            native_type_arguments=native_checked_types(declaration.native_type_arguments)?,
+            direct_declaration_id=declaration.direct_declaration_id,
+            canonical=native_canonical_symbol_id(declaration.canonical)?,
+            name=str(declaration.name),
+            fields=[str(field) for field in declaration.fields],
+            field_identities=native_identities(declaration.field_identities)?,
+            field_types=native_checked_types(declaration.field_types)?,
+            owned_callable_fields=native_indexes(declaration.owned_callable_fields)?,
+            field_public=declaration.field_public,
+            field_aliases=declaration.field_aliases,
+            reflection_fields=native_optional_indexes(declaration.reflection_fields)?,
+            reflection_metadata=declaration.reflection_metadata,
+            comparison_equality=native_optional_identity(declaration.comparison_equality)?,
+            public=declaration.public,
+            has_field_defaults=declaration.has_field_defaults,
+            field_default_body=native_optional_boxed_body(declaration.field_default_body)?,
+            validated_constructor=native_validated_constructor(declaration.validated_constructor)?,
+            method_partial_defaults=declaration.method_partial_defaults,
+            display_method=native_optional_identity(declaration.display_method)?,
+            newtype_deserialize=declaration.newtype_deserialize,
+            newtype_string_conversion=declaration.newtype_string_conversion,
+            derives=declaration.derives,
+            named_type_identities=native_identity_map(declaration.named_type_identities)?,
+            type_parameters=declaration.type_parameters,
+            type_parameter_count=native_index(declaration.type_parameter_count)?,
+            record_package_identity=declaration.record_package_identity,
+        ),
+    )
+
+
+pub def authored_loaf_callable(
+    callable: &RustLoafCallable,
+    provenance: &BodyIrRecordProvenance,
+) -> Result[CompilerLoafCallable, str]:
+    """Project all callable signature/default facts and its authenticated declaration-only frame."""
+    authored = CompilerLoafCallable(
+        canonical=authored_identity(callable.canonical, provenance)?,
+        item=str(callable.item),
+        parameters=authored_types(callable.parameters, provenance)?,
+        return_type=authored_type(callable.return_type, provenance)?,
+        type_parameters=[str(parameter) for parameter in callable.type_parameters.iter()],
+        native_type_arguments=authored_types(callable.native_type_arguments, provenance)?,
+        native_callable_parameters=[parameter.clone() for parameter in callable.native_callable_parameters.iter()],
+        parameter_defaults=[value.clone() for value in callable.parameter_defaults.iter()],
+        declaration_frame=authored_optional_boxed_body(callable.declaration_frame, provenance)?,
+    )
+    if not valid_loaf_callable(authored.clone()):
+        return Err("native Loaf callable has a default inventory that disagrees with its parameters")
+    return Ok(authored)
+
+
+pub def native_loaf_callable(callable: CompilerLoafCallable) -> Result[RustLoafCallable, str]:
+    """Restore all callable facts and refuse a malformed or multiple declaration-frame projection."""
+    if not valid_loaf_callable(callable.clone()):
+        return Err("authored Loaf callable has a default inventory that disagrees with its parameters")
+    return Ok(
+        RustLoafCallable(
+            canonical=native_canonical_symbol_id(callable.canonical)?,
+            item=str(callable.item),
+            parameters=native_checked_types(callable.parameters)?,
+            return_type=native_checked_type(callable.return_type)?,
+            type_parameters=callable.type_parameters,
+            native_type_arguments=native_checked_types(callable.native_type_arguments)?,
+            native_callable_parameters=callable.native_callable_parameters,
+            parameter_defaults=callable.parameter_defaults,
+            declaration_frame=native_optional_boxed_body(callable.declaration_frame)?,
+        ),
+    )
+
+
+pub def authored_body_ir_module(
+    module: &RustBodyIrModule,
+    provenance: &BodyIrRecordProvenance,
+) -> Result[CompilerBodyIrModule, str]:
+    """Project all 18 live module fields, keeping runtime bindings and selected entrypoints invocation-only."""
+    mut callables: list[CompilerLoafCallable] = []
+    for callable in module.loaf_callables.iter():
+        callables.append(authored_loaf_callable(callable, provenance)?)
+    mut nominals: list[CompilerNominalDeclaration] = []
+    for declaration in module.nominal_declarations.iter():
+        nominals.append(authored_nominal_declaration(declaration, provenance)?)
+    mut bodies: list[CompilerBody] = []
+    for body in module.bodies.iter():
+        bodies.append(authored_body(body, provenance)?)
+    return Ok(
+        CompilerBodyIrModule(
+            runtime_callable_bindings=[binding.clone() for binding in module.runtime_callable_bindings.iter()],
+            decorated_bindings=[binding.clone() for binding in module.decorated_bindings.iter()],
+            entrypoint_effects=[effect.clone() for effect in module.entrypoint_effects.iter()],
+            program_entrypoints=authored_identities(module.program_entrypoints, provenance)?,
+            string_conversion_contract=module.string_conversion_contract.clone(),
+            constant_declarations=[value.clone() for value in module.constant_declarations.iter()],
+            type_alias_declarations=[value.clone() for value in module.type_alias_declarations.iter()],
+            enum_declarations=[value.clone() for value in module.enum_declarations.iter()],
+            loaf_callables=callables,
+            native_union_declarations=[value.clone() for value in module.native_union_declarations.iter()],
+            static_declarations=[value.clone() for value in module.static_declarations.iter()],
+            module_id=module.module_id.clone(),
+            nominal_declarations=nominals,
+            fieldless_enum_declarations=[value.clone() for value in module.fieldless_enum_declarations.iter()],
+            value_enum_declarations=[value.clone() for value in module.value_enum_declarations.iter()],
+            trait_declarations=authored_identities(module.trait_declarations, provenance)?,
+            trait_implementations=[value.clone() for value in module.trait_implementations.iter()],
+            bodies=bodies,
+        ),
+    )
+
+
+pub def native_body_ir_module(module: CompilerBodyIrModule) -> Result[RustBodyIrModule, str]:
+    """Restore every module field without importing invocation facts from a provider artifact or fabricating them."""
+    mut callables: list[RustLoafCallable] = []
+    for callable in module.loaf_callables:
+        callables.append(native_loaf_callable(callable)?)
+    mut nominals: list[RustNominalDeclaration] = []
+    for declaration in module.nominal_declarations:
+        nominals.append(native_nominal_declaration(declaration)?)
+    mut bodies: list[RustBody] = []
+    for body in module.bodies:
+        bodies.append(native_body(body)?)
+    return Ok(
+        RustBodyIrModule(
+            runtime_callable_bindings=module.runtime_callable_bindings,
+            decorated_bindings=module.decorated_bindings,
+            entrypoint_effects=module.entrypoint_effects,
+            program_entrypoints=native_identities(module.program_entrypoints)?,
+            string_conversion_contract=module.string_conversion_contract,
+            constant_declarations=module.constant_declarations,
+            type_alias_declarations=module.type_alias_declarations,
+            enum_declarations=module.enum_declarations,
+            loaf_callables=callables,
+            native_union_declarations=module.native_union_declarations,
+            static_declarations=module.static_declarations,
+            module_id=module.module_id,
+            nominal_declarations=nominals,
+            fieldless_enum_declarations=module.fieldless_enum_declarations,
+            value_enum_declarations=module.value_enum_declarations,
+            trait_declarations=native_identities(module.trait_declarations)?,
+            trait_implementations=module.trait_implementations,
+            bodies=bodies,
+        ),
+    )
+
+
+def authored_trait_arguments(
+    arguments: &list[RustTraitTypeArgument],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[TraitTypeArgument], str]:
+    """Project ordered trait binders and their checked arguments."""
+    mut authored: list[TraitTypeArgument] = []
+    for argument in arguments:
+        authored.append(
+            TraitTypeArgument(parameter=str(argument.parameter), argument=authored_type(argument.argument, provenance)?),
+        )
+    return Ok(authored)
+
+
+def native_trait_arguments(arguments: list[TraitTypeArgument]) -> Result[list[RustTraitTypeArgument], str]:
+    """Restore ordered trait binders and their checked arguments."""
+    mut native: list[RustTraitTypeArgument] = []
+    for argument in arguments:
+        native.append(
+            RustTraitTypeArgument(parameter=str(argument.parameter), argument=native_checked_type(argument.argument)?),
+        )
+    return Ok(native)
+
+
+def authored_trait_default(
+    selected: &Option[RustTraitDefaultInstantiation],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[Option[TraitDefaultInstantiation], str]:
+    """Project a selected trait-default scope without combining it with method binders."""
+    match selected:
+        Some(value) =>
+            return Ok(
+                Some(
+                    TraitDefaultInstantiation(
+                        receiver_type=authored_type(value.receiver_type, provenance)?,
+                        arguments=authored_trait_arguments(value.arguments, provenance)?,
+                    ),
+                ),
+            )
+        None => return Ok(None)
+
+
+def native_trait_default(
+    selected: Option[TraitDefaultInstantiation],
+) -> Result[Option[RustTraitDefaultInstantiation], str]:
+    """Restore a selected trait-default scope without changing its independent binder inventory."""
+    match selected:
+        Some(value) =>
+            return Ok(
+                Some(
+                    RustTraitDefaultInstantiation(
+                        receiver_type=native_checked_type(value.receiver_type)?,
+                        arguments=native_trait_arguments(value.arguments)?,
+                    ),
+                ),
+            )
+        None => return Ok(None)
+
+
+def authored_trait_fields(
+    fields: &list[RustTraitFieldImplementation],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[TraitFieldWitness], str]:
+    """Project every required-field witness as a pair of canonical identities."""
+    mut authored: list[TraitFieldWitness] = []
+    for field in fields:
+        authored.append(
+            TraitFieldWitness(
+                requirement=authored_identity(field.requirement, provenance)?,
+                implementation=authored_identity(field.implementation, provenance)?,
+            ),
+        )
+    return Ok(authored)
+
+
+def native_trait_fields(fields: list[TraitFieldWitness]) -> Result[list[RustTraitFieldImplementation], str]:
+    """Restore every required-field witness without name matching or an empty default."""
+    mut native: list[RustTraitFieldImplementation] = []
+    for field in fields:
+        native.append(
+            RustTraitFieldImplementation(
+                requirement=native_canonical_symbol_id(field.requirement)?,
+                implementation=native_canonical_symbol_id(field.implementation)?,
+            ),
+        )
+    return Ok(native)
+
+
+def authored_types(types: &list[RustType], provenance: &BodyIrRecordProvenance) -> Result[list[CheckedType], str]:
+    """Project an ordered checked-type inventory through the authenticated provenance boundary."""
+    mut authored: list[CheckedType] = []
+    for ty in types:
+        authored.append(authored_type(ty, provenance)?)
+    return Ok(authored)
+
+
+def native_checked_types(types: list[CheckedType]) -> Result[list[RustType], str]:
+    """Restore an ordered checked-type inventory without parsing display text."""
+    mut native: list[RustType] = []
+    for ty in types:
+        native.append(native_checked_type(ty)?)
+    return Ok(native)
+
+
+def authored_identities(
+    identities: &list[RustCanonicalSymbolId],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[CanonicalSymbolId], str]:
+    """Project an ordered identity inventory through the authenticated provenance boundary."""
+    mut authored: list[CanonicalSymbolId] = []
+    for identity in identities:
+        authored.append(authored_identity(identity, provenance)?)
+    return Ok(authored)
+
+
+def native_identities(identities: list[CanonicalSymbolId]) -> Result[list[RustCanonicalSymbolId], str]:
+    """Restore an ordered identity inventory without spelling-based reconstruction."""
+    mut native: list[RustCanonicalSymbolId] = []
+    for identity in identities:
+        native.append(native_canonical_symbol_id(identity)?)
+    return Ok(native)
+
+
+def authored_optional_identity(
+    identity: &Option[RustCanonicalSymbolId],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[Option[CanonicalSymbolId], str]:
+    """Project one optional canonical identity without treating absence as a name lookup permission."""
+    match identity:
+        Some(value) => return Ok(Some(authored_identity(value, provenance)?))
+        None => return Ok(None)
+
+
+def native_optional_identity(identity: Option[CanonicalSymbolId]) -> Result[Option[RustCanonicalSymbolId], str]:
+    """Restore one optional canonical identity without inventing an absent target."""
+    match identity:
+        Some(value) => return Ok(Some(native_canonical_symbol_id(value)?))
+        None => return Ok(None)
+
+
+def authored_optional_identities(
+    identities: &Option[list[RustCanonicalSymbolId]],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[Option[list[CanonicalSymbolId]], str]:
+    """Preserve None versus Some empty while projecting an optional complete method inventory."""
+    match identities:
+        Some(values) => return Ok(Some(authored_identities(values, provenance)?))
+        None => return Ok(None)
+
+
+def native_optional_identities(
+    identities: Option[list[CanonicalSymbolId]],
+) -> Result[Option[list[RustCanonicalSymbolId]], str]:
+    """Preserve None versus Some empty while restoring an optional complete method inventory."""
+    match identities:
+        Some(values) => return Ok(Some(native_identities(values)?))
+        None => return Ok(None)
+
+
+def authored_shared_identities(
+    identities: &Arc[BTreeMap[str, RustCanonicalSymbolId]],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[NamedTypeIdentity], str]:
+    """Copy every SharedIdentities map entry without carrying Arc allocation identity into the authored contract."""
+    return authored_identity_map(identities, provenance)
+
+
+def native_shared_identities(
+    identities: list[NamedTypeIdentity],
+) -> Result[Arc[BTreeMap[str, RustCanonicalSymbolId]], str]:
+    """Restore an independent Arc-backed map and reject duplicate authored keys instead of overwriting entries."""
+    return Ok(Arc.new(native_identity_map(identities)?))
+
+
+def authored_identity_map(
+    identities: &BTreeMap[str, RustCanonicalSymbolId],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[NamedTypeIdentity], str]:
+    """Project every ordered identity-map entry into an owned key and authored identity."""
+    mut authored: list[NamedTypeIdentity] = []
+    for name, identity in identities.iter():
+        authored.append(NamedTypeIdentity(name=str(name), identity=authored_identity(identity, provenance)?))
+    return Ok(authored)
+
+
+def native_identity_map(identities: list[NamedTypeIdentity]) -> Result[BTreeMap[str, RustCanonicalSymbolId], str]:
+    """Restore an ordered identity map and reject duplicate keys rather than mutating a retained entry."""
+    mut native: BTreeMap[str, RustCanonicalSymbolId] = BTreeMap.new()
+    for entry in identities:
+        if native.insert(str(entry.name), native_canonical_symbol_id(entry.identity)?).is_some():
+            return Err("authored named-type identity map contains a duplicate key")
+    return Ok(native)
+
+
+def authored_optional_body(
+    body: &Option[RustBody],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[CompilerBody], str]:
+    """Project an optional recursive Body as an exact zero-or-one authored list."""
+    match body:
+        Some(value) => return Ok([authored_body(value, provenance)?])
+        None => return Ok([])
+
+
+def native_optional_body(bodies: list[CompilerBody]) -> Result[Option[RustBody], str]:
+    """Restore an optional recursive Body and reject an ambiguous list tail."""
+    if len(bodies) == 0:
+        return Ok(None)
+    if len(bodies) != 1:
+        return Err("authored optional Body must contain zero or one value")
+    return Ok(Some(native_body(bodies[0])?))
+
+
+def authored_optional_boxed_body(
+    body: &Option[Box[RustBody]],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[CompilerBody], str]:
+    """Project an optional boxed Body without treating allocation indirection as record data."""
+    match body:
+        Some(value) => return Ok([authored_body(value, provenance)?])
+        None => return Ok([])
+
+
+def native_optional_boxed_body(bodies: list[CompilerBody]) -> Result[Option[Box[RustBody]], str]:
+    """Restore an optional boxed Body and reject an ambiguous recursive list tail."""
+    if len(bodies) == 0:
+        return Ok(None)
+    if len(bodies) != 1:
+        return Err("authored optional boxed Body must contain zero or one value")
+    return Ok(Some(Box.new(native_body(bodies[0])?)))
+
+
+def authored_optional_indexes(indexes: &Option[list[usize]]) -> Option[list[int]]:
+    """Project optional native indexes without collapsing None into Some empty."""
+    match indexes:
+        Some(values) => return Some([int(value) for value in values])
+        None => return None
+
+
+def native_optional_indexes(indexes: Option[list[int]]) -> Result[Option[list[usize]], str]:
+    """Restore optional native indexes without collapsing None into Some empty."""
+    match indexes:
+        Some(values) => return Ok(Some(native_indexes(values)?))
+        None => return Ok(None)
+
+
+def native_local_ids(indexes: list[int]) -> Result[list[LocalId], str]:
+    """Restore local identities after checking every index fits the native u32 representation."""
+    mut native: list[LocalId] = []
+    for index in indexes:
+        value: u32 = index.wrapping_resize()
+        if int(value) != index:
+            return Err("authored local identity exceeds the native u32 range")
+        native.append(LocalId(value))
+    return Ok(native)
+
+
+def native_indexes(indexes: list[int]) -> Result[list[usize], str]:
+    """Restore native indexes without wrapping a negative or oversized authored value."""
+    mut native: list[usize] = []
+    for index in indexes:
+        native.append(native_index(index)?)
+    return Ok(native)
+
+
+def native_index(index: int) -> Result[usize, str]:
+    """Restore one native index without wrapping a negative or oversized authored value."""
+    value: usize = index.wrapping_resize()
+    if int(value) != index:
+        return Err("authored index exceeds the native usize range")
+    return Ok(value)

@@ -1,6 +1,10 @@
 """Host resource readings used by the build engine and its evidence programs."""
 
-from rust::incan_platform_clock import current_process_footprint as native_current_footprint, process_table_text
+from rust::incan_platform_clock import (
+    current_process_footprint as native_current_footprint,
+    current_process_live_allocated as native_current_live_allocated,
+    process_table_text,
+)
 
 
 pub model ProcessResource:
@@ -17,6 +21,11 @@ pub model ProcessResource:
 pub def current_footprint() -> Result[int, str]:
     """This process's current physical footprint in bytes, or the platform probe's refusal."""
     return native_current_footprint().map((value) => int(value)).map_err((error) => str(error))
+
+
+pub def current_live_allocated() -> Result[int, str]:
+    """Bytes currently attributed to live allocations, excluding pages retained by the allocator after free."""
+    return native_current_live_allocated().map((value) => int(value)).map_err((error) => str(error))
 
 
 pub def process_table() -> Result[list[ProcessResource], str]:

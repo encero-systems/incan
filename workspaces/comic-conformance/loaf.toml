@@ -1,0 +1,11 @@
+[project]
+name = "comic-conformance"
+version = "0.1.0"
+description = "Direct experimental COMIC corpus runner"
+
+[project.scripts]
+main = "src/main.incn"
+row-writer = "src/write_cases_main.incn"
+row-reader = "src/read_cases_main.incn"
+column-writer = "src/write_columns_main.incn"
+column-reader = "src/read_columns_main.incn"

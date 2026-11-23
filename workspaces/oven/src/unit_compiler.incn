@@ -1,5 +1,6 @@
 """Write and compile one prepared unit through the installed compiler, without resolving dependencies."""
 
+from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from std.fs import Path
 from driver_command import driver_command
@@ -65,8 +66,8 @@ pub def compile_prepared_unit(
 pub def crate_name(unit: UnitDescription) -> str:
     """Name the compiled crate from its package, or its source stem for a projectless unit."""
     if unit.package != "":
-        return unit.package.replace("-", "_")
-    return Path(unit.source).stem().replace("-", "_")
+        return native_crate_name(unit.package)
+    return native_crate_name(Path(unit.source).stem())
 
 
 pub def write_unit(

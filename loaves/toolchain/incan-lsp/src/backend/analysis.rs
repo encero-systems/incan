@@ -287,6 +287,7 @@ fn analyze(
         library_imported_dsl_surfaces: session.library_imported_dsl_surfaces.clone(),
         loaves: Arc::clone(session.loaves()),
         active_features: session.active_features.clone(),
+        trust_entries: trust_entries_from_stop(&session.unit().trust_stop),
     };
     (diagnostics, Some(state))
 }
@@ -364,6 +365,9 @@ fn document_previews(
 
 /// Report collection and checking failures: the document's own with their Rust context, and one note per other
 /// module that has errors, which its own analysis reports once it is opened.
+///
+/// Missing compile-time trust is informational editor state rather than a failed imported module. The imported
+/// document reports that state when opened, without turning every importer into an error.
 fn push_failures(
     diagnostics: &mut Vec<Diagnostic>,
     uri: &Url,
@@ -384,7 +388,7 @@ fn push_failures(
                 rust_origin_symbols,
                 related,
             ));
-        } else {
+        } else if failure.error.stable_code() != Some("INCAN-T0134") {
             others.insert(failure.file_path.clone());
         }
     }
@@ -497,6 +501,7 @@ pub(super) fn unit_description(path: &Path, profile: &str) -> incan_driver::erro
         .arg0("oven")
         .arg("describe-unit")
         .arg(path)
+        .arg("--unattended")
         .arg("--profile")
         .arg(profile)
         .output()

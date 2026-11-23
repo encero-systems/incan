@@ -13,6 +13,7 @@ pub model RegistryUnit:
     pub version: str
     pub domain: str
     pub directory: str
+    pub registry: str = ""
     pub features: list[str] = []
     pub entry: str = ""
     pub dependencies: list[str] = []
@@ -23,6 +24,9 @@ pub model RegistryUnit:
     pub refusal: str = ""
     pub artifact: str = ""
     pub kind: str = "lib"
+    # The admitted source archive and its digest are evidence for trust only; resolution uses compiled entry fields.
+    pub source_archive: str = ""
+    pub source_digest: str = ""
 
 
 pub model RegistrySelection:

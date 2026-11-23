@@ -37,6 +37,11 @@ pub class Connection:
     # out of the cell, which releases its descriptor at once for every holder of the connection.
     stream: Rc[RefCell[Option[UnixStream]]]
 
+    @staticmethod
+    pub def from_stream(stream: UnixStream) -> Connection:
+        """Own a connected Unix stream without exposing the connection's stored handle."""
+        return Connection(stream=Rc.new(RefCell.new(Some(stream))))
+
     pub def peer(self) -> Result[PeerIdentity, str]:
         """Read OS peer credentials; the standard wrapper uses getpeereid or SO_PEERCRED."""
         match self.stream.borrow().as_ref():
@@ -198,7 +203,7 @@ def zeros(count: int) -> bytes:
 
 def connection(stream: UnixStream) -> Connection:
     """Speak frames over `stream`."""
-    return Connection(stream=Rc.new(RefCell.new(Some(stream))))
+    return Connection.from_stream(stream)
 
 
 pub class Listener:

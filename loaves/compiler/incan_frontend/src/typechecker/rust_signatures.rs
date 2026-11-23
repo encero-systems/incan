@@ -323,16 +323,17 @@ impl TypeChecker {
             return None;
         }
         let lookup_path = Self::rust_metadata_lookup_path(base)?;
-        let metadata = self.known_rust_metadata_for_path(lookup_path)?;
+        let alias = self.known_rust_type_alias_for_path(lookup_path)?;
         self.record_rust_metadata_query(base);
-        let RustItemKind::Type(info) = &metadata.kind else {
-            return None;
-        };
-        let target = info.alias_target.as_deref()?;
-        if info.type_params.len() != args.len() {
+        let alias = alias.into_alias()?;
+        if alias.type_params.len() != args.len() {
             return None;
         }
-        Some(Self::substitute_rust_display_params(&target, &info.type_params, args))
+        Some(Self::substitute_rust_display_params(
+            &alias.target,
+            &alias.type_params,
+            args,
+        ))
     }
 
     /// Replace each binder of `display` that names one of `params` with the matching argument display, through

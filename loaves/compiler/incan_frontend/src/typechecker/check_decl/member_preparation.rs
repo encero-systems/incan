@@ -172,8 +172,10 @@ impl TypeChecker {
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &method.params,
-            super::ownership_contracts::direct_method_boundary(method),
+            super::ownership_contracts::method_input_header(method),
         );
+        let resolved_param_types =
+            self.inherited_method_parameter_types(method, method_span, resolved_param_types, owner_params, &self_ty);
         let return_type = self.resolve_callable_return_annotation(&method.return_type, method.result_source.is_some());
         self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
 

@@ -136,7 +136,11 @@ pub fn compile_error_to_diagnostic_with_phase_and_sources(
 ) -> Diagnostic {
     let stable = stable_diagnostic(uri.as_str(), source, error, phase);
     let range = span_to_range(source, stable.primary_span.start.offset, stable.primary_span.end.offset);
-    let severity = error_kind_to_severity(error.kind);
+    let severity = if error.stable_code() == Some("INCAN-T0134") {
+        DiagnosticSeverity::INFORMATION
+    } else {
+        error_kind_to_severity(error.kind)
+    };
 
     // Build the message with notes and hints
     let mut message = stable.message.clone();
@@ -286,6 +290,23 @@ mod tests {
         assert_eq!(offset_to_position(source, "😀x".len()), Position::new(0, 3));
         assert_eq!(position_to_offset(source, Position::new(0, 2)), Some("😀".len()));
         assert_eq!(position_to_offset(source, Position::new(0, 3)), Some("😀x".len()));
+    }
+
+    /// A compile-time trust stop is informational in the editor even though it still prevents a checked expansion.
+    #[test]
+    fn missing_compile_time_trust_is_information() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Url::parse("file:///workspace/main.incn")?;
+        let error = CompileError::new(
+            "vocabulary block is not yet checked".to_string(),
+            incan_frontend::ast::Span::new(0, 5),
+        )
+        .with_stable_code("INCAN-T0134");
+
+        let diagnostic = compile_error_to_diagnostic(&error, "query\n", &uri);
+
+        assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::INFORMATION));
+        assert_eq!(diagnostic.code, Some(NumberOrString::String("INCAN-T0134".to_string())));
+        Ok(())
     }
 
     #[test]

@@ -1,5 +1,6 @@
 """Content-addressed inspection projections and source observations owned by the requesting home."""
 
+from rust::incan_loaf_names import artifact_stem
 from rust::std::string import String as RustString
 from std.fs import Path
 from files import make_directory, read
@@ -148,7 +149,7 @@ pub def interface_inputs(directory: Path, package: str) -> Result[list[str], str
     mut ledger = graph_observations(directory)?
     mut inputs: list[str] = []
     for suffix in ["incnlib", "rustabi"]:
-        path = directory.joinpath(f"{package}.{suffix}")
+        path = directory.joinpath(f"{artifact_stem(package)}.{suffix}")
         if path.is_file():
             inputs.extend([suffix, ledger.digest(path)?])
     save_observations(ledger)

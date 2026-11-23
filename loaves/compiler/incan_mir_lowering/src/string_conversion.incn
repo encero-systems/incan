@@ -96,14 +96,15 @@ pub def lower_string_conversions(
     module: &BodyIrModule,
     file: str,
     mut intrinsics: list[EnumDeclaration],
+    start: int = 0,
 ) -> Result[tuple[list[Function], list[ExternalFunction]], str]:
-    """Plan every selected raw chain root before headers or dependent generic SDK calls are admitted."""
+    """Plan selected raw chain roots from `start`, leaving a continuation's unchanged roots intact."""
     constructors = constructor_owner.as_ref()
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     if conversion_trait(module)? == "":
         return Ok((functions, externals))
-    for index in range(len(module.nominal_declarations)):
+    for index in range(start, len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, index)
         name = conversion_name(module, declaration)?
         if name == "":

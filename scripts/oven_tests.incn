@@ -1,5 +1,5 @@
 """
-Run installed CI's Oven test step through an installed Oven, several test invocations at once.
+Run installed CI's Oven test step through an installed Oven, with independent projects tested concurrently.
 
 Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]` from a checkout. OVEN is the
 installed command; EVIDENCE is the run's evidence directory. The step runs, one source per invocation so a source can
@@ -12,10 +12,10 @@ be excluded on its own:
 Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
 it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
 
-At most N invocations run at once: `--jobs N`, else the core count. Each invocation also
-reserves memory, and one starts only while the reservations fit the memory they share: `--memory GIB`, else physical
-memory less a headroom. OVEN must store each test source's executable apart, so invocations in one project never
-replace each other's.
+At most N independent-project invocations run at once: `--jobs N`, else the core count. Each invocation also reserves
+memory, and one starts only while the reservations fit the memory they share: `--memory GIB`, else physical memory
+less a headroom. Test sources from the Oven project run serially because they share its mutable project output; their
+executables have distinct final paths, but preparing several generations concurrently can withdraw an in-flight view.
 """
 
 from rust::std::cell import RefCell
@@ -71,6 +71,8 @@ pub model Invocation:
     pub directory: str
     pub reservation: int
     pub log: Path
+    # Runs serially with other invocations from the same mutable project.
+    pub serial: bool = false
     # Runs by itself after the others, because it requires an installation that has stopped changing.
     pub alone: bool = false
 
@@ -172,9 +174,15 @@ def run(options: Options) -> Result[str, str]:
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
     planned = invocations(root, options.evidence, logs)?
-    ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
+    ran = run_all(
+        options.oven,
+        [item for item in planned if not item.serial and not item.alone],
+        options.jobs,
+        options.memory,
+    )?
+    ran_serial = run_all(options.oven, [item for item in planned if item.serial], 1, options.memory)?
     ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
-    succeeded = ran and ran_alone
+    succeeded = ran and ran_serial and ran_alone
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
@@ -194,7 +202,7 @@ pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invoc
             return Err("Oven test sources are absent")
         unit = ["test", source.0]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        planned.append(invocation(unit, oven.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone))
+        planned.append(invocation(unit, oven.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, not alone, alone))
     compiler = root.joinpath("loaves/compiler").0 + "/"
     excluded = root.joinpath("loaves/compiler/internal_models/tests").0 + "/"
     for source in loaf_tests(root.joinpath("loaves"))?:
@@ -218,11 +226,19 @@ def invocation(
     logs: Path,
     position: int,
     source: Path,
+    serial: bool = false,
     alone: bool = false,
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
     log = logs.joinpath(log_name(position, source))
-    return Invocation(arguments=arguments, directory=directory, reservation=reservation, log=log, alone=alone)
+    return Invocation(
+        arguments=arguments,
+        directory=directory,
+        reservation=reservation,
+        log=log,
+        serial=serial,
+        alone=alone,
+    )
 
 
 def reservation_of(source: Path, compiler: str) -> int:

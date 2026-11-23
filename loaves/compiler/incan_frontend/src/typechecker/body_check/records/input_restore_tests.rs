@@ -20,7 +20,7 @@ fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<d
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(2)?;
+    let graph = reader.graph(3)?;
     reader.finish()?;
     let invalid_entry = graph.nodes.len();
     let mut invalid = checked.clone();
@@ -75,7 +75,7 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(2)?;
+    let graph = reader.graph(3)?;
     reader.finish()?;
     let initializer = graph.owned_locals.values().next().ok_or("missing owned initializer")?;
     assert!(initializer.source.is_some());
@@ -131,7 +131,7 @@ fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<()
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(2)?;
+    let graph = reader.graph(3)?;
     reader.finish()?;
     assert_eq!(graph.operations.len(), 1);
     for completion in [true, false] {
@@ -195,7 +195,7 @@ fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(2)?;
+    let graph = reader.graph(3)?;
     reader.finish()?;
     assert_eq!(graph.invocations.len(), 1);
     let mut positive = BodyLocal {
@@ -377,5 +377,34 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
     };
     assert!(super::super::restore_local(&positions, &mut local, &wrong).is_err());
     assert!(local.expressions.body_ir_parameter_requirements.is_empty());
+    Ok(())
+}
+
+/// Record types retain nominal versus generic identity, while the current owner profile still refuses generics.
+#[test]
+fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::symbols::ResolvedType;
+    use crate::typechecker::canonical_nodes::NodeBindingError;
+    for leaf in [ResolvedType::Named("E".into()), ResolvedType::TypeVar("E".into())] {
+        let expected = ResolvedType::Generic(
+            "Result".into(),
+            vec![ResolvedType::Unit, ResolvedType::Generic("Option".into(), vec![leaf])],
+        );
+        let mut fields = Vec::new();
+        super::super::types::type_fields(&expected, &mut fields)?;
+        let mut reader = fields.iter();
+        assert_eq!(super::super::types::read_type(&mut reader)?, expected);
+        assert_eq!(reader.next(), None);
+        fields.pop();
+        assert!(super::super::types::read_type(&mut fields.iter()).is_err());
+    }
+    let source = "trait Failure[E]:\n    def fail(self, marker: Borrowed[int]) -> Result[None, E]:\n        pass\ndef forward[E, F with Failure[E]](failure: Borrowed[F], marker: Borrowed[int]) -> Result[None, E]:\n    return failure.fail(marker)\n";
+    let (program, checker, owner) = fixture(source, "forward")?;
+    assert!(matches!(
+        Positions::new(&checker, &program, owner, false),
+        Err(NodeBindingError::Unsupported(
+            "modified, generic, public, or generated owner"
+        ))
+    ));
     Ok(())
 }

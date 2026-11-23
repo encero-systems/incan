@@ -276,21 +276,102 @@ impl TypeChecker {
         self.types_compatible(&expected.return_type, &found.return_type)
     }
 
-    /// Return whether two methods have the same call-time parameter shape, ignoring return type.
-    pub(super) fn method_call_shapes_same(&self, left: &MethodInfo, right: &MethodInfo) -> bool {
-        if left.receiver != right.receiver {
+    /// Return whether two method declarations accept an indistinguishable positional call under RFC 174.
+    ///
+    /// Declaration conflicts compare the shared positional-count range and its parameter types. Defaults widen that
+    /// range, a positional rest parameter leaves it unbounded, and method type parameters compare by declaration
+    /// position rather than spelling. Parameter names and return types deliberately take no part.
+    pub(super) fn method_overload_shapes_conflict(&self, left: &MethodInfo, right: &MethodInfo) -> bool {
+        if left.receiver != right.receiver || left.type_params.len() != right.type_params.len() {
             return false;
         }
-        if left.is_async != right.is_async {
-            return false;
-        }
-        if left.params.len() != right.params.len() {
-            return false;
-        }
-        left.params
+
+        let left_normal = left
+            .params
             .iter()
-            .zip(right.params.iter())
-            .all(|(left_param, right_param)| left_param.kind == right_param.kind && left_param.ty == right_param.ty)
+            .filter(|param| param.kind == ParamKind::Normal)
+            .collect::<Vec<_>>();
+        let right_normal = right
+            .params
+            .iter()
+            .filter(|param| param.kind == ParamKind::Normal)
+            .collect::<Vec<_>>();
+        let left_required = left_normal.iter().filter(|param| !param.has_default).count();
+        let right_required = right_normal.iter().filter(|param| !param.has_default).count();
+        let shared_count = left_required.max(right_required);
+        let left_rest = left.params.iter().find(|param| param.kind == ParamKind::RestPositional);
+        let right_rest = right
+            .params
+            .iter()
+            .find(|param| param.kind == ParamKind::RestPositional);
+        if (left_rest.is_none() && shared_count > left_normal.len())
+            || (right_rest.is_none() && shared_count > right_normal.len())
+        {
+            return false;
+        }
+
+        (0..shared_count).all(|index| {
+            let left_type = left_normal
+                .get(index)
+                .map(|param| &param.ty)
+                .or_else(|| left_rest.map(|param| &param.ty));
+            let right_type = right_normal
+                .get(index)
+                .map(|param| &param.ty)
+                .or_else(|| right_rest.map(|param| &param.ty));
+            match (left_type, right_type) {
+                (Some(left_type), Some(right_type)) => {
+                    Self::overload_parameter_types_same(left_type, &left.type_params, right_type, &right.type_params)
+                }
+                _ => false,
+            }
+        })
+    }
+
+    /// Compare overload parameter types while treating same-position method type parameters as the same type.
+    fn overload_parameter_types_same(
+        left: &ResolvedType,
+        left_type_params: &[String],
+        right: &ResolvedType,
+        right_type_params: &[String],
+    ) -> bool {
+        if let (ResolvedType::TypeVar(left_name), ResolvedType::TypeVar(right_name)) = (left, right) {
+            let left_position = left_type_params.iter().position(|name| name == left_name);
+            let right_position = right_type_params.iter().position(|name| name == right_name);
+            return match (left_position, right_position) {
+                (Some(left_position), Some(right_position)) => left_position == right_position,
+                (None, None) => left_name == right_name,
+                _ => false,
+            };
+        }
+
+        match (left, right) {
+            (ResolvedType::Generic(left_name, left_args), ResolvedType::Generic(right_name, right_args)) => {
+                left_name == right_name
+                    && left_args.len() == right_args.len()
+                    && left_args.iter().zip(right_args).all(|(left_arg, right_arg)| {
+                        Self::overload_parameter_types_same(left_arg, left_type_params, right_arg, right_type_params)
+                    })
+            }
+            (ResolvedType::Tuple(left_items), ResolvedType::Tuple(right_items)) => {
+                left_items.len() == right_items.len()
+                    && left_items.iter().zip(right_items).all(|(left_item, right_item)| {
+                        Self::overload_parameter_types_same(left_item, left_type_params, right_item, right_type_params)
+                    })
+            }
+            (ResolvedType::FrozenList(left_item), ResolvedType::FrozenList(right_item))
+            | (ResolvedType::FrozenSet(left_item), ResolvedType::FrozenSet(right_item))
+            | (ResolvedType::TypeToken(left_item), ResolvedType::TypeToken(right_item))
+            | (ResolvedType::Ref(left_item), ResolvedType::Ref(right_item))
+            | (ResolvedType::RefMut(left_item), ResolvedType::RefMut(right_item)) => {
+                Self::overload_parameter_types_same(left_item, left_type_params, right_item, right_type_params)
+            }
+            (ResolvedType::FrozenDict(left_key, left_value), ResolvedType::FrozenDict(right_key, right_value)) => {
+                Self::overload_parameter_types_same(left_key, left_type_params, right_key, right_type_params)
+                    && Self::overload_parameter_types_same(left_value, left_type_params, right_value, right_type_params)
+            }
+            _ => left == right,
+        }
     }
 
     /// True if `ancestor` appears in the transitive supertrait closure of trait `descendant` (RFC 042).

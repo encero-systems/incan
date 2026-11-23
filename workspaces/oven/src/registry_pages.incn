@@ -16,7 +16,7 @@ from pub::incan_platform.store import begin, commit, get, lease, put
 from store_path_conversion import snapshot
 from unit_freshness import fingerprint
 
-const PROFILE: str = "incan.registry-page/1"
+const PROFILE: str = "incan.registry-page/2"
 
 
 pub def question(path: Path, observed: Observation, compiler: str) -> Result[str, str]:

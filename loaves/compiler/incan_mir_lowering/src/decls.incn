@@ -1,17 +1,21 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_lang::lang::types::ownership import from_str as ownership_mode, OwnershipMode
+from rust::std::collections import BTreeMap, BTreeSet
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     NominalDeclaration,
     StaticDeclaration,
     GlobalPlace,
     EnumDeclaration as RustEnumDeclaration,
+    LifecycleMetadata as CheckedLifecycle,
 )
 from pub::incan_mir_plan import (
     EnumDeclaration,
     ModelDeclaration,
     FieldMetadata,
+    FieldLifecycle,
     Parameter,
     SourceSpan,
     PlanType,
@@ -33,6 +37,8 @@ from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
 from symbols import model_symbol
+from reflection_carriers import is_field_metadata_carrier
+from stored_types import stored_type
 from pub::incan_mir_plan import source_span as plan_span
 
 
@@ -89,14 +95,16 @@ pub def lower_model_declarations(
     mut intrinsics: list[EnumDeclaration],
     nominal_instances: &list[NominalInstance],
     publish_generics: bool = false,
+    start: int = 0,
 ) -> Result[list[ModelDeclaration], str]:
     """
     Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
 
     Instance selection borrows the retained inventory; only the resulting native declaration plan is owned here.
+    `start` lets a resumed unit append layouts for declarations absent from its preserved plan.
 
-    A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
-    derives Default: a Rust derive would give every field its zero value instead.
+    Semantic construction derives stay in checked Body IR rather than becoming Rust derives. `Default` is built at
+    each `default()` call from declared field defaults, and `Validate` is executed by its retained generated constructor.
     """
     mut unions = collect_unions(module)
     reached = serde_propagation(module)?
@@ -104,7 +112,8 @@ pub def lower_model_declarations(
     comparisons = comparison_functions(constructors, module, intrinsics)?
     # Foreign storage names are collected once; each owner then checks membership instead of rescanning the module.
     native_names = native_argument_names(module)?
-    for owner in range(len(module.nominal_declarations)):
+    mut view_lifetimes = ViewLifetimeLayout.start(module.nominal_declarations, module.enum_declarations)
+    for owner in range(start, len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, owner)
         mut item = library_item(declaration)
         if publish_generics and item == "" and len(declaration.type_parameters) != 0:
@@ -121,7 +130,7 @@ pub def lower_model_declarations(
         mut derives: list[str] = []
         for derive in declaration.derives:
             if (
-                derive != "Default"
+                derive not in ["Default", "Validate"]
                 and not (len(comparisons[owner]) != 0 and derive in ["PartialEq", "Eq", "PartialOrd", "Ord"])
             ):
                 derives.append(derive)
@@ -169,7 +178,11 @@ pub def lower_model_declarations(
             validate_marker_traits(declaration)?
         mut view_lifetime_count = 0
         if item == "":
-            view_lifetime_count = declaration_view_lifetimes(declaration)
+            view_lifetime_count = view_lifetimes.declaration(
+                declaration,
+                module.nominal_declarations,
+                module.enum_declarations,
+            )
         models.append(
             ModelDeclaration(
                 name=model_symbol(str(declaration.name)),
@@ -184,7 +197,8 @@ pub def lower_model_declarations(
                 library_type_arguments=library_arguments,
                 field_serde_names=serde_names,
                 checked_deserialize=checked_deserialize,
-                reflection_metadata=planned_field_metadata(declaration),
+                reflection_metadata=planned_field_metadata(module, constructors, declaration),
+                field_metadata_carrier=is_field_metadata_carrier(declaration),
                 comparison_methods=comparisons[owner],
                 fallible_iterator=fallible_methods(constructors, module, owner, native_names, intrinsics)?,
                 iterator=iterator_methods(constructors, module, owner, native_names, intrinsics)?,
@@ -199,52 +213,278 @@ pub def lower_model_declarations(
     return Ok(models)
 
 
-def declaration_view_lifetimes(declaration: &NominalDeclaration) -> int:
-    """Count physical references retained by one closed source layout; callable fields bind their own signatures."""
-    if len(declaration.type_parameters) == 0:
-        return 0
-    mut count = 0
-    for field in declaration.field_types:
-        count += type_view_lifetimes(field)
-    return count
+model ViewLifetimeCount:
+    """One measured layout and whether no declaration cycle truncated it."""
+
+    count: int
+    complete: bool
 
 
-def type_view_lifetimes(ty: &RustType) -> int:
-    """Count reference slots structurally through tuples and generic nominal arguments in declaration order."""
-    match ty:
-        RustType.Ref(inner) => return 1 + type_view_lifetimes(inner)
-        RustType.RefMut(inner) => return 1 + type_view_lifetimes(inner)
-        RustType.Generic(base=base, args=arguments) =>
-            if base in [
-                "FrozenList",
-                "FrozenSet",
-                "FrozenDict",
-                "$FrozenList",
-                "$FrozenSet",
-                "$FrozenDict",
-            ]:
-                return 0
-            return element_view_lifetimes(arguments)
-        RustType.Tuple(elements) => return element_view_lifetimes(elements)
-        RustType.NativeArray(element=element, length=_length) => return type_view_lifetimes(element)
-        _ => return 0
+pub class ViewLifetimeLayout:
+    """Index view-bearing nominal layouts, then memoize their ordered native lifetime counts."""
+
+    cached: BTreeMap[str, int]
+    active: list[str]
+    dependents: BTreeMap[str, list[str]]
+    view_types: BTreeSet[str]
+    pending: list[str]
+
+    @staticmethod
+    pub def start(
+        declarations: &list[NominalDeclaration], enums: &list[RustEnumDeclaration],
+    ) -> ViewLifetimeLayout:
+        """Index direct borrow storage and propagate it once through the reverse nominal dependency graph."""
+        cached: BTreeMap[str, int] = BTreeMap.new()
+        dependents: BTreeMap[str, list[str]] = BTreeMap.new()
+        view_types: BTreeSet[str] = BTreeSet.new()
+        mut layout = ViewLifetimeLayout(
+            cached=cached,
+            active=[],
+            dependents=dependents,
+            view_types=view_types,
+            pending=[],
+        )
+        layout.index_declarations(declarations, enums)
+        layout.propagate_view_types()
+        return layout
+
+    def index_declarations(
+        mut self,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> None:
+        """Record each stored nominal dependency and every owner with a direct reference slot."""
+        for declaration in declarations:
+            owner = str(declaration.name)
+            for field in declaration.field_types:
+                self.index_type(owner, field)
+        for declaration in enums:
+            owner = declaration.carrier_name()
+            for variant in declaration.variants:
+                for field in variant.fields:
+                    self.index_type(owner, field)
+
+    def index_type(mut self, owner: str, ty: &RustType) -> None:
+        """Index direct references and transitive nominal dependencies using the storage rules of `type_lifetimes`."""
+        match ty:
+            RustType.Ref(inner) =>
+                self.seed(owner)
+                self.index_type(owner, inner)
+            RustType.RefMut(inner) =>
+                self.seed(owner)
+                self.index_type(owner, inner)
+            RustType.Named(name) => self.record_dependency(str(name), owner)
+            RustType.Generic(base=base, args=arguments) =>
+                if base in ["FrozenList", "FrozenSet", "FrozenDict", "$FrozenList", "$FrozenSet", "$FrozenDict"]:
+                    return
+                match ownership_mode(base):
+                    Some(OwnershipMode.Borrowed | OwnershipMode.BorrowedMut | OwnershipMode.Reference) =>
+                        self.seed(owner)
+                    Some(OwnershipMode.Owned) => pass
+                    None => self.record_dependency(str(base), owner)
+                for argument in arguments:
+                    self.index_type(owner, argument)
+            RustType.Tuple(elements) =>
+                for element in elements:
+                    self.index_type(owner, element)
+            RustType.NativeArray(element=element, length=_length) => self.index_type(owner, element)
+            _ => pass
+
+    def seed(mut self, owner: str) -> None:
+        """Queue one nominal that stores a direct source reference, retaining first-discovery order."""
+        if owner not in self.pending:
+            self.pending.append(owner)
+
+    def record_dependency(mut self, dependency: str, owner: str) -> None:
+        """Record that `owner` becomes a view type whenever `dependency` does."""
+        owners = self.dependents.entry(dependency).or_insert([])
+        if not owners.contains(owner):
+            owners.push(owner)
+
+    def propagate_view_types(mut self) -> None:
+        """Compute the least fixed point of nominal layouts that directly or transitively retain a borrow."""
+        mut cursor = 0
+        while cursor < len(self.pending):
+            selected = str(self.pending[cursor])
+            cursor += 1
+            if self.view_types.contains(selected):
+                continue
+            _ = self.view_types.insert(selected)
+            mut owners: list[str] = []
+            match self.dependents.get(selected):
+                Some(dependents) =>
+                    for owner in dependents:
+                        owners.append(str(owner))
+                None => pass
+            for owner in owners:
+                if not self.view_types.contains(owner):
+                    self.pending.append(owner)
+
+    pub def declaration(
+        mut self,
+        declaration: &NominalDeclaration,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> int:
+        """Count physical references retained by one source layout; callable fields bind their own signatures."""
+        return self.named(str(declaration.name), declarations, enums).count
+
+    pub def enum_declaration(
+        mut self,
+        declaration: &RustEnumDeclaration,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> int:
+        """Count physical references retained by an enum's payloads in source variant order."""
+        return self.named(declaration.carrier_name(), declarations, enums).count
+
+    def named(
+        mut self,
+        name: str,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> ViewLifetimeCount:
+        """Resolve one nominal once when acyclic; a cycle is bounded without caching its path-dependent partial count."""
+        match self.cached.get(name):
+            Some(count) => return ViewLifetimeCount(count=int(count.clone()), complete=true)
+            None => pass
+        if not self.view_types.contains(name):
+            _ = self.cached.insert(name, 0)
+            return ViewLifetimeCount(count=0, complete=true)
+        if name in self.active:
+            return ViewLifetimeCount(count=0, complete=false)
+
+        self.active.append(name)
+        mut measured = ViewLifetimeCount(count=0, complete=true)
+        mut found = false
+        for declaration in declarations:
+            if str(declaration.name) == name:
+                measured = self.nominal_fields(declaration, declarations, enums)
+                found = true
+                break
+        if not found:
+            for declaration in enums:
+                if declaration.carrier_name() == name:
+                    measured = self.enum_fields(declaration, declarations, enums)
+                    found = true
+                    break
+        _ = self.active.pop()
+        if found and measured.complete:
+            _ = self.cached.insert(name, measured.count)
+        return measured
+
+    def nominal_fields(
+        mut self,
+        declaration: &NominalDeclaration,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> ViewLifetimeCount:
+        """Measure stored nominal fields once in checked declaration order."""
+        mut measured = ViewLifetimeCount(count=0, complete=true)
+        for field in declaration.field_types:
+            measured = combined_view_lifetimes(measured, self.type_lifetimes(field, declarations, enums))
+        return measured
+
+    def enum_fields(
+        mut self,
+        declaration: &RustEnumDeclaration,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> ViewLifetimeCount:
+        """Measure every enum payload in source variant order."""
+        mut measured = ViewLifetimeCount(count=0, complete=true)
+        for variant in declaration.variants:
+            for field in variant.fields:
+                measured = combined_view_lifetimes(measured, self.type_lifetimes(field, declarations, enums))
+        return measured
+
+    def type_lifetimes(
+        mut self,
+        ty: &RustType,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> ViewLifetimeCount:
+        """Count reference slots through structural fields and source nominal view layouts."""
+        match ty:
+            RustType.Ref(inner) =>
+                nested = self.type_lifetimes(inner, declarations, enums)
+                return ViewLifetimeCount(count=1 + nested.count, complete=nested.complete)
+            RustType.RefMut(inner) =>
+                nested = self.type_lifetimes(inner, declarations, enums)
+                return ViewLifetimeCount(count=1 + nested.count, complete=nested.complete)
+            RustType.Named(name) => return self.named(str(name), declarations, enums)
+            RustType.Generic(base=base, args=arguments) =>
+                arguments_count = self.element_lifetimes(arguments, declarations, enums)
+                match ownership_mode(base):
+                    Some(OwnershipMode.Borrowed | OwnershipMode.BorrowedMut | OwnershipMode.Reference) =>
+                        return ViewLifetimeCount(
+                            count=1 + arguments_count.count,
+                            complete=arguments_count.complete,
+                        )
+                    Some(OwnershipMode.Owned) => return arguments_count
+                    None => pass
+                if base in ["FrozenList", "FrozenSet", "FrozenDict", "$FrozenList", "$FrozenSet", "$FrozenDict"]:
+                    return ViewLifetimeCount(count=0, complete=true)
+                return combined_view_lifetimes(
+                    self.named(str(base), declarations, enums),
+                    arguments_count,
+                )
+            RustType.Tuple(elements) => return self.element_lifetimes(elements, declarations, enums)
+            RustType.NativeArray(element=element, length=_length) =>
+                return self.type_lifetimes(element, declarations, enums)
+            _ => return ViewLifetimeCount(count=0, complete=true)
+
+    def element_lifetimes(
+        mut self,
+        elements: &list[RustType],
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> ViewLifetimeCount:
+        """Sum structural reference slots without copying retained field types."""
+        mut measured = ViewLifetimeCount(count=0, complete=true)
+        for element in elements:
+            measured = combined_view_lifetimes(measured, self.type_lifetimes(element, declarations, enums))
+        return measured
 
 
-def element_view_lifetimes(elements: &list[RustType]) -> int:
-    """Sum reference slots without copying the retained field types."""
-    mut count = 0
-    for element in elements:
-        count += type_view_lifetimes(element)
-    return count
+def combined_view_lifetimes(left: ViewLifetimeCount, right: ViewLifetimeCount) -> ViewLifetimeCount:
+    """Combine two structural measurements while retaining whether either crossed a declaration cycle."""
+    return ViewLifetimeCount(count=left.count + right.count, complete=left.complete and right.complete)
 
 
-def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[FieldMetadata]]:
-    """Copy checked metadata values without recovering missing visibility, type names, or defaults."""
+def lifecycle_text(value: &Option[str]) -> Option[str]:
+    """Copy a checked optional label without treating empty text as absence."""
+    match value:
+        Some(text) => return Some(str(text))
+        None => return None
+
+
+def planned_lifecycle(value: &Option[CheckedLifecycle]) -> Option[FieldLifecycle]:
+    """Keep the five source-checked labels as ordinary Incan plan data."""
+    match value:
+        None => return None
+        Some(labels) =>
+            return Some(FieldLifecycle(
+                since=lifecycle_text(labels.since),
+                retire_in=lifecycle_text(labels.retire_in),
+                message=lifecycle_text(labels.message),
+                by=lifecycle_text(labels.by),
+                issue=lifecycle_text(labels.issue),
+            ))
+
+
+def planned_field_metadata(
+    module: &BodyIrModule, constructors: &ConstructorIndex, declaration: &NominalDeclaration,
+) -> Option[list[FieldMetadata]]:
+    """Retain checked visibility and defaults; derive stored selectors from each original typed field slot."""
     match declaration.reflection_metadata:
         None => return None
         Some(fields) =>
             mut result: list[FieldMetadata] = []
             for field in fields:
+                mut stored: Option[str] = None
+                if int(field.position) < len(declaration.field_types):
+                    stored = stored_type(module, constructors, declaration.field_types[int(field.position)])
                 mut alias: Option[str] = None
                 mut description: Option[str] = None
                 mut record_identity: list[int] = []
@@ -265,6 +505,10 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
                         record_identity=record_identity,
                         record_canonical=field.record_canonical,
                         renamed_from=renamed_from,
+                        renamed_from_lifecycle=planned_lifecycle(field.renamed_from_lifecycle),
+                        position=int(field.position),
+                        default_is_empty=field.default_is_empty,
+                        stored_type=stored,
                         alias=alias,
                         description=description,
                         type_name=str(field.type_name),

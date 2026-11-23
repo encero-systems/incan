@@ -99,6 +99,14 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_equality_contract()?;
     assert_builtin_method_identities()?;
     assert_generic_view_carrier_storage()?;
+    assert_nested_generic_static_call_arguments()?;
+    assert_frozen_literal_bound_method_identity()?;
+    assert_native_provider_field_layout()?;
+    assert_declared_record_namespace()?;
+    assert_independently_retained_newtype_return()?;
+    assert_generic_newtype_provider_methods()?;
+    assert_nested_generic_static_call_bound_mismatch()?;
+    assert_nominal_carrier_maps_stay_shared()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -109,6 +117,388 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         .err()
         .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
+    Ok(())
+}
+
+/// A standard package owns generic newtype methods just like any other source package. Their wrapped-field
+/// projections and callable coverage must survive canonical carrier qualification without a native bridge.
+fn assert_generic_newtype_provider_methods() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::executable_representation::{DeclarationCoverage, SurfaceReader, build_surface};
+    use std::collections::BTreeSet;
+
+    for source in [
+        "pub type Mutex[T] = newtype T:\n    pub def get(self) -> T:\n        return self.0\n",
+        "@derive(Clone)\npub type Mutex[T with Clone] = newtype list[T]:\n    pub def get(self) -> list[T]:\n        return self.0\n",
+    ] {
+        for package in ["application", "incan_stdlib_primitives"] {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let module_path = vec!["primitives".to_owned(), "async".to_owned(), "sync".to_owned()];
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module_path.clone()));
+            checker.set_current_package_identity(Some(package.to_owned()));
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let mut facts = checker.into_type_info();
+            let owner = facts
+                .declarations
+                .declaration_identities
+                .values()
+                .find(|identity| identity.declaration_name == "Mutex")
+                .ok_or("missing checked generic newtype identity")?
+                .clone();
+            let key = bir::nominal_carrier_key(&owner).ok_or("missing checked generic carrier")?;
+            // Generated SDK operations retain a provider identity even without an explicit source import.
+            facts
+                .declarations
+                .body_ir_native_type_identities
+                .insert(key.clone(), owner.clone());
+            facts
+                .declarations
+                .body_ir_native_type_identities
+                .insert(owner.declaration_name.clone(), owner);
+            let providers = ProviderOperationCatalog::new();
+            let context = BodyIrContext {
+                modules: &[],
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: Some(package),
+                include_inline_tests: false,
+            };
+            let module = super::build_body_ir_module(&program, &module_path, &facts, &context);
+            let method = module
+                .bodies
+                .iter()
+                .find(|body| body.name == "get")
+                .ok_or("missing newtype method")?;
+            let identity = method.canonical.clone().ok_or("missing newtype method identity")?;
+            let public = BTreeSet::from([identity.clone()]);
+            let bytes = build_surface(
+                std::slice::from_ref(&module),
+                package,
+                "0.1.0",
+                &public,
+                &BTreeSet::new(),
+            )?;
+            let reader = SurfaceReader::open(&bytes)?;
+            let coverage = reader.index().coverage(&identity)?;
+            assert!(
+                matches!(coverage, DeclarationCoverage::Covered { .. }),
+                "{package}: {coverage:?}; body: {method:#?}; layouts: {:#?}",
+                module.nominal_declarations
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A method and its returned newtype may be retained in separate publication fragments. The owner remains exact,
+/// and neither missing storage nor conflicting copies may be resolved by context order or a short name.
+fn assert_independently_retained_newtype_return() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "pub type Token = newtype str\npub class Factory:\n    pub def token(self) -> Token:\n        return Token(\"value\")\n";
+    let (_, _, seed) = checked_seed(source)?;
+    let owner = seed
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.name == "Token")
+        .ok_or("missing checked Token layout")?
+        .clone();
+    let method = seed
+        .callable_declaration_frames()
+        .find(|body| body.name.ends_with("token"))
+        .and_then(|body| body.canonical.clone())
+        .ok_or("missing checked token method")?;
+    let mut methods = seed.clone();
+    methods
+        .nominal_declarations
+        .retain(|declaration| declaration.canonical != owner.canonical);
+    let mut layouts = seed.clone();
+    layouts.bodies.clear();
+    layouts
+        .nominal_declarations
+        .retain(|declaration| declaration.canonical == owner.canonical);
+    assert!(layouts.is_well_formed_nominal_declaration(&owner));
+    for context in [
+        vec![methods.clone(), layouts.clone()],
+        vec![layouts.clone(), methods.clone()],
+    ] {
+        let returns = super::collect::collect_published_newtype_returns(&context);
+        let returned = returns
+            .get(&method)
+            .and_then(Option::as_ref)
+            .ok_or("separately retained newtype owner was refused")?;
+        assert_eq!(returned.declaration, owner);
+    }
+    let missing = super::collect::collect_published_newtype_returns(&[methods.clone()]);
+    assert!(missing.get(&method).is_some_and(Option::is_none));
+    let mut conflict = layouts.clone();
+    conflict.nominal_declarations[0].field_types = vec![super::IncanType::Primitive(super::IncanPrimitiveType::Int)];
+    for context in [
+        vec![methods.clone(), layouts.clone(), conflict.clone()],
+        vec![conflict, layouts, methods],
+    ] {
+        let returns = super::collect::collect_published_newtype_returns(&context);
+        assert!(returns.get(&method).is_some_and(Option::is_none));
+    }
+    Ok(())
+}
+
+/// Prove nominal-carrier retention refines each callable's canonical map without replacing that allocation.
+fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Value:\n    number: int\ndef make() -> Value:\n    return Value(number=1)\ndef forward() -> Value:\n    return make()\n";
+    let (program, facts, mut module) = checked_seed(source)?;
+    let opaque_carriers = super::opaque_returns::collect(&module, &facts);
+    super::trait_values::retain_inputs(&mut module, &program, &facts, &[]);
+    super::trait_returns::retain_returns(&mut module, &program, &facts, &[]);
+    super::opaque_returns::retain(&mut module, &opaque_carriers);
+    assert!(
+        super::nominal_carriers::return_index_keeps_identity_maps_borrowed(&module),
+        "the return index retained a whole canonical map per callable"
+    );
+    let identities = module
+        .bodies
+        .iter()
+        .map(|body| {
+            Ok((
+                body.canonical.clone().ok_or("missing callable identity")?,
+                std::sync::Arc::as_ptr(&body.named_type_identities),
+            ))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()?;
+
+    super::nominal_carriers::retain(&mut module, &facts, &[]);
+
+    for body in &module.bodies {
+        let canonical = body.canonical.as_ref().ok_or("missing retained callable identity")?;
+        let original = identities.get(canonical).ok_or("missing original canonical map")?;
+        assert!(
+            std::ptr::eq(*original, std::sync::Arc::as_ptr(&body.named_type_identities)),
+            "nominal retention replaced the shared canonical map for {}",
+            body.name
+        );
+    }
+    Ok(())
+}
+
+/// Prove a nested generic static call carries the enclosing symbolic bound arguments into Body IR.
+fn assert_nested_generic_static_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Source[E]:\n    def integer(mut self) -> Result[int, E]\ntrait Reconstruct:\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Self, E]\nmodel Inner with Reconstruct:\n    value: int\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Inner, E]:\n        return Ok(Inner(value=source.integer()?))\nmodel Outer with Reconstruct:\n    inner: Inner\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Outer, E]:\n        return Ok(Outer(inner=Inner.reconstruct(source)?))\n";
+    let (_, facts, module) = checked_seed(source)?;
+    let checked_arguments = vec![
+        crate::symbols::ResolvedType::Named("E".to_owned()),
+        crate::symbols::ResolvedType::Named("S".to_owned()),
+    ];
+    let (call_span, arguments) = facts
+        .calls
+        .body_ir_call_type_arguments
+        .iter()
+        .find(|(_, arguments)| *arguments == &checked_arguments)
+        .ok_or("missing checked nested static call arguments")?;
+    assert_eq!(
+        facts.calls.call_site_monomorph_type_args.get(call_span),
+        Some(arguments),
+    );
+    assert!(matches!(
+        facts.calls.body_ir_call_result_types.get(call_span),
+        Some(crate::symbols::ResolvedType::Generic(base, sides))
+            if base == "Result"
+                && matches!(sides.as_slice(), [_, crate::symbols::ResolvedType::Named(error)] if error == "E")
+    ));
+
+    let body_arguments = vec![
+        super::IncanType::TypeVar("E".to_owned()),
+        super::IncanType::TypeVar("S".to_owned()),
+    ];
+    let retained = module
+        .bodies
+        .iter()
+        .flat_map(|body| &body.block.stmts)
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } if target.type_args == body_arguments => Some(target),
+            _ => None,
+        })
+        .ok_or("nested static call omitted its Body IR type arguments")?;
+    assert!(retained.canonical.is_some());
+    assert!(retained.direct_call_id.is_some());
+    Ok(())
+}
+
+/// Reflection records use their Incan provider layout, including the primitive package and same-named local types.
+fn assert_native_provider_field_layout() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+@derive(Eq)
+pub model FieldInfo:
+    pub name: FrozenStr
+    pub identity: FrozenBytes
+    pub canonical: bool
+    pub renamed_from: FrozenList[FrozenStr]
+    pub alias: Option[FrozenStr]
+    pub description: Option[FrozenStr]
+    pub wire_name: FrozenStr
+    pub type_name: FrozenStr
+    pub has_default: bool
+    pub extra: FrozenDict[FrozenStr, FrozenStr]
+pub model Holder:
+    pub fields: FrozenList[FieldInfo]
+pub model MetadataFacts:
+    hidden: int = 1
+    pub values [renamed_from { name="items", since="0.6", message="" }]: list[int] = []
+    pub text: str = ""
+"#;
+    for kind in ["model", "class"] {
+        let source = source.replace("pub model FieldInfo:", &format!("pub {kind} FieldInfo:"));
+        for (package, module_parts) in [
+            (None, vec!["reflection"]),
+            (Some("application"), vec!["reflection"]),
+            (Some("incan_stdlib_primitives"), vec!["ordinary"]),
+            (Some("incan_stdlib_primitives"), vec!["reflection"]),
+            (Some("incan_stdlib_primitives"), vec!["primitives", "reflection"]),
+        ] {
+            let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let module_path = module_parts.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module_path.clone()));
+            checker.set_current_package_identity(package.map(str::to_owned));
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let facts = checker.into_type_info();
+            let providers = ProviderOperationCatalog::new();
+            let context = BodyIrContext {
+                modules: &[],
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: package,
+                include_inline_tests: false,
+            };
+            let seed = super::build_module_seed(&program, &module_path, &facts, &context);
+            let metadata = seed
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "MetadataFacts")
+                .and_then(|value| value.reflection_metadata.as_ref())
+                .ok_or("missing checked reflection facts")?;
+            assert_eq!(metadata.len(), 2);
+            assert_eq!(metadata[0].position, 1);
+            assert!(metadata[0].default_is_empty);
+            assert_eq!(metadata[0].renamed_from, ["items"]);
+            let labels = metadata[0]
+                .renamed_from_lifecycle
+                .as_ref()
+                .ok_or("missing lifecycle labels")?;
+            assert_eq!(labels.since.as_deref(), Some("0.6"));
+            assert_eq!(labels.message.as_deref(), Some(""));
+            assert_eq!(labels.issue, None);
+            assert_eq!(metadata[1].position, 2);
+            assert!(!metadata[1].default_is_empty);
+            let declaration = seed
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "FieldInfo")
+                .ok_or("missing provider FieldInfo declaration")?;
+            let holder = seed
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "Holder")
+                .ok_or("missing containing model")?;
+            let consumer = bir::native_nominal_item(&declaration.canonical).unwrap_or_default();
+            assert!(consumer.is_empty());
+            if declaration.native_item != consumer {
+                return Err(format!(
+                    "provider layout {:?}; consumer layout {:?}; declaration {:?}; containing field types {:?}",
+                    declaration.native_item, consumer, declaration.canonical, holder.field_types
+                )
+                .into());
+            }
+            let key = bir::nominal_carrier_key(&declaration.canonical).ok_or("missing source carrier key")?;
+            let mut published = seed.clone();
+            for value in &mut published.nominal_declarations {
+                value.named_type_identities.remove(&key);
+            }
+            super::nominal_carriers::retain_published_module(&mut published);
+            let retained = published
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "FieldInfo")
+                .ok_or("missing admitted provider layout")?;
+            assert_eq!(retained.carrier_name(), key);
+        }
+    }
+    Ok(())
+}
+
+/// Literal-only frozen argument adaptation must select a real trait declaration rather than the diagnostic fallback.
+fn assert_frozen_literal_bound_method_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+trait Observe:
+    def reference(self, kind: FrozenStr, identity: FrozenBytes) -> int: ...
+def positional[W with Observe](walker: W) -> int:
+    return walker.reference("object", b"a")
+def named[W with Observe](walker: W) -> int:
+    return walker.reference(identity=b"a", kind="object")
+trait Dynamic:
+    def label(self, value: str) -> int: ...
+trait Static:
+    def label(self, value: FrozenStr) -> int: ...
+def prefer[W with (Dynamic, Static)](walker: W) -> int:
+    return walker.label("object")
+"#;
+    let (_, facts, module) = checked_seed(source)?;
+    let selected = facts
+        .calls
+        .resolved_method_calls
+        .values()
+        .find(|call| call.method == "label")
+        .ok_or("missing overload selection")?;
+    let crate::typechecker::ResolvedMethodDispatch::Trait { trait_name, .. } = &selected.dispatch;
+    assert_eq!(trait_name, "Dynamic");
+    for name in ["positional", "named"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing bound caller")?;
+        let target = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Method(target),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .ok_or("missing bound method call")?;
+        let identity = target
+            .canonical
+            .as_ref()
+            .ok_or("frozen literal lost the selected trait method")?;
+        assert_eq!(identity.declaration_name, "reference");
+    }
+    for arguments in ["kind, b'a'", "'object', identity"] {
+        let invalid = format!(
+            "trait Observe:\n    def reference(self, kind: FrozenStr, identity: FrozenBytes) -> int: ...\ndef runtime[W with Observe](walker: W, kind: str, identity: bytes) -> int:\n    return walker.reference({arguments})\n"
+        );
+        let tokens = crate::lexer::lex(&invalid).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        assert!(TypeChecker::new().check_program(&program).is_err());
+    }
+    Ok(())
+}
+
+/// Prove an enclosing placeholder bound cannot satisfy a nested static call requiring other trait arguments.
+fn assert_nested_generic_static_call_bound_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Source[E]:\n    def integer(mut self) -> Result[int, E]\nmodel Inner:\n    value: int\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Inner, E]:\n        return Ok(Inner(value=source.integer()?))\nmodel Outer:\n    inner: Inner\n    @staticmethod\n    def reconstruct[S with Source[str]](mut source: S) -> Result[Outer, str]:\n        return Ok(Outer(inner=Inner.reconstruct[int, S](source)?))\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    assert!(checker.check_program(&program).is_err());
     Ok(())
 }
 
@@ -324,6 +714,7 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         .find(|body| body.name == "leaf")
         .ok_or("missing profiled loan body")?;
     leaf.checked_input_profile = Some(bir::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner: leaf.canonical.clone().ok_or("missing profiled loan identity")?,
         parameters: leaf
@@ -606,6 +997,260 @@ fn assert_complete_shared_read_shapes() -> Result<(), Box<dyn std::error::Error>
             "{name}: {body:#?}"
         );
     }
+    Ok(())
+}
+
+/// Read-only string callees and every ordinary caller storage shape retain a loan, while ownership-changing bodies
+/// keep their existing access.
+#[test]
+fn read_only_string_calls_borrow_the_callers_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Holder:
+    text: str
+
+model Greeter:
+    name: str
+
+    def greet(self, greeting: str) -> str:
+        return f"{greeting} {self.name}"
+
+    hello = partial greet(greeting="hello")
+
+model Registration:
+    kind: str
+
+model RegistrationIndex:
+    entries: dict[str, Registration]
+
+    def shape(self, kind: str) -> int:
+        if kind not in self.entries:
+            return 0
+        return len(self.entries[kind].kind)
+
+    def registration(self, kind: str) -> int:
+        self.shape(kind)
+        return charge_registration(self.entries[kind])
+
+const PREFIX: str = "pre"
+static GREETING: str = "hello"
+
+def ignored(text: str) -> int:
+    return 1
+def length(text: str) -> int:
+    return len(text)
+def sliced(text: str) -> int:
+    return len(text[0:1])
+def compared(text: str) -> bool:
+    return text == "!"
+
+def local() -> int:
+    text = "payload"
+    return ignored(text) + length(text) + sliced(text)
+def forwarded(text: str) -> int:
+    return ignored(text) + length(text) + sliced(text)
+def field(holder: Holder) -> int:
+    return ignored(holder.text) + length(holder.text) + sliced(holder.text)
+def indexed(values: list[str]) -> int:
+    return length(values[0])
+def set_contains(values: set[str], text: str) -> bool:
+    return text in values
+def keyed_pair(key: str, value: int) -> int:
+    return length(key) + value
+def keyed_call(key: str, values: dict[str, int]) -> int:
+    return keyed_pair(key, values[key])
+def dictionary_key(values: dict[str, int], key: str) -> int:
+    return values[key]
+def optional_dictionary_key(values: dict[str, Option[bool | int]], key: str) -> str:
+    match values[key]:
+        int(number) => return f"int {number}"
+        bool(truth) => return f"bool {truth}"
+        None => return "absent"
+def charge_registration(registration: Registration) -> int:
+    return len(registration.kind)
+def registration_lookup(entries: dict[str, Registration], kind: str) -> int:
+    if kind not in entries:
+        return 0
+    return charge_registration(entries[kind])
+def declaration_strings() -> int:
+    return ignored(PREFIX) + ignored(GREETING)
+
+def moved(text: str) -> str:
+    return text
+def stored(text: str) -> list[str]:
+    return [text]
+def mutated(mut text: str) -> int:
+    return len(text)
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+
+    for name in ["ignored", "length", "sliced", "compared"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing read-only string callee")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
+            "{name}: {body:#?}"
+        );
+    }
+    let sliced = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "sliced")
+        .ok_or("missing sliced string callee")?;
+    assert!(
+        sliced.locals.iter().any(|local| {
+            matches!(local.origin, bir::LocalOrigin::Temporary)
+                && local.ty == super::IncanType::Primitive(super::IncanPrimitiveType::Str)
+        }),
+        "{sliced:#?}"
+    );
+    for name in ["local", "forwarded", "field"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing string caller")?;
+        let calls = body
+            .block
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                    args,
+                    ..
+                } if matches!(target.name.as_str(), "ignored" | "length" | "sliced") => args.first(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 3, "{name}: {body:#?}");
+        assert!(
+            calls.iter().all(|argument| matches!(
+                argument,
+                bir::ArgumentElement::One(bir::Operand::Place(read))
+                    if read.fact == bir::OwnershipFact::Borrow && !read.last_use
+            )),
+            "{name}: {body:#?}"
+        );
+    }
+    for name in ["moved", "stored", "mutated"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing ownership-changing string control")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::Inferred,
+            "{name}: {body:#?}"
+        );
+    }
+    let indexed = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "indexed")
+        .ok_or("missing indexed string control")?;
+    let indexed_argument = indexed.block.stmts.iter().find_map(|statement| match &statement.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            args,
+            ..
+        } if target.name == "length" => args.first(),
+        _ => None,
+    });
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = indexed_argument else {
+        return Err("missing indexed string call argument".into());
+    };
+    assert_eq!(
+        indexed.locals[read.place.local_id().ok_or("missing indexed argument local")?.index()].ty,
+        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
+        "{indexed:#?}"
+    );
+    let set_contains = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "set_contains")
+        .ok_or("missing set-key control")?;
+    assert_eq!(
+        set_contains.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{set_contains:#?}"
+    );
+    for (name, parameter) in [
+        ("dictionary_key", 1),
+        ("optional_dictionary_key", 1),
+        ("registration_lookup", 1),
+        ("registration", 1),
+        ("greet", 1),
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing retained owned-string boundary")?;
+        assert_eq!(
+            body.params[parameter].input_access,
+            incan_semantics_core::IncanInputAccess::Inferred,
+            "{name}: {body:#?}"
+        );
+    }
+    for name in ["dictionary_key", "optional_dictionary_key"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing dictionary-key boundary")?;
+        assert!(
+            body.locals.iter().all(|local| {
+                !matches!(local.origin, bir::LocalOrigin::Temporary)
+                    || local.ty
+                        != super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
+            }),
+            "{name}: {body:#?}"
+        );
+    }
+    let declaration_strings = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "declaration_strings")
+        .ok_or("missing declaration-string caller")?;
+    assert!(
+        declaration_strings.locals.iter().all(|local| {
+            !matches!(local.origin, bir::LocalOrigin::Temporary)
+                || local.ty
+                    != super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
+        }),
+        "{declaration_strings:#?}"
+    );
+    let keyed_call = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "keyed_call")
+        .ok_or("missing keyed call control")?;
+    let keyed_argument = keyed_call
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.name == "keyed_pair" => args.first(),
+            _ => None,
+        });
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = keyed_argument else {
+        return Err("missing keyed call argument".into());
+    };
+    assert_eq!(
+        keyed_call.locals[read.place.local_id().ok_or("missing keyed argument local")?.index()].ty,
+        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
+        "{keyed_call:#?}"
+    );
     Ok(())
 }
 
@@ -1003,21 +1648,39 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     use crate::loaf_index::LoafIndex;
     use std::sync::Arc;
 
-    let sdk = include_str!("../../../../stdlib/primitives/src/reflection.incn");
+    let sdk = include_str!("../../../../stdlib/primitives/src/primitives/reflection.incn");
+    let facade = include_str!("../../../../stdlib/primitives/src/reflection.incn");
     let tokens = crate::lexer::lex(sdk).map_err(|errors| format!("{errors:?}"))?;
-    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-    let mut declaring = TypeChecker::new();
-    declaring.set_current_package_identity(Some("incan_stdlib_primitives".into()));
-    declaring.set_current_module_path(Some(vec!["reflection".into()]));
-    declaring
-        .check_program(&program)
-        .map_err(|errors| format!("{errors:?}"))?;
-    let module_path = vec!["reflection".to_owned()];
-    let exports = collect_checked_public_exports(&program, &declaring);
+    let declaration = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let tokens = crate::lexer::lex(facade).map_err(|errors| format!("{errors:?}"))?;
+    let facade = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let owner_path = vec!["primitives".to_owned(), "reflection".to_owned()];
+    let mut modules = Vec::new();
+    let mut checked_exports = Vec::new();
+    for (module_path, program) in [
+        (owner_path.clone(), &declaration),
+        (vec!["reflection".to_owned()], &facade),
+    ] {
+        let mut declaring = TypeChecker::new();
+        declaring.set_current_package_identity(Some("incan_stdlib_primitives".into()));
+        declaring.set_current_module_path(Some(module_path.clone()));
+        if module_path == owner_path {
+            declaring
+                .check_program(program)
+                .map_err(|errors| format!("{errors:?}"))?;
+        } else {
+            declaring.register_dependency_module_path_segments("primitives_reflection", owner_path.clone());
+            declaring
+                .check_with_imports(program, &[("primitives_reflection", &declaration)])
+                .map_err(|errors| format!("{errors:?}"))?;
+        }
+        checked_exports.push((module_path.clone(), collect_checked_public_exports(program, &declaring)));
+        modules.push(collect_checked_api_metadata(program, &declaring, module_path));
+    }
     let mut api = CheckedApiMetadataPackage {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
         package: None,
-        modules: vec![collect_checked_api_metadata(&program, &declaring, module_path.clone())],
+        modules,
         public_namespaces: Vec::new(),
     };
     materialize_checked_api_public_namespaces(&mut api)?;
@@ -1025,7 +1688,7 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     manifest.contract_metadata.identity_graph.extend_checked_api_exports(
         "incan_stdlib_primitives",
         &api,
-        &[(module_path, exports)],
+        &checked_exports,
     )?;
     manifest.contract_metadata.api = Some(api);
     let directory = tempfile::tempdir()?;
@@ -1054,4 +1717,421 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     };
     let module = super::build_module_seed(&program, &[], &facts, &context);
     Ok((facts, module))
+}
+
+/// A match's payload ownership constrains its subject, not an unrelated model read inside the same arm. Moving a
+/// payload out must keep the subject owned while the independently observed dictionary can still be borrowed.
+#[test]
+fn enum_match_keeps_unrelated_inputs_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Dictionary:
+    values: list[str]
+enum Node:
+    Scalar(str)
+    Other
+
+def inspect(node: Node, dictionary: Dictionary) -> int:
+    match node:
+        Node.Scalar(name) => return len(name) + len(dictionary.values)
+        Node.Other => return len(dictionary.values)
+    return 0
+
+def take(node: Node, dictionary: Dictionary) -> str:
+    match node:
+        Node.Scalar(name) =>
+            assert len(dictionary.values) >= 0
+            return name
+        Node.Other => return ""
+    return ""
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for name in ["inspect", "take"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing enum match body")?;
+        assert_eq!(
+            body.params[1].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
+            "{name}: {body:#?}"
+        );
+        if name == "take" {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::Inferred,
+                "moving a payload must retain the owned subject: {body:#?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// An immediate error callback borrows the input it only observes, without turning a stored closure into an alias.
+#[test]
+fn immediate_error_callbacks_borrow_read_only_captures() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+class Cursor:
+    items: list[int]
+    index: int = 0
+    pub def peek(self) -> int:
+        return self.items[self.index]
+    pub def take(mut self) -> int:
+        value = self.items[self.index]
+        self.index += 1
+        return value
+model Shape:
+    identity: str
+    metadata: list[str]
+model Field:
+    shape: Shape
+
+def parser(mut cursor: Cursor, outcome: Result[int, str]) -> Result[int, str]:
+    outcome.map_err((_) => f"at {cursor.peek()}")?
+    return Ok(cursor.take())
+
+def read_field(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((error) => f"{field.shape.identity}: {error}")
+
+def retained(field: Field) -> int:
+    callback = () => len(field.shape.metadata)
+    return callback()
+
+def take_field(field: Field) -> Field:
+    return field
+
+def through_owned(field: Field) -> str:
+    return take_field(field).shape.identity
+
+def dependent(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((_) => through_owned(field))
+
+def returned(field: Field, outcome: Result[int, str]) -> Result[int, Field]:
+    return outcome.map_err((_) => field)
+
+def store_text(text: str) -> list[str]:
+    return [text]
+
+def text_message(error: str, text: str) -> str:
+    stored = store_text(text)
+    return error + str(len(stored))
+
+def field_dependent(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((error) => text_message(error, field.shape.identity))
+
+def invoke(callback: Callable[str, str]) -> str:
+    return callback("invalid")
+
+class Runner:
+    pub def map_err(self, callback: Callable[str, str]) -> str:
+        return callback("invalid")
+
+def direct(field: Field) -> str:
+    return invoke((error) => f"{field.shape.identity}: {error}")
+
+def method(field: Field, runner: Runner) -> str:
+    return runner.map_err((error) => f"{field.shape.identity}: {error}")
+
+def advance(mut cursor: Cursor, callback: Callable[(), int]) -> int:
+    cursor.take()
+    return callback()
+
+def overlap(mut cursor: Cursor) -> int:
+    return advance(cursor, () => cursor.peek())
+
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for name in [
+        "parser",
+        "read_field",
+        "direct",
+        "method",
+        "overlap",
+        "retained",
+        "dependent",
+        "returned",
+        "field_dependent",
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing callback body")?;
+        let captures = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Closure { captured_operands, .. },
+                    ..
+                } => Some(captured_operands),
+                _ => None,
+            })
+            .ok_or("missing closure capture")?;
+        let Some(bir::Operand::Place(capture)) = captures.first() else {
+            return Err("missing captured source place".into());
+        };
+        if matches!(name, "parser" | "read_field" | "direct" | "method") {
+            assert_eq!(capture.fact, bir::OwnershipFact::Borrow, "{name}: {body:#?}");
+            assert!(!capture.last_use);
+        } else {
+            assert_ne!(
+                capture.fact,
+                bir::OwnershipFact::Borrow,
+                "stored or consuming closure changed: {body:#?}"
+            );
+        }
+        if matches!(name, "read_field" | "direct" | "method") {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::InferredShared,
+                "{body:#?}"
+            );
+        } else if name != "parser" {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::Inferred,
+                "{name}: {body:#?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Copy projections remain reads inside value wrappers; a wrapper containing an owner still needs that owner.
+#[test]
+fn wrapped_scalar_projections_keep_inputs_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Packet:
+    value: int
+    slots: dict[str, int]
+    metadata: list[str]
+
+def ok_field(packet: Packet) -> Result[int, str]:
+    return Ok(packet.value)
+def err_field(packet: Packet) -> Result[int, int]:
+    return Err(packet.value)
+def some_field(packet: Packet) -> Option[int]:
+    return Some(packet.value)
+def ok_index(packet: Packet) -> Result[int, str]:
+    return Ok(packet.slots["key"])
+def plain_field(packet: Packet) -> int:
+    return packet.value
+
+def whole_ok(packet: Packet) -> Result[Packet, str]:
+    return Ok(packet)
+def whole_some(packet: Packet) -> Option[Packet]:
+    return Some(packet)
+def owned_ok(packet: Packet) -> Result[list[str], str]:
+    return Ok(packet.metadata)
+def owned_err(packet: Packet) -> Result[int, list[str]]:
+    return Err(packet.metadata)
+def owned_some(packet: Packet) -> Option[list[str]]:
+    return Some(packet.metadata)
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for (name, expected) in [
+        ("ok_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("err_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("some_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("ok_index", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("plain_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("whole_ok", incan_semantics_core::IncanInputAccess::Inferred),
+        ("whole_some", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_ok", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_err", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_some", incan_semantics_core::IncanInputAccess::Inferred),
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing wrapper body")?;
+        assert_eq!(body.params[0].input_access, expected, "{name}: {body:#?}");
+    }
+    Ok(())
+}
+
+/// Producer namespaces survive checker reset and lowering without changing canonical compiler identities.
+fn assert_declared_record_namespace() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "pub model Value:\n    pub number: int\npub enum Choice:\n    Number(int)\n    Empty\npub class Resource:\n    pub number: int\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declared = incan_semantics_core::record_identity::RecordPackageIdentity {
+        registry_id: "sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0".to_owned(),
+        scoped_name: "example/catalog".to_owned(),
+    };
+    let mut original_identities = None;
+    for package in [None, Some(declared)] {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["records".to_owned()]));
+        checker.set_current_package_identity(Some("example/catalog".to_owned()));
+        checker.set_record_package_identity(package.clone());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.into_type_info();
+        if let Some(original) = &original_identities {
+            assert_eq!(&facts.declarations.declaration_identities, original);
+        } else {
+            original_identities = Some(facts.declarations.declaration_identities.clone());
+        }
+        let providers = ProviderOperationCatalog::new();
+        let context = BodyIrContext {
+            modules: &[],
+            provider_operations: &providers,
+            registry_package: None,
+            library_package: Some("example/catalog"),
+            include_inline_tests: false,
+        };
+        let seed = super::build_module_seed(&program, &["records".to_owned()], &facts, &context);
+        let model = seed
+            .nominal_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Value")
+            .ok_or("missing model")?;
+        assert_eq!(model.record_package_identity, package);
+        let class = seed
+            .nominal_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Resource")
+            .ok_or("missing class")?;
+        assert!(class.record_package_identity.is_none());
+        let choice = seed
+            .enum_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Choice")
+            .ok_or("missing enum")?;
+        assert_eq!(choice.record_package_identity, package);
+    }
+    Ok(())
+}
+
+/// A plain implementation inherits the explicit trait input contract before its body and callers are checked.
+#[test]
+fn trait_implementation_inherits_explicit_input_contract() -> Result<(), Box<dyn std::error::Error>> {
+    for (mode, access) in [
+        ("Borrowed", incan_semantics_core::IncanInputAccess::Shared),
+        ("BorrowedMut", incan_semantics_core::IncanInputAccess::Exclusive),
+        ("Owned", incan_semantics_core::IncanInputAccess::Owned),
+    ] {
+        let source = format!(
+            "trait Observe:\n    def observe[T](self, value: {mode}[T]) -> None:\n        pass\nclass Observer with Observe:\n    def observe[T](self, value: T) -> None:\n        pass\n"
+        );
+        let (program, facts, seed) = checked_seed(&source)?;
+        let crate::ast::Declaration::Class(owner) = &program.declarations[1].node else {
+            return Err("missing Observer class".into());
+        };
+        let span = owner.methods[0].span;
+        let body = seed
+            .bodies
+            .iter()
+            .find(|body| {
+                body.canonical
+                    .as_ref()
+                    .is_some_and(|identity| identity.declaration_span == span)
+            })
+            .ok_or("missing concrete observe body")?;
+        assert_eq!(body.params[1].input_access, access, "{mode}: {body:#?}");
+        assert!(
+            matches!(body.params[1].ty, incan_semantics_core::IncanType::TypeVar(_)),
+            "body type {:?}; binding {:?}; contracts {:?}",
+            body.params[1].ty,
+            facts.declarations.method_bindings_by_span.get(&span),
+            facts.declarations.ownership_contracts
+        );
+    }
+    Ok(())
+}
+
+/// An abstract trait declares the input ABI but does not acquire a fabricated executable body.
+#[test]
+fn abstract_trait_inputs_govern_the_concrete_body() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Observe:\n    def observe[T](self, value: Borrowed[T]) -> None: ...\nclass Observer with Observe:\n    def observe[T](self, value: T) -> None:\n        pass\n";
+    let (_, _, seed) = checked_seed(source)?;
+    assert_eq!(
+        seed.bodies.len(),
+        1,
+        "{:?}",
+        seed.bodies.iter().map(|body| &body.name).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        seed.bodies[0].params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Shared
+    );
+    assert!(matches!(
+        seed.bodies[0].params[1].ty,
+        incan_semantics_core::IncanType::TypeVar(_)
+    ));
+    Ok(())
+}
+
+/// The source checker's conditional result survives executable serialization with declaration-scoped binders;
+/// stripping the requirements cannot turn its generic profile into an unconditional source proof.
+#[test]
+fn generic_result_profile_retains_symbolic_requirement() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Visit:
+    def visit[E, W with Sink[E]](self, mut sink: BorrowedMut[W]) -> Result[None, E]:
+        pass
+
+trait Sink[E]:
+    def feed[V with Visit](mut self, value: Borrowed[V]) -> Result[None, E]:
+        return value.visit(self)
+
+class Value with Visit:
+    pub count: int
+    def visit[E, W with Sink[E]](self, mut sink: W) -> Result[None, E]:
+        return Ok(None)
+
+class Reader with Sink[str]:
+    pub count: int
+
+def main() -> Result[None, str]:
+    value = Value(count=7)
+    mut reader = Reader(count=0)
+    reader.feed(value)?
+    assert value.count == 7
+    return Ok(None)
+"#;
+    let (_, _, seed) = checked_seed(source)?;
+    let body = seed
+        .bodies
+        .iter()
+        .find(|body| {
+            body.canonical
+                .as_ref()
+                .is_some_and(|owner| owner.declaration_name == "feed")
+        })
+        .ok_or("missing generic feed body")?;
+    let profile = body
+        .checked_input_profile
+        .as_ref()
+        .ok_or("missing generic input profile")?;
+    assert_eq!(profile.version, 3);
+    assert_eq!(profile.result_requirements.len(), 1);
+    assert_eq!(
+        profile.result_requirements[0].1,
+        super::IncanType::Generic {
+            base: "Result".into(),
+            args: vec![
+                super::IncanType::Primitive(super::IncanPrimitiveType::Unit),
+                super::IncanType::TypeVar("E".into())
+            ],
+        }
+    );
+    let decoded: bir::Body = postcard::from_bytes(&postcard::to_allocvec(body)?)?;
+    assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
+    let mut stripped = decoded;
+    stripped
+        .checked_input_profile
+        .as_mut()
+        .ok_or("lost profile")?
+        .result_requirements
+        .clear();
+    assert!(stripped.input_profile_gap().is_some());
+    Ok(())
 }

@@ -364,12 +364,18 @@ def borrow_element_text(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Borrow a materialized copy of a list or dictionary text element; the copy is a new owner its caller releases."""
+    """Borrow a materialized text element, adapting a static frozen wrapper as for a direct place; release the new owner after the call."""
     match fact:
         OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
         _ => pass
     operand = value_operand(builder, value, span)?
+    if operand_type(builder, operand)? == PlanType.FrozenStr:
+        # Match direct frozen text: copy its static wrapper, then provide the owned text view this helper expects.
+        owner = display_plan_operand(builder, operand, span)?
+        reference = temporary(builder, PlanType.StringRef, span)
+        builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+        return Ok(read_place(reference, false, span))
     match operand.kind:
         OperandKind.Move(owner) =>
             if place_type(builder.locals, owner) != PlanType.String:

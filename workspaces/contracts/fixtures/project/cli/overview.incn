@@ -6,7 +6,7 @@
 # expect-stdout-contains:
 #   usage: incan COMMAND [OPTIONS]
 #   incan --version
-#   incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+#   incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 #   incan check PATH [--format text|json] [UNIT OPTIONS]
 #   incan explain CODE
 #   incan test PATH [UNIT OPTIONS]

@@ -1,5 +1,6 @@
 """Bind the shared local graph's exact artifacts to a compiler unit description (DD-0008)."""
 
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue
@@ -42,12 +43,19 @@ from unit_freshness import Key, artifact_files, unit_key
 from unit_publication import record_payload
 from compiler_facts import admit_fact
 from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
+from compile_time_trust import MissingTrust, combine as combine_trust, decide, decide_registry
 
 
-pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
+pub def describe_native(
+    source: Path,
+    profile: str,
+    request: FeatureRequest,
+    unattended: bool = false,
+) -> Result[UnitDescription, str]:
     """Describe the source and prepare the exact native inputs checking and compilation share."""
-    unit = describe(source, profile, request)?
-    return prepare_native(unit, toolchain_for(unit)?)
+    mut unit = describe(source, profile, request)?
+    unit.unattended = unattended
+    return prepare_native(unit, toolchain_for(unit)?, unattended)
 
 
 pub def toolchain_for(unit: UnitDescription) -> Result[Toolchain, str]:
@@ -68,6 +76,7 @@ pub def compile_incan_library(
     toolchain: Toolchain,
     compiler: str,
     reader: ManifestReader,
+    unattended: bool,
 ) -> Result[i32, str]:
     """
     Prepare one activated Incan provider after the shared graph prepared all its dependencies.
@@ -80,6 +89,7 @@ pub def compile_incan_library(
     # 1. Defaults have already contributed to the local graph's closure.
     selected = FeatureRequest(features=features, default_features=false)
     mut unit = describe(Path(source), profile, selected, reader, Some(toolchain))?
+    unit.unattended = unattended
     unit.kind = "library"
     # 2. A provider sees the same selected artifacts as every other consumer in this graph.
     unit.loaves = rebase_loaves(unit.loaves, loaves)
@@ -213,7 +223,11 @@ def library_reason(store: Path, library: UnitDescription) -> str:
     return "no stored build"
 
 
-pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+pub def prepare_native(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    unattended: bool = false,
+) -> Result[UnitDescription, str]:
     """
     Prepare exact artifacts for one selected unit, preserving its kind and activated root features.
 
@@ -222,6 +236,7 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
     """
     # 1. Incan and Rust consumers share one activation graph and one artifact per source provider.
     mut unit = described
+    unit.unattended = unattended or unit.unattended
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         unit = resolve_dependencies(unit, toolchain)?
     else:
@@ -289,13 +304,13 @@ def standard_available(loaf: UnitLoaf) -> bool:
     """Keep source dependencies and published standard providers; an unbuilt standard package grants no interface."""
     if not loaf.standard:
         return true
-    interface = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
+    interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
     return loaf_library(loaf).is_file() and interface.is_file()
 
 
 def loaf_library(loaf: UnitLoaf) -> Path:
-    """A Loaf's compiled library: `lib<crate>.rlib` in its directory, the crate being its name with `_` for `-`."""
-    linked = loaf.name.replace("-", "_")
+    """A Loaf's compiled library, using the shared native-name projection in its artifact directory."""
+    linked = native_crate_name(loaf.name)
     return Path(loaf.dir).joinpath(f"lib{linked}.rlib")
 
 
@@ -342,12 +357,12 @@ def link_loaf(
 
     During bootstrap only already compiled standard packages may be linked.
     """
-    linked = loaf.name.replace("-", "_")
+    linked = native_crate_name(loaf.name)
     library = loaf_library(loaf)
     if loaf.standard and not library.is_file():
         return Ok((described, []))
     unit = add_extern(described, NativeCrate(name=linked, path=library.0))?
-    closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
+    closure = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.native.json")
     if not closure.is_file():
         return Ok((unit, [loaf.dir]))
     document = readings.read(closure)?
@@ -364,6 +379,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     3. Compile the local units the edges reach.
     4. Bind the project's own crate, then the aliases of its local and registry edges.
     """
+    mut unit = unit
     # 1. A project with no local source or Rust inputs needs no dependency preparation.
     declared = rust_facet(unit.project_root, false, unit.manifests)?
     if not needs_local_preparation(unit, declared.kind):
@@ -381,6 +397,12 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     if len(facets) == 0:
         facets = local_facets(demand, configuration, {}, unit.manifests)?
     registry = registry_for_unit(unit, facets, toolchain)?
+    local_trust = decide(facets, unit.project_root, unit.unattended, unit.manifests)?
+    decision = combine_trust(local_trust, decide_registry(registry, unit.project_root, unit.unattended)?)
+    unit.covered_by = decision.covered_by
+    unit.trust_stop = decision.stop()
+    if len(decision.missing) > 0:
+        return Ok(with_prepared_loaves(unit, decision.missing))
     # 3. The local units the edges reach are compiled, each once, before the unit that links them.
     request = RustBuild(
         project=unit.project_root,
@@ -393,6 +415,8 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),
         manifests=unit.manifests,
+        unattended=unit.unattended,
+        covered_by=unit.covered_by,
     )
     built = build_dependencies(request, facets)?
     # 4. The unit searches what was built, names its own crate, and binds each edge under the alias it is written by.
@@ -409,6 +433,20 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         if facet.project == unit.project_root and facet.domain == DependencyDomain.Target:
             result = bind_edges(result, facet, built, registry)?
     return Ok(result)
+
+
+def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> UnitDescription:
+    """Mark dependencies unavailable after the trust cut while retaining their source binding descriptions."""
+    mut ready = unit
+    mut not_prepared = [item.loaf for item in missing]
+    for loaf in ready.loaves:
+        if not loaf.is_dependency():
+            continue
+        interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
+        if (not loaf_library(loaf).is_file() or not interface.is_file()) and loaf.name not in not_prepared:
+            not_prepared.append(loaf.name)
+    ready.not_prepared_loaves = sorted(not_prepared)
+    return ready
 
 
 def registry_for_unit(

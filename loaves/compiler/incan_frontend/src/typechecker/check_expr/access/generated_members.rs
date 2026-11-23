@@ -121,14 +121,7 @@ impl TypeChecker {
         member: &str,
         kind: SemanticSourceTargetKind,
     ) -> CanonicalSymbolId {
-        CanonicalSymbolId {
-            namespace: SymbolNamespace::Member,
-            origin: owner.origin.clone(),
-            declaration_name: member.to_string(),
-            kind,
-            scope_discriminant: owner.scope_discriminant,
-            declaration_span: owner.declaration_span,
-        }
+        owner.generated_member(member, kind)
     }
 
     /// Resolve an owner declaration first, then mint its compiler-synthesized member target.
@@ -282,12 +275,15 @@ impl TypeChecker {
             }
         }
         let (library, path) = self.loaf_module(&module)?;
-        let (SymbolKind::Type(TypeInfo::Class(info)), _) =
-            self.lookup_pub_library_module_symbol_member(&library, &path, name)?
-        else {
+        let (SymbolKind::Type(info), _) = self.lookup_pub_library_module_symbol_member(&library, &path, name)? else {
             return None;
         };
-        let selected = info.fields.get(field)?;
+        let fields = match &info {
+            TypeInfo::Model(model) => &model.fields,
+            TypeInfo::Class(class) => &class.fields,
+            _ => return None,
+        };
+        let selected = fields.get(field)?;
         if let Some(identity) = selected.identity.clone() {
             self.type_info.record_resolved_identity(span, identity);
         }

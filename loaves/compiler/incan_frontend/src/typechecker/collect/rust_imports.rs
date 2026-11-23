@@ -114,7 +114,8 @@ impl TypeChecker {
     /// Whether an admitted nonstandard Loaf supplies its compiled crate under `crate_name`.
     fn dependency_loaf_supplies_rust_root(&self, crate_name: &str) -> bool {
         self.loaves.identities().any(|(_, identity)| {
-            !self.loaves.is_standard_package(&identity.name) && identity.name.replace('-', "_") == crate_name
+            !self.loaves.is_standard_package(&identity.name)
+                && incan_loaf_names::native_crate_name(&identity.name) == crate_name
         })
     }
 

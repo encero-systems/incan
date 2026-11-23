@@ -442,3 +442,86 @@ fn local_loan_destinations_keep_checked_sources() -> Result<(), Box<dyn std::err
     assert!(flow::analyze(&graph).is_err());
     Ok(())
 }
+
+/// Generic trait defaults retain an exact conditional result obligation; removal or type replacement cannot
+/// turn the source proof into an unconditional permission to release caller-owned loans.
+#[test]
+fn generic_trait_result_requires_closed_dependency_proof() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Visit:
+    def visit[E, W with Sink[E]](self, mut sink: BorrowedMut[W]) -> Result[None, E]:
+        pass
+
+trait Sink[E]:
+    def feed[V with Visit](mut self, value: Borrowed[V]) -> Result[None, E]:
+        return value.visit(self)
+
+class Value with Visit:
+    pub count: int
+    def visit[E, W with Sink[E]](self, mut sink: W) -> Result[None, E]:
+        return Ok(None)
+
+class Reader with Sink[str]:
+    pub count: int
+
+def main() -> Result[None, str]:
+    value = Value(count=7)
+    mut reader = Reader(count=0)
+    reader.feed(value)?
+    assert value.count == 7
+    return Ok(None)
+"#;
+    let checker = checked(source)?;
+    assert!(
+        checker.errors.is_empty(),
+        "errors={:?}; calls={:?}",
+        checker.errors,
+        checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .iter()
+            .filter(|(_, call)| call
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.declaration_name == "feed"))
+            .map(|(span, call)| (
+                call,
+                checker.type_info.expr_type(*span),
+                checker.type_info.selected_input_contract(call)
+            ))
+            .collect::<Vec<_>>()
+    );
+    let (owner, state) = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "feed")
+        .ok_or("missing feed flow")?;
+    let InputFlow::Checked { graph, .. } = state else {
+        return Err(format!("{state:?}").into());
+    };
+    let (span, invocation) = graph
+        .invocations
+        .iter()
+        .find(|(_, call)| call.result_requirement.is_some())
+        .ok_or("generic call lost its conditional obligation")?;
+    assert_eq!(
+        invocation.result_requirement.as_ref(),
+        checker.type_info.expr_type(*span)
+    );
+    assert!(checker.type_info.checked_input_body(owner)?.is_some());
+    for replacement in [None, Some(ResolvedType::Str)] {
+        let mut corrupted = checker.type_info.clone();
+        let Some(InputFlow::Checked { graph, .. }) = corrupted.protocols.explicit_input_flow.get_mut(owner) else {
+            return Err("missing copied graph".into());
+        };
+        graph
+            .invocations
+            .get_mut(span)
+            .ok_or("missing copied invocation")?
+            .result_requirement = replacement;
+        assert!(corrupted.checked_input_body(owner).is_err());
+    }
+    Ok(())
+}

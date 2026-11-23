@@ -73,6 +73,7 @@ mod rust_hover;
 mod scoped_symbol_contexts;
 mod scoped_symbols;
 mod signature_help;
+mod trust_command;
 
 use api_markdown::*;
 use completions::*;
@@ -83,8 +84,10 @@ use metadata_previews::*;
 use scoped_symbol_contexts::*;
 use scoped_symbols::*;
 use signature_help::*;
+use trust_command::*;
 
 const EMIT_CONTRACT_MODEL_COMMAND: &str = "incan.metadata.model.emit";
+const ADD_TRUST_COMMAND: &str = "incan.trust.add";
 
 /// Document state stored by the LSP
 #[derive(Debug, Clone)]
@@ -123,6 +126,8 @@ pub struct DocumentState {
     loaves: Arc<LoafIndex>,
     /// Active root-package features used to keep completion aligned with the compiler's declaration projection.
     active_features: BTreeSet<String>,
+    /// User-configuration entries Oven offered for compile-time providers withheld from unattended analysis.
+    trust_entries: Vec<TrustEntry>,
 }
 
 /// Source-aware canonical identity facts retained from one completed document analysis.

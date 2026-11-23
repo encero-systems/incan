@@ -32,7 +32,7 @@ def relay[U](items: list[U]) -> int:
 
 
 class Index[K, V]:
-    entries: dict[K, V]
+    pub entries: dict[K, V]
 
     pub def put(mut self, key: K, value: V) -> None:
         self.entries[key] = value

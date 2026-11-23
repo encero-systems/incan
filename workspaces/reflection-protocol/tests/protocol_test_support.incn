@@ -1,0 +1,271 @@
+"""Handwritten adopters prove the ordinary protocol before compiler-generated adoption exists."""
+
+from std.primitives.reflection import (
+    DecimalValue,
+    FieldInfo,
+    LifecycleInfo,
+    Reconstruct,
+    SequenceKind,
+    ShapeInfo,
+    Source,
+    VariantInfo,
+    Walk,
+    Walker,
+)
+
+const NO_RENAMES: FrozenList[FrozenStr] = []
+const NO_FIELDS: FrozenList[FieldInfo] = []
+const NO_VARIANTS: FrozenList[VariantInfo] = []
+
+
+pub def text_shape() -> ShapeInfo:
+    """A manually declared scalar representation, with no nominal authority claim."""
+    return ShapeInfo(
+        name="str",
+        identity=b"",
+        renamed_from=NO_RENAMES,
+        renamed_from_lifecycle=None,
+        spelling="string",
+        fields=NO_FIELDS,
+        variants=NO_VARIANTS,
+    )
+
+
+pub class TextValue with Walk, Reconstruct:
+    """A custom live class deliberately exposing only its stored text."""
+
+    pub text: str
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Pass the actual typed string to the selected walker."""
+        return walker.str(self.text)
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        """Describe the chosen stored scalar without constructing a TextValue."""
+        return text_shape()
+
+    @staticmethod
+    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[TextValue, E]:
+        """Restore the class from one typed source read."""
+        value = source.str()?
+        return Ok(TextValue(text=value))
+
+
+pub class RecordingWalker with Walker[str]:
+    """Override a scalar observation; inherited structural defaults must reuse this state."""
+
+    pub values: list[str]
+    pub refuse: bool = false
+
+    def str(mut self, value: str) -> Result[None, str]:
+        """Record values in order or propagate the unchanged test failure."""
+        if self.refuse:
+            return Err("located failure")
+        self.values.append(value)
+        return Ok(None)
+
+
+pub class QuietWalker with Walker[str]:
+    """Use every default without any concrete override."""
+
+    pub marker: int = 0
+
+
+pub class TextSource with Source[str]:
+    """A deliberately limited format; unsupported kinds fail rather than become absent fields."""
+
+    pub text: str
+    pub fail: bool = false
+    pub reads: int = 0
+    pub failures: list[str] = []
+    pub validation_failure: Option[ValidationError] = None
+
+    def str(mut self) -> Result[str, str]:
+        """Read the test's string and retain a caller-selected failure exactly once."""
+        self.reads += 1
+        if self.fail:
+            return Err(self.malformed("bad text"))
+        return Ok(self.text)
+
+    def bool(mut self) -> Result[bool, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def bytes(mut self) -> Result[bytes, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def integer(mut self) -> Result[i128, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def unsigned(mut self) -> Result[u128, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def float(mut self) -> Result[f64, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def decimal(mut self) -> Result[DecimalValue, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def none(mut self) -> Result[None, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def some[V with Reconstruct](mut self) -> Result[Option[V], str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def element[V with Reconstruct](mut self) -> Result[Option[V], str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def entry[K with Reconstruct, V with Reconstruct](mut self) -> Result[Option[tuple[K, V]], str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def member(mut self) -> Result[FrozenStr, str]:
+        """Refuse a value kind this test format cannot read."""
+        return Err(self.malformed("unsupported kind"))
+
+    def begin_sequence(mut self, kind: SequenceKind) -> Result[None, str]:
+        """This source has no sequence representation."""
+        return Err(self.malformed("sequence"))
+
+    def end_sequence(mut self) -> Result[None, str]:
+        """An unentered sequence cannot be completed."""
+        return Err(self.malformed("sequence end"))
+
+    def begin_dict(mut self) -> Result[None, str]:
+        """This source has no dictionary representation."""
+        return Err(self.malformed("dict"))
+
+    def end_dict(mut self) -> Result[None, str]:
+        """An unentered dictionary cannot be completed."""
+        return Err(self.malformed("dict end"))
+
+    def begin_model(mut self, shape: ShapeInfo) -> Result[None, str]:
+        """This source accepts a metadata-only model for absence controls."""
+        return Ok(None)
+
+    def field[V with Reconstruct](mut self, info: FieldInfo) -> Result[Option[V], str]:
+        """The input contains no model fields; absence is distinct from a failed scalar read."""
+        return Ok(None)
+
+    def end_model(mut self) -> Result[None, str]:
+        """The empty test model has no trailing input."""
+        return Ok(None)
+
+    def begin_variant(mut self, shape: ShapeInfo) -> Result[VariantInfo, str]:
+        """This source has no enum representation."""
+        return Err(self.malformed("variant"))
+
+    def end_variant(mut self) -> Result[None, str]:
+        """An unentered variant cannot be completed."""
+        return Err(self.malformed("variant end"))
+
+    def reference(mut self, kind: FrozenStr) -> Result[FrozenBytes, str]:
+        """This source never resolves references as a side effect of decoding."""
+        return Err(self.malformed("reference"))
+
+    def missing(mut self, info: FieldInfo) -> str:
+        """Retain one located missing-field failure."""
+        return self.malformed("missing " + str(info.name))
+
+    def takes_default(self, info: FieldInfo) -> bool:
+        """No missing field is repaired by a current constructor default."""
+        return false
+
+    def invalid(mut self, error: ValidationError) -> str:
+        """Retain this scalar source's final validation error separately from the diagnostic summary."""
+        self.validation_failure = Some(error)
+        return self.malformed("validation")
+
+    def collects(self) -> bool:
+        """This source continues independent failures when requested by reconstruction."""
+        return true
+
+    def collected(self) -> Option[str]:
+        """Return all retained failures, or genuine absence of failures."""
+        if len(self.failures) == 0:
+            return None
+        return Some("; ".join(self.failures))
+
+    def malformed(mut self, reason: str) -> str:
+        """A stable source location survives conversion and collection exactly once."""
+        error = "input:1: " + reason
+        self.failures.append(error)
+        return error
+
+    def numeric_range(mut self, requested_type: FrozenStr) -> str:
+        """Retain requested numeric type in the source's failure channel."""
+        return self.malformed("range " + str(requested_type))
+
+    def shape_mismatch(mut self, expected: FrozenStr, actual: FrozenStr) -> str:
+        """Retain both incompatible shapes."""
+        return self.malformed("shape " + str(expected) + " != " + str(actual))
+
+
+pub class ReferenceValue with Walk:
+    """A hand-authored reference kind; walking never looks up its target."""
+
+    pub identity: FrozenBytes
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Pass the reference as a typed observation."""
+        return walker.reference("object", self.identity)
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        """The test uses an explicit custom reference spelling."""
+        return ShapeInfo(
+            name="ReferenceValue",
+            identity=b"",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="ref@object",
+            fields=NO_FIELDS,
+            variants=NO_VARIANTS,
+        )
+
+
+pub class NestedReferences with Walk:
+    """A custom sequence containing explicitly present references."""
+
+    pub values: list[ReferenceValue]
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Compose optional and sequence defaults around each reference."""
+        walker.begin_sequence(SequenceKind.List, len(self.values))?
+        for value in self.values:
+            walker.some(value)?
+        return walker.end_sequence()
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        """Describe this custom sequence independently of its instances."""
+        return ShapeInfo(
+            name="NestedReferences",
+            identity=b"",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="list[ref@object]",
+            fields=NO_FIELDS,
+            variants=NO_VARIANTS,
+        )
+
+
+pub class ReferenceCollector with Walker[str]:
+    """Observe only references, relying on defaults for all intermediate structure."""
+
+    pub identities: list[FrozenBytes]
+
+    def reference(mut self, kind: FrozenStr, identity: FrozenBytes) -> Result[None, str]:
+        """Record the supplied identity without fetching its target."""
+        assert kind == "object"
+        self.identities.append(identity)
+        return Ok(None)

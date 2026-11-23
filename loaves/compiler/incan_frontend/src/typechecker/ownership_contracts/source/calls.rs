@@ -44,6 +44,31 @@ impl Builder<'_> {
         if self.checker.type_info.constructor_field_binding(span).is_some() {
             return self.model_construction(callee, arguments, span, incoming);
         }
+        if let Some(view_fields) = self.enum_view_constructor_fields(callee, span) {
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, span, incoming);
+            }
+            let view_fields = self.enum_argument_view_sources(arguments)?;
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, span, incoming);
+            }
+        }
+        if self
+            .checker
+            .type_info
+            .resolved_identity(span)
+            .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant)
+            && self
+                .checker
+                .type_info
+                .expr_type(span)
+                .is_some_and(|ty| self.checker.type_holds_borrow(ty))
+        {
+            let view_fields = self.enum_argument_view_sources(arguments)?;
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, span, incoming);
+            }
+        }
         if !matches!(callee.node, Expr::Ident(_)) {
             return Err(Unavailable {
                 span,
@@ -349,6 +374,12 @@ impl Builder<'_> {
                     .iter()
                     .all(|mode| !matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut))
             });
+        let result_requirement = (call.kind == super::super::InputCallKind::Explicit
+            && contract.is_some_and(|contract| {
+                contract.result_source.is_none() && contract.modes.iter().all(|mode| mode.component.parameter.is_some())
+            })
+            && conditional_result(result))
+        .then(|| result.clone());
         if view.is_none()
             && native_dependencies.is_none()
             && !native_independent_result
@@ -356,6 +387,7 @@ impl Builder<'_> {
             && !owned_dependent_result
             && !clone_result
             && !plain_result(result)
+            && result_requirement.is_none()
             && !lends_nothing
         {
             return Err(Unavailable {
@@ -382,6 +414,7 @@ impl Builder<'_> {
         let mut loans = Vec::new();
         let mut invocation = Invocation {
             callee: call.callee.clone(),
+            result_requirement,
             receiver: None,
             receiver_owned: false,
             receiver_source: None,
@@ -1164,6 +1197,27 @@ fn plain_result(ty: &ResolvedType) -> bool {
         }
         _ => false,
     }
+}
+
+/// Retain an unresolved scalar-carrier obligation without declaring any named leaf independent. Legacy checking
+/// can represent an enclosing binder as Named; Body IR classifies it using the exact declaration's binder inventory.
+/// A real nominal leaf stays nominal and refuses closed admission until its dependency proof is supported.
+pub(in crate::typechecker::ownership_contracts) fn conditional_result(ty: &ResolvedType) -> bool {
+    /// Check carrier leaves while retaining whether any unresolved binder prevents a final independence proof.
+    fn leaves(ty: &ResolvedType, generic: &mut bool) -> bool {
+        match ty {
+            ResolvedType::TypeVar(_) | ResolvedType::Named(_) => {
+                *generic = true;
+                true
+            }
+            ResolvedType::Generic(_, arguments) if ty.is_result() || ty.is_option() => {
+                !arguments.is_empty() && arguments.iter().all(|item| leaves(item, generic))
+            }
+            _ => plain_result(ty),
+        }
+    }
+    let mut generic = false;
+    (ty.is_result() || ty.is_option()) && leaves(ty, &mut generic) && generic
 }
 
 /// Printing reaches no nominal display hook for primitive values and for lists whose items print the same way.

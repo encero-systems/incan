@@ -221,7 +221,7 @@ pub trait Reconstruct with Walk:
 ### Which types have them
 
 - `Walk` and `Reconstruct` must be automatic derives of `model`, `enum` and `newtype`, holding for a declaration when every field, payload or underlying type has them. They hold for a generic declaration at each instantiation whose type arguments do.
-- `bool`, every integer and float type, `decimal`, `str`, `bytes`, `None`, `Option`, `Result`, `list`, `dict`, `set`, tuples, union types and their frozen forms must have them when their element types do.
+- `bool`, every integer, float and decimal type, `str`, `bytes`, `None`, `Option`, `Result`, `list`, `dict`, `set`, tuples, union types and their frozen forms must have them when their element types do.
 - A `class`, a callable, a `rust::` type and a live runtime resource must not have them unless the type's author writes them. `SecretStr` and `SecretBytes` must not have them at all, so every format refuses a value holding one by the same rule (RFC 103).
 - A declaration without the members must not be refused for that. A use is refused: a call, or a bound through a type parameter. The diagnostic must name the field path and show the field's declaration as a second location. For an author-extensible type it must explain that the type can supply the members; for `SecretStr` or `SecretBytes` it must explain the non-disclosure restriction rather than suggest implementing a forbidden protocol.
 - A program that reaches none of these members must compile and run as if they did not exist.
@@ -254,7 +254,8 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 
 | Kind | `Walker[E]` members | `Source[E]` members |
 | --- | --- | --- |
-| `bool`, `str`, `bytes`, `decimal` | One member each, named for the kind and taking the value | One member each, named for the kind and returning the value |
+| `bool`, `str`, `bytes` | One member each, named for the kind and taking the value | One member each, named for the kind and returning the value |
+| Decimals | `decimal(value: DecimalValue)`; a `decimal[P, S]` arrives as its exact value with its precision and scale | `decimal()`, returning `DecimalValue` |
 | Integers | `integer(value: i128)`, and `unsigned(value: u128)` for `u128` | `integer()`, `unsigned()` |
 | Floats | `float(value: f64)`; an `f32` arrives as the `f64` it equals | `float()` |
 | `None` | `none()` | `none()`, returning `None` |
@@ -273,6 +274,21 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 - Source implementations must expose typed failure conversion for malformed values, numeric range failures, and shape mismatches. End operations validate that the selected container or frame is complete under the format's contract. Tuple arity, enum variant selection, union membership and nested declared types are checked rather than guessed.
 - Depth, sizes and allocation are the format's to bound. The generated recursion must carry the source or walker's accounting through nested values; calling a nested model must not reset its limits. The members add no arbitrary universal limit.
 
+### Decimal values
+
+`std.primitives.reflection` owns `DecimalValue`, which holds any decimal exactly, together with the type it was declared as:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `coefficient` | `i128` | The value times 10 to the power `scale`, so `19.90` in a `decimal[10, 2]` is `1990` |
+| `precision` | `u8` | The declared precision `P`, from 1 to 38 |
+| `scale` | `u8` | The declared scale `S`, from 0 to `P` |
+
+- Constructing a `DecimalValue` must refuse a precision outside 1 to 38, a scale above the precision and a coefficient with more than `precision` digits.
+- A walker receives the declared precision and scale with the value, because a format may write a decimal at its type's scale, as `19.90d`, and an element of a `list[decimal[10, 2]]` reaches the walker without a `FieldInfo`.
+- Reconstruction must convert the returned `DecimalValue` into the requested `decimal[P, S]` by exact value, and refuse a value that type cannot hold exactly, such as `19.95` into a `decimal[10, 1]`, through the source's numeric range failure.
+- Whether a value written as one decimal type fits a field of another is the format's rule. RFC 165 fits a decimal only into the same type.
+
 ### Shape
 
 `__shape__()` returns a `ShapeInfo`, without needing a value:
@@ -283,9 +299,13 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | `identity` | `FrozenBytes` | The model's or enum's identity under RFC 165, distinct from its structural model hash; empty for other types |
 | `renamed_from` | `FrozenList[FrozenStr]` | The declaration's earlier names under RFC 085, earliest first, empty when it has none |
 | `renamed_from_lifecycle` | `Option[LifecycleInfo]` | The declaration rename block's optional lifecycle facts under RFC 085, using the same carrier as fields and variants |
+| `selector` | `FrozenStr` | The text a `stored_type` uses to name this model or enum: its identity, followed by its type arguments when it is a generic instantiation, under *Generic models* in RFC 165; empty for other types |
 | `spelling` | `FrozenStr` | The type's canonical spelling, with nested models and enums folded in, under *Record hashes* in RFC 165 |
 | `fields` | `FrozenList[FieldInfo]` | Every stored field, in ascending identity order |
 | `variants` | `FrozenList[VariantInfo]` | An enum's variants, in ascending identity order |
+| `declarations` | `FrozenList[ShapeInfo]` | Every other model and enum this shape can reach, each once, in ascending `selector` order |
+
+`declarations` lets a format describe every type a value could hold without a value to walk, including the element type of an empty list, the type inside a `None` and the variants a value did not take. It holds each model and enum that a field's `stored_type` names, a variant's payload fields included, in this shape or in any shape it holds. A shape inside `declarations` has empty `declarations` of its own, because the list holding it is already the whole closure, so a recursive model lists each declaration once and a selector naming the type itself resolves to the shape itself. A written `__shape__` must list the closure of its stored form the same way; `ShapeInfo.of[T]()` gives each reached type's shape and closure to merge. A format must refuse a shape whose `stored_type` names a selector it cannot resolve, rather than guess it.
 
 `FieldInfo` must gain these, and `__fields__()` must carry them too:
 
@@ -293,7 +313,7 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | --- | --- | --- |
 | `identity` | `FrozenBytes` | The field's identity under RFC 165 |
 | `canonical` | `bool` | RFC 085's `canonical`, true when absent |
-| `stored_type` | `FrozenStr` | The field's declared type in canonical spelling: aliases resolved, a newtype as what it holds, generic arguments concrete, a nested model or enum by its identity so that its own evolution does not move this text |
+| `stored_type` | `FrozenStr` | The field's declared type in canonical spelling: aliases resolved, a newtype as what it holds, generic arguments concrete, a nested model or enum by its `selector` so that its own evolution does not move this text |
 | `default_is_empty` | `bool` | Whether the declared default is an empty collection |
 | `position` | `int` | The field's place in declaration order |
 | `renamed_from` | `FrozenList[FrozenStr]` | The field's earlier names under RFC 085, earliest first, empty when it has none |

@@ -108,8 +108,9 @@ Rules:
 - **Unknown fields are errors**: `Point(z=1)` is a type error.
 - **Duplicates are errors**: `Point(x=1, x=2)` is a type error.
 - **Missing required fields are errors**: if a field has no default, you must pass it.
+- **Private fields are not external constructor keys**: code outside the declaring class, including a child class, must call a `pub` constructor method or use fields declared `pub`.
 
-Importing a public class does not make its private fields readable. Construction still follows the declaring provider's complete field order so private defaults are applied by that provider, including through direct imports, aliases, and multi-hop public facade re-exports. A later `value.private_field` access remains a type error outside methods on the declaring class.
+Importing a public class does not make its private fields constructor keys or readable fields. Private defaults are still applied by the declaring provider when external code omits those fields, including through direct imports, aliases, and multi-hop public facade re-exports. A later `value.private_field` access remains a type error outside methods on the declaring class.
 
 ## Field access
 

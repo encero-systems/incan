@@ -102,16 +102,81 @@ impl TypeChecker {
         program: &Program,
         preserve_dependency_semantics: bool,
     ) -> Result<(), Vec<CompileError>> {
-        self.reset_program_check(program, preserve_dependency_semantics);
-        self.collect_program_check_declarations(program);
-        self.record_program_header_facts();
-        self.record_source_declaration_identities(program);
-        self.record_type_param_declaration_spans(program);
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::reset_program_check",
+            )
+            .entered();
+            self.reset_program_check(program, preserve_dependency_semantics);
+        }
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::collect_program_declarations",
+                declarations = program.declarations.len(),
+            )
+            .entered();
+            self.collect_program_check_declarations(program);
+        }
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::record_program_header_facts",
+            )
+            .entered();
+            self.record_program_header_facts();
+        }
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::record_source_declaration_identities",
+            )
+            .entered();
+            self.record_source_declaration_identities(program);
+        }
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::record_type_param_declaration_spans",
+            )
+            .entered();
+            self.record_type_param_declaration_spans(program);
+        }
         self.visibility_point = VisibilityPoint::Collected;
-        self.prepare_program_body_facts();
-        self.check_program_declaration_bodies(program);
-        self.record_program_lowering_facts(program);
-        let result = self.finish_program_check(program);
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::prepare_program_body_facts",
+            )
+            .entered();
+            self.prepare_program_body_facts();
+        }
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::check_program_declaration_bodies",
+                declarations = program.declarations.len(),
+            )
+            .entered();
+            self.check_program_declaration_bodies(program);
+        }
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::record_program_lowering_facts",
+            )
+            .entered();
+            self.record_program_lowering_facts(program);
+        }
+        let result = {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::finish_program_check",
+            )
+            .entered();
+            self.finish_program_check(program)
+        };
         self.visibility_point = VisibilityPoint::Finished;
         result
     }
@@ -147,6 +212,16 @@ impl TypeChecker {
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
         self.type_info = TypeCheckInfo::default();
+        self.view_type_cache.get_mut().clear();
+        if preserve_dependency_semantics {
+            self.type_info
+                .declarations
+                .ownership_contracts
+                .clone_from(&self.dependency_method_input_contracts);
+        } else {
+            self.dependency_method_input_contracts.clear();
+        }
+        self.type_info.declarations.record_package_identity = self.record_package_identity.clone();
         self.warnings.clear();
         self.errors.clear();
         self.pending_uncopyable_dict_lookups.clear();

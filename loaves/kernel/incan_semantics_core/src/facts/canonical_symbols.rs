@@ -130,6 +130,22 @@ impl CanonicalSymbolId {
         }
     }
 
+    /// Derive one compiler-generated member identity from its exact nominal owner.
+    ///
+    /// Generated members have no independent source token, so their owner's origin, scope and declaration span are
+    /// the only stable provenance available. Keeping that rule here prevents frontend and executable consumers from
+    /// independently reconstructing identities from a member spelling.
+    pub fn generated_member(&self, declaration_name: impl Into<String>, kind: SemanticSourceTargetKind) -> Self {
+        Self {
+            namespace: SymbolNamespace::Member,
+            origin: self.origin.clone(),
+            declaration_name: declaration_name.into(),
+            kind,
+            scope_discriminant: self.scope_discriminant,
+            declaration_span: self.declaration_span,
+        }
+    }
+
     /// Return the owning module path when this identity is owned by a project source module.
     pub fn module_path(&self) -> Option<&[String]> {
         match &self.origin {

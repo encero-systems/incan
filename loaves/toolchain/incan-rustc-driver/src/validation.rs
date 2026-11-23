@@ -3,7 +3,7 @@
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::CanonicalSymbolId;
+use internal_models::{CanonicalSymbolId, DeclarationKind, SymbolNamespace, SymbolOrigin};
 use std::collections::BTreeSet;
 
 use crate::error::PlanError;
@@ -65,7 +65,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 }
 
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Scalar {
     CChar,
     RawPointer(bool, Vec<Scalar>),
@@ -167,7 +167,7 @@ enum Scalar {
 }
 
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Leaf {
     /// One exact shared-reference carrier, never an owned copy of its referent.
     Reference(Vec<Scalar>),
@@ -374,9 +374,10 @@ fn invalid(function: &Function, reason: impl Into<String>) -> PlanError {
 /// This pass checks references, signatures, scalar expression types, and cleanup edges. It is not an ownership
 /// checker: stage 3c must only submit checked bodies, and rustc's borrow checker remains a backstop.
 pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
-    validate_declarations(plan, library)?;
+    let borrowed_aliases = BorrowedAliasInventory::collect(plan);
+    validate_declarations(plan, library, &borrowed_aliases)?;
     for function in &plan.functions {
-        validate_callable(plan, function)?;
+        validate_callable(plan, function, &borrowed_aliases)?;
     }
     Ok(())
 }
@@ -384,12 +385,13 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
 /// Collect each function's first adapter refusal after the shared declaration context has passed validation.
 /// A declaration failure is returned alone because individual function checks require that context.
 pub(crate) fn refusals(plan: &Plan, library: bool) -> Vec<PlanError> {
-    if let Err(error) = validate_declarations(plan, library) {
+    let borrowed_aliases = BorrowedAliasInventory::collect(plan);
+    if let Err(error) = validate_declarations(plan, library, &borrowed_aliases) {
         return vec![error];
     }
     plan.functions
         .iter()
-        .filter_map(|function| match validate_callable(plan, function) {
+        .filter_map(|function| match validate_callable(plan, function, &borrowed_aliases) {
             Ok(()) => None,
             Err(error @ PlanError::Invalid { .. }) => Some(error),
             Err(error) => Some(invalid(function, error.to_string())),
@@ -398,7 +400,11 @@ pub(crate) fn refusals(plan: &Plan, library: bool) -> Vec<PlanError> {
 }
 
 /// Validate names, declarations, extern signatures and the entrypoint before any callable body is inspected.
-fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
+fn validate_declarations(
+    plan: &Plan,
+    library: bool,
+    borrowed_aliases: &BorrowedAliasInventory,
+) -> Result<(), PlanError> {
     span(&plan.span)?;
     let mut names = BTreeSet::new();
     for function in &plan.functions {
@@ -406,8 +412,8 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
             return Err(invalid(function, "function name is invalid or duplicated"));
         }
     }
-    validate_models(plan)?;
-    validate_enums(plan)?;
+    validate_models(plan, borrowed_aliases)?;
+    validate_enums(plan, borrowed_aliases)?;
     validate_generic_models(plan)?;
     validate_generic_enums(plan)?;
     library_model_order(plan)?;
@@ -415,7 +421,7 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
     crate::checked_json::validate_source_roots(plan)?;
     validate_value_layouts(plan)?;
     validate_statics(plan)?;
-    let mut paths = BTreeSet::new();
+    let mut paths = Vec::new();
     for external in &plan.externals {
         span(&external.span)?;
         for ty in external
@@ -427,21 +433,23 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
             validate_model_type(plan, ty)?;
         }
         let segments: Vec<_> = external.path.split("::").collect();
+        let path_key = (
+            external.path.clone(),
+            external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
+        );
         if incan_semantics_core::body_ir::rust_item_identity(&external.path).is_none()
             || !segments
                 .iter()
                 .filter(|segment| **segment != "[]")
                 .all(|segment| identifier(segment))
-            || !paths.insert((
-                external.path.clone(),
-                external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
-            ))
+            || paths.contains(&path_key)
         {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
                 reason: "invalid or duplicate canonical external path".into(),
             });
         }
+        paths.push(path_key);
         if external
             .parameters
             .iter()
@@ -490,10 +498,14 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
 }
 
 /// Apply the same closure, callable-storage and body checks in ordinary compilation and diagnostic enumeration.
-fn validate_callable(plan: &Plan, function: &Function) -> Result<(), PlanError> {
+fn validate_callable(
+    plan: &Plan,
+    function: &Function,
+    borrowed_aliases: &BorrowedAliasInventory,
+) -> Result<(), PlanError> {
     validate_closure_constructor(function)?;
     crate::shared_callables::validate(function)?;
-    validate_function(plan, function)
+    validate_function(plan, function, borrowed_aliases)
 }
 
 /// Whether a binary main's result is a standard `Result` with a unit success and a text or SDK-owned error.

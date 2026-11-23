@@ -478,6 +478,23 @@ pub fn imported_module_deps_for<'m>(
     module_idx_by_key: &HashMap<String, usize>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<(&'m str, &'m Program)> {
+    imported_module_dep_indexes_for(modules, module_index, module_idx_by_key, own_standard_package)
+        .into_iter()
+        .map(|idx| (modules[idx].name.as_str(), &modules[idx].ast))
+        .collect()
+}
+
+/// Resolve the collected-module indexes in one module's transitive source dependency closure.
+///
+/// This is the identity-preserving form of [`imported_module_deps_for`]. Typecheck orchestration uses the indexes to
+/// attach immutable provider facts that were built once for each collected module without changing dependency order
+/// or collapsing modules that happen to share a short name.
+pub(crate) fn imported_module_dep_indexes_for(
+    modules: &[ParsedModule],
+    module_index: usize,
+    module_idx_by_key: &HashMap<String, usize>,
+    own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+) -> Vec<usize> {
     // ---- Context: bounds and setup ----
     if module_index >= modules.len() {
         return Vec::new();
@@ -501,11 +518,7 @@ pub fn imported_module_deps_for<'m>(
         ));
     }
 
-    // ---- Context: materialize dependency pairs for typechecker.check_with_imports ----
-    dep_indexes
-        .into_iter()
-        .map(|idx| (modules[idx].name.as_str(), &modules[idx].ast))
-        .collect()
+    dep_indexes.into_iter().collect()
 }
 
 /// Collect immediate local source dependencies for one collected module from bare and absolute `crate.*` imports.

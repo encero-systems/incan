@@ -3,7 +3,7 @@
 //! Oven reads a project's manifest once and describes each unit it compiles, checks or analyzes. The compiler reads
 //! no manifest: everything a session needs about the project arrives here.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -62,6 +62,9 @@ pub struct UnitDescription {
     pub source_root: PathBuf,
     /// The package name, which is also the package identity of a library unit's declarations.
     pub package: String,
+    /// Registry declared by this package's own manifest. Absence does not synthesize a default root key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_id: Option<String>,
     /// The package version.
     pub version: String,
     /// The build profile whose Loaf artifacts the unit reads.
@@ -96,6 +99,15 @@ pub struct UnitDescription {
     /// This vocabulary unit is the generated adapter for the required public desugar export.
     #[serde(default)]
     pub vocab_desugarer: bool,
+    /// Stable authority labels covering each selected Loaf whose compile-time code may run for this unit.
+    #[serde(default)]
+    pub covered_by: BTreeMap<String, String>,
+    /// Selected Loaves unavailable to code-free analysis because preparing them would run untrusted code.
+    #[serde(default)]
+    pub not_prepared_loaves: Vec<String>,
+    /// Stable missing-trust stop retained for editor presentation while code-free analysis continues.
+    #[serde(default)]
+    pub trust_stop: String,
     /// The exact Rust libraries this unit links, including its toolchain and reached Loaves.
     pub externs: Vec<UnitNativeCrate>,
     /// Directories containing the transitive dependencies of the named libraries. Once read, this also holds the
@@ -223,10 +235,31 @@ impl UnitDescription {
                 unit.schema
             )));
         }
+        if let Some(registry) = &unit.registry_id {
+            incan_semantics_core::record_identity::validate_record_registry_id(registry)
+                .map_err(|error| CliError::failure(format!("{}: {error}", origin.display())))?;
+        }
+        if let Some(identity) = unit.record_package_identity() {
+            identity
+                .validate()
+                .map_err(|error| CliError::failure(format!("{}: {error}", origin.display())))?;
+        }
         unit.merge_search_index()?;
         unit.rust_facts = rust_facts_directory(origin);
         crate::loaf_publication::vocab::prepared_registration(&unit)?;
         Ok(unit)
+    }
+
+    /// Retain a persistent record namespace only when the unit declares both a registry and a scoped name.
+    /// Scripts and packages without the released default registry key keep ordinary reflection without a selector.
+    pub fn record_package_identity(&self) -> Option<incan_semantics_core::record_identity::RecordPackageIdentity> {
+        if !self.package.contains('/') {
+            return None;
+        }
+        Some(incan_semantics_core::record_identity::RecordPackageIdentity {
+            registry_id: self.registry_id.as_ref()?.clone(),
+            scoped_name: self.package.clone(),
+        })
     }
 
     /// Keep the description's own directories in `own_search` and merge the search index it names into `search`.

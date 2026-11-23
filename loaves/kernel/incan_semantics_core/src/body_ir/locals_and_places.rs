@@ -25,7 +25,7 @@ pub struct LocalDecl {
     pub name: Option<String>,
     /// Canonical source identity of this binding, or `None` for compiler temporaries and explicitly unresolved
     /// recovery locals.
-    pub identity: Option<CanonicalSymbolId>,
+    pub identity: Option<Box<CanonicalSymbolId>>,
     pub ty: IncanType,
     pub origin: LocalOrigin,
     /// Lexical scope this local is declared in.
@@ -39,7 +39,7 @@ impl LocalDecl {
         let name = self.name.as_deref().unwrap_or("<tmp>");
         let identity = self
             .identity
-            .as_ref()
+            .as_deref()
             .map_or_else(|| "unproven".to_string(), CanonicalSymbolId::render_compact);
         format!(
             "local {} {} : {} [{}] identity={} scope={} span={}..{}",

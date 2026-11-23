@@ -1,0 +1,61 @@
+"""Typed column refusals, finite budgets and independent logical-value comparisons."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_errors import ColumnError, ColumnFailure
+from std.primitives.crumb.hashes import value_hash
+from std.primitives.crumb.values import Value, Projection
+from case_data import ExpectedStatus, expected_status, field, text
+
+
+pub def category(error: ColumnError) -> Result[str, str]:
+    """Match structured causes, never diagnostic text, against independent corpus categories."""
+    if error.kind == ColumnFailure.Shared:
+        if let Some(cause) = error.cause:
+            return Ok(cause.kind.value())
+        return Err("shared column refusal has no binary cause")
+    return Ok(error.kind.value())
+
+
+pub def refusal(error: ColumnError, expected: JsonValue) -> Result[bool, str]:
+    """Only a matching typed production refusal satisfies a negative test."""
+    if expected_status(expected)? != ExpectedStatus.Refused:
+        return Err(error.message())
+    wanted = text(expected, "kind")?
+    actual = category(error)?
+    if wanted != actual:
+        return Err("expected " + wanted + ", got " + actual + " at " + str(error.offset))
+    return Ok(true)
+
+
+pub def case_budget(example: JsonValue) -> Result[Budget, str]:
+    """Corpus ceilings tighten the one real decoder allowance; setup/expectation work uses a separate budget."""
+    mut bytes = 67108864
+    mut elements = 4194304
+    if let Some(limits) = example.get("limits"):
+        for key in ["elements", "records", "dictionary_entries", "bits"]:
+            if let Some(value) = limits.get(key):
+                elements = min([elements, value.expect_int().map_err((e) => e.message())?])
+        if let Some(value) = limits.get("dictionary_bytes"):
+            bytes = value.expect_int().map_err((e) => e.message())?
+    return Budget.create(bytes=bytes, elements=elements, depth=128).map_err((e) => e.message())
+
+
+pub def same_values(actual: list[Value], expected: list[Value], mut budget: Budget) -> Result[None, str]:
+    """Compare every decoded logical value against separately authored input notation."""
+    if len(actual) != len(expected):
+        return Err("decoded logical count differs")
+    # Object hashes compare normalized logical projections, not structural Value equality.
+    for index in range(len(actual)):
+        left = value_hash(actual[index], Projection.Object, budget).map_err((e) => e.message())?
+        right = value_hash(expected[index], Projection.Object, budget).map_err((e) => e.message())?
+        if left.digest != right.digest:
+            return Err("decoded logical value differs at " + str(index))
+    return Ok(None)
+
+
+pub def require_accepted(expected: JsonValue) -> Result[None, str]:
+    """Successful decoding cannot satisfy a refused vector."""
+    if expected_status(expected)? != ExpectedStatus.Accepted:
+        return Err("decoder accepted an independently refused input")
+    return Ok(None)

@@ -19,6 +19,10 @@ from std.async.channel import SenderPermit             # accepted
 from std.async import SenderPermit                     # refused: std.async does not re-export SenderPermit (INCAN-I0001)
 ```
 
+## Runtime
+
+A program runs all of its async code on one runtime for the program's whole lifetime. A task spawned, or a handle or channel created, while one async operation runs stays valid in every later one, also when the program enters async code from synchronous code more than once.
+
 ## Task arguments
 
 A parameter bounded by `RuntimeFuture[T]` (`task` of `spawn`, `timeout`, `timeout_ms` and `race_timeout`, `awaitable` of `arm`) takes a task: a direct call of an `async def` written as the argument, a `JoinHandle[T]`, or another awaitable value. Any other argument is refused with `INCAN-T0115`, including a function value, a value of a type that is not awaitable, and a name bound to the result of an `async def` call.

@@ -4,6 +4,7 @@
 //! A session is opened once from the unit description Oven supplies (DD-0008) and reused by every stage, so the
 //! Loaves, the vocabulary they bring and the active features are decided once per unit.
 
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -22,6 +23,7 @@ use incan_frontend::contract_metadata::{
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
 use incan_frontend::loaf_index::{LIBRARY_MANIFEST_EXTENSION, LoafIndex};
 use incan_frontend::parsed_module::ParsedModule;
+use incan_frontend::rust_abi_cache::{RustAbiCache, encode_rust_abi_cache};
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
@@ -130,14 +132,20 @@ impl CompilationSession {
         Self::open(unit, true)
     }
 
-    /// Initialize the shared parser context from Loaf artifacts; only formatting may omit absent manifests.
+    /// Initialize the shared parser context from available Loaf manifests.
+    ///
+    /// Formatting may omit absent manifests, and unattended preparation may retain an untrusted Loaf description
+    /// without its compiled artifacts. A retained checked manifest may still describe inert vocabulary syntax; worker
+    /// admission and semantic imports remain separately gated.
     fn open(unit: &UnitDescription, formatting: bool) -> CliResult<Self> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::open_session", input = %unit.source.display()).entered();
         let mut deferred = Vec::new();
         for loaf in &unit.loaves {
             let key = if loaf.standard { &loaf.name } else { &loaf.key };
-            let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
-            if formatting
+            let manifest = loaf
+                .dir
+                .join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", artifact_stem(&loaf.name)));
+            if (formatting || unit.not_prepared_loaves.contains(&loaf.name))
                 && !manifest
                     .try_exists()
                     .map_err(|error| CliError::failure(format!("{}: {error}", manifest.display())))?
@@ -210,6 +218,7 @@ impl CompilationSession {
         };
         let uncovered = imported_rust_paths(modules)
             .into_iter()
+            .chain(self.loaves.stale_shipped_rust_paths())
             .filter(|path| self.loaves.rust_abi_item(path).is_none())
             .collect::<BTreeSet<_>>();
         self.loaves
@@ -219,7 +228,9 @@ impl CompilationSession {
             return Ok(());
         }
         let facts = source.facts(&uncovered).map_err(CliError::failure)?;
-        Arc::make_mut(&mut self.loaves).add_rust_facts(&uncovered, facts);
+        let encoded = encode_rust_abi_cache(&facts).map_err(CliError::failure)?;
+        let cache = RustAbiCache::decode_owned(encoded).map_err(CliError::failure)?;
+        Arc::make_mut(&mut self.loaves).add_rust_fact_cache(&uncovered, Arc::new(cache));
         Ok(())
     }
 
@@ -428,6 +439,7 @@ impl CompilationSession {
                 self.unit.vocab_admissions.clone(),
                 self.unit.project_root.clone(),
                 self.unit.vocab_policy.clone(),
+                self.unit.covered_by.clone(),
             );
             let expansion = vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime(
                 &mut ast,

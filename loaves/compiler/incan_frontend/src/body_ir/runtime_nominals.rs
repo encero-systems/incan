@@ -202,6 +202,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         Vec::new()
     };
     Some(bir::NominalDeclaration {
+        record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),
         class_inheritance: None,
@@ -221,6 +222,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         public: true,
         has_field_defaults: false,
         field_default_body: None,
+        validated_constructor: None,
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: bir::NewtypeDeserialize::Unselected,

@@ -1,8 +1,9 @@
 """
 Recognize and type checked places that select a collection element or a copied text slice.
 
-No native place projection can name such an element: the runtime reaches it through a call. A read of one therefore
-materializes a copy, and code that only needs its type must compute it here instead of projecting the place.
+No native place projection can name such an element directly: the runtime reaches it through a checked accessor.
+Shared list access preserves intermediate elements for a field read; owned element reads materialize a copy.
+Code that only needs the selected type computes it here without emitting either operation.
 """
 
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
@@ -85,8 +86,10 @@ def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -
         _ => pass
     match projection:
         PlaceElem.Index(_index) =>
-            if source == PlanType.String:
+            if source in [PlanType.String, PlanType.FrozenStr]:
                 return Ok(PlanType.String)
+            if source == PlanType.FrozenBytes:
+                return Ok(PlanType.U8)
             match source:
                 PlanType.NativeArray(elements, _length) =>
                     if len(elements) == 1:

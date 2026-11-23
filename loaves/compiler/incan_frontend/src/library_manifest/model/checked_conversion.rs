@@ -437,6 +437,8 @@ pub(super) fn field_from_checked(package_name: &str, field: &crate::library_expo
         record_identity: hex::encode(&field.record_identity),
         record_canonical: field.record_canonical,
         renamed_from: field.renamed_from.clone(),
+        renamed_from_lifecycle: field.renamed_from_lifecycle.clone(),
+        default_is_empty: field.default_is_empty,
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {

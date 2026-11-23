@@ -6,6 +6,7 @@ This example demonstrates:
 - `mut self` for default methods that mutate adopter fields
 """
 
+
 @requires(name: str)
 trait Loggable:
     def log(self, msg: str) -> None:
@@ -22,9 +23,13 @@ class Service with Loggable, Counter:
     name: str
     pub count: int = 0
 
+    @staticmethod
+    pub def new(name: str) -> Service:
+        return Service(name=name)
+
 
 def main() -> None:
-    mut s = Service(name="svc")
+    mut s = Service.new(name="svc")
     s.log("starting")
     s.bump()
     s.log(f"count={s.count}")
