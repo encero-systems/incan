@@ -1,6 +1,6 @@
 # RFC 157: Chained pattern guards
 
-- **Status:** Planned
+- **Status:** Draft
 - **Created:** 2026-10-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
