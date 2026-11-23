@@ -1,4 +1,4 @@
-# behavior: `incan tools metadata api PATH --format markdown` renders compact checked signatures (#3142) and shows the type bounds that select overloads with different return types (#1033).
+# behavior: `incan tools metadata api PATH --format markdown` renders compact checked signatures (#3142), the type bounds that select overloads, and multiple bounds on one type parameter (#1033).
 # cli-commands:
 #   tools metadata api src/main.incn --format markdown
 # expect-stdout:
@@ -40,6 +40,12 @@
 #   pub def convert[T with Float](value: int) -> float
 #   ```
 #
+#   ### `retain`
+#
+#   ```incan
+#   pub def retain[T with (Eq, Debug), U](value: T, _fallback: U) -> T
+#   ```
+#
 # expect-stderr:
 # expect-exit: 0
 
@@ -67,6 +73,10 @@ pub def convert[T with Int](value: int) -> int:
 
 pub def convert[T with Float](value: int) -> float:
     return float(value)
+
+
+pub def retain[T with (Eq, Debug), U](value: T, _fallback: U) -> T:
+    return value
 
 
 def main() -> None:
