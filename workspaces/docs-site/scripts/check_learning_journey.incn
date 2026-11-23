@@ -46,6 +46,7 @@ def main() -> Result[None, str]:
     check_routes(docs, errors)?
     check_bridges(docs, errors)?
     check_setup_references(docs, errors)?
+    check_readme_installation(site, docs, errors)?
 
     # 2. Validate tutorial and source setup metadata.
     for relative in TUTORIALS:
@@ -118,6 +119,28 @@ def check_setup_references(docs: Path, mut errors: list[str]) -> Result[None, st
         mut message = f"{SNIPPETS[index]} references differ from the canonical setup pages: "
         message += f"expected {quoted_list(sorted(expected))}, found {quoted_list(found)}"
         require(errors, found == sorted(expected), message)
+    return Ok(None)
+
+
+def check_readme_installation(site: Path, docs: Path, mut errors: list[str]) -> Result[None, str]:
+    """Keep the README's archive and Rust prerequisites aligned with the canonical install snippet."""
+    readme = read(site.parent().parent().joinpath("README.md"))?
+    snippet = read(docs.joinpath("_snippets/learning/install_toolchain.md"))?
+    command = "incan toolchain install "
+    require(errors, command in readme and command in snippet, "README and install guide must both install an archive")
+    pins = captures("(?m)^rustup toolchain install ([0-9.]+) --profile minimal --component rustc-dev$", snippet)?
+    require(errors, len(pins) == 1, "install guide must name one pinned Rust release with rustc-dev")
+    for pin in pins:
+        require(errors, f"rustup toolchain install {pin} --profile minimal --component rustc-dev" in readme,
+            f"README install must use Rust {pin} with rustc-dev, as the install guide does")
+    retired_commands = [
+        "releases/latest/download/install.sh",
+        "brew install incan",
+        "npm install -g @incan/toolchain",
+        "pipx install incan",
+    ]
+    for retired in retired_commands:
+        require(errors, retired not in readme, f"README install still contains the old installer command '{retired}'")
     return Ok(None)
 
 
