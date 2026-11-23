@@ -1,15 +1,17 @@
 //! A module's admitted plan record: the page a worker restores its functions from, and the note of what it restored.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use incan_mir_plan_native::{
-    ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, PARTIAL_MODULE_NOTE, POSITIONED_MODULE_PAGE,
-    PlanModuleFunction, PlanModuleValue, REPOSITION_MODULE_PAGE, decode_plan_module, encode_module_note,
-    read_module_admission, write_module_placement,
+    ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
+    PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleSelectionRecord, PlanModuleValue,
+    PlanSelectedModule, PlanSelectionScope, REPOSITION_MODULE_PAGE, decode_plan_module, decode_plan_module_selection,
+    encode_module_note, read_module_admission, write_module_placement,
 };
 
 use sha2::{Digest, Sha256};
@@ -262,6 +264,75 @@ fn named_content(path: &Path) -> Option<[u8; 32]> {
         return None;
     }
     hex::decode(&named).ok()?.try_into().ok()
+}
+
+/// One request's exact selected graph and module inventory, checked against the digest the selector passed separately.
+pub struct PlanModuleSelection {
+    digest: [u8; 32],
+    record: PlanModuleSelectionRecord,
+}
+
+impl PlanModuleSelection {
+    /// Read the canonical staged descriptor under the current activation's independent selection authority.
+    pub fn read(products: &Path, expected: [u8; 32]) -> Result<Self, String> {
+        let path = products.join(PLAN_MODULE_SELECTION_PAGE);
+        let mut companion = path.as_os_str().to_os_string();
+        companion.push(".digest");
+        if read_selection_file(Path::new(&companion), 64)? != hex::encode(expected).as_bytes() {
+            return Err("staged plan-module selection does not name the accepted digest".into());
+        }
+        // Oven forms this descriptor for the activation, so it has no retained store frame to read here.
+        let encoded = read_selection_file(&path, MAX_PLAN_MODULE_SELECTION_BYTES)?;
+        if <[u8; 32]>::from(Sha256::digest(&encoded)) != expected {
+            return Err("staged plan-module selection differs from the accepted digest".into());
+        }
+        Ok(Self {
+            digest: expected,
+            record: decode_plan_module_selection(&encoded)?,
+        })
+    }
+
+    /// The exact digest supplied by the graph selector.
+    pub fn digest(&self) -> [u8; 32] {
+        self.digest
+    }
+
+    /// The graph root, view and producer that selected the staged modules.
+    pub fn scope(&self) -> &PlanSelectionScope {
+        &self.record.scope
+    }
+
+    /// Resolve one module in the canonical name order the decoder already verified.
+    pub fn module(&self, module: &str) -> Option<&PlanSelectedModule> {
+        let modules = &self.record.modules;
+        let position = modules.binary_search_by(|row| row.module.as_str().cmp(module)).ok()?;
+        modules.get(position)
+    }
+}
+
+/// Bound the request-private descriptor and its named digest before allocating their byte buffers.
+fn read_selection_file(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err(format!(
+            "{} exceeds the staged selection file limit of {limit} bytes",
+            path.display()
+        ));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!(
+            "{} exceeds the staged selection file limit of {limit} bytes",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 /// The final events of an admitted module, by the native function name of the body each belongs to.
@@ -536,13 +607,13 @@ mod tests {
 
     use incan_mir_plan_native::{
         AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, Function, Local, LoweringEvent,
-        PlanModuleFunction, PlanModuleValue, PlanType, TerminatorKind, block, encode_plan_module, encode_product,
-        source_span,
+        MAX_PLAN_MODULE_SELECTION_BYTES, PLAN_MODULE_SELECTION_PAGE, PlanModuleFunction, PlanModuleValue, PlanType,
+        TerminatorKind, block, encode_plan_module, encode_product, source_span,
     };
 
     use super::{
-        AdmittedProduct, FRAME_LIST, admitted_page, admitted_plan_page, admitted_products, read_admitted,
-        report_admitted, staged_page, staged_page_reads,
+        AdmittedProduct, FRAME_LIST, PlanModuleSelection, admitted_page, admitted_plan_page, admitted_products,
+        read_admitted, report_admitted, staged_page, staged_page_reads,
     };
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
@@ -946,6 +1017,33 @@ mod tests {
         assert_eq!(admitted_plan_page(&first)?.functions[0].event, vec![1]);
         assert_eq!(admitted_plan_page(&second)?.functions[0].event, vec![3]);
         assert_eq!(reads(), 3, "one changed page was not the one page read");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// An oversized selection copy or named digest refuses at its own file boundary before reading its bytes.
+    #[test]
+    fn staged_module_selection_bounds_both_its_files() -> Result<(), String> {
+        let root = directory("selection-file-bounds");
+        let path = root.join(PLAN_MODULE_SELECTION_PAGE);
+        let companion = root.join(format!("{PLAN_MODULE_SELECTION_PAGE}.digest"));
+        let expected = [0x55; 32];
+        let write = |path: &Path, value: &[u8]| std::fs::write(path, value).map_err(|error| error.to_string());
+        write(&companion, hex::encode(expected).as_bytes())?;
+        let descriptor = std::fs::File::create(&path).map_err(|error| error.to_string())?;
+        descriptor
+            .set_len(MAX_PLAN_MODULE_SELECTION_BYTES + 1)
+            .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            PlanModuleSelection::read(&root, expected),
+            Err(reason) if reason.contains(&format!("limit of {MAX_PLAN_MODULE_SELECTION_BYTES} bytes"))
+        ));
+        write(&path, b"incomplete descriptor")?;
+        write(&companion, &[b'5'; 65])?;
+        assert!(matches!(
+            PlanModuleSelection::read(&root, expected),
+            Err(reason) if reason.contains("limit of 64 bytes")
+        ));
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

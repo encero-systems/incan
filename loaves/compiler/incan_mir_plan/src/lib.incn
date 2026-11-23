@@ -207,11 +207,16 @@ pub from rust::incan_mir_plan_native import (
     PARTIAL_MODULE_NOTE,
     PLAN_MODULE_FAMILY,
     PLAN_MODULE_PAGE,
+    PLAN_MODULE_SELECTION_PAGE,
     POSITIONED_MODULE_PAGE,
     REPOSITION_MODULE_PAGE,
     PlanModuleFunction,
+    PlanModuleSelectionRecord,
     PlanModuleValue,
+    PlanSelectedModule,
+    PlanSelectionScope,
     decode_plan_module,
+    decode_plan_module_selection,
     encode_plan_module,
 )
 from std.fs import Path

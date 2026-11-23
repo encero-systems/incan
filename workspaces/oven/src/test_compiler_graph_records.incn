@@ -74,7 +74,7 @@ from compiler_ranked_build import RankedBuildInputs, contextual_ranked_pages
 from compiler_body_keys import body_key, namespace_header_key, namespace_key
 from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_modules
 from compiler_plan_modules import plan_module_key
-from pub::incan_mir_plan import PlanModuleFunction, PlanModuleValue, encode_plan_module
+from pub::incan_mir_plan import PlanModuleFunction, PlanModuleValue, decode_plan_module_selection, encode_plan_module
 from compiler_owner_records import encode_body_frame, read_body_frame
 from compiler_body_values import (
     encode_body_inventory,
@@ -348,10 +348,8 @@ def damage_graph_frame(graph: Snapshot, key: str) -> Result[None, str]:
 
 pub def test_a_plan_module_selection_reads_again_only_the_slots_that_changed() -> Result[None, str]:
     """
-    A request's plan-module selection is recorded with the revisions it was made at, each slot's output-index entry and
-    evaluation. The next selection under an edit's cutoff takes every unchanged slot from that record, reading none of
-    its evaluation or receipt, and admits the same pages, outputs and covered owners; a slot republished since is
-    selected again, alone.
+    Reuse unchanged slots without reading evaluations or receipts, including their pages, outputs and covered owners.
+    Select only the republished slot again. Compact authority pins the current graph while preserving those pages.
     """
     origin = "kept"
     token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -376,15 +374,17 @@ pub def test_a_plan_module_selection_reads_again_only_the_slots_that_changed() -
     kept = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged)
     mut reads = finish_frame_reads()
     again = kept?
-    assert [page.key for page in again.pages] == [page.key for page in first.pages]
-    assert [page.digest for page in again.pages] == [page.digest for page in first.pages]
-    assert again.outputs == first.outputs
-    assert len(again.records) == 2 and again.authority is None and len(capable.pages) == len(first.pages)
+    assert again.outputs == first.outputs and len(again.records) == 2 and again.authority is None
     selected_again = select_plan_modules(graph, origin, [], [], nothing, nothing, unchanged, compact_authority=true)?
+    for pages in [again.pages, capable.pages, selected_again.pages]:
+        assert [(page.key, page.digest) for page in pages] == [(page.key, page.digest) for page in first.pages]
     match (capable.authority, selected_again.authority):
         (Some(before), Some(after)) =>
             assert before.key == "plan-module-selection.crumb" and after.key == before.key and before.digest != after.digest
             assert [before.digest, after.digest] == [hexlify(sha256.digest(before.value)), hexlify(sha256.digest(after.value))]
+            decoded = decode_plan_module_selection(after.value.clone())?
+            assert decoded.scope.manifest == graph.digest and decoded.scope.generation == graph.generation
+            assert [row.module for row in decoded.modules] == ["left", "right"]
         _ => return Err("the same modules under another selected graph generation lost their authority")
     for read in reads:
         assert not read.key.startswith("incan.engine.evaluation\t"), "an unchanged slot's evaluation was read again"

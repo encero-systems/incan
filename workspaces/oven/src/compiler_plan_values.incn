@@ -12,7 +12,10 @@ from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value as crumb_field
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as integer_field, items, number, text, tuple_items
-from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, decode_plan_module
+from pub::incan_mir_plan import (
+    PLAN_MODULE_FAMILY, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE,
+    PlanModuleFunction, PlanModuleValue, decode_plan_module,
+)
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 
@@ -318,6 +321,7 @@ pub model PlanModuleSelection:
     pub pages: list[SelectedBodyPage] = []
     pub outputs: list[str] = []
     pub records: list[AdmittedPlanModule] = []
+    # This request's compact authority stays separate from ordinary pages until the launcher negotiates it.
     pub authority: Option[SelectedBodyPage] = None
     pub covered: CoveredBodyOwners = CoveredBodyOwners()
     # Every admitted slot as this selection keeps it, recorded with the request for the next one.
@@ -352,6 +356,51 @@ pub def value_frame(selected: Snapshot, key: RecordKey) -> Result[Option[ValueFr
             return Ok(Some(ValueFrame(segment=segment, offset=location.offset + prefix, length=location.length - prefix)))
 
 
+const PLAN_MODULE_AUTHORITY_ROW: bytes = b"plnwit\x00"
+
+
+def plan_module_authority_description() -> Description:
+    """Describe the same Crumb row the native Plan decoder authenticates for this activation."""
+    return model_description(PLAN_MODULE_AUTHORITY_ROW, "incan.plan-module-selection/1", [
+        ModelField(
+            identity=b"module", name="modules", storage="list<tuple<string,string,string,i64,boolean,i64,string>>",
+        ),
+        ModelField(
+            identity=b"scope_", name="scope", storage="tuple<string,string,string,i64,string,string,string,string>",
+        ),
+    ])
+
+
+def plan_module_authority(
+    selected: Borrowed[Snapshot], origin: str, records: Borrowed[list[AdmittedPlanModule]],
+) -> Result[SelectedBodyPage, str]:
+    """Name the exact encoded selection while the request still owns its graph snapshot."""
+    scope = Value.Tuple([
+        Value.Text(selected.root.value.clone()), Value.Text(selected.root.placement.clone()),
+        Value.Text(selected.digest.clone()), integer_field(selected.generation), Value.Text(selected.view.clone()),
+        Value.Text(selected.index.clone()), Value.Text(origin), Value.Text(LOWERING_PROFILE),
+    ])
+    mut modules: Dict[str, Value] = {}
+    for record in records:
+        let module: Borrowed[str] = record.plan.module
+        if module in modules:
+            return Err("a plan-module authority names one module twice")
+        modules[module] = Value.Tuple([
+            Value.Text(module.clone()), Value.Text(encode_record_key(record.key)?),
+            Value.Text(record.value_digest.clone()), integer_field(len(record.plan.functions)),
+            Value.Boolean(record.placement_current), integer_field(record.namespace),
+            Value.Text(record.certificate.clone()),
+        ])
+    authority = encode_graph_row(PLAN_MODULE_AUTHORITY_ROW, plan_module_authority_description(), [
+        crumb_field(b"module", Value.List([modules[module] for module in sorted([name for name in modules.keys()])])),
+        crumb_field(b"scope_", scope),
+    ])?
+    digest = hexlify(sha256.digest(authority))
+    if not canonical_digest(digest):
+        return Err("selected plan-module authority has a noncanonical digest")
+    return Ok(SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=authority, digest=digest))
+
+
 pub def select_plan_modules(
     selected: Snapshot,
     origin: str,
@@ -376,7 +425,6 @@ pub def select_plan_modules(
     mut refused: set[str] = set()
     for owner in invalid_owners:
         refused.add(owner)
-    _ = compact_authority
     mut selection = PlanModuleSelection()
     slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules,
         included=reachable_modules)
@@ -444,4 +492,6 @@ pub def select_plan_modules(
             placement_current=entry.bound and key.identity not in changed_positions, proofs=entry.proofs, events=events,
         ))
 
+    if compact_authority and len(selection.records) > 0:
+        selection.authority = Some(plan_module_authority(selected, origin, selection.records)?)
     return Ok(selection)

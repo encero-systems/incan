@@ -1,7 +1,8 @@
 //! A module's plan record: the plan function of every body of one module, as Bakery pages it for admission.
 
 use crate::wire::{
-    Schema, Shape, ShapeBody, ShapeField, Wire, decode_graph_row, encode_graph_row, items, required, text,
+    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, boolean_value, decode_graph_row, encode_graph_row,
+    items, number, required, text, tuple_items,
 };
 
 /// The family of a module's plan record.
@@ -16,6 +17,10 @@ pub const REPOSITION_MODULE_PAGE: &str = ".incnmodule.reposition";
 pub const ADMITTED_MODULE_NOTE: &str = ".admitted";
 /// The suffix of the note of a module some of whose ordinary bodies were restored.
 pub const PARTIAL_MODULE_NOTE: &str = ".partially-admitted";
+/// The request-private authority page for modules selected by the current Oven activation.
+pub const PLAN_MODULE_SELECTION_PAGE: &str = "plan-module-selection.crumb";
+/// The existing wire limit, enforced before the compiler allocates a staged module selection.
+pub const MAX_PLAN_MODULE_SELECTION_BYTES: u64 = MAX_RECORD_BYTES as u64;
 
 const PLAN_MODULE_SELECTOR: &[u8] = b"plnmod\x00";
 const MAX_PLAN_MODULE_FUNCTIONS: usize = 65_536;
@@ -149,4 +154,138 @@ pub fn decode_plan_module(encoded: &[u8]) -> Result<PlanModuleValue, String> {
         functions.push(function);
     }
     Ok(PlanModuleValue { module, functions })
+}
+
+const PLAN_MODULE_SELECTION_SELECTOR: &[u8] = b"plnwit\x00";
+static PLAN_MODULE_SELECTION: Shape = Shape {
+    selector: PLAN_MODULE_SELECTION_SELECTOR,
+    path: "incan.plan-module-selection/1",
+    body: ShapeBody::Record(&[
+        ShapeField {
+            identity: b"module",
+            name: "modules",
+            storage: "list<tuple<string,string,string,i64,boolean,i64,string>>",
+        },
+        ShapeField {
+            identity: b"scope_",
+            name: "scope",
+            storage: "tuple<string,string,string,i64,string,string,string,string>",
+        },
+    ]),
+};
+static PLAN_MODULE_SELECTION_SCHEMA: Schema = Schema::new(&[&PLAN_MODULE_SELECTION]);
+
+/// The exact graph and producer against which Oven selected the request's module pages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanSelectionScope {
+    pub store_root: String,
+    pub placement: String,
+    pub manifest: String,
+    pub generation: i64,
+    pub view: String,
+    pub index: String,
+    pub origin: String,
+    pub profile: String,
+}
+
+/// The selected output key, content, function count, placement and namespace order of one module.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanSelectedModule {
+    pub module: String,
+    pub output: String,
+    pub digest: String,
+    pub count: i64,
+    pub positioned: bool,
+    pub rank: i64,
+    pub certificate: String,
+}
+
+/// One activation's module selection, independent of the files through which the compiler reads the page bodies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanModuleSelectionRecord {
+    pub scope: PlanSelectionScope,
+    pub modules: Vec<PlanSelectedModule>,
+}
+
+/// Accept only the selector's lowercase SHA-256 spelling.
+fn canonical_selection_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Require a concrete graph generation, placement and producer.
+fn validate_selection_scope(scope: &PlanSelectionScope) -> Result<(), String> {
+    if scope.generation <= 0
+        || scope.placement.is_empty()
+        || (scope.store_root.is_empty() && !scope.placement.starts_with("memory:"))
+        || !canonical_selection_digest(&scope.manifest)
+        || scope.view.is_empty()
+        || scope.index.is_empty()
+        || scope.origin.is_empty()
+        || scope.profile.is_empty()
+    {
+        return Err("malformed plan-module selection scope".into());
+    }
+    Ok(())
+}
+
+/// Check each selected module's identity, bounds and canonical name order.
+fn validate_selected_modules(modules: &[PlanSelectedModule]) -> Result<(), String> {
+    let mut previous = "";
+    for module in modules {
+        if module.module.as_str() <= previous
+            || module.output.is_empty()
+            || !canonical_selection_digest(&module.digest)
+            || !(1..=MAX_PLAN_MODULE_FUNCTIONS as i64).contains(&module.count)
+            || module.rank < 0
+        {
+            return Err("malformed or unordered selected plan module".into());
+        }
+        previous = &module.module;
+    }
+    if previous.is_empty() {
+        return Err("plan-module selection has no modules".into());
+    }
+    Ok(())
+}
+
+/// Decode the one canonical selector record without rebinding it to a different graph, placement or module order.
+pub fn decode_plan_module_selection(encoded: &[u8]) -> Result<PlanModuleSelectionRecord, String> {
+    let fields = decode_graph_row(
+        encoded,
+        PLAN_MODULE_SELECTION_SELECTOR,
+        &PLAN_MODULE_SELECTION_SCHEMA,
+        2,
+    )?;
+    let scope = tuple_items(&fields[1].value, 8)?;
+    let scope = PlanSelectionScope {
+        store_root: text(&scope[0])?,
+        placement: text(&scope[1])?,
+        manifest: text(&scope[2])?,
+        generation: number(&scope[3])?,
+        view: text(&scope[4])?,
+        index: text(&scope[5])?,
+        origin: text(&scope[6])?,
+        profile: text(&scope[7])?,
+    };
+    validate_selection_scope(&scope)?;
+    let modules = items(&fields[0].value)?
+        .iter()
+        .map(|module| {
+            let module = tuple_items(module, 7)?;
+            Ok(PlanSelectedModule {
+                module: text(&module[0])?,
+                output: text(&module[1])?,
+                digest: text(&module[2])?,
+                count: number(&module[3])?,
+                positioned: boolean_value(&module[4])?,
+                rank: number(&module[5])?,
+                certificate: text(&module[6])?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    validate_selected_modules(&modules)?;
+    Ok(PlanModuleSelectionRecord { scope, modules })
 }
