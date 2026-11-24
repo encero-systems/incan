@@ -305,17 +305,12 @@ impl TypeChecker {
         self.note_place_change(argument, true);
     }
 
-    /// Refuse rebinding a caller-visible `mut` parameter (`items = [0]`, `label += "!"`) in its own body.
-    ///
-    /// The caller sees the parameter's changes, not a new value bound to its name, so a rebinding could only be lost.
-    /// Returns whether the name was such a parameter.
-    pub(in crate::typechecker) fn refuse_caller_visible_mut_param_rebinding(&mut self, name: &str, span: Span) -> bool {
-        if self.current_caller_visible_param(name).is_none() {
-            return false;
-        }
-        self.errors
-            .push(errors::caller_visible_mut_parameter_rebinding(name, span));
-        true
+    /// Record whole-value assignment as a change to the exact caller-visible `mut` parameter.
+    pub(in crate::typechecker) fn note_caller_visible_mut_param_assignment(&mut self, name: &str, span: Span) {
+        let Some(param) = self.current_caller_visible_param(name) else {
+            return;
+        };
+        self.note_param_change(ViewSource::writable(Some(param)), name, span, true);
     }
 
     /// Remember that the local binding declared at `target_span` holds the declared callable named by `value`.
