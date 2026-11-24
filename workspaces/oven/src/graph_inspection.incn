@@ -26,7 +26,16 @@ from observation import Ledger, trace, watch_inputs, watched_inputs
 from graph_pages import GraphPage, publish_page, request_key, warm_page
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
-from graph_queries import definition_hits, matches, query, query_group, selection_keys, text
+from graph_queries import (
+    QueryHit,
+    definition_hits,
+    matches,
+    portable_source_anchor,
+    query,
+    query_group,
+    selection_keys,
+    text,
+)
 from graph_identity import keyed, link_keys, declaration_digests
 from graph_snapshot import (
     artifact_observations,
@@ -37,7 +46,7 @@ from graph_snapshot import (
 )
 from graph_context import pack
 from graph_context_index import ContextIndex, with_author
-from graph_context_items import anchor_root, observed_anchor_root
+from graph_context_items import anchor_root, observed_anchor_root, written_by
 from graph_process import process_facts
 from graph_rust import inspect_rust
 from json_fields import required_items, string_value
@@ -66,6 +75,7 @@ const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/19"
 const EXPORT_PRESENTATION_DOMAIN: str = "incan.codegraph.export-presentation/1"
 # Keep the private typed envelope distinct from either CLI definitions format in the existing answer cache.
 const MCP_DEFINITIONS_FORMAT: str = "mcp-definitions/1"
+const MCP_RELATIONSHIPS_FORMAT: str = "mcp-relationships/1"
 
 
 pub model GraphOptions:
@@ -277,6 +287,13 @@ pub def mcp_definitions(arguments: list[str]) -> Result[JsonValue, str]:
         return Err("MCP definition records require a defs query")
     selected.format = MCP_DEFINITIONS_FORMAT
     return parse(selected_response(selected)?).map_err((error) => error.message())
+
+
+pub def mcp_relationships(arguments: list[str]) -> Result[str, str]:
+    """Render ordinary relationship queries with the author of each selected source span."""
+    mut selected = options(arguments)?
+    selected.format = MCP_RELATIONSHIPS_FORMAT
+    return selected_response(selected)
 
 
 def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) -> Result[str, str]:
@@ -549,16 +566,19 @@ def response(
     if selected.stale != "":
         status = json_text(snapshot_status(selected.stale, snapshot))?
         return Ok(Answered(text=status, snapshot=snapshot, unchecked=degraded))
+    mut author_root: Option[str] = None
+    if selected.format == MCP_DEFINITIONS_FORMAT or selected.format == MCP_RELATIONSHIPS_FORMAT:
+        author_root = Some(observed_anchor_root(Path(root))?.0)
     portable = shared_query(selected)
     if paged and not portable:
         # The request's page keeps this answer; a presentation cache keyed by the same root would only duplicate it.
-        rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
-        return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
+        rendered = render(paths, root, selected, toolchain, degraded, snapshot, process, preferences, author_root)?
+        return Ok(Answered(text=rendered.text, snapshot=snapshot, unchecked=degraded))
     mut inputs: list[str] = []
-    match presentation_inputs(paths, root, selected, snapshot, preferences, portable)?:
+    match presentation_inputs(paths, root, selected, snapshot, preferences, portable, author_root)?:
         None =>
-            rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
-            return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
+            rendered = render(paths, root, selected, toolchain, degraded, snapshot, process, preferences, author_root)?
+            return Ok(Answered(text=rendered.text, snapshot=snapshot, unchecked=degraded))
         Some(ready) => inputs = ready
     cached = Path(f"{cache_file(fingerprint(inputs)?)?.0}.answer")
     trace(f"graph answer lookup: {lookup.elapsed().as_millis()} ms")
@@ -569,11 +589,11 @@ def response(
     if cached.is_file():
         return Ok(Answered(text=read(cached)?, snapshot=snapshot, unchecked=degraded))
     evaluation = Instant.now()
-    rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
-    if not portable or portable_answer(rendered):
-        publish(cached, rendered)?
+    rendered = render(paths, root, selected, toolchain, degraded, snapshot, process, preferences, author_root)?
+    if not portable or rendered.portable:
+        publish(cached, rendered.text)?
     trace(f"graph answer evaluation: {evaluation.elapsed().as_millis()} ms")
-    return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
+    return Ok(Answered(text=rendered.text, snapshot=snapshot, unchecked=degraded))
 
 
 def needs_snapshot(selected: GraphOptions) -> bool:
@@ -588,12 +608,15 @@ def presentation_inputs(
     snapshot: str,
     preferences: Dict[str, int],
     portable: bool,
+    author_root: Option[str],
 ) -> Result[Option[list[str]], str]:
     """Everything an answer depends on: the options, and each unit's graph with the identity of its file."""
     mut key_root = root
     mut anchors = ""
     if portable:
-        anchors = anchor_root(Path(root)).0
+        match author_root:
+            Some(bound) => anchors = bound
+            None => anchors = anchor_root(Path(root)).0
         match relative_scope(root, anchors):
             None => return Ok(None)
             Some(scope) => key_root = f"relative:{scope}"
@@ -627,7 +650,7 @@ def presentation_inputs(
 
 
 def shared_query(selected: GraphOptions) -> bool:
-    """Only plain, risk-free query lines can be reused without rendering requester-specific structured headers."""
+    """Allow portable caching for risk-free text queries when their source anchors are portable."""
     structured = selected.query == "defs" and selected.format in ["json", MCP_DEFINITIONS_FORMAT]
     return selected.query != "" and not structured and not selected.risk
 
@@ -647,11 +670,16 @@ def portable_answer(answer: str) -> bool:
     """Refuse retention of plain answers that expose an absolute source location instead of a relative anchor."""
     for line in answer.split("\n"):
         for word in line.split(" "):
-            if word.startswith("/") or word.startswith("\\\\") or word.startswith("file://"):
-                return false
-            if len(word) > 2 and word[1:3] in [":/", ":\\"]:
+            if not portable_source_anchor(word):
                 return false
     return true
+
+
+model RenderedGraph:
+    """Response bytes and the portability of their original, unquoted anchors."""
+
+    text: str
+    portable: bool = true
 
 
 def render(
@@ -663,13 +691,14 @@ def render(
     snapshot: str,
     process: list[JsonValue],
     preferences: Dict[str, int],
-) -> Result[str, str]:
+    author_root: Option[str],
+) -> Result[RenderedGraph, str]:
     """The answer to a query, at most `limit` hits, or the merged records as one JSON array or one record per line."""
     if selected.task != "":
         started = Instant.now()
         mut index = context_index(paths, root, toolchain, process)?
         trace(f"graph context index: {started.elapsed().as_millis()} ms")
-        return pack(
+        packed = pack(
             index,
             snapshot,
             JsonValue.bool(degraded),
@@ -678,27 +707,46 @@ def render(
             anchor_root(Path(root)).0,
             selected.format,
             preferences,
-        )
+        )?
+        return Ok(RenderedGraph(text=packed))
     if selected.query != "":
         started = Instant.now()
-        mut author_root: Option[str] = None
-        if selected.format == MCP_DEFINITIONS_FORMAT:
-            author_root = Some(observed_anchor_root(Path(root))?.0)
         records = query_records(paths, root, selected, toolchain, degraded, snapshot, author_root)?
         trace(f"graph query records: {started.elapsed().as_millis()} ms")
         if selected.format == "json" and selected.query == "defs":
-            return definition_response(records, selected.term, selected.limit)
+            return Ok(RenderedGraph(text=definition_response(records, selected.term, selected.limit)?))
         if let Some(anchors) = author_root:
-            return mcp_definition_response(records, selected.term, selected.limit, anchors)
+            if selected.format == MCP_DEFINITIONS_FORMAT:
+                return Ok(RenderedGraph(text=mcp_definition_response(records, selected.term, selected.limit, anchors)?))
+            return render_hits(query(records, selected.query, selected.term, anchors), selected.limit, true)
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
-        mut lines = hits[:selected.limit]
-        if len(hits) > selected.limit:
-            lines.append(f"… {len(hits) - selected.limit} more")
-        return Ok("\n".join(lines))
+        return render_hits(hits, selected.limit, false)
     records = export_records(paths, root, selected, toolchain, degraded, snapshot)? + process
     if selected.format == "json":
-        return json_text(JsonValue.array(records))
-    return Ok("\n".join([json_text(record)? for record in records]))
+        return Ok(RenderedGraph(text=json_text(JsonValue.array(records))?))
+    return Ok(RenderedGraph(text="\n".join([json_text(record)? for record in records])))
+
+
+def render_hits(hits: list[QueryHit], limit: int, authored: bool) -> Result[RenderedGraph, str]:
+    """Render the same winning hits in order, with quoting after checking their original anchors."""
+    included = hits[:limit]
+    mut portable = true
+    mut lines: list[str] = []
+    if authored:
+        if len(included) > 0:
+            lines.append("authored_text=quoted_evidence")
+        for hit in included:
+            portable = portable and portable_source_anchor(hit.anchor)
+            name = json_text(JsonValue.string(hit.label))?
+            where = json_text(JsonValue.string(hit.anchor))?
+            author = written_by(hit.author)
+            lines.append(f"{hit.kind} {name} [author={author}] {where}{hit.status}")
+    else:
+        lines = [hit.plain() for hit in included]
+        portable = portable_answer("\n".join(lines))
+    if len(hits) > limit:
+        lines.append(f"… {len(hits) - limit} more")
+    return Ok(RenderedGraph(text="\n".join(lines), portable=portable))
 
 
 def query_records(
@@ -738,7 +786,7 @@ def query_records(
         )
     # 2. Modules and declarations of every unit, under the one header.
     kind = group.split(",")[1]
-    nodes = read_records(paths, root, toolchain, "nodes", selected.strict, degraded, snapshot)?
+    nodes = read_records(paths, root, toolchain, "nodes", selected.strict, degraded, snapshot, author_root=author_root)?
     keys = selection_keys(nodes, selected.term)
     mut seen: Dict[str, bool] = {}
     for record in nodes:
@@ -747,6 +795,7 @@ def query_records(
     mut relationships_read: list[JsonValue] = []
     for unit in paths:
         started = Instant.now()
+        author = selected_author(unit, author_root)
         mut lines: list[str] = []
         if published(unit):
             lines = relationships(unit, toolchain, kind, keys)?
@@ -755,17 +804,26 @@ def query_records(
         for line in lines:
             if line.strip() == "":
                 continue
-            record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
+            mut record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
             if text(record, "record") == "header":
                 continue
             key = text(record, "id")
             if key != "" and key in seen:
                 continue
             seen[key] = true
+            if let Some(authority) = author:
+                record = with_author(record, authority)?
             relationships_read.append(record)
         trace(f"graph relationships {unit.package}: {started.elapsed().as_millis()} ms")
     # 4. The declarations key the relationships; they are already keyed themselves.
     return Ok(nodes + link_keys(relationships_read, nodes)?)
+
+
+def selected_author(unit: GraphUnit, author_root: Option[str]) -> Option[JsonValue]:
+    """Bind the exact emitting unit to the request's observed source anchor."""
+    if let Some(anchors) = author_root:
+        return Some(unit.author(anchors).json())
+    return None
 
 
 def definition_response(records: list[JsonValue], term: str, limit: int) -> Result[str, str]:
@@ -1046,9 +1104,7 @@ def read_records(
         # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
         document = read_graph(unit, toolchain, group)?
         mut package_name = unit.package
-        mut author: Option[JsonValue] = None
-        if let Some(anchors) = author_root:
-            author = Some(unit.author(anchors).json())
+        author = selected_author(unit, author_root)
         for line in document.split("\n"):
             if line.strip() == "":
                 continue

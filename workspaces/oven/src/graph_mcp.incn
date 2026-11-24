@@ -4,7 +4,13 @@ from rust::std::io import Write, stdin, stdout
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
-from graph_inspection import graph_response, mcp_definitions, options as graph_options, prepare_inspection
+from graph_inspection import (
+    graph_response,
+    mcp_definitions,
+    mcp_relationships,
+    options as graph_options,
+    prepare_inspection,
+)
 from graph_queries import display, nested, text
 from graph_memory import TaskMemory
 from home import TOOLCHAIN
@@ -145,7 +151,7 @@ model GraphServer:
         command = self.graph_command() + ["--query", kind, term]
         if kind == "defs":
             return definition_content(mcp_definitions(command)?)
-        return Ok(tool_content(graph_response(command)?, false))
+        return Ok(tool_content(mcp_relationships(command)?, false))
 
     def call(mut self, name: str, arguments: JsonValue) -> Result[str, str]:
         """Share CLI retrieval, ranking and freshness; arguments cannot change this server's selected project."""

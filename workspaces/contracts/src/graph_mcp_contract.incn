@@ -7,10 +7,17 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
+from std.tempfile import TemporaryDirectory
 from files import items, make_directory, parse_json, read, remove, required_text, write, optional_text as text
 
 
-pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: str = "") -> Result[None, str]:
+pub def check_mcp(
+    incan: str,
+    project: Path,
+    external_anchor: str = "",
+    bakery: str = "",
+    workspace_records: list[JsonValue] = [],
+) -> Result[None, str]:
     """
     Require MCP graph parity and continued serving after malformed or refused requests.
 
@@ -97,13 +104,113 @@ pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: 
     if "incan://graph/snapshot" not in resources or "snapshot_id" not in summary:
         return Err("MCP orientation resources are missing current snapshot facts")
     check_preparations(observations)?
-    if external_anchor == "":
-        return Ok(None)
-    return check_external_definition(replies[4], replies[5], project, external_anchor)
+    if external_anchor != "":
+        return check_external_definition(replies[4], replies[5], project, external_anchor)
+    if project.joinpath("deps/checked/loaf.toml").is_file():
+        check_workspace_definition(replies[5], project)?
+        module_id = workspace_module(workspace_records, project.joinpath("src/main.incn"))?
+        return check_authored_relationships(incan, project, module_id)
+    return Ok(None)
+
+
+def check_workspace_definition(reply: JsonValue, project: Path) -> Result[None, str]:
+    """Preserve the existing plain definition display and require its matched structured author."""
+    expected = "declaration provider::helper src/provider.incn:1"
+    if expected not in content(reply)?.split("\n"):
+        return Err("MCP workspace definitions changed the ordinary display")
+    response = result(reply)?
+    structured = response.require("structuredContent").map_err((error) => error.message())?
+    records = items(structured.require("records").map_err((error) => error.message())?)?
+    mut matches = 0
+    for record in records:
+        if text(record, "name") != "helper":
+            continue
+        span = record.require("span").map_err((error) => error.message())?
+        if text(span, "file") not in ["src/provider.incn", project.joinpath("src/provider.incn").0]:
+            continue
+        line = span.require("start_line").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )?
+        author = record.require("author").map_err((error) => error.message())?
+        if line != 1 or text(author, "kind") != "workspace" or text(author, "identity") != "":
+            return Err("MCP workspace definition lost its exact source author")
+        matches += 1
+    if matches != 1:
+        return Err("MCP workspace definitions lost the exact provider declaration")
+    return Ok(None)
+
+
+def workspace_module(records: list[JsonValue], source: Path) -> Result[str, str]:
+    """Select the emitting module of the fixture's main declaration from its ordinary graph."""
+    mut modules: list[str] = []
+    for record in records:
+        if text(record, "record") == "declaration" and text(record, "name") == "main":
+            span = record.get("span").unwrap_or(JsonValue.null())
+            if text(span, "file") == source.0:
+                modules.append(required_text(record, "module_id")?)
+    if len(modules) != 1 or modules[0] == "":
+        return Err("the relationship graph did not identify its workspace module")
+    return Ok(modules[0])
+
+
+def check_authored_relationships(incan: str, project: Path, module_id: str) -> Result[None, str]:
+    """Keep the exact emitter and workspace author across ordinary cold and warm MCP relationships."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = scratch.path().resolve().map_err((error) => error.message())?
+    bakery = root.joinpath("bakery")
+    traces = root.joinpath("traces")
+    make_directory(traces)?
+    protocol = root.joinpath("queries")
+    queries = [
+        ("refs", "helper", "reference \"provider::helper\" [author=workspace] \"src/main.incn:29\""),
+        ("callers", "helper", "call \"main\" [author=workspace] \"src/main.incn:29\""),
+        ("callees", "main", "call \"provider::helper\" [author=workspace] \"src/main.incn:29\""),
+        ("imports", module_id, "import \"provider::helper\" [author=workspace] \"src/main.incn:22\""),
+    ]
+    mut calls = [
+        request(1, "initialize", JsonValue.object({"protocolVersion": JsonValue.string("2025-11-25")})),
+        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
+    ]
+    for index in range(len(queries)):
+        kind, term, _ = queries[index]
+        arguments = JsonValue.object({"kind": JsonValue.string(kind), "term": JsonValue.string(term)})
+        calls.append(call(index + 2, "graph_query", arguments))
+    write(protocol, "\n".join([item.to_json().map_err((error) => error.message())? for item in calls]) + "\n")?
+    cold = mcp_output(incan, project, protocol, bakery.0, "")?
+    replies = [parse_json(line)? for line in cold.split("\n") if line != ""]
+    if len(replies) != len(calls) - 1:
+        return Err("MCP authored relationship queries did not each receive a response")
+    for index in range(len(queries)):
+        kind, _, expected = queries[index]
+        check_authored_relationship(replies[index + 1], index + 2, kind, expected)?
+    sleep(Duration.from_secs(3))
+    _ = mcp_output(incan, project, protocol, bakery.0, "")?
+    warm = mcp_output(incan, project, protocol, bakery.0, traces.0)?
+    if warm != cold or warm_graph_pages(traces)? != len(queries):
+        return Err("MCP authored relationships failed to replay all four watched answers")
+    return Ok(None)
+
+
+def check_authored_relationship(reply: JsonValue, identifier: int, kind: str, expected: str) -> Result[None, str]:
+    """Require one successful relationship response with all spans attributed."""
+    received = reply.require("id").map_err((error) => error.message())?.expect_int().map_err((error) => error.message())?
+    if received != identifier:
+        return Err(f"MCP {kind} answered a different request")
+    payload = result(reply)?
+    failed = payload.require("isError").map_err((error) => error.message())?.expect_bool().map_err(
+        (error) => error.message(),
+    )?
+    lines = content(reply)?.split("\n")
+    if failed or lines[0] != "authored_text=quoted_evidence" or expected not in lines:
+        return Err(f"MCP {kind} omitted the expected authored relationship: {expected}")
+    for line in lines[1:]:
+        if not line.startswith("… ") and (" [author=" not in line or " [author=unknown] " in line):
+            return Err(f"MCP {kind} returned a relationship without source authorship")
+    return Ok(None)
 
 
 pub def check_mcp_definition_boundary(incan: str, project: Path, boundary: Path, provider: Path) -> Result[None, str]:
-    """Invalidate a checked definitions page when its local provider becomes part of the requester's repository."""
+    """Invalidate checked author pages when their provider becomes part of the requester's repository."""
     scratch = boundary.joinpath(".mcp-definition-boundary")
     traces = scratch.joinpath("traces")
     bakery = scratch.joinpath("bakery")
@@ -120,25 +227,38 @@ pub def check_mcp_definition_boundary(incan: str, project: Path, boundary: Path,
             "graph_query",
             JsonValue.object({"kind": JsonValue.string("defs"), "term": JsonValue.string("checked_helper")}),
         ),
+        call(3, "graph_query", JsonValue.object({"kind": JsonValue.string("refs"), "term": JsonValue.string("NUMBER")})),
+        call(
+            4,
+            "graph_query",
+            JsonValue.object({"kind": JsonValue.string("callees"), "term": JsonValue.string("checked_helper")}),
+        ),
     ]
     write(protocol, "\n".join([item.to_json().map_err((error) => error.message())? for item in calls]) + "\n")?
     # The first request may create dependency graph files. Wait for those files to settle before seeding the page.
-    seed = definition_reply(incan, project, protocol, bakery.0)?
-    check_boundary_author(seed, provider, f"{provider.0}:6", "dependency", "graph_checked@0.1.0")?
+    seed = boundary_replies(incan, project, protocol, bakery.0)?
+    check_boundary_author(seed[0], provider, f"{provider.0}:6", "dependency", "graph_checked@0.1.0")?
     sleep(Duration.from_secs(3))
-    _ = definition_reply(incan, project, protocol, bakery.0)?
-    warm = definition_reply(incan, project, protocol, bakery.0, traces.0)?
-    if seed.to_json().map_err((error) => error.message())? != warm.to_json().map_err((error) => error.message())?:
-        return Err("unchanged checked MCP definitions changed the selected response")
-    if not warm_boundary_page(traces)?:
-        return Err("unchanged checked MCP definitions did not replay their admitted page")
+    _ = boundary_replies(incan, project, protocol, bakery.0)?
+    warm = boundary_replies(incan, project, protocol, bakery.0, traces.0)?
+    if encoded_replies([seed[0]])? != encoded_replies([warm[0]])? or warm_graph_pages(traces)? == 0:
+        return Err("unchanged checked MCP definitions did not replay their admitted answer")
     # The marker is the sole change to the request's source tree.
     make_directory(boundary.joinpath(".git"))?
-    current = definition_reply(incan, project, protocol, bakery.0)?
-    fresh = definition_reply(incan, project, protocol, fresh_bakery.0)?
-    check_boundary_author(fresh, provider, "provider/src/lib.incn:6", "workspace", "")?
-    if current.to_json().map_err((error) => error.message())? != fresh.to_json().map_err((error) => error.message())?:
-        return Err("warm MCP definitions disagree with fresh selection after the repository root changes")
+    current = boundary_replies(incan, project, protocol, bakery.0)?
+    fresh = boundary_replies(incan, project, protocol, fresh_bakery.0)?
+    check_boundary_author(fresh[0], provider, "provider/src/lib.incn:6", "workspace", "")?
+    if encoded_replies([current[0]])? != encoded_replies([fresh[0]])?:
+        return Err("warm MCP definitions disagreed with the fresh repository boundary")
+    # Count the relationship red only after typed definitions prove the old and new author roots.
+    check_boundary_reference(seed[1], f"{provider.0}:8", "dependency:\"graph_checked@0.1.0\"")?
+    check_boundary_call(seed[2], "src/main.incn:6")?
+    if encoded_replies(seed)? != encoded_replies(warm)? or warm_graph_pages(traces)? != 3:
+        return Err("unchanged checked MCP authorship did not replay all three admitted answers")
+    check_boundary_reference(fresh[1], "provider/src/lib.incn:8", "workspace")?
+    check_boundary_call(fresh[2], "consumer/src/main.incn:6")?
+    if encoded_replies(current)? != encoded_replies(fresh)?:
+        return Err("warm MCP relationships disagreed with the fresh repository boundary")
     return Ok(None)
 
 
@@ -159,25 +279,59 @@ def mcp_output(incan: str, project: Path, protocol: Path, bakery: str, trace: st
         Err(_) => return Err("MCP output is not UTF-8")
 
 
-def definition_reply(incan: str, project: Path, protocol: Path, bakery: str, trace: str = "") -> Result[JsonValue, str]:
-    """Read the one definition result after MCP initialization."""
+def boundary_replies(
+    incan: str,
+    project: Path,
+    protocol: Path,
+    bakery: str,
+    trace: str = "",
+) -> Result[list[JsonValue], str]:
+    """Read the definition and both relationship results after MCP initialization."""
     stdout = mcp_output(incan, project, protocol, bakery, trace)?
     replies = [line for line in stdout.split("\n") if line != ""]
-    if len(replies) != 2:
-        return Err("MCP repository boundary control did not receive its two replies")
-    reply = parse_json(replies[1])?
-    identifier = reply.require("id").map_err((error) => error.message())?.expect_int().map_err(
-        (error) => error.message(),
-    )?
-    if identifier != 2:
-        return Err("MCP repository boundary control received another response")
-    if reply.get("result") is None:
-        return Err(f"MCP repository boundary request was refused: {replies[1]}")
-    return Ok(reply)
+    if len(replies) != 4:
+        return Err("MCP repository boundary control did not receive its four replies")
+    mut checked: list[JsonValue] = []
+    for requested in [2, 3, 4]:
+        reply = parse_json(replies[requested - 1])?
+        received = reply.require("id").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )?
+        if received != requested or reply.get("result") is None:
+            return Err(f"MCP repository boundary request {requested} was refused: {replies[requested - 1]}")
+        checked.append(reply)
+    return Ok(checked)
 
 
-def warm_boundary_page(traces: Path) -> Result[bool, str]:
-    """Require the ordinary page-hit observation so a fresh render cannot satisfy the warm control."""
+def encoded_replies(replies: list[JsonValue]) -> Result[str, str]:
+    """Compare the complete ordinary replies, including displayed anchors and typed definitions."""
+    return JsonValue.array(replies).to_json().map_err((error) => error.message())
+
+
+def check_boundary_reference(reply: JsonValue, shown: str, author: str) -> Result[None, str]:
+    """Require the dependency's reference to NUMBER at the physical emitting source and its selected author."""
+    anchor = JsonValue.string(shown).to_json().map_err((error) => error.message())?
+    lines = content(reply)?.split("\n")
+    suffix = f" [author={author}] {anchor}"
+    matching = [line for line in lines[1:] if line.startswith("reference ") and (
+        "\"NUMBER\" " in line
+        or "::NUMBER\" " in line
+    ) and line.endswith(suffix)]
+    if lines[0] != "authored_text=quoted_evidence" or len(matching) != 1:
+        return Err(f"MCP refs omitted the exact authored NUMBER reference at {shown}")
+    return Ok(None)
+
+
+def check_boundary_call(reply: JsonValue, shown: str) -> Result[None, str]:
+    """Attribute the consumer's call to the consumer even when the chosen callee belongs to a dependency."""
+    anchor = JsonValue.string(shown).to_json().map_err((error) => error.message())?
+    expected = f"call \"graph_checked::main::checked_helper\" [author=workspace] {anchor}"
+    return check_authored_relationship(reply, 4, "callees", expected)
+
+
+def warm_graph_pages(traces: Path) -> Result[int, str]:
+    """Count the distinct page observations, so fresh rendering cannot satisfy a warm control."""
+    mut pages: set[str] = set()
     for path in traces.iterdir().map_err((error) => error.message())?:
         for line in read(path)?.split("\n"):
             if line == "":
@@ -185,8 +339,8 @@ def warm_boundary_page(traces: Path) -> Result[bool, str]:
             record = parse_json(line)?
             key = text(record, "key")
             if text(record, "operation") == "reason" and key.startswith("oven: graph page ") and key.endswith(": warm"):
-                return Ok(true)
-    return Ok(false)
+                pages.add(key)
+    return Ok(len(pages))
 
 
 def check_boundary_author(

@@ -9,6 +9,7 @@ from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import zero_id
 from files import write
+from json_fields import required_text
 from rust_target import decoded
 from scratch import scratch_directory
 
@@ -84,10 +85,12 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     _ = ran?
     imported_answer = imported?
     own_answer = own?
-    imported_text = imported_answer.to_json().map_err((error) => error.message())?
-    own_text = own_answer.to_json().map_err((error) => error.message())?
-    assert imported_text.contains("def value(scale: int) -> int"), imported_text
-    assert own_text.contains("def main() -> None"), own_text
+    own_text = required_text(own_answer, "hover")?
+    assert own_text == "def main() -> None:", "local hover did not return its exact declaration"
+    imported_text = required_text(imported_answer, "hover")?
+    encoded = JsonValue.string(imported_text).to_json().map_err((error) => error.message())?
+    expected = "pub def value(scale: int) -> int:"
+    assert imported_text == expected, f"imported hover did not return its exact declaration: {encoded}"
     return Ok(None)
 
 

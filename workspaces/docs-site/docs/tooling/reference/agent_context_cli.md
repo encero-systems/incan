@@ -96,12 +96,14 @@ Every argument object rejects unknown fields. Fields listed below are required; 
 | --- | --- | --- |
 | `context_for_task` | `task: string`, `budget: integer` | Compact context for task text. |
 | `context_for_declaration` | `declaration: string`, `budget: integer` | Compact context using the declaration selector as its task. |
-| `graph_query` | `kind: string`, `term: string` | CLI query hits (default limit `20`). For `kind: "defs"`, `structuredContent.records` contains a header followed by the selected declaration records, each with its `author` and any available `span`. The first text block keeps the CLI display. The second serializes the same object as `structuredContent`. |
+| `graph_query` | `kind: string`, `term: string` | Selected query hits (default limit `20`). For `kind: "defs"`, `structuredContent.records` contains a header followed by the selected declaration records, each with its `author` and any available `span`. The first text block keeps the CLI display. The second serializes the same object as `structuredContent`. |
 | `graph_summary` | `{}` or omitted | JSON object with `snapshot_id`, `degraded`, `languages`, `semantic_contexts` and `counts`, an object from record kind to count. |
 | `snapshot_status` | `snapshot: string` | Freshness JSON comparing the supplied ID with the service snapshot reported by `graph_summary`. |
 | `process_risk` | `{}` or omitted | JSON array of optional process observations. |
 | `record_feedback` | `task: string`, `declaration: string`, `snapshot: string`, `ttl_seconds: integer` | The retained feedback object. Mutates only this MCP session. |
 | `task_memory` | `task: string` | JSON array of current feedback for that exact task. |
+
+A nonempty `refs`, `callers`, `callees` or `imports` reply begins with `authored_text=quoted_evidence`. Each hit gives its JSON-quoted label and source anchor and identifies the author of the record at that anchor.
 
 Feedback requires a nonempty task, a unique proved declaration and a TTL in `1..86400` seconds. For `snapshot`, use the current ID from `graph_summary` or the exact current checked or tolerant export ID for the same selection. The server rejects stale snapshots, snapshots for another selection and IDs it cannot verify. The declaration selector accepts an exported ID, stable key or exact qualified label.
 
