@@ -47,10 +47,10 @@ pub def overlay_hover(
                 key = encode_record_key(signature)?
                 match get(selected, key).map_err((error) => error.message())?:
                     Some(value) =>
-                        text = source_value(signature, value)?.decode().map_err(
+                        signature_text = source_value(signature, value)?.decode().map_err(
                             (_) => f"invalid declaration signature text: {path}:{facet}",
                         )?
-                        return Ok(Some(text.strip()))
+                        return Ok(Some(signature_text.strip()))
                     None => pass
             return Ok(None)
 
