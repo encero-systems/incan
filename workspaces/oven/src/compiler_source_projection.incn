@@ -782,6 +782,16 @@ pub def captured_source_key(origin: str, file: str) -> RecordKey:
     return source_key("source-capture", origin, file, "module")
 
 
+pub def raw_source_key(origin: str, file: str) -> RecordKey:
+    """Name the exact authored UTF-8 source selected for this module."""
+    return source_key("source-raw", origin, file, "module")
+
+
+pub def source_comments_key(origin: str, file: str) -> RecordKey:
+    """Name the ordered authored comment lexemes selected for this module."""
+    return source_key("source-comments", origin, file, "module")
+
+
 pub def positioned_source_key(origin: str, file: str) -> RecordKey:
     """The positioned source projection recorded when an aggregate binds physical source geometry."""
     return source_key("source-positioned", origin, file, "module")
