@@ -10,7 +10,7 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from rust::std::mem import drop, take
 from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
-from bakery import find, fact_file
+from bakery import fact_file, find_executable_payload
 from bakery_records import Fact
 from bakery_roots import register_root
 from check_pages import check_page_directory, keep_check_pages
@@ -356,12 +356,14 @@ pub def obtain(
     # A unit with options is described and keyed afresh on every request: its inputs reach beyond the captured
     # sources, as a Clove's C sources do, and its bakery key, not the capture, proves it unchanged.
     mut previous_view: Option[Snapshot] = None
+    mut view_retry: Option[NativeUnit] = None
     if not listing_refusals and unit_options == "":
         selected = admission.open(request_view).map_err((error) => error.message())?
         match selected_program(selected, handle)?:
             Some(unit) =>
                 if restore_program(store, unit, console)?:
                     return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console))
+                view_retry = Some(unit)
             None => pass
         previous_view = Some(selected)
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
@@ -377,17 +379,22 @@ pub def obtain(
     mut selector: Option[str] = None
     if unit_options == "":
         selector = standalone_selector(epoch, producer)?
+    mut indexed_retry: Option[NativeUnit] = None
     if not listing_refusals:
         if let Some(unit) = indexed_program(store, epoch, selector, admission)?:
-            if restore_program(store, unit, console)?:
+            # A miss in the held request view cannot be replaced by another variant of that same Unit.
+            if view_retry is None and restore_program(store, unit, console)?:
                 return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console, epoch_reads=epoch_reads))
+            indexed_retry = Some(unit)
     preparation = match prepared:
         Some(found) => found
         None => prepare_program(epoch, request_view, console, selected_home, unit_options, scheduled_origin, source_readings)?
     ready = preparation.unit
     toolchain = preparation.toolchain
     if preparation.whole != "":
-        return whole_unit_program(store, selector, ready, toolchain, console, preparation.whole, epoch_reads)
+        return whole_unit_program(
+            store, selector, ready, toolchain, console, preparation.whole, epoch_reads, view_retry, indexed_retry,
+        )
     compiled_key = match preparation.key:
         Some(key) => key
         None => return Err("prepared records program has no unit key")
@@ -501,6 +508,7 @@ pub def obtain(
     produced = obtain_executable(
         ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies), checking, Some(records),
         report_directory=Some(plan_report),
+        retry=program_retry(view_retry, indexed_retry, key.digest),
     )?
     admission_report = records.joinpath("admissions")
     # A bakery hit plans nothing and never reads an earlier report.
@@ -755,6 +763,8 @@ def whole_unit_program(
     console: str,
     whole: str,
     epoch_reads: int,
+    view_retry: Option[NativeUnit],
+    indexed_retry: Option[NativeUnit],
 ) -> Result[ProgramOutcome, str]:
     """
     Compile a unit the records producer cannot give per-declaration records whole, through the unit compiler the first
@@ -781,7 +791,10 @@ def whole_unit_program(
         return Err(compiled_key.refusal)
     key = linkage_key(compiled_key, development_link(ready, true))?
     binary = program_binary(ready)
-    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true)?
+    produced = obtain_executable(
+        ready, toolchain, binary, compiled_key, true, Some(store), true,
+        retry=program_retry(view_retry, indexed_retry, key.digest),
+    )?
     if produced.code != 0:
         return Ok(
             ProgramOutcome(
@@ -992,27 +1005,14 @@ pub def restore_program(store: Path, unit: NativeUnit, console: str = "") -> Res
 
 
 def unit_record(store: Path, unit: NativeUnit) -> Result[Option[Fact], str]:
-    """
-    The unit's record while it holds the selected executable payload; its immutable record already admitted native
-    loader generations. A record holding other bytes was sealed again after the unit was linked again.
-    """
-    fact = required_unit(store, unit.identity)?
-    if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
-        return Ok(None)
-    return Ok(Some(fact))
+    """Look up the immutable fact for this exact descriptor and its admitted loader generations."""
+    return find_executable_payload(store, unit.identity, Path(unit.binary).name(), unit.payload)
 
 
 def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
     """Resolve the loader witness through this unit's immutable payload binding, never an ambient path."""
     binary = Path(unit.binary)
     return fact_file(store, fact, library_witness(Path(binary.name())).0)
-
-
-def required_unit(store: Path, identity: str) -> Result[Fact, str]:
-    """A selected unit must exist; absence after descriptor publication is a store failure, never a rebake."""
-    match find(store, identity)?:
-        Some(fact) => return Ok(fact)
-        None => return Err("selected native unit record is missing")
 
 
 def executable_payload(fact: Fact, name: str) -> Result[str, str]:
@@ -1089,6 +1089,14 @@ def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str],
         ]
         bindings.append(f"listing:{fingerprint(contents)?}")
     return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
+
+
+def program_retry(view: Option[NativeUnit], indexed: Option[NativeUnit], identity: str) -> Option[NativeUnit]:
+    """Keep the held view's payload for the final Unit, then consider the independently admitted index."""
+    if let Some(selected) = view:
+        if selected.identity == identity:
+            return Some(selected)
+    return indexed
 
 
 def indexed_program(
