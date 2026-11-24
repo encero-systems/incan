@@ -10,11 +10,12 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use incan_driver::session::{CallableBodySource, CompilationSession};
-use incan_driver::unit::UnitDescription;
+use incan_driver::unit::{UnitDescription, UnitKind};
 use incan_frontend::declaration_interface::{CallableBodyInputs, CallableBodyProducts, ValidatedCallableBodies};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::{CompilerNodeId, module_identity_for_path, package_module_identity};
 use sha2::{Digest, Sha256};
 
 /// One invocation's authenticated store placement and accepted declaration inputs, without retaining checkers.
@@ -29,6 +30,7 @@ pub(super) struct CallableProducts {
 struct StoredCallableBodies {
     directory: PathBuf,
     package: String,
+    library: bool,
     project_root: PathBuf,
 }
 
@@ -53,7 +55,12 @@ impl CallableBodySource for StoredCallableBodies {
         bytes.extend_from_slice(&magic);
         file.take(limit + 1 - 4).read_to_end(&mut bytes).ok()?;
         let source = project_source(&self.project_root, module)?;
-        let products = super::callable_crumb::decode(&bytes, &source).ok()?;
+        let owner = CompilerNodeId::module(if self.library {
+            package_module_identity(&self.package, &module.path_segments)
+        } else {
+            module_identity_for_path(&module.path_segments)
+        });
+        let products = super::callable_crumb::decode(&bytes, &owner, &source).ok()?;
         let selection = products
             .select(&module.ast, &module.source, &self.package, &module.path_segments)
             .ok()?;
@@ -78,6 +85,7 @@ impl CallableProducts {
             session.set_callable_body_source(std::sync::Arc::new(StoredCallableBodies {
                 directory: directory.clone(),
                 package: unit.package.clone(),
+                library: unit.kind == UnitKind::Library,
                 project_root: project_root.clone(),
             }));
         }
@@ -200,7 +208,7 @@ fn publish(
     source: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = super::callable_crumb::encode(&products, module, source)?;
-    let restored = super::callable_crumb::decode(&bytes, source)?;
+    let restored = super::callable_crumb::decode(&bytes, module, source)?;
     if super::callable_crumb::encode(&restored, module, source)? != bytes {
         return Err("callable products lost facts in their private round trip".into());
     }

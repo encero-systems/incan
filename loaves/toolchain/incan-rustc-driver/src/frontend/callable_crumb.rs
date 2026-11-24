@@ -46,12 +46,13 @@ pub(super) fn encode(
     internal_models::encode_callable_inventory(&to_atom(products.crumb_fields(module, source, &CheckerRows)?))
 }
 
-pub(super) fn decode(bytes: &[u8], source: &str) -> Result<CallableBodyProducts, String> {
+/// Admit a bounded callable inventory against the selected module and source.
+pub(super) fn decode(bytes: &[u8], module: &CompilerNodeId, source: &str) -> Result<CallableBodyProducts, String> {
     if bytes.len() > 64 * 1024 * 1024 {
         return Err("callable inventory exceeds its byte limit".into());
     }
     let root = to_cell(internal_models::decode_callable_inventory(&bytes.to_vec())?)?;
-    CallableBodyProducts::from_crumb_fields(root, source, &CheckerRows)
+    CallableBodyProducts::from_crumb_fields(root, module, source, &CheckerRows)
 }
 
 #[cfg(test)]
@@ -93,19 +94,20 @@ mod tests {
         let products = CallableBodyProducts::from_checked(&program, source, &checker, &body)?;
         let encoded = encode(&products, &body.module_id, path)?;
         assert!(encoded.starts_with(b"CRMB"));
-        let restored = decode(&encoded, path)?;
+        let restored = decode(&encoded, &body.module_id, path)?;
         assert_eq!(restored.native_inputs()?, products.native_inputs()?);
         assert_eq!(encode(&restored, &body.module_id, path)?, encoded);
         assert_eq!(restored.select(&program, source, package, &modules)?.len(), 2);
         let edited = source.replace("x * 2", "x * 7");
         assert_eq!(restored.select(&parse(&edited)?, &edited, package, &modules)?.len(), 1);
-        assert!(decode(&encoded, "src/other.incn").is_err());
-        assert!(decode(&products.to_bytes()?, path).is_err());
+        assert!(decode(&encoded, &body.module_id, "src/other.incn").is_err());
+        assert!(decode(&encoded, &CompilerNodeId::module("foreign"), path).is_err());
+        assert!(decode(&products.to_bytes()?, &body.module_id, path).is_err());
         let mut damaged = encoded;
         if let Some(last) = damaged.last_mut() {
             *last ^= 1;
         }
-        assert!(decode(&damaged, path).is_err());
+        assert!(decode(&damaged, &body.module_id, path).is_err());
         Ok(())
     }
 }
