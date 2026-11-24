@@ -70,6 +70,26 @@ class SemanticScanner:
             self.feed(character)
         self.feed("\n")
 
+    pub def scan_comments(mut self, source: str) -> str:
+        """Read source with the same scanner and retain ordered comment lexemes."""
+        mut comments: list[str] = []
+        mut lexeme: list[str] = []
+        for character in source:
+            self.feed(character)
+            if self.mode == ScanMode.Comment:
+                lexeme.append(character)
+            elif len(lexeme) > 0:
+                # A CR immediately before this LF belongs to the physical terminator.
+                if lexeme[len(lexeme) - 1] == "\r":
+                    _ = lexeme.pop()
+                comments.append("".join(lexeme))
+                lexeme = []
+        if len(lexeme) > 0:
+            comments.append("".join(lexeme))
+        self.feed("\n")
+        return "\n".join(comments)
+
+
     def feed(mut self, character: str) -> None:
         """Advance by one character in the current mode."""
         match self.mode:
@@ -243,16 +263,24 @@ def documents(lines: list[LogicalLine], index: int) -> bool:
     return false
 
 
-pub def positioned_code(source: str) -> str:
+pub def positioned_source(source: str, retain_comments: bool = false) -> tuple[str, str]:
     """
-    The text of a source file without its comments or trailing whitespace, with every line kept, so every line and
-    column of code is where it was; blank lines after the last code are dropped. Two files with the same positioned
-    code compile to the same native code and line tables: a comment text edit, or a comment ending a line or the file,
-    leaves it unchanged, while a comment line inserted above code moves that code and changes it.
+    Keep the source's code positions, dropping comments, trailing whitespace and blank lines after the last code.
+    When requested, return the original comment lexemes from that same scan in physical order.
     """
     mut scanner = SemanticScanner()
-    scanner.scan(source)
+    mut comments = ""
+    if retain_comments:
+        comments = scanner.scan_comments(source)
+    else:
+        scanner.scan(source)
     mut text = scanner.layout
     while text.endswith("\n"):
         text = text[:len(text) - 1]
-    return text
+    return (text, comments)
+
+
+pub def source_comments(source: str) -> str:
+    """Retain comment lexemes without allocating a positioned or semantic projection."""
+    mut scanner = SemanticScanner.for_boundaries()
+    return scanner.scan_comments(source)

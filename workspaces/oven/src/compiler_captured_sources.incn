@@ -1,10 +1,13 @@
 """Stage captured Incan source projections before compiler-produced records authenticate them."""
 
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.fs.file import _decode_text
+from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
 from pub::incan_platform.trace import Operation
 from pub::internal_models.records import RecordKey, encode_record_key
-from pub::internal_models.source_value_records import source_value
+from pub::internal_models.source_value_records import encode_source_text, source_value
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
@@ -12,15 +15,18 @@ from compiler_source_projection import (
     compiler_generation_record,
     positioned_source_key,
     project_source_file,
+    raw_source_key,
     scope_member,
     scope_members,
     signature_record,
+    source_comments_key,
 )
 from core_process import executable
 from observation import observe
 from jec import begin as begin_work, record as record_work
 from engine_capture import CapturedInput, InputRole
 from project_library import provides_source
+from semantic_text import source_comments
 from unit import UnitDescription, dependency_source_roots
 
 
@@ -111,7 +117,7 @@ pub def prepare_captured_source_inputs(
                     continue
                 stage_put(prepared, encode_record_key(capture.key)?, capture.encoded()?)
                 path = Path(input.path)
-                source = unit.source_text(path)?
+                source = stage_source_input(prepared, unit, input, identity, path)?
                 projection = project_source_file(identity[0], identity[1], path, declared, active, Some(source))?
                 doc_key = projection.documentation_key()
                 doc_slot = encode_record_key(doc_key)?
@@ -155,10 +161,46 @@ pub def prepare_captured_source_inputs(
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried, projections=projections))
 
 
+def stage_source_input(
+    mut transaction: Transaction, unit: UnitDescription, input: CapturedInput, identity: Tuple[str, str], path: Path,
+) -> Result[str, str]:
+    """Stage the selected UTF-8 and comments, then return the text used by the current semantic projector."""
+    if let Some(readings) = unit.source_readings:
+        captured = readings.as_ref()
+        if path.0 in captured:
+            reading = captured[path.0]
+            if reading.raw_digest != input.digest:
+                return Err(f"captured source {path.0}: selected bytes differ from their input digest")
+            stage_source_witnesses(transaction, identity, reading.text, reading.comments)?
+            return Ok(reading.text)
+
+    # An uncaptured projection still uses filesystem text semantics, derived from the same byte read as the witness.
+    content = path.read_bytes().map_err((error) => error.message())?
+    if hexlify(sha256.digest(content)) != input.digest:
+        return Err(f"captured source {path.0}: file bytes differ from their input digest")
+    raw = match content.decode("utf-8", "strict"):
+        Ok(source) => source
+        Err(_) => return Err(f"captured source {path.0}: invalid UTF-8")
+    semantic = _decode_text(path, content, "utf-8", "strict").map_err((error) => error.message())?
+    stage_source_witnesses(transaction, identity, raw, source_comments(raw))?
+    return Ok(semantic)
+
+
+def stage_source_witnesses(
+    mut transaction: Transaction, identity: Tuple[str, str], raw: str, comments: str,
+) -> Result[None, str]:
+    """Publish observed text in the existing transaction without adding compiler invalidation inputs."""
+    raw_slot = encode_record_key(raw_source_key(identity[0], identity[1]))?
+    comment_slot = encode_record_key(source_comments_key(identity[0], identity[1]))?
+    stage_put(transaction, raw_slot, encode_source_text(raw)?)
+    stage_put(transaction, comment_slot, encode_source_text(comments)?)
+    return Ok(None)
+
+
 def capture_marker(engine: str, digest: str, declared: list[str], active: Option[list[str]]) -> str:
     """Everything one module's projection is a function of, besides its logical path: its captured bytes' digest, its
     feature selection and the engine that projects it."""
-    mut parts = ["incan.source-capture/1", engine, digest, "declared:" + ",".join(declared)]
+    mut parts = ["incan.source-capture/2", engine, digest, "declared:" + ",".join(declared)]
     match active:
         Some(features) => parts.append("active:" + ",".join(features))
         None => parts.append("active:none")

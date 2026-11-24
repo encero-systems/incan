@@ -10,7 +10,11 @@ from pub::incan_platform.store import begin, commit, get, stage_delete, stage_pu
 from pub::internal_models.runtime_requirement_rows import (
     RuntimeRequirementRow, decode_runtime_requirement_batches, encode_runtime_requirement_batches,
 )
+from pub::internal_models.records import encode_record_key
+from pub::internal_models.source_value_records import source_value
+from compiler_graph_record_fixtures import required as required_record
 from compiler_runtime_requirements import runtime_requirements_key
+from compiler_source_projection import project_source, raw_source_key, source_comments_key
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
 from engine_messages import Message, Stop
@@ -90,6 +94,39 @@ pub def lowering_example_run(
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
         return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
+
+
+pub def verify_comment_only_publication(binary: str, source: Path, store: Path, original: str) -> Result[None, str]:
+    """Publish new raw and comment values on an ordinary native cache hit without invalidating code or docs."""
+    before = snapshot(store).map_err((error) => error.message())?
+    edited = original.replace("# inserted above main", "# retained above main")
+    assert edited != original and len(edited.encode("utf-8")) == len(original.encode("utf-8"))
+    write(source, edited)?
+    report = lowering_example_run(binary, source, store, "hullo")?
+    diagnostic = report.to_json().map_err((error) => error.message())?
+    for counter in ["unit_evaluations", "body_evaluations", "plan_function_evaluations", "native_bakes"]:
+        assert proof_count(report, counter)? == 0, diagnostic
+    after = snapshot(store).map_err((error) => error.message())?
+    assert after.generation > before.generation, "a native cache hit must still publish changed authored source"
+
+    raw = raw_source_key("main", "main.incn")
+    comments = source_comments_key("main", "main.incn")
+    for key, previous, revised in [
+        (raw, original.encode("utf-8"), edited.encode("utf-8")),
+        (comments, b"# inserted above main", b"# retained above main"),
+    ]:
+        slot = encode_record_key(key)?
+        old = required_record(before, slot)?
+        new = required_record(after, slot)?
+        assert old[:4] == b"CRMB" and new[:4] == b"CRMB", "source witnesses must be typed Crumb values"
+        assert source_value(key, old)? == previous and source_value(key, new)? == revised
+
+    projection = project_source("main", "main.incn", original)?
+    assert len(projection.owners) == 2
+    for key in [owner.key for owner in projection.owners] + [projection.documentation_key()]:
+        slot = encode_record_key(key)?
+        assert required_record(after, slot)? == required_record(before, slot)?, "a comment edit changed code or docs"
+    return Ok(None)
 
 
 pub def attempt_trace(root: Path, name: str) -> Result[Path, str]:

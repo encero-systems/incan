@@ -56,7 +56,9 @@ from compiler_body_values import (
 from compiler_captured_sources import publish_captured_source_inputs
 from compiler_body_projection import projection_refusals
 from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies, publish_compiled_bodies
-from engine_capture import CapturedInput, InputRole
+from engine_capture import (
+    CaptureOutcome, CaptureRequest, CapturedInput, InputRole, InputSelection, admitted_home, capture,
+)
 from observation import file_digest, file_metadata
 from jec import begin as begin_work, record as record_work
 from project_library import library_key
@@ -701,7 +703,7 @@ def verify_durable_source_values(root: Path) -> Result[None, str]:
     """Change raw source and comments while preserving the persisted checked code and documentation."""
     path = root.joinpath("src").joinpath("main.incn")
     path.parent().mkdir(true, true).map_err((error) => error.message())?
-    unit = UnitDescription(
+    mut unit = UnitDescription(
         source=path.0,
         project_root=root.0,
         source_root=path.parent().0,
@@ -751,13 +753,14 @@ def verify_durable_source_values(root: Path) -> Result[None, str]:
     assert required(after, docs_slot)? == original_docs
     assert source_value(code_key, original_code)? == b"def main() -> None:\n    println(\"left#right\")"
     assert read_documentation(original_docs)? == [("main", "    \"\"\"Explain # in documentation.\"\"\"")]
-    return verify_raw_and_comment_values(before, after, unit.package, module, source, changed)
+    witness_keys = verify_raw_and_comment_values(before, after, unit.package, module, source, changed)?
+    return verify_crlf_source_record(unit, root, path, changed, witness_keys, (code_slot, docs_slot), after)
 
 
 def verify_raw_and_comment_values(
     before: Snapshot, after: Snapshot, origin: str, module: str, source: str, changed: str,
-) -> Result[None, str]:
-    """Read both dedicated values from each selected disk generation under stable module keys."""
+) -> Result[tuple[RecordKey, RecordKey], str]:
+    """Read both values across the selected disk generations and return their exact keys."""
     raw_key = RecordKey(
         family="source-raw", identity_profile=SOURCE_PROFILE, origin=origin,
         identity=module, facet="module", context="",
@@ -781,7 +784,68 @@ def verify_raw_and_comment_values(
     assert source_value(raw_key, raw_after.unwrap_or(b""))? == changed.encode("utf-8")
     assert source_value(comments_key, comments_before.unwrap_or(b""))? == b"# Standalone note\n# first note"
     assert source_value(comments_key, comments_after.unwrap_or(b""))? == b"# Standalone note\n# later note"
+    return Ok((raw_key, comments_key))
+
+
+def verify_crlf_source_record(
+    mut unit: UnitDescription, root: Path, path: Path, lf_source: str,
+    witnesses: tuple[RecordKey, RecordKey], semantic_slots: tuple[str, str], lf_snapshot: Snapshot,
+) -> Result[None, str]:
+    """Retain exact CRLF and comment text through the two existing acquisition routes."""
+    physical = path.resolve().map_err((error) => error.message())?
+    note = "# later note 🧭  "
+    source = lf_source.replace("# later note", note).replace("\n", "\r\n")
+    expected = source.encode("utf-8")
+    comments = ("# Standalone note\n" + note).encode("utf-8")
+    assert "\r\n" in source, "the fixture must contain physical CRLF terminators"
+    publish_binary(physical, expected)?
+    request = CaptureRequest(roots=[physical.0], selection=InputSelection(command="run"))
+    captured_source = capture(request, None, admitted_home()?, 0)?
+    assert captured_source.outcome == CaptureOutcome.Changed
+    epoch = match captured_source.epoch:
+        Some(value) => value
+        None => return Err("the CRLF capture did not produce an epoch")
+    input = match epoch.input(physical.0):
+        Some(value) => value
+        None => return Err("the CRLF capture omitted the source root")
+    readings = match captured_source.readings:
+        Some(value) => value
+        None => return Err("the CRLF capture omitted its input readings")
+    rows = readings.as_ref()
+    assert physical.0 in rows, "the root path must select its own capture reading"
+    reading = rows[physical.0]
+    assert input.role == InputRole.Root
+    assert reading.raw_digest == input.digest and input.digest == file_digest(physical)?
+    assert reading.text.encode("utf-8") == expected, "the capture must retain original CRLF"
+    unit.source_readings = Some(readings)
+    assert unit.source_text(physical)? == source, "the unit must use its selected capture reading"
+    captured_store = verify_crlf_values(unit, root.joinpath("captured-crlf"), input, witnesses, expected, comments)?
+
+    # A fresh store keeps the standalone control from carrying the first arm's matching capture marker.
+    unit.source_readings = None
+    standalone = verify_crlf_values(unit, root.joinpath("standalone-crlf"), input, witnesses, expected, comments)?
+    for slot in [semantic_slots[0], semantic_slots[1]]:
+        unchanged = required(lf_snapshot, slot)?
+        assert required(captured_store, slot)? == unchanged, "captured CRLF changed the semantic or documentation record"
+        assert required(standalone, slot)? == unchanged, "standalone CRLF changed the semantic or documentation record"
     return Ok(None)
+
+
+def verify_crlf_values(
+    unit: UnitDescription, store_path: Path, input: CapturedInput, witnesses: tuple[RecordKey, RecordKey],
+    raw: bytes, comments: bytes,
+) -> Result[Snapshot, str]:
+    """Reopen the disk snapshot and decode its typed witnesses under their independent keys."""
+    store = disk_root(store_path.0)
+    empty = store_snapshot(store).map_err((error) => error.message())?
+    published = publish_captured_source_inputs(empty, unit, [input])?
+    reopened = store_snapshot(store).map_err((error) => error.message())?
+    assert reopened.digest == published.snapshot.digest and reopened.generation > empty.generation
+    for key, expected in [(witnesses[0], raw), (witnesses[1], comments)]:
+        encoded = required(reopened, encode_record_key(key)?)?
+        assert encoded[:4] == b"CRMB", f"{store_path.name()}: {key.family} requires a typed value"
+        assert source_value(key, encoded)? == expected, f"{store_path.name()}: {key.family} lost authored bytes"
+    return Ok(reopened)
 
 
 def captured(paths: list[Path]) -> Result[list[CapturedInput], str]:
