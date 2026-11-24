@@ -3,9 +3,11 @@
 from rust::std::fs import File
 from rust::std::process import Command
 from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
-from files import items, make_directory, parse_json, read, remove, required_text, optional_text as text
+from files import items, make_directory, parse_json, read, remove, required_text, write, optional_text as text
 
 
 pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: str = "") -> Result[None, str]:
@@ -51,22 +53,10 @@ pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: 
     protocol = project.joinpath(".mcp-requests")
     data = "\n".join([item.to_json().map_err((error) => error.message())? for item in messages]) + "\n{\n"
     protocol.write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
-    mut command = Command.new(incan)
-    command.arg("mcp").arg(".").current_dir(project.0)
-    if bakery != "":
-        command.env("INCAN_BAKERY", bakery)
     observations = project.joinpath(".mcp-preparation")
     make_directory(observations)?
-    command.env("INCAN_ENGINE_TRACE", observations.0)
-    command.stdin(File.open(protocol.0).map_err((error) => str(error))?)
-    output = command.output().map_err((error) => str(error))?
-    protocol.unlink().map_err((error) => error.message())?
-    if not output.status.success():
-        return Err("MCP server failed instead of serving graph requests")
-    mut stdout = ""
-    match RustString.from_utf8(output.stdout):
-        Ok(value) => stdout = str(value)
-        Err(_) => return Err("MCP output is not UTF-8")
+    stdout = mcp_output(incan, project, protocol, bakery, observations.0)?
+    remove(protocol)?
     # 2. Reply identities distinguish parse errors from requests and notifications.
     mut replies: Dict[int, JsonValue] = {}
     mut parse_errors = 0
@@ -110,6 +100,126 @@ pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: 
     if external_anchor == "":
         return Ok(None)
     return check_external_definition(replies[4], replies[5], project, external_anchor)
+
+
+pub def check_mcp_definition_boundary(incan: str, project: Path, boundary: Path, provider: Path) -> Result[None, str]:
+    """Invalidate a checked definitions page when its local provider becomes part of the requester's repository."""
+    scratch = boundary.joinpath(".mcp-definition-boundary")
+    traces = scratch.joinpath("traces")
+    bakery = scratch.joinpath("bakery")
+    fresh_bakery = scratch.joinpath("fresh-bakery")
+    make_directory(traces)?
+    make_directory(bakery)?
+    make_directory(fresh_bakery)?
+    protocol = scratch.joinpath("requests")
+    calls = [
+        request(1, "initialize", JsonValue.object({"protocolVersion": JsonValue.string("2025-11-25")})),
+        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
+        call(
+            2,
+            "graph_query",
+            JsonValue.object({"kind": JsonValue.string("defs"), "term": JsonValue.string("checked_helper")}),
+        ),
+    ]
+    write(protocol, "\n".join([item.to_json().map_err((error) => error.message())? for item in calls]) + "\n")?
+    # The first request may create dependency graph files. Wait for those files to settle before seeding the page.
+    seed = definition_reply(incan, project, protocol, bakery.0)?
+    check_boundary_author(seed, provider, f"{provider.0}:6", "dependency", "graph_checked@0.1.0")?
+    sleep(Duration.from_secs(3))
+    _ = definition_reply(incan, project, protocol, bakery.0)?
+    warm = definition_reply(incan, project, protocol, bakery.0, traces.0)?
+    if seed.to_json().map_err((error) => error.message())? != warm.to_json().map_err((error) => error.message())?:
+        return Err("unchanged checked MCP definitions changed the selected response")
+    if not warm_boundary_page(traces)?:
+        return Err("unchanged checked MCP definitions did not replay their admitted page")
+    # The marker is the sole change to the request's source tree.
+    make_directory(boundary.joinpath(".git"))?
+    current = definition_reply(incan, project, protocol, bakery.0)?
+    fresh = definition_reply(incan, project, protocol, fresh_bakery.0)?
+    check_boundary_author(fresh, provider, "provider/src/lib.incn:6", "workspace", "")?
+    if current.to_json().map_err((error) => error.message())? != fresh.to_json().map_err((error) => error.message())?:
+        return Err("warm MCP definitions disagree with fresh selection after the repository root changes")
+    return Ok(None)
+
+
+def mcp_output(incan: str, project: Path, protocol: Path, bakery: str, trace: str) -> Result[str, str]:
+    """Run normal stdin/stdout MCP with the selected Bakery and operation trace."""
+    mut command = Command.new(incan)
+    command.arg("mcp").arg(".").current_dir(project.0)
+    if bakery != "":
+        command.env("INCAN_BAKERY", bakery)
+    if trace != "":
+        command.env("INCAN_ENGINE_TRACE", trace)
+    command.stdin(File.open(protocol.0).map_err((error) => str(error))?)
+    output = command.output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err("MCP server failed instead of serving graph requests")
+    match RustString.from_utf8(output.stdout):
+        Ok(value) => return Ok(str(value))
+        Err(_) => return Err("MCP output is not UTF-8")
+
+
+def definition_reply(incan: str, project: Path, protocol: Path, bakery: str, trace: str = "") -> Result[JsonValue, str]:
+    """Read the one definition result after MCP initialization."""
+    stdout = mcp_output(incan, project, protocol, bakery, trace)?
+    replies = [line for line in stdout.split("\n") if line != ""]
+    if len(replies) != 2:
+        return Err("MCP repository boundary control did not receive its two replies")
+    reply = parse_json(replies[1])?
+    identifier = reply.require("id").map_err((error) => error.message())?.expect_int().map_err(
+        (error) => error.message(),
+    )?
+    if identifier != 2:
+        return Err("MCP repository boundary control received another response")
+    if reply.get("result") is None:
+        return Err(f"MCP repository boundary request was refused: {replies[1]}")
+    return Ok(reply)
+
+
+def warm_boundary_page(traces: Path) -> Result[bool, str]:
+    """Require the ordinary page-hit observation so a fresh render cannot satisfy the warm control."""
+    for path in traces.iterdir().map_err((error) => error.message())?:
+        for line in read(path)?.split("\n"):
+            if line == "":
+                continue
+            record = parse_json(line)?
+            key = text(record, "key")
+            if text(record, "operation") == "reason" and key.startswith("oven: graph page ") and key.endswith(": warm"):
+                return Ok(true)
+    return Ok(false)
+
+
+def check_boundary_author(
+    reply: JsonValue,
+    provider: Path,
+    shown_span: str,
+    author_kind: str,
+    identity: str,
+) -> Result[None, str]:
+    """Match the selected provider span in both the display and its typed authority."""
+    label = "graph_checked::main::checked_helper"
+    if f"declaration {label} {shown_span}" not in content(reply)?.split("\n"):
+        return Err("MCP definitions displayed the provider under a different repository root")
+    response = result(reply)?
+    structured = response.require("structuredContent").map_err((error) => error.message())?
+    records = items(structured.require("records").map_err((error) => error.message())?)?
+    mut matches = 0
+    for record in records:
+        if text(record, "name") != "checked_helper":
+            continue
+        span = record.require("span").map_err((error) => error.message())?
+        if text(span, "file") != provider.0:
+            continue
+        matches += 1
+        line = span.require("start_line").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )?
+        author = record.require("author").map_err((error) => error.message())?
+        if line != 6 or text(author, "kind") != author_kind or text(author, "identity") != identity:
+            return Err("MCP definitions did not attribute the provider span under the expected repository root")
+    if matches != 1:
+        return Err("MCP repository boundary control lost the exact provider definition")
+    return Ok(None)
 
 
 def check_external_definition(

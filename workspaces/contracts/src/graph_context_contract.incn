@@ -4,7 +4,7 @@ from std.fs import Path
 from std.json import JsonValue, parse
 from std.tempfile import TemporaryDirectory
 from files import make_directory, read_bytes, write, write_bytes
-from graph_mcp_contract import check_mcp
+from graph_mcp_contract import check_mcp, check_mcp_definition_boundary
 from run import invoke
 
 
@@ -67,9 +67,7 @@ pub def check_context(incan: str, project: Path) -> Result[None, str]:
     make_directory(degraded.joinpath("src"))?
     for file in ["loaf.toml", "src/lib.incn", "src/payload.incn"]:
         write_bytes(provider.joinpath(file), read_bytes(fixture.joinpath(file))?)?
-    write(
-        consumer.joinpath("loaf.toml"),
-        """
+    manifest = """
 [project]
 name = "graph_author_consumer"
 version = "0.1.0"
@@ -79,11 +77,8 @@ main = "src/main.incn"
 
 [dependencies]
 checked = { path = "../provider" }
-
-[tool.incan.codegraph]
-sources = ["degraded"]
-""",
-    )?
+"""
+    write(consumer.joinpath("loaf.toml"), manifest + "\n[tool.incan.codegraph]\nsources = [\"degraded\"]\n")?
     write(
         consumer.joinpath("src/main.incn"),
         "\n".join(
@@ -121,7 +116,10 @@ sources = ["degraded"]
     anchor = provider.joinpath("src/lib.incn")
     bakery = root.joinpath("bakery")
     check_context_formats(incan, consumer, f"{anchor.0}:6", [f"INCAN_BAKERY={bakery.0}"])?
-    return check_mcp(incan, consumer, f"{anchor.0}:6", bakery.0)
+    check_mcp(incan, consumer, f"{anchor.0}:6", bakery.0)?
+    # Keep every selected unit checked so the repository-boundary control can publish a page.
+    write(consumer.joinpath("loaf.toml"), manifest)?
+    return check_mcp_definition_boundary(incan, consumer, root, anchor)
 
 
 def check_context_formats(
