@@ -3,17 +3,34 @@
 A checked caller needs only the exact dependency interface it installs. A changed callee contract rechecks its
 callers, and a later caller edit installs the new interface."""
 
+from rust::std::mem import drop
 from rust::std::process import Command
 from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
+from std.primitives.hash import sha256
+from std.primitives.text import copy_frozen_bytes
+from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, locate_value
+from pub::internal_models.namespace_references import NamespaceReference, namespace_reference_filename
+from pub::internal_models.records import encode_record_key
+from pub::internal_models.checker_records import CHECKER_PROFILE, decode_owned_namespace_view
+from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_FORMAT, decode_executable_namespace_view
+from compiler_body_keys import namespace_key
+from compiler_captured_sources import source_origin
+from compiler_executable_metadata import namespace_digests, typed_namespace_reader
+from compiler_graph_records import reusable_evaluation
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import Refusal, zero_id
+from features import FeatureRequest
 from files import write
+from json_fields import required_items, required_text
 from scratch import scratch_directory
+from store_path_conversion import store_path
+from unit import describe
 
 
 pub def test_an_unchanged_namespace_is_admitted_by_its_header_and_a_changed_contract_rechecks_its_callers() -> Result[None, str]:
@@ -75,9 +92,19 @@ def exercise_admission(binary: str, root: Path, store: Path, main: Path, callee:
     if body.installed_frames != 0:
         return Err("checking opened the frame of a namespace no checked module imports")
 
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    graph = admission.open(HOME_VIEW).map_err((error) => error.message())?
+    expected = check_scale_namespace(graph, main)?
+
     # Prime the callee's interface, then select the same frame while a different caller body is checked.
     write(main, caller_source("println(str(first(box) + 0))"))?
-    run(binary, store, main, observations, "prime-interface")?
+    seen = {trace_row_key(row): true for row in records(observations)}
+    proof = match run(binary, store, main, observations, "prime-interface", report=true)?:
+        Some(value) => value
+        None => return Err("prime-interface did not return its request graph proof")
+    fresh = [row for row in records(observations) if trace_row_key(row) not in seen]
+    extent_proof = require_prime_scale_extent(proof, graph, expected, fresh, main)
+    drop(graph)
     after_prime = counts_of(observations)
     prime = after_prime.since(after_body)
     if prime.checked_callers == 0 or prime.installed_frames != 1:
@@ -100,7 +127,256 @@ def exercise_admission(binary: str, root: Path, store: Path, main: Path, callee:
     replacement = counts_of(observations).since(after_contract)
     if replacement.checked_callers == 0 or replacement.installed_frames != 1:
         return Err(f"replacement caller edit checked {replacement.checked_callers} caller(s) and opened {replacement.installed_frames} frames")
+    return extent_proof
+
+
+def check_scale_namespace(graph: Snapshot, main: Path) -> Result[NamespaceReference, str]:
+    """Admit the callee's typed checker row and read its exact placement in the held index."""
+    if graph.index == "" or graph.pin is None:
+        return Err("prime-interface has no leased namespace index")
+    unit = describe(main, "debug", FeatureRequest())?
+    module = "scale.incn"
+    key = namespace_key(source_origin(unit), module)
+    written = encode_record_key(key)?
+    extent = match locate_value(graph, written).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Err("the selected callee namespace has no current frame")
+    selected = match reusable_evaluation(graph, key, CHECKER_PROFILE)?:
+        Some(value) => value
+        None => return Err("the edited callee has no current checked namespace")
+    if hexlify(sha256.digest(selected.value)) != selected.value_digest:
+        return Err("the selected callee namespace differs from its evaluation")
+    namespace = decode_owned_namespace_view(selected.value).map_err((error) => f"callee namespace refused: {error:?}")?
+    reader = typed_namespace_reader()?
+    _ = decode_executable_namespace_view(reader, namespace.body_ir)?
+    _ = namespace_digests(reader, module, selected.value)?
+    if (
+        extent.offset < 0 or len(extent.digest) != 32
+        or extent.length != 8 + len(written.encode("utf-8")) + len(selected.value)
+    ):
+        return Err("the selected callee namespace extent does not cover its full frame")
+    return Ok(NamespaceReference(
+        key=key, segment=extent.segment, offset=extent.offset, length=extent.length,
+        frame_digest=extent.digest, value_digest=selected.value_digest,
+    ))
+
+
+def require_prime_scale_selection(
+    proof: JsonValue, graph: Borrowed[Snapshot], expected: Borrowed[NamespaceReference],
+) -> Result[None, str]:
+    """Require the exact caller request to select scale's lease before observing the native reader."""
+    wanted = encode_record_key(expected.key)?
+    mut matched = false
+    for demand in required_items(proof, "graph_demands")?:
+        if text_field(demand, "role") != "evaluation-frame" or text_field(demand, "key") != wanted:
+            continue
+        generation = integer_field(demand, "generation")?
+        if (
+            text_field(demand, "store") != graph.root.value
+            or text_field(demand, "view") != graph.view
+            or text_field(demand, "manifest") != graph.digest
+            or generation != graph.generation
+        ):
+            return Err("prime-interface selected scale from a different graph")
+        matched = true
+    if not matched:
+        return Err("prime-interface did not select scale in the leased graph")
     return Ok(None)
+
+
+def require_prime_scale_extent(
+    proof: JsonValue, graph: Borrowed[Snapshot], expected: Borrowed[NamespaceReference],
+    fresh: list[JsonValue], main: Path,
+) -> Result[None, str]:
+    """Bind the issued prime argument and its installed scale interface to the pre-prime graph lease."""
+    require_prime_scale_selection(proof, graph, expected)?
+    issued_prefix = "oven: issued-graph-body-records\t"
+    staged_prefix = "oven: staged-namespace-reference\t"
+    mut issued: list[JsonValue] = []
+    mut staged: list[JsonValue] = []
+    for row in fresh:
+        if text_field(row, "operation") != "reason":
+            continue
+        detail = text_field(row, "key")
+        if detail.startswith(issued_prefix):
+            issued.append(row)
+        elif detail.startswith(staged_prefix):
+            reference = reason_value(row, staged_prefix)?
+            if text_field(reference, "module") == "scale.incn":
+                staged.append(row)
+
+    if len(issued) != 1:
+        return Err(f"prime-interface issued graph-body-records rows: {len(issued)}, expected 1")
+    if len(staged) != 1:
+        return Err(f"prime-interface staged scale namespace extents: {len(staged)}, expected 1")
+    sent = reason_value(issued[0], issued_prefix)?
+    scale = reason_value(staged[0], staged_prefix)?
+    descriptor = required_text(sent, "unit")?
+    output = required_text(sent, "output")?
+    directory = required_text(sent, "records")?
+    clock = required_text(issued[0], "clock_id")?
+    route = required_text(sent, "route")?
+    generation = required_text(sent, "generation")?
+    if (
+        descriptor == "" or output == "" or directory == "" or clock == ""
+        or integer_field(sent, "records_count")? != 1
+        or required_text(scale, "unit")? != descriptor
+        or required_text(staged[0], "clock_id")? != clock
+        or required_text(scale, "page")? != Path(directory).joinpath(namespace_reference_filename()).0
+        or required_text(scale, "format")?.encode("utf-8") != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT)
+    ):
+        return Err("prime-interface did not issue the observed typed namespace page")
+    if (
+        required_text(scale, "key")? != encode_record_key(expected.key)?
+        or required_text(scale, "segment")? != expected.segment
+        or integer_field(scale, "offset")? != expected.offset
+        or integer_field(scale, "length")? != expected.length
+        or required_text(scale, "frame_digest")? != hexlify(expected.frame_digest)
+        or required_text(scale, "value_digest")? != expected.value_digest
+    ):
+        return Err("prime-interface issued scale at a different authenticated extent")
+    if route == "worker" and generation in ["", "-"]:
+        return Err("prime-interface worker issue has no generation")
+    if (route == "cold" and generation != "-") or route not in ["worker", "cold"]:
+        return Err("prime-interface has an unexpected driver route")
+    mut operation = "driver_spawn"
+    if route == "worker":
+        operation = "driver_request"
+    if driver_operations(fresh, operation, f"--unit {descriptor}", clock) != 1:
+        return Err("prime-interface has no unique completed driver operation for the issued unit")
+    return require_prime_native(fresh, main, output, route, clock)
+
+
+def require_prime_native(
+    fresh: list[JsonValue], main: Path, output: str, route: str, clock: str,
+) -> Result[None, str]:
+    """Require the actual scale header and installed interface under the one completed frontend activation."""
+    source = main.absolute().map_err((error) => error.message())?
+    mut parents: Dict[str, str] = {}
+    mut closed: Dict[str, int] = {}
+    mut units: list[str] = []
+    mut headers: list[str] = []
+    mut interfaces: list[str] = []
+    mut native: list[JsonValue] = []
+    for row in fresh:
+        kind = text_field(row, "kind")
+        id = text_field(row, "id")
+        if kind == "end":
+            closed[id] = closed.get(id, 0) + 1
+        if kind != "begin":
+            continue
+        parents[id] = text_field(row, "parent")
+        function = text_field(row, "function")
+        if let Some(fields) = row.get("fields"):
+            if function == "incan_rustc_driver::compile_unit" and text_field(fields, "input") == source.0:
+                units.append(id)
+            elif function == "incan_rustc_driver::native_compile" and text_field(fields, "input") == output:
+                native.append(row)
+            elif text_field(fields, "module") == "scale.incn":
+                if function == "incan_rustc_driver::admit_namespace_header":
+                    headers.append(id)
+                elif function == "incan_rustc_driver::open_installed_namespace_interface":
+                    interfaces.append(id)
+    if len(units) != 1 or len(native) != 1 or len(headers) != 1 or len(interfaces) != 1:
+        return Err("prime-interface did not compile one unit and install its one scale interface")
+    unit = units[0]
+    native_id = required_text(native[0], "id")?
+    for id in [unit, native_id, headers[0], interfaces[0]]:
+        if id == "" or closed.get(id, 0) != 1:
+            return Err("prime-interface has an incomplete compiler invocation")
+    if not under(headers[0], unit, parents) or not under(interfaces[0], unit, parents):
+        return Err("prime-interface scale intake belongs to another compiler invocation")
+    if under(native_id, unit, parents):
+        return Ok(None)
+    if route != "worker":
+        return Err("prime-interface native output belongs to another compiler invocation")
+    return require_prime_handoff(fresh, native[0], unit, parents, clock)
+
+
+def require_prime_handoff(
+    fresh: list[JsonValue], native: JsonValue, unit: str, parents: Dict[str, str], clock: str,
+) -> Result[None, str]:
+    """A detached native output must read the packet written by this exact frontend activation."""
+    native_pid = integer_field(native, "pid")?
+    mut writers: list[JsonValue] = []
+    mut readers: list[JsonValue] = []
+    for row in fresh:
+        if text_field(row, "kind") != "event":
+            continue
+        if let Some(fields) = row.get("fields"):
+            if text_field(fields, "message") != "rustc handoff packet":
+                continue
+            role = text_field(fields, "role")
+            if role == "writer" and under(text_field(row, "parent"), unit, parents):
+                writers.append(fields)
+            elif role == "reader" and integer_field(row, "pid")? == native_pid:
+                readers.append(fields)
+    if len(writers) != 1 or len(readers) != 1:
+        return Err("prime-interface has no unique native handoff packet")
+    writer = writers[0]
+    reader = readers[0]
+    packet = required_text(writer, "packet")?
+    digest = required_text(writer, "packet_sha256")?
+    size = integer_field(writer, "packet_size")?
+    if (
+        packet == "" or len(digest) != 64 or size <= 0
+        or required_text(reader, "packet")? != packet
+        or required_text(reader, "packet_sha256")? != digest
+        or integer_field(reader, "packet_size")? != size
+        or driver_operations(fresh, "driver_spawn", packet, clock) != 1
+    ):
+        return Err("prime-interface native handoff differs from the completed frontend packet")
+    return Ok(None)
+
+
+def trace_row_key(row: JsonValue) -> str:
+    """Track prior canonical work and native span or event identities across the prime request."""
+    kind = text_field(row, "kind")
+    if kind == "begin" or kind == "end":
+        return kind + ":" + text_field(row, "id")
+    if kind == "event":
+        pid = integer_field(row, "pid").unwrap_or(-1)
+        time = integer_field(row, "time_ns").unwrap_or(-1)
+        return f"event:{pid}:{time}"
+    clock = text_field(row, "clock_id")
+    work = text_field(row, "work")
+    return f"work:{clock}:{work}"
+
+
+def reason_value(row: JsonValue, prefix: str) -> Result[JsonValue, str]:
+    """Parse the compact JSON after the exact existing reason prefix."""
+    detail = required_text(row, "key")?
+    return parse(detail[len(prefix):]).map_err((error) => error.message())
+
+
+def integer_field(row: JsonValue, key: str) -> Result[int, str]:
+    """Read one required numeric witness without JSON coercion."""
+    return row.require(key).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def driver_operations(rows: list[JsonValue], operation: str, key: str, clock: str) -> int:
+    """Count the exact issuer's completed calls for the selected unit or handoff."""
+    mut count = 0
+    for row in rows:
+        if (
+            text_field(row, "kind") == "span" and text_field(row, "operation") == operation
+            and text_field(row, "key") == key and text_field(row, "clock_id") == clock
+            and text_field(row, "outcome") == "done"
+        ):
+            count += 1
+    return count
+
+
+def under(id: str, ancestor: str, parents: Dict[str, str]) -> bool:
+    """Follow bounded native ancestry across checking threads without assuming process-local adjacency."""
+    mut current = id
+    for _ in range(len(parents) + 1):
+        if current == "":
+            return false
+        if current == ancestor:
+            return true
+        current = parents.get(current, "")
+    return false
 
 
 pub model Counts:
@@ -127,22 +403,29 @@ def counts_of(directory: Path) -> Counts:
     )
 
 
-def run(binary: str, store: Path, main: Path, observations: Path, name: str) -> Result[None, str]:
-    """Run the program through the records engine with its compiler records traced into `observations`."""
-    outcome = Command
-        .new(binary)
-        .arg("run")
-        .arg(main.0)
-        .env("INCAN_ENGINE", "records")
-        .env("INCAN_BAKERY", store.0)
-        .env("INCAN_ENGINE_TRACE", observations.0)
-        .env("INCAN_ENGINE_REQUEST", f"namespace-admission-{name}")
-        .output()
-        .map_err((error) => str(error))?
-    if not outcome.status.success() or outcome.stdout != b"3\x0a":
+def run(
+    binary: str, store: Path, main: Path, observations: Path, name: str, report: bool = false,
+) -> Result[Option[JsonValue], str]:
+    """Run the program through the records engine, keeping its optional proof separate from stdout."""
+    mut invocation = Command.new(binary)
+    invocation.arg("run").arg(main.0)
+    invocation.env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0)
+    invocation.env("INCAN_ENGINE_TRACE", observations.0).env("INCAN_NATIVE_TIMING", "handoff")
+    invocation.env("INCAN_ENGINE_REQUEST", f"namespace-admission-{name}")
+    if report:
+        invocation.arg("--engine-report")
+    outcome = invocation.output().map_err((error) => str(error))?
+    if not outcome.status.success() or (not report and outcome.stdout != b"3\x0a"):
         error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
         return Err(f"{name} records run: status={outcome.status.code()} stderr={error}")
-    return Ok(None)
+    if not report:
+        return Ok(None)
+    output = outcome.stdout.decode("utf-8", "strict").map_err((error) => str(error))?
+    parts = output.split("\n")
+    if len(parts) != 3 or parts[1] != "3" or parts[2] != "":
+        return Err(f"{name} did not return one proof and the exact application output")
+    proof = parse(parts[0]).map_err((error) => error.message())?
+    return Ok(Some(proof))
 
 
 def records(directory: Path) -> list[JsonValue]:
