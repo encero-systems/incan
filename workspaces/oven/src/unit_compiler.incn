@@ -171,10 +171,13 @@ pub def compile_prepared_unit_completion(
         native += ["--plan-module-selection-digest", digest]
     if let Some(records) = graph_body_records:
         records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
-        write_selected_records(records_path, unit, records)?
-        native += ["--graph-body-records", records_path.0]
+        mut observed_reference: Option[str] = None
         if get_or("INCAN_NATIVE_TIMING", "") == "handoff" and get_or("INCAN_ENGINE_TRACE", "") != "":
-            if let Err(reason) = trace_staged_namespace_references(path, records_path):
+            observed_reference = Some(namespace_reference_filename())
+        published_size = write_selected_record_pages(records_path, unit, records, observed_reference)?
+        native += ["--graph-body-records", records_path.0]
+        if let Some(size) = published_size:
+            if let Err(reason) = trace_staged_namespace_references(path, records_path, records, size):
                 trace(f"namespace reference observation incomplete for {path.0}: {reason}")
         native += ["--plan-record-products", records_path.0]
         output_path = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
@@ -200,27 +203,30 @@ pub def compile_prepared_unit_completion(
     return Ok(PreparedUnitCompletion(code=0, plan_module_selection_digest=plan_selection_digest))
 
 
-def trace_staged_namespace_references(descriptor: Path, directory: Path) -> Result[None, str]:
-    """Read the two pages already published for the driver. Never reopen the selected Bakery frame here."""
-    marker = directory.joinpath(EXECUTABLE_GRAPH_INPUT)
-    page = directory.joinpath(namespace_reference_filename())
-    if not marker.is_file() or not page.is_file():
-        return Ok(None)
-    marker_file = marker.open("rb").map_err((error) => error.message())?
-    format_bytes = marker_file.read_bytes(len(EXECUTABLE_GRAPH_FORMAT) + 1).map_err((error) => error.message())?
-    if format_bytes != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT):
+def trace_staged_namespace_references(
+    descriptor: Path, directory: Path, records: Borrowed[list[SelectedBodyPage]], size: int,
+) -> Result[None, str]:
+    """Observe the exact authored bytes from the successful marker and namespace reference publications."""
+    name = namespace_reference_filename()
+    mut marker = -1
+    mut reference_page = -1
+    for index, record in enumerate(records):
+        if record.segment != "" and record.digest != "":
+            continue
+        if record.key == EXECUTABLE_GRAPH_INPUT:
+            marker = index
+        elif record.key == name:
+            reference_page = index
+    if marker < 0 or reference_page < 0 or len(records[reference_page].value) != size:
+        return Err("staged namespace reference publication has no exact input bytes")
+
+    if records[marker].value != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT):
         return Err("unsupported staged executable graph format")
-    format_name = format_bytes.decode("utf-8", "strict").map_err((_) => "staged executable graph format is not UTF-8")?
-
-    size = page.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
-    if size > 64 * 1024 * 1024:
-        return Err("staged namespace reference page exceeds the driver limit")
-    reference_file = page.open("rb").map_err((error) => error.message())?
-    encoded = reference_file.read_bytes(size + 1).map_err((error) => error.message())?
-    if len(encoded) != size:
-        return Err("staged namespace reference page changed while observed")
-
-    references = decode_namespace_references(encoded)?
+    format_name = records[marker].value.decode("utf-8", "strict").map_err(
+        (_) => "staged executable graph format is not UTF-8",
+    )?
+    page = directory.joinpath(name)
+    references = decode_namespace_references(records[reference_page].value)?
     for reference in references:
         if reference.key != namespace_key(reference.key.origin, reference.key.identity):
             return Err("staged namespace references name another record family")
@@ -274,6 +280,14 @@ pub def write_selected_records(
     Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
     compiler context they were selected under. Builds and checks read their records from this one writer.
     """
+    _ = write_selected_record_pages(directory, unit, records, None)?
+    return Ok(None)
+
+
+def write_selected_record_pages(
+    directory: Path, unit: UnitDescription, records: Borrowed[list[SelectedBodyPage]], observed_key: Option[str],
+) -> Result[Option[int], str]:
+    """Publish selected pages and return the exact size only for one observed reference and marker."""
     if directory.exists():
         remove_dir_all(directory.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
     directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
@@ -283,6 +297,9 @@ pub def write_selected_records(
 
     publish_binary(directory.joinpath("producer-profile"), unit.lowering_context.unwrap_or(generation).encode("utf-8"))?
     mut listed: list[str] = []
+    mut observed_markers = 0
+    mut observed_references = 0
+    mut observed_size = 0
     for page in records:
         clock = work_clock()
         # A page offered by its store frame is a line of the request's frame list; its bytes are not copied.
@@ -294,11 +311,19 @@ pub def write_selected_records(
         if page.digest != "":
             publish_binary(directory.joinpath(page.key + DIGEST_COMPANION), page.digest.encode("utf-8"))?
         work(Operation.EngineGraphStaging, "compiler-input\t" + page.key, clock, size)
+        if let Some(key) = observed_key:
+            if page.key == EXECUTABLE_GRAPH_INPUT:
+                observed_markers += 1
+            elif page.key == key:
+                observed_references += 1
+                observed_size = size
     if len(listed) > 0:
         clock = work_clock()
         text = "".join(listed)
         publish_binary(directory.joinpath(FRAME_LIST), text.encode("utf-8"))?
         work(Operation.EngineGraphStaging, "compiler-input\t" + FRAME_LIST, clock, len(text))
+    if observed_markers == 1 and observed_references == 1:
+        return Ok(Some(observed_size))
     return Ok(None)
 
 
