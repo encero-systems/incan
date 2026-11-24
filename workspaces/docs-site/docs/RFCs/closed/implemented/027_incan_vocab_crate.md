@@ -4,7 +4,7 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Issue:** [#161](https://github.com/encero-systems/incan/issues/161)
-- **RFC PR:**
+- **RFC PR:** [#176](https://github.com/encero-systems/incan/pull/176), [#178](https://github.com/encero-systems/incan/pull/178)
     - Phases 1-3: [#176](https://github.com/encero-systems/incan/pull/176)
     - Phases 4-9: [#178](https://github.com/encero-systems/incan/pull/177)
 - **Related**:

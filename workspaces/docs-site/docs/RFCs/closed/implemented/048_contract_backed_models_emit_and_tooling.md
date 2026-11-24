@@ -11,7 +11,7 @@
     - RFC 034 (`incan.pub` registry)
     - RFC 082 (checked API documentation generation)
 - **Issue:** https://github.com/encero-systems/incan/issues/205, https://github.com/encero-systems/incan/issues/438
-- **RFC PR:** —
+- **RFC PR:** [#448](https://github.com/encero-systems/incan/pull/448)
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.20
 

@@ -10,7 +10,7 @@
     - RFC 061 (`std.compression` codec-based compression and decompression)
     - RFC 065 (`std.hash` stable hashing primitives)
 - **Issue:** https://github.com/encero-systems/incan/issues/342
-- **RFC PR:** —
+- **RFC PR:** [#574](https://github.com/encero-systems/incan/pull/574)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

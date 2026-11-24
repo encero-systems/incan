@@ -319,6 +319,7 @@ A chained assignment must evaluate its right-hand-side expression once and assig
 5. An initializer that constructs a new value or explicitly clones a value must create an owned local result, rather than borrow the initializer's receiver. An explicit clone must own independent mutable contents, including nested mutable contents; it must not retain source borrows. Unsupported cloning must be diagnosed. Generic bounds and representation choices must enforce this contract rather than weaken it.
 6. A derived alias must preserve the original target identity and access permissions. Reborrowing through a writable alias may temporarily suspend use of the parent alias, subject to the same conflict checks. It must not manufacture two independently usable exclusive accesses.
 7. These rules must apply consistently to field places in collections and custom objects. Element projections, selection expressions, and destructuring must preserve the same access permissions and alias meaning. Duckborrowing must analyze the resulting ownership and lifetimes, not silently classify difficult shapes as detached copies.
+8. A binding pattern may be written `mut name` wherever binding patterns appear, as in `Ok(mut reader) =>`, the way a parameter is written `(mut user) =>`. A plain binding is read-only. A `mut` binding is writable: it owns the payload when the matched subject is an owned value, such as a call result, and borrows the payload writably when the subject is a place, which must then permit mutation. Like `mut name = place`, it never copies the payload to make the binding legal.
 
 ### Borrow duration and conflicts
 
@@ -339,7 +340,7 @@ The same responsibility applies to loop targets, destructuring, element projecti
 
 ### Duckborrowing
 
-The compiler may infer a borrow, move, or copy only when it preserves the source contract. An owned local's unobservable copy may be optimized away. A writable alias's observable sharing must not be optimized away. In particular, the compiler must not turn an alias into a copy to permit owner replacement, overlapping access, suspension, escape, or an unsupported expression shape. When the source requests conflicting access, the result must be a diagnostic.
+The compiler may infer a borrow, move, or copy only when it preserves the source contract. An owned local's unobservable copy may be optimized away. The same holds for an explicit clone of a plain parameter: when `name.clone()` is the last use of a plain parameter `name` and the copy is unobservable, duckborrowing may take that parameter owned and move it instead of cloning. A caller whose argument is still needed then supplies the copy, and a caller whose argument is not moves it. Without the clone, a read-only parameter is never moved to make `mut local = name` legal. A writable alias's observable sharing must not be optimized away. In particular, the compiler must not turn an alias into a copy to permit owner replacement, overlapping access, suspension, escape, or an unsupported expression shape. When the source requests conflicting access, the result must be a diagnostic.
 
 ### The `mut` parameter contract
 
@@ -398,7 +399,7 @@ For this contract, RFC 023's blanket no-borrows-across-`await` policy is replace
 
 ### Transition and migration
 
-The transition is not a compatibility guarantee for ordinary locals. Code that currently copies `mut other = original` can change meaning when that declaration becomes a writable borrow. Existing code may also become invalid because it overlaps accesses. Adoption requires a warning release identifying affected declarations before their meaning changes, with explicit cloning for independent values and direct mutation or a checked borrow for shared access. A warning cannot make an actual borrow conflict safe in the new semantics.
+The transition is not a compatibility guarantee for ordinary locals. Code that currently copies `mut other = original` can change meaning when that declaration becomes a writable borrow. Existing code may also become invalid because it overlaps accesses. Adoption needs no separate warning release. The change that adopts the new meaning migrates existing declarations with it: a declaration whose behavior differs observably, because a write through the new alias reaches a place that is read afterward, gains an explicit `.clone()` when it relied on a copy, and keeps the alias when shared access was meant, through direct mutation or a checked borrow. The release notes name the change. A migration cannot make an actual borrow conflict safe in the new semantics: such a conflict is an error to fix in the source.
 
 The blanket whole-parameter rebinding refusal is replaced by write-through assignment subject to borrow safety. `clear()` on `list`, `dict`, and `set` remains a proposed in-place operation; it must remove all elements while preserving the collection as the mutation target. It is useful independently of assignment and does not add a new `.copy()` contract.
 

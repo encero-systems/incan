@@ -8,7 +8,7 @@
     - RFC 042 (traits are always abstract)
     - RFC 044 (open-ended trait methods)
 - **Issue:** https://github.com/encero-systems/incan/issues/203
-- **RFC PR:** —
+- **RFC PR:** [#515](https://github.com/encero-systems/incan/pull/515)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

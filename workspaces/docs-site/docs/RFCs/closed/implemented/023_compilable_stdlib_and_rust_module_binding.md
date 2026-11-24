@@ -3,6 +3,7 @@
 - **Status:** Implemented
 - **Created:** 2026-02-08
 - **Issue:** [#125](https://github.com/encero-systems/incan/issues/125)
+- **RFC PR:** [#141](https://github.com/encero-systems/incan/pull/141), [#142](https://github.com/encero-systems/incan/pull/142), [#143](https://github.com/encero-systems/incan/pull/143), [#144](https://github.com/encero-systems/incan/pull/144), [#151](https://github.com/encero-systems/incan/pull/151), [#156](https://github.com/encero-systems/incan/pull/156), [#160](https://github.com/encero-systems/incan/pull/160)
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing & compiler→stdlib handoff)
 - **Target version:** 0.1.0

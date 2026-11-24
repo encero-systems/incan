@@ -15,7 +15,7 @@
     - RFC 099 (generic trait-targeted methods)
 - **Issue:** https://github.com/encero-systems/incan/issues/595
 - **Follow-up:** https://github.com/encero-systems/incan/issues/596 (v0.5 trait-system bridge removal)
-- **RFC PR:** —
+- **RFC PR:** [#597](https://github.com/encero-systems/incan/pull/597)
 - **Written against:** v0.3
 - **Shipped in:** v0.3
 

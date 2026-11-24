@@ -15,7 +15,7 @@
     - OpenTelemetry semantic conventions (external)
     - OpenTelemetry GenAI semantic conventions (external)
 - **Issue:** https://github.com/encero-systems/incan/issues/392
-- **RFC PR:** —
+- **RFC PR:** [#563](https://github.com/encero-systems/incan/pull/563)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

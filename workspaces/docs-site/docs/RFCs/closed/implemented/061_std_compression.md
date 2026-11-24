@@ -9,7 +9,7 @@
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
 - **Issue:** https://github.com/encero-systems/incan/issues/339
-- **RFC PR:** —
+- **RFC PR:** [#582](https://github.com/encero-systems/incan/pull/582)
 - **Written against:** v0.2
 - **Shipped in:** 0.3.0
 

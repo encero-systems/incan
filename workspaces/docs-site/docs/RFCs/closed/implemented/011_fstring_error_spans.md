@@ -3,7 +3,7 @@
 - **Status**: Implemented
 - **Author(s)**: Danny Meijer (@dannymeijer)
 - **Issue**: #71
-- **RFC PR**: —
+- **RFC PR**: [#155](https://github.com/encero-systems/incan/pull/155)
 - **Created**: 2021-12-17
 - **Target version**: 0.2
 

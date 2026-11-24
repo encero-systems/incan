@@ -10,7 +10,7 @@
     - RFC 070 (`Result` combinators)
     - RFC 088 (`Iterator` adapter surface)
 - **Issue:** https://github.com/encero-systems/incan/issues/579
-- **RFC PR:** —
+- **RFC PR:** [#938](https://github.com/encero-systems/incan/pull/938)
 - **Written against:** v0.5
 - **Shipped in:** v0.5
 

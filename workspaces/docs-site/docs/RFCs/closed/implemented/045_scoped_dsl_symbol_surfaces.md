@@ -10,7 +10,7 @@
     - RFC 022 (namespaced stdlib and compiler handoff)
     - RFC 031 (library system phase 1)
 - **Issue:** https://github.com/encero-systems/incan/issues/202
-- **RFC PR:** —
+- **RFC PR:** [#529](https://github.com/encero-systems/incan/pull/529)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 
