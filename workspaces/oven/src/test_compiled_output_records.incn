@@ -184,7 +184,34 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     helper_symbol = "function:helper::value"
     helper_signature = helper_symbol + "|incan.source-signature/2:sha256:2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
     output = scratch.path().joinpath("compiled-body-output")
-    publish_compiled_output(
+    publish_test_body_pair(output, identity, fallback_identity, declaration, local, final, helper_symbol, helper_signature)?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    provider = publish_source_projection(empty, project_source("provider", "lib", provider_source)?)?
+    before = provider.snapshot
+    published = publish_compiled_bodies(before, unit, output)?
+    assert published.bodies == 1 and published.fallbacks == 1
+    assert published.checking_evaluations == 2 and published.body_ir_evaluations == 2
+    assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
+    assert not output.is_file()
+    check_dependency_refusals(scratch.path(), unit, published.snapshot, identity, declaration, local, final)?
+    check_fallback_lowering(scratch.path(), unit, published.snapshot, fallback_identity)?
+    check_retained_body_pair(published.snapshot, identity, source_text, provider_source, helper_symbol, helper_signature)?
+    verify_linked_capture(unit, scratch.path())?
+    return verify_durable_source_values(scratch.path().joinpath("durable-source"))
+
+
+def publish_test_body_pair(
+    output: Path,
+    identity: str,
+    fallback_identity: str,
+    declaration: bytes,
+    local: bytes,
+    final: bytes,
+    helper_symbol: str,
+    helper_signature: str,
+) -> Result[None, str]:
+    """Publish a body pair with the declaration and dependency identities the next edit will select."""
+    return publish_compiled_output(
         output,
         CompiledBodyOutputs(
             values=[
@@ -244,16 +271,20 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                 ),
             ],
         ),
-    )?
-    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
-    provider = publish_source_projection(empty, project_source("provider", "lib", provider_source)?)?
-    before = provider.snapshot
-    published = publish_compiled_bodies(before, unit, output)?
-    assert published.bodies == 1 and published.fallbacks == 1
-    assert published.checking_evaluations == 2 and published.body_ir_evaluations == 2
-    assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
-    assert not output.is_file()
-    diagnostic_output = scratch.path().joinpath("ambiguous-dependency-output")
+    )
+
+
+def check_dependency_refusals(
+    scratch: Path,
+    unit: UnitDescription,
+    graph: Snapshot,
+    identity: str,
+    declaration: bytes,
+    local: bytes,
+    final: bytes,
+) -> Result[None, str]:
+    """Keep ambiguous and absent dependency evidence tied to its body owner and reference."""
+    diagnostic_output = scratch.joinpath("ambiguous-dependency-output")
     publish_compiled_output(
         diagnostic_output,
         CompiledBodyOutputs(
@@ -280,7 +311,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
             fallbacks=[],
         ),
     )?
-    match publish_compiled_bodies(published.snapshot, unit, diagnostic_output):
+    match publish_compiled_bodies(graph, unit, diagnostic_output):
         Ok(_) =>
             assert false, "an ambiguous dependency source unexpectedly published"
         Err(message) =>
@@ -320,6 +351,13 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert len(listed) == 2, str(listed)
     assert listed[0].contains("reference_subject=expr:engine_programs#120..131"), listed[0]
     assert listed[1].contains("reference_subject=expr:engine_programs#140..146"), listed[1]
+    return Ok(None)
+
+
+def check_fallback_lowering(
+    scratch: Path, unit: UnitDescription, graph: Snapshot, fallback_identity: str,
+) -> Result[None, str]:
+    """Check the published fallback and the authority required for its lowering products."""
     fallback_key = RecordKey(
         family="eligibility",
         identity_profile="incan.stable-declaration/1",
@@ -328,12 +366,12 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         facet="other",
         context="checker-record",
     )
-    assert read_eligibility(fallback_key, required(published.snapshot, encode_record_key(fallback_key)?)?)? == Some("local record output refused: Unsupported(\"fixture\")")
+    assert read_eligibility(fallback_key, required(graph, encode_record_key(fallback_key)?)?)? == Some("local record output refused: Unsupported(\"fixture\")")
     assert fallback_reasons(
         [CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal")],
     ) == ["src/main.incn::other: exact producer refusal"]
 
-    fallback_output = scratch.path().joinpath("fallback-body-output")
+    fallback_output = scratch.joinpath("fallback-body-output")
     publish_compiled_output(
         fallback_output,
         CompiledBodyOutputs(
@@ -348,18 +386,18 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
             ],
         ),
     )?
-    report = scratch.path().joinpath("fallback-plan-report")
+    report = scratch.joinpath("fallback-plan-report")
     report.mkdir(true, true).map_err((error) => error.message())?
     report
         .joinpath("other.event")
         .write_bytes(encode_lowering_event(LoweringEvent(identity=fallback_identity, key="plan", function="other", product=b"native", reused=false))?)
         .map_err((error) => error.message())?
-    match prepare_compiled_bodies(begin(published.snapshot), unit, fallback_output, Some(report)):
+    match prepare_compiled_bodies(begin(graph), unit, fallback_output, Some(report)):
         Ok(_) =>
             assert false, "a checker-record fallback authenticated a lowering record"
         Err(message) =>
             assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
-    canonical_fallback_output = scratch.path().joinpath("canonical-fallback-body-output")
+    canonical_fallback_output = scratch.joinpath("canonical-fallback-body-output")
     publish_compiled_output(
         canonical_fallback_output,
         CompiledBodyOutputs(
@@ -374,7 +412,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
             ],
         ),
     )?
-    canonical_report = scratch.path().joinpath("canonical-fallback-plan-report")
+    canonical_report = scratch.joinpath("canonical-fallback-plan-report")
     canonical_report.mkdir(true, true).map_err((error) => error.message())?
     fallback_symbol = encode_incan_symbol_identity(
         RustCanonicalSymbolId.module_declaration(
@@ -392,7 +430,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         .joinpath("other.refusal")
         .write_bytes(encode_lowering_refusal(LoweringRefusal(identity=fallback_symbol, function="other", refusal="full-source fallback"))?)
         .map_err((error) => error.message())?
-    skipped = prepare_compiled_bodies(begin(published.snapshot), unit, canonical_fallback_output, Some(canonical_report))?
+    skipped = prepare_compiled_bodies(begin(graph), unit, canonical_fallback_output, Some(canonical_report))?
     assert skipped.bodies == 0 and skipped.fallbacks == 1
     # A fallback owner's plan is witnessed by its module's namespace record, as a member's is: the record carries the
     # owner's Body IR. This request staged no namespace record, so the event above published no plan.
@@ -404,16 +442,28 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         RustCanonicalSymbolId.module_declaration(["main"], "main", RustDeclarationKind.Function, RustHirSourceSpan.new(0, 10)),
     )
     assert not namespace_witnessed_event(unit, fallbacks, checked_symbol)?, "a checked owner's plan read its namespace"
-    selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
+    return Ok(None)
+
+
+def check_retained_body_pair(
+    graph: Snapshot,
+    identity: str,
+    source_text: str,
+    provider_source: str,
+    helper_symbol: str,
+    helper_signature: str,
+) -> Result[None, str]:
+    """Check the selected bodies and how their exact declaration and source witnesses invalidate."""
+    selected = select_body_inventory(graph, CHECKER_PROFILE)?
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?
     assert len(pages) == 1 and len(pages[0].key) == 64
     decoded = decode_graph_body_values(pages[0].value.clone()).map_err((error) => f"{error:?}")?
     assert len(decoded) == 1 and decoded[0].identity == identity
-    assert invalid_body_owners(published.snapshot, [], CHECKER_PROFILE)? == []
+    assert invalid_body_owners(graph, [], CHECKER_PROFILE)? == []
 
     provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
-    provider_body_edit = publish_source_projection(published.snapshot, provider_body)?
+    provider_body_edit = publish_source_projection(graph, provider_body)?
     assert invalid_body_owners(
         provider_body_edit.snapshot,
         [signature_record(provider_body.owners[0]).key],
@@ -421,7 +471,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     )? == []
 
     provider_signature = project_source("provider", "lib", provider_source.replace("value() -> int", "value() -> str"))?
-    provider_signature_edit = publish_source_projection(published.snapshot, provider_signature)?
+    provider_signature_edit = publish_source_projection(graph, provider_signature)?
     assert invalid_body_owners(
         provider_signature_edit.snapshot,
         [signature_record(provider_signature.owners[0]).key],
@@ -434,38 +484,37 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         source_text.replace("def other() -> None:\n    pass", "def other() -> int:\n    return 1"),
     )?
     assert module_signature.census.text == project_source("app", "src/main.incn", source_text)?.census.text
-    module_signature_edit = publish_source_projection(published.snapshot, module_signature)?
+    module_signature_edit = publish_source_projection(graph, module_signature)?
     assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == []
 
     project_slot = project_declaration_slot("app", "helper", "value", helper_signature)
     for supplier in [helper_symbol, helper_signature]:
         address = encode_record_key(project_declaration_slot("app", "helper", "value", supplier))?
-        stored = get(published.snapshot, address).map_err((error) => error.message())?
+        stored = get(graph, address).map_err((error) => error.message())?
         match stored:
             Some(value) => assert read_binding(address, value)? == supplier
             None => return Err("published declaration slot is absent")
     helper_body = project_source("app", "src/helper.incn", "pub def value() -> int:\n    return 2\n")?
-    helper_body_edit = publish_source_projection(published.snapshot, helper_body)?
+    helper_body_edit = publish_source_projection(graph, helper_body)?
     assert invalid_body_owners(helper_body_edit.snapshot, [helper_body.owners[0].key], CHECKER_PROFILE)? == []
     changed_signature = commit(
         put(
-            begin(published.snapshot),
+            begin(graph),
             encode_record_key(project_slot)?,
             b"app|module:helper|value|function|module|0|() -> str",
         ),
     ).map_err((error) => error.message())?
     assert invalid_body_owners(changed_signature, [project_slot], CHECKER_PROFILE)? == [identity]
-    removed = commit(delete(begin(published.snapshot), encode_record_key(project_slot)?)).map_err(
+    removed = commit(delete(begin(graph), encode_record_key(project_slot)?)).map_err(
         (error) => error.message(),
     )?
     assert invalid_body_owners(removed, [project_slot], CHECKER_PROFILE)? == [identity]
 
     edited = project_source("app", "src/main.incn", source_text.replace("pass", "println(\"edited\")"))?
     changed = edited.owners[0].key
-    projected = publish_source_projection(published.snapshot, edited)?
+    projected = publish_source_projection(graph, edited)?
     assert invalid_body_owners(projected.snapshot, [changed], CHECKER_PROFILE)? == [identity]
-    verify_linked_capture(unit, scratch.path())?
-    return verify_durable_source_values(scratch.path().joinpath("durable-source"))
+    return Ok(None)
 
 
 pub def test_executable_reads_require_the_current_callee_contract() -> Result[None, str]:
