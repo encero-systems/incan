@@ -894,20 +894,8 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
     """
     if selected.index == "":
         return Ok(None)
-    mut writing: Dict[str, int] = {}
-    mut slots: set[str] = set()
-    mut renewed_scopes: set[str] = set()
+    writing, slots, renewed_scopes = output_replacements(transaction.writes)
     mut removed_scope_edges: set[str] = set()
-    mut position = -1
-    for write in transaction.writes:
-        position += 1
-        key = write.key
-        if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
-            slots.add(key)
-        if write.kind != KIND_TOMBSTONE:
-            writing[key] = position
-            if is_demanded_scope_edge(key):
-                renewed_scopes.add("\t".join(key.split("\t")[1:6]))
     for slot in sorted([key for key in slots]):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
         for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
@@ -926,6 +914,24 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
         if not retained:
             stage_delete(transaction, slot + "\t")
     return Ok(None)
+
+
+pub def output_replacements(writes: Borrowed[list[Write]]) -> tuple[Dict[str, int], set[str], set[str]]:
+    """Collect replacement write positions, output slots, and source scopes renewed by this transaction."""
+    mut writing: Dict[str, int] = {}
+    mut slots: set[str] = set()
+    mut renewed_scopes: set[str] = set()
+    mut position = -1
+    for write in writes:
+        position += 1
+        key = write.key
+        if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
+            slots.add(key)
+        if write.kind != KIND_TOMBSTONE:
+            writing[key] = position
+            if is_demanded_scope_edge(key):
+                renewed_scopes.add("\t".join(key.split("\t")[1:6]))
+    return (writing, slots, renewed_scopes)
 
 
 def is_demanded_scope_edge(key: str) -> bool:
