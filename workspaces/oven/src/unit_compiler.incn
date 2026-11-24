@@ -15,10 +15,21 @@ pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
 from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
+from std.encoding.hex import hexlify
+from std.environ import get_or
 from std.fs import Path
 from pub::internal_models.overload_members import scope_output_suffix
-from pub::internal_models.executable_body_wire import executable_graph_output_marker
-from std.json import parse
+from pub::internal_models.executable_body_wire import (
+    EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT, executable_graph_output_marker,
+)
+from pub::internal_models.namespace_references import (
+    decode_namespace_references,
+    namespace_key,
+    namespace_reference_filename,
+)
+from pub::internal_models.records import encode_record_key
+from std.json import JsonValue, parse
+from std.primitives.text import copy_frozen_bytes
 from driver_command import driver_command
 from codegen import compiled_arguments
 from c_interop import archive_arguments
@@ -26,8 +37,8 @@ from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import PreparedWarnings, check_for_warnings, compile_or_replay, replay_checked_warnings
 from compiler_worker import compile_resident, served_resident
-from files import discard_file, open_stream, read
-from observation import trace_boundary
+from files import discard_file, json_text, open_stream, read
+from observation import trace, trace_boundary
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from trace_adapter import work, work_clock
@@ -160,8 +171,14 @@ pub def compile_prepared_unit_completion(
         native += ["--plan-module-selection-digest", digest]
     if let Some(records) = graph_body_records:
         records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
-        write_selected_records(records_path, unit, records)?
+        mut observed_reference: Option[str] = None
+        if get_or("INCAN_NATIVE_TIMING", "") == "handoff" and get_or("INCAN_ENGINE_TRACE", "") != "":
+            observed_reference = Some(namespace_reference_filename())
+        published_size = write_selected_record_pages(records_path, unit, records, observed_reference)?
         native += ["--graph-body-records", records_path.0]
+        if let Some(size) = published_size:
+            if let Err(reason) = trace_staged_namespace_references(path, records_path, records, size):
+                trace(f"namespace reference observation incomplete for {path.0}: {reason}")
         native += ["--plan-record-products", records_path.0]
         output_path = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
         discard_graph_body_output(output_path)?
@@ -184,6 +201,50 @@ pub def compile_prepared_unit_completion(
     if executable:
         normalize_release_executable(output, unit.profile)?
     return Ok(PreparedUnitCompletion(code=0, plan_module_selection_digest=plan_selection_digest))
+
+
+def trace_staged_namespace_references(
+    descriptor: Path, directory: Path, records: Borrowed[list[SelectedBodyPage]], size: int,
+) -> Result[None, str]:
+    """Observe the exact authored bytes from the successful marker and namespace reference publications."""
+    name = namespace_reference_filename()
+    mut marker = -1
+    mut reference_page = -1
+    for index, record in enumerate(records):
+        if record.segment != "" and record.digest != "":
+            continue
+        if record.key == EXECUTABLE_GRAPH_INPUT:
+            marker = index
+        elif record.key == name:
+            reference_page = index
+    if marker < 0 or reference_page < 0 or len(records[reference_page].value) != size:
+        return Err("staged namespace reference publication has no exact input bytes")
+
+    if records[marker].value != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT):
+        return Err("unsupported staged executable graph format")
+    format_name = records[marker].value.decode("utf-8", "strict").map_err(
+        (_) => "staged executable graph format is not UTF-8",
+    )?
+    page = directory.joinpath(name)
+    references = decode_namespace_references(records[reference_page].value)?
+    for reference in references:
+        if reference.key != namespace_key(reference.key.origin, reference.key.identity):
+            return Err("staged namespace references name another record family")
+    for reference in references:
+        detail = json_text(JsonValue.object({
+            "unit": JsonValue.string(descriptor.0),
+            "page": JsonValue.string(page.0),
+            "format": JsonValue.string(format_name),
+            "module": JsonValue.string(reference.key.identity),
+            "key": JsonValue.string(encode_record_key(reference.key)?),
+            "segment": JsonValue.string(reference.segment),
+            "offset": JsonValue.int(reference.offset),
+            "length": JsonValue.int(reference.length),
+            "frame_digest": JsonValue.string(hexlify(reference.frame_digest)),
+            "value_digest": JsonValue.string(reference.value_digest),
+        }))?
+        trace("staged-namespace-reference\t" + detail)
+    return Ok(None)
 
 
 pub def selected_plan_module_digest(records: Borrowed[list[SelectedBodyPage]]) -> Result[Option[str], str]:
@@ -219,6 +280,14 @@ pub def write_selected_records(
     Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
     compiler context they were selected under. Builds and checks read their records from this one writer.
     """
+    _ = write_selected_record_pages(directory, unit, records, None)?
+    return Ok(None)
+
+
+def write_selected_record_pages(
+    directory: Path, unit: UnitDescription, records: Borrowed[list[SelectedBodyPage]], observed_key: Option[str],
+) -> Result[Option[int], str]:
+    """Publish selected pages and return the exact size only for one observed reference and marker."""
     if directory.exists():
         remove_dir_all(directory.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
     directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
@@ -228,6 +297,9 @@ pub def write_selected_records(
 
     publish_binary(directory.joinpath("producer-profile"), unit.lowering_context.unwrap_or(generation).encode("utf-8"))?
     mut listed: list[str] = []
+    mut observed_markers = 0
+    mut observed_references = 0
+    mut observed_size = 0
     for page in records:
         clock = work_clock()
         # A page offered by its store frame is a line of the request's frame list; its bytes are not copied.
@@ -239,11 +311,19 @@ pub def write_selected_records(
         if page.digest != "":
             publish_binary(directory.joinpath(page.key + DIGEST_COMPANION), page.digest.encode("utf-8"))?
         work(Operation.EngineGraphStaging, "compiler-input\t" + page.key, clock, size)
+        if let Some(key) = observed_key:
+            if page.key == EXECUTABLE_GRAPH_INPUT:
+                observed_markers += 1
+            elif page.key == key:
+                observed_references += 1
+                observed_size = size
     if len(listed) > 0:
         clock = work_clock()
         text = "".join(listed)
         publish_binary(directory.joinpath(FRAME_LIST), text.encode("utf-8"))?
         work(Operation.EngineGraphStaging, "compiler-input\t" + FRAME_LIST, clock, len(text))
+    if observed_markers == 1 and observed_references == 1:
+        return Ok(Some(observed_size))
     return Ok(None)
 
 
