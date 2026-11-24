@@ -1,10 +1,8 @@
 """
-Give a release's registry closure each unit's source checksum, as the release pins it from the crates.io index.
+Preserve each release registry unit's source checksum under its admitted provenance.
 
-The seed toolchain's registry units were compiled from crates.io package archives, and its closure records no source
-digest for them. A release writes the candidate home's own closure, each unit carrying the SHA-256 of the package
-archive its Loaf version publishes, as `scripts/registry-checksums.json` pins it. The seed's compiled entries and
-producer selection stay shared.
+Legacy seed units use the pinned upstream package digest. Issued units retain the authenticated Loaf archive digest and
+publisher revision. The candidate writes its own closure while sharing the seed's compiled entries and producer choices.
 """
 
 from std.fs import Path
@@ -14,41 +12,54 @@ from release_support import write_json
 pub const REGISTRY_CHECKSUMS: str = "scripts/registry-checksums.json"
 
 
+model SourceArchivePin:
+    """An already authenticated Loaf publisher, decimal revision and archive digest."""
+
+    issuer: str
+    revision: str
+    checksum: str
+
+
 pub def write_checksummed_registry(toolchain: Path, pins: Path) -> Result[None, str]:
     """
-    Write the candidate's registry closure with each unit's pinned checksum, and name it in the candidate's manifest.
+    Write the candidate's checked registry closure and name it from the candidate manifest.
 
-    1. The manifest names the seed's closure by absolute path; a manifest naming none leaves the candidate without a
-       registry.
-    2. Every other file beside the seed's closure, its compiled entries and producer selection among them, is linked.
-    3. The written closure is the seed's with each unit's `checksum` set, and the manifest names it relative to the
-       toolchain directory. The seed's own closure is never written.
+    1. Validate the complete selected seed closure and release pins before touching the candidate registry.
+    2. Link the admitted compiled entries and producer records beside the new closure.
+    3. Write that closure and make its manifest path relative. The seed's own closure is never written.
     """
+    # 1. Resolve and check the admitted source before creating the candidate's registry.
     manifest = toolchain.joinpath("toolchain.json")
-    seed_closure = optional_text(read_json(manifest)?, "registry_units")?
+    document = read_json(manifest)?
+    seed_closure = optional_text(document, "registry_units")?
     if seed_closure == "":
         return Ok(None)
     if not seed_closure.startswith("/"):
         return Err(f"the candidate manifest names its seed registry closure by a relative path: {seed_closure}")
     source = Path(seed_closure)
+    closure = checksummed_closure(read_json(source)?, read_json(pins)?)?
+    mut fields = document.expect_object().map_err((error) => error.message())?
+    fields["registry_units"] = JsonValue.string("registry/closure.json")
+    siblings = source.parent().iterdir().map_err((error) => error.message())?
+
+    # 2. Keep the seed's compiled artifacts and selection under their original identities.
     registry = toolchain.joinpath("registry")
     registry.mkdir(true, true).map_err((error) => error.message())?
-    for child in source.parent().iterdir().map_err((error) => error.message())?:
+    for child in siblings:
         if child.name() != source.name():
             registry.joinpath(child.name()).symlink_to(child).map_err((error) => error.message())?
-    closure = checksummed_closure(read_json(source)?, read_json(pins)?)?
+
+    # 3. Publish the checked closure before naming it from the candidate manifest.
     write_json(registry.joinpath("closure.json"), closure)?
-    mut fields = read_json(manifest)?.expect_object().map_err((error) => error.message())?
-    fields["registry_units"] = JsonValue.string("registry/closure.json")
     return write_json(manifest, JsonValue.object(fields))
 
 
 pub def checksummed_closure(closure: JsonValue, pins: JsonValue) -> Result[JsonValue, str]:
     """
-    The registry closure with each unit's `checksum` set to the pin for its Loaf version.
+    Validate source checksums for an already admitted compiled registry closure.
 
-    Every unit needs a pin, and the refusal names every unpinned Loaf version at once. A unit that already records a
-    checksum keeps it only when it equals the pin.
+    Every unit keeps its upstream pin. Legacy rows carry that digest in the closure. Issued rows keep the source archive
+    digest, under an independently admitted issuer and revision in the release policy. Compiled identity is unchanged.
     """
     checksums = pins.require("checksums").map_err((error) => f"{REGISTRY_CHECKSUMS}: {error.message()}")?
     mut units: list[JsonValue] = []
@@ -59,22 +70,73 @@ pub def checksummed_closure(closure: JsonValue, pins: JsonValue) -> Result[JsonV
     for item in listed:
         loaf = optional_text(item, "loaf")?
         version = optional_text(item, "version")?
-        pinned = pinned_checksum(checksums, loaf, version)?
-        if pinned == "":
+        upstream = pinned_checksum(checksums, loaf, version)?
+        if upstream == "":
             if f"{loaf} {version}" not in unpinned:
                 unpinned.append(f"{loaf} {version}")
             continue
-        recorded = optional_text(item, "checksum")?
-        if recorded != "" and recorded != pinned:
-            return Err(f"the registry unit of {loaf} {version} records {recorded}; {REGISTRY_CHECKSUMS} pins {pinned}")
+        checksum = unit_source_checksum(item, pins, loaf, version, upstream)?
         mut unit = item.expect_object().map_err((error) => error.message())?
-        unit["checksum"] = JsonValue.string(pinned)
+        unit["checksum"] = JsonValue.string(checksum)
         units.append(JsonValue.object(unit))
     if len(unpinned) > 0:
         return Err(f"{REGISTRY_CHECKSUMS} pins no checksum for: {", ".join(sorted(unpinned))}")
     mut fields = closure.expect_object().map_err((error) => error.message())?
     fields["units"] = JsonValue.array(units)
     return Ok(JsonValue.object(fields))
+
+
+def unit_source_checksum(item: JsonValue, pins: JsonValue, loaf: str, version: str, upstream: str) -> Result[str, str]:
+    """Return the digest belonging to the unit's admitted source domain."""
+    issuer = optional_text(item, "registry")?
+    revision = optional_text(item, "revision")?
+    recorded = optional_text(item, "checksum")?
+    if issuer == "" and revision == "":
+        if recorded != "" and recorded != upstream:
+            return Err(f"the registry unit of {loaf} {version} records {recorded}; {REGISTRY_CHECKSUMS} pins {upstream}")
+        return Ok(upstream)
+
+    if issuer == "":
+        return Err(f"the registry unit of {loaf} {version} records a revision without a registry")
+    if not is_issued_revision(revision):
+        return Err(f"the registry unit of {loaf} {version} needs a decimal-string revision")
+    archive = pinned_source_archive(pins, loaf, version)?
+    if issuer != archive.issuer:
+        return Err(f"{loaf} {version} records registry {issuer}; source archive pins {archive.issuer}")
+    if revision != archive.revision:
+        return Err(f"{loaf} {version} records revision {revision}; source archive pins {archive.revision}")
+    if recorded != archive.checksum:
+        return Err(f"{loaf} {version} records source archive checksum {recorded}; pins {archive.checksum}")
+    return Ok(recorded)
+
+
+def pinned_source_archive(pins: JsonValue, loaf: str, version: str) -> Result[SourceArchivePin, str]:
+    """Read one exact issued source pin independently of the upstream checksum map."""
+    archive = pins
+        .require("source_archives")
+        .and_then((loaves) => loaves.require(loaf))
+        .and_then((versions) => versions.require(version))
+        .map_err((error) => f"{REGISTRY_CHECKSUMS} source archive for {loaf} {version}: {error.message()}")?
+    issuer = optional_text(archive, "registry")?
+    revision = optional_text(archive, "revision")?
+    checksum = optional_text(archive, "checksum")?
+    if issuer == "":
+        return Err(f"the source archive pin for {loaf} {version} needs a registry")
+    if not is_issued_revision(revision):
+        return Err(f"the source archive pin for {loaf} {version} needs a decimal-string revision")
+    if not is_sha256(checksum):
+        return Err(f"the source archive pin for {loaf} {version} needs a sha256 checksum")
+    return Ok(SourceArchivePin(issuer=issuer, revision=revision, checksum=checksum))
+
+
+def is_issued_revision(value: str) -> bool:
+    """Check the registry's positive decimal revision spelling without changing the wire value."""
+    if value == "" or value.startswith("0"):
+        return false
+    for character in value:
+        if character not in "0123456789":
+            return false
+    return true
 
 
 def pinned_checksum(checksums: JsonValue, loaf: str, version: str) -> Result[str, str]:
