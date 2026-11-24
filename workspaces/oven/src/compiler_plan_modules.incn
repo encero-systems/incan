@@ -1,6 +1,7 @@
 """Fold a module's plan functions into one module-level plan record, and read which modules a compile restored."""
 
 from pub::incan_platform.trace import Operation, enter_producer, finish_producer
+from rust::std::mem import take
 from std.fs import Path
 from std.primitives.hash import sha256
 from std.encoding.hex import hexlify, unhexlify
@@ -24,7 +25,9 @@ from pub::internal_models.records import ReadWitness, ReadScope, RecordRequest, 
 from compiler_source_projection import positioned_source_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_lowering_order import LoweringOrder, LoweringOrders
-from compiler_graph_records import EditCutoff, OutputSlots, family_outputs, prepare_evaluation, retire_output, reusable_evaluation
+from compiler_graph_records import (
+    EditCutoff, OutputSlots, family_outputs, matching_plan_evaluation, prepare_evaluation, retire_output,
+)
 from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE, admitted_plan, canonical_digest
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
 from jec import begin as begin_work, record as record_work
@@ -258,12 +261,26 @@ pub def staged_plan(
     """
     mut retained = event
     retained.reused = true
+    return describe_staged_plan(file, retained, identity, symbol, function, key, plan, order)
+
+
+def describe_staged_plan(
+    file: str,
+    event: Borrowed[LoweringEvent],
+    identity: str,
+    symbol: str,
+    function: str,
+    key: str,
+    plan: RecordKey,
+    order: LoweringOrder,
+) -> Result[StagedPlan, str]:
+    """Encode a normalized event without consuming its product."""
     recorded = PlanModuleFunction(
         identity=identity,
         symbol=symbol,
         function=function,
         key=key,
-        event=encode_lowering_event(retained)?,
+        event=encode_lowering_event(event)?,
     )
     return Ok(StagedPlan(file=file, module=event.module, function=recorded, plan=plan, order=order))
 
@@ -321,15 +338,19 @@ def restored_plans(
             if function.symbol != admitted.identity and (function.identity == function.symbol or admitted.placement is None):
                 return Err("restored function changed an uncertified canonical identity")
             event = placed_admission(event, page.module, admitted)?
-        selected = match reusable_evaluation(graph, key, LOWERING_PROFILE, cutoff)?:
-            Some(value) => value
+        evaluation, receipt = match matching_plan_evaluation(graph, key, LOWERING_PROFILE, event.product, cutoff)?:
+            Some(authority) => authority
             None => return Err("restored function lost its selected evaluation")
-        if selected.value != event.product:
-            return Err("restored module event differs from its selected function product")
-        order = orders.retained(graph, module.key.identity, selected)?
-        source.add(output, selected.value)
+        order = orders.selected_order(graph, module.key.identity, receipt.preparation.output.origin,
+            evaluation.namespace, receipt.preparation.rank_certificate)?
+        event.reused = true
         symbol = event.identity.clone()
-        result.append(staged_plan(module.key.identity, event, function.identity, symbol, function.function, function.key, key, order)?)
+        plan = describe_staged_plan(
+            module.key.identity, event, function.identity, symbol, function.function, function.key, key, order,
+        )?
+        product = take(event.product)
+        source.add(output, product)
+        result.append(plan)
     return Ok(result)
 
 

@@ -23,6 +23,7 @@ from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store.path import StorePath
 from scratch import scratch_directory
+from returned_plan_product_copy import verify_returned_plan_product_copy
 from pub::internal_models.records import (
     AbsentFact,
     DeletedFact,
@@ -401,7 +402,7 @@ pub def test_a_plan_module_selection_reads_again_only_the_slots_that_changed() -
     assert len(third.pages) == 2 and len(third.records) == 2
     evaluations = [read.key for read in reads if read.key.startswith("incan.engine.evaluation\t")]
     assert len(evaluations) == 1, f"{len(evaluations)} evaluations were read for one republished slot"
-    return Ok(None)
+    return verify_returned_plan_product_copy()
 
 
 pub def test_build_admits_a_settled_checker_pair_while_body_ir_is_pending() -> Result[None, str]:

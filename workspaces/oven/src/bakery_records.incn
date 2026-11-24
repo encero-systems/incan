@@ -15,6 +15,7 @@ from pub::incan_platform.store.files import StoreError
 
 const UNIT_ROW: bytes = b"bakuni\x00"
 const UNIT_SCHEMA: str = "incan.bakery.unit/1"
+const VARIANTS_ROW: bytes = b"bakvar\x00"
 
 
 pub model FactFile:
@@ -34,6 +35,13 @@ pub model Fact:
     pub name: str
     pub reaches: list[str]
     pub files: list[FactFile]
+
+
+pub model UnitVariant:
+    """One exact unit fact and the original bytes kept under the unit's current record."""
+
+    pub fact: Fact
+    pub encoded: bytes
 
 
 pub def record_key(identity: str) -> str:
@@ -126,6 +134,86 @@ pub def decode_fact(value: bytes) -> Option[Fact]:
                     match fact_document(document):
                         Ok(fact) => return Some(fact)
                         Err(_) => return None
+
+
+def variants_description() -> Description:
+    """Describe the sorted original fact rows for a unit with conflicting executable payloads."""
+    return model_description(
+        VARIANTS_ROW,
+        "incan.bakery.unit-variants/1",
+        [ModelField(identity=b"rows__", name="records", storage="list<binary>")],
+    )
+
+
+pub def executable_member(fact: Fact) -> Option[FactFile]:
+    """Identify a standalone executable only when its primary staged file is unique."""
+    mut found: Option[FactFile] = None
+    for file in fact.files:
+        if file.program and "/" not in file.path:
+            if found is not None:
+                return None
+            found = Some(file)
+    return found
+
+
+pub def encode_unit_variants(variants: list[UnitVariant]) -> Result[bytes, str]:
+    """Keep a singleton's original encoding and retain complete fact rows for a conflict."""
+    if len(variants) == 1:
+        return Ok(variants[0].encoded)
+    return encode_graph_row(
+        VARIANTS_ROW,
+        variants_description(),
+        [required_value(b"rows__", Value.List([Value.Binary(row.encoded) for row in variants]))],
+    )
+
+
+pub def decode_unit_variants(value: bytes) -> Result[list[UnitVariant], str]:
+    """Read either an old unit fact or a canonical set of independently digest-pinned unit facts."""
+    if let Some(single) = decode_fact(value):
+        return Ok([UnitVariant(fact=single, encoded=value)])
+    fields = decode_graph_row(value, VARIANTS_ROW, variants_description(), 1).map_err((_) => "invalid unit record")?
+    records = items(fields[0].value)?
+    if len(records) < 2:
+        return Err("a unit variants record must contain at least two executable payloads")
+    mut variants: list[UnitVariant] = []
+    mut previous = ""
+    mut executable_name = ""
+    for item in records:
+        encoded = match item:
+            Value.Binary(row) => row
+            _ => return Err("invalid unit variant row")
+
+        fact = match decode_fact(encoded):
+            Some(found) => found
+            None => return Err("invalid unit variant fact")
+
+        executable = match executable_member(fact):
+            Some(found) => found
+            None => return Err("a unit variant must have one standalone executable")
+
+        if not canonical_payload_digest(executable.digest) or executable.digest <= previous:
+            return Err("unit variants must have distinct, ordered executable digests")
+        if len(variants) > 0:
+            first = variants[0].fact
+            if fact.identity != first.identity or fact.kind != first.kind or fact.name != first.name:
+                return Err("unit variant names another unit")
+            if executable.path != executable_name:
+                return Err("unit variant names another executable")
+        else:
+            executable_name = executable.path
+        previous = executable.digest
+        variants.append(UnitVariant(fact=fact, encoded=encoded))
+    return Ok(variants)
+
+
+def canonical_payload_digest(digest: str) -> bool:
+    """Recognize the exact hexadecimal digest a stored executable supplies."""
+    if len(digest) != 64:
+        return false
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return false
+    return true
 
 
 def fact_document(document: JsonValue) -> Result[Fact, str]:

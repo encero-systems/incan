@@ -66,12 +66,29 @@ from store_path_conversion import (
 )
 from unit import UnitDescription
 from unit_freshness import Key
-from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, record_key, staging_root, store_failure
+from bakery_records import (
+    Fact,
+    FactFile,
+    UnitVariant,
+    claim_file,
+    decode_fact,
+    decode_unit_variants,
+    encode_fact,
+    encode_unit_variants,
+    executable_member,
+    record_key,
+    staging_root,
+    store_failure,
+)
 from bakery_roots import collect, preview_collection
-
 pub from bakery_views import forget_view
 from bakery_views import (
-    ViewSelection, layout_identity, observed_file_digest, read_view, remember_file_digest, write_view,
+    ViewSelection,
+    layout_identity,
+    observed_file_digest,
+    read_view,
+    remember_file_digest,
+    write_view,
 )
 
 const VERIFY: int = -2
@@ -111,27 +128,129 @@ pub def find(store: Path, identity: str) -> Result[Option[Fact], str]:
 
 def find_unit(store: Path, identity: str) -> Result[Option[Fact], str]:
     """Find an intact unit; damage names its object and requires an explicit owner repair."""
+    variants = read_unit(store, identity)?
+    if len(variants) == 0:
+        return Ok(None)
+    if len(variants) > 1:
+        mut digests: list[str] = []
+        for variant in variants:
+            if let Some(file) = executable_member(variant.fact):
+                digests.append(file.digest)
+        return Err(f"ambiguous unit {identity}: {", ".join(digests)}")
+    return Ok(Some(checked_fact(store, variants[0].fact)?))
+
+
+enum ExecutablePayloadDemand:
+    """Which parts of the selected executable Fact this reader will use."""
+
+    Complete
+    Launch(str)
+
+
+pub def find_executable_payload(store: Path, identity: str, name: str, digest: str) -> Result[Option[Fact], str]:
+    """Find the exact pinned executable and verify its complete selected Fact."""
+    return executable_payload_for(store, identity, name, digest, ExecutablePayloadDemand.Complete)
+
+
+pub def find_launch_executable_payload(store: Path, identity: str, name: str, digest: str) -> Result[Option[Fact], str]:
+    """Verify an exact launch Fact's payloads, leaving its optional link predecessor to the linker."""
+    return executable_payload_for(store, identity, name, digest, ExecutablePayloadDemand.Launch(name))
+
+
+def executable_payload_for(
+    store: Path, identity: str, name: str, digest: str, demand: ExecutablePayloadDemand,
+) -> Result[Option[Fact], str]:
+    """Observe one exact executable selection using the requested Fact scope."""
+    clock = begin_work()
+    selected = find_pinned_executable(store, identity, name, digest, demand)
+    record_work(Operation.BakeryFind, identity, clock)
+    return selected
+
+
+def find_pinned_executable(
+    store: Path, identity: str, name: str, digest: str, demand: ExecutablePayloadDemand,
+) -> Result[Option[Fact], str]:
+    """An unknown digest is a miss; an absent selected unit and damaged required bytes are errors."""
+    variants = read_unit(store, identity)?
+    if len(variants) == 0:
+        return Err("selected native unit record is missing")
+    if len(variants) == 1:
+        fact = variants[0].fact
+        for file in fact.files:
+            if file.path == name and file.program:
+                if file.digest == digest:
+                    return Ok(Some(checked_fact(store, fact, demand)?))
+                _ = checked_fact(store, fact)?
+                return Ok(None)
+        _ = checked_fact(store, fact)?
+        return Err("unit record does not contain the selected executable")
+    mut named = false
+    for variant in variants:
+        if let Some(file) = executable_member(variant.fact):
+            if file.path == name:
+                named = true
+                if file.digest == digest:
+                    return Ok(Some(checked_fact(store, variant.fact, demand)?))
+    if not named:
+        return Err("unit record does not contain the selected executable")
+    return Ok(None)
+
+
+def read_unit(store: Path, identity: str) -> Result[list[UnitVariant], str]:
+    """Read the unit and every alternative from one current Store snapshot."""
     view = snapshot(store).map_err(store_failure)?
-    note_graph_demand("baked-unit", view, record_key(identity))
-    match store_lookup(view, record_key(identity)).map_err(store_failure)?:
-        Lookup.Found(value) => return checked_fact(store, identity, owned(value))
-        Lookup.Deleted => return Ok(None)
-        Lookup.Absent => return Ok(None)
+    key = record_key(identity)
+    note_graph_demand("baked-unit", view, key)
+    match store_lookup(view, key).map_err(store_failure)?:
+        Lookup.Found(value) => return checked_rows(identity, owned(value))
+        Lookup.Deleted => return Ok([])
+        Lookup.Absent => return Ok([])
 
 
-def checked_fact(store: Path, identity: str, value: bytes) -> Result[Option[Fact], str]:
-    """Decode a selected unit and verify its payloads without mutating the store on failure."""
-    object = record_key(identity)
-    match decode_fact(value):
-        None => return Err(StoreError(kind="integrity", object=object, detail="invalid unit record").message())
-        Some(fact) =>
-            if fact.identity != identity:
-                return Err(StoreError(kind="integrity", object=object, detail="unit names another identity").message())
-            for file in fact.files:
-                if not payload_current(store, file):
-                    path = payload_path(store, file.digest)
-                    return Err(StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message())
-            return Ok(Some(fact))
+def checked_rows(identity: str, value: bytes) -> Result[list[UnitVariant], str]:
+    """Bind each decoded fact to its requested unit key."""
+    key = record_key(identity)
+    variants = decode_unit_variants(value).map_err(
+        (detail) => StoreError(kind="integrity", object=key, detail=detail).message(),
+    )?
+    for variant in variants:
+        if variant.fact.identity != identity:
+            return Err(StoreError(kind="integrity", object=key, detail="unit names another identity").message())
+    return Ok(variants)
+
+
+def checked_fact(
+    store: Path, fact: Fact, demand: ExecutablePayloadDemand = ExecutablePayloadDemand.Complete,
+) -> Result[Fact, str]:
+    """Verify the demanded members without substituting another variant on damage."""
+    predecessor = match demand:
+        ExecutablePayloadDemand.Complete => None
+        ExecutablePayloadDemand.Launch(name) => launch_predecessor(fact, name)
+    for file in fact.files:
+        if let Some(relative) = predecessor:
+            if file.path == relative and not file.program:
+                continue
+        if not payload_current(store, file):
+            path = payload_path(store, file.digest)
+            return Err(StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message())
+    return Ok(fact)
+
+
+def launch_predecessor(fact: Borrowed[Fact], name: str) -> Option[str]:
+    """Find the one optional predecessor member in the selected executable’s layout."""
+    if name in ["", ".", ".."] or Path(name).name() != name or "\\" in name:
+        return None
+    relative = name + ".native-objects.json"
+    mut found = false
+    for file in fact.files:
+        if file.path != relative:
+            continue
+        if found or file.program:
+            return None
+        found = true
+    if found:
+        return Some(relative)
+    return None
 
 
 def payload_current(store: Path, file: FactFile) -> bool:
@@ -232,7 +351,13 @@ def prior_fact(store: Path, name: str) -> Result[Option[Fact], str]:
         Some(identity) =>
             match get(snapshot(store).map_err(store_failure)?, record_key(identity)).map_err(store_failure)?:
                 None => return Ok(None)
-                Some(value) => return Ok(decode_fact(value))
+                Some(value) =>
+                    variants = checked_rows(identity, value)?
+                    mut largest = variants[0].fact
+                    for variant in variants[1:]:
+                        if fact_bytes(variant.fact) > fact_bytes(largest):
+                            largest = variant.fact
+                    return Ok(Some(largest))
 
 
 def fact_bytes(fact: Fact) -> int:
@@ -251,6 +376,7 @@ pub def seal(
     name: str,
     reaches: list[str],
     provenance: str,
+    repairing: bool = false,
 ) -> Result[Fact, str]:
     """
     Publish a completed bake of `identity`; the caller holds its claim.
@@ -260,7 +386,7 @@ pub def seal(
     3. Remove the staging directory.
     """
     clock = begin_work()
-    prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance)?
+    prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance, repairing)?
     published = commit(prepared.transaction).map_err(store_failure)?
     trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
     record_work(Operation.BakerySeal, identity, clock)
@@ -282,6 +408,7 @@ pub def prepare_seal(
     name: str,
     reaches: list[str],
     provenance: str,
+    repairing: bool = false,
 ) -> Result[PreparedFact, str]:
     """
     Store immutable payloads before preparing their records; only the caller's commit makes the unit visible.
@@ -301,14 +428,80 @@ pub def prepare_seal(
     for index in range(len(relatives)):
         files.append(stored_file(staged, relatives[index], digests[index].digest)?)
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
-    mut transaction = begin(snapshot(store).map_err(store_failure)?)
+    current = snapshot(store).map_err(store_failure)?
+    mut transaction = begin(current)
     transaction.payloads = digests
-    transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?, EXPECT_REPAIR)
+    transaction = put(
+        transaction,
+        record_key(identity),
+        sealed_unit_rows(current, fact, provenance, repairing)?,
+        EXPECT_REPAIR,
+    )
     selection = name_key(name)
     transaction = put(transaction, selection, encode_binding(selection, identity)?)
     _ = staged.remove_tree()
     release(store, staged.name())
     return Ok(PreparedFact(fact=fact, transaction=transaction))
+
+
+def sealed_unit_rows(current: Snapshot, fact: Fact, provenance: str, repairing: bool) -> Result[bytes, str]:
+    """Retain distinct executable payloads in the existing atomic unit row."""
+    encoded = encode_fact(fact, provenance)?
+    previous = rows_before_seal(current, fact.identity, repairing)?
+    executable = match executable_member(fact):
+        Some(file) => file
+        None =>
+            if len(previous) > 1:
+                return Err("cannot replace retained executable variants without an executable")
+            return Ok(encoded)
+
+    if len(previous) == 0:
+        return Ok(encoded)
+    mut by_digest: dict[str, UnitVariant] = {}
+    for variant in previous:
+        if let Some(retained) = executable_member(variant.fact):
+            if retained.path != executable.path or variant.fact.kind != fact.kind or variant.fact.name != fact.name:
+                return Err("an existing executable payload names a different unit layout")
+            if len(previous) > 1 and retained.digest == executable.digest:
+                if not same_variant_members(variant.fact, fact):
+                    return Err(f"executable {retained.digest} names different unit payload members")
+                return encode_unit_variants(previous)
+            by_digest[retained.digest] = variant
+    by_digest[executable.digest] = UnitVariant(fact=fact, encoded=encoded)
+    return encode_unit_variants([by_digest[digest] for digest in sorted([key for key in by_digest.keys()])])
+
+
+def rows_before_seal(current: Snapshot, identity: str, repairing: bool) -> Result[list[UnitVariant], str]:
+    """Recover existing alternatives; only an explicitly quarantined repair may replace unreadable facts."""
+    match get(current, record_key(identity)):
+        Err(error) =>
+            if repairing and error.kind == "integrity":
+                return Ok([])
+            return Err(store_failure(error))
+        Ok(found) =>
+            if let Some(value) = found:
+                checked = checked_rows(identity, value)
+                if repairing and checked.is_err():
+                    return Ok([])
+                return checked
+    return Ok([])
+
+
+def same_variant_members(first: Fact, second: Fact) -> bool:
+    """Require the same frozen executable's members and reachability on republication."""
+    if len(first.files) != len(second.files) or sorted(first.reaches) != sorted(second.reaches):
+        return false
+    for index in range(len(first.files)):
+        left = first.files[index]
+        right = second.files[index]
+        if (
+            left.path != right.path
+            or left.digest != right.digest
+            or left.size != right.size
+            or left.program != right.program
+        ):
+            return false
+    return true
 
 
 def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, str]:
@@ -783,17 +976,19 @@ pub def verify_all(store: Path) -> Result[list[str], str]:
 def verify_record(store: Path, key: str, value: bytes) -> list[str]:
     """Audit a record's schema, exact identity and every payload; report all damage without mutations."""
     mut damaged: list[str] = []
-    match decode_fact(value):
-        None => damaged.append(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
-        Some(fact) =>
-            if record_key(fact.identity) != key:
-                damaged.append(StoreError(kind="integrity", object=key, detail="unit names another identity").message())
-            for file in fact.files:
-                if not payload_intact(store, file.digest):
-                    path = payload_path(store, file.digest)
-                    damaged.append(
-                        StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message(),
-                    )
+    variants = match decode_unit_variants(value):
+        Err(detail) => return [StoreError(kind="integrity", object=key, detail=detail).message()]
+        Ok(found) => found
+
+    mut checked: set[str] = set()
+    for variant in variants:
+        if record_key(variant.fact.identity) != key:
+            return [StoreError(kind="integrity", object=key, detail="unit names another identity").message()]
+        for file in variant.fact.files:
+            if file.digest not in checked and not payload_intact(store, file.digest):
+                path = payload_path(store, file.digest)
+                damaged.append(StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message())
+            checked.add(file.digest)
     return damaged
 
 
@@ -922,7 +1117,7 @@ pub def repair_derived(
         quarantine_payload(store, digest).map_err(store_failure)?
     # 3. Record publication uses the same transaction path as an ordinary bake.
     forget_verified()
-    return seal(store, identity, staged, kind, name, reaches, provenance)
+    return seal(store, identity, staged, kind, name, reaches, provenance, repairing=true)
 
 
 pub def repair_payload_command(arguments: list[str]) -> Result[i32, str]:
@@ -947,20 +1142,19 @@ def preserve_unit_damage(store: Path, identity: str, view: Snapshot) -> Result[b
         Ok(found) =>
             match found:
                 Lookup.Found(value) =>
-                    match decode_fact(owned(value)):
-                        None =>
+                    variants = match checked_rows(identity, owned(value)):
+                        Err(_) =>
                             quarantine_record(view, key, true).map_err(store_failure)?
                             return Ok(true)
-                        Some(fact) =>
-                            if fact.identity != identity:
-                                quarantine_record(view, key, true).map_err(store_failure)?
-                                return Ok(true)
-                            mut damaged = false
-                            for file in fact.files:
-                                if not payload_current(store, file):
-                                    quarantine_payload(store, file.digest).map_err(store_failure)?
-                                    damaged = true
-                            return Ok(damaged)
+                        Ok(found) => found
+
+                    mut damaged: set[str] = set()
+                    for variant in variants:
+                        for file in variant.fact.files:
+                            if file.digest not in damaged and not payload_current(store, file):
+                                quarantine_payload(store, file.digest).map_err(store_failure)?
+                                damaged.add(file.digest)
+                    return Ok(len(damaged) > 0)
                 Lookup.Deleted => return Ok(false)
                 Lookup.Absent => return Ok(false)
 
