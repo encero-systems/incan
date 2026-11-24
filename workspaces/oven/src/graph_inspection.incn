@@ -26,7 +26,7 @@ from observation import Ledger, trace, watch_inputs, watched_inputs
 from graph_pages import GraphPage, publish_page, request_key, warm_page
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
-from graph_queries import matches, query, query_group, selection_keys, text
+from graph_queries import definition_hits, matches, query, query_group, selection_keys, text
 from graph_identity import keyed, link_keys, declaration_digests
 from graph_snapshot import (
     artifact_observations,
@@ -36,7 +36,7 @@ from graph_snapshot import (
     snapshot_status,
 )
 from graph_context import pack
-from graph_context_index import ContextIndex
+from graph_context_index import ContextIndex, with_author
 from graph_context_items import anchor_root
 from graph_process import process_facts
 from graph_rust import inspect_rust
@@ -64,6 +64,8 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
 # The versions of the cache keys for ordinary answers and raw exports.
 const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/19"
 const EXPORT_PRESENTATION_DOMAIN: str = "incan.codegraph.export-presentation/1"
+# Keep the private typed envelope distinct from either CLI definitions format in the existing answer cache.
+const MCP_DEFINITIONS_FORMAT: str = "mcp-definitions/1"
 
 
 pub model GraphOptions:
@@ -266,6 +268,15 @@ pub def inspect_codegraph(selected: GraphOptions) -> Result[i32, str]:
 pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -> Result[str, str]:
     """Validate a graph service invocation before preparing its current, content-addressed answer."""
     return selected_response(options(arguments)?, preferences)
+
+
+pub def mcp_definitions(arguments: list[str]) -> Result[JsonValue, str]:
+    """Render the ordinary definitions query once with display and typed records in the same cached answer."""
+    mut selected = options(arguments)?
+    if selected.query != "defs":
+        return Err("MCP definition records require a defs query")
+    selected.format = MCP_DEFINITIONS_FORMAT
+    return parse(selected_response(selected)?).map_err((error) => error.message())
 
 
 def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) -> Result[str, str]:
@@ -613,7 +624,7 @@ def presentation_inputs(
 
 def shared_query(selected: GraphOptions) -> bool:
     """Only plain, risk-free query lines can be reused without rendering requester-specific structured headers."""
-    structured = selected.query == "defs" and selected.format == "json"
+    structured = selected.query == "defs" and selected.format in ["json", MCP_DEFINITIONS_FORMAT]
     return selected.query != "" and not structured and not selected.risk
 
 
@@ -666,10 +677,15 @@ def render(
         )
     if selected.query != "":
         started = Instant.now()
-        records = query_records(paths, root, selected, toolchain, degraded, snapshot)?
+        mut author_root: Option[str] = None
+        if selected.format == MCP_DEFINITIONS_FORMAT:
+            author_root = Some(anchor_root(Path(root)).0)
+        records = query_records(paths, root, selected, toolchain, degraded, snapshot, author_root)?
         trace(f"graph query records: {started.elapsed().as_millis()} ms")
         if selected.format == "json" and selected.query == "defs":
             return definition_response(records, selected.term, selected.limit)
+        if let Some(anchors) = author_root:
+            return mcp_definition_response(records, selected.term, selected.limit, anchors)
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         mut lines = hits[:selected.limit]
         if len(hits) > selected.limit:
@@ -688,6 +704,7 @@ def query_records(
     toolchain: Toolchain,
     degraded: bool,
     snapshot: str,
+    author_root: Option[str] = None,
 ) -> Result[list[JsonValue], str]:
     """
     The records a query reads: every module and declaration, and the relationships its term can select.
@@ -704,7 +721,17 @@ def query_records(
         mut definition: Option[str] = None
         if selected.query == "defs":
             definition = Some(selected.term)
-        return read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot, definition)
+        return read_records(
+            paths,
+            root,
+            toolchain,
+            group,
+            selected.strict,
+            degraded,
+            snapshot,
+            definition,
+            author_root=author_root,
+        )
     # 2. Modules and declarations of every unit, under the one header.
     kind = group.split(",")[1]
     nodes = read_records(paths, root, toolchain, "nodes", selected.strict, degraded, snapshot)?
@@ -741,10 +768,41 @@ def definition_response(records: list[JsonValue], term: str, limit: int) -> Resu
     """Bound structured definition records and their digest metadata to the same exact selection."""
     declarations = [record for record in records[1:] if definition_candidate(record, term) and matches(record, term)]
     selected = declarations[:limit]
-    mut header = records[0].expect_object().map_err((error) => error.message())?
+    document = definition_document(records[0], selected, len(declarations) - len(selected))?
+    return json_text(JsonValue.array(document))
+
+
+def mcp_definition_response(records: list[JsonValue], term: str, limit: int, root: str) -> Result[str, str]:
+    """Keep typed records aligned with ordinary text order, deduplication, and limit."""
+    hits = definition_hits(records, term, root)
+    selected = hits[:limit]
+    remaining_lines = len(hits) - len(selected)
+    mut lines = [line for line, _ in selected]
+    if remaining_lines > 0:
+        lines.append(f"… {remaining_lines} more")
+    mut declarations: list[JsonValue] = []
+    for _, group in selected:
+        declarations.extend(group)
+    # A compact line may describe several canonical declarations, each with its own author.
+    mut remaining_records = 0
+    for _, group in hits[limit:]:
+        remaining_records += len(group)
+    typed = definition_document(records[0], declarations, remaining_records)?
+    return json_text(
+        JsonValue.object({"display": JsonValue.string("\n".join(lines)), "records": JsonValue.array(typed)}),
+    )
+
+
+def definition_document(
+    header_record: JsonValue,
+    selected: list[JsonValue],
+    remaining: int,
+) -> Result[list[JsonValue], str]:
+    """Render digest metadata for exactly the declarations that this response presents."""
+    mut header = header_record.expect_object().map_err((error) => error.message())?
     header["declaration_digests"] = declaration_digests(selected)?
-    header["remaining_hits"] = JsonValue.int(len(declarations) - len(selected))
-    return json_text(JsonValue.array([JsonValue.object(header)] + selected))
+    header["remaining_hits"] = JsonValue.int(remaining)
+    return Ok([JsonValue.object(header)] + selected)
 
 
 def export_records(
@@ -961,6 +1019,7 @@ def read_records(
     snapshot: str,
     definition: Option[str] = None,
     providers: list[JsonValue] = [],
+    author_root: Option[str] = None,
 ) -> Result[list[JsonValue], str]:
     """
     Merge unit documents deterministically, retaining one header and one instance of each identified fact.
@@ -983,6 +1042,9 @@ def read_records(
         # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
         document = read_graph(unit, toolchain, group)?
         mut package_name = unit.package
+        mut author: Option[JsonValue] = None
+        if let Some(anchors) = author_root:
+            author = Some(unit.author(anchors).json())
         for line in document.split("\n"):
             if line.strip() == "":
                 continue
@@ -1009,6 +1071,8 @@ def read_records(
             if key != "" and key in seen:
                 continue
             seen[key] = true
+            if let Some(authority) = author:
+                record = with_author(record, authority)?
             records.append(record)
         trace(f"graph records {unit.package}: {started.elapsed().as_millis()} ms")
     # 4. The header tells the reader the mode, whether any unit was unchecked, and every language and context involved.
