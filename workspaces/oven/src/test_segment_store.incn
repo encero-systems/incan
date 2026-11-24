@@ -461,7 +461,10 @@ def refuse_bulk_index_neighbor(root: StorePath, reference: str, offset: int) -> 
     end = start + int(parts[2])
     assert start >= 0 and end <= len(original) and 0 <= offset and start + offset < end
     at = start + offset
-    changed = original[:at] + b"\xff" + original[at + 1:]
+    buffer = BytesIO(original)
+    buffer.seek(at, 0).map_err((error) => error.message())?
+    buffer.write_bytes(b"\xff").map_err((error) => error.message())?
+    changed = buffer.getvalue()
     pack = hexlify(sha256.digest(changed))
     digest = hexlify(sha256.digest(changed[start:end]))
     pack_path(root, pack).store_write_bytes(changed).map_err((error) => error.message())?
