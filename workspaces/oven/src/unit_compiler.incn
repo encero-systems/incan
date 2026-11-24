@@ -15,10 +15,21 @@ pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
 from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
+from std.encoding.hex import hexlify
+from std.environ import get_or
 from std.fs import Path
 from pub::internal_models.overload_members import scope_output_suffix
-from pub::internal_models.executable_body_wire import executable_graph_output_marker
-from std.json import parse
+from pub::internal_models.executable_body_wire import (
+    EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT, executable_graph_output_marker,
+)
+from pub::internal_models.namespace_references import (
+    decode_namespace_references,
+    namespace_key,
+    namespace_reference_filename,
+)
+from pub::internal_models.records import encode_record_key
+from std.json import JsonValue, parse
+from std.primitives.text import copy_frozen_bytes
 from driver_command import driver_command
 from codegen import compiled_arguments
 from c_interop import archive_arguments
@@ -26,8 +37,8 @@ from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import PreparedWarnings, check_for_warnings, compile_or_replay, replay_checked_warnings
 from compiler_worker import compile_resident, served_resident
-from files import discard_file, open_stream, read
-from observation import trace_boundary
+from files import discard_file, json_text, open_stream, read
+from observation import trace, trace_boundary
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from trace_adapter import work, work_clock
@@ -162,6 +173,9 @@ pub def compile_prepared_unit_completion(
         records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
         write_selected_records(records_path, unit, records)?
         native += ["--graph-body-records", records_path.0]
+        if get_or("INCAN_NATIVE_TIMING", "") == "handoff" and get_or("INCAN_ENGINE_TRACE", "") != "":
+            if let Err(reason) = trace_staged_namespace_references(path, records_path):
+                trace(f"namespace reference observation incomplete for {path.0}: {reason}")
         native += ["--plan-record-products", records_path.0]
         output_path = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
         discard_graph_body_output(output_path)?
@@ -184,6 +198,47 @@ pub def compile_prepared_unit_completion(
     if executable:
         normalize_release_executable(output, unit.profile)?
     return Ok(PreparedUnitCompletion(code=0, plan_module_selection_digest=plan_selection_digest))
+
+
+def trace_staged_namespace_references(descriptor: Path, directory: Path) -> Result[None, str]:
+    """Read the two pages already published for the driver. Never reopen the selected Bakery frame here."""
+    marker = directory.joinpath(EXECUTABLE_GRAPH_INPUT)
+    page = directory.joinpath(namespace_reference_filename())
+    if not marker.is_file() or not page.is_file():
+        return Ok(None)
+    marker_file = marker.open("rb").map_err((error) => error.message())?
+    format_bytes = marker_file.read_bytes(len(EXECUTABLE_GRAPH_FORMAT) + 1).map_err((error) => error.message())?
+    if format_bytes != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT):
+        return Err("unsupported staged executable graph format")
+    format_name = format_bytes.decode("utf-8", "strict").map_err((_) => "staged executable graph format is not UTF-8")?
+
+    size = page.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    if size > 64 * 1024 * 1024:
+        return Err("staged namespace reference page exceeds the driver limit")
+    reference_file = page.open("rb").map_err((error) => error.message())?
+    encoded = reference_file.read_bytes(size + 1).map_err((error) => error.message())?
+    if len(encoded) != size:
+        return Err("staged namespace reference page changed while observed")
+
+    references = decode_namespace_references(encoded)?
+    for reference in references:
+        if reference.key != namespace_key(reference.key.origin, reference.key.identity):
+            return Err("staged namespace references name another record family")
+    for reference in references:
+        detail = json_text(JsonValue.object({
+            "unit": JsonValue.string(descriptor.0),
+            "page": JsonValue.string(page.0),
+            "format": JsonValue.string(format_name),
+            "module": JsonValue.string(reference.key.identity),
+            "key": JsonValue.string(encode_record_key(reference.key)?),
+            "segment": JsonValue.string(reference.segment),
+            "offset": JsonValue.int(reference.offset),
+            "length": JsonValue.int(reference.length),
+            "frame_digest": JsonValue.string(hexlify(reference.frame_digest)),
+            "value_digest": JsonValue.string(reference.value_digest),
+        }))?
+        trace("staged-namespace-reference\t" + detail)
+    return Ok(None)
 
 
 pub def selected_plan_module_digest(records: Borrowed[list[SelectedBodyPage]]) -> Result[Option[str], str]:
