@@ -9,6 +9,7 @@ from std.fs import Path
 from std.hash import file_digest
 from bakery import find
 from bakery_records import Fact
+from bakery_roots import collect
 from engine_program_records import decode_program
 from files import make_directory, read, write
 from home_paths import bakery
@@ -185,6 +186,9 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     assert second.identity == first.identity and second.payload == test_payload.digest
     assert indexed_payload(store, selector)? == Some(second.payload), "the index still names the earlier payload"
     assert read(root.joinpath("attempts"))? == "xx" and carrier.is_file()
+
+    # The ordinary project registration must keep both payloads reachable during collection.
+    _ = collect(store, 0)?
 
     first_restored = restore_into(store, first, root.joinpath("first"), launcher_payload)?
     second_restored = restore_into(store, second, root.joinpath("second"), test_payload)?

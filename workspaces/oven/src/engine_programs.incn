@@ -10,7 +10,7 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from rust::std::mem import drop, take
 from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
-from bakery import find, fact_file
+from bakery import fact_file, find_executable_payload
 from bakery_records import Fact
 from bakery_roots import register_root
 from check_pages import check_page_directory, keep_check_pages
@@ -988,27 +988,14 @@ pub def restore_program(store: Path, unit: NativeUnit, console: str = "") -> Res
 
 
 def unit_record(store: Path, unit: NativeUnit) -> Result[Option[Fact], str]:
-    """
-    The unit's record while it holds the selected executable payload; its immutable record already admitted native
-    loader generations. A record holding other bytes was sealed again after the unit was linked again.
-    """
-    fact = required_unit(store, unit.identity)?
-    if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
-        return Ok(None)
-    return Ok(Some(fact))
+    """Look up the immutable fact for this exact descriptor and its admitted loader generations."""
+    return find_executable_payload(store, unit.identity, Path(unit.binary).name(), unit.payload)
 
 
 def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
     """Resolve the loader witness through this unit's immutable payload binding, never an ambient path."""
     binary = Path(unit.binary)
     return fact_file(store, fact, library_witness(Path(binary.name())).0)
-
-
-def required_unit(store: Path, identity: str) -> Result[Fact, str]:
-    """A selected unit must exist; absence after descriptor publication is a store failure, never a rebake."""
-    match find(store, identity)?:
-        Some(fact) => return Ok(fact)
-        None => return Err("selected native unit record is missing")
 
 
 def executable_payload(fact: Fact, name: str) -> Result[str, str]:

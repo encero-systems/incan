@@ -4,7 +4,7 @@ from rust::std::fs import remove_dir_all
 from store_selection_records import read_binding
 from std.encoding.hex import hexlify
 from std.fs import Path
-from bakery_records import Fact, claim_file, decode_fact, record_key, staging_root, store_failure
+from bakery_records import Fact, claim_file, decode_unit_variants, record_key, staging_root, store_failure
 from files import make_directory, read
 from observation import trace
 from publication import publish
@@ -252,7 +252,7 @@ pub def preview_collection(store: Path) -> Result[Collectable, str]:
             None => pass
             Some(value) =>
                 if key.startswith("incan.bakery.unit\t") and key[len("incan.bakery.unit\t"):] in expired:
-                    if let Some(fact) = decode_fact(value):
+                    for fact in checked_facts(key, value).map_err(store_failure)?:
                         for file in fact.files:
                             leaving[file.digest] = file.size
                 else:
@@ -358,19 +358,18 @@ pub def expiring_records(store: Path) -> Result[list[str], str]:
     return Ok([identity for identity in expiring(registrations, unit_reaches(current)?).keys()])
 
 
-pub def unit_facts(store: Path) -> Result[dict[str, Fact], str]:
-    """Every unit record of the current snapshot, by identity; a damaged record is an error."""
+pub def unit_facts(store: Path) -> Result[dict[str, list[Fact]], str]:
+    """Every current unit and all its retained facts, by identity."""
     current = snapshot(store).map_err(store_failure)?
-    mut facts: dict[str, Fact] = {}
+    mut facts: dict[str, list[Fact]] = {}
     for key in keys(current).map_err(store_failure)?:
         if not key.startswith("incan.bakery.unit\t"):
             continue
         match get(current, key).map_err(store_failure)?:
             None => pass
             Some(value) =>
-                match decode_fact(value):
-                    None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
-                    Some(fact) => facts[fact.identity] = fact
+                alternatives = checked_facts(key, value).map_err(store_failure)?
+                facts[alternatives[0].identity] = alternatives
     return Ok(facts)
 
 
@@ -383,10 +382,20 @@ def unit_reaches(view: Snapshot) -> Result[dict[str, list[str]], str]:
         match get(view, key).map_err(store_failure)?:
             None => pass
             Some(value) =>
-                match decode_fact(value):
-                    None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
-                    Some(fact) => reaches[fact.identity] = fact.reaches
+                facts = checked_facts(key, value).map_err(store_failure)?
+                reaches[facts[0].identity] = fact_reaches(facts)
     return Ok(reaches)
+
+
+pub def fact_reaches(facts: list[Fact]) -> list[str]:
+    """Keep the union of dependencies reached by all retained executable variants."""
+    if len(facts) == 1:
+        return facts[0].reaches
+    mut reached: set[str] = set()
+    for fact in facts:
+        for identity in fact.reaches:
+            reached.add(identity)
+    return sorted([identity for identity in reached])
 
 
 pub def reached_from(roots: list[str], reaches: dict[str, list[str]]) -> dict[str, bool]:
@@ -407,10 +416,23 @@ pub def reached_from(roots: list[str], reaches: dict[str, list[str]]) -> dict[st
 def payload_references(key: str, value: bytes) -> Result[list[str], StoreError]:
     """Decode payload ownership at its family's boundary; malformed units abort collection before any unlink."""
     if key.startswith("incan.bakery.unit\t"):
-        match decode_fact(value):
-            None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit payload references"))
-            Some(fact) => return Ok([file.digest for file in fact.files])
+        mut payloads: list[str] = []
+        for fact in checked_facts(key, value)?:
+            for file in fact.files:
+                payloads.append(file.digest)
+        return Ok(payloads)
     return sealed_payload_references(key, value)
+
+
+def checked_facts(key: str, value: bytes) -> Result[list[Fact], StoreError]:
+    """Decode complete unit payload ownership before collection can unlink anything."""
+    variants = decode_unit_variants(value).map_err((detail) => StoreError(kind="integrity", object=key, detail=detail))?
+    mut facts: list[Fact] = []
+    for variant in variants:
+        if record_key(variant.fact.identity) != key:
+            return Err(StoreError(kind="integrity", object=key, detail="unit names another identity"))
+        facts.append(variant.fact)
+    return Ok(facts)
 
 
 def collect_staging(store: Path) -> Result[int, str]:
