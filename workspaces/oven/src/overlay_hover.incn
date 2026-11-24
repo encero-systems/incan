@@ -45,13 +45,13 @@ pub def overlay_hover(
             for facet in declaration_facets(found[1]):
                 signature = signature_key(origin, path, facet)
                 key = encode_record_key(signature)?
-                match get(selected, key).map_err((error) => error.message())?:
-                    Some(value) =>
-                        signature_text = source_value(signature, value)?.decode().map_err(
-                            (_) => f"invalid declaration signature text: {path}:{facet}",
-                        )?
-                        return Ok(Some(signature_text.strip()))
-                    None => pass
+                match get(selected, key):
+                    Ok(Some(value)) =>
+                        match source_value(signature, value)?.decode():
+                            Ok(signature_text) => return Ok(Some(signature_text.strip()))
+                            Err(_) => return Err(f"invalid declaration signature text: {path}:{facet}")
+                    Ok(None) => pass
+                    Err(error) => return Err(error.message())
             return Ok(None)
 
 
