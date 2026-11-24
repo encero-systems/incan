@@ -977,7 +977,10 @@ def lowering_events(report: Path) -> Result[list[LoweringEvent], str]:
         entry = Path(path)
         if not entry.is_file() or not path.endswith(".event"):
             continue
-        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
+        reading = begin_work()
+        bytes = entry.read_bytes().map_err((error) => error.message())?
+        record_work(Operation.FileRead, entry.0, reading, len(bytes))
+        event = decode_lowering_event(bytes)?
         events.append(event)
     return Ok(events)
 

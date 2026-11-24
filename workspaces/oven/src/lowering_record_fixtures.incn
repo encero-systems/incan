@@ -169,6 +169,138 @@ def changed_plan_report_request(before: Dict[str, str], after: Dict[str, str]) -
     return Ok(added[0])
 
 
+pub def plan_report_event_rows(trace: Path, root: Path) -> Result[Dict[str, str], str]:
+    """Retain the fixture's actual issued unit, private report and enclosing read windows by raw work identity."""
+    units = root.joinpath("target/incan/units").resolve().map_err((error) => error.message())?
+    mut rows: Dict[str, str] = {}
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-oven-") or not file.name().endswith(".jsonl"):
+            continue
+        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line == "":
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if not json_text_is(row, "outcome", "done"):
+                continue
+            if not is_plan_report_event_row(row, units)?:
+                continue
+            if not json_text_is(row, "kind", "span") or not json_text_is(row, "clock", "host-monotonic-raw"):
+                return Err("the Plan event trace lacks a complete host-clock span")
+            process = proof_count(row, "process")?
+            work = required_text(row, "work")?
+            if process <= 0 or file.name() != f"engine-oven-{process}.jsonl" or work == "" or work in rows:
+                return Err("the Plan event trace has a foreign or repeated work identity")
+            rows[work] = line
+    return Ok(rows)
+
+
+def is_plan_report_event_row(row: JsonValue, units: Path) -> Result[bool, str]:
+    """Select the three causal boundaries and exact private event reads for this fixture."""
+    operation = required_text(row, "operation")?
+    key = required_text(row, "key")?
+    if operation == "driver_request" and key.startswith("--unit "):
+        return Ok(Path(key[len("--unit "):]).parent().0 == units.0)
+    if operation == "engine_graph_staging" and key == "compiled-lowering-staging":
+        return Ok(true)
+    selected = Path(key)
+    if operation == "engine_sidecar_authentication":
+        return Ok(private_plan_report(selected, units))
+    if operation == "file_read" and key.endswith(".event"):
+        return Ok(private_plan_report(selected.parent(), units))
+    return Ok(false)
+
+
+def private_plan_report(report: Path, units: Path) -> bool:
+    """Recognize a request-owned report directly below the actual descriptor directory."""
+    return report.parent().0 == units.0 and report.name().startswith("plan-report-")
+
+
+def plan_events_same_owner(issue: JsonValue, row: JsonValue) -> Result[bool, str]:
+    """Join phase spans on one settlement role and one raw clock."""
+    for name in ["run", "request", "thread", "clock_id"]:
+        expected = required_text(issue, name)?
+        if expected == "" or not json_text_is(row, name, expected):
+            return Ok(false)
+    return Ok(proof_count(issue, "process")? == proof_count(row, "process")?)
+
+
+pub def require_one_read_per_plan_event(
+    seed: Dict[str, str], beta: Dict[str, str], edited: JsonValue, predecessor: Borrowed[PlanReportPredecessor],
+) -> Result[None, str]:
+    """Join the beta request and the same event bytes read by census and publication."""
+    for work in seed.keys():
+        if beta.get(work) != Some(seed[work]):
+            return Err("the preceding Plan event trace changed")
+    mut rows: list[JsonValue] = []
+    mut issued: list[JsonValue] = []
+    for work in beta.keys():
+        if work in seed:
+            continue
+        row = parse(beta[work]).map_err((error) => error.message())?
+        if json_text_is(row, "operation", "driver_request"):
+            issued.append(row)
+        else:
+            rows.append(row)
+    if len(issued) != 1:
+        return Err("the beta edit did not issue one Plan report request")
+    if not json_text_is(issued[0], "key", "--unit " + predecessor.descriptor):
+        return Err("the beta report counts name another descriptor")
+    return require_beta_event_windows(issued[0], rows, edited)
+
+
+def require_beta_event_windows(issue: JsonValue, rows: list[JsonValue], edited: JsonValue) -> Result[None, str]:
+    """Establish the two disjoint report consumers after the selected compiler request."""
+    mut reports: list[JsonValue] = []
+    mut lowering: list[JsonValue] = []
+    mut reads: list[JsonValue] = []
+    for row in rows:
+        if not plan_events_same_owner(issue, row)?:
+            return Err("the beta Plan event trace spans another request owner")
+        match required_text(row, "operation")?:
+            "engine_sidecar_authentication" => reports.append(row)
+            "engine_graph_staging" => lowering.append(row)
+            "file_read" => reads.append(row)
+            _ => return Err("unexpected beta Plan event operation")
+    if len(reports) != 1 or len(lowering) != 1:
+        return Err("the beta request has no unique Plan census and publication windows")
+    report = reports[0]
+    after = lowering[0]
+    if proof_count(issue, "end_ns")? > proof_count(report, "start_ns")? or proof_count(report, "end_ns")? > proof_count(after, "start_ns")?:
+        return Err("the beta Plan event windows overlap or precede compiler completion")
+    expected = proof_count(edited, "plan_function_evaluations")? + proof_count(edited, "plan_function_reuses")?
+    return require_event_file_cohort(reads, report, after, expected)
+
+
+def span_contains(outer: JsonValue, inner: JsonValue) -> Result[bool, str]:
+    """Check exact interval containment on already joined clocks."""
+    start = proof_count(inner, "start_ns")?
+    end = proof_count(inner, "end_ns")?
+    return Ok(proof_count(outer, "start_ns")? <= start and start < end and end <= proof_count(outer, "end_ns")?)
+
+
+def require_event_file_cohort(reads: list[JsonValue], census: JsonValue, publication: JsonValue, expected: int) -> Result[None, str]:
+    """Demand one whole census cohort and account for any later reads of those files."""
+    report = required_text(census, "key")?
+    mut first: Dict[str, int] = {}
+    mut second: Dict[str, int] = {}
+    for row in reads:
+        path = required_text(row, "key")?
+        size = proof_count(row, "bytes")?
+        if Path(path).parent().0 != report or size <= 0 or proof_count(row, "calls")? != 1:
+            return Err("the beta Plan reader named a foreign or empty event")
+        if span_contains(census, row)? and path not in first:
+            first[path] = size
+        elif span_contains(publication, row)? and path not in second:
+            second[path] = size
+        else:
+            return Err("a beta Plan event read was duplicated inside one phase or outside both")
+    if expected <= 0 or len(first) != expected or (len(second) != 0 and second != first):
+        return Err("the beta Plan event reads lack the complete actual file cohort")
+    observed = len(first) + len(second)
+    assert observed == expected, f"the beta Plan report read {observed} events; expected {expected} from one read per file"
+    return Ok(None)
+
+
 pub def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited: str) -> Result[None, str]:
     """Each warm edit checks its own module, builds one module's Body IR, and lowers only that module's bodies."""
     changed = sorted([key for key in current.keys() if current[key] > previous.get(key, 0)])

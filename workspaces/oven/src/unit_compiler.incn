@@ -26,6 +26,7 @@ from compiler_refusals import PreparedWarnings, check_for_warnings, compile_or_r
 from compiler_worker import compile_resident, served_resident
 from files import discard_file, open_stream, read
 from observation import trace_boundary
+from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from trace_adapter import work, work_clock
 from publication import publish, publish_binary
@@ -296,7 +297,10 @@ pub def plan_record_counts(report: Path) -> Result[PlanRecordCounts, str]:
     for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
-        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
+        reading = begin_work()
+        bytes = entry.read_bytes().map_err((error) => error.message())?
+        record_work(Operation.FileRead, entry.0, reading, len(bytes))
+        event = decode_lowering_event(bytes)?
         if event.reused:
             counts.plan_reuses += 1
         else:
