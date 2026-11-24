@@ -64,9 +64,7 @@ pub def parse_options(arguments: list[str]) -> Result[DocsExampleOptions, str]:
 pub def verify(root: Path, compiler: str, options: DocsExampleOptions) -> Result[None, str]:
     """Check every verified snippet and tutorial source, require formatting, and optionally build web snippets."""
     snippet_directory = root.joinpath("workspaces/docs-site/docs/_snippets/language/examples")
-    verified = sorted(
-        [path.0 for path in snippet_directory.rglob("verified_*.incn").map_err((error) => error.message())?],
-    )
+    verified = verified_paths(snippet_directory, "verified_*.incn")?
     if len(verified) == 0:
         return Err(f"no verified documentation examples found in {snippet_directory.0}")
 
@@ -84,9 +82,7 @@ pub def verify(root: Path, compiler: str, options: DocsExampleOptions) -> Result
         require_compiler(compiler, root, ["fmt", "--check", source], f"format {source}")?
 
     if options.build_web:
-        web = sorted(
-            [path.0 for path in snippet_directory.rglob("verified_web_*.incn").map_err((error) => error.message())?],
-        )
+        web = verified_paths(snippet_directory, "verified_web_*.incn")?
         if len(web) == 0:
             return Err(f"no verified web documentation examples found in {snippet_directory.0}")
         for source in web:
@@ -97,6 +93,12 @@ pub def verify(root: Path, compiler: str, options: DocsExampleOptions) -> Result
     else:
         println("Web snippets typechecked; pass --build-web with a receipt-compatible Oven Loaf for backend builds.")
     return Ok(None)
+
+
+def verified_paths(directory: Path, pattern: str) -> Result[list[str], str]:
+    """Return sorted paths for one verified snippet pattern, preserving traversal errors."""
+    paths = directory.rglob(pattern).map_err((error) => error.message())?
+    return Ok(sorted([path.0 for path in paths]))
 
 
 def require_compiler(compiler: str, root: Path, arguments: list[str], label: str) -> Result[None, str]:
