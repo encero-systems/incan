@@ -294,10 +294,95 @@ def check_independent_document(mut peer: Peer, project: Path) -> Result[None, st
     )
     peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": document}))?
     check_live_type_error(peer, uri, buffer, 1, "return \"wrong\"")?
+    structured = check_structured_diagnostics(peer, uri)
     close_document(peer, uri)?
     if read(path)? != disk:
         return Err("checking the independent document rewrote its authored source")
+    return structured
+
+
+def check_structured_diagnostics(mut peer: Peer, uri: str) -> Result[None, str]:
+    """Check one diagnostic after an astral character and an ownership diagnostic with related source ranges."""
+    utf16_source = "def independent() -> None:\n    println(\"🧭\" + overlay_missing)\n"
+    change_document(peer, uri, 2, utf16_source)?
+    unicode_items = peer.diagnostic_items(uri, Some(2))?
+    ownership_source = ("def independent() -> None:\n" + "    mut xs = [1, 2, 3]\n" + "    it = xs.iter()\n" + "    xs = [4, 5, 6]\n" + "    println(it.collect())\n")
+    change_document(peer, uri, 3, ownership_source)?
+    ownership_items = peer.diagnostic_items(uri, Some(3))?
+    check_related_iterator(ownership_items, uri, ownership_source)?
+    for item in unicode_items:
+        if "Unknown symbol 'overlay_missing'" not in required_text(item, "message")?:
+            continue
+        range = required(item, "range")?
+        start = required(range, "start")?
+        end = required(range, "end")?
+        # The compass contributes two UTF-16 units before the missing name on this line.
+        if required(start, "line")?.as_int() != Some(1) or required(start, "character")?.as_int() != Some(19):
+            return Err("LSP did not use the UTF-16 start after an astral character")
+        if required(end, "line")?.as_int() != Some(1) or required(end, "character")?.as_int() != Some(34):
+            return Err("LSP did not use the UTF-16 end after an astral character")
+        return Ok(None)
+    return Err("LSP omitted the missing-name diagnostic after the astral character")
+
+
+def check_related_iterator(items: list[JsonValue], uri: str, source: str) -> Result[None, str]:
+    """Verify the stable primary bytes and the exact related labels and ranges for the open iterator fixture."""
+    for item in items:
+        if "cannot replace `xs` while `it` is still reading it" not in required_text(item, "message")?:
+            continue
+        data = required(item, "data")?
+        if required_text(data, "code")? != "INCAN-T0001" or "xs.clone().iter()" not in required_text(item, "message")?:
+            return Err("LSP lost the iterator error's stable code or hint")
+        primary = required(data, "primary_span")?
+        if required_text(primary, "file")? != uri:
+            return Err("LSP did not use the authored document URI in the stable primary span")
+        first = required(required(primary, "start")?, "offset")?.as_int()
+        last = required(required(primary, "end")?, "offset")?.as_int()
+        bytes = source.encode("utf-8")
+        if first != Some(73) or last != Some(75) or bytes[73:75] != b"xs":
+            return Err(f"LSP did not preserve replacement target bytes 73–75: {first}, {last}")
+        if not editor_range_matches(required(item, "range")?, 3, 4, 6)?:
+            return Err("LSP did not highlight the replacement target in the authored document")
+        return check_iterator_locations(item, uri)
+    return Err("LSP omitted the live-iterator replacement diagnostic")
+
+
+def check_iterator_locations(item: JsonValue, uri: str) -> Result[None, str]:
+    """Associate each exact related message with its distinct authored range."""
+    related = required(item, "relatedInformation")?.expect_array().map_err((error) => error.message())?
+    mut observed: list[int] = []
+    for entry in related:
+        label = required_text(entry, "message")?
+        if label.startswith("hint:"):
+            continue
+        line, first, last = match label:
+            "`it` reads `xs` from here" => (2, 9, 18)
+            "`xs` is replaced here" => (3, 4, 6)
+            "`it` is used again here" => (4, 12, 14)
+            _ => (-1, 0, 0)
+        if line < 0:
+            return Err(f"LSP returned an unexpected iterator location: {label}")
+        location = required(entry, "location")?
+        if required_text(location, "uri")? != uri:
+            return Err(f"LSP sent the iterator location outside the authored document: {label}")
+        if not editor_range_matches(required(location, "range")?, line, first, last)?:
+            return Err(f"LSP changed the iterator range for {label}")
+        observed.append(line)
+    if sorted(observed) != [2, 3, 4]:
+        return Err(f"LSP did not preserve all three exact iterator locations: {observed}")
     return Ok(None)
+
+
+def editor_range_matches(range: JsonValue, line: int, first: int, last: int) -> Result[bool, str]:
+    """Match both ends of one expected source range."""
+    start = required(range, "start")?
+    end = required(range, "end")?
+    return Ok(
+        required(start, "line")?.as_int() == Some(line)
+        and required(end, "line")?.as_int() == Some(line)
+        and required(start, "character")?.as_int() == Some(first)
+        and required(end, "character")?.as_int() == Some(last)
+    )
 
 
 def close_document(mut peer: Peer, uri: str) -> Result[None, str]:
