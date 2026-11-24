@@ -33,7 +33,9 @@ def main() -> None:
     arguments = args().unwrap_or([])
     match parse_options(arguments[1:]):
         Ok(options) =>
-            match verify(repository_root().unwrap_or(Path(".")), get_or("INCAN_BIN", get_or("INCAN", "incan")), options):
+            root = repository_root().unwrap_or(Path("."))
+            compiler = get_or("INCAN_BIN", get_or("INCAN", "incan"))
+            match verify(root, compiler, options):
                 Ok(_) => exit(0)
                 Err(message) =>
                     write_stderr(f"docs examples: {message}\n")
