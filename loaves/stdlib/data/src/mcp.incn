@@ -1,0 +1,87 @@
+"""Typed specifications for closed, scalar MCP tool inputs."""
+
+from std.json import JsonValue
+from std.reflection import FieldInfo
+
+
+pub model IntegerBounds:
+    """Inclusive bounds for a tool's single integer field."""
+
+    pub minimum: int
+    pub maximum: int
+
+
+pub model ToolSpec:
+    """A wire tool's identity, checked argument fields and annotations."""
+
+    pub name: str
+    pub description: str
+    pub fields: FrozenList[FieldInfo]
+    pub read_only: bool
+    pub open_world: bool
+    pub integer_bounds: Option[IntegerBounds] = None
+
+    pub def to_json_value(self) -> Result[JsonValue, str]:
+        """Produce the wire spec using the supplied checked declaration."""
+        input_schema = closed_scalar_schema(self.fields, self.integer_bounds)?
+        annotations = JsonValue.object(
+            {"readOnlyHint": JsonValue.bool(self.read_only), "openWorldHint": JsonValue.bool(self.open_world)},
+        )
+        return Ok(
+            JsonValue.object(
+                {"name": JsonValue.string(self.name), "description": JsonValue.string(
+                    self.description,
+                ), "inputSchema": input_schema, "annotations": annotations},
+            ),
+        )
+
+
+def closed_scalar_schema(fields: FrozenList[FieldInfo], bounds: Option[IntegerBounds]) -> Result[JsonValue, str]:
+    """Project declared string and integer fields with no additional properties."""
+    mut properties: Dict[str, JsonValue] = {}
+    mut required: list[JsonValue] = []
+    mut integer_fields = 0
+    for field in fields:
+        name = str(field.wire_name)
+        type_name = str(field.type_name)
+        if name in properties:
+            return Err(f"duplicate tool argument `{name}`")
+        if type_name == "str":
+            properties[name] = JsonValue.object({"type": JsonValue.string("string")})
+        elif type_name == "int":
+            integer_fields += 1
+            properties[name] = integer_schema(bounds)?
+        else:
+            return Err(f"unsupported tool argument `{name}`: {type_name}")
+        if not field.has_default:
+            required.append(JsonValue.string(name))
+    if bounds is not None and integer_fields != 1:
+        return Err("integer bounds require exactly one integer argument")
+    return Ok(
+        JsonValue.object(
+            {"type": JsonValue.string("object"), "properties": JsonValue.object(properties), "required": JsonValue.array(
+                required,
+            ), "additionalProperties": JsonValue.bool(false)},
+        ),
+    )
+
+
+def integer_schema(bounds: Option[IntegerBounds]) -> Result[JsonValue, str]:
+    """Encode a primitive integer and, when supplied, its inclusive bounds."""
+    mut entries = {"type": JsonValue.string("integer")}
+    if let Some(limits) = bounds:
+        if limits.minimum > limits.maximum:
+            return Err("integer bounds must be in ascending order")
+        entries["minimum"] = JsonValue.int(limits.minimum)
+        entries["maximum"] = JsonValue.int(limits.maximum)
+    return Ok(JsonValue.object(entries))
+
+
+pub def closed_tool_arguments(arguments: JsonValue, declared: FrozenList[FieldInfo]) -> Result[Dict[str, JsonValue], str]:
+    """Reject nonobjects and keys outside the supplied checked declaration."""
+    fields = arguments.expect_object().map_err((_) => "arguments must be an object")?
+    names = [str(field.wire_name) for field in declared]
+    for key in fields.keys():
+        if key not in names:
+            return Err(f"unexpected argument `{key}`")
+    return Ok(fields)
