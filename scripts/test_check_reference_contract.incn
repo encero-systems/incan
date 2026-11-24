@@ -60,6 +60,15 @@ def require_specific_exception_phrases() -> Result[None, str]:
         if result.code != 1 or expected not in result.stderr or "reference contract check passed" in result.stdout:
             failures.append(f"phrase length {len(phrase)} exited {result.code}: {result.stdout}{result.stderr}")
     assert failures == [], "\n".join(failures)
+
+    write(root, f"workspaces/docs-site/docs/{page}", "Prefer this call.\n")?
+    expected_reason = f"{root.joinpath(allow).0}:2: expected a nonempty exception reason"
+    for suffix in ["", "\t "]:
+        write(root, allow, f"# Scoped prose exceptions\n{page}\tPrefer this call.{suffix}\n")?
+        result = invoke_checker(root, "check_reference_contract", "--all")?
+        if result.code != 1 or result.stdout != "" or expected_reason not in result.stderr:
+            failures.append(f"reason suffix {suffix:?} exited {result.code}: {result.stdout}{result.stderr}")
+    assert failures == [], "\n".join(failures)
     return Ok(None)
 
 
