@@ -115,14 +115,19 @@ pub def serve_overlays(profile: str) -> Result[i32, str]:
     return Ok(0)
 
 
-def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest, mut mirror: OverlayMirror) -> Result[str, str]:
+def answer_overlay(
+    mut channel: Channel,
+    store: Path,
+    request: OverlayRequest,
+    mut mirror: OverlayMirror,
+) -> Result[str, str]:
     """
     Answer one overlay request: the diagnostics of its source with its buffer in place of the file, as an
     `incan.overlay-diagnostics/1` document carrying the editor's document version.
 
     1. Name the program's editor view, and mirror the program with the buffer in place into its overlay root.
     2. Fork the editor view from the store's shared records on its first request.
-    3. Check the program's entry in the editor view, collecting the compiler's JSON report.
+    3. Check the selected source in the editor view, collecting the compiler's JSON report.
     4. Place each diagnostic on the editor's document path.
     """
     # 1. The overlay has the program's logical names, so its unit key is the one a build of these bytes has.
@@ -140,9 +145,33 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest, m
     # A hover reads records and the buffer; it needs no mirror and no engine request.
     if request.hover_line > 0:
         return hover_answer(store, editor, program, entry, document, text, request)
+    # A diagnostic uses open sources in this program. A save builds against the other files on disk.
+    mut siblings: Dict[str, str] = {}
+    if not request.build:
+        prefix = program.0 + "/"
+        for path in request.open_buffers.keys():
+            if not path.startswith(prefix) or path == absolute.0:
+                continue
+            relative = path[len(prefix):]
+            mut editable = path.endswith(".incn")
+            for part in relative.split("/"):
+                if part in ["", ".", ".."]:
+                    return Err(f"an editor buffer needs a canonical source path: {path}")
+                if part.startswith(".") or part == "target":
+                    editable = false
+            if not editable:
+                continue
+            # For a new document, the deepest existing ancestor fixes its physical position in the program.
+            mut ancestor = Path(path)
+            while not ancestor.exists() and not ancestor.is_symlink():
+                ancestor = ancestor.parent()
+            canonical = ancestor.resolve().map_err((error) => error.message())?
+            if canonical.0 != ancestor.0:
+                return Err(f"an editor buffer needs a canonical source path: {path}")
+            siblings[relative] = request.open_buffers[path]
     # The overlay root lies beside the store, not in it: capture never re-reads a file under the bakery.
     overlay = store.parent().joinpath("editor").joinpath(editor)
-    _ = mirror_into(mirror, program, overlay, document, text)?
+    _ = mirror_into(mirror, program, overlay, document, text, siblings)?
     # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
     if snapshot(store, editor).map_err((error) => error.message())?.index == "":
         fork_project_view(store, HOME_VIEW, editor)?
@@ -151,12 +180,18 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest, m
     target = overlay.joinpath(entry.0[len(program.0) + 1:])
     if request.build:
         return built_overlay(editor, target, request)
-    checked = submit_check(channel, store, editor, target, request.profile, request.report)?
+    # The manifest entry names the view and the save build. Editor diagnostics also check independently opened files.
+    requesting, checked_source = match request.editor_session:
+        true => (absolute.0, overlay.joinpath(document))
+        false => ("", target)
+    checked = submit_check(channel, store, editor, checked_source, request.profile, request.report)?
     # 4. Diagnostics name the editor's documents, never the overlay root.
     mut entries: list[JsonValue] = []
-    for found in report_diagnostics(checked.report, overlay.0, program.0).map_err(
+    for found in report_diagnostics(checked.report, overlay.0, program.0, requesting).map_err(
         (reason) => f"{reason}: {checked.errors.strip()}",
     )?:
+        if not request.editor_session and found.preparation_stop:
+            return Err(found.message)
         entries.append(diagnostic_json(found))
     mut fields = {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(request.version), "ok": JsonValue.bool(
         checked.passed,
@@ -189,6 +224,7 @@ def hover_answer(
         text,
         request.hover_line,
         request.hover_column,
+        request.declaration_end_column,
     )?:
         hover = JsonValue.string(signature)
     answer = {"schema": JsonValue.string(OVERLAY_HOVER_SCHEMA), "version": JsonValue.int(request.version), "editor_view": JsonValue.string(
@@ -273,13 +309,14 @@ def failed_answer(version: int, reason: str) -> Result[str, str]:
 
 def diagnostic_json(found: OverlayDiagnostic) -> JsonValue:
     """One diagnostic of an overlay answer."""
-    return JsonValue.object(
-        {"message": JsonValue.string(found.message), "code": JsonValue.string(found.code), "severity": JsonValue.string(
-            found.severity,
-        ), "path": JsonValue.string(found.path), "line": JsonValue.int(found.line), "column": JsonValue.int(found.column), "end_line": JsonValue.int(
-            found.end_line,
-        ), "end_column": JsonValue.int(found.end_column)},
-    )
+    mut fields = {"message": JsonValue.string(found.message), "code": JsonValue.string(found.code), "severity": JsonValue.string(
+        found.severity,
+    ), "path": JsonValue.string(found.path), "line": JsonValue.int(found.line), "column": JsonValue.int(found.column), "end_line": JsonValue.int(
+        found.end_line,
+    ), "end_column": JsonValue.int(found.end_column)}
+    if let Some(data) = found.data:
+        fields["data"] = data
+    return JsonValue.object(fields)
 
 
 pub def project_view_name(

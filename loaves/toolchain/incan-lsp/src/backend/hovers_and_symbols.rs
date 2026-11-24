@@ -182,6 +182,12 @@ pub(super) fn source_surface_hover(
         .map(|markdown| source_markdown_hover(&doc.source, markdown, None))
 }
 
+/// A locally rendered hover or the checked declaration to send through the authored overlay.
+pub(super) enum ResolvedValueHover {
+    Ready(Hover),
+    PrivateFunction(CheckedIdentityOccurrence),
+}
+
 /// Prefer checked Rust calls and imports, then contextual receivers and retained Incan identities. The source
 /// identifier is scanned once for the remaining immutable lookups; no declaration or document snapshot is needed.
 pub(super) fn resolved_value_hover(
@@ -190,9 +196,9 @@ pub(super) fn resolved_value_hover(
     ast: &Program,
     offset: usize,
     aliases: &HashMap<String, Vec<String>>,
-) -> Option<Hover> {
+) -> Option<ResolvedValueHover> {
     if let Some(hover) = rust_hover::checked_call_hover(doc, offset) {
-        return Some(hover);
+        return Some(ResolvedValueHover::Ready(hover));
     }
     if let Some(rust_symbol) = rust_symbol_at_offset(&doc.rust_origin_symbols, offset) {
         let mut markdown = format!(
@@ -207,7 +213,11 @@ pub(super) fn resolved_value_hover(
                 rust_item_kind_label(&metadata.kind)
             ));
         }
-        return Some(source_markdown_hover(&doc.source, markdown, Some(rust_symbol.span)));
+        return Some(ResolvedValueHover::Ready(source_markdown_hover(
+            &doc.source,
+            markdown,
+            Some(rust_symbol.span),
+        )));
     }
     let identifier = identifier_at_offset(&doc.source, offset);
     if let Some((ident, span)) = &identifier
@@ -219,20 +229,36 @@ pub(super) fn resolved_value_hover(
             "```incan\n{detail}\n```\n\n*classmethod receiver* — callable constructor for `{}`.",
             context.owner_type
         );
-        return Some(source_markdown_hover(&doc.source, markdown, Some(*span)));
+        return Some(ResolvedValueHover::Ready(source_markdown_hover(
+            &doc.source,
+            markdown,
+            Some(*span),
+        )));
     }
     if let Some((ident, span)) = &identifier
         && let Some(markdown) = builtin_list_repeat_hover(&doc.source, ident, *span)
     {
-        return Some(source_markdown_hover(&doc.source, markdown, Some(*span)));
+        return Some(ResolvedValueHover::Ready(source_markdown_hover(
+            &doc.source,
+            markdown,
+            Some(*span),
+        )));
     }
     if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset) {
-        return Some(checked_identity_hover(&doc.source, &occurrence));
+        return Some(if is_private_function_binding(uri, doc, ast, &occurrence) {
+            ResolvedValueHover::PrivateFunction(occurrence)
+        } else {
+            ResolvedValueHover::Ready(checked_identity_hover(&doc.source, &occurrence, None))
+        });
     }
     if let Some((ident, span)) = &identifier
         && let Some(markdown) = unchecked_lookup_hover(&doc.source, &doc.value_types, ident, *span)
     {
-        return Some(source_markdown_hover(&doc.source, markdown, Some(*span)));
+        return Some(ResolvedValueHover::Ready(source_markdown_hover(
+            &doc.source,
+            markdown,
+            Some(*span),
+        )));
     }
     None
 }
