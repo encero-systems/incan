@@ -1,22 +1,27 @@
-"""A local stdio MCP consumer of Oven's graph service, using the 2025-11-25 protocol revision."""
+"""Serve Oven's graph inspection and session feedback over the local MCP stdio protocol."""
 
 from rust::std::io import Write, stdin, stdout
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
 from graph_inspection import (
+    MAXIMUM_CONTEXT_BUDGET,
+    MINIMUM_CONTEXT_BUDGET,
     graph_response,
     mcp_definitions,
     mcp_relationships,
     options as graph_options,
     prepare_inspection,
+    validate_context_budget,
 )
+from graph_mcp_task import GRAPH_TASK_TOOL_NAME, decode_graph_task, graph_task_spec
 from graph_queries import display, nested, text
 from graph_memory import TaskMemory
 from home import TOOLCHAIN
 from cli_help import render
 
 pub const USAGE: str = "incan mcp PATH [--profile NAME]"
+const PROTOCOL_VERSION: str = "2026-07-28"
 
 
 pub model McpOptions:
@@ -60,7 +65,7 @@ pub def serve_graph(selected: McpOptions) -> Result[i32, str]:
     root = selected.path.resolve().map_err((error) => f"cannot {error.message()}")?
     if not root.is_file() and not root.is_dir():
         return Err("MCP PATH does not exist")
-    mut server = GraphServer(root=root.0, profile=selected.profile)
+    mut server = GraphServer(root=root.0, profile=selected.profile, tools=catalog())
     # 2. Read requests serially.
     # Explicit reads avoid the native Lines iterator's ownership refusal tracked under #2256.
     input = stdin()
@@ -91,38 +96,28 @@ model GraphServer:
 
     root: str
     profile: str
-    initialized: bool = false
-    ready: bool = false
+    tools: Result[JsonValue, str]
     memory: TaskMemory = TaskMemory()
 
     def handle(mut self, request: JsonValue) -> JsonValue:
-        """Validate JSON-RPC envelopes, negotiate legacy MCP, and suppress notification responses."""
+        """Serve discovery and graph calls on one protocol; suppress notification responses."""
         identifier = nested(request, "id")
         method = text(request, "method")
         if text(request, "jsonrpc") != "2.0" or method == "":
             return failure(JsonValue.null(), -32600, "Invalid Request")
-        if method == "notifications/initialized":
-            if self.initialized:
-                self.ready = true
-            return JsonValue.null()
         if request.get("id") is None:
             return JsonValue.null()
         if method == "ping":
             return success(identifier, JsonValue.object({}))
+        if method == "server/discover":
+            return success(identifier, discovery())
         if method == "initialize":
-            self.initialized = true
-            result = JsonValue.object(
-                {"protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object(
-                    {"tools": JsonValue.object({}), "resources": JsonValue.object({})},
-                ), "serverInfo": JsonValue.object(
-                    {"name": JsonValue.string("incan-graph"), "version": JsonValue.string(TOOLCHAIN)},
-                )},
+            return failure(
+                identifier, -32022, "Unsupported protocol version",
+                Some(JsonValue.object({"supportedVersions": supported_versions()})),
             )
-            return success(identifier, result)
-        if not self.ready:
-            return failure(identifier, -32002, "Send initialize and notifications/initialized first")
         if method == "tools/list":
-            match catalog():
+            match self.tools:
                 Ok(tools) => return success(identifier, JsonValue.object({"tools": tools}))
                 Err(reason) => return failure(identifier, -32603, reason)
         if method == "resources/list":
@@ -141,6 +136,9 @@ model GraphServer:
 
     def tool_reply(mut self, name: str, arguments: JsonValue) -> Result[JsonValue, str]:
         """Return the validated tool's display result and, for definitions, its selected canonical records."""
+        if name == GRAPH_TASK_TOOL_NAME:
+            selected = decode_graph_task(arguments)?
+            return Ok(tool_content(self.context(selected.task, selected.budget)?, false))
         validate_arguments(name, arguments)?
         if name != "graph_query":
             return Ok(tool_content(self.call(name, arguments)?, false))
@@ -156,17 +154,12 @@ model GraphServer:
     def call(mut self, name: str, arguments: JsonValue) -> Result[str, str]:
         """Share CLI retrieval, ranking and freshness; arguments cannot change this server's selected project."""
         mut command = self.graph_command()
-        if name in ["context_for_task", "context_for_declaration"]:
-            mut task = text(arguments, "task")
-            if name == "context_for_declaration":
-                task = text(arguments, "declaration")
+        if name == "context_for_declaration":
+            task = text(arguments, "declaration")
             if task.strip() == "":
                 return Err("a nonempty task or declaration is required")
             budget = nested(arguments, "budget").expect_int().map_err((_) => "budget must be an integer")?
-            prepared = prepare_inspection(
-                graph_options(command + ["--task", task, "--budget", str(budget), "--format", "compact"])?,
-            )?
-            return prepared.respond(self.memory.preferences(task, prepared.snapshot()?))
+            return self.context(task, budget)
         if name == "record_feedback":
             return self.record_feedback(arguments)
         if name == "task_memory":
@@ -180,6 +173,13 @@ model GraphServer:
         if name == "snapshot_status":
             return graph_response(command + ["--stale", text(arguments, "snapshot")])
         return self.summary()
+
+    def context(mut self, task: str, budget: int) -> Result[str, str]:
+        """Pack current graph context using the shared CLI selection and session's current preferences."""
+        mut selected = graph_options(self.graph_command() + ["--task", task, "--format", "compact"])?
+        selected.budget = validate_context_budget(budget)?
+        prepared = prepare_inspection(selected)?
+        return prepared.respond(self.memory.preferences(task, prepared.snapshot()?))
 
     def current_snapshot(self) -> Result[str, str]:
         """Refresh current source inputs without decoding the full graph just to compare a retained snapshot."""
@@ -248,13 +248,25 @@ def success(identifier: JsonValue, result: JsonValue) -> JsonValue:
     return JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "id": identifier, "result": result})
 
 
-def failure(identifier: JsonValue, code: int, message: str) -> JsonValue:
+def failure(identifier: JsonValue, code: int, message: str, details: Option[JsonValue] = None) -> JsonValue:
     """Protocol errors remain distinct from tool execution failures."""
-    return JsonValue.object(
-        {"jsonrpc": JsonValue.string("2.0"), "id": identifier, "error": JsonValue.object(
-            {"code": JsonValue.int(code), "message": JsonValue.string(message)},
-        )},
-    )
+    mut error = {"code": JsonValue.int(code), "message": JsonValue.string(message)}
+    if let Some(data) = details:
+        error["data"] = data
+    return JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "id": identifier, "error": JsonValue.object(error)})
+
+
+def supported_versions() -> JsonValue:
+    """Keep discovery and the initialize refusal on the same single protocol revision."""
+    return JsonValue.array([JsonValue.string(PROTOCOL_VERSION)])
+
+
+def discovery() -> JsonValue:
+    """Describe fixed stdio capabilities without opening or preparing any graph."""
+    fixed_list = JsonValue.object({"listChanged": JsonValue.bool(false)})
+    capabilities = JsonValue.object({"tools": fixed_list, "resources": fixed_list})
+    info = JsonValue.object({"name": JsonValue.string("incan-graph"), "version": JsonValue.string(TOOLCHAIN)})
+    return JsonValue.object({"supportedVersions": supported_versions(), "capabilities": capabilities, "serverInfo": info})
 
 
 def tool_content(content: str, error: bool) -> JsonValue:
@@ -300,9 +312,12 @@ def validate_arguments(name: str, arguments: JsonValue) -> Result[None, str]:
 
 
 def catalog() -> Result[JsonValue, str]:
-    """Publish fixed JSON Schemas and read-only annotations for graph tools."""
+    """Publish the typed task registration and preserve the order of the remaining tools."""
     mut tools: list[JsonValue] = []
     for name in tool_names():
+        if name == GRAPH_TASK_TOOL_NAME:
+            tools.append(graph_task_spec()?)
+            continue
         fields = properties(name)
         tools.append(
             JsonValue.object(
@@ -337,7 +352,7 @@ def parse_records(document: str) -> Result[list[JsonValue], str]:
 def tool_names() -> list[str]:
     """Share the offered tool set between discovery and dispatch."""
     return [
-        "context_for_task",
+        GRAPH_TASK_TOOL_NAME,
         "context_for_declaration",
         "graph_query",
         "graph_summary",
@@ -350,18 +365,15 @@ def tool_names() -> list[str]:
 
 def description(name: str) -> str:
     """Describe each public tool without exposing implementation details."""
-    descriptions = {"context_for_task": "Pack task-ranked current graph context within a token budget", "context_for_declaration": "Pack a declaration and its graph neighborhood", "graph_query": "Explore checked definitions, references, callers, callees or imports", "graph_summary": "Read current snapshot, provenance and record counts", "snapshot_status": "Compare a retained snapshot with current graph inputs", "process_risk": "Read optional local git churn, ownership and co-change observations", "task_memory": "Read unexpired feedback for this exact task and current snapshot", "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry"}
+    descriptions = {"context_for_declaration": "Pack a declaration and its graph neighborhood", "graph_query": "Explore checked definitions, references, callers, callees or imports", "graph_summary": "Read current snapshot, provenance and record counts", "snapshot_status": "Compare a retained snapshot with current graph inputs", "process_risk": "Read optional local git churn, ownership and co-change observations", "task_memory": "Read unexpired feedback for this exact task and current snapshot", "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry"}
     return descriptions[name]
 
 
 def properties(name: str) -> Dict[str, JsonValue]:
     """Use one argument schema for advertised fields and runtime object validation."""
     string = JsonValue.object({"type": JsonValue.string("string")})
-    budget = integer_schema(128, 1000000)
-    if name == "context_for_task":
-        return {"task": string, "budget": budget}
     if name == "context_for_declaration":
-        return {"declaration": string, "budget": budget}
+        return {"declaration": string, "budget": integer_schema(MINIMUM_CONTEXT_BUDGET, MAXIMUM_CONTEXT_BUDGET)}
     if name == "graph_query":
         kinds = ["defs", "refs", "callers", "callees", "imports"]
         kind = JsonValue.object(

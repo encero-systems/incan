@@ -134,6 +134,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "mcp",
+        package: Some("incan_stdlib_data"),
+        facet: Some(facets::DATA),
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "toml",
         package: Some("incan_stdlib_data"),
         facet: None,
