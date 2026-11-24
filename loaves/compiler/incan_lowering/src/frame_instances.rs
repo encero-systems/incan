@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use incan_mir_plan_native::{
-    Carrier, EnumDeclaration, ExternalFunction, Function, GenericLoan, PlanType, StaticCell, UnitNominals,
-    carrier_position,
+    Carrier, EnumDeclaration, ExternalFunction, Function, FunctionSlot, GenericLoan, PlanType, StaticCell,
+    UnitNominals, carrier_position,
 };
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{Body, BodyIrModule, DecoratedInitialization};
@@ -383,14 +383,18 @@ fn retain_generic_decorator_frames(
 }
 
 /// Refuse a native instance symbol that collides with another retained source declaration.
-fn retain_instance(functions: &mut Vec<Function>, names: &mut FunctionNames, function: Function) -> Result<(), String> {
+fn retain_instance(
+    functions: &mut Vec<FunctionSlot>,
+    names: &mut FunctionNames,
+    function: Function,
+) -> Result<(), String> {
     if !named_functions(names, functions, &function.name).is_empty() {
         return Err(format!(
             "unsupported Body IR type parameter instance symbol collision {}",
             function.name
         ));
     }
-    functions.push(function);
+    functions.push(function.into());
     Ok(())
 }
 
@@ -413,7 +417,7 @@ pub fn function_names() -> FunctionNames {
 }
 
 /// Index the rows appended since the last lookup, then return this symbol's positions in list order.
-pub fn named_functions(names: &mut FunctionNames, functions: &[Function], name: &str) -> Vec<usize> {
+pub fn named_functions(names: &mut FunctionNames, functions: &[FunctionSlot], name: &str) -> Vec<usize> {
     while names.indexed < functions.len() {
         names
             .positions
@@ -427,14 +431,14 @@ pub fn named_functions(names: &mut FunctionNames, functions: &[Function], name: 
 
 /// Add closure bodies and constructors once; two functions sharing one item's forwarding environment agree on it.
 pub fn append_synthesized(
-    functions: &mut Vec<Function>,
+    functions: &mut Vec<FunctionSlot>,
     names: &mut FunctionNames,
     additions: Vec<Function>,
 ) -> Result<(), String> {
     for addition in additions {
         let mut present = false;
         for position in named_functions(names, functions, &addition.name) {
-            if functions[position] != addition {
+            if *functions[position] != addition {
                 return Err(format!(
                     "invalid Body IR synthesized function collision {}",
                     addition.name
@@ -443,7 +447,7 @@ pub fn append_synthesized(
             present = true;
         }
         if !present {
-            functions.push(addition);
+            functions.push(addition.into());
         }
     }
     Ok(())

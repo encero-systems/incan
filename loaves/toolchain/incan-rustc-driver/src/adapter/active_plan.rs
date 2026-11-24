@@ -317,8 +317,9 @@ impl PlanReader {
         Ok(inputs)
     }
 
+    /// Find one active function by its indexed name and borrow the existing slot's value.
     pub(super) fn function(&self, name: &str) -> Option<&crate::plan::Function> {
-        self.by_name.get(name).map(|position| &self.plan.functions[*position])
+        self.by_name.get(name).map(|position| &*self.plan.functions[*position])
     }
 
     pub(super) fn function_input(&self, name: &str) -> Option<&DefinitionInput> {
@@ -487,7 +488,7 @@ mod tests {
         assert_ne!(member.identity, member.symbol);
         let (function, externals) = decode_product(&product.function, &[])?;
         let mut plan = plan(&["__incan_probe_helper"]);
-        let helper = &mut plan.functions[0];
+        let helper = plan.functions[0].make_mut();
         helper.locals.push(Local {
             ty: PlanType::Unit,
             span: helper.span.clone(),
@@ -501,7 +502,7 @@ mod tests {
             cleanup: false,
             span: helper.span.clone(),
         });
-        plan.functions.push(function);
+        plan.functions.push(function.into());
         plan.externals = externals;
         let compact = AdmittedDefinition {
             function: member.function.clone(),

@@ -238,6 +238,11 @@ impl ModulePage {
         (!self.path.as_os_str().is_empty() && !self.inspect_placement).then_some(self.content)
     }
 
+    /// Authenticate this request's actual backing before lending a prior positioned function.
+    pub(crate) fn current_positioned_bytes(&self) -> bool {
+        self.positioned_content().is_some() && self.bytes().is_some()
+    }
+
     /// The bytes of the final event of the body lowered to `function`, read from this request's page.
     pub fn event_bytes(&self, function: &str) -> Option<&[u8]> {
         let inspect = self.resident.inspect_placement;

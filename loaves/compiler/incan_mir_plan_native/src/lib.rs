@@ -26,14 +26,14 @@ pub use body::{
     ForeignFunction, FrozenValue, Local, Operand, OperandKind, Parameter, Place, Projection, Rvalue, RvalueKind,
     Statement, StatementKind, Terminator, TerminatorKind, UnaryOp, Unwind, assign, block, copy, integer, place,
 };
-pub use carriers::{fold_carrier_positions, fold_inventories};
+pub use carriers::{fold_carrier_positions, fold_function_slots, fold_inventories};
 pub use nominal::{
     CARRIER_BASE, NominalKind, NominalReference, NominalRemap, ProductNominal, UnitNominals, carrier_index,
     carrier_position, describe_nominals, is_carrier_index, resolve_nominals, unit_nominals, unresolved_nominal,
 };
 pub use plan::{
     AttributeArgument, AttributeValue, Carrier, EnumDeclaration, EnumVariant, ExternalFunction,
-    FallibleIteratorMethods, Function, GenericEnumDeclaration, GenericEnumVariant, GenericLayoutField,
+    FallibleIteratorMethods, Function, FunctionSlot, GenericEnumDeclaration, GenericEnumVariant, GenericLayoutField,
     GenericLayoutType, GenericLoan, GenericModelDeclaration, IteratorMethods, ModelDeclaration, NativeAttribute,
     NativeTraitAdoption, NativeTraitMethod, Plan, PlanExport, StaticCell, ZipCarrier, semantic_type_matches,
 };

@@ -328,7 +328,15 @@ pub(super) fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Res
     for block in instantiated
         .functions
         .iter_mut()
-        .flat_map(|function| function.blocks.iter_mut())
+        .filter(|slot| {
+            slot.blocks.iter().any(|block| {
+                let TerminatorKind::Call(callee, ..) = &block.terminator.kind else {
+                    return false;
+                };
+                matches!(&callee.kind, CalleeKind::External(path) if inferred.contains_key(path))
+            })
+        })
+        .flat_map(|slot| slot.make_mut().blocks.iter_mut())
     {
         let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind else {
             continue;

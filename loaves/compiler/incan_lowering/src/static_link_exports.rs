@@ -151,13 +151,16 @@ fn lower_scalar_accessor(
     };
     builder.emit(assign(place(0, span), RvalueKind::Use(output), span));
     builder.finish(TerminatorKind::Return, span);
-    inventories.functions.push(Function::new(
-        builder.name,
-        parameters,
-        result,
-        builder.locals,
-        builder.blocks,
-        span.clone(),
-    ));
+    inventories.functions.push(
+        Function::new(
+            builder.name,
+            parameters,
+            result,
+            builder.locals,
+            builder.blocks,
+            span.clone(),
+        )
+        .into(),
+    );
     merge_externals(&mut inventories.externals, builder.externals)
 }
