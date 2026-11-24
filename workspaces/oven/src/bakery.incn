@@ -140,26 +140,49 @@ def find_unit(store: Path, identity: str) -> Result[Option[Fact], str]:
     return Ok(Some(checked_fact(store, variants[0].fact)?))
 
 
+enum ExecutablePayloadDemand:
+    """Which parts of the selected executable Fact this reader will use."""
+
+    Complete
+    Launch(str)
+
+
 pub def find_executable_payload(store: Path, identity: str, name: str, digest: str) -> Result[Option[Fact], str]:
-    """Find the exact pinned executable and its own sidecars from the same unit record."""
+    """Find the exact pinned executable and verify its complete selected Fact."""
+    return executable_payload_for(store, identity, name, digest, ExecutablePayloadDemand.Complete)
+
+
+pub def find_launch_executable_payload(store: Path, identity: str, name: str, digest: str) -> Result[Option[Fact], str]:
+    """Verify an exact launch Fact's payloads, leaving its optional link predecessor to the linker."""
+    return executable_payload_for(store, identity, name, digest, ExecutablePayloadDemand.Launch(name))
+
+
+def executable_payload_for(
+    store: Path, identity: str, name: str, digest: str, demand: ExecutablePayloadDemand,
+) -> Result[Option[Fact], str]:
+    """Observe one exact executable selection using the requested Fact scope."""
     clock = begin_work()
-    selected = find_pinned_executable(store, identity, name, digest)
+    selected = find_pinned_executable(store, identity, name, digest, demand)
     record_work(Operation.BakeryFind, identity, clock)
     return selected
 
 
-def find_pinned_executable(store: Path, identity: str, name: str, digest: str) -> Result[Option[Fact], str]:
-    """An unknown digest is a miss; an absent selected unit and damaged selected bytes are errors."""
+def find_pinned_executable(
+    store: Path, identity: str, name: str, digest: str, demand: ExecutablePayloadDemand,
+) -> Result[Option[Fact], str]:
+    """An unknown digest is a miss; an absent selected unit and damaged required bytes are errors."""
     variants = read_unit(store, identity)?
     if len(variants) == 0:
         return Err("selected native unit record is missing")
     if len(variants) == 1:
-        fact = checked_fact(store, variants[0].fact)?
+        fact = variants[0].fact
         for file in fact.files:
             if file.path == name and file.program:
                 if file.digest == digest:
-                    return Ok(Some(fact))
+                    return Ok(Some(checked_fact(store, fact, demand)?))
+                _ = checked_fact(store, fact)?
                 return Ok(None)
+        _ = checked_fact(store, fact)?
         return Err("unit record does not contain the selected executable")
     mut named = false
     for variant in variants:
@@ -167,7 +190,7 @@ def find_pinned_executable(store: Path, identity: str, name: str, digest: str) -
             if file.path == name:
                 named = true
                 if file.digest == digest:
-                    return Ok(Some(checked_fact(store, variant.fact)?))
+                    return Ok(Some(checked_fact(store, variant.fact, demand)?))
     if not named:
         return Err("unit record does not contain the selected executable")
     return Ok(None)
@@ -196,13 +219,38 @@ def checked_rows(identity: str, value: bytes) -> Result[list[UnitVariant], str]:
     return Ok(variants)
 
 
-def checked_fact(store: Path, fact: Fact) -> Result[Fact, str]:
-    """Verify the selected fact without substituting another variant on damage."""
+def checked_fact(
+    store: Path, fact: Fact, demand: ExecutablePayloadDemand = ExecutablePayloadDemand.Complete,
+) -> Result[Fact, str]:
+    """Verify the demanded members without substituting another variant on damage."""
+    predecessor = match demand:
+        ExecutablePayloadDemand.Complete => None
+        ExecutablePayloadDemand.Launch(name) => launch_predecessor(fact, name)
     for file in fact.files:
+        if let Some(relative) = predecessor:
+            if file.path == relative and not file.program:
+                continue
         if not payload_current(store, file):
             path = payload_path(store, file.digest)
             return Err(StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message())
     return Ok(fact)
+
+
+def launch_predecessor(fact: Borrowed[Fact], name: str) -> Option[str]:
+    """Find the one optional predecessor member in the selected executable’s layout."""
+    if name in ["", ".", ".."] or Path(name).name() != name or "\\" in name:
+        return None
+    relative = name + ".native-objects.json"
+    mut found = false
+    for file in fact.files:
+        if file.path != relative:
+            continue
+        if found or file.program:
+            return None
+        found = true
+    if found:
+        return Some(relative)
+    return None
 
 
 def payload_current(store: Path, file: FactFile) -> bool:

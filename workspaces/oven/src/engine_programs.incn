@@ -10,7 +10,7 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from rust::std::mem import drop, take
 from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
-from bakery import fact_file, find_executable_payload
+from bakery import fact_file, find_executable_payload, find_launch_executable_payload
 from bakery_records import Fact
 from bakery_roots import register_root
 from check_pages import check_page_directory, keep_check_pages
@@ -989,10 +989,10 @@ def stored_program(selected: Snapshot, key: str) -> Result[Option[NativeUnit], s
 
 pub def restore_program(store: Path, unit: NativeUnit, console: str = "") -> Result[bool, str]:
     """
-    Validate the selected immutable unit and restore only missing or changed derived executable views. False tells the
-    caller to resolve a missing carrier, a superseded executable, or a missing warning result for this selection.
+    Validate the exact selected launch payload and its required companions, restoring only missing or changed views.
+    False tells the caller to resolve a missing carrier, a superseded executable, or a missing warning result.
     """
-    match unit_record(store, unit)?:
+    match find_launch_executable_payload(store, unit.identity, Path(unit.binary).name(), unit.payload)?:
         None => return Ok(false)
         Some(fact) =>
             if not carriers_present(store, fact, Path(unit.binary))?:
