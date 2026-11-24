@@ -1,9 +1,9 @@
 """Hover through an editor view: a declaration's signature from the overlay's buffer or from the view's records."""
 
-from rust::std::string import String as RustString
 from std.fs import Path
 from pub::incan_platform.store import get
 from pub::internal_models.records import encode_record_key
+from pub::internal_models.source_value_records import source_value
 from compiler_source_projection import project_source, signature_key, signature_record
 from intake import ManifestReader, read_project
 from store_path_conversion import snapshot
@@ -43,9 +43,14 @@ pub def overlay_hover(
             path = imported_path(document, found[0])
             selected = snapshot(store, view).map_err((error) => error.message())?
             for facet in declaration_facets(found[1]):
-                key = encode_record_key(signature_key(origin, path, facet))?
+                signature = signature_key(origin, path, facet)
+                key = encode_record_key(signature)?
                 match get(selected, key).map_err((error) => error.message())?:
-                    Some(value) => return Ok(Some(str(RustString.from_utf8_lossy(value).into_owned()).strip()))
+                    Some(value) =>
+                        text = source_value(signature, value)?.decode().map_err(
+                            (_) => f"invalid declaration signature text: {path}:{facet}",
+                        )?
+                        return Ok(Some(text.strip()))
                     None => pass
             return Ok(None)
 
