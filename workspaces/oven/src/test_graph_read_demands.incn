@@ -5,7 +5,7 @@ from std.json import JsonValue
 from pub::incan_platform.store import begin, commit, put
 from pub::incan_platform.store.index import find
 from benchmark_graph_frames import required_graph_frames
-from graph_read_demands import begin_graph_demands, finish_graph_demands, note_graph_demand
+from graph_read_demands import GraphDemand, begin_graph_demands, finish_graph_demands, note_graph_demand
 from scratch import scratch_directory
 from store_path_conversion import snapshot
 
@@ -34,5 +34,31 @@ pub def test_graph_oracle_selects_a_past_revision_without_read_counters() -> Res
     result = required_graph_frames(JsonValue.object({"graph_demands": JsonValue.array([item.to_json() for item in requests])}), store)?
     assert len(result.unknown) == 0
     assert len(result.lengths) == 1
-    assert result.lengths[hexlify(old.digest) + "\twanted"] == 8 + len("wanted") + 1
+    wanted = hexlify(old.digest) + "\twanted"
+    assert result.lengths[wanted] == 8 + len("wanted") + 1
+
+    # The capture caches the old view before the mismatched selector reaches it.
+    mismatched = GraphDemand(role="baked-unit", store=store.0, generation=later.generation,
+        manifest=selected.digest, view=selected.view, key="wanted")
+    invalid_report = JsonValue.object({"graph_demands": JsonValue.array([requests[0].to_json(), mismatched.to_json()])})
+    match required_graph_frames(invalid_report, store):
+        Ok(_) => return Err("cached graph snapshot accepted a different generation")
+        Err(reason) => assert reason == "graph selector generation differs from its selected snapshot", reason
+
+    # Both roles select the older index after CURRENT has changed. Only the eager role needs its payload.
+    for role in ["evaluation-frame", "evaluation-value"]:
+        begin_graph_demands(true)
+        note_graph_demand("capture-mode", selected, "".join(list.repeat("a", 64)))
+        note_graph_demand(role, selected, "wanted")
+        selectors = finish_graph_demands()
+        report = JsonValue.object({"graph_demands": JsonValue.array([item.to_json() for item in selectors])})
+        frames = required_graph_frames(report, store)?
+        assert len(frames.unknown) == 0
+        assert len(frames.roots) == 2
+        assert frames.roots[1] == f"{role}\t{selected.generation}\t{selected.digest}\t{selected.view}\twanted"
+        if role == "evaluation-frame":
+            assert len(frames.lengths) == 0
+        else:
+            assert len(frames.lengths) == 1
+            assert frames.lengths[wanted] == 15
     return Ok(None)
