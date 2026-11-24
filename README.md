@@ -33,11 +33,12 @@ The current toolchain is designed to be easy to install, try, inspect, and diagn
 
 ## Getting started
 
-To use Incan 0.6, get the `incan` executable and the matching `toolchain.tar.zst` archive for your host. Put `incan` on `PATH`, then install the pinned Rust compiler and the archive:
+To use Incan 0.6, get the `incan` executable and `toolchain.tar.zst` archive from the same build for your host. For a published release, download the matching `toolchain.tar.zst.sigstore.json` and keep it beside the archive. Put the downloaded `incan` first on `PATH` before installing the toolchain.
 
 ```bash
 rustup toolchain install 1.98.0 --profile minimal --component rustc-dev
 incan toolchain install ./toolchain.tar.zst
+export PATH="${INCAN_HOME:-$HOME/.incan}/bin:$PATH"
 incan --version
 ```
 
