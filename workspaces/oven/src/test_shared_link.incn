@@ -310,8 +310,10 @@ def require_old_bakery(oven: Path, store: Path, variants: bool) -> Result[None, 
         return Err("the old Bakery reader must select the installed bin/oven alias")
     home = oven.parent().parent()
     for operation in ["verify", "gc"]:
-        command = Command.new(oven.0).args(["bakery", operation]).env("INCAN_HOME", home.0)
-        result = command.env("INCAN_BAKERY", store.0).env("OVEN_OWNER", "off").output().map_err(
+        mut command = Command.new(oven.0)
+        command.args(["bakery", operation]).env("INCAN_HOME", home.0)
+        command.env("INCAN_BAKERY", store.0).env("OVEN_OWNER", "off")
+        result = command.output().map_err(
             (error) => f"cannot run old Bakery {operation}: {error}",
         )?
         stdout = str(RustString.from_utf8(result.stdout).map_err((error) => str(error))?)
