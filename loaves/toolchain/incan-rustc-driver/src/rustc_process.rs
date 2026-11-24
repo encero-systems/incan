@@ -88,6 +88,10 @@ impl RustcHandoff {
                     .entered();
             self.read_compact_definitions()?
         };
+        let previous_link = self
+            .plan_record_products
+            .as_ref()
+            .map(|products| products.root.join(crate::adapter::PREDECESSOR_LOCATOR));
         let _captured = crate::spans::captured_source_scope(self.captured_sources, self.captured_texts)?;
         crate::adapter::compile(
             self.plan,
@@ -104,6 +108,7 @@ impl RustcHandoff {
             self.library_facades,
             self.plan_record_report.as_deref(),
             compact,
+            previous_link.as_deref(),
         )
         .map_err(|error| error.to_string())?;
         drop(native);
