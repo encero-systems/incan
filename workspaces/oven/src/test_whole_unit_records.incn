@@ -171,7 +171,8 @@ def verify_callable_entry(entry: NamespaceAtom) -> Result[None, str]:
             assert callable_field(typed, 126870908593503u64)? == NamespaceAtom.Missing
             assert callable_field(typed, 109270082024287u64)? == NamespaceAtom.Missing
             assert callable_field(typed, 123594016516451u64)? == NamespaceAtom.Missing
-            assert callable_field(typed, 109330262287475u64)? == NamespaceAtom.Items([])
+            no_coordinates: list[NamespaceAtom] = []
+            assert callable_field(typed, 109330262287475u64)? == NamespaceAtom.Items(no_coordinates)
             helper_identity = callable_fields(canonical)?
             origin = callable_field(helper_identity, 26525135469642u64)?
             verify_inline_nominal(body, origin)?
@@ -188,9 +189,11 @@ def verify_inline_nominal(body: Borrowed[list[NamespaceField]], owner_origin: Na
                     identity = callable_fields(entry.value.clone())?
                     assert callable_field(identity, 26525135469642u64)? == owner_origin
                     assert callable_text(callable_field(identity, 235552561301414u64)?)? == "RetainedInline"
-                    lexical = NamespaceAtom.Alternative(52363337397491u64, [])
+                    lexical_fields: list[NamespaceField] = []
+                    lexical = NamespaceAtom.Alternative(52363337397491u64, lexical_fields)
                     assert callable_field(identity, 162014550503162u64)? == lexical
-                    nominal_kind = NamespaceAtom.Alternative(103544703951856u64, [])
+                    nominal_fields: list[NamespaceField] = []
+                    nominal_kind = NamespaceAtom.Alternative(103544703951856u64, nominal_fields)
                     assert callable_field(identity, 12265375465139u64)? == nominal_kind
                     assert callable_field(identity, 251177442890846u64)? == NamespaceAtom.Missing
                     span = callable_fields(callable_field(identity, 206641408467676u64)?)?
