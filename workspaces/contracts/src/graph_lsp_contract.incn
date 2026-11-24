@@ -225,11 +225,27 @@ def observe_editor(
     peer.diagnostics(uri, 4)?
     observed.append(matching_mirrors(root, previous, relative, revised)?)
     check_open_provider(peer, uri, revised, provider_uri, provider_path, provider_source)?
+    check_typed_hover(peer, uri, revised)?
     check_independent_document(peer, project)?
     mut matches = observed[0]
     for view in observed[1:]:
         matches = [candidate for candidate in matches if candidate in view]
     return Ok(matches)
+
+
+def check_typed_hover(mut peer: Peer, uri: str, source: str) -> Result[None, str]:
+    """A private declaration keeps its checked signature and canonical identity."""
+    position = cursor(uri, source, "def read_item(item:", "read_item")?
+    hover = peer.request(13, "textDocument/hover", position)?
+    response = hover.to_json().map_err((error) => error.message())?
+    if "def read_item(item: Item) -> int" not in response or "Canonical declaration:" not in response:
+        return Err(f"LSP lost the private checked declaration signature or its identity: {response}")
+    expected = required(position, "position")?
+    line = required(expected, "line")?.expect_int().map_err((error) => error.message())?
+    first = required(expected, "character")?.expect_int().map_err((error) => error.message())?
+    if not editor_range_matches(required(hover, "range")?, line, first, first + len("read_item"))?:
+        return Err("LSP changed the private declaration's name range")
+    return Ok(None)
 
 
 def change_document(mut peer: Peer, uri: str, version: int, source: str) -> Result[None, str]:
