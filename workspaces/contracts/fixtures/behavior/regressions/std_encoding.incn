@@ -16,6 +16,13 @@ def fs_error(detail: str) -> EncodingError:
 
 
 def exercise() -> Result[None, EncodingError]:
+    """
+    Check the RFC 064 examples in their original order.
+
+    1. Check the encoded values and malformed inputs.
+    2. Check chunked BytesIO and file round trips.
+    """
+    # 1. Check the encoded values and malformed inputs.
     payload = b"hello?"
 
     assert hexlify(payload) == hex.hexlify(payload)
@@ -101,6 +108,12 @@ def exercise() -> Result[None, EncodingError]:
         Ok(_) => println("accepted-bad-bech32-checksum")
         Err(_) => println("bech32-checksum-error")
 
+    # 2. Check chunked BytesIO and file round trips.
+    return check_stream_round_trips(payload)
+
+
+def check_stream_round_trips(payload: bytes) -> Result[None, EncodingError]:
+    """Check chunk size two through BytesIO and hex file paths."""
     hex_encode_source = BytesIO(payload)
     hex_encode_target = BytesIO()
     hex.encode(hex_encode_source, hex_encode_target, chunk_size=2)?
