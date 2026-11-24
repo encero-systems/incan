@@ -102,9 +102,13 @@ def typed_receipt_controls(store: Path, start: Snapshot) -> Result[None, str]:
     frames = required_graph_frames(report, store)?
     assert len(frames.unknown) == 0
     assert len(frames.lengths) == 2
-    assert sorted([length for length in frames.lengths.values()]) == sorted([
-        8 + len(encoded.encode("utf-8")) + len(input), 8 + len(receipt_key.encode("utf-8")) + len(receipt),
-    ])
+    for key_and_size in [(encoded, len(input)), (receipt_key, len(receipt))]:
+        wanted_key, size = key_and_size
+        match find(selected.root, selected.index, wanted_key).map_err((error) => error.detail)?:
+            Some(location) =>
+                identity = hexlify(location.digest) + "\t" + wanted_key
+                assert frames.lengths.get(identity) == Some(8 + len(wanted_key.encode("utf-8")) + size)
+            None => return Err("fixture's selected graph frame is absent")
 
     for malformed in [f"{root}\t1\t{encoded}", f"{root}\t0\t{encoded[:-1]}"]:
         demand = GraphDemand(role="witness", store=store.0, generation=selected.generation,
