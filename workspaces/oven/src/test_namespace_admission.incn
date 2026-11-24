@@ -3,6 +3,7 @@
 A checked caller needs only the exact dependency interface it installs. A changed callee contract rechecks its
 callers, and a later caller edit installs the new interface."""
 
+from rust::std::mem import drop
 from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
@@ -10,6 +11,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
+from std.primitives.text import copy_frozen_bytes
 from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, locate_value
 from pub::internal_models.namespace_references import NamespaceReference, namespace_reference_filename
 from pub::internal_models.records import encode_record_key
@@ -221,7 +223,7 @@ def require_prime_scale_extent(
         or required_text(scale, "unit")? != descriptor
         or required_text(staged[0], "clock_id")? != clock
         or required_text(scale, "page")? != Path(directory).joinpath(namespace_reference_filename()).0
-        or required_text(scale, "format")?.encode("utf-8") != EXECUTABLE_GRAPH_FORMAT
+        or required_text(scale, "format")?.encode("utf-8") != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT)
     ):
         return Err("prime-interface did not issue the observed typed namespace page")
     if (
