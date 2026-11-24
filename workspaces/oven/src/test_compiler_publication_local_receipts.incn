@@ -49,13 +49,15 @@ pub def test_publication_local_receipt_keeps_semantic_demands_and_reads_one_fram
             assert encode_read_receipt(spans.as_ref())? == expected
             assert encode_read_receipt(lowering.as_ref())? == expected
         _ => return Err("one publication stage did not receive its local receipt")
-    assert [entry.key for entry in demands] == [
-        published.evaluation_key,
-        evaluation_record_key(CHECKER_PROFILE, encode_record_key(missing_key)?),
-        published.evaluation_key,
+    assert [(entry.role, entry.key) for entry in demands] == [
+        ("evaluation", published.evaluation_key),
+        ("receipt-frame", published.receipt_key),
+        ("evaluation-value", published.value_key),
+        ("evaluation", evaluation_record_key(CHECKER_PROFILE, encode_record_key(missing_key)?)),
+        ("evaluation", published.evaluation_key),
     ], "publication changed the sequence of semantic demands"
     for entry in demands:
-        assert entry.role == "evaluation" and entry.view == graph.view and entry.manifest == graph.digest
+        assert entry.view == graph.view and entry.manifest == graph.digest
     exact = [read for read in reads if read.key == published.value_key]
     assert len(exact) == 1, "the publication must name one exact physical revision"
     assert exact[0].reads == 1, f"publication reopened the local frame: {exact[0].reads} opens of {exact[0].frame_bytes} bytes"

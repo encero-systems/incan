@@ -439,6 +439,8 @@ def frames(path: Path, store: Path, mut census: Census) -> Result[None, str]:
             size = number(item, "value_bytes")?
             frame = number(item, "frame_bytes")?
             identity = revision + "\t" + key
+            if identity in covered:
+                census.problems.append(f"duplicate observed graph frame: {key} {revision}")
             covered.add(identity)
             if identity not in selection.lengths:
                 census.problems.append(f"graph frame outside the independently selected roots: {key} {revision}")
