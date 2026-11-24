@@ -104,6 +104,7 @@ from compiler_projection_cache import (
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from unit import UnitDescription, dependency_source_roots
+from unit_compiler import CompletedPlanEvents, take_completed_plan_events
 
 
 model LoweringBody:
@@ -198,6 +199,7 @@ pub def prepare_compiled_bodies(
     compiler: str = "",
     mut captured_sources: Dict[str, SourceProjection] = {},
     plan_admissions: Option[PlanModuleAdmissions] = None,
+    completed_plan_events: Option[CompletedPlanEvents] = None,
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -288,6 +290,7 @@ pub def prepare_compiled_bodies(
         cutoff,
         authenticated.scopes,
         plan_admissions,
+        completed_plan_events,
     )?
     record_work(Operation.EngineGraphStaging, "compiled-lowering-staging", staging_lowering)
     record_work(Operation.EngineGraphStaging, output.0, staging)
@@ -521,10 +524,13 @@ def prepare_optional_lowering_records(
     cutoff: EditCutoff = EditCutoff(),
     scopes: Borrowed[ExecutableScopeInputs],
     plan_admissions: Option[PlanModuleAdmissions],
+    completed_plan_events: Option[CompletedPlanEvents],
 ) -> Result[LoweringDemandWork, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
-        events = lowering_events(report)?
+        events = match completed_plan_events:
+            Some(current) => take_completed_plan_events(current, report)?
+            None => lowering_events(report)?
         mut fresh = set([value.identity for value in outputs.values])
         notes = admission_report.unwrap_or(report)
         admissions = match plan_admissions:
