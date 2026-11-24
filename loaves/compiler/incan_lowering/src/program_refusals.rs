@@ -202,8 +202,8 @@ fn ordinary_refusals(
             match lowered {
                 Ok((function, runtime, pending, synthesized)) => {
                     merge_instance_requests(&mut inventories.instances, &pending);
-                    inventories.functions.push(function);
-                    inventories.functions.extend(synthesized);
+                    inventories.functions.push(function.into());
+                    inventories.functions.extend(synthesized.into_iter().map(Into::into));
                     if let Err(error) = merge_externals(&mut inventories.externals, runtime) {
                         refusals.push(format!("{}: {error}", body.name));
                     }

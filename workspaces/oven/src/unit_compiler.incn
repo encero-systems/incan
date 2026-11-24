@@ -92,6 +92,7 @@ pub def compile_prepared_unit_completion(
     graph_body_records: Option[list[SelectedBodyPage]] = None,
     records_directory: Option[Path] = None,
     checked_warnings: Option[Path] = None,
+    report_directory: Option[Path] = None,
 ) -> Result[PreparedUnitCompletion, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -145,10 +146,13 @@ pub def compile_prepared_unit_completion(
         discard_graph_body_output(output_path)?
         discard_file(checker_record_report_path(output_path))
         native += ["--graph-body-output", output_path.0]
-        report = plan_record_report_path(unit, key, toolchain.unit_descriptor_crumb)
-        if report.exists():
-            remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
-        report.mkdir(true, true).map_err((error) => f"plan record report: cannot {error.message()}")?
+        report = match report_directory:
+            Some(current) => current
+            None => plan_record_report_path(unit, key, toolchain.unit_descriptor_crumb)
+        if report_directory is None:
+            if report.exists():
+                remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
+            report.mkdir(true, true).map_err((error) => f"plan record report: cannot {error.message()}")?
         native += ["--plan-record-report", report.0]
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
@@ -284,9 +288,8 @@ def discard_graph_body_output(output: Path) -> Result[None, str]:
     return Ok(None)
 
 
-pub def plan_record_counts(unit: UnitDescription, key: Key, typed: bool) -> Result[PlanRecordCounts, str]:
-    """Count only loss-checked plan products that the lowering reports as evaluated or reused for this request."""
-    report = plan_record_report_path(unit, key, typed)
+pub def plan_record_counts(report: Path) -> Result[PlanRecordCounts, str]:
+    """Count only loss-checked plan products in this activation's report."""
     mut counts = PlanRecordCounts()
     if not report.is_dir():
         return Ok(counts)

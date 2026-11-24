@@ -1,0 +1,181 @@
+"""Count regular-object work on one ordinary same-path development link."""
+
+from rust::std::env::consts import OS
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import parse
+from files import read, write
+from observation import file_digest
+from engine_protocol_fixtures import json_text_is, stop_engine
+from lowering_record_fixtures import command_proof, proof_count
+from scratch import scratch_directory
+
+
+model CallableObject:
+    """A native callable's emitted group, symbol and selected content object."""
+
+    group: str
+    symbol: str
+    object: str = ""
+
+
+model EditLink:
+    """The two ordinary objects selected by one link, with its exact staged-input counts."""
+
+    main: CallableObject
+    greeting: CallableObject
+    main_hashes: int
+    greeting_hashes: int
+
+
+pub def test_development_link_does_not_rehash_an_unchanged_regular_object() -> Result[None, str]:
+    """A real warm relocation keeps the selected main object and hashes only the changed greeting input."""
+    if OS != "macos":
+        return Ok(None)
+    scratch = scratch_directory()?
+    root = scratch.path().resolve().map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    outcome = exercise_development_link(root, binary)
+    if root.joinpath("bakery/CURRENT").is_file():
+        stop_engine(root.joinpath("bakery"), binary)?
+    return outcome
+
+
+def exercise_development_link(root: Path, binary: str) -> Result[None, str]:
+    """Reuse one compiler and require a selected object independently of its hash observation."""
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    seed = link_edit(root, binary, "hello", [])?
+    seen = trace_names(trace)?
+    warm = link_edit(root, binary, "hullo", seen)?
+    if (
+        seed.main.group != warm.main.group
+        or seed.main.symbol != warm.main.symbol
+        or seed.main.object != warm.main.object
+    ):
+        return Err("the edited executable did not select the same authored main object")
+    if (
+        seed.greeting.group != warm.greeting.group
+        or seed.greeting.symbol != warm.greeting.symbol
+        or seed.greeting.object == warm.greeting.object
+    ):
+        return Err("the edited executable did not select a new object for the same greeting group")
+    if seed.main_hashes != 1 or seed.greeting_hashes != 1 or warm.greeting_hashes != 1:
+        return Err(f"unexpected development-link setup: seed main={seed.main_hashes} seed greeting={seed.greeting_hashes} warm greeting={warm.greeting_hashes}")
+    assert warm.main_hashes == 0, f"selected unchanged main regular object rehashed on edit: {warm.main_hashes}, expected 0"
+    return Ok(None)
+
+
+def link_edit(root: Path, binary: str, greeting: str, seen: list[str]) -> Result[EditLink, str]:
+    """Run the same projectless Debug request at the same path, then read its current native evidence."""
+    source = root.joinpath("main.incn")
+    write(source, f"def greeting() -> str:\n    return \"{greeting}\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
+    plan = root.joinpath("native.plan")
+    trace = root.joinpath("trace")
+    bakery = root.joinpath("bakery")
+    child = Command.new(binary)
+        .args(["run", source.0, "--profile", "debug", "--engine-report"])
+        .current_dir(root.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", bakery.0)
+        .env("INCAN_ENGINE_TRACE", trace.0)
+        .env("INCAN_NATIVE_PLAN_REPORT", plan.0)
+        .env("INCAN_NATIVE_TIMING", "incremental")
+        .env_remove("INCAN_RUST_INCREMENTAL")
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(child.stdout).map_err((error) => str(error))?
+    error_text = from_utf8(child.stderr).map_err((error) => str(error))?
+    if not child.status.success() or not output.endswith(greeting + "\n") or error_text != "":
+        return Err(f"{greeting} ordinary native command: status={child.status.code()} stderr={error_text}")
+    proof = command_proof(child.stdout)?
+    if proof_count(proof, "unit_evaluations")? != 1 or proof_count(proof, "native_bakes")? != 1 or proof_count(proof, "whole_unit_compiles")? != 0:
+        return Err(f"{greeting} did not finish an ordinary Records unit and native link")
+    if greeting == "hullo" and (proof_count(proof, "plan_function_evaluations")? != 1 or proof_count(proof, "plan_function_reuses")? != 2):
+        return Err("the one-body edit did not preserve the other two Plan products")
+    native = read(plan)?
+    executable = root.joinpath("target/incan/debug/bin/main")
+    mapped = Command.new("/usr/bin/dsymutil").args(["--dump-debug-map", executable.0]).output().map_err((error) => str(error))?
+    if not mapped.status.success() or mapped.stderr != b"":
+        return Err("could not read the actual selected program's debug map")
+    debug_map = from_utf8(mapped.stdout).map_err((error) => str(error))?
+    main = select_callable(native, debug_map, source, bakery, "main")?
+    changed = select_callable(native, debug_map, source, bakery, "greeting")?
+    return issued_hash_counts(root, trace, seen, main, changed)
+
+
+def select_callable(native: str, debug_map: str, source: Path, bakery: Path, name: str) -> Result[CallableObject, str]:
+    """Match the exact authored Plan function to its emitted symbol and actual linked object."""
+    mut found_source = false
+    mut selected: list[CallableObject] = []
+    for line in native.split("\n"):
+        if line.startswith("plan-function\t") and line.endswith(f"\t{source.0}\t{name}"):
+            found_source = True
+        if line.startswith("mono-item\t"):
+            fields = line.split("\t")
+            if len(fields) == 8 and fields[2] == "function" and fields[4] == "1" and fields[6].startswith("__incan_unit_") and fields[6].endswith(f"::{name}"):
+                selected.append(CallableObject(group=fields[5], symbol=fields[7]))
+    if not found_source or len(selected) != 1:
+        return Err(f"{name} does not name one authored native callable in the ordinary Plan")
+    mut result = selected[0]
+    mut filename = ""
+    mut objects: list[str] = []
+    symbol = "- { sym: _" + result.symbol + ","
+    for line in debug_map.split("\n"):
+        text = line.strip()
+        if text.startswith("- filename:"):
+            filename = text.split("- filename:")[1].strip()
+            if filename.startswith("'") and filename.endswith("'"):
+                filename = filename[1:len(filename) - 1]
+        elif text.startswith(symbol):
+            objects.append(filename)
+    if len(objects) != 1:
+        return Err(f"{name} does not name one actual linked debug object")
+    object = Path(objects[0])
+    digest = file_digest(object)?
+    if object.0 != bakery.joinpath(f"native-shared/link-inputs/sha256/{digest[:2]}/{digest}.o").0:
+        return Err(f"{name} selected an object without its exact content name")
+    result.object = object.0
+    return Ok(result)
+
+
+def trace_names(trace: Path) -> Result[list[str], str]:
+    """Names present before the edit, including the original completed linker process."""
+    entries = trace.iterdir().map_err((error) => error.message())?
+    return Ok([entry.name() for entry in entries if entry.is_file()])
+
+
+def issued_hash_counts(root: Path, trace: Path, seen: list[str], main: CallableObject, greeting: CallableObject) -> Result[EditLink, str]:
+    """Count only regular staged source hashes issued by the new program linker."""
+    mut found: list[EditLink] = []
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file() or entry.name() in seen or not entry.name().startswith("engine-compiler-"):
+            continue
+        mut ran = false
+        mut main_count = 0
+        mut greeting_count = 0
+        for line in read(entry)?.split("\n"):
+            if line == "":
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if not json_text_is(row, "kind", "begin"):
+                continue
+            if json_text_is(row, "function", "incan_rustc_driver::run_linker"):
+                ran = True
+            if not json_text_is(row, "function", "incan_rustc_driver::link_input_digest"):
+                continue
+            fields = row.require("fields").map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
+            path = Path(fields["input"].expect_str().map_err((error) => error.message())?)
+            if not path.0.startswith(root.joinpath("target/incan/units").0 + "/") or not path.parent().name().endswith(".rustc-output") or not path.name().endswith(".rcgu.o"):
+                continue
+            if path.name().startswith(f"main.{main.group}."):
+                main_count += 1
+            if path.name().startswith(f"main.{greeting.group}."):
+                greeting_count += 1
+        if ran and greeting_count > 0:
+            found.append(EditLink(main=main, greeting=greeting, main_hashes=main_count, greeting_hashes=greeting_count))
+    if len(found) != 1:
+        return Err("the new program linker and its changed regular source operand were not uniquely observed")
+    return Ok(found[0])

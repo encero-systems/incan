@@ -423,7 +423,7 @@ fn carried_frames(
                 "plan-function frame {name} is missing from the whole-program plan"
             ));
         };
-        frames.push(plan.functions[*index].clone());
+        frames.push((*plan.functions[*index]).clone());
         carried.push(name);
     }
     Ok(frames)

@@ -20,12 +20,18 @@ from lowering_record_fixtures import (
     command_proof,
     lowering_attempts,
     lowering_example_run,
+    mark_plan_report_predecessor,
+    plan_report_requests,
     proof_count,
     report_fixture_build,
     stop_example_engine,
     verify_generic_runtime_batches,
+    verify_module_work,
 )
 from plan_admission_fixtures import verify_compact_module_admission_scope
+from borrowed_positioned_member_control import (
+    observed_plan_reconciliations, ordinary_member_rows, verify_alpha_request_routes, verify_borrowed_gamma_members,
+)
 from scratch import scratch_directory
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
@@ -261,6 +267,7 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
     write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
     _ = traced_example_run(binary, source, store, observations, "12")?
+    cold_reconciliations = observed_plan_reconciliations(observations)?
     cold = observed_module_work(observations)?
     projections = observed_source_projections(observations)?
     for name in ["lone_alpha", "lone_beta", "lone_gamma", "main"]:
@@ -270,14 +277,19 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
         assert cold.get("check:" + name + ".incn", 0) > 0, f"the cold build traced no checker entry for {name}"
         assert cold.get("body-ir:" + name + ".incn", 0) > 0, f"the cold build traced no Body IR entry for {name}"
     assert cold.get("body-ir", 0) >= 4, "the cold build did not observe Body IR for all four modules"
+    seed_requests = plan_report_requests(observations, root)?
     write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
     edited = traced_example_run(binary, source, store, observations, "16")?
+    warm_reconciliations = observed_plan_reconciliations(observations)?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
     warm = observed_module_work(observations)?
     verify_module_work(cold, warm, "lone_beta")?
     # The three unchanged modules, `main` among them, are restored from their module plan records.
     assert proof_count(edited, "plan_module_reuses")? == 3, diagnostic
+    retained_members = verify_borrowed_gamma_members(store)
+    before_member_rows = ordinary_member_rows(observations)
+    predecessor = mark_plan_report_predecessor(observations, root, seed_requests)?
     # A later edit of a module that was restored lowers that module again, and its edit reaches the program.
     write(root.joinpath("lone_alpha.incn"), lone_module("lone_alpha", "7"))?
     again = traced_example_run(binary, source, store, observations, "22")?
@@ -285,7 +297,13 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     assert proof_count(again, "plan_function_evaluations")? == 1, again_diagnostic
     assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
     verify_module_work(warm, observed_module_work(observations)?, "lone_alpha")?
-    return stop_example_engine(binary, store)
+    preserved = predecessor.preserved(observations, root)
+    stop_example_engine(binary, store)?
+    reconciliations = [cold_reconciliations, warm_reconciliations, observed_plan_reconciliations(observations)?]
+    assert reconciliations == [1, 2, 3], f"expected one reconciliation per request, cumulative counts {reconciliations}"
+    retained_members?
+    verify_alpha_request_routes(before_member_rows?, ordinary_member_rows(observations)?)?
+    return preserved
 
 
 pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> Result[None, str]:
@@ -502,17 +520,6 @@ def observed_source_projections(trace: Path) -> Result[Dict[str, int], str]:
                 module = key.split("\t")[-1]
                 counts[module] = counts.get(module, 0) + 1
     return Ok(counts)
-
-
-def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited: str) -> Result[None, str]:
-    """Each warm edit checks its own module, builds one module's Body IR, and lowers only that module's bodies."""
-    changed = sorted([key for key in current.keys() if current[key] > previous.get(key, 0)])
-    expected = sorted(["body-ir", "body-ir:" + edited + ".incn", "check:" + edited + ".incn", "lower:" + edited])
-    if changed != expected:
-        return Err(f"edit of {edited} entered {changed}, expected {expected}")
-    if current["body-ir"] - previous.get("body-ir", 0) != 1:
-        return Err(f"edit of {edited} rebuilt more than one module's Body IR")
-    return Ok(None)
 
 
 pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:

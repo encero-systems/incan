@@ -13,9 +13,11 @@ from pub::internal_models.runtime_requirement_rows import (
 from compiler_runtime_requirements import runtime_requirements_key
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
+from engine_protocol_fixtures import json_text_is
 from engine_messages import Message, Stop
 from engine_wire import zero_id
 from files import write
+from json_fields import required_text
 from scratch import scratch_directory
 from store_path_conversion import snapshot
 
@@ -90,6 +92,92 @@ pub def lowering_example_run(
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
         return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
+
+
+pub model PlanReportPredecessor:
+    """A fixture's sentinel at the preceding request's descriptor-adjacent report path."""
+
+    requests: Dict[str, str]
+    descriptor: str
+    path: Path
+    sentinel: str
+
+    @staticmethod
+    pub def retained(requests: Dict[str, str], descriptor: str, path: Path, sentinel: str) -> Self:
+        """Keep the preceding request and its exact sentinel together for successor readback."""
+        return PlanReportPredecessor(requests=requests, descriptor=descriptor, path=path, sentinel=sentinel)
+
+    pub def preserved(self, trace: Path, root: Path) -> Result[None, str]:
+        """Check the successor issued on the same descriptor and left the predecessor readable."""
+        successor = changed_plan_report_request(self.requests, plan_report_requests(trace, root)?)?
+        if successor != self.descriptor:
+            return Err("the successor used a different Plan report descriptor")
+        if not self.path.is_file():
+            return Err("the successor removed the preceding Plan report")
+        text = self.path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if text != self.sentinel:
+            return Err("the successor changed the preceding Plan report sentinel")
+        return Ok(None)
+
+
+pub def mark_plan_report_predecessor(trace: Path, root: Path, prior: Dict[str, str]) -> Result[PlanReportPredecessor, str]:
+    """Place the regression sentinel at the actual preceding request's original report path."""
+    requests = plan_report_requests(trace, root)?
+    descriptor = changed_plan_report_request(prior, requests)?
+    report = Path(descriptor + ".graph-plan-report")
+    report.mkdir(true, true).map_err((error) => error.message())?
+    path = report.joinpath("retained-predecessor")
+    sentinel = "previous admitted report remains readable\n"
+    write(path, sentinel)?
+    return Ok(PlanReportPredecessor.retained(requests, descriptor, path, sentinel))
+
+
+pub def plan_report_requests(trace: Path, root: Path) -> Result[Dict[str, str], str]:
+    """Collect actual unit descriptor requests for this fixture's physical unit directory."""
+    units = root.joinpath("target/incan/units").resolve().map_err((error) => error.message())?
+    mut requests: Dict[str, str] = {}
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-oven-"):
+            continue
+        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line == "":
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if not json_text_is(row, "operation", "driver_request") or not json_text_is(row, "outcome", "done"):
+                continue
+            key = required_text(row, "key")?
+            if not key.startswith("--unit "):
+                continue
+            descriptor = Path(key[len("--unit "):])
+            if descriptor.parent().0 != units.0:
+                continue
+            work = required_text(row, "work")?
+            if work in requests:
+                return Err("the fixture trace repeats a unit request")
+            requests[work] = descriptor.0
+    return Ok(requests)
+
+
+def changed_plan_report_request(before: Dict[str, str], after: Dict[str, str]) -> Result[str, str]:
+    """Read exactly one new request from a cumulative fixture trace with its preceding identities intact."""
+    for work in before.keys():
+        if after.get(work) != Some(before[work]):
+            return Err("a preceding fixture request changed")
+    added = [after[work] for work in after.keys() if work not in before]
+    if len(added) != 1:
+        return Err("the fixture edit did not issue one unit request")
+    return Ok(added[0])
+
+
+pub def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited: str) -> Result[None, str]:
+    """Each warm edit checks its own module, builds one module's Body IR, and lowers only that module's bodies."""
+    changed = sorted([key for key in current.keys() if current[key] > previous.get(key, 0)])
+    expected = sorted(["body-ir", "body-ir:" + edited + ".incn", "check:" + edited + ".incn", "lower:" + edited])
+    if changed != expected:
+        return Err(f"edit of {edited} entered {changed}, expected {expected}")
+    if current["body-ir"] - previous.get("body-ir", 0) != 1:
+        return Err(f"edit of {edited} rebuilt more than one module's Body IR")
+    return Ok(None)
 
 
 pub def attempt_trace(root: Path, name: str) -> Result[Path, str]:

@@ -16,17 +16,22 @@ use rustc_middle::mir::Body;
 use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_session::config::Input;
 use rustc_span::FileName;
+use std::collections::BTreeMap;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod active_plan;
 mod callbacks;
+mod completed_codegen;
 mod library_verification;
+mod native_object_products;
 mod rustc_queries;
 pub(crate) mod stable_link;
 
 pub(crate) use active_plan::PlanReader;
 use library_verification::*;
+pub(crate) use native_object_products::PREDECESSOR_LOCATOR;
 pub(crate) use rustc_queries::*;
 
 /// Compilation is serialized: `PLAN` and `FAILURE` are process-global slots, also in the resident worker.
@@ -72,6 +77,8 @@ struct Callbacks {
     timing: crate::native_timing::Timing,
     rustc_started: std::time::Instant,
     codegen_started: Option<std::time::Instant>,
+    /// The link's uniquely issued file and any earlier group admitted under the same private holder.
+    completed_objects: Option<(std::fs::File, BTreeMap<String, stable_link::PreviousObject>)>,
     /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
     /// are published, and a test harness selects each test by its module path.
     partition: bool,
@@ -107,21 +114,14 @@ pub fn compile(
     library_facades: Vec<crate::library_exports::LibraryFacade>,
     plan_record_report: Option<&Path>,
     compact_definitions: Vec<incan_mir_plan_native::AdmittedDefinition>,
+    previous_link_locator: Option<&Path>,
 ) -> Result<(), DriverError> {
     let mut timing = crate::native_timing::Timing::requested();
     force_plan_failure_once()?;
     let features = declared_features(access)?;
 
     // ---- Validated source plan ----
-    if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
-        let mut report = String::new();
-        for refusal in validation::refusals(&plan, kind != UnitKind::Program) {
-            report.push_str(&refusal.to_string().replace('\n', " "));
-            report.push('\n');
-        }
-        std::fs::write(path, report)
-            .map_err(|error| DriverError::Invocation(format!("cannot write native validation report: {error}")))?;
-    }
+    write_validation_report(&plan, kind)?;
     validation::validate(&plan, kind != UnitKind::Program)?;
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
@@ -155,13 +155,106 @@ pub fn compile(
     reader.write_fingerprint_report()?;
     *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&reader));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
-    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks);
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
-    for (name, path) in &all {
-        args.push("--extern".into());
-        args.push(format!("{name}={}", path.display()));
-    }
+    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &all);
     let search = crate::native_search::dependencies(&all, dependency_search_paths);
+    let links_sysroot = access.links_sysroot() && kind != UnitKind::Library;
+    append_native_linkage(&mut args, &shared, identity, shared_store, links_sysroot)?;
+    args.extend_from_slice(rustc_args);
+    let private = match plan_record_report {
+        Some(report)
+            if NATIVE_INCREMENTAL_QUALIFIED
+                && kind == UnitKind::Program
+                && overflow_checks
+                && reader.has_record_inputs() =>
+        {
+            native_incremental(
+                &mut args,
+                crate_name,
+                &identity.toolchain,
+                &identity.target,
+                report,
+                &all,
+            )?
+        }
+        _ => None,
+    };
+    let stores_objects = shared_store.is_some() && identity.target.ends_with("-apple-darwin");
+    let mut completed = native_object_products::LinkCapture::issue(
+        private.as_ref().zip(shared_store).filter(|_| stores_objects),
+        &mut args,
+        previous_link_locator,
+    );
+    timing.mark("native_arguments");
+    let mut callbacks = Callbacks {
+        features,
+        plan,
+        library_facades,
+        search,
+        shared: shared.iter().map(|(name, _)| name.clone()).collect(),
+        development: shared_store.is_some(),
+        loaded: Vec::new(),
+        timing,
+        rustc_started: std::time::Instant::now(),
+        codegen_started: None,
+        completed_objects: completed.as_mut().and_then(|capture| capture.backend_input()),
+        partition: kind == UnitKind::Program,
+        reader,
+    };
+    run_plan_compiler(&args, &mut callbacks)?;
+
+    // ---- Completed loader witnesses ----
+    if let Some(held) = &private {
+        // A development link on Darwin has already stored every unit object by its content.
+        held.publish(output, stores_objects)?;
+    }
+    if shared_store.is_some() {
+        crate::native_shared::write_witness(output, &callbacks.loaded)?;
+    }
+    if let Some(capture) = completed {
+        capture.store_result(output);
+    }
+    callbacks.timing.mark("loader_witness");
+    Ok(())
+}
+
+/// Keep the optional first-refusal report ahead of the normal validation result.
+fn write_validation_report(plan: &Plan, kind: UnitKind) -> Result<(), DriverError> {
+    if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
+        let mut report = String::new();
+        for refusal in validation::refusals(plan, kind != UnitKind::Program) {
+            report.push_str(&refusal.to_string().replace('\n', " "));
+            report.push('\n');
+        }
+        std::fs::write(path, report)
+            .map_err(|error| DriverError::Invocation(format!("cannot write native validation report: {error}")))?;
+    }
+    Ok(())
+}
+
+/// Run the ordinary compiler and clear its query slots while the caller still holds the compilation lease.
+fn run_plan_compiler(args: &[String], callbacks: &mut Callbacks) -> Result<(), DriverError> {
+    let capture = crate::native_timing::Capture::begin();
+    crate::native_crates::release_extern_crates();
+    let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(args, callbacks));
+    crate::native_crates::release_extern_crates();
+    capture.finish(callbacks.codegen_started.map(|started| started.elapsed()));
+    callbacks.timing.mark("rustc_codegen_link_teardown");
+    *PLAN.lock().map_err(|_| DriverError::State)? = None;
+    if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
+        return Err(DriverError::Plan(error));
+    }
+    result.map_err(|_| DriverError::Compilation)
+}
+
+/// Append the selected development and toolchain link flags in their ordinary rustc argument order.
+fn append_native_linkage(
+    args: &mut Vec<String>,
+    shared: &[(String, PathBuf)],
+    identity: &DriverIdentity,
+    shared_store: Option<&Path>,
+    links_sysroot: bool,
+) -> Result<(), DriverError> {
     if let Some(store) = shared_store {
         // Rustc's relative `-Crpath` entries would name the store from the staged output, not from the viewed copy.
         args.push("-Cprefer-dynamic".into());
@@ -179,73 +272,22 @@ pub fn compile(
         }
         // The executable is linked in the bakery and run from a copy elsewhere, so its carriers are found through
         // absolute search paths into the bakery's shared native store, which every home on that bakery reads.
-        args.extend(absolute_rpaths(&shared, identity, darwin));
+        args.extend(absolute_rpaths(shared, identity, darwin));
     }
-    if access.links_sysroot() && kind != UnitKind::Library {
+    if links_sysroot {
         args.extend(sysroot_linkage(identity));
     }
-    args.extend_from_slice(rustc_args);
-    let private = match plan_record_report {
-        Some(report)
-            if NATIVE_INCREMENTAL_QUALIFIED
-                && kind == UnitKind::Program
-                && overflow_checks
-                && reader.has_record_inputs() =>
-        {
-            native_incremental(&mut args, crate_name, identity, report, &all)?
-        }
-        _ => None,
-    };
-    timing.mark("native_arguments");
-    let mut callbacks = Callbacks {
-        features,
-        plan,
-        library_facades,
-        search,
-        shared: shared.iter().map(|(name, _)| name.clone()).collect(),
-        development: shared_store.is_some(),
-        loaded: Vec::new(),
-        timing,
-        rustc_started: std::time::Instant::now(),
-        codegen_started: None,
-        partition: kind == UnitKind::Program,
-        reader,
-    };
-    let capture = crate::native_timing::Capture::begin();
-    crate::native_crates::release_extern_crates();
-    let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
-    crate::native_crates::release_extern_crates();
-    capture.finish(callbacks.codegen_started.map(|started| started.elapsed()));
-    callbacks.timing.mark("rustc_codegen_link_teardown");
-    *PLAN.lock().map_err(|_| DriverError::State)? = None;
-    if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
-        return Err(DriverError::Plan(error));
-    }
-
-    // ---- Completed loader witnesses ----
-    result.map_err(|_| DriverError::Compilation)?;
-    if let Some(held) = &private {
-        // A development link on Darwin has already stored every unit object by its content.
-        held.publish(
-            output,
-            shared_store.is_some() && identity.target.ends_with("-apple-darwin"),
-        )?;
-    }
-    if shared_store.is_some() {
-        crate::native_shared::write_witness(output, &callbacks.loaded)?;
-    }
-    callbacks.timing.mark("loader_witness");
     Ok(())
 }
 
-/// Give a program whose every function has a record input rustc's incremental session in its private unit directory,
-/// under a crate identity and output path that do not change between its builds. The returned private output, when
-/// one could be held, receives rustc's output until the executable is published. The session is named by the crates
-/// the program links (`linked`) as well, see [`incremental_session`].
+/// Use a stable crate identity for a program whose every function has a record input. Only the holder of its
+/// private output uses the associated incremental session. A contender still compiles to its requested output.
+/// The session is named by the crates the program links (`linked`) as well, see [`incremental_session`].
 fn native_incremental(
     args: &mut Vec<String>,
     crate_name: &str,
-    identity: &DriverIdentity,
+    toolchain: &str,
+    target: &str,
     report: &Path,
     linked: &[(String, PathBuf)],
 ) -> Result<Option<PrivateOutput>, DriverError> {
@@ -253,22 +295,24 @@ fn native_incremental(
     let parent = report
         .parent()
         .ok_or_else(|| DriverError::Invocation("native plan report has no private unit directory".into()))?;
-    let compiler = incan_semantics_core::semantic_digest::semantic_digest(&identity.toolchain)
+    // Older writers must not populate or retire the receipt-compatible session or its private link output.
+    let compiler = incan_semantics_core::semantic_digest::semantic_digest(&("incan.native-objects/1", toolchain))
         .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
     let compiler = compiler.trim_start_matches("sha256:");
-    let private = PrivateOutput::acquire(parent, crate_name, compiler)?;
-    let incremental = incremental_session(parent, crate_name, compiler, linked, private.is_some())?;
+    let mut private = PrivateOutput::acquire(parent, crate_name, compiler)?;
     let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
         crate_name.to_owned(),
-        identity.toolchain.clone(),
-        identity.target.clone(),
+        toolchain.to_owned(),
+        target.to_owned(),
     ])
     .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
     args.push("-C".into());
     args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
-    args.push("-C".into());
-    args.push(format!("incremental={}", incremental.display()));
-    if let Some(held) = &private {
+    if let Some(held) = &mut private {
+        let incremental = incremental_session(parent, crate_name, compiler, linked)?;
+        args.push("-C".into());
+        args.push(format!("incremental={}", incremental.display()));
+        held.session = Some(incremental);
         held.redirect(args);
     }
     Ok(private)
@@ -287,7 +331,6 @@ fn incremental_session(
     crate_name: &str,
     compiler: &str,
     linked: &[(String, PathBuf)],
-    held: bool,
 ) -> Result<PathBuf, DriverError> {
     let mut crates = linked
         .iter()
@@ -305,13 +348,11 @@ fn incremental_session(
         "{prefix}{}.rustc-incremental",
         &digest.trim_start_matches("sha256:")[..16]
     );
-    if held {
-        for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
-            let other = entry.file_name().to_string_lossy().into_owned();
-            let earlier = other != name && other.starts_with(&prefix) && other.ends_with(".rustc-incremental");
-            if earlier && !working(&entry.path()) {
-                let _ = std::fs::remove_dir_all(entry.path());
-            }
+    for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
+        let other = entry.file_name().to_string_lossy().into_owned();
+        let earlier = other != name && other.starts_with(&prefix) && other.ends_with(".rustc-incremental");
+        if earlier && !working(&entry.path()) {
+            let _ = std::fs::remove_dir_all(entry.path());
         }
     }
     let session = parent.join(name);
@@ -343,6 +384,7 @@ fn working(session: &Path) -> bool {
 struct PrivateOutput {
     path: PathBuf,
     _lock: std::fs::File,
+    session: Option<PathBuf>,
 }
 
 impl PrivateOutput {
@@ -362,6 +404,7 @@ impl PrivateOutput {
             Ok(()) => Ok(Some(Self {
                 path: directory.join(crate_name),
                 _lock: lock,
+                session: None,
             })),
             Err(std::fs::TryLockError::WouldBlock) => Ok(None),
             Err(std::fs::TryLockError::Error(error)) => Err(failed(error)),
@@ -449,6 +492,7 @@ fn compilation_arguments(
     identity: &DriverIdentity,
     kind: UnitKind,
     overflow_checks: bool,
+    externs: &[(String, PathBuf)],
 ) -> Vec<String> {
     let overflow = if overflow_checks { "yes" } else { "no" };
     let optimization = optimization_level(overflow_checks);
@@ -483,6 +527,10 @@ fn compilation_arguments(
     }
     if kind != UnitKind::Library && debuginfo != "0" {
         args.push("-Csplit-debuginfo=unpacked".into());
+    }
+    for (name, path) in externs {
+        args.push("--extern".into());
+        args.push(format!("{name}={}", path.display()));
     }
     args
 }
@@ -570,7 +618,7 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, optimization_level};
+    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
     use std::path::Path;
 
     /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
@@ -587,13 +635,29 @@ mod tests {
                 "lib.incn".to_owned(),
             ]
         };
-        let (mut first, mut second) = (arguments("/staging/one/oven"), arguments("/staging/two/oven"));
-        let held = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free")?;
-        held.redirect(&mut first);
-        assert!(PrivateOutput::acquire(units.path(), "oven", "abc")?.is_none());
+        let report = units.path().join("native-report");
+        let prepare = |args: &mut Vec<String>| native_incremental(args, "oven", "pinned-rustc", "target", &report, &[]);
+        let (mut first, mut contender, mut second) = (
+            arguments("/staging/one/oven"),
+            arguments("/staging/contender/oven"),
+            arguments("/staging/two/oven"),
+        );
+        let held = prepare(&mut first)?.ok_or("the private output is free")?;
+        let incremental_arguments = |args: &[String]| {
+            args.iter()
+                .filter(|argument| argument.starts_with("incremental="))
+                .count()
+        };
+        assert_eq!(incremental_arguments(&first), 1);
+        assert!(prepare(&mut contender)?.is_none());
+        assert_eq!(contender[2], "/staging/contender/oven");
+        assert_eq!(
+            incremental_arguments(&contender),
+            0,
+            "a compilation without the native output lease must not write its predecessor's incremental root"
+        );
         drop(held);
-        let again = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free again")?;
-        again.redirect(&mut second);
+        let _again = prepare(&mut second)?.ok_or("the private output is free again")?;
         assert_eq!(first, second);
         assert!(Path::new(&first[2]).starts_with(units.path()));
         Ok(())
@@ -630,11 +694,11 @@ mod tests {
         let library = crates.path().join("libfacet.rlib");
         std::fs::write(&library, b"facet built under one metadata")?;
         let linked = vec![("facet".to_owned(), library.clone())];
-        let first = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        let first = incremental_session(units.path(), "oven", "abc", &linked)?;
         assert!(first.is_dir());
-        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked, true)?, first);
+        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked)?, first);
         std::fs::write(&library, b"facet built under another metadata")?;
-        let second = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        let second = incremental_session(units.path(), "oven", "abc", &linked)?;
         assert_ne!(second, first, "a changed linked crate kept the earlier session");
         assert!(second.is_dir());
         assert!(!first.exists(), "the session named for the earlier crates was kept");

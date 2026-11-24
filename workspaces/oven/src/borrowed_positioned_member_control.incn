@@ -1,0 +1,134 @@
+"""Check retained member identity independently of the ordinary lowering routes."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import parse
+from pub::incan_mir_plan import decode_plan_module
+from compiler_graph_records import EditCutoff, reusable_evaluation
+from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
+from json_fields import required_text
+from lowering_record_fixtures import proof_count
+from store_path_conversion import snapshot as store_snapshot
+
+
+pub def verify_borrowed_gamma_members(store: Path) -> Result[None, str]:
+    """Read genuine kept gamma identities after beta and before the next compiler request."""
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    cutoff = EditCutoff(active=true)
+    selection = select_plan_modules(graph, "main", ["lone_alpha.incn"], [], cutoff=cutoff)?
+    mut matched = 0
+    for record in selection.records:
+        if record.plan.module != "lone_gamma":
+            continue
+        matched += 1
+        if record.admitted_snapshot != graph.digest or not record.placement_current:
+            return Err("retained gamma does not have current positioned authority")
+        if record.events or len(record.plan.functions) != 2:
+            return Err("gamma did not choose the two retained metadata rows")
+        current = match reusable_evaluation(graph, record.key, LOWERING_PROFILE)?:
+            Some(value) => value
+            None => return Err("retained gamma has no current Plan evaluation")
+        if current.value_digest != record.value_digest or hexlify(sha256.digest(current.value)) != record.value_digest:
+            return Err("retained gamma does not match the authenticated current Plan bytes")
+        # This independent audit reads the current opaque event bytes, without building a Function.
+        decoded = decode_plan_module(current.value)?
+        if decoded.module != "lone_gamma" or len(decoded.functions) != 2:
+            return Err("the current Plan does not name exactly two gamma members")
+        mut selected_members: list[str] = []
+        for member in record.plan.functions:
+            if len(member.event) != 0:
+                return Err("the retained gamma metadata contains an owned event")
+            selected_members.append(f"{member.identity}\t{member.symbol}\t{member.function}\t{member.key}")
+        mut current_members: list[str] = []
+        for member in decoded.functions:
+            if len(member.event) == 0:
+                return Err("gamma's authenticated Plan lacks its current event bytes")
+            current_members.append(f"{member.identity}\t{member.symbol}\t{member.function}\t{member.key}")
+        if selected_members != current_members:
+            return Err("the retained gamma members differ from their current ordered Plan entries")
+    if matched != 1:
+        return Err("the current graph has no unique kept gamma module")
+    moved = select_plan_modules(graph, "main", ["lone_alpha.incn"], [],
+        changed_positions=set(["lone_gamma.incn"]), cutoff=cutoff)?
+    mut repositioned = 0
+    for record in moved.records:
+        if record.plan.module == "lone_gamma":
+            if record.placement_current or record.events or len(record.plan.functions) != 2:
+                return Err("moved gamma must keep metadata without current placement authority")
+            repositioned += 1
+    if repositioned != 1:
+        return Err("the moved gamma metadata is not unique")
+    return Ok(None)
+
+
+pub def ordinary_member_rows(trace: Path) -> Result[Dict[str, int], str]:
+    """Count the existing completed ordinary routes by their exact product-row spelling."""
+    mut counts: Dict[str, int] = {}
+    for path in trace.iterdir().map_err((error) => error.message())?:
+        if not path.name().startswith("engine-compiler-") or not path.name().endswith(".jsonl"):
+            continue
+        content = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in content.split("\n"):
+            if '"operation":"lowering_product"' not in line:
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if required_text(row, "kind")? != "line" or required_text(row, "operation")? != "lowering_product":
+                continue
+            label = required_text(row, "key")?
+            counts[label] = counts.get(label, 0) + 1
+    return Ok(counts)
+
+
+pub def verify_alpha_request_routes(before: Dict[str, int], after: Dict[str, int]) -> Result[None, str]:
+    """Restore changed alpha through its current paths and receive both unchanged gamma members by identity."""
+    for label in ["lowered ordinary lone_alpha::lone_alpha_one", "reused ordinary lone_alpha::lone_alpha_two"]:
+        assert after.get(label, 0) - before.get(label, 0) == 1, f"ordinary alpha edit did not emit {label} once"
+    for label in ["admitted ordinary lone_alpha::lone_alpha_one", "admitted ordinary lone_alpha::lone_alpha_two"]:
+        assert after.get(label, 0) == before.get(label, 0), f"changed alpha used the unchanged admitted route: {label}"
+    members = ["lone_gamma::lone_gamma_one", "lone_gamma::lone_gamma_two"]
+    mut restored = 0
+    for member in members:
+        for route in ["lowered", "reused"]:
+            label = f"{route} ordinary {member}"
+            assert after.get(label, 0) == before.get(label, 0), f"unchanged gamma used its keyed route: {member}"
+        label = f"admitted ordinary {member}"
+        completed = after.get(label, 0) - before.get(label, 0)
+        assert completed >= 0 and completed <= 1, f"ordinary gamma restored {member} {completed} times"
+        restored += completed
+    assert restored == 0, f"unchanged gamma completed {restored} owned ordinary restores"
+    for member in members:
+        label = f"direct ordinary {member}"
+        assert after.get(label, 0) - before.get(label, 0) == 1, f"ordinary gamma did not receive {member} by identity"
+    return Ok(None)
+
+
+pub def observed_plan_reconciliations(trace: Path) -> Result[int, str]:
+    """Count Plan reconciliation intervals contained by the same request's graph staging.
+
+    Oven writes the reconciliation span before its enclosing staging span. Pair them in that order within each
+    daemon's trace and require complete containment on the same monotonic clock.
+    """
+    mut count = 0
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not entry.name().startswith("engine-oven-"):
+            continue
+        mut reconciliation: Option[tuple[int, int]] = None
+        for line in entry.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if "\"operation\":\"engine_graph_staging\"" not in line:
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            key = required_text(event, "key")?
+            if key == "plan-module-reconciliation":
+                assert reconciliation is None, "two reconciliations before graph staging completed"
+                reconciliation = Some((proof_count(event, "start_ns")?, proof_count(event, "end_ns")?))
+            elif key.endswith(".graph-body-output"):
+                if let Some((start, end)) = reconciliation:
+                    staging_start = proof_count(event, "start_ns")?
+                    staging_end = proof_count(event, "end_ns")?
+                    contained = staging_start <= start and start < end and end <= staging_end
+                    assert contained, "reconciliation lies outside graph staging"
+                    count += 1
+                    reconciliation = None
+        assert reconciliation is None, "reconciliation lacks its enclosing graph staging"
+    return Ok(count)

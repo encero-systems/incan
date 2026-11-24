@@ -17,7 +17,7 @@ use crate::nominal::{
     NominalKind, NominalReference, NominalRemap, ProductNominal, UnitNominals, binding_remap, capture_remap,
     preserving_remap, resolve_nominals,
 };
-use crate::plan::{ExternalFunction, Function, GenericLoan};
+use crate::plan::{ExternalFunction, Function, FunctionSlot, GenericLoan};
 use crate::positions::{PositionChange, WirePositions};
 use crate::records::body::{
     restore_binary, restore_operand, restore_operands, restore_place, restore_span, restore_statement, restore_type,
@@ -231,14 +231,15 @@ fn restore_noted_product(
     Ok((function, restored, remap.crates))
 }
 
-/// Restore a product for a unit that links `linked`: its function, runtime demand and helper frames, refused when a
-/// function or constant it names belongs to another crate.
+type RestoredProduct = (Function, Vec<ExternalFunction>, Vec<Function>);
+
+/// Restore a product and record whether it needs any linked crate after checking every exact referenced crate.
 fn restore_for_unit(
     stored: &StoredProduct,
     references: &[NominalReference],
     linked: &BTreeSet<String>,
     can_request_runtime: Option<&dyn Fn(&str) -> bool>,
-) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
+) -> Result<(RestoredProduct, bool), String> {
     let pending_runtime = can_request_runtime.and_then(|allows| {
         let paths: BTreeSet<_> = stored
             .runtime
@@ -257,14 +258,14 @@ fn restore_for_unit(
             "plan product names crate {name}, which this unit does not link"
         ));
     }
-    Ok((function, runtime, frames))
+    Ok(((function, runtime, frames), !crates.is_empty()))
 }
 
 /// Bind a retained product to this unit and restore its function and helper frames from one typed decode.
 pub fn restore_named_product(encoded: &[u8], unit: &UnitNominals) -> Option<NamedProduct> {
     let stored = decode_product_record(encoded).ok()?;
     let resolved = resolve_nominals(&stored.nominals, unit)?;
-    let (function, runtime, frames) = restore_for_unit(&stored, &resolved, &BTreeSet::new(), None).ok()?;
+    let ((function, runtime, frames), _) = restore_for_unit(&stored, &resolved, &BTreeSet::new(), None).ok()?;
     Some((function, runtime, resolved, frames))
 }
 
@@ -404,7 +405,7 @@ impl PlacedRecord {
         references: &[NominalReference],
         linked: &BTreeSet<String>,
     ) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
-        restore_for_unit(&self.stored, references, linked, None)
+        restore_for_unit(&self.stored, references, linked, None).map(|(restored, _)| restored)
     }
 
     /// Restore ordinary frames while preserving exact recorded external demands the caller will resolve before
@@ -416,7 +417,34 @@ impl PlacedRecord {
         linked: &BTreeSet<String>,
         can_request_runtime: &dyn Fn(&str) -> bool,
     ) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
-        restore_for_unit(&self.stored, references, linked, Some(can_request_runtime))
+        restore_for_unit(&self.stored, references, linked, Some(can_request_runtime)).map(|(restored, _)| restored)
+    }
+
+    /// Receive the existing ordinary product in one shareable Plan slot after the same checked restore.
+    pub fn restore_slot(
+        &self,
+        references: &[NominalReference],
+        linked: &BTreeSet<String>,
+        can_request_runtime: Option<&dyn Fn(&str) -> bool>,
+    ) -> Result<(FunctionSlot, Vec<ExternalFunction>, Vec<Function>), String> {
+        let ((function, runtime, frames), uses_linked_crates) =
+            restore_for_unit(&self.stored, references, linked, can_request_runtime)?;
+        let mut slot = FunctionSlot::from(function);
+        // Every carrier position in a stored product is recorded in its nominal inventory. Avoid keeping a body whose
+        // call target or runtime mode may still change in the current request.
+        if !uses_linked_crates
+            && self.stored.nominals.is_empty()
+            && runtime.is_empty()
+            && frames.is_empty()
+            && slot.future_callee.is_none()
+            && !slot
+                .blocks
+                .iter()
+                .any(|block| matches!(&block.terminator.kind, TerminatorKind::Call(..)))
+        {
+            slot.keep_placement();
+        }
+        Ok((slot, runtime, frames))
     }
 
     /// Whether the product restores with every declaration bound to its own product-local ordinal.

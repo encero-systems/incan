@@ -86,7 +86,7 @@ JSON is an array whose first element is the header, followed by nodes and then e
 
 `incan mcp PATH [--profile NAME]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. The server advertises protocol version `2025-11-25`, tools and resources. Clients send `initialize`, then `notifications/initialized`, before using tools/resources. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
 
-Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`; use before initialization returns `-32002`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls contain one text content block and `isError: false`.
+Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`; use before initialization returns `-32002`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls return a text content block and `isError: false`. Definition queries also return the structured records described below.
 
 ### Tools
 
@@ -96,7 +96,7 @@ Every argument object rejects unknown fields. Fields listed below are required; 
 | --- | --- | --- |
 | `context_for_task` | `task: string`, `budget: integer` | Compact context for task text. |
 | `context_for_declaration` | `declaration: string`, `budget: integer` | Compact context using the declaration selector as its task. |
-| `graph_query` | `kind: string`, `term: string` | CLI query hits; the default limit is `20`. |
+| `graph_query` | `kind: string`, `term: string` | CLI query hits (default limit `20`). For `kind: "defs"`, `structuredContent.records` contains a header followed by the selected declaration records, each with its `author` and any available `span`. The first text block keeps the CLI display. The second serializes the same object as `structuredContent`. |
 | `graph_summary` | `{}` or omitted | JSON object with `snapshot_id`, `degraded`, `languages`, `semantic_contexts` and `counts`, an object from record kind to count. |
 | `snapshot_status` | `snapshot: string` | Freshness JSON comparing the supplied ID with the service snapshot reported by `graph_summary`. |
 | `process_risk` | `{}` or omitted | JSON array of optional process observations. |

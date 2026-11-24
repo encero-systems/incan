@@ -1,6 +1,6 @@
 //! Governed async runtime bodies behind boxing shims: the coroutine step of the Incan `runtime_calls` module.
 
-use incan_mir_plan_native::{Callee, CalleeKind, EnumDeclaration, ExternalFunction, Function, PlanType};
+use incan_mir_plan_native::{Callee, CalleeKind, EnumDeclaration, ExternalFunction, FunctionSlot, PlanType};
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 
@@ -23,7 +23,7 @@ use crate::type_parameters::{Instance, instantiate, request_instance};
 pub fn retain_runtime_future_instances(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
-    functions: &mut [Function],
+    functions: &mut [FunctionSlot],
     instances: &mut Vec<Instance>,
     intrinsics: &[EnumDeclaration],
     unions: &[IncanType],
@@ -103,7 +103,7 @@ pub fn retain_runtime_future_instances(
                 "unsupported governed runtime body reenters {path}; its primitive must use Rust interop"
             ));
         }
-        function.future_callee = Some(Callee {
+        function.make_mut().future_callee = Some(Callee {
             kind: CalleeKind::Planned(symbol),
             span,
         });

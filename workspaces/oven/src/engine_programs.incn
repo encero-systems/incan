@@ -3,13 +3,14 @@
 from pub::incan_platform.store import stage_put
 from pub::incan_platform.store import FrameRead
 from std.fs import Path
+from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
-from rust::std::mem import take
+from rust::std::mem import drop, take
 from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
-from bakery import find, fact_file
+from bakery import fact_file, find_executable_payload
 from bakery_records import Fact
 from bakery_roots import register_root
 from check_pages import check_page_directory, keep_check_pages
@@ -44,16 +45,17 @@ pub from engine_program_records import NativeUnit
 from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection, program_view
 from features import FeatureRequest
 from home import StandardPackage, dependency_artifact_dir
+from owner_endpoint import prepare_directory
 from incan_units import (
     check_prepared, executable_project_root, executable_view, obtain_executable, prepare_project_library,
     program_binary, view_executable,
 )
 from project_library import planned_program
 from pub::incan_platform.store import (
-    EXPECT_REPAIR, HOME_VIEW, Snapshot, SnapshotAdmission, Transaction, begin, commit, get, put,
+    EXPECT_REPAIR, HOME_VIEW, PreparedPayload, Snapshot, SnapshotAdmission, Transaction, begin, commit, get, put,
 )
 from engine_overlay import is_editor_view
-from store_path_conversion import snapshot, store_path
+from store_path_conversion import pin_payload, snapshot, store_path
 from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import UnitDescription, describe, with_c_abi_target
 from engine_unit_options import decode_unit_options
@@ -353,13 +355,17 @@ pub def obtain(
     # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
     # A unit with options is described and keyed afresh on every request: its inputs reach beyond the captured
     # sources, as a Clove's C sources do, and its bakery key, not the capture, proves it unchanged.
+    mut previous_view: Option[Snapshot] = None
+    mut view_retry: Option[NativeUnit] = None
     if not listing_refusals and unit_options == "":
         selected = admission.open(request_view).map_err((error) => error.message())?
         match selected_program(selected, handle)?:
             Some(unit) =>
                 if restore_program(store, unit, console)?:
                     return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console))
+                view_retry = Some(unit)
             None => pass
+        previous_view = Some(selected)
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
     opening = begin_work()
     mut epoch_reads = 0
@@ -373,21 +379,26 @@ pub def obtain(
     mut selector: Option[str] = None
     if unit_options == "":
         selector = standalone_selector(epoch, producer)?
+    mut indexed_retry: Option[NativeUnit] = None
     if not listing_refusals:
         if let Some(unit) = indexed_program(store, epoch, selector, admission)?:
-            if restore_program(store, unit, console)?:
+            # A miss in the held request view cannot be replaced by another variant of that same Unit.
+            if view_retry is None and restore_program(store, unit, console)?:
                 return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console, epoch_reads=epoch_reads))
+            indexed_retry = Some(unit)
     preparation = match prepared:
         Some(found) => found
         None => prepare_program(epoch, request_view, console, selected_home, unit_options, scheduled_origin, source_readings)?
     ready = preparation.unit
     toolchain = preparation.toolchain
     if preparation.whole != "":
-        return whole_unit_program(store, selector, ready, toolchain, console, preparation.whole, epoch_reads)
+        return whole_unit_program(
+            store, selector, ready, toolchain, console, preparation.whole, epoch_reads, view_retry, indexed_retry,
+        )
     compiled_key = match preparation.key:
         Some(key) => key
         None => return Err("prepared records program has no unit key")
-    plan_report = plan_record_report_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
+    report_parent = plan_record_report_path(ready, compiled_key, toolchain.unit_descriptor_crumb).parent()
     body_output = graph_body_output_path(ready, compiled_key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
@@ -396,7 +407,10 @@ pub def obtain(
     if listing_refusals:
         native_key = refusal_diagnostic_key(compiled_key)?
     # Build and run ask for the same debug program, including its existing shared native linkage policy.
-    key = linkage_key(native_key, development_link(ready, true))?
+    shared_link = development_link(ready, true)
+    if not shared_link:
+        previous_view = None
+    key = linkage_key(native_key, shared_link)?
     binary = program_binary(ready)
     # 3. The native producer owns the payload claim. Checked records follow the graph that authorized them.
     mut selection = select_bodies(admission, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
@@ -451,6 +465,11 @@ pub def obtain(
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     selected_bodies.append(SelectedBodyPage(key=EXECUTABLE_GRAPH_INPUT, value=copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT)))
     record_work(Operation.EngineSelect, "body-inventory", selecting)
+    mut previous_link: Option[PreviousLinkMember] = None
+    if shared_link:
+        let held_view: Borrowed[Option[Snapshot]] = previous_view
+        if let Some(selected) = held_view:
+            previous_link = previous_link_member(store, selected)?
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
         checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, changes=projected.keys, covered=covered, plan_reads=plan_reads))
@@ -471,19 +490,33 @@ pub def obtain(
     if not listing_refusals:
         if let Some(requirements) = get(graph, runtime_key).map_err((error) => error.message())?:
             selected_bodies.append(SelectedBodyPage(key=RUNTIME_REQUIREMENTS, value=requirements))
-    # The descriptor is shared across source edits and stores. Each active compile owns its selected pages and
-    # admission notes until Bakery has read them, even if another request replaces the diagnostic report.
-    plan_report.parent().mkdir(true, true).map_err((error) => error.message())?
-    admission_attempt = TemporaryDirectory.try_new_with("plan-admission-", "", Some(plan_report.parent())).map_err((error) => error.message())?
-    records = admission_attempt.path().joinpath("products")
-    produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies), checking, Some(records))?
-    admission_report = admission_attempt.path().joinpath("products").joinpath("admissions")
-    # A bakery hit plans nothing; the report beside the key is the earlier build's.
+    # Keep both request-owned directories alive through publication, beside the stable native session.
+    report_parent.mkdir(true, true).map_err((error) => error.message())?
+    admission_attempt = TemporaryDirectory.try_new_with("plan-admission-", "", Some(report_parent)).map_err((error) => error.message())?
+    admission_root = admission_attempt.path()
+    mut previous_payload: Option[PreparedPayload] = None
+    if let Some(predecessor) = previous_link:
+        # The optional native witness requires an owner-only attempt. An unsecured attempt can still compile normally.
+        match prepare_directory(admission_root.0):
+            Ok(_) =>
+                selected_bodies.append(predecessor.page)
+                previous_payload = Some(predecessor.payload)
+            Err(_) => pass
+    records = admission_root.joinpath("products")
+    report_attempt = TemporaryDirectory.try_new_with("plan-report-", "", Some(report_parent)).map_err((error) => error.message())?
+    plan_report = report_attempt.path()
+    produced = obtain_executable(
+        ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies), checking, Some(records),
+        report_directory=Some(plan_report),
+        retry=program_retry(view_retry, indexed_retry, key.digest),
+    )?
+    admission_report = records.joinpath("admissions")
+    # A bakery hit plans nothing and never reads an earlier report.
     mut plan_counts = PlanRecordCounts()
     mut plan_module_reuses = 0
     if produced.evaluations > 0:
         reading_plan_sidecars = begin_work()
-        plan_counts = plan_record_counts(ready, compiled_key, toolchain.unit_descriptor_crumb)?
+        plan_counts = plan_record_counts(plan_report)?
         record_work(
             Operation.EngineSidecarAuthentication,
             plan_report.0,
@@ -502,6 +535,8 @@ pub def obtain(
                 plan_function_reuses=plan_counts.plan_reuses,
             ),
         )
+    drop(previous_payload)
+    drop(previous_view)
     # 4. Source edits cannot certify a native unit for a different captured epoch.
     verifying_inputs = begin_work()
     installed = toolchain_directory()?.0
@@ -728,6 +763,8 @@ def whole_unit_program(
     console: str,
     whole: str,
     epoch_reads: int,
+    view_retry: Option[NativeUnit],
+    indexed_retry: Option[NativeUnit],
 ) -> Result[ProgramOutcome, str]:
     """
     Compile a unit the records producer cannot give per-declaration records whole, through the unit compiler the first
@@ -754,7 +791,10 @@ def whole_unit_program(
         return Err(compiled_key.refusal)
     key = linkage_key(compiled_key, development_link(ready, true))?
     binary = program_binary(ready)
-    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true)?
+    produced = obtain_executable(
+        ready, toolchain, binary, compiled_key, true, Some(store), true,
+        retry=program_retry(view_retry, indexed_retry, key.digest),
+    )?
     if produced.code != 0:
         return Ok(
             ProgramOutcome(
@@ -898,6 +938,48 @@ pub def selected_program(selected: Snapshot, handle: str) -> Result[Option[Nativ
     return stored_program(selected, program_key(handle))
 
 
+model PreviousLinkMember:
+    """One staged locator and the lease that protects its content name while the compiler uses it."""
+
+    page: SelectedBodyPage
+    payload: PreparedPayload
+
+
+def previous_link_member(store: Path, selected: Snapshot) -> Result[Option[PreviousLinkMember], str]:
+    """Find the authenticated regular-object member of the previous program selected in this exact view."""
+    pointer = get(selected, SELECTION_KEY).map_err((error) => error.message())?
+    if let Some(value) = pointer:
+        handle = decode_selection(selected.view, value)?
+        unit = match selected_program(selected, handle)?:
+            Some(found) => found
+            None => return Err("selected native descriptor is missing")
+        if let Some(fact) = unit_record(store, unit)?:
+            return regular_link_member(store, fact, Path(unit.binary).name() + ".native-objects.json")
+    return Ok(None)
+
+
+def regular_link_member(store: Path, fact: Fact, relative: str) -> Result[Option[PreviousLinkMember], str]:
+    """Stage one exact selected regular-object member by content name, preserving the existing missing-member path."""
+    members = [file for file in fact.files if file.path == relative]
+    if len(members) == 0:
+        return Ok(None)
+    if len(members) != 1 or members[0].program:
+        return Err("the previous native unit has an invalid regular-object member")
+    path = match fact_file(store, fact, relative):
+        Some(found) => found
+        None => return Err("the previous native unit has lost its regular-object member")
+    digest = members[0].digest
+    payload = pin_payload(store, digest).map_err((error) => error.message())?
+    if not path.is_file():
+        return Ok(None)
+    locator = JsonValue.object({"path": JsonValue.string(path.0), "sha256": JsonValue.string(digest)})
+    encoded = locator.to_json().map_err((error) => error.message())?.encode("utf-8")
+    if len(encoded) > 16_384:
+        return Err("the previous native link locator is too large")
+    page = SelectedBodyPage(key="native-link-predecessor.json", value=encoded)
+    return Ok(Some(PreviousLinkMember(page=page, payload=payload)))
+
+
 def stored_program(selected: Snapshot, key: str) -> Result[Option[NativeUnit], str]:
     """Open the exact descriptor visible at the supplied snapshot."""
     match get(selected, key).map_err((error) => error.message())?:
@@ -923,27 +1005,14 @@ pub def restore_program(store: Path, unit: NativeUnit, console: str = "") -> Res
 
 
 def unit_record(store: Path, unit: NativeUnit) -> Result[Option[Fact], str]:
-    """
-    The unit's record while it holds the selected executable payload; its immutable record already admitted native
-    loader generations. A record holding other bytes was sealed again after the unit was linked again.
-    """
-    fact = required_unit(store, unit.identity)?
-    if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
-        return Ok(None)
-    return Ok(Some(fact))
+    """Look up the immutable fact for this exact descriptor and its admitted loader generations."""
+    return find_executable_payload(store, unit.identity, Path(unit.binary).name(), unit.payload)
 
 
 def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
     """Resolve the loader witness through this unit's immutable payload binding, never an ambient path."""
     binary = Path(unit.binary)
     return fact_file(store, fact, library_witness(Path(binary.name())).0)
-
-
-def required_unit(store: Path, identity: str) -> Result[Fact, str]:
-    """A selected unit must exist; absence after descriptor publication is a store failure, never a rebake."""
-    match find(store, identity)?:
-        Some(fact) => return Ok(fact)
-        None => return Err("selected native unit record is missing")
 
 
 def executable_payload(fact: Fact, name: str) -> Result[str, str]:
@@ -1020,6 +1089,14 @@ def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str],
         ]
         bindings.append(f"listing:{fingerprint(contents)?}")
     return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
+
+
+def program_retry(view: Option[NativeUnit], indexed: Option[NativeUnit], identity: str) -> Option[NativeUnit]:
+    """Keep the held view's payload for the final Unit, then consider the independently admitted index."""
+    if let Some(selected) = view:
+        if selected.identity == identity:
+            return Some(selected)
+    return indexed
 
 
 def indexed_program(
