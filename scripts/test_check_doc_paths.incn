@@ -48,6 +48,7 @@ def test_shell_commands_and_diagrams_both_check_concrete_paths() -> Result[None,
     repository = repository_root()?
     require_archive_command_match(root, repository)?
     require_contributor_commands(repository)?
+    require_component_manifest_diagnostic(root, repository)?
     return Ok(None)
 
 
@@ -243,6 +244,33 @@ def require_archive_command_match(root: Path, repository: Path) -> Result[None, 
     assert result.status.code().unwrap_or(-1) == 1, stderr
     expected = "README and install guide must use the same archive installation command"
     assert expected in output, f"{output}\n{stderr}"
+    return Ok(None)
+
+
+def require_component_manifest_diagnostic(root: Path, repository: Path) -> Result[None, str]:
+    """Name the actual input path when the component checker cannot parse its manifest."""
+    site = root.joinpath("component-check-site")
+    source_site = repository.joinpath("workspaces/docs-site")
+    for name in ["check_incapunk_components.incn", "docs_check_support.incn"]:
+        write(site, f"scripts/{name}", read(source_site.joinpath(f"scripts/{name}"))?)?
+    relative = "docs/shared/incapunk/incus-library/manifest.json"
+    write(site, relative, "{")?
+    canonical_site = site.resolve().map_err((error) => error.message())?
+    manifest = canonical_site.joinpath(relative)
+
+    executable: str = var("INCAN").unwrap_or("incan")
+    mut command = Command.new(executable)
+    command.current_dir(canonical_site.0).arg("run").arg("scripts/check_incapunk_components.incn")
+    result = command.output().map_err((error) => f"cannot run the component check: {error}")?
+    stdout = RustString.from_utf8(result.stdout).map_err((error) => f"invalid component check output: {error}")?
+    stderr = RustString.from_utf8(result.stderr).map_err((error) => f"invalid component check error: {error}")?
+    assert result.status.code().unwrap_or(-1) == 1, f"{stdout}\n{stderr}"
+    assert "Incapunk component contract passed" not in stdout, stdout
+    cause = "JSONDecodeError: EOF while parsing an object"
+    diagnostics = [line for line in stderr.split("\n") if cause in line]
+    assert len(diagnostics) == 1, stderr
+    diagnostic = diagnostics[0]
+    assert f"cannot parse {manifest.0}: {cause}" in diagnostic, f"missing component manifest path\n{diagnostic}"
     return Ok(None)
 
 
