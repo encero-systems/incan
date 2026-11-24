@@ -107,6 +107,10 @@ pub model PlanReportPredecessor:
         """Keep the preceding request and its exact sentinel together for successor readback."""
         return PlanReportPredecessor(requests=requests, descriptor=descriptor, path=path, sentinel=sentinel)
 
+    pub def matches_driver_request(self, request: JsonValue) -> bool:
+        """Match the exact issued descriptor within the model that owns it."""
+        return json_text_is(request, "key", "--unit " + self.descriptor)
+
     pub def preserved(self, trace: Path, root: Path) -> Result[None, str]:
         """Check the successor issued on the same descriptor and left the predecessor readable."""
         successor = changed_plan_report_request(self.requests, plan_report_requests(trace, root)?)?
@@ -243,7 +247,7 @@ pub def require_one_read_per_plan_event(
             rows.append(row)
     if len(issued) != 1:
         return Err("the beta edit did not issue one Plan report request")
-    if not json_text_is(issued[0], "key", "--unit " + predecessor.descriptor):
+    if not predecessor.matches_driver_request(issued[0]):
         return Err("the beta report counts name another descriptor")
     return require_beta_event_windows(issued[0], rows, edited)
 
