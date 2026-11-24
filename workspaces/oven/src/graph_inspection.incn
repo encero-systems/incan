@@ -93,21 +93,22 @@ pub model GraphOptions:
 
 pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
     """
-    Validate the full invocation before any build or cache operation.
+    Validate a graph or current-directory context request before preparing any facts.
 
-    1. The command is `codegraph`.
-    2. Read each argument: `--strict`, a flag with its value, or the one path.
-    3. A path is required, and the format and query kind must be known.
+    `codegraph` takes one path. `context` selects the graph from the current directory and requires a task.
+    Both use the same graph options, so validation and rendering see the same request.
     """
-    # 1. Only the `codegraph` inspection exists, and anything else is answered with the usage.
     if len(arguments) == 0:
         return Err("expected `codegraph`")
-    if arguments[0] != "codegraph":
-        if arguments[0].startswith("-"):
-            return Err(refused_option(arguments[0]))
-        return Err(f"unknown command `{arguments[0]}`")
-    # 2. A flag takes the arguments it needs, nothing else starts with `-`, and the first plain argument is the path.
+    command = arguments[0]
+    if command not in ["codegraph", "context"]:
+        if command.startswith("-"):
+            return Err(refused_option(command))
+        return Err(f"unknown command `{command}`")
     mut result = GraphOptions()
+    if command == "context":
+        # An already selected path makes the shared parser reject a later path operand.
+        result.path = "."
     mut index = 1
     while index < len(arguments):
         value = arguments[index]
@@ -152,7 +153,6 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
         else:
             result.path = value
             index += 1
-    # 3. Nothing is built or cached before the path, the format and the query kind are known to be valid.
     if result.path == "":
         return Err("a PATH is required")
     if result.strict and result.allow_errors:
@@ -161,6 +161,8 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
         return Err("--format is json, jsonl or compact")
     if result.format == "compact" and result.task == "":
         return Err("--format compact requires --task")
+    if command == "context" and result.task == "":
+        return Err("context requires --task")
     if result.task != "" and (result.query != "" or result.stale != ""):
         return Err("--task cannot be combined with --query or --stale")
     if result.query != "" and result.query not in QUERY_KINDS:
