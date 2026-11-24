@@ -31,6 +31,7 @@ pub model OverlayDiagnostic:
     pub end_line: int = 0
     pub end_column: int = 0
     pub preparation_stop: bool = false
+    pub data: Option[JsonValue] = None
 
 
 pub def editor_view_name(project_view: str) -> Result[str, str]:
@@ -281,6 +282,8 @@ pub def report_diagnostics(
         if requesting != "" and diagnostic.path not in ["", requesting] and diagnostic.severity == "error":
             if diagnostic.code != "INCAN-T0134":
                 imported.add(diagnostic.path)
+        if requesting != "" and not diagnostic.preparation_stop:
+            diagnostic.data = Some(authored_diagnostic(entry, overlay, program)?)
         found.append(diagnostic)
     for path in sorted([path for path in imported]):
         found.append(
@@ -295,6 +298,33 @@ pub def report_diagnostics(
             ),
         )
     return Ok(found)
+
+
+def authored_diagnostic(entry: JsonValue, overlay: str, program: str) -> Result[JsonValue, str]:
+    """Retain the stable compiler diagnostic while moving its source spans into authored coordinates."""
+    mut data = entry
+    if let Some(span) = data.get("primary_span"):
+        data.set("primary_span", authored_span(span, overlay, program)?).map_err((error) => error.message())?
+    if let Some(related) = data.get("related_spans"):
+        mut locations: list[JsonValue] = []
+        for location in related.expect_array().map_err((error) => error.message())?:
+            span = location.require("span").map_err((error) => error.message())?
+            mut authored = location
+            authored.set("span", authored_span(span, overlay, program)?).map_err((error) => error.message())?
+            locations.append(authored)
+        data.set("related_spans", JsonValue.array(locations)).map_err((error) => error.message())?
+    return Ok(data)
+
+
+def authored_span(span: JsonValue, overlay: str, program: str) -> Result[JsonValue, str]:
+    """Translate the mirror's source path, leaving every offset and line boundary intact."""
+    path = text_field(span, "file")
+    authored = document_path(path, overlay, program)
+    if path == authored:
+        return Ok(span)
+    mut rewritten = span
+    rewritten.set("file", JsonValue.string(authored)).map_err((error) => error.message())?
+    return Ok(rewritten)
 
 
 def document_path(path: str, overlay: str, program: str) -> str:

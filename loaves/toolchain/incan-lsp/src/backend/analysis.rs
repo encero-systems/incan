@@ -42,8 +42,9 @@ impl IncanLanguageServer {
         let result = tokio::task::spawn_blocking(move || match analysis_uri.to_file_path() {
             Ok(path) => {
                 let path = path.canonicalize().unwrap_or(path);
-                let diagnostics = engine_overlay::diagnostics(&path, &source, version, &profile, &open_sources)
-                    .unwrap_or_else(|reason| vec![lsp_root_error_diagnostic(reason)]);
+                let diagnostics =
+                    engine_overlay::diagnostics(&path, &analysis_uri, &source, version, &profile, &open_sources)
+                        .unwrap_or_else(|reason| vec![lsp_root_error_diagnostic(reason)]);
                 // Keep existing navigation ready before publishing the matching diagnostic version.
                 let (_, state) = analyze(
                     &analysis_uri,

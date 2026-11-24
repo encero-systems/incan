@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
 
 /// The document an overlay request answers with.
 const OVERLAY_SCHEMA: &str = "incan.overlay-diagnostics/1";
@@ -31,6 +31,7 @@ impl Drop for OverlayServer {
 /// Ask the engine for one document's diagnostics with `source` as its unsaved buffer.
 pub(super) fn diagnostics(
     path: &Path,
+    uri: &Url,
     source: &str,
     version: i32,
     profile: &str,
@@ -50,7 +51,7 @@ pub(super) fn diagnostics(
         Ask::Diagnostics(open_sources),
     );
     let _ = std::fs::remove_file(&buffer);
-    document_diagnostics(path, &answered?, version)
+    document_diagnostics(path, uri, source, &answered?, version)
 }
 
 /// Build the saved document in its editor view, so the project's next build of the same bytes reuses the unit.
@@ -153,7 +154,13 @@ fn exchange(server: &mut OverlayServer, request: &str) -> Result<serde_json::Val
 }
 
 /// The answer's diagnostics for `path`, when the answer is for the version asked about.
-fn document_diagnostics(path: &Path, document: &serde_json::Value, version: i32) -> Result<Vec<Diagnostic>, String> {
+fn document_diagnostics(
+    path: &Path,
+    uri: &Url,
+    source: &str,
+    document: &serde_json::Value,
+    version: i32,
+) -> Result<Vec<Diagnostic>, String> {
     if let Some(reason) = document["error"].as_str() {
         return Err(reason.to_string());
     }
@@ -167,13 +174,17 @@ fn document_diagnostics(path: &Path, document: &serde_json::Value, version: i32)
         if named.canonicalize().unwrap_or(named) != wanted {
             continue;
         }
-        found.push(lsp_diagnostic(entry));
+        found.push(lsp_diagnostic(entry, &wanted, uri, source)?);
     }
     Ok(found)
 }
 
-/// One answered diagnostic over its one-based start and end, as an LSP diagnostic over that range.
-fn lsp_diagnostic(entry: &serde_json::Value) -> Diagnostic {
+/// Present a compiler record against the same source version, or a synthetic answer's document coordinates.
+fn lsp_diagnostic(entry: &serde_json::Value, path: &Path, uri: &Url, source: &str) -> Result<Diagnostic, String> {
+    if let Some(data) = entry.get("data") {
+        // The served record already has compiler facts; the host only admits and presents them.
+        return crate::diagnostics::stable_overlay_diagnostic(data, path, uri, source);
+    }
     let position = |line: &str, column: &str| {
         Position::new(
             entry[line].as_u64().unwrap_or(1).saturating_sub(1) as u32,
@@ -194,14 +205,14 @@ fn lsp_diagnostic(entry: &serde_json::Value) -> Diagnostic {
         .as_str()
         .filter(|code| !code.is_empty())
         .map(|code| NumberOrString::String(code.to_owned()));
-    Diagnostic {
+    Ok(Diagnostic {
         range: Range::new(start, end),
         severity: Some(severity),
         code,
         source: Some("incan".into()),
         message: entry["message"].as_str().unwrap_or_default().to_string(),
         ..Default::default()
-    }
+    })
 }
 
 /// The private file that holds one document's unsaved buffer for the request.

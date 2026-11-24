@@ -308,13 +308,14 @@ def failed_answer(version: int, reason: str) -> Result[str, str]:
 
 def diagnostic_json(found: OverlayDiagnostic) -> JsonValue:
     """One diagnostic of an overlay answer."""
-    return JsonValue.object(
-        {"message": JsonValue.string(found.message), "code": JsonValue.string(found.code), "severity": JsonValue.string(
-            found.severity,
-        ), "path": JsonValue.string(found.path), "line": JsonValue.int(found.line), "column": JsonValue.int(found.column), "end_line": JsonValue.int(
-            found.end_line,
-        ), "end_column": JsonValue.int(found.end_column)},
-    )
+    mut fields = {"message": JsonValue.string(found.message), "code": JsonValue.string(found.code), "severity": JsonValue.string(
+        found.severity,
+    ), "path": JsonValue.string(found.path), "line": JsonValue.int(found.line), "column": JsonValue.int(found.column), "end_line": JsonValue.int(
+        found.end_line,
+    ), "end_column": JsonValue.int(found.end_column)}
+    if let Some(data) = found.data:
+        fields["data"] = data
+    return JsonValue.object(fields)
 
 
 pub def project_view_name(
