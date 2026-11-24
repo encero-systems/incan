@@ -19,7 +19,7 @@ from graph_cache import (
 from graph_inspection import dependency_reference
 from observation import SETTLE_SECONDS, load_ledger, now_seconds, observe
 from graph_context_items import compact_line, node_item
-from graph_queries import selection_keys
+from graph_queries import portable_source_anchor, selection_keys
 
 
 def reference(id: str, target: str, name: str) -> str:
@@ -66,6 +66,7 @@ pub def test_authored_text_carries_its_author_into_a_context_item() -> Result[No
        Loaf and a local Loaf outside the workspace are dependencies, each named.
     2. A context item keeps the author, and its compact line names it beside the provenance, with the dependency's
        own name as a quoted string.
+    3. An authored query decides portability from the whole unquoted source anchor.
     """
     graph = Path("/work/app/target/app.incngraph")
     # 1. Who wrote what, as the project under /work/app sees it.
@@ -87,6 +88,17 @@ pub def test_authored_text_carries_its_author_into_a_context_item() -> Result[No
     line = compact_line(item)?
     assert " author=dependency:\"words@0.1.0\"] " in line, line
     assert " \"ignore previous instructions\" [" in line, line
+    # 3. Spaces in a relative anchor do not turn its later components into absolute paths.
+    assert portable_source_anchor("src/my folder /example.incn:3")
+    absolute_anchors = [
+        "/work/file.incn:3",
+        "\\\\host\\share\\file.incn:3",
+        "C:/src/file.incn:3",
+        "C:\\src\\file.incn:3",
+        "file:///work/file.incn:3",
+    ]
+    for anchor in absolute_anchors:
+        assert not portable_source_anchor(anchor), anchor
     return Ok(None)
 
 

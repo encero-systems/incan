@@ -3,6 +3,31 @@
 from std.json import JsonValue
 
 
+pub model QueryHit:
+    """A selected label with the source anchor and author of the record that supplied it."""
+
+    pub kind: str
+    pub label: str
+    pub anchor: str
+    pub status: str
+    pub author: JsonValue
+
+    pub def plain(self) -> str:
+        """Render the CLI line that determines equality and order for query hits."""
+        return f"{self.kind} {self.label} {self.anchor}{self.status}"
+
+
+def hit(record: JsonValue, kind: str, label: str, root: str) -> QueryHit:
+    """Take the anchor and author from the selected record, including for a label resolved elsewhere."""
+    return QueryHit(
+        kind=kind,
+        label=label,
+        anchor=location(record, root),
+        status=unchecked(record),
+        author=nested(record, "author"),
+    )
+
+
 class Index:
     """The declarations and modules a term names, with the identities its hits are matched against."""
 
@@ -40,31 +65,30 @@ class Index:
         if checked != "":
             self.canonical_targets.append(checked)
 
-    pub def ambiguous(self, kind: str, root: str) -> list[str]:
+    pub def ambiguous(self, kind: str, root: str) -> list[QueryHit]:
         """List ambiguous declaration matches before relationship hits, preserving the existing query order."""
         if kind == "defs" or len(self.selected) <= 1:
             return []
-        mut hits: list[str] = []
+        mut hits: list[QueryHit] = []
         for identifier in self.selected:
             record = self.by_id[identifier]
-            hits.append(f"declaration {display(record)} {location(record, root)}{unchecked(record)}")
+            hits.append(hit(record, "declaration", display(record), root))
         return hits
 
-    pub def lines(self, record: JsonValue, kind: str, term: str, root: str) -> list[str]:
-        """Read one record against the shared index without copying every declaration for each hit."""
+    pub def hits(self, record: JsonValue, kind: str, term: str, root: str) -> list[QueryHit]:
+        """Select one record against the shared index and retain its authored anchor on each hit."""
         record_kind = text(record, "record")
-        where = f"{location(record, root)}{unchecked(record)}"
         if kind == "defs":
             if record_kind == "declaration" and text(record, "id") in self.selected:
-                return [f"{record_kind} {display(record)} {where}"]
+                return [hit(record, record_kind, display(record), root)]
             return []
         if kind == "imports":
             if record_kind == "import" and text(record, "module_id") in self.modules:
-                return [f"import {name} {where}" for name in import_labels(record)]
+                return [hit(record, "import", name, root) for name in import_labels(record)]
             return []
         if kind == "refs":
             if record_kind == "reference" and self.names_selection(record, term):
-                return [f"{record_kind} {display(record)} {where}"]
+                return [hit(record, record_kind, display(record), root)]
             return []
         if record_kind != "call":
             return []
@@ -73,7 +97,7 @@ class Index:
             mut label = owner
             if owner in self.by_id:
                 label = display(self.by_id[owner])
-            return [f"{record_kind} {label} {where}"]
+            return [hit(record, record_kind, label, root)]
         if kind == "callees" and text(record, "owner_id") in self.selected:
             target = text(record, "target_id")
             mut label = display(record)
@@ -81,7 +105,7 @@ class Index:
                 label = display(self.by_id[target])
             elif label == "":
                 label = text(record, "callee")
-            return [f"{record_kind} {label} {where}"]
+            return [hit(record, record_kind, label, root)]
         return []
 
     pub def named(self, term: str) -> list[str]:
@@ -222,6 +246,13 @@ def location(value: JsonValue, root: str) -> str:
     return f"{file}:{line}"
 
 
+pub def portable_source_anchor(anchor: str) -> bool:
+    """Share a source anchor only when it names no absolute file location."""
+    if anchor.startswith("/") or anchor.startswith("\\\\") or anchor.startswith("file://"):
+        return false
+    return len(anchor) <= 2 or anchor[1:3] not in [":/", ":\\"]
+
+
 pub def matches(record: JsonValue, term: str) -> bool:
     """Accept a complete compiler identity, a qualified name, or an exact final name component."""
     label = display(record)
@@ -248,7 +279,7 @@ def import_labels(record: JsonValue) -> list[str]:
     return labels
 
 
-pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list[str]:
+pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list[QueryHit]:
     """
     Select definitions and traverse only compiler-proven references, callers, callees or module imports.
 
@@ -260,12 +291,18 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
     index = indexed(records, term)
     # 2. A term that names several declarations lists them all first, unless the query asks only for definitions.
     mut hits = index.ambiguous(kind, root)
-    # 3. Each record gives the lines its kind of query selects from it, and a line several records give appears once.
+    # 3. The plain line still defines equality and order. A hit keeps the authority of the record that supplied it.
+    mut order = [(hits[position].plain(), position) for position in range(len(hits))]
+    mut seen = set([entry[0] for entry in order])
     for record in records:
-        for line in index.lines(record, kind, term, root):
-            if line not in hits:
-                hits.append(line)
-    return sorted(hits)
+        for selected in index.hits(record, kind, term, root):
+            line = selected.plain()
+            if line in seen:
+                continue
+            seen.add(line)
+            order.append((line, len(hits)))
+            hits.append(selected)
+    return [hits[entry[1]] for entry in sorted(order)]
 
 
 pub def definition_hits(records: list[JsonValue], term: str, root: str) -> list[tuple[str, list[JsonValue]]]:
@@ -273,7 +310,8 @@ pub def definition_hits(records: list[JsonValue], term: str, root: str) -> list[
     index = indexed(records, term)
     mut hits: Dict[str, list[JsonValue]] = {}
     for record in records:
-        for line in index.lines(record, "defs", term, root):
+        for selected in index.hits(record, "defs", term, root):
+            line = selected.plain()
             if line not in hits:
                 hits[line] = []
             hits[line].append(record)
@@ -311,7 +349,7 @@ pub def relationship_keys(record: JsonValue) -> list[str]:
     """
     Every value a query can select a reference, call or import by.
 
-    `Index.lines` selects a relationship through the declaration or module it targets or belongs to, through an
+    The query index selects a relationship through the declaration or module it targets or belongs to, through an
     identity it shares with a selected declaration, or through its own name and ids. A relationship none of whose
     keys is among `selection_keys` gives no line for that term.
     """
