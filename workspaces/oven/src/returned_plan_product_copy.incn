@@ -90,18 +90,27 @@ pub def verify_returned_plan_product_copy() -> Result[None, str]:
     saved = commit(put(begin(first), plan_selection_key(origin), kept)).map_err((error) => error.message())?
     reissued_receipt = fixture_fold_receipt(saved, output, inputs)?
     reissued = publish_evaluation(saved, "plan-right-new-receipt", rank, value, reissued_receipt)?
-    current = reissued.snapshot
+    republished = reissued.snapshot
     first_evaluation = evaluation_revision(first, LOWERING_PROFILE, value_key)?
-    current_evaluation = evaluation_revision(current, LOWERING_PROFILE, value_key)?
+    current_evaluation = evaluation_revision(republished, LOWERING_PROFILE, value_key)?
     assert reissued.value_key == value_key and first_evaluation != ""
     assert current_evaluation != "" and current_evaluation != first_evaluation
+    measure_frame_reads(true)
+    refreshing = select_plan_modules(republished, origin, [], [], cutoff=cutoff, compact_authority=true)
+    refreshed_reads = finish_frame_reads()
+    refreshed = refreshing?
+    selected_values = [read for read in refreshed_reads if read.key == value_key]
+    assert len(selected_values) == 1 and selected_values[0].reads == 1
+    # The next warm selection can withhold events only after the new evaluation is recorded in the store.
+    now_kept = encode_plan_selection(origin, refreshed.kept)?
+    current = commit(put(begin(republished), plan_selection_key(origin), now_kept)).map_err((error) => error.message())?
+    assert evaluation_revision(current, LOWERING_PROFILE, value_key)? == current_evaluation
     scope = ReadScope(snapshot=current.digest, profile=LOWERING_PROFILE)
     measure_frame_reads(true)
     choosing = select_plan_modules(current, origin, [], [], cutoff=cutoff, compact_authority=true)
     selected_reads = finish_frame_reads()
     selection = choosing?
-    selected_values = [read for read in selected_reads if read.key == value_key]
-    assert len(selected_values) == 1 and selected_values[0].reads == 1
+    assert len([read.key for read in selected_reads if read.key == value_key]) == 0
     assert len(selection.records) == 1 and selection.records[0].placement_current
     assert not selection.records[0].events, "the fixture took the ordinary wholly owned Plan fallback"
     assert [function.event for function in selection.records[0].plan.functions] == [b"", b""]
