@@ -237,7 +237,9 @@ def require_prime_scale_extent(
         return Err("prime-interface worker issue has no generation")
     if (route == "cold" and generation != "-") or route not in ["worker", "cold"]:
         return Err("prime-interface has an unexpected driver route")
-    operation = "driver_request" if route == "worker" else "driver_spawn"
+    mut operation = "driver_spawn"
+    if route == "worker":
+        operation = "driver_request"
     if driver_operations(fresh, operation, f"--unit {descriptor}", clock) != 1:
         return Err("prime-interface has no unique completed driver operation for the issued unit")
     return require_prime_native(fresh, main, output, route, clock)
