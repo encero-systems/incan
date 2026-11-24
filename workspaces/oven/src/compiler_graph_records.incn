@@ -928,7 +928,8 @@ pub def output_replacements(writes: Borrowed[list[Write]]) -> tuple[Dict[str, in
         if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
             slots.add(key)
         if write.kind != KIND_TOMBSTONE:
-            writing[key] = position
+            if key.startswith("incan.engine.edge-out/3\t") or key.startswith("incan.engine.edge-in/3\t"):
+                writing[key] = position
             if is_demanded_scope_edge(key):
                 renewed_scopes.add("\t".join(key.split("\t")[1:6]))
     return (writing, slots, renewed_scopes)
