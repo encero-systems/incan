@@ -159,7 +159,7 @@ class ReceiptViews:
 
     by_view: Dict[tuple[int, str, str, str], Rc[ReadReceipt]] = {}
 
-    def read(mut self, selected: Snapshot, key: str) -> Result[Rc[ReadReceipt], str]:
+    pub def read(mut self, selected: Snapshot, key: str) -> Result[Rc[ReadReceipt], str]:
         """Authenticate the selected content root once, sharing the immutable receipt across its witnesses."""
         identity = (selected.generation, selected.digest, selected.view, key)
         if let Some(prior) = self.by_view.get(identity):
