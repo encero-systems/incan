@@ -1,5 +1,4 @@
-//! One document's analysis on the compiler's route: the session `incan check` opens, its module collector with the
-//! editor's unsaved buffers in place of their files, and one checking pass whose document checker the editor reads.
+//! Versioned document diagnostics come from the editor overlay. Navigation retains its existing checked state.
 
 use super::*;
 
@@ -8,19 +7,6 @@ use incan_driver::modules::{collect_document_modules, entry_module_segments};
 use incan_driver::unit::UnitDescription;
 
 impl IncanLanguageServer {
-    /// On the engine route, the signature the editor view answers for the declaration at `position` of the latest
-    /// buffer; `None` leaves hover to the in-process analysis.
-    pub(super) async fn engine_hover(&self, uri: &Url, position: Position) -> Option<String> {
-        if !engine_overlay::selected() {
-            return None;
-        }
-        let path = uri.to_file_path().ok()?;
-        let source = self.pending_sources.read().await.get(uri).cloned()?;
-        let (line, column) = (position.line + 1, position.character + 1);
-        let answered = tokio::task::spawn_blocking(move || engine_overlay::hover(&path, &source, line, column)).await;
-        answered.ok()?.ok()?
-    }
-
     /// Analyze a document off the async workers and publish only while this request is still the latest one.
     pub(super) async fn analyze_document(&self, uri: &Url, source: &str, version: i32, debounce: bool) {
         let ticket = Arc::new(());
@@ -48,48 +34,28 @@ impl IncanLanguageServer {
                 return;
             }
         }
-        // With the engine selected, diagnostics are the overlay request's answer, published as soon as it arrives. The
-        // in-process analysis below still keeps the document state hover and navigation read, but only once typing
-        // pauses: an edit within the pause supersedes it, so it never competes with the next keystroke's request.
-        let overlay = engine_overlay::selected();
-        if overlay && let Ok(path) = uri.to_file_path() {
-            let text = source.to_owned();
-            let answered =
-                tokio::task::spawn_blocking(move || engine_overlay::diagnostics(&path, &text, version)).await;
-            let diagnostics = match answered {
-                Ok(Ok(found)) => found,
-                Ok(Err(reason)) => vec![lsp_root_error_diagnostic(reason)],
-                Err(error) => vec![lsp_root_error_diagnostic(format!("overlay request failed: {error}"))],
-            };
-            let tickets = self.analysis_tickets.read().await;
-            if !tickets.get(uri).is_some_and(|latest| Arc::ptr_eq(latest, &ticket)) {
-                return;
-            }
-            drop(tickets);
-            self.client
-                .publish_diagnostics(uri.clone(), diagnostics, Some(version))
-                .await;
-            tokio::time::sleep(std::time::Duration::from_millis(engine_overlay::ANALYSIS_PAUSE_MS)).await;
-            let tickets = self.analysis_tickets.read().await;
-            if !tickets.get(uri).is_some_and(|latest| Arc::ptr_eq(latest, &ticket)) {
-                return;
-            }
-        }
         let open_sources = self.open_sources(uri, source).await;
         let analysis_uri = uri.clone();
         let sessions = Arc::clone(&self.analysis_sessions);
         let profile = Arc::clone(&self.profile);
         let source = source.to_owned();
         let result = tokio::task::spawn_blocking(move || match analysis_uri.to_file_path() {
-            Ok(path) => analyze(
-                &analysis_uri,
-                &path.canonicalize().unwrap_or(path),
-                &source,
-                version,
-                &open_sources,
-                &sessions,
-                &profile,
-            ),
+            Ok(path) => {
+                let path = path.canonicalize().unwrap_or(path);
+                let diagnostics = engine_overlay::diagnostics(&path, &source, version, &profile, &open_sources)
+                    .unwrap_or_else(|reason| vec![lsp_root_error_diagnostic(reason)]);
+                // Keep existing navigation ready before publishing the matching diagnostic version.
+                let (_, state) = analyze(
+                    &analysis_uri,
+                    &path,
+                    &source,
+                    version,
+                    &open_sources,
+                    &sessions,
+                    &profile,
+                );
+                (diagnostics, state)
+            }
             Err(()) => (
                 vec![lsp_root_error_diagnostic(
                     "Incan analyzes documents that are files".to_string(),
@@ -120,9 +86,6 @@ impl IncanLanguageServer {
             }
         }
         drop(documents);
-        if overlay {
-            return;
-        }
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, Some(version))
             .await;

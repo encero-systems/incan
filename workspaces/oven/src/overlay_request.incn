@@ -14,6 +14,10 @@ pub model OverlayRequest:
     pub buffer: str
     pub version: int
     pub profile: str
+    # Other documents open in the same editor session, by canonical source path.
+    pub open_buffers: Dict[str, str] = {}
+    # A live editor checks the opened document. The standalone command checks the program.
+    pub editor_session: bool = false
     # Whether the answer carries the engine's work counters.
     pub report: bool = false
     # Whether the overlay is built, as on a save, so the project's next build finds its unit, instead of only checked.
@@ -24,7 +28,7 @@ pub model OverlayRequest:
 
 
 pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
-    """Read one served request line: `{"source": …, "buffer": …, "version": N}`, with `"build": true` on a save."""
+    """Read a served document request and its optional snapshot of other unsaved buffers."""
     request = parse(line).map_err((error) => error.message())?
     source = request.require("source").map_err((error) => error.message())?.expect_str().map_err(
         (error) => error.message(),
@@ -37,7 +41,13 @@ pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
     )?
     if version < 0:
         return Err(f"a document version is a non-negative integer, got {version}")
-    mut answered = OverlayRequest(source=source, buffer=buffer, version=version, profile=profile)
+    mut answered = OverlayRequest(source=source, buffer=buffer, version=version, profile=profile, editor_session=true)
+    if let Some(open_buffers) = request.get("open_buffers"):
+        buffers = open_buffers.expect_object().map_err((error) => error.message())?
+        mut sources: Dict[str, str] = {}
+        for path in buffers.keys():
+            sources[path] = buffers[path].expect_str().map_err((error) => error.message())?
+        answered.open_buffers = sources
     if let Some(report) = request.get("report"):
         answered.report = report.expect_bool().map_err((error) => error.message())?
     if let Some(selected) = request.get("build"):

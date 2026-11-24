@@ -1,11 +1,6 @@
-//! Diagnostics through the records engine's overlay request (14.1), selected with `INCAN_LSP_ENGINE`.
-//!
-//! `INCAN_LSP_ENGINE=overlay` keeps one Oven beside the server running `incan check --overlay-serve`: it holds one
-//! engine connection, and each analysis is one JSON line in and one `incan.overlay-diagnostics/1` line out.
-//! `INCAN_LSP_ENGINE=overlay-process` starts `incan check SOURCE --overlay BUFFER ...` once per analysis instead.
-//! Either way the server keeps only the diagnostics of the document it asked about, and only when the answer names the
-//! version it asked for.
+//! Versioned diagnostics and saved builds through Incan's persistent editor overlay.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -13,12 +8,8 @@ use std::sync::Mutex;
 
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
 
-/// The environment selection that routes diagnostics through the engine's overlay request.
-pub(super) const ENGINE_SELECTION: &str = "INCAN_LSP_ENGINE";
 /// The document an overlay request answers with.
 const OVERLAY_SCHEMA: &str = "incan.overlay-diagnostics/1";
-/// How long typing must pause before the in-process analysis behind hover and navigation runs on the overlay route.
-pub(super) const ANALYSIS_PAUSE_MS: u64 = 300;
 /// Requests of one program share its editor view's overlay root, so this server sends them one at a time; the lock
 /// also owns the persistent Oven, when one is running.
 static REQUESTS: Mutex<Option<OverlayServer>> = Mutex::new(None);
@@ -37,40 +28,35 @@ impl Drop for OverlayServer {
     }
 }
 
-/// Whether this server answers diagnostics through the engine's overlay request.
-pub(super) fn selected() -> bool {
-    std::env::var(ENGINE_SELECTION).is_ok_and(|value| value == "overlay" || value == "overlay-process")
-}
-
-/// Whether each analysis starts its own Oven instead of using the persistent one.
-fn per_process() -> bool {
-    std::env::var(ENGINE_SELECTION).is_ok_and(|value| value == "overlay-process")
-}
-
 /// Ask the engine for one document's diagnostics with `source` as its unsaved buffer.
-pub(super) fn diagnostics(path: &Path, source: &str, version: i32) -> Result<Vec<Diagnostic>, String> {
+pub(super) fn diagnostics(
+    path: &Path,
+    source: &str,
+    version: i32,
+    profile: &str,
+    open_sources: &HashMap<PathBuf, String>,
+) -> Result<Vec<Diagnostic>, String> {
     let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let buffer = buffer_path(path);
     std::fs::write(&buffer, source)
         .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
     let version = version.max(0);
-    let answered = if per_process() {
-        process_answer(path, &buffer, version, &Ask::Diagnostics)
-    } else {
-        served_answer(&mut server, path, &buffer, version, &Ask::Diagnostics)
-    };
+    let answered = served_answer(
+        &mut server,
+        path,
+        &buffer,
+        version,
+        profile,
+        Ask::Diagnostics(open_sources),
+    );
     let _ = std::fs::remove_file(&buffer);
     document_diagnostics(path, &answered?, version)
 }
 
 /// Build the saved document in its editor view, so the project's next build of the same bytes reuses the unit.
-pub(super) fn saved(path: &Path) -> Result<(), String> {
+pub(super) fn saved(path: &Path, profile: &str) -> Result<(), String> {
     let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let answered = if per_process() {
-        process_answer(path, path, 0, &Ask::Build)?
-    } else {
-        served_answer(&mut server, path, path, 0, &Ask::Build)?
-    };
+    let answered = served_answer(&mut server, path, path, 0, profile, Ask::Build)?;
     if let Some(reason) = answered["error"].as_str() {
         return Err(reason.to_string());
     }
@@ -80,32 +66,10 @@ pub(super) fn saved(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The signature of the declaration named at one-based `line` and `column` of `source`, answered from the editor
-/// view's records for an imported declaration, or from the buffer itself for one of its own; `None` names nothing.
-pub(super) fn hover(path: &Path, source: &str, line: u32, column: u32) -> Result<Option<String>, String> {
-    let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let buffer = buffer_path(path);
-    std::fs::write(&buffer, source)
-        .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
-    let ask = Ask::Hover(line, column);
-    let answered = if per_process() {
-        process_answer(path, &buffer, 0, &ask)
-    } else {
-        served_answer(&mut server, path, &buffer, 0, &ask)
-    };
-    let _ = std::fs::remove_file(&buffer);
-    let answered = answered?;
-    if let Some(reason) = answered["error"].as_str() {
-        return Err(reason.to_string());
-    }
-    Ok(answered["hover"].as_str().map(str::to_string))
-}
-
 /// What one overlay request asks the engine for.
-enum Ask {
-    Diagnostics,
+enum Ask<'a> {
+    Diagnostics(&'a HashMap<PathBuf, String>),
     Build,
-    Hover(u32, u32),
 }
 
 /// One answer from the persistent Oven, starting it when none runs and once more if it stopped answering.
@@ -114,19 +78,26 @@ fn served_answer(
     path: &Path,
     buffer: &Path,
     version: i32,
-    ask: &Ask,
+    profile: &str,
+    ask: Ask<'_>,
 ) -> Result<serde_json::Value, String> {
     let mut request = serde_json::json!({"source": path, "buffer": buffer, "version": version});
     match ask {
-        Ask::Diagnostics => {}
+        Ask::Diagnostics(open_sources) => {
+            let siblings = open_sources
+                .iter()
+                .filter(|(open, _)| open.as_path() != path)
+                .collect::<HashMap<_, _>>();
+            request["open_buffers"] =
+                serde_json::to_value(siblings).map_err(|error| format!("cannot encode editor buffers: {error}"))?;
+        }
         Ask::Build => request["build"] = serde_json::json!(true),
-        Ask::Hover(line, column) => request["hover"] = serde_json::json!([line, column]),
     }
     let request = request.to_string();
     let mut last = String::new();
     for _ in 0..2 {
         if server.is_none() {
-            *server = Some(start_server()?);
+            *server = Some(start_server(profile)?);
         }
         let Some(running) = server.as_mut() else {
             continue;
@@ -142,11 +113,13 @@ fn served_answer(
     Err(last)
 }
 
-/// Start `incan check --overlay-serve` beside this server.
-fn start_server() -> Result<OverlayServer, String> {
+/// Start the adjacent Incan overlay server with the LSP session's artifact profile.
+fn start_server(profile: &str) -> Result<OverlayServer, String> {
     let mut child = Command::new(oven()?)
         .arg("check")
         .arg("--overlay-serve")
+        .arg("--profile")
+        .arg(profile)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -179,38 +152,6 @@ fn exchange(server: &mut OverlayServer, request: &str) -> Result<serde_json::Val
     serde_json::from_str(&line).map_err(|error| format!("overlay server answered no document ({error})"))
 }
 
-/// One answer from an Oven started for this analysis alone.
-fn process_answer(path: &Path, buffer: &Path, version: i32, ask: &Ask) -> Result<serde_json::Value, String> {
-    let mut command = Command::new(oven()?);
-    command
-        .arg("check")
-        .arg(path)
-        .arg("--overlay")
-        .arg(buffer)
-        .arg("--document-version")
-        .arg(version.to_string())
-        .arg("--format")
-        .arg("json");
-    match ask {
-        Ask::Diagnostics => {}
-        Ask::Build => {
-            command.arg("--build");
-        }
-        Ask::Hover(line, column) => {
-            command.arg("--hover").arg(format!("{line}:{column}"));
-        }
-    }
-    let output = command
-        .output()
-        .map_err(|error| format!("cannot run the overlay request: {error}"))?;
-    serde_json::from_slice(&output.stdout).map_err(|error| {
-        format!(
-            "overlay request answered no document ({error}): {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )
-    })
-}
-
 /// The answer's diagnostics for `path`, when the answer is for the version asked about.
 fn document_diagnostics(path: &Path, document: &serde_json::Value, version: i32) -> Result<Vec<Diagnostic>, String> {
     if let Some(reason) = document["error"].as_str() {
@@ -241,18 +182,22 @@ fn lsp_diagnostic(entry: &serde_json::Value) -> Diagnostic {
     };
     let start = position("line", "column");
     let mut end = position("end_line", "end_column");
-    if entry["end_line"].is_null() || end <= start {
+    if entry["end_line"].is_null() || end < start {
         end = Position::new(start.line, start.character + 1);
     }
     let severity = match entry["severity"].as_str() {
         Some("warning") => DiagnosticSeverity::WARNING,
+        Some("information") => DiagnosticSeverity::INFORMATION,
         _ => DiagnosticSeverity::ERROR,
     };
-    let code = entry["code"].as_str().unwrap_or("overlay").to_string();
+    let code = entry["code"]
+        .as_str()
+        .filter(|code| !code.is_empty())
+        .map(|code| NumberOrString::String(code.to_owned()));
     Diagnostic {
         range: Range::new(start, end),
         severity: Some(severity),
-        code: Some(NumberOrString::String(code)),
+        code,
         source: Some("incan".into()),
         message: entry["message"].as_str().unwrap_or_default().to_string(),
         ..Default::default()

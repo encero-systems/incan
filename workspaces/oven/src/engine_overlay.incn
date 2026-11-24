@@ -30,6 +30,7 @@ pub model OverlayDiagnostic:
     pub code: str = ""
     pub end_line: int = 0
     pub end_column: int = 0
+    pub preparation_stop: bool = false
 
 
 pub def editor_view_name(project_view: str) -> Result[str, str]:
@@ -105,26 +106,48 @@ pub def mirror_overlay(program: Path, overlay: Path, document: str, buffer: str)
     return mirror_into(state, program, overlay, document, buffer)
 
 
-pub def mirror_into(mut state: OverlayMirror, program: Path, overlay: Path, document: str, buffer: str) -> Result[int, str]:
-    """Reconcile source and mirror generations. An edit of the buffer lends unchanged files from the open session."""
+pub def mirror_into(
+    mut state: OverlayMirror,
+    program: Path,
+    overlay: Path,
+    document: str,
+    buffer: str,
+    siblings: Dict[str, str] = {},
+) -> Result[int, str]:
+    """Reconcile disk generations and the current editor snapshot in the same mirror."""
     root = program.0 + "\n" + overlay.0
     if state.root != root:
         state.files = {}
         state.root = root
     state.read_files = 0
     state.read_bytes = 0
-    # An unsaved buffer is a separate input. It must never stand in for a verified disk-to-mirror comparison.
-    if document in state.files:
-        state.files[document] = None
-    mut written = mirror_directory(state, program, overlay, "", document)?
-    if write_if_changed(overlay.joinpath(document), buffer.encode("utf-8"))?:
-        written += 1
-    remove_absent(program, overlay, "", document)?
+    mut buffers = {path: siblings[path] for path in siblings.keys()}
+    buffers[document] = buffer
+    mut virtual_directories: set[str] = set()
+    for path in buffers.keys():
+        # An unsaved buffer never stands in for a verified disk-to-mirror comparison.
+        if path in state.files:
+            state.files[path] = None
+        mut parent = Path(path).parent()
+        while parent.0 not in ["", "."] and parent.0 not in virtual_directories:
+            virtual_directories.add(parent.0)
+            parent = parent.parent()
+    mut written = mirror_directory(state, program, overlay, "", buffers)?
+    for path in buffers.keys():
+        if write_if_changed(overlay.joinpath(path), buffers[path].encode("utf-8"))?:
+            written += 1
+    remove_absent(program, overlay, "", buffers, virtual_directories)?
     trace(f"overlay mirror read {state.read_files} disk sources, {state.read_bytes} source bytes, wrote {written} files")
     return Ok(written)
 
 
-def mirror_directory(mut state: OverlayMirror, source: Path, destination: Path, relative: str, document: str) -> Result[int, str]:
+def mirror_directory(
+    mut state: OverlayMirror,
+    source: Path,
+    destination: Path,
+    relative: str,
+    buffers: Dict[str, str],
+) -> Result[int, str]:
     """Mirror one directory, observing each source entry once and opening only files whose generations changed."""
     mut written = 0
     for entry in source.iterdir().map_err((error) => f"cannot {error.message()}")?:
@@ -134,11 +157,11 @@ def mirror_directory(mut state: OverlayMirror, source: Path, destination: Path, 
         mut path = name
         if relative != "":
             path = f"{relative}/{name}"
-        if path == document:
+        if path in buffers:
             continue
         if let Some(before) = file_metadata(entry)?:
             if before.is_directory():
-                written += mirror_directory(state, entry, destination.joinpath(name), path, document)?
+                written += mirror_directory(state, entry, destination.joinpath(name), path, buffers)?
             elif before.is_file():
                 if mirror_file(state, entry, destination.joinpath(name), path, before)?:
                     written += 1
@@ -164,10 +187,16 @@ def mirror_file(mut state: OverlayMirror, source: Path, destination: Path, key: 
     return Ok(written)
 
 
-def remove_absent(source: Path, destination: Path, relative: str, document: str) -> Result[None, str]:
+def remove_absent(
+    source: Path,
+    destination: Path,
+    relative: str,
+    buffers: Dict[str, str],
+    virtual_directories: set[str],
+) -> Result[None, str]:
     """
-    Remove mirrored files and directories the program no longer has; the document always stays. What the mirror leaves
-    out is never mirrored, so it is the overlay's own: its build output and hidden entries stay too.
+    Remove stale mirror files and directories unless an open document still needs them. The overlay owns its build
+    output and hidden entries.
     """
     if not destination.is_dir():
         return Ok(None)
@@ -178,13 +207,13 @@ def remove_absent(source: Path, destination: Path, relative: str, document: str)
         mut path = name
         if relative != "":
             path = f"{relative}/{name}"
-        if path == document:
+        if path in buffers:
             continue
         original = source.joinpath(name)
         if entry.is_dir():
-            if original.is_dir():
-                remove_absent(original, entry, path, document)?
-            elif not document.startswith(path + "/"):
+            if original.is_dir() or path in virtual_directories:
+                remove_absent(original, entry, path, buffers, virtual_directories)?
+            else:
                 entry.remove_tree().map_err((error) => f"cannot {error.message()}")?
         elif not original.is_file():
             entry.unlink().map_err((error) => f"cannot {error.message()}")?
@@ -202,16 +231,35 @@ def write_if_changed(path: Path, content: bytes) -> Result[bool, str]:
     return Ok(true)
 
 
-pub def report_diagnostics(report: str, overlay: str, program: str) -> Result[list[OverlayDiagnostic], str]:
+pub def preparation_stop_report(stopped: OverlayDiagnostic) -> Result[str, str]:
+    """Use the ordinary check-report console for a typed stop that occurred before a compiler could run."""
+    entry = JsonValue.object({
+        "preparation_stop": JsonValue.bool(stopped.preparation_stop),
+        "code": JsonValue.string(stopped.code),
+        "message": JsonValue.string(stopped.message),
+        "severity": JsonValue.string(stopped.severity),
+        "primary_span": JsonValue.object({"file": JsonValue.string(stopped.path)}),
+    })
+    return JsonValue.object({"diagnostics": JsonValue.array([entry])}).to_json().map_err((error) => error.message())
+
+
+pub def report_diagnostics(
+
+    report: str,
+    overlay: str,
+    program: str,
+    requesting: str = "",
+) -> Result[list[OverlayDiagnostic], str]:
     """
-    The diagnostics of the compiler's JSON check report, each on the editor's path for its document: a file under the
-    `overlay` root is named under `program` instead.
+    Project one check report in authored coordinates. When an editor requests a document, summarize the imported
+    modules that failed its check so the editor can report the cause on the requesting document too.
     """
     document = parse(report).map_err((error) => f"the check answered no report ({error.message()})")?
     entries = document.require("diagnostics").map_err((error) => error.message())?.expect_array().map_err(
         (error) => error.message(),
     )?
     mut found: list[OverlayDiagnostic] = []
+    mut imported: set[str] = set()
     for entry in entries:
         mut diagnostic = OverlayDiagnostic(
             message=text_field(entry, "message"),
@@ -220,6 +268,7 @@ pub def report_diagnostics(report: str, overlay: str, program: str) -> Result[li
             column=1,
             severity=text_field(entry, "severity"),
             code=text_field(entry, "code"),
+            preparation_stop=entry.get("preparation_stop").unwrap_or(JsonValue.null()).as_bool().unwrap_or(false),
         )
         if let Some(span) = entry.get("primary_span"):
             diagnostic.path = document_path(text_field(span, "file"), overlay, program)
@@ -229,7 +278,22 @@ pub def report_diagnostics(report: str, overlay: str, program: str) -> Result[li
             if let Some(end) = span.get("end"):
                 diagnostic.end_line = int_field(end, "line", diagnostic.line)
                 diagnostic.end_column = int_field(end, "column", diagnostic.column)
+        if requesting != "" and diagnostic.path not in ["", requesting] and diagnostic.severity == "error":
+            if diagnostic.code != "INCAN-T0134":
+                imported.add(diagnostic.path)
         found.append(diagnostic)
+    for path in sorted([path for path in imported]):
+        found.append(
+            OverlayDiagnostic(
+                message=f"imported module {path} has errors; open it for details",
+                path=requesting,
+                severity="error",
+                line=1,
+                column=1,
+                end_line=1,
+                end_column=1,
+            ),
+        )
     return Ok(found)
 
 

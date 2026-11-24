@@ -54,7 +54,8 @@ from project_library import planned_program
 from pub::incan_platform.store import (
     EXPECT_REPAIR, HOME_VIEW, PreparedPayload, Snapshot, SnapshotAdmission, Transaction, begin, commit, get, put,
 )
-from engine_overlay import is_editor_view
+from compile_time_trust import MISSING_TRUST_CODE
+from engine_overlay import OverlayDiagnostic, is_editor_view
 from store_path_conversion import pin_payload, snapshot, store_path
 from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import UnitDescription, describe, with_c_abi_target
@@ -154,6 +155,8 @@ pub model CheckOutcome:
 
     pub code: i32
     pub console: str
+    # A selected pre-check refusal has no compiler report or graph publication.
+    pub preparation_stop: Option[OverlayDiagnostic] = None
     # Top-level function bodies the check checked, and those it restored from the request view's records.
     pub body_evaluations: int = 0
     pub body_reuses: int = 0
@@ -231,6 +234,14 @@ pub def check_program(
     asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
     verify_scheduled_origin(asked, scheduled_origin)?
     ready = prepared_for(view, asked, toolchain)?
+    if ready.trust_stop != "":
+        if not is_editor_view(view) or format != "json":
+            return Err(ready.trust_stop)
+        stopped = OverlayDiagnostic(
+            message=ready.trust_stop, path=ready.source, line=1, column=1, severity="information",
+            code=MISSING_TRUST_CODE, preparation_stop=true,
+        )
+        return Ok(CheckOutcome(code=1, console=console, preparation_stop=Some(stopped)))
     # A unit without per-declaration records is checked whole, keyed by its full inputs as every check is.
     whole = whole_unit_reason(ready, unit_options)?
     if whole != "":
@@ -262,10 +273,7 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
     Prepare a request's unit. An editor's overlay request was never asked for by its user, so it is unattended: it
     stops before compile-time code that no trust entry covers, and the stop names what lacks trust (RFC 117).
     """
-    ready = prepare_native(described, toolchain, is_editor_view(view))?
-    if ready.trust_stop != "":
-        return Err(ready.trust_stop)
-    return Ok(ready)
+    return prepare_native(described, toolchain, is_editor_view(view))
 
 
 def body_reading(
@@ -683,6 +691,8 @@ pub def prepare_program(
     shared = planned.project_library is not None
     described, _ = prepare_project_library(planned, toolchain)?
     ready = prepared_for(view, described, toolchain)?
+    if ready.trust_stop != "":
+        return Err(ready.trust_stop)
     mut whole = whole_unit_reason(ready, unit_options)?
     if whole == "" and not toolchain.graph_executable_crumb:
         whole = "compiler predates typed executable graph records"

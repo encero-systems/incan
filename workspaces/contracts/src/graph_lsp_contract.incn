@@ -5,7 +5,8 @@ from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue, parse
 from protocol_peer import Peer, decode, start
-from files import required_text
+from files import optional_text, parse_json, read, required, required_text, write
+from run import invoke
 
 
 pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
@@ -19,18 +20,125 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     source_path = project.joinpath("src").joinpath("main.incn")
     if not project.joinpath("src").joinpath("provider.incn").is_file():
         return Ok(None)
-    mut binary = ""
-    environment_key: str = "INCAN_LSP"
-    match var(environment_key):
-        Ok(value) => binary = str(value)
-        Err(_) => return Ok(None)
+    binary = match lsp_binary():
+        Some(value) => value
+        None => return Ok(None)
+
     if project.joinpath("deps").joinpath("words").is_dir():
         return check_vocabulary(incan, binary, project)
-    # 1. Prepare declared Loaves and analyze the opened source.
-    prepare(incan, project)?
-    source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
-    uri = file_uri(source_path)
-    mut peer = start(binary, project)?
+    # 1. Prepare declared Loaves on the ordinary installed command route.
+    selectors = ["INCAN_ENGINE", "INCAN_LSP_ENGINE"]
+    prepare(incan, project, selectors, profile="release")?
+    source = read(source_path)?
+    root = selected_editor_root(incan, project)?
+    previous = editor_views(root)?
+    mut peer = start(binary, project, arguments=["--profile", "release"], remove_environment=selectors)?
+    observed = observe_editor(peer, project, source, root, previous)
+    shutdown = peer.request(9, "shutdown", JsonValue.null())
+    exited = peer.notify("exit", JsonValue.null())
+    peer.finish()?
+    _ = shutdown?
+    exited?
+    if read(source_path)? != source:
+        return Err("the LSP overlay changed the authored file")
+    matches = observed?
+    if len(matches) == 0:
+        return Err("ordinary editor did not dispatch its versioned buffers to the overlay")
+    if len(matches) != 1:
+        return Err("more than one editor view matched the ordinary session")
+    return check_profile(incan, project, source_path, matches[0])
+
+
+pub def check_untrusted_vocabulary(incan: str, project: Path) -> Result[None, str]:
+    """Require the ordinary editor to report an unattended vocabulary refusal without preparing the registration."""
+    binary = match lsp_binary():
+        Some(value) => value
+        None => return Ok(None)
+
+    relative = "src/main.incn"
+    path = project.joinpath(relative)
+    source = read(path)?
+    if prepared_vocabulary(project):
+        return Err("unattended graph inspection prepared a vocabulary registration")
+    root = selected_editor_root(incan, project)?
+    previous = editor_views(root)?
+    mut peer = start(binary, project, remove_environment=["INCAN_ENGINE", "INCAN_LSP_ENGINE"])?
+    observed = observe_vocabulary_trust(peer, project, path, source)
+    shutdown = peer.request(2, "shutdown", JsonValue.null())
+    exited = peer.notify("exit", JsonValue.null())
+    peer.finish()?
+    _ = shutdown?
+    exited?
+    views = matching_mirrors(root, previous, relative, source)?
+    if len(views) != 1:
+        return Err("unattended trust refusal did not reach exactly one ordinary editor view")
+    if read(path)? != source or prepared_vocabulary(project) or prepared_vocabulary(Path(views[0])):
+        return Err("unattended editor preparation changed the authored source or produced a vocabulary registration")
+    return observed
+
+
+def lsp_binary() -> Option[str]:
+    """Read the optional LSP path supplied to the graph Contracts runner."""
+    environment_key: str = "INCAN_LSP"
+    return match var(environment_key):
+        Ok(value) => Some(str(value))
+        Err(_) => None
+
+
+def prepared_vocabulary(project: Path) -> bool:
+    """Detect registration metadata or either executable, even when preparation created a directory."""
+    root = project.joinpath("deps/words/target/incan/vocabulary")
+    for artifact in ["register", "desugar", "registration.json"]:
+        path = root.joinpath(artifact)
+        if path.is_file() or path.is_symlink():
+            return true
+    return false
+
+
+def observe_vocabulary_trust(mut peer: Peer, project: Path, path: Path, source: str) -> Result[None, str]:
+    """Require exactly one information-level T0134 diagnostic on the version-one source."""
+    peer.request(
+        1,
+        "initialize",
+        JsonValue.object(
+            {"processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)), "capabilities": JsonValue.object(
+                {},
+            )},
+        ),
+    )?
+    peer.notify("initialized", JsonValue.object({}))?
+    uri = file_uri(path)
+    document = JsonValue.object(
+        {"uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(1), "text": JsonValue.string(
+            source,
+        )},
+    )
+    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": document}))?
+    mut refused = 0
+    for item in peer.diagnostic_items(uri, Some(1))?:
+        if optional_text(item, "code") != "INCAN-T0134":
+            continue
+        if required(item, "severity")?.as_int() != Some(3):
+            return Err("LSP did not report the unattended trust refusal as information")
+        if "Loaf `words`" not in required_text(item, "message")?:
+            return Err("LSP trust refusal lost the selected vocabulary Loaf")
+        refused += 1
+    if refused != 1:
+        return Err(f"LSP expected one versioned T0134 trust refusal, found {refused}")
+    return Ok(None)
+
+
+def observe_editor(
+    mut peer: Peer,
+    project: Path,
+    source: str,
+    root: Path,
+    previous: list[str],
+) -> Result[list[str], str]:
+    """Drive existing navigation and sample each versioned overlay before changing the buffer again."""
+    uri = file_uri(project.joinpath("src").joinpath("main.incn"))
+    relative = "src/main.incn"
+    mut observed: list[list[str]] = []
     initialized = peer.request(
         1,
         "initialize",
@@ -54,6 +162,7 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
         ),
     )?
     peer.diagnostics(uri, 1)?
+    observed.append(matching_mirrors(root, previous, relative, source)?)
     # 2. Checked imports and navigation share public metadata and declaration relationships.
     check_standard_completions(peer, uri, source)?
     at_helper = cursor(uri, source, "println(helper())", "helper")?
@@ -99,23 +208,181 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     dependency_definition = peer.request(10, "textDocument/definition", at_dependency)?
     if "/deps/checked/src/lib.incn" not in dependency_definition.to_json().map_err((error) => error.message())?:
         return Err("LSP lost a checked dependency definition while its graph was stale")
-    # 3. An edited buffer invalidates the old hierarchy item before shutdown.
-    peer.notify(
-        "textDocument/didChange",
-        JsonValue.object(
-            {"textDocument": JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(2)}), "contentChanges": JsonValue.array(
-                [JsonValue.object({"text": JsonValue.string(f"\n{source}")})],
-            )},
-        ),
-    )?
+    # 3. An edited buffer invalidates the old hierarchy item.
+    revised = f"\n{source}"
+    change_document(peer, uri, 2, revised)?
     peer.diagnostics(uri, 2)?
+    observed.append(matching_mirrors(root, previous, relative, revised)?)
     stale = peer.request(8, "callHierarchy/incomingCalls", JsonValue.object({"item": prepared[0]}))?
     if not stale.is_null():
         return Err("LSP reused a hierarchy item from an earlier live snapshot")
-    ignored = peer.request(9, "shutdown", JsonValue.null())?
-    peer.notify("exit", JsonValue.null())?
-    peer.finish()?
+    mut invalid = revised + f"\n# Overlay for {project.0}\n"
+    invalid += "def overlay_wrong_type() -> int:\n    return \"wrong\"\n"
+    change_document(peer, uri, 3, invalid)?
+    check_live_type_error(peer, uri, invalid, 3, "return \"wrong\"")?
+    observed.append(matching_mirrors(root, previous, relative, invalid)?)
+    change_document(peer, uri, 4, revised)?
+    peer.diagnostics(uri, 4)?
+    observed.append(matching_mirrors(root, previous, relative, revised)?)
+    check_open_provider(peer, uri, revised, provider_uri, provider_path, provider_source)?
+    check_independent_document(peer, project)?
+    mut matches = observed[0]
+    for view in observed[1:]:
+        matches = [candidate for candidate in matches if candidate in view]
+    return Ok(matches)
+
+
+def change_document(mut peer: Peer, uri: str, version: int, source: str) -> Result[None, str]:
+    """Send the next full-sync buffer under the session's actual URI and version."""
+    document = JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(version)})
+    changes = JsonValue.array([JsonValue.object({"text": JsonValue.string(source)})])
+    return peer.notify("textDocument/didChange", JsonValue.object({"textDocument": document, "contentChanges": changes}))
+
+
+def check_open_provider(
+    mut peer: Peer,
+    uri: str,
+    source: str,
+    provider_uri: str,
+    provider_path: Path,
+    provider_source: str,
+) -> Result[None, str]:
+    """Check the same main buffer against the unsaved provider, then against its unchanged disk source."""
+    provider = provider_source.replace("-> int:", "-> str:").replace("return 7", "return \"seven\"")
+    main = source + "\ndef overlay_provider_type() -> int:\n    return helper()\n"
+    change_document(peer, provider_uri, 2, provider)?
+    peer.diagnostics(provider_uri, 2)?
+    change_document(peer, uri, 5, main)?
+    check_live_type_error(peer, uri, main, 5, "return helper()")?
+    broken = provider_source.replace("return 7", "return (")
+    change_document(peer, provider_uri, 3, broken)?
+    mut provider_failed = false
+    for item in peer.diagnostic_items(provider_uri, Some(3))?:
+        if required(item, "severity")?.as_int() == Some(1):
+            provider_failed = true
+            break
+    if not provider_failed:
+        return Err("the open provider's syntax error was lost")
+    change_document(peer, uri, 6, main)?
+    original_path = provider_path.resolve().map_err((error) => error.message())?
+    mut summarized = false
+    for diagnostic in peer.diagnostic_items(uri, Some(6))?:
+        message = required_text(diagnostic, "message")?
+        if required(diagnostic, "severity")?.as_int() == Some(1) and original_path.0 in message:
+            summarized = true
+    if not summarized:
+        return Err("the importer did not report the open provider's failure")
+    close_document(peer, provider_uri)?
+    change_document(peer, uri, 7, main)?
+    peer.diagnostics(uri, 7)?
+    if read(provider_path)? != provider_source:
+        return Err("the LSP overlay changed the authored provider")
     return Ok(None)
+
+
+def check_independent_document(mut peer: Peer, project: Path) -> Result[None, str]:
+    """A file outside the entry's import graph still checks its own open version."""
+    path = project.joinpath("src").joinpath("independent.incn")
+    disk = "def independent() -> int:\n    return 7\n"
+    write(path, disk)?
+    buffer = disk.replace("return 7", "return \"wrong\"")
+    uri = file_uri(path)
+    document = JsonValue.object(
+        {"uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(1), "text": JsonValue.string(
+            buffer,
+        )},
+    )
+    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": document}))?
+    check_live_type_error(peer, uri, buffer, 1, "return \"wrong\"")?
+    close_document(peer, uri)?
+    if read(path)? != disk:
+        return Err("checking the independent document rewrote its authored source")
+    return Ok(None)
+
+
+def close_document(mut peer: Peer, uri: str) -> Result[None, str]:
+    """Wait for didClose so the following requests cannot consult the closed buffer."""
+    peer.notify(
+        "textDocument/didClose",
+        JsonValue.object({"textDocument": JsonValue.object({"uri": JsonValue.string(uri)})}),
+    )?
+    if len(peer.diagnostic_items(uri, None)?) != 0:
+        return Err("closing a document did not clear its diagnostics")
+    return Ok(None)
+
+
+def check_live_type_error(mut peer: Peer, uri: str, source: str, version: int, statement: str) -> Result[None, str]:
+    """Require one type error at the authored return statement in the selected editor version."""
+    requested = cursor(uri, source, statement, "return")?
+    expected = required(requested, "position")?
+    mut errors: list[JsonValue] = []
+    for diagnostic in peer.diagnostic_items(uri, Some(version))?:
+        if required(diagnostic, "severity")?.as_int() == Some(1):
+            errors.append(diagnostic)
+    if len(errors) != 1:
+        return Err("the unsaved editor did not publish exactly one type error")
+    start = required(required(errors[0], "range")?, "start")?
+    if (
+        required_text(errors[0], "code")? != "INCAN-T0001"
+        or (
+            required(start, "line")?.as_int() != required(expected, "line")?.as_int()
+            or required(start, "character")?.as_int() != required(expected, "character")?.as_int()
+        )
+    ):
+        return Err("the unsaved type error did not identify the authored return")
+    return Ok(None)
+
+
+def check_profile(incan: str, project: Path, source: Path, observed_view: str) -> Result[None, str]:
+    """Check that the LSP selected the same view as the ordinary release-profile overlay command."""
+    result = invoke(incan, ["check", source.0, "--overlay", source.0, "--profile", "release"], project)?
+    if result.code != Some(0):
+        return Err(f"cannot check the release editor view: {result.stderr}")
+    answer = parse_json(result.stdout)?
+    if required(answer, "ok")?.as_bool() != Some(true):
+        return Err("the release editor view refused the unchanged source")
+    expected = required_text(answer, "editor_view")?
+    if Path(observed_view).name() != expected:
+        return Err("the editor did not use the configured release profile")
+    return Ok(None)
+
+
+def selected_editor_root(incan: str, project: Path) -> Result[Path, str]:
+    """Use the effective Bakery selected by the ordinary home and environment."""
+    status = invoke(incan, ["bakery", "status", "--format", "json"], project, arg0=Some("oven"))?
+    if status.code != Some(0):
+        return Err(f"cannot read the selected Bakery: {status.stderr}")
+    report = parse_json(status.stdout)?
+    if required_text(report, "schema")? != "incan.oven.store-status/1":
+        return Err("cannot identify the selected Bakery status")
+    bakery = Path(required_text(report, "store")?).resolve().map_err((error) => error.message())?
+    return Ok(bakery.parent().joinpath("editor"))
+
+
+def editor_views(root: Path) -> Result[list[str], str]:
+    """List physical editor-view directories in the selected store's sibling directory."""
+    if root.is_symlink():
+        return Err("the editor view root is a symbolic link")
+    if not root.exists():
+        return Ok([])
+    mut views: list[str] = []
+    for entry in root.iterdir().map_err((error) => error.message())?:
+        if entry.name().startswith("editor-") and entry.is_dir() and not entry.is_symlink():
+            views.append(entry.0)
+    return Ok(views)
+
+
+def matching_mirrors(root: Path, previous: list[str], relative: str, source: str) -> Result[list[str], str]:
+    """Sample the fresh physical views mirroring the exact sent buffer."""
+    mut matches: list[str] = []
+    for view in editor_views(root)?:
+        if view in previous:
+            continue
+        candidate = Path(view).joinpath(relative)
+        if candidate.is_file() and candidate.resolve().map_err((error) => error.message())?.0 == candidate.0:
+            if read(candidate)? == source:
+                matches.append(view)
+    return Ok(matches)
 
 
 def check_vocabulary(incan: str, binary: str, project: Path) -> Result[None, str]:
@@ -155,11 +422,13 @@ def check_vocabulary(incan: str, binary: str, project: Path) -> Result[None, str
     return peer.finish()
 
 
-def prepare(incan: str, project: Path) -> Result[None, str]:
+def prepare(incan: str, project: Path, remove_environment: list[str] = [], profile: str = "debug") -> Result[None, str]:
     """Prepare the consumer's declared Loaves through Oven before a live session reads their compiled interfaces."""
     mut command = Command.new(incan)
     command.env("OVEN_OWNER", "off")
-    command.arg("build").arg("src/main.incn").current_dir(project.0)
+    for variable in remove_environment:
+        command.env_remove(variable)
+    command.arg("build").arg("src/main.incn").arg("--profile").arg(profile).current_dir(project.0)
     output = command.output().map_err((error) => str(error))?
     if not output.status.success():
         return Err(f"cannot prepare the LSP consumer: {decode(output.stderr)?}")
