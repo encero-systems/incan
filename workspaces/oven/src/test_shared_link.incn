@@ -16,7 +16,9 @@ from files import make_directory, read, write
 from home_paths import bakery
 from engine_epochs import prepare_admitted_submit
 from engine_messages import Submit
-from engine_programs import NativeUnit, PreparedProgram, obtain, program_handle, restore_program
+from engine_programs import (
+    NativeUnit, PreparedProgram, obtain, prepare_selection, program_handle, read_program, restore_program,
+)
 from incan_units import obtain_executable
 from pub::incan_platform.store import SnapshotAdmission, Transaction, commit_group, get, keys_with_prefix
 from scratch import scratch_directory
@@ -25,7 +27,7 @@ from store_path_conversion import snapshot, store_path
 from toolchain import Toolchain, load_toolchain
 from unit import UnitDescription
 from unit_transport import CompilerSourceCapture
-from unit_freshness import Key, fingerprint
+from unit_freshness import Key, fingerprint, unit_key
 
 
 pub def test_development_executables_link_carriers_from_the_bakery() -> Result[None, str]:
@@ -196,13 +198,16 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     toolchain = carrier_toolchain(root, carrier, [launcher, test_runner])?
     unit = program_unit(root.joinpath("app"), standalone=true)?
     # 1. One link, sealed and indexed together under the production selector.
-    first = indexed_link(store, unit, toolchain)?
+    first = captured_link(store, unit, toolchain)?
     output = Path(first.binary)
     assert first.payload == launcher_payload.digest and indexed_payload(store)? == first.payload
     match find(store, first.identity)?:
         None => return Err("the single payload's bare unit record was missing")
         Some(fact) =>
             assert fact.identity == first.identity
+    old_reader = get_or("INCAN_RFC124_OLD_READER", "")
+    if old_reader != "":
+        require_old_bakery(Path(old_reader), store, false)?
     # Deferred publication seals and indexes the payload without creating the executable view.
     assert restore_program(store, first)?
     require_executable(output, launcher_payload)?
@@ -211,11 +216,16 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     # 2. A removed carrier: linked again, to different bytes.
     carrier.unlink().map_err((error) => error.message())?
     assert not restore_program(store, first)?
-    second = indexed_link(store, unit, toolchain)?
+    second = captured_link(store, unit, toolchain)?
     assert second.identity == first.identity and second.payload == test_payload.digest
     assert indexed_payload(store)? == second.payload, "the index still names the earlier payload"
     assert read(root.joinpath("attempts"))? == "xx" and carrier.is_file()
 
+    if old_reader != "":
+        variants = snapshot(store).map_err((error) => error.message())?
+        require_old_bakery(Path(old_reader), store, true)?
+        after = snapshot(store).map_err((error) => error.message())?
+        assert after.digest == variants.digest and after.generation == variants.generation
     # The ordinary project registration must keep both payloads reachable during collection.
     _ = collect(store, 0)?
 
@@ -237,7 +247,7 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     carrier.unlink().map_err((error) => error.message())?
     assert not restore_program(store, second)?
     assert indexed_payload(store)? == second.payload
-    retried = indexed_link(store, unit, toolchain).map_err(
+    retried = captured_link(store, unit, toolchain).map_err(
         (reason) => f"second carrier loss prevented the selected payload from relinking: {reason}",
     )?
     assert retried.identity == second.identity and retried.payload == second.payload
@@ -245,6 +255,73 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     assert indexed_payload(store)? == retried.payload
     assert restore_program(store, retried)? and lookup_ambiguity(store, first, retried) == "ambiguous"
     require_executable(output, test_payload)?
+
+    # A selected payload can be reused only for its original linkage identity.
+    foreign = NativeUnit(
+        identity="sha256:" + fingerprint(["another native linkage identity"])?,
+        payload=retried.payload,
+        binary=retried.binary,
+    )
+    assert foreign.identity != retried.identity
+    key = unit_key(unit, toolchain)?
+    match obtain_executable(unit, toolchain, output, key, true, Some(store), true, retry=Some(foreign)):
+        Ok(_) => return Err("a foreign retry selected one of the ambiguous payloads")
+        Err(reason) =>
+            assert reason.startswith(f"ambiguous unit {retried.identity}:"), reason
+            assert first.payload in reason and retried.payload in reason, reason
+    assert read(root.joinpath("attempts"))? == "xxx", "a foreign retry started another link"
+    verify_project_view_retry(root, launcher, test_runner, launcher_payload, test_payload)?
+    return Ok(None)
+
+
+def verify_project_view_retry(
+    root: Path, launcher: Path, test_runner: Path, launcher_payload: ExecutableFixture, test_payload: ExecutableFixture
+) -> Result[None, str]:
+    """Relink a manifest-backed request whose finalized view pins the retained executable."""
+    project = root.joinpath("request-view")
+    store = project.joinpath("bakery")
+    carrier = project.joinpath("native-shared").joinpath("libincan_debug_shared_0123456789abcdef.dylib")
+    toolchain = carrier_toolchain(project, carrier, [launcher, test_runner])?
+    unit = program_unit(project.joinpath("app"))?
+    first = captured_link(store, unit, toolchain, select_view=true)?
+    assert first.payload == launcher_payload.digest
+    carrier.unlink().map_err((error) => error.message())?
+    second = captured_link(store, unit, toolchain, select_view=true)?
+    assert second.identity == first.identity and second.payload == test_payload.digest
+    selected = snapshot(store).map_err((error) => error.message())?
+    indexes = keys_with_prefix(selected, "incan.engine.standalone-program\t").map_err((error) => error.message())?
+    assert not indexes, "the manifest-backed request unexpectedly has a standalone index"
+    assert lookup_ambiguity(store, first, second) == "ambiguous"
+    carrier.unlink().map_err((error) => error.message())?
+    assert not restore_program(store, second)?
+    retried = captured_link(store, unit, toolchain, select_view=true, prior=Some(second)).map_err(
+        (reason) => f"request-view retry lost its selected payload: {reason}",
+    )?
+    assert retried.identity == second.identity and retried.payload == second.payload
+    assert read(project.joinpath("attempts"))? == "xxx" and carrier.is_file()
+    assert restore_program(store, retried)?
+    require_executable(Path(retried.binary), test_payload)?
+    return Ok(None)
+
+
+def require_old_bakery(oven: Path, store: Path, variants: bool) -> Result[None, str]:
+    """Exercise the old installed Oven's verify and collection on the isolated fixture store."""
+    if oven.name() != "oven" or oven.parent().name() != "bin" or not oven.is_file():
+        return Err("the old Bakery reader must select the installed bin/oven alias")
+    home = oven.parent().parent()
+    for operation in ["verify", "gc"]:
+        command = Command.new(oven.0).args(["bakery", operation]).env("INCAN_HOME", home.0)
+        result = command.env("INCAN_BAKERY", store.0).env("OVEN_OWNER", "off").output().map_err(
+            (error) => f"cannot run old Bakery {operation}: {error}",
+        )?
+        stdout = str(RustString.from_utf8(result.stdout).map_err((error) => str(error))?)
+        stderr = str(RustString.from_utf8(result.stderr).map_err((error) => str(error))?)
+        if variants:
+            assert result.status.code() == Some(1)
+            assert "integrity" in stdout + stderr and "invalid unit record" in stdout + stderr, stdout + stderr
+        else:
+            assert result.status.success(), stdout + stderr
+        println(f"old Bakery {operation}: variants={variants}\n{stdout}{stderr}")
     return Ok(None)
 
 
@@ -330,9 +407,13 @@ def lookup_ambiguity(store: Path, first: NativeUnit, second: NativeUnit) -> str:
             return f"other refusal: {reason}"
 
 
-def indexed_link(store: Path, unit: UnitDescription, toolchain: Toolchain) -> Result[NativeUnit, str]:
-    """Run an ordinary captured standalone request through the installed engine's index and link path."""
-    view = "rfc124-standalone"
+def captured_link(
+    store: Path, unit: UnitDescription, toolchain: Toolchain, select_view: bool = false, prior: Option[NativeUnit] = None
+) -> Result[NativeUnit, str]:
+    """Run a captured request and publish its native outcome alongside its admitted inputs."""
+    view = match select_view:
+        true => "rfc124-request-view"
+        false => "rfc124-standalone"
     producer = "rfc124-link-proof"
     mut admission = SnapshotAdmission.for_store(store_path(store))
     captured = prepare_admitted_submit(
@@ -347,6 +428,8 @@ def indexed_link(store: Path, unit: UnitDescription, toolchain: Toolchain) -> Re
         ),
     )?
     handle = program_handle(captured.identity, producer, view)?
+    if let Some(expected) = prior:
+        assert read_program(store, handle)? == Some(expected), "the request lost its finalized view"
     preparation = PreparedProgram(
         unit=unit,
         toolchain=toolchain,
@@ -374,10 +457,15 @@ def indexed_link(store: Path, unit: UnitDescription, toolchain: Toolchain) -> Re
         group.append(transaction)
     if let Some(warnings) = produced.prepared_warnings:
         group.append(warnings.transaction)
-    _ = commit_group(group).map_err((error) => error.message())?
     match produced.unit:
         None => return Err("the link selected no executable")
-        Some(linked) => return Ok(linked)
+        Some(linked) =>
+            if select_view:
+                selection = prepare_selection(admission, view, linked, handle)?
+                if let Some(transaction) = selection.transaction:
+                    group.append(transaction)
+            _ = commit_group(group).map_err((error) => error.message())?
+            return Ok(linked)
 
 
 def indexed_payload(store: Path) -> Result[str, str]:
