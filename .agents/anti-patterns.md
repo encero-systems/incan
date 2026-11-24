@@ -151,7 +151,7 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 - Source: `readable-incan.md`, "The shape of a module" ("Imports come first").
 - Search: the `lateimport` findings of [`incan_structure.awk`](#incan_structureawk).
 - The earlier matcher counted only private imports. Count public re-exports as top-level imports too.
-- Remaining verified hits: five statements in `loaves/compiler/incan_mir_plan/src/lib.incn` at lines 169–221. The primitive async and I/O imports precede declarations.
+- Remaining verified hits: five statements in `loaves/compiler/incan_mir_plan/src/lib.incn` at lines 169–228. The primitive async and I/O imports precede declarations. The scanner skips both multiline string delimiters, including the fixture text in `scripts/test_check_doc_paths.incn`.
 
 ### IN5 Long lines
 
@@ -271,16 +271,74 @@ Over `*.incn` outside `fixtures`. It skips string bodies, so docstring examples 
 # Prints `<rule>\t<file>:<line>:<text>`: nested (a def inside a function body), lateimport (a top-level import after
 # the first declaration) and nodoc (a def, model, class, enum, trait or newtype whose body does not open with a string).
 function indent(s) { match(s, /^[ ]*/); return RLENGTH }
-FNR == 1 { depth = 0; seen = 0; in_str = 0; pending = 0 }
+function quote_at(text, start,    char, triple) {
+  char = substr(text, start, 1)
+  if (char != "\"" && char != "\047") return ""
+  triple = char char char
+  return substr(text, start, 3) == triple ? triple : char
+}
+function after_quote(text, start, quote,    i, width) {
+  width = length(quote)
+  for (i = start; i <= length(text); i++) {
+    if (substr(text, i, 1) == "\\") {
+      if (i == length(text)) return -1
+      i++; continue
+    }
+    if (substr(text, i, width) == quote) return i + width
+  }
+  return 0
+}
+# An unclosed triple quote or an escaped physical newline carries the delimiter forward.
+function quote_continues(quote, following) { return following < 0 || (!following && length(quote) == 3) }
+function multiline_quote(text, active,    i, quote, following) {
+  i = active == "" ? 1 : after_quote(text, 1, active)
+  if (quote_continues(active, i)) return active
+  if (!i) return ""
+  while (i <= length(text)) {
+    if (substr(text, i, 1) == "#") break
+    quote = quote_at(text, i)
+    if (quote == "") { i++; continue }
+    following = after_quote(text, i + length(quote), quote)
+    if (following <= 0) return quote_continues(quote, following) ? quote : ""
+    i = following
+  }
+  return ""
+}
+function code_after(text, position) { return substr(text, position) !~ /^[ \t]*(#.*)?$/ }
+# Pending documentation: 1 is the header, 2 the first statement, 3 a multiline literal.
+FNR == 1 { depth = 0; seen = 0; multiline = ""; pending = 0 }
 {
   line = $0
-  if (in_str) { if (gsub(/"""/, "&", line) % 2 == 1) in_str = 0; next }
+  if (multiline != "") {
+    if (pending == 3) {
+      # Finish the declaration's potential multiline docstring.
+      following = after_quote(line, 1, multiline)
+      if (quote_continues(multiline, following)) next
+      if (!following || code_after(line, following)) print "nodoc\t" at
+      pending = 0
+      multiline = following ? multiline_quote(substr(line, following), "") : ""
+    } else multiline = multiline_quote(line, multiline)
+    next
+  }
   if (line ~ /^[ ]*$/ || line ~ /^[ ]*#/) next
   ind = indent(line)
-  if (pending == 2) { if (line !~ /^[ ]*(r|f)?"/) print "nodoc\t" at; pending = 0 }
+  if (pending == 2) {
+    # A function docstring is a standalone string literal, including either quote style.
+    quote = quote_at(line, ind + 1)
+    if (quote != "") {
+      following = after_quote(line, ind + 1 + length(quote), quote)
+      if (quote_continues(quote, following)) { multiline = quote; pending = 3; next }
+      if (!following || code_after(line, following)) print "nodoc\t" at
+      pending = 0
+      multiline = following ? multiline_quote(substr(line, following), "") : ""
+      next
+    }
+    print "nodoc\t" at
+    pending = 0
+  }
+  multiline = multiline_quote(line, "")
   if (pending == 1) {
     if (line ~ /:[ ]*(#.*)?$/) pending = 2
-    if (gsub(/"""/, "&", line) % 2 == 1) in_str = 1
     next
   }
   while (depth > 0 && ind <= sind[depth]) depth--
@@ -298,7 +356,6 @@ FNR == 1 { depth = 0; seen = 0; in_str = 0; pending = 0 }
     next
   }
   if (line ~ /^[ ]*module [A-Za-z_]+:/) { depth++; sind[depth] = ind; kind[depth] = "module"; next }
-  if (gsub(/"""/, "&", line) % 2 == 1) in_str = 1
 }
 ```
 

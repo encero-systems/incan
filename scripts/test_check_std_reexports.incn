@@ -73,7 +73,7 @@ def test_reads_function_names_and_import_lists() -> Result[None, str]:
     assert found[0].module == "io"
     assert found[0].names == ["BytesIO", "IoError"]
     assert found[0].aliases == ["Buffer", "IoError"]
-    require_late_import_inventory()?
+    require_structural_inventory()?
     return Ok(None)
 
 
@@ -89,8 +89,8 @@ def package() -> Result[TemporaryDirectory, str]:
     return Ok(temporary)
 
 
-def require_late_import_inventory() -> Result[None, str]:
-    """The inventory reports real plain and public late imports, while skipping literal examples."""
+def require_structural_inventory() -> Result[None, str]:
+    """The inventory distinguishes late imports, standalone docstrings and string expressions."""
     repository = repository_root()?
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
@@ -103,21 +103,46 @@ def require_late_import_inventory() -> Result[None, str]:
     mut fixture = "\"\"\"An example in the module docstring.\npub from crate.example import DocOnly\n\"\"\"\n"
     fixture += "from std.fs import Path\npub from crate.example import Early\npub def sample() -> None:\n"
     fixture += "    \"\"\"An example in the function docstring.\npub from crate.example import StillDocOnly\n"
-    fixture += "    \"\"\"\n    pass\npub from crate.example import Late\nfrom std.fs import File\n"
+    fixture += "    \"\"\"\n    pass\ndef quoted_text() -> str:\n    return '''An example in a fixture string.\n"
+    fixture += "from std.fs import FixtureOnly\n\"\"\"\nfrom std.fs import NestedExample\n\"\"\"\n"
+    fixture += "pub from crate.example import StillFixtureOnly\n'''\n"
+    fixture += "pub from crate.example import Late\nfrom std.fs import File\n"
     write(root, "sample.incn", fixture)?
-    assert late_imports(root, ["sample.incn"])? == [
-        "lateimport\tsample.incn:11:pub from crate.example import Late",
-        "lateimport\tsample.incn:12:from std.fs import File",
-    ]
+    findings = inventory_findings(root, ["sample.incn"])?
+    assert findings == [
+        "lateimport\tsample.incn:19:pub from crate.example import Late",
+        "lateimport\tsample.incn:20:from std.fs import File",
+    ], "\n".join(findings)
 
     primitives = repository.joinpath("loaves/stdlib/primitives/src/primitives")
-    late = late_imports(root, [primitives.joinpath("async.incn").0, primitives.joinpath("io.incn").0])?
+    late = inventory_findings(root, [primitives.joinpath("async.incn").0, primitives.joinpath("io.incn").0])?
     assert late == [], "\n".join(late)
+
+    mut declarations = "def single() -> None:\n    'It\\'s documented.'  # Escape and comment.\n    pass\n\n\n"
+    declarations += "def multiline() -> None:\n"
+    declarations += "    '''Documented across\n    two lines.'''  # Closing comment.\n    pass\n\n\n"
+    declarations += "def double() -> None:\n    \"Documented with a double quote.\"\n    pass\n\n\n"
+    declarations += "def single_expression() -> None:\n    'left' + 'right'\n    pass\n\n\n"
+    declarations += "def double_expression() -> None:\n    \"left\" + \"right\"\n    pass\n\n\n"
+    declarations += "def triple_expression() -> None:\n    '''left\n    continued''' + 'right'\n    pass\n\n\n"
+    declarations += "def interpolated() -> None:\n    f\"Value {1}\"\n    pass\n\n\n"
+    declarations += "def missing() -> None:\n    pass\n"
+    declarations += "\n\ndef continued() -> None:\n"
+    declarations += "    \"A literal with a backslash\\\n    and a physical newline.\"  # Documented.\n    pass\n"
+    write(root, "docstrings.incn", declarations)?
+    undocumented = inventory_findings(root, ["docstrings.incn"], "nodoc")?
+    assert undocumented == [
+        "nodoc\tdocstrings.incn:17:def single_expression() -> None:",
+        "nodoc\tdocstrings.incn:22:def double_expression() -> None:",
+        "nodoc\tdocstrings.incn:27:def triple_expression() -> None:",
+        "nodoc\tdocstrings.incn:33:def interpolated() -> None:",
+        "nodoc\tdocstrings.incn:38:def missing() -> None:",
+    ], "\n".join(undocumented)
     return Ok(None)
 
 
-def late_imports(root: Path, files: list[str]) -> Result[list[str], str]:
-    """Run the inventory matcher and keep the exact source positions of late imports."""
+def inventory_findings(root: Path, files: list[str], rule: str = "lateimport") -> Result[list[str], str]:
+    """Run the inventory matcher and keep exact source positions for one rule."""
     mut command = Command.new("/usr/bin/awk")
     command.current_dir(root.0).arg("-f").arg("incan_structure.awk")
     for file in files:
@@ -125,4 +150,4 @@ def late_imports(root: Path, files: list[str]) -> Result[list[str], str]:
     result = command.output().map_err((error) => f"cannot run the inventory matcher: {error}")?
     assert result.status.success()
     output = RustString.from_utf8(result.stdout).map_err((error) => f"invalid inventory output: {error}")?
-    return Ok([line for line in output.split("\n") if line.startswith("lateimport\t")])
+    return Ok([line for line in output.split("\n") if line.startswith(f"{rule}\t")])
