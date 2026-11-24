@@ -240,37 +240,7 @@ def exercise_ordinal_map() -> Result[None, OrdinalMapError]:
     eight_byte: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 4294967296)])?
     assert eight_byte.ordinal_width_bytes() == 8
 
-    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, 1), (alpha, 2)]), "duplicate_key")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, 1), (beta, 1)]), "duplicate_ordinal")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, -1)]), "negative_ordinal")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(b"bad"), "truncated")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, 0, 0)), "invalid_magic")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, len(b"INCAN_ORDMAP\0"), 2)), "unsupported_version")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, 15, 1)), "unsupported_flags")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_key_encoding_payload_offset(), 120)), "key_encoding_mismatch")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_width_offset(encoded), 3)), "invalid_ordinal_width")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_lookup_algorithm_payload_offset(encoded), 120)), "unsupported_lookup")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_verification_mode_offset(encoded), 9)), "unsupported_verification")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_append_byte_to_bytes(encoded, 1)), "trailing_bytes")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_section_payload_offset(encoded, 0), 3)), "invalid_key_offsets")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_key_final_offset_offset(encoded), 4)), "invalid_key_records")
-    wide_map: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 256)])?
-    wide_encoded = wide_map.to_bytes()
-    noncanonical_ordinals = _replace_byte(_replace_byte(wide_encoded, _ordinal_section_payload_offset(wide_encoded, 1), 1), _ordinal_section_payload_offset(wide_encoded, 1) + 1, 0)
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(noncanonical_ordinals), "non_canonical_ordinal_width")
-    one_key_encoded = one_byte.to_bytes()
-    invalid_ordinal_section = _remove_byte_at(_replace_byte(one_key_encoded, _ordinal_section_length_offset(one_key_encoded, 1), 0), _ordinal_section_payload_offset(one_key_encoded, 1))
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(invalid_ordinal_section), "invalid_ordinals")
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_section_payload_offset(encoded, 2), 255)), "invalid_lookup_payload")
-    metadata_payload = _append_byte_to_bytes(_replace_byte(encoded, _ordinal_section_length_offset(encoded, 3), 1), 0)
-    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(metadata_payload), "unsupported_metadata")
-    loose = LooseKey(value=1)
-    loose_map: OrdinalMap[LooseKey] = OrdinalMap.from_pairs([(loose, 1)])?
-    loose_encoded = loose_map.to_bytes()
-    noncanonical_key_payload = _replace_byte(loose_encoded, _ordinal_key_record_payload_offset(loose_encoded, 0), 1)
-    assert_loose_ordinal_error(OrdinalMap[LooseKey].from_bytes(noncanonical_key_payload), "non_canonical_key_payload")
-    assert_bad_encoding_error(OrdinalMap.from_keys([BadEncodingKey(value=1)]), "invalid_key_encoding")
-    assert_raises[ValueError](build_bad_empty_map)
+    exercise_invalid_ordinal_maps(alpha, beta, encoded, one_byte)?
 
     uuid = UUID.from_int(113059749145936325402354257176981405696)
     uuid_map: OrdinalMap[UUID] = OrdinalMap.from_pairs([(uuid, 42)])?
@@ -302,6 +272,44 @@ def exercise_ordinal_map() -> Result[None, OrdinalMapError]:
     status_restored: OrdinalMap[InvoiceStatus] = OrdinalMap.from_bytes(status_map.to_bytes())?
     assert status_restored.require(InvoiceStatus.Cancelled)? == 2
 
+    return Ok(None)
+
+
+def exercise_invalid_ordinal_maps(
+    alpha: SmallKey, beta: SmallKey, encoded: bytes, one_byte: OrdinalMap[SmallKey],
+) -> Result[None, OrdinalMapError]:
+    """Check rejected constructors and wire mutations against the maps already built by the fixture."""
+    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, 1), (alpha, 2)]), "duplicate_key")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, 1), (beta, 1)]), "duplicate_ordinal")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, -1)]), "negative_ordinal")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(b"bad"), "truncated")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, 0, 0)), "invalid_magic")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, len(b"INCAN_ORDMAP\0"), 2)), "unsupported_version")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, 15, 1)), "unsupported_flags")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_key_encoding_payload_offset(), 120)), "key_encoding_mismatch")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_width_offset(encoded), 3)), "invalid_ordinal_width")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_lookup_algorithm_payload_offset(encoded), 120)), "unsupported_lookup")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_verification_mode_offset(encoded), 9)), "unsupported_verification")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_append_byte_to_bytes(encoded, 1)), "trailing_bytes")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_section_payload_offset(encoded, 0), 3)), "invalid_key_offsets")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_key_final_offset_offset(encoded), 4)), "invalid_key_records")
+    wide_map: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 256)])?
+    wide_encoded = wide_map.to_bytes()
+    noncanonical_ordinals = _replace_byte(_replace_byte(wide_encoded, _ordinal_section_payload_offset(wide_encoded, 1), 1), _ordinal_section_payload_offset(wide_encoded, 1) + 1, 0)
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(noncanonical_ordinals), "non_canonical_ordinal_width")
+    one_key_encoded = one_byte.to_bytes()
+    invalid_ordinal_section = _remove_byte_at(_replace_byte(one_key_encoded, _ordinal_section_length_offset(one_key_encoded, 1), 0), _ordinal_section_payload_offset(one_key_encoded, 1))
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(invalid_ordinal_section), "invalid_ordinals")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_section_payload_offset(encoded, 2), 255)), "invalid_lookup_payload")
+    metadata_payload = _append_byte_to_bytes(_replace_byte(encoded, _ordinal_section_length_offset(encoded, 3), 1), 0)
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(metadata_payload), "unsupported_metadata")
+    loose = LooseKey(value=1)
+    loose_map: OrdinalMap[LooseKey] = OrdinalMap.from_pairs([(loose, 1)])?
+    loose_encoded = loose_map.to_bytes()
+    noncanonical_key_payload = _replace_byte(loose_encoded, _ordinal_key_record_payload_offset(loose_encoded, 0), 1)
+    assert_loose_ordinal_error(OrdinalMap[LooseKey].from_bytes(noncanonical_key_payload), "non_canonical_key_payload")
+    assert_bad_encoding_error(OrdinalMap.from_keys([BadEncodingKey(value=1)]), "invalid_key_encoding")
+    assert_raises[ValueError](build_bad_empty_map)
     return Ok(None)
 
 

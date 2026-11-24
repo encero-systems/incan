@@ -9,7 +9,8 @@ from std.encoding.hex import hexlify
 from engine_channel import Channel
 from compiler_graph_records import ReceiptProjectionCache
 from engine_messages import BindingOutcome, Captured, Complete, CompletionStatus, Message
-from engine_overlay import is_editor_view
+from engine_overlay import is_editor_view, preparation_stop_report
+from files import write
 from engine_replies import send
 from request_directory import serve_from, served
 from engine_programs import (
@@ -333,6 +334,20 @@ def settled_check(store: Path, mut admission: SnapshotAdmission, pending: Pendin
     read = read_counts()
     outcome = result?
     record(Operation.EngineUnit, pending.capture.revision, checking)
+    if let Some(stopped) = outcome.preparation_stop:
+        # A trust stop precedes compiler work and leaves the previous capture selected.
+        write(Path(f"{outcome.console}.out"), preparation_stop_report(stopped)?)?
+        return Ok(Ready(
+            message=Complete(
+                snapshot=pending.capture.snapshot.digest,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=CompletionStatus.Failed,
+                observation_handle="",
+            ),
+            console=outcome.console,
+        ))
     captured = after_projection(pending.capture)?
     mut snapshot = captured.snapshot.digest
     if let Some(transaction) = captured.transaction:
