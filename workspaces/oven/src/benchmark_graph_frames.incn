@@ -157,15 +157,16 @@ def witness_request(witness: ReadWitness) -> RecordRequest:
 class ReceiptViews:
     """Reuse decoded receipts only within the same authenticated immutable view of this store."""
 
-    by_view: Dict[tuple[int, str, str, str], Rc[ReadReceipt]] = {}
+    by_view: Dict[str, Rc[ReadReceipt]] = {}
 
     pub def read(mut self, selected: Snapshot, key: str) -> Result[Rc[ReadReceipt], str]:
         """Authenticate the selected content root once, sharing the immutable receipt across its witnesses."""
-        identity = (selected.generation, selected.digest, selected.view, key)
-        if let Some(prior) = self.by_view.get(identity):
-            return Ok(prior)
         if not key.startswith(RECEIPT_KEY_PREFIX) or len(key) != len(RECEIPT_KEY_PREFIX) + 64:
             return Err("invalid graph receipt key")
+        # The view length keeps arbitrary view text separate from the canonical receipt key.
+        identity = f"{selected.generation}:{selected.digest}:{len(selected.view)}:{selected.view}{key}"
+        if let Some(prior) = self.by_view.get(identity):
+            return Ok(prior)
         payload = required_value(selected, key)?
         if hexlify(sha256.digest(payload)) != key[len(RECEIPT_KEY_PREFIX):]:
             return Err("graph receipt payload differs from its content root")
