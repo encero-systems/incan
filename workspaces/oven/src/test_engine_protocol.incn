@@ -1137,6 +1137,11 @@ def process_lifecycle() -> Result[None, str]:
     channel.transport.close()?
     await_exit(first, not first_done)?
     await_exit(second, not second_done)?
+    return check_idle_service_reuse(binary, root, identity, source)
+
+
+def check_idle_service_reuse(binary: str, root: Path, identity: Identity, source: Path) -> Result[None, str]:
+    """Require native reuse after restart and verify the service exits when its last connection closes."""
     # A fresh service with a one-second timeout exits after its last client disconnects, without Drain.
     mut idle = launch_service(binary, root, identity)?
     mut idle_channel = await_service(root, identity)?
