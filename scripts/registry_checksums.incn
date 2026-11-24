@@ -60,7 +60,12 @@ pub def checksummed_closure(closure: JsonValue, pins: JsonValue) -> Result[JsonV
 
     Every unit keeps its upstream pin. Legacy rows carry that digest in the closure. Issued rows keep the source archive
     digest, under an independently admitted issuer and revision in the release policy. Compiled identity is unchanged.
+    A producer result that refused any demand cannot select candidate state.
     """
+    if let Some(outcomes) = closure.get("refused"):
+        refused = outcomes.expect_array().map_err((error) => f"registry producer refusals: {error.message()}")?
+        if len(refused) != 0:
+            return Err("the registry producer refused one or more selected Units")
     checksums = pins.require("checksums").map_err((error) => f"{REGISTRY_CHECKSUMS}: {error.message()}")?
     mut units: list[JsonValue] = []
     mut unpinned: list[str] = []
