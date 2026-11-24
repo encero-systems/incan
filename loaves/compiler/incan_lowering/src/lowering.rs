@@ -10,8 +10,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use incan_mir_plan_native::{
-    Callee, EnumDeclaration, ExternalFunction, Function, GenericEnumDeclaration, GenericModelDeclaration,
-    ModelDeclaration, Plan, PlanExport, StaticCell, ZipCarrier, fold_carrier_positions, fold_inventories, source_span,
+    Callee, EnumDeclaration, ExternalFunction, FunctionSlot, GenericEnumDeclaration, GenericModelDeclaration,
+    ModelDeclaration, Plan, PlanExport, StaticCell, ZipCarrier, fold_carrier_positions, fold_function_slots,
+    source_span,
 };
 use incan_semantics_core::body_ir::{BodyIrModule, LinkedStaticAccessors, NativeUnionDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, IncanType};
@@ -79,7 +80,7 @@ pub struct UnitContinuation {
     layout_inputs_grew: bool,
     pub models: Vec<ModelDeclaration>,
     pub enums: Vec<EnumDeclaration>,
-    pub functions: Vec<Function>,
+    pub functions: Vec<FunctionSlot>,
     pub externals: Vec<ExternalFunction>,
     pub instances: Vec<Instance>,
     pub emitted_frames: EmittedFrames,
@@ -244,7 +245,7 @@ pub fn program_context(
 pub struct Inventories {
     pub models: Vec<ModelDeclaration>,
     pub enums: Vec<EnumDeclaration>,
-    pub functions: Vec<Function>,
+    pub functions: Vec<FunctionSlot>,
     pub externals: Vec<ExternalFunction>,
     pub instances: Vec<Instance>,
 }
@@ -535,7 +536,7 @@ fn finish_unit_plan(
         RuntimeRetention::NeedsRuntime(requests) => {
             inventories.functions.truncate(original_functions);
             for (index, callee) in future_callees {
-                inventories.functions[index].future_callee = Some(callee);
+                inventories.functions[index].make_mut().future_callee = Some(callee);
             }
             let retry = UnitContinuation {
                 layout_inputs_grew: context.nominal_declarations.len() != original_nominal_count,
@@ -689,8 +690,12 @@ pub fn initial_plan_roots(
     )?;
     inventories.models.extend(prepared_models);
     inventories.enums.extend(prepared_enums);
-    inventories.functions.extend(checked_functions);
-    inventories.functions.extend(string_functions);
+    inventories
+        .functions
+        .extend(checked_functions.into_iter().map(FunctionSlot::from));
+    inventories
+        .functions
+        .extend(string_functions.into_iter().map(FunctionSlot::from));
     inventories.externals.extend(checked_runtime);
     merge_externals(&mut inventories.externals, conversion_runtime)?;
     merge_instance_requests(&mut inventories.instances, &checked_instances);
@@ -738,8 +743,12 @@ fn resume_plan_roots(
         previous_model_count,
     )?;
     extend_program_context(program, context, constructors, new_unions)?;
-    inventories.functions.extend(checked_functions);
-    inventories.functions.extend(string_functions);
+    inventories
+        .functions
+        .extend(checked_functions.into_iter().map(FunctionSlot::from));
+    inventories
+        .functions
+        .extend(string_functions.into_iter().map(FunctionSlot::from));
     inventories.externals.extend(checked_runtime);
     merge_externals(&mut inventories.externals, conversion_runtime)?;
     merge_instance_requests(&mut inventories.instances, &checked_instances);
@@ -886,7 +895,7 @@ fn finalize_plan_layouts(
     let sources = inventories.enums.len();
     inventories.enums.extend(intrinsics.iter().cloned());
     // No carrier is appended after this point, so each carrier position takes its place in the plan's enum table.
-    fold_inventories(
+    fold_function_slots(
         &mut inventories.functions,
         &mut inventories.models,
         &mut inventories.enums,

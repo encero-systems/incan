@@ -8,11 +8,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    EventPosition, EventReference, ExternalFunction, Function, LoweringEvent, LoweringRefusal, NominalKind,
-    NominalReference, PlacedRecord, PlanFunctionRecord, PositionChange, ProductNominal, SourceSpan, UnitNominals,
-    WirePositions, decode_lowering_event, decode_plan_function_record, decode_product_parts, encode_lowering_event,
-    encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product, place_product_record,
-    plan_function_digest, positioned_product_requirements, product_nominals, resolve_nominals, unresolved_nominal,
+    EventPosition, EventReference, ExternalFunction, Function, FunctionSlot, LoweringEvent, LoweringRefusal,
+    NominalKind, NominalReference, PlacedRecord, PlanFunctionRecord, PositionChange, ProductNominal, SourceSpan,
+    UnitNominals, WirePositions, decode_lowering_event, decode_plan_function_record, decode_product_parts,
+    encode_lowering_event, encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product,
+    place_product_record, plan_function_digest, positioned_product_requirements, product_nominals, resolve_nominals,
+    unresolved_nominal,
 };
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::semantic_digest::semantic_digest;
@@ -586,8 +587,10 @@ pub fn admitted_function(
     resolved: &[NominalReference],
     linked: &BTreeSet<String>,
     runtime_scope: &BodyIrModule,
-) -> Option<(Function, Vec<ExternalFunction>, Vec<Function>)> {
-    restore_scalar_product(placed, resolved, linked, Some(runtime_scope)).ok()
+) -> Option<(FunctionSlot, Vec<ExternalFunction>, Vec<Function>)> {
+    let allow = |path: &str| sealed_runtime_path(runtime_scope, path);
+    let pending = (!runtime_scope.runtime_binding_scopes.is_empty()).then_some(&allow as &dyn Fn(&str) -> bool);
+    placed.restore_slot(resolved, linked, pending).ok()
 }
 
 /// Admit deferred call demands only during ordinary planning, where the current sealed scope will resolve them.
