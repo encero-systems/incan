@@ -273,6 +273,7 @@ pub def obtain_executable(
     graph_body_records: Option[list[SelectedBodyPage]] = None,
     ranked: Option[RankedBuildInputs] = None,
     records_directory: Option[Path] = None,
+    report_directory: Option[Path] = None,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -291,7 +292,10 @@ pub def obtain_executable(
     shared = development_link(unit, development)
     # Inputs that cannot be named portably are compiled in place; nothing is baked or reused.
     if key.refusal != "":
-        completed = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records, records_directory)?
+        completed = compile_staged(
+            unit, toolchain, output, key, key.refusal, shared, graph_body_records, records_directory,
+            report_directory=report_directory,
+        )?
         return Ok(Made(code=completed.code, launch=output, evaluations=1,
             plan_module_selection_digest=completed.plan_module_selection_digest))
     selected = linkage_key(key, shared)?
@@ -347,6 +351,7 @@ pub def obtain_executable(
         selected_pages,
         records_directory,
         staged_warnings,
+        report_directory,
     )?
     if completed.code != 0:
         _ = staged.remove_tree()
@@ -464,10 +469,12 @@ def compile_staged(
     graph_body_records: Option[list[SelectedBodyPage]] = None,
     records_directory: Option[Path] = None,
     checked_warnings: Option[Path] = None,
+    report_directory: Option[Path] = None,
 ) -> Result[PreparedUnitCompletion, str]:
     """Compile a unit to its staged name and retain its successful dispatch authority."""
     return compile_prepared_unit_completion(
         unit, toolchain, staged, Some(key), reason, shared, graph_body_records, records_directory, checked_warnings,
+        report_directory,
     )
 
 
