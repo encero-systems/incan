@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
+from pub::incan_platform.trace import Operation
 from pub::internal_models.records import RecordKey, encode_record_key
 from pub::internal_models.source_value_records import source_value
 from compiler_source_projection import (
@@ -17,6 +18,7 @@ from compiler_source_projection import (
 )
 from core_process import executable
 from observation import observe
+from jec import begin as begin_work, record as record_work
 from engine_capture import CapturedInput, InputRole
 from project_library import provides_source
 from unit import UnitDescription, dependency_source_roots
@@ -225,7 +227,15 @@ def captured_source_identity(
         Err(_) => return Ok(None)
         Ok(resolved) => resolved.0
 
-    for dependency in dependency_source_roots(unit):
+    clock = begin_work()
+    roots = dependency_source_roots(unit)
+    if clock is not None:
+        record_work(
+            Operation.EngineSelect,
+            "captured-source-dependency-roots\t" + unit.project_root + "\t" + path,
+            clock,
+        )
+    for dependency in roots:
         if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
             if unit.project_library == Some(dependency[0]):
                 if not project_member or not provides_source(relative):
