@@ -26,6 +26,7 @@ from bakery import (
     bakery,
     claim,
     find,
+    find_executable_payload,
     view_directory,
     lookup,
     reached,
@@ -46,6 +47,7 @@ from compiler_refusals import (
     PreparedWarnings, check_or_replay, ordinary_compilation, retain_checked_warnings, warning_identity,
 )
 from compiler_worker import relay_console
+from engine_program_records import NativeUnit
 from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
 from scratch import scratch_directory
@@ -273,6 +275,7 @@ pub def obtain_executable(
     graph_body_records: Option[list[SelectedBodyPage]] = None,
     ranked: Option[RankedBuildInputs] = None,
     records_directory: Option[Path] = None,
+    retry: Option[NativeUnit] = None,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -307,15 +310,16 @@ pub def obtain_executable(
         warnings = warning_identity(key)?
         retained.append(warnings)
     register_root(store, unit.project_root, root_registration(unit), retained)?
-    # 1. A sealed executable uses the checked warnings of this raw source identity.
-    if let Some(fact) = current_executable(store, identity, output)?:
+    # 1. An admitted retry keeps its payload only for this exact executable identity.
+    payload = retry_payload(retry, identity, output.name())?
+    if let Some(fact) = current_executable(store, identity, output, payload)?:
         made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication)?
         trace(f"{label}: reused")
         return Ok(made)
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
-    if let Some(fact) = current_executable(store, identity, output)?:
+    if let Some(fact) = current_executable(store, identity, output, payload)?:
         made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
@@ -430,12 +434,25 @@ def viewed(store: Path, fact: Fact, output: Path, kind: str, shared: bool) -> Re
     return Ok(Made(code=0, launch=output, fact=Some(fact), identity=fact.identity))
 
 
-def current_executable(store: Path, identity: str, output: Path) -> Result[Option[Fact], str]:
+def retry_payload(retry: Option[NativeUnit], identity: str, name: str) -> Result[Option[str], str]:
+    """Carry the earlier payload only while the descriptor names the recomputed executable."""
+    if let Some(selected) = retry:
+        if selected.identity == identity:
+            if Path(selected.binary).name() != name:
+                return Err("the selected native retry names another executable")
+            return Ok(Some(selected.payload))
+    return Ok(None)
+
+
+def current_executable(store: Path, identity: str, output: Path, payload: Option[str]) -> Result[Option[Fact], str]:
     """
     The sealed fact of `identity`, while its executable can still start. Its linkage key already binds the loader
     generations admitted at link time; a shared carrier the executable loads that is gone since means linking again.
     """
-    match find(store, identity)?:
+    selected = match payload:
+        Some(digest) => find_executable_payload(store, identity, output.name(), digest)?
+        None => find(store, identity)?
+    match selected:
         None => return Ok(None)
         Some(fact) =>
             if not carriers_present(store, fact, output)?:
