@@ -20,6 +20,7 @@ from pub::incan_platform.store import (
     first_stored_key,
     keys_with_prefix,
     locate_value,
+    lookup,
     owned,
     read_frame,
     revisions_with_prefix,
@@ -276,6 +277,28 @@ pub def reusable_evaluation(
     """
     mut selected_witnesses: Dict[str, tuple[RecordRequest, str]] = {}
     return select_evaluation(selected, output, profile, selected_witnesses, cutoff=cutoff)
+
+
+pub def matching_plan_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+    expected: Borrowed[bytes],
+    cutoff: EditCutoff,
+) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
+    """Authenticate a current Plan function whose caller already owns the exact product bytes."""
+    evaluation, receipt = match evaluation_authority(selected, output, profile)?:
+        Some(authority) => authority
+        None => return Ok(None)
+    mapped = match lookup(selected, evaluation.output).map_err((error) => error.message())?:
+        Lookup.Found(value) => value
+        _ => return Err("selected compiler evaluation is incomplete")
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    if cutoff.revalidates(evaluation.output) and not witnesses_validate(selected, receipt, verified)?:
+        return Ok(None)
+    if mapped.len() != len(expected) or not mapped.0.as_bytes().starts_with(expected):
+        return Err("restored module event differs from its selected function product")
+    return Ok(Some((evaluation, receipt)))
 
 
 pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
