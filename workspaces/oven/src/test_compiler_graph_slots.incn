@@ -16,6 +16,7 @@ from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_graph_records import (
     OutputSlots,
     family_outputs,
+    output_replacements,
     prepare_evaluation,
     publish_evaluation,
     readers_of,
@@ -25,7 +26,7 @@ from compiler_graph_records import (
 )
 from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
-from compiler_body_keys import body_key, project_declaration_slot
+from compiler_body_keys import body_identity_profile, body_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_publication import prepared_product_request
 from compiler_source_projection import (
@@ -76,8 +77,8 @@ pub def test_removed_and_replaced_functions_leave_only_their_historical_graph_sl
             assert (present_after is None) == (row.key.facet == "gone")
     for row in before.owners:
         owner = "function:main::" + row.key.facet + "|old"
-        scope = Some(OutputSlots(origin=origin, identity_profile="incan.stable-declaration/1", included=Some([owner])))
         for family, profile in products:
+            scope = Some(OutputSlots(origin=origin, identity_profile=body_identity_profile(family), included=Some([owner])))
             assert len(family_outputs(graph, family, profile, scope)?) == 1
             selected = family_outputs(edited, family, profile, scope)?
             if row.key.facet == "unknown":
@@ -116,7 +117,18 @@ pub def test_scope_name_leaves_only_after_its_last_reader_is_retired() -> Result
     receipt = source.receipt(scope, owners[2], [prepared_product_request(binding.key)])?
     mut transfer = begin(shared)
     retire_output(transfer, CHECKER_PROFILE, owners[1])?
-    _ = prepare_evaluation(transfer, owners[2].identity, rank, b"checked", receipt)?
+    prepared = prepare_evaluation(transfer, owners[2].identity, rank, b"checked", receipt)?
+    assert transfer.root.value == shared.root.value and transfer.root.placement == shared.root.placement
+    assert transfer.base == shared.generation and transfer.view == shared.view
+    assert prepared.edge_count == 1 and len(transfer.writes) == 7
+    positions, _output_slots, _renewed_scopes = output_replacements(transfer.writes)
+    mut edges = 0
+    for position in range(len(transfer.writes)):
+        written = transfer.writes[position].key
+        if written.startswith("incan.engine.edge-out/3\t") or written.startswith("incan.engine.edge-in/3\t"):
+            assert positions.get(written) == Some(position)
+            edges += 1
+    assert edges == 2
     supersede_outputs(shared, transfer)?
     moved = commit(transfer).map_err((error) => error.message())?
     assert get(moved, key).map_err((error) => error.message())? == Some(encoded)
@@ -126,6 +138,7 @@ pub def test_scope_name_leaves_only_after_its_last_reader_is_retired() -> Result
     final_view = commit(last).map_err((error) => error.message())?
     assert get(final_view, key).map_err((error) => error.message())? is None
     assert get(graph, key).map_err((error) => error.message())? == Some(encoded)
+    assert len(positions) == edges, f"retirement indexed {len(positions) - edges} non-edge writes"
     return Ok(None)
 
 

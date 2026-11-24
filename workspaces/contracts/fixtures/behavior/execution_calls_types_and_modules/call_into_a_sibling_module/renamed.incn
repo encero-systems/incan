@@ -1,0 +1,8 @@
+"""Call the sibling function through a module alias."""
+
+import helper as provider
+
+
+pub def observe() -> None:
+    """Print the result of the module-qualified call."""
+    println(provider.bump(41))

@@ -1,13 +1,20 @@
 """Verify reference prose rules, their exclusions and untracked-page discovery."""
 
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.environ import get_or
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from check_reference_contract import page_findings, changed_pages
-from check_support import git
+from check_support import git, read, repository_root
+from check_test_support import Outcome, write
+
+
+const FULL_REFERENCE_SCAN: str = "incan run scripts/check_reference_contract.incn -- --all"
 
 
 def test_flags_each_rule_in_prose() -> Result[None, str]:
-    """Every lexical rule reports a violating source line."""
+    """Every lexical rule reports a violation unless a specific phrase exempts it."""
     for rule, text in [
         ("comparison with another language", "Renders as Python spells it.\n"),
         ("time-bound wording", "This is currently refused.\n"),
@@ -20,6 +27,48 @@ def test_flags_each_rule_in_prose() -> Result[None, str]:
         ("example comment", "```incan\nx = f(1)   # the first alternative binds x\n```\n"),
     ]:
         assert rule in findings(text)?
+    return require_specific_exception_phrases()
+
+
+def require_specific_exception_phrases() -> Result[None, str]:
+    """Exercise the normal checker with absent, valid and malformed exceptions."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path().resolve().map_err((error) => error.message())?
+    repository = repository_root()?
+    write(root, "AGENTS.md", "")?
+    for file in ["check_reference_contract.incn", "check_support.incn"]:
+        write(root, f"scripts/{file}", read(repository.joinpath(f"scripts/{file}"))?)?
+
+    page = "tooling/reference/example.md"
+    allow = "scripts/check_reference_contract.allow"
+    write(root, f"workspaces/docs-site/docs/{page}", "Prefer this call.\nThis is currently refused.\n")?
+    absent = invoke_checker(root, "check_reference_contract", "--all")?
+    assert absent.code == 1 and "2 finding(s) in 1 page(s)" in absent.stdout, absent.stdout
+    assert f"{page}:1: advice:" in absent.stdout and f"{page}:2: time-bound wording:" in absent.stdout
+
+    for scope in [page, "*"]:
+        write(root, allow, f"{scope}\tPrefer this call.\tFixture explanation\n")?
+        scoped = invoke_checker(root, "check_reference_contract", "--all")?
+        assert scoped.code == 1 and "1 finding(s) in 1 page(s)" in scoped.stdout, scoped.stdout
+        assert f"{page}:1: advice:" not in scoped.stdout and f"{page}:2: time-bound wording:" in scoped.stdout
+
+    expected = f"{root.joinpath(allow).0}:2: expected a nonempty exact phrase"
+    mut failures: list[str] = []
+    for phrase in ["", " "]:
+        write(root, allow, f"# Scoped prose exceptions\n{page}\t{phrase}\tFixture explanation\n")?
+        result = invoke_checker(root, "check_reference_contract", "--all")?
+        if result.code != 1 or expected not in result.stderr or "reference contract check passed" in result.stdout:
+            failures.append(f"phrase length {len(phrase)} exited {result.code}: {result.stdout}{result.stderr}")
+    assert failures == [], "\n".join(failures)
+
+    write(root, f"workspaces/docs-site/docs/{page}", "Prefer this call.\n")?
+    expected_reason = f"{root.joinpath(allow).0}:2: expected a nonempty exception reason"
+    for suffix in ["", "\t "]:
+        write(root, allow, f"# Scoped prose exceptions\n{page}\tPrefer this call.{suffix}\n")?
+        result = invoke_checker(root, "check_reference_contract", "--all")?
+        if result.code != 1 or result.stdout != "" or expected_reason not in result.stderr:
+            failures.append(f"reason suffix {suffix:?} exited {result.code}: {result.stdout}{result.stderr}")
+    assert failures == [], "\n".join(failures)
     return Ok(None)
 
 
@@ -42,6 +91,15 @@ def test_ignores_code_links_and_see_also() -> Result[None, str]:
         + "## See also\n\n- [Rust types for Python developers](../how-to/rust.md)\n"
     )
     assert findings(text)? == []
+
+    nested = (
+        "````markdown\n```text\nYou should see literal text.\n```\n"
+        + "`````\nYou should also see literal text.\n`````\n"
+        + "~~~\nYou should see a literal tilde fence.\n~~~\n````\n\n"
+        + "You should see a real finding.\n"
+    )
+    reported = page_findings(nested, "tooling/reference/fences.md", [])?
+    assert [finding.text for finding in reported] == ["You should see a real finding."]
     return Ok(None)
 
 
@@ -61,6 +119,59 @@ def test_changed_pages_include_untracked_reference_pages() -> Result[None, str]:
     path.write_text("Contract.\n", "utf-8", "strict", None).map_err((error) => error.message())?
     assert changed_pages(root, "")? == ["tooling/reference/new_contract.md"]
     return Ok(None)
+
+
+def test_make_checks_every_reference_page() -> Result[None, str]:
+    """Both verification targets run the full reference scan, even if a comment mentions it."""
+    root = repository_root()?
+    for target in ["docs", "pre-commit"]:
+        mut command = Command.new("make")
+        command.current_dir(root.0).arg("-n").arg(target).arg("INCAN=incan")
+        output = command.output().map_err((error) => f"cannot inspect make {target}: {error}")?
+        assert output.status.success()
+        commands = RustString.from_utf8(output.stdout).map_err((error) => error.to_string())?
+        assert invokes_full_reference_scan(commands), target
+    comment = "# " + FULL_REFERENCE_SCAN
+    assert not invokes_full_reference_scan(comment), "a commented recipe cannot run the reference scan"
+    check_repository_checker_usage(root)?
+    checked_api = read(root.joinpath("workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md"))?
+    function_rows = [line for line in checked_api.split("\n") if line.startswith("| `function` |")]
+    assert len(function_rows) == 1, "the checked API reference must have one function inventory row"
+    function_row = function_rows[0]
+    assert "`native_attribute`" not in function_row, "the checked API function row names the retired attribute field"
+    assert "`decorators`" in function_row, "the checked API function row omits the decorators field"
+    return Ok(None)
+
+
+def invokes_full_reference_scan(commands: str) -> bool:
+    """Identify the executable full-scan command in a Make dry-run transcript."""
+    return FULL_REFERENCE_SCAN in [line.strip() for line in commands.split("\n")]
+
+
+def check_repository_checker_usage(root: Path) -> Result[None, str]:
+    """Require accurate help and malformed-option output from the normal checker entry points."""
+    mut mismatches: list[str] = []
+    for name in ["check_changed_rustdocs", "check_doc_paths", "check_reference_contract", "check_us_english"]:
+        invocation = f"usage: incan run scripts/{name}.incn --"
+        help = invoke_checker(root, name, "--help")?
+        if help.code != 0 or invocation not in help.stdout:
+            mismatches.append(f"{name} help exited {help.code} or did not name the current invocation")
+        refused = invoke_checker(root, name, "--unknown-option")?
+        expected_error = f"{name}: error: unrecognized arguments: --unknown-option"
+        if refused.code != 2 or invocation not in refused.stderr or expected_error not in refused.stderr:
+            mismatches.append(f"{name} did not report the invalid option with its current invocation")
+    assert mismatches == [], "\n".join(mismatches)
+    return Ok(None)
+
+
+def invoke_checker(root: Path, name: str, flag: str) -> Result[Outcome, str]:
+    """Run one checker from the checkout and capture its exit status and both text streams."""
+    mut command = Command.new(get_or("INCAN", "incan"))
+    command.current_dir(root.0).arg("run").arg(f"scripts/{name}.incn").arg("--").arg(flag)
+    output = command.output().map_err((error) => f"cannot run {name}: {error}")?
+    stdout = RustString.from_utf8(output.stdout).map_err((error) => f"invalid {name} stdout: {error}")?
+    stderr = RustString.from_utf8(output.stderr).map_err((error) => f"invalid {name} stderr: {error}")?
+    return Ok(Outcome(code=output.status.code().unwrap_or(-1), stdout=stdout, stderr=stderr))
 
 
 def findings(text: str, page: str = "language/reference/sample.md") -> Result[list[str], str]:

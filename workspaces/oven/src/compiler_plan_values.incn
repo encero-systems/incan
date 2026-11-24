@@ -7,30 +7,34 @@ from compiler_source_projection import positioned_source_key
 from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
-from compiler_graph_records import EditCutoff, OutputSlot, OutputSlots, decode_record_key, evaluation_revision, family_slots, reusable_evaluation, reusable_family_records, readers_of, select_slot_record, slot_output
+from compiler_graph_records import EditCutoff, InputReaders, OutputSlot, OutputSlots, PlanImportReach, decode_record_key, evaluation_revision, family_slots, reusable_evaluation, reusable_family_records, select_slot_record, slot_output
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value as crumb_field
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as integer_field, items, number, text, tuple_items
-from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, decode_plan_module
+from pub::incan_mir_plan import (
+    PLAN_MODULE_FAMILY, PLAN_MODULE_SELECTION_PAGE, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE,
+    PlanModuleFunction, PlanModuleValue, decode_plan_module,
+)
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 
-pub const LOWERING_PROFILE: str = "incan.lowering-records/11"
+pub const LOWERING_PROFILE: str = "incan.lowering-records/12"
 
 
-pub def plan_reads_changed(selected: Snapshot, changed: list[RecordKey]) -> Result[Dict[str, list[RecordKey]], str]:
+pub def plan_reads_changed(changed: Borrowed[list[InputReaders]]) -> Dict[str, list[RecordKey]]:
     """Remember each exact changed input that excludes a previously certified native plan."""
     mut inputs: Dict[str, list[RecordKey]] = {}
-    for target in changed:
-        for reader in readers_of(selected, [target], LOWERING_PROFILE)?:
-            if reader.family not in ["lowering-demand", "plan-function"]:
+    for input in changed:
+        for reader in input.readers:
+            if reader.profile != LOWERING_PROFILE or reader.output.family not in ["lowering-demand", "plan-function"]:
                 continue
-            mut causes = inputs.get(reader.identity, [])
-            if target not in causes:
-                causes.append(target)
-                inputs[reader.identity] = causes
-    return Ok(inputs)
+            let owner: Borrowed[str] = reader.output.identity
+            if owner not in inputs:
+                inputs[owner] = []
+            if input.input not in inputs[owner]:
+                inputs[owner].append(input.input)
+    return inputs
 
 
 pub model RetainedPlanInputs:
@@ -54,13 +58,15 @@ pub def select_plan_inventory_except(
     admitted_outputs: list[str] = [],
     keyed_readers: Option[list[str]] = None,
     cutoff: EditCutoff = EditCutoff(),
+    plan_reach: Option[PlanImportReach] = None,
 ) -> Result[PlanFunctionSelection, str]:
     """
     Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit. A
     function whose exact output is in `admitted_outputs` travels in its module page. Its product is not read twice.
     """
     mut inventory = PlanFunctionSelection(retained=RetainedPlanInputs(snapshot=selected.digest))
-    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, excluded_outputs=admitted_outputs, included=keyed_readers)
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid,
+        excluded_outputs=admitted_outputs, included=keyed_readers, plan_reach=plan_reach)
     for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE, Some(slots), cutoff=cutoff)?:
         # A rechecked reader may probe its old ordinary scalar by the compiler's newly computed full key.
         # A module or entry admission bypasses that lookup and therefore remains unavailable on this path.
@@ -315,6 +321,8 @@ pub model PlanModuleSelection:
     pub pages: list[SelectedBodyPage] = []
     pub outputs: list[str] = []
     pub records: list[AdmittedPlanModule] = []
+    # This request's compact authority stays separate from ordinary pages until the launcher negotiates it.
+    pub authority: Option[SelectedBodyPage] = None
     pub covered: CoveredBodyOwners = CoveredBodyOwners()
     # Every admitted slot as this selection keeps it, recorded with the request for the next one.
     pub kept: list[SelectedPlanModule] = []
@@ -348,6 +356,51 @@ pub def value_frame(selected: Snapshot, key: RecordKey) -> Result[Option[ValueFr
             return Ok(Some(ValueFrame(segment=segment, offset=location.offset + prefix, length=location.length - prefix)))
 
 
+const PLAN_MODULE_AUTHORITY_ROW: bytes = b"plnwit\x00"
+
+
+def plan_module_authority_description() -> Description:
+    """Describe the same Crumb row the native Plan decoder authenticates for this activation."""
+    return model_description(PLAN_MODULE_AUTHORITY_ROW, "incan.plan-module-selection/1", [
+        ModelField(
+            identity=b"module", name="modules", storage="list<tuple<string,string,string,i64,boolean,i64,string>>",
+        ),
+        ModelField(
+            identity=b"scope_", name="scope", storage="tuple<string,string,string,i64,string,string,string,string>",
+        ),
+    ])
+
+
+def plan_module_authority(
+    selected: Borrowed[Snapshot], origin: str, records: Borrowed[list[AdmittedPlanModule]],
+) -> Result[SelectedBodyPage, str]:
+    """Name the exact encoded selection while the request still owns its graph snapshot."""
+    scope = Value.Tuple([
+        Value.Text(selected.root.value.clone()), Value.Text(selected.root.placement.clone()),
+        Value.Text(selected.digest.clone()), integer_field(selected.generation), Value.Text(selected.view.clone()),
+        Value.Text(selected.index.clone()), Value.Text(origin), Value.Text(LOWERING_PROFILE),
+    ])
+    mut modules: Dict[str, Value] = {}
+    for record in records:
+        let module: Borrowed[str] = record.plan.module
+        if module in modules:
+            return Err("a plan-module authority names one module twice")
+        modules[module] = Value.Tuple([
+            Value.Text(module.clone()), Value.Text(encode_record_key(record.key)?),
+            Value.Text(record.value_digest.clone()), integer_field(len(record.plan.functions)),
+            Value.Boolean(record.placement_current), integer_field(record.namespace),
+            Value.Text(record.certificate.clone()),
+        ])
+    authority = encode_graph_row(PLAN_MODULE_AUTHORITY_ROW, plan_module_authority_description(), [
+        crumb_field(b"module", Value.List([modules[module] for module in sorted([name for name in modules.keys()])])),
+        crumb_field(b"scope_", scope),
+    ])?
+    digest = hexlify(sha256.digest(authority))
+    if not canonical_digest(digest):
+        return Err("selected plan-module authority has a noncanonical digest")
+    return Ok(SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=authority, digest=digest))
+
+
 pub def select_plan_modules(
     selected: Snapshot,
     origin: str,
@@ -356,6 +409,8 @@ pub def select_plan_modules(
     complete_namespaces: set[str] = set(),
     changed_positions: set[str] = set(),
     cutoff: EditCutoff = EditCutoff(),
+    reachable_modules: Option[list[str]] = None,
+    compact_authority: bool = false,
 ) -> Result[PlanModuleSelection, str]:
     """
     Admit whole every module whose plan record still validates in the selected graph and that this request leaves
@@ -371,7 +426,8 @@ pub def select_plan_modules(
     for owner in invalid_owners:
         refused.add(owner)
     mut selection = PlanModuleSelection()
-    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules)
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules,
+        included=reachable_modules)
     mut recorded: Dict[str, SelectedPlanModule] = {}
     if cutoff.active:
         recorded = recorded_plan_selection(selected, origin)?
@@ -436,4 +492,6 @@ pub def select_plan_modules(
             placement_current=entry.bound and key.identity not in changed_positions, proofs=entry.proofs, events=events,
         ))
 
+    if compact_authority and len(selection.records) > 0:
+        selection.authority = Some(plan_module_authority(selected, origin, selection.records)?)
     return Ok(selection)

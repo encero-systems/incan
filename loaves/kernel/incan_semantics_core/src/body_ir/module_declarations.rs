@@ -355,46 +355,50 @@ pub fn loaf_item_path(canonical: &CanonicalSymbolId) -> Option<String> {
 }
 
 impl LoafCallable {
-    /// The declaration record of a Loaf's callable body: its parameters, result, type parameters and defaults, and the
-    /// compiled item its package identity names. Async items expose a future constructor rather than the resumed
-    /// body output, so consumers use the same retained boxed-future ABI as calls within the declaring package.
-    /// `None` for a body no Loaf declares or a governed template that must first close its named type parameters or
-    /// open `Self` receiver at the checked adopter.
-    pub fn from_body(body: &Body) -> Option<Self> {
+    /// Find the package declaration a compiled frame can name without allocating a callable or its native item.
+    /// A governed template first needs its type parameters or open `Self` receiver closed by a checked adopter.
+    pub fn compiled_identity(body: &Body) -> Option<&CanonicalSymbolId> {
         if !body.type_parameters.is_empty() || body.locals.first().is_some_and(|local| local.ty == IncanType::SelfType)
         {
             return None;
         }
-        let canonical = body.canonical.clone()?;
+        body.canonical
+            .as_ref()
+            .filter(|identity| matches!(identity.origin, crate::SymbolOrigin::Package { .. }))
+    }
+
+    /// Move a checked callable into its declaration frame, dropping its implementation statements. Async items
+    /// expose the same retained boxed-future ABI as calls within their declaring package.
+    pub fn from_owned_frame(mut frame: Box<Body>) -> Option<Self> {
+        let canonical = Self::compiled_identity(&frame)?.clone();
         let item = loaf_item_path(&canonical)?;
-        let mut frame = body.clone();
-        frame.block.stmts.clear();
+        frame.block.stmts = Vec::new();
         Some(Self {
             item,
-            parameters: body
+            parameters: frame
                 .params
                 .iter()
                 .map(
-                    |param| match body.locals.get(param.local.index()).map(|local| &local.origin) {
+                    |param| match frame.locals.get(param.local.index()).map(|local| &local.origin) {
                         Some(LocalOrigin::Receiver { mutable: false }) => IncanType::Ref(Box::new(param.ty.clone())),
                         Some(LocalOrigin::Receiver { mutable: true }) => IncanType::RefMut(Box::new(param.ty.clone())),
                         _ => param.ty.clone(),
                     },
                 )
                 .collect(),
-            return_type: if body.is_async {
+            return_type: if frame.is_async {
                 IncanType::Generic {
                     base: "Awaitable".into(),
-                    args: vec![body.return_type.clone()],
+                    args: vec![frame.return_type.clone()],
                 }
             } else {
-                body.return_type.clone()
+                frame.return_type.clone()
             },
-            type_parameters: body.type_parameters.clone(),
+            type_parameters: Vec::new(),
             native_type_arguments: Vec::new(),
             native_callable_parameters: Vec::new(),
-            parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),
-            declaration_frame: Some(Box::new(frame)),
+            parameter_defaults: frame.params.iter().map(|param| param.default.clone()).collect(),
+            declaration_frame: Some(frame),
             canonical,
         })
     }

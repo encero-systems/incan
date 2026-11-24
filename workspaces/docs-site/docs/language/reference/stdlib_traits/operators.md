@@ -1,12 +1,6 @@
 # Operator traits (Reference)
 
-This page documents stdlib traits that describe operator behavior for custom types.
-
-Operator traits are capability contracts. Dunder methods are the implementation hooks that satisfy those contracts.
-
-The surface follows a split model: dunder methods are the implementation surface, while traits are the nominal capability vocabulary.
-
-A type may define a compatible dunder hook directly for syntax. Use explicit trait adoption when you want a named capability for bounds, documentation, or diagnostics.
+Operator syntax dispatches to the corresponding dunder method. A custom type can define that method directly. An explicit trait adoption also makes the type satisfy a bound on that trait.
 
 ## Binary arithmetic
 
@@ -26,8 +20,6 @@ A type may define a compatible dunder hook directly for syntax. Use explicit tra
 | ------ | ------------- | ---------------------------- |
 | `-a`   | `Neg[Output]` | `__neg__(self) -> Output`    |
 | `~a`   | `Not[Output]` | `__invert__(self) -> Output` |
-
-`Not` names the nominal trait to stay aligned with Rust's `std::ops::Not`; its hook is `__invert__` because the operator surface is bitwise inversion.
 
 ## Bitwise, matrix, and pipeline operators
 
@@ -55,8 +47,6 @@ See [Indexing and slicing](indexing_and_slicing.md) for the indexing-specific re
 
 ## Compound assignment
 
-Current compound assignment syntax covers `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `@=`, `&=`, `|=`, `^=`, `<<=`, and `>>=`.
-
 Compound assignment first resolves an explicit in-place operator hook when present, then falls back to ordinary binary operator assignment.
 
 | Syntax    | Explicit trait                | Explicit hook                               | Fallback     |
@@ -76,6 +66,10 @@ Compound assignment first resolves an explicit in-place operator hook when prese
 
 ## Comparisons
 
-Comparison fallback behavior is deliberately explicit: fallback must be defined by traits or user dunders. The compiler does not synthesize hidden comparison hooks merely because a related hook exists.
+Comparison fallbacks require a default method from an adopted trait or a user-defined dunder. An individual comparison dunder supplies only its corresponding hook.
 
-The comparison traits are declared with the derive-facing comparison family, not in `std.traits.ops`. Use `std.derives.comparison.Eq` for `==` / `!=` and `std.derives.comparison.Ord` for `<`, `<=`, `>`, and `>=`. Their default methods define the fallback behavior directly.
+`std.derives.comparison.Eq` defines the `==` and `!=` hooks. `std.derives.comparison.Ord` defines the `<`, `<=`, `>`, and `>=` hooks. Their default methods define the fallbacks.
+
+## See also
+
+- [Traits as language hooks](../../explanation/traits_as_language_hooks.md)

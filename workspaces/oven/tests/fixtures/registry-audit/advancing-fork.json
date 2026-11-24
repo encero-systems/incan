@@ -1,0 +1,50 @@
+{
+  "schema": "loaves.pub/audit/1",
+  "registry": "8822a599af5b58bc7b2e535cfe9ef02ba5389c510ffb4c736f550c20857454cd",
+  "checkpoint": {
+    "head": "4522fa92550c992989ae6ec2192243d6a2c7e9fdf48c7b8b433c79a747fe1bf1",
+    "length": 3,
+    "timestamp": 1795392060,
+    "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+    "signature": {
+      "raw": "00dcd06ea3a828a7c50d038c7b8248f8422a46e585897a38ade7710ec11d1125aec47a5ce13563d82314d1fa72c8d42f560bf7f31ced803a115dd1a30dec6b05",
+      "r": "",
+      "s": ""
+    }
+  },
+  "events": [
+    {
+      "sequence": 1,
+      "kind": "delegate",
+      "key_kind": "ed25519",
+      "key": "6ab4606181888122999031722f79f8a715e4658f3b00c3dc5ef73b25b5e650b1",
+      "signature": {
+        "raw": "7d183a0291a29d3f31ff83483ffbb8a7175df523e47d993111471c1a8874aab14f168eb651acc6dcedb9b32dc9b30ebe98e1797ef91b24a474f7cd76c9a04c07",
+        "r": "",
+        "s": ""
+      }
+    },
+    {
+      "sequence": 2,
+      "kind": "statement",
+      "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+      "payload": "aW5jYW4tcmVnaXN0cnktYWR2aXNvcnktdjEKaWQ9SU5DQU4tMjAyNi0wMDEwCnBhY2thZ2U9ZXhhbXBsZS9sb2FmCnZlcnNpb249MS4yLjMKYWN0aW9uPXB1Ymxpc2gKcmVhc29uPWRpZmZlcmVudCBzaWduZWQgcHJlZml4Cg==",
+      "signature": {
+        "raw": "f15bbd2dd3c735d1dbf100c1e7a0764e99a727958e5c899f2df3d33452271eeb09929da0a0ec495a65f8ef58366500ea2e5c7c646bc2673da969dcc2f3836c0d",
+        "r": "",
+        "s": ""
+      }
+    },
+    {
+      "sequence": 3,
+      "kind": "statement",
+      "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+      "payload": "aW5jYW4tcmVnaXN0cnktYWR2aXNvcnktdjEKaWQ9SU5DQU4tMjAyNi0wMDEwCnBhY2thZ2U9ZXhhbXBsZS9sb2FmCnZlcnNpb249MS4yLjMKYWN0aW9uPXdpdGhkcmF3CnJlYXNvbj1maXh0dXJlIHdpdGhkcmF3YWwK",
+      "signature": {
+        "raw": "5ac9cb79e6832d00a6172682aa6f4934bcf9560706a75ec4046dcf6e4cf61c54a3db3d244e21313992828d179fbb62e1d0fd0ad6327fa0b72b1cfde7fefa660e",
+        "r": "",
+        "s": ""
+      }
+    }
+  ]
+}

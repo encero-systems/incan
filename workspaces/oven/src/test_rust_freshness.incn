@@ -54,7 +54,9 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
         registry_aliases=[],
     )
     request = RustBuild(project="root", rustc="rustc", registry=RegistryUnits(units=[], search=[]))
-    assert rust_library_compiler_identity("rlib", "compiler", "sdk one")? == rust_library_compiler_identity(
+    archive_compiler = rust_library_compiler_identity("rlib", "compiler", "sdk one")?
+    assert archive_compiler != "compiler"
+    assert archive_compiler == rust_library_compiler_identity(
         "rlib",
         "compiler",
         "sdk two",
@@ -144,7 +146,9 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     1. Compile a synthetic Rust library with counted native and graph compilers.
     2. Change only the graph observer and require a graph refresh without another native compilation.
     3. Change an observed source and require both native compilation and graph production again.
+    4. Verify the installed producer rebuilds under a replacement compiler when its source is present.
     """
+    # 1. Count native and graph invocations separately.
     source = scratch.joinpath("shared/src/lib.rs")
     rustc = scratch.joinpath("rustc")
     driver = scratch.joinpath("driver")
@@ -213,6 +217,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     assert read(native_attempts)? == "x"
     assert read(graph_attempts)? == "x"
 
+    # 2. Change only the graph observer, then restore the original observer.
     write(driver, graph_script + "# changed graph observer\n")?
     request.project = scratch.joinpath("second-consumer").0
     second = compile_rust_library(facet, declared, scratch.joinpath("second-output"), request, {}, [])?
@@ -229,6 +234,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     assert read(native_attempts)? == "x"
     graphs = read(graph_attempts)?
 
+    # 3. Change the observed source under that same observer.
     write(source, "pub fn value() -> u32 { 2 }\n")?
     request.project = scratch.joinpath("changed-consumer").0
     changed = compile_rust_library(facet, declared, scratch.joinpath("changed-output"), request, {}, [])?
@@ -236,7 +242,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     assert read(native_attempts)? == "xx"
     assert read(graph_attempts)? == graphs + "x"
 
-    # An installed producer from another compiler generation is rebuilt from source into this home's store.
+    # 4. Prepare the installed producer inputs for the replacement native compiler.
     installed_directory = scratch.joinpath("changed-output").joinpath(f"{crate_name}-{facet_slot(facet, "release")}")
     installed_artifact = installed_directory.joinpath(
         f"lib{crate_name}-{artifact_context(facet, declared, "release")?}.rlib",
@@ -244,6 +250,27 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     toolchain.externs = [NativeCrate(name=crate_name, path=installed_artifact.0)]
     request.toolchain = Some(toolchain)
     request.installed = native_artifacts(toolchain.externs)
+    return verify_local_installed_producer_rebuild(
+        scratch, facet, declared, request, toolchain, installed_directory, installed_artifact,
+        source, native_attempts, graph_attempts, graphs,
+    )
+
+
+def verify_local_installed_producer_rebuild(
+    scratch: Path,
+    facet: LocalFacet,
+    declared: RustFacet,
+    mut request: RustBuild,
+    toolchain: Toolchain,
+    installed_directory: Path,
+    installed_artifact: Path,
+    source: Path,
+    native_attempts: Path,
+    graph_attempts: Path,
+    graphs: str,
+) -> Result[None, str]:
+    """Rebuild the installed fixture with a different compiler, then require shipped source for another rebuild."""
+    # An installed producer from another compiler generation is rebuilt from source into this home's store.
     installed_arguments = library_compile_arguments(facet, declared, installed_directory, request, {}, [])?
     installed_environment = package_environment(facet.project, declared, declared.crate_name)
     installed_key = rust_library_producer_key(
@@ -254,7 +281,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
         request,
         toolchain,
     )?
-    installed_graph = installed_directory.joinpath(f"{crate_name}.incngraph")
+    installed_graph = installed_directory.joinpath(f"{declared.crate_name}.incngraph")
     installed_dependencies = installed_directory.joinpath("library.d")
     record(
         installed_directory.joinpath("library.oven-inputs"),

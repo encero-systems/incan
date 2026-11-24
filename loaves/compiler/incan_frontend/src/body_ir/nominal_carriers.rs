@@ -222,24 +222,13 @@ pub(crate) fn retain_published_frame(body: &mut bir::Body) {
 /// Retain canonical carriers on decoded declarations without rechecking or changing their persisted ownership.
 pub(crate) fn retain_published_module(module: &mut bir::BodyIrModule) {
     for declaration in &mut module.nominal_declarations {
-        // Older source-owned standard layouts were published under short names. Preserve the authenticated
-        // declaration owner in its carrier slot too; a conflicting retained key remains refused.
-        retain_declaration_carrier(declaration);
-        for ty in &mut declaration.field_types {
-            qualify_type(ty, None, &declaration.named_type_identities);
-        }
-        if let Some(body) = &mut declaration.field_default_body {
-            retain_published_frame(body);
-        }
-        for partial in &mut declaration.method_partial_defaults {
-            retain_published_frame(&mut partial.frame);
+        if declaration.linked_layout_witness.is_none() {
+            retain_published_model_layout(declaration);
         }
     }
     for declaration in &mut module.enum_declarations {
-        for variant in &mut declaration.variants {
-            for ty in &mut variant.fields {
-                qualify_type(ty, None, &declaration.named_type_identities);
-            }
+        if declaration.linked_layout_witness.is_none() {
+            retain_published_enum_layout(declaration);
         }
     }
     for alias in &mut module.type_alias_declarations {
@@ -257,6 +246,101 @@ pub(crate) fn retain_published_module(module: &mut bir::BodyIrModule) {
             storage.ty = body.return_type.clone();
         }
     }
+}
+
+/// Normalize the checked field and default frame carriers as they are consumed through a published Loaf.
+fn retain_published_model_layout(declaration: &mut bir::NominalDeclaration) {
+    // Preserve the authenticated owner even when an older source-owned layout used only its short name.
+    retain_declaration_carrier(declaration);
+    for ty in &mut declaration.field_types {
+        qualify_type(ty, None, &declaration.named_type_identities);
+    }
+    if let Some(body) = &mut declaration.field_default_body {
+        retain_published_frame(body);
+    }
+    for partial in &mut declaration.method_partial_defaults {
+        retain_published_frame(&mut partial.frame);
+    }
+}
+
+/// Normalize the checked variant field carriers as they are consumed through a published Loaf.
+fn retain_published_enum_layout(declaration: &mut bir::EnumDeclaration) {
+    for variant in &mut declaration.variants {
+        for ty in &mut variant.fields {
+            qualify_type(ty, None, &declaration.named_type_identities);
+        }
+    }
+}
+
+/// Select a native item only for models whose checked layout did not already name a native carrier.
+pub fn linked_model_item(declaration: &bir::NominalDeclaration) -> Option<String> {
+    declaration
+        .native_item
+        .is_empty()
+        .then(|| linked_type_item(&declaration.canonical, &declaration.type_parameters))
+        .flatten()
+}
+
+/// Select the exact provider-owned item for a linked enum layout.
+pub fn linked_enum_item(declaration: &bir::EnumDeclaration) -> Option<String> {
+    linked_type_item(&declaration.canonical, &declaration.type_parameters)
+}
+
+/// Select a native carrier or the provider's compiled template; generic newtypes keep their governed storage.
+fn linked_type_item(identity: &CanonicalSymbolId, parameters: &[String]) -> Option<String> {
+    use incan_semantics_core::SemanticSourceTargetKind;
+    bir::native_nominal_item(identity).or_else(|| {
+        (parameters.is_empty()
+            || matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class | SemanticSourceTargetKind::Enum
+            ))
+        .then(|| bir::loaf_item_path(identity))
+        .flatten()
+    })
+}
+
+/// Publish the witness of the normalized, linked declaration, excluding closed specializations. The native item is
+/// temporary because the compiled and direct consumers share this frame but select linkage at different boundaries.
+pub fn publish_linked_layout(
+    fragment: &mut incan_semantics_core::executable_representation::ExecutableDeclaration,
+) -> Option<(String, String)> {
+    use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness};
+    if let Some(model) = fragment.nominal_mut() {
+        if !model.native_type_arguments.is_empty() {
+            return None;
+        }
+        retain_published_model_layout(model);
+        let original = linked_model_item(model).map(|item| std::mem::replace(&mut model.native_item, item));
+        let witness = model_layout_witness(model);
+        if let Some(item) = original {
+            model.native_item = item;
+        }
+        return trace_published_layout(&model.canonical, witness);
+    }
+    let enumeration = fragment.enum_layout_mut()?;
+    if !enumeration.native_type_arguments.is_empty() {
+        return None;
+    }
+    retain_published_enum_layout(enumeration);
+    let original = linked_enum_item(enumeration).map(|item| std::mem::replace(&mut enumeration.native_item, item));
+    let witness = enum_layout_witness(enumeration);
+    if let Some(item) = original {
+        enumeration.native_item = item;
+    }
+    trace_published_layout(&enumeration.canonical, witness)
+}
+
+/// Record one producer computation. An unwitnessable declaration retains the ordinary uncached route.
+fn trace_published_layout(
+    identity: &CanonicalSymbolId,
+    witness: Result<(String, String), incan_semantics_core::semantic_digest::DigestError>,
+) -> Option<(String, String)> {
+    tracing::trace!(
+        target: "incan::invocation", phase = "linked_layout_computed", declaration = %identity.render_compact(),
+        recorded = witness.is_ok(),
+    );
+    witness.ok()
 }
 
 /// Bind one declaration's encoded carrier to its exact checked owner without replacing a conflicting retained fact.

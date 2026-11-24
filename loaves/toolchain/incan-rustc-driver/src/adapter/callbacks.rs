@@ -151,6 +151,9 @@ impl rustc_driver::Callbacks for Callbacks {
             config.opts.unstable_features = rustc_feature::UnstableFeatures::Allow;
         }
         self.timing.configure(config);
+        if let Some((handoff, previous)) = self.completed_objects.take() {
+            completed_codegen::install(config, handoff, previous);
+        }
         config.input = Input::Str {
             name: FileName::Custom(SYNTHETIC_SOURCE_NAME.to_owned()),
             input: String::new(),

@@ -5,7 +5,7 @@ from pub::internal_models import CompiledBodyOutputs
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from pub::internal_models.source_value_records import source_value
-from compiler_body_keys import IDENTITY_PROFILE
+from compiler_body_keys import IDENTITY_PROFILE, body_identity_profile
 from compiler_graph_records import OutputSlots, decode_record_key, family_outputs, readers_of, retire_output, reusable_evaluation
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_source_projection import SourceProjection, owner_placement_key, owner_source_key, signature_key
@@ -83,11 +83,12 @@ pub def retire_missing_functions(
                         retired.add(reader.identity)
     if len(retired) == 0:
         return Ok(None)
-    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=Some(sorted([owner for owner in retired])))
+    owners = Some(sorted([owner for owner in retired]))
     for family in ["local", "final", "body-ir", "lowering-demand", "plan-function"]:
         mut profile = CHECKER_PROFILE
         if family in ["lowering-demand", "plan-function"]:
             profile = LOWERING_PROFILE
+        slots = OutputSlots(origin=origin, identity_profile=body_identity_profile(family), included=owners)
         for output in family_outputs(selected, family, profile, Some(slots))?:
             retire_output(transaction, profile, decode_record_key(output)?)?
     return Ok(None)

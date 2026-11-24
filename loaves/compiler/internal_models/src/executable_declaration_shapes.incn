@@ -1,0 +1,343 @@
+"""Checked executable Body IR descriptions for graph-only publication."""
+
+from std.primitives.crumb.descriptions import Description
+from crumb_rows import ModelField, model_description
+from plan_wire_rows import enum_schema, variant_schema
+
+
+pub def descriptions() -> list[Description]:
+    """Return this group of the exact checked executable description closure."""
+    return [
+        describe_body_ir_module(),
+        describe_class_inheritance(),
+        describe_class_method_implementation(),
+        describe_constant_declaration(),
+        describe_decorated_binding(),
+        describe_decorated_initialization(),
+        describe_entrypoint_effect(),
+        describe_enum_declaration(),
+        describe_enum_variant_declaration(),
+        describe_field_metadata(),
+        describe_fieldless_enum_declaration(),
+        describe_fieldless_enum_variant_declaration(),
+        describe_linked_static_accessors(),
+        describe_linked_static_guard_accessors(),
+        describe_method_partial_defaults(),
+        describe_native_union_declaration(),
+        describe_newtype_deserialize(),
+        describe_newtype_string_conversion(),
+        describe_nominal_declaration(),
+        describe_primitive_trait_adapter(),
+        describe_record_package_identity(),
+        describe_static_declaration(),
+        describe_static_initializer(),
+        describe_string_conversion_contract(),
+        describe_string_conversion_selection(),
+        describe_trait_adoption(),
+        describe_trait_field_implementation(),
+        describe_trait_implementation(),
+        describe_trait_type_argument(),
+        describe_type_alias_declaration(),
+        describe_validated_constructor(),
+        describe_value_enum_backing(),
+        describe_value_enum_declaration(),
+        describe_value_enum_variant_declaration(),
+    ]
+
+def describe_body_ir_module() -> Description:
+    return model_description(b"\x70\x27\x49\xa1\x72\x4a\x00", "incan.graph.executable/1/BodyIrModule", [
+        ModelField(identity=b"\x68\xa7\x53\xa7\x1d\x25", name="decorated_bindings", storage="list<record@4c78d56a5e7a>", canonical=true),
+        ModelField(identity=b"\x51\x5c\x29\xb4\x85\xab", name="entrypoint_effects", storage="list<enum@632a0c548a1a>", canonical=true),
+        ModelField(identity=b"\x50\x56\x8e\x7e\x9b\x8d", name="string_conversion_contract", storage="enum@2f19346d3e3a", canonical=true),
+        ModelField(identity=b"\xad\xdd\x29\x57\xee\x60", name="constant_declarations", storage="list<record@680475508ce5>", canonical=true),
+        ModelField(identity=b"\xf7\xf8\x7b\x00\x4a\x47", name="type_alias_declarations", storage="list<record@e48b557a6f93>", canonical=true),
+        ModelField(identity=b"\x76\x11\xa3\x4d\xd0\x65", name="enum_declarations", storage="list<record@1b8670c281ff>", canonical=true),
+        ModelField(identity=b"\x50\xaf\x4d\x6d\x0e\x2d", name="loaf_callables", storage="list<record@6f7e7deaf61f>", canonical=true),
+        ModelField(identity=b"\x1a\xa2\xc6\x8f\x96\x40", name="native_union_declarations", storage="list<record@661d658bf35a>", canonical=true),
+        ModelField(identity=b"\x96\x95\xe4\x9e\x53\xd4", name="static_declarations", storage="list<record@57085f388011>", canonical=true),
+        ModelField(identity=b"\xbf\x1d\xfa\xc8\xe8\xf0", name="module_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x3a\x2f\x9f\xd2\xcf\x05", name="nominal_declarations", storage="list<record@c96abe553de7>", canonical=true),
+        ModelField(identity=b"\x14\x83\x25\x0a\x9c\xca", name="fieldless_enum_declarations", storage="list<record@577c88fbb6e3>", canonical=true),
+        ModelField(identity=b"\x25\x5b\x9d\xe8\x43\xc8", name="value_enum_declarations", storage="list<record@0794abf185df>", canonical=true),
+        ModelField(identity=b"\x8a\x47\xa8\x75\xcd\x2e", name="trait_declarations", storage="list<record@28cdd429f7ec>", canonical=true),
+        ModelField(identity=b"\xfa\xa7\xa4\xa5\x77\xc9", name="trait_implementations", storage="list<record@98b89f46439c>", canonical=true),
+        ModelField(identity=b"\x29\xa7\x11\x63\xaa\x38", name="bodies", storage="list<record@02ff73c4b317>", canonical=true),
+    ])
+
+def describe_class_inheritance() -> Description:
+    return model_description(b"\xf6\xc9\x78\x03\x84\xb9\x00", "incan.graph.executable/1/ClassInheritance", [
+        ModelField(identity=b"\xe4\x71\x25\x96\x8b\x3b", name="parent", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="list<record@770fd02cc5ed>", canonical=true),
+    ])
+
+def describe_class_method_implementation() -> Description:
+    return model_description(b"\x77\x0f\xd0\x2c\xc5\xed\x00", "incan.graph.executable/1/ClassMethodImplementation", [
+        ModelField(identity=b"\x5b\x7e\x6b\xf2\xdc\x4a", name="method", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xda\x31\x01\x2c\x40\x33", name="implementation", storage="record@28cdd429f7ec", canonical=true),
+    ])
+
+def describe_constant_declaration() -> Description:
+    return model_description(b"\x68\x04\x75\x50\x8c\xe5\x00", "incan.graph.executable/1/ConstantDeclaration", [
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@50678bb85abb", canonical=true),
+    ])
+
+def describe_decorated_binding() -> Description:
+    return model_description(b"\x4c\x78\xd5\x6a\x5e\x7a\x00", "incan.graph.executable/1/DecoratedBinding", [
+        ModelField(identity=b"\xff\x77\x55\xc9\x33\x4b", name="original_body", storage="record@02ff73c4b317", canonical=true),
+        ModelField(identity=b"\xf9\xd7\xa7\x92\xac\x66", name="initializer", storage="option<record@02ff73c4b317>", canonical=true),
+        ModelField(identity=b"\x05\xfd\x54\x8c\xb9\x46", name="initialization", storage="enum@5623050ba4fc", canonical=true),
+    ])
+
+def describe_decorated_initialization() -> Description:
+    return enum_schema(b"\x56\x23\x05\x0b\xa4\xfc\x00", "incan.graph.executable/1/DecoratedInitialization", [
+        variant_schema(b"\x3b\x5d\x85\x15\xaf\xe5", "ModuleStorage", []),
+        variant_schema(b"\xdb\xe7\x37\x5d\xe5\x91", "PerInstantiation", []),
+        variant_schema(b"\x31\xbd\xb5\x28\x4f\xc5", "PerInvocation", []),
+    ])
+
+def describe_entrypoint_effect() -> Description:
+    return enum_schema(b"\x63\x2a\x0c\x54\x8a\x1a\x00", "incan.graph.executable/1/EntrypointEffect", [
+        variant_schema(b"\x83\x91\x45\x90\xa5\x86", "PrintText", [ModelField(identity=b"\x98\x2d\x9e\x3e\xb9\x96", name="text", storage="string", canonical=true), ModelField(identity=b"\x37\xa0\x02\x5a\xa1\xf2", name="span", storage="record@74a6fa8e9339", canonical=true)]),
+    ])
+
+def describe_enum_declaration() -> Description:
+    return model_description(b"\x1b\x86\x70\xc2\x81\xff\x00", "incan.graph.executable/1/EnumDeclaration", [
+        ModelField(identity=b"\x64\x50\x89\x89\xd4\xcc", name="record_package_identity", storage="option<record@de2ab51c6719>", canonical=true),
+        ModelField(identity=b"\xf1\x2f\xd2\xa7\x0b\x90", name="native_item", storage="string", canonical=true),
+        ModelField(identity=b"\xa6\xb0\x5d\x0b\xca\xad", name="direct_declaration_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\xef\xa1\xf3\x75\xd7\x61", name="public", storage="boolean", canonical=true),
+        ModelField(identity=b"\xa1\xc4\xe8\xba\x64\xbd", name="type_parameters", storage="list<string>", canonical=true),
+        ModelField(identity=b"\xd2\xeb\x5c\x55\xaf\x3e", name="native_type_arguments", storage="list<enum@b0e0f36c4c22>", canonical=true),
+        ModelField(identity=b"\xda\xd5\x69\xe1\x01\xad", name="variants", storage="list<record@37331354b014>", canonical=true),
+        ModelField(identity=b"\xa8\x8f\xe6\xec\x61\x15", name="derives", storage="list<string>", canonical=true),
+        ModelField(identity=b"\x1e\x61\xb0\x87\xa8\x64", name="named_type_identities", storage="map<string,record@28cdd429f7ec>", canonical=true),
+    ])
+
+def describe_enum_variant_declaration() -> Description:
+    return model_description(b"\x37\x33\x13\x54\xb0\x14\x00", "incan.graph.executable/1/EnumVariantDeclaration", [
+        ModelField(identity=b"\xa6\xb0\x5d\x0b\xca\xad", name="direct_declaration_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<enum@b0e0f36c4c22>", canonical=true),
+    ])
+
+def describe_field_metadata() -> Description:
+    return model_description(b"\x8a\xe4\x68\xe6\xcf\x43\x00", "incan.graph.executable/1/FieldMetadata", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\x45\xb0\x66\xb7\x9a\x4d", name="record_identity", storage="binary", canonical=true),
+        ModelField(identity=b"\xbd\xeb\x90\xf5\x50\x61", name="record_canonical", storage="boolean", canonical=true),
+        ModelField(identity=b"\xcd\x45\x7f\x2e\x58\x1d", name="renamed_from", storage="list<string>", canonical=true),
+        ModelField(identity=b"\xcf\x5a\x34\xb4\x37\x09", name="renamed_from_lifecycle", storage="option<record@7f6dccb134b0>", canonical=true),
+        ModelField(identity=b"\x5a\x45\x24\x59\x50\x3b", name="position", storage="u64", canonical=true),
+        ModelField(identity=b"\xda\xd0\x8f\x79\x38\xe2", name="default_is_empty", storage="boolean", canonical=true),
+        ModelField(identity=b"\x1a\x0a\x6a\x36\xca\x0a", name="alias", storage="option<string>", canonical=true),
+        ModelField(identity=b"\xc9\x04\x6f\x7a\x37\xad", name="description", storage="option<string>", canonical=true),
+        ModelField(identity=b"\x25\x01\xa7\xdd\xe4\x56", name="type_name", storage="string", canonical=true),
+        ModelField(identity=b"\x68\x2a\x77\x7c\x23\x28", name="has_default", storage="boolean", canonical=true),
+    ])
+
+def describe_fieldless_enum_declaration() -> Description:
+    return model_description(b"\x57\x7c\x88\xfb\xb6\xe3\x00", "incan.graph.executable/1/FieldlessEnumDeclaration", [
+        ModelField(identity=b"\xa6\xb0\x5d\x0b\xca\xad", name="direct_declaration_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\xda\xd5\x69\xe1\x01\xad", name="variants", storage="list<record@05447d083d0d>", canonical=true),
+    ])
+
+def describe_fieldless_enum_variant_declaration() -> Description:
+    return model_description(b"\x05\x44\x7d\x08\x3d\x0d\x00", "incan.graph.executable/1/FieldlessEnumVariantDeclaration", [
+        ModelField(identity=b"\xa6\xb0\x5d\x0b\xca\xad", name="direct_declaration_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+    ])
+
+def describe_linked_static_accessors() -> Description:
+    return model_description(b"\xaa\x8e\x36\xe2\x6c\x59\x00", "incan.graph.executable/1/LinkedStaticAccessors", [
+        ModelField(identity=b"\x0c\xf6\x7f\xc7\x2b\x3c", name="load", storage="string", canonical=true),
+        ModelField(identity=b"\x82\x4d\x80\xd7\x19\x85", name="store", storage="option<string>", canonical=true),
+        ModelField(identity=b"\x67\xdd\x51\x00\x71\xed", name="initialize_module", storage="option<string>", canonical=true),
+        ModelField(identity=b"\xe7\xda\x21\x35\xb6\xd3", name="guarded", storage="option<record@49411bf468dc>", canonical=true),
+    ])
+
+def describe_linked_static_guard_accessors() -> Description:
+    return model_description(b"\x49\x41\x1b\xf4\x68\xdc\x00", "incan.graph.executable/1/LinkedStaticGuardAccessors", [
+        ModelField(identity=b"\x32\x50\x0d\x75\x00\xce", name="force", storage="string", canonical=true),
+        ModelField(identity=b"\x88\x07\x07\xd8\x08\x1a", name="with_ref", storage="string", canonical=true),
+        ModelField(identity=b"\x85\x48\xf8\xcb\x1f\x36", name="with_mut", storage="option<string>", canonical=true),
+    ])
+
+def describe_method_partial_defaults() -> Description:
+    return model_description(b"\x59\xa5\x39\x37\x5e\x56\x00", "incan.graph.executable/1/MethodPartialDefaults", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\x37\xa0\x02\x5a\xa1\xf2", name="span", storage="record@74a6fa8e9339", canonical=true),
+        ModelField(identity=b"\x34\xa0\x40\x05\xbc\xaf", name="target", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x9d\xff\x50\xdf\x08\xc6", name="frame", storage="record@02ff73c4b317", canonical=true),
+    ])
+
+def describe_native_union_declaration() -> Description:
+    return model_description(b"\x66\x1d\x65\x8b\xf3\x5a\x00", "incan.graph.executable/1/NativeUnionDeclaration", [
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@b0e0f36c4c22", canonical=true),
+        ModelField(identity=b"\xfa\x86\x09\xf1\x2a\xf5", name="rust_item", storage="string", canonical=true),
+        ModelField(identity=b"\x17\x37\x3c\xa1\xc7\x63", name="members", storage="list<enum@b0e0f36c4c22>", canonical=true),
+        ModelField(identity=b"\xdd\xf4\xb4\xb7\xf4\x7f", name="closure_members", storage="list<enum@b0e0f36c4c22>", canonical=true),
+        ModelField(identity=b"\xb5\x1b\x90\x65\x9a\x78", name="closure_items", storage="list<string>", canonical=true),
+    ])
+
+def describe_newtype_deserialize() -> Description:
+    return enum_schema(b"\x5d\xaf\x12\x10\x8a\xa0\x00", "incan.graph.executable/1/NewtypeDeserialize", [
+        variant_schema(b"\x26\x11\x8c\xfc\x7e\x5b", "Unselected", []),
+        variant_schema(b"\xf4\x6f\x36\xf7\x2d\xc6", "Ordinary", []),
+        variant_schema(b"\x0e\xfd\x92\xa3\x35\x90", "Checked", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@28cdd429f7ec", canonical=true)]),
+    ])
+
+def describe_newtype_string_conversion() -> Description:
+    return enum_schema(b"\x55\xae\xb0\xf0\x53\xd3\x00", "incan.graph.executable/1/NewtypeStringConversion", [
+        variant_schema(b"\x26\x11\x8c\xfc\x7e\x5b", "Unselected", []),
+        variant_schema(b"\xd4\x61\xa4\x93\xa3\x75", "Automatic", []),
+    ])
+
+def describe_nominal_declaration() -> Description:
+    return model_description(b"\xc9\x6a\xbe\x55\x3d\xe7\x00", "incan.graph.executable/1/NominalDeclaration", [
+        ModelField(identity=b"\x64\x50\x89\x89\xd4\xcc", name="record_package_identity", storage="option<record@de2ab51c6719>", canonical=true),
+        ModelField(identity=b"\x81\x2f\xff\x9c\x3c\xf4", name="trait_adoptions", storage="list<record@862d3e1c410e>", canonical=true),
+        ModelField(identity=b"\xf1\x2f\xd2\xa7\x0b\x90", name="native_item", storage="string", canonical=true),
+        ModelField(identity=b"\xa9\x79\xb0\x14\x16\x76", name="class_inheritance", storage="option<record@f6c9780384b9>", canonical=true),
+        ModelField(identity=b"\xd2\xeb\x5c\x55\xaf\x3e", name="native_type_arguments", storage="list<enum@b0e0f36c4c22>", canonical=true),
+        ModelField(identity=b"\xa6\xb0\x5d\x0b\xca\xad", name="direct_declaration_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<string>", canonical=true),
+        ModelField(identity=b"\xbb\x82\x66\x4e\xde\x2c", name="field_identities", storage="list<record@28cdd429f7ec>", canonical=true),
+        ModelField(identity=b"\x1a\x33\x5c\xea\x15\xf9", name="field_types", storage="list<enum@b0e0f36c4c22>", canonical=true),
+        ModelField(identity=b"\x0b\xc4\x33\xf3\xaa\x0b", name="field_public", storage="list<boolean>", canonical=true),
+        ModelField(identity=b"\x9a\x4f\xed\xcf\x67\xe4", name="field_aliases", storage="list<option<string>>", canonical=true),
+        ModelField(identity=b"\x08\x9c\x33\x15\x18\x81", name="reflection_fields", storage="option<list<u64>>", canonical=true),
+        ModelField(identity=b"\x1b\x4f\xa3\x96\xb0\xa9", name="reflection_metadata", storage="option<list<record@8ae468e6cf43>>", canonical=true),
+        ModelField(identity=b"\x30\x90\xd6\xc4\x08\xb6", name="comparison_equality", storage="option<record@28cdd429f7ec>", canonical=true),
+        ModelField(identity=b"\xef\xa1\xf3\x75\xd7\x61", name="public", storage="boolean", canonical=true),
+        ModelField(identity=b"\x04\xcc\x6b\x2d\x1e\xea", name="has_field_defaults", storage="boolean", canonical=true),
+        ModelField(identity=b"\x13\x62\xe3\x2f\x1f\x0c", name="field_default_body", storage="option<record@02ff73c4b317>", canonical=true),
+        ModelField(identity=b"\xc1\x28\x3f\x7d\xf8\x9f", name="validated_constructor", storage="option<record@6e5aca22099a>", canonical=true),
+        ModelField(identity=b"\x5b\xe2\xc1\x33\x32\x22", name="method_partial_defaults", storage="list<record@59a539375e56>", canonical=true),
+        ModelField(identity=b"\xfd\x6f\x8e\xa7\xfd\xe2", name="display_method", storage="option<record@28cdd429f7ec>", canonical=true),
+        ModelField(identity=b"\x72\x03\x30\x58\x23\x18", name="newtype_deserialize", storage="enum@5daf12108aa0", canonical=true),
+        ModelField(identity=b"\x7f\xb1\x11\xcf\x2a\x56", name="newtype_string_conversion", storage="enum@55aeb0f053d3", canonical=true),
+        ModelField(identity=b"\xa8\x8f\xe6\xec\x61\x15", name="derives", storage="list<string>", canonical=true),
+        ModelField(identity=b"\x1e\x61\xb0\x87\xa8\x64", name="named_type_identities", storage="map<string,record@28cdd429f7ec>", canonical=true),
+        ModelField(identity=b"\xa1\xc4\xe8\xba\x64\xbd", name="type_parameters", storage="list<string>", canonical=true),
+        ModelField(identity=b"\xe7\x94\xf9\xdc\xef\x77", name="type_parameter_count", storage="u64", canonical=true),
+    ])
+
+def describe_primitive_trait_adapter() -> Description:
+    return model_description(b"\x64\x1b\x21\x72\x47\xd8\x00", "incan.graph.executable/1/PrimitiveTraitAdapter", [
+        ModelField(identity=b"\x58\xe4\x42\x11\x34\xca", name="receiver_type", storage="enum@b0e0f36c4c22", canonical=true),
+        ModelField(identity=b"\x91\x1e\x80\xa2\xd7\x6f", name="payload_field", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xe4\xe8\x82\xd2\x7a\x32", name="decode_slot", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xd5\x6e\x2b\x5c\x63\x24", name="decoded_value", storage="record@28cdd429f7ec", canonical=true),
+    ])
+
+def describe_record_package_identity() -> Description:
+    return model_description(b"\xde\x2a\xb5\x1c\x67\x19\x00", "incan.graph.executable/1/RecordPackageIdentity", [
+        ModelField(identity=b"\x81\xb7\x02\x76\x70\xfb", name="registry_id", storage="string", canonical=true),
+        ModelField(identity=b"\x72\xa9\x7b\x1c\x23\x36", name="scoped_name", storage="string", canonical=true),
+    ])
+
+def describe_static_declaration() -> Description:
+    return model_description(b"\x57\x08\x5f\x38\x80\x11\x00", "incan.graph.executable/1/StaticDeclaration", [
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@b0e0f36c4c22", canonical=true),
+        ModelField(identity=b"\xac\x1b\x5c\x09\x61\xa7", name="initial", storage="enum@34aabec0dce1", canonical=true),
+    ])
+
+def describe_static_initializer() -> Description:
+    return enum_schema(b"\x34\xaa\xbe\xc0\xdc\xe1\x00", "incan.graph.executable/1/StaticInitializer", [
+        variant_schema(b"\xa6\x23\x0c\x2a\x81\xab", "Literal", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="enum@50678bb85abb", canonical=true)]),
+        variant_schema(b"\x6f\x20\x2f\x54\xa7\xb2", "List", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<enum@50678bb85abb>", canonical=true)]),
+        variant_schema(b"\x96\x11\xd3\xd8\x00\xfc", "Dict", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<tuple<enum@50678bb85abb,enum@50678bb85abb>>", canonical=true)]),
+        variant_schema(b"\xb6\xf6\xf3\xad\x07\xb3", "Set", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<enum@50678bb85abb>", canonical=true)]),
+        variant_schema(b"\x7a\x15\x10\x26\x67\xbd", "Computed", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@02ff73c4b317", canonical=true)]),
+        variant_schema(b"\xbf\xda\x02\x6e\x6c\x59", "Linked", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@aa8e36e26c59", canonical=true)]),
+    ])
+
+def describe_string_conversion_contract() -> Description:
+    return enum_schema(b"\x2f\x19\x34\x6d\x3e\x3a\x00", "incan.graph.executable/1/StringConversionContract", [
+        variant_schema(b"\x26\x11\x8c\xfc\x7e\x5b", "Unselected", []),
+        variant_schema(b"\xac\x7c\x94\x9f\x12\x11", "Inactive", []),
+        variant_schema(b"\x57\xfd\x7a\x0c\xf3\x3f", "Selected", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@cdce611f8a1a", canonical=true)]),
+    ])
+
+def describe_string_conversion_selection() -> Description:
+    return model_description(b"\xcd\xce\x61\x1f\x8a\x1a\x00", "incan.graph.executable/1/StringConversionSelection", [
+        ModelField(identity=b"\x24\xc0\x71\x5f\x72\x4c", name="trait_identity", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xc6\xc1\xcf\x3f\x70\xac", name="method_identity", storage="record@28cdd429f7ec", canonical=true),
+    ])
+
+def describe_trait_adoption() -> Description:
+    return model_description(b"\x86\x2d\x3e\x1c\x41\x0e\x00", "incan.graph.executable/1/TraitAdoption", [
+        ModelField(identity=b"\x24\xc0\x71\x5f\x72\x4c", name="trait_identity", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xb1\x92\x01\x7d\xa4\x7f", name="arguments", storage="list<enum@b0e0f36c4c22>", canonical=true),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="option<list<record@28cdd429f7ec>>", canonical=true),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<record@da72b155784a>", canonical=true),
+        ModelField(identity=b"\x0f\xd9\x7b\xe2\x0e\xf1", name="primitive_adapter", storage="option<record@641b217247d8>", canonical=true),
+    ])
+
+def describe_trait_field_implementation() -> Description:
+    return model_description(b"\xda\x72\xb1\x55\x78\x4a\x00", "incan.graph.executable/1/TraitFieldImplementation", [
+        ModelField(identity=b"\xf8\xdc\xb7\xa1\x3b\xf4", name="requirement", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xda\x31\x01\x2c\x40\x33", name="implementation", storage="record@28cdd429f7ec", canonical=true),
+    ])
+
+def describe_trait_implementation() -> Description:
+    return model_description(b"\x98\xb8\x9f\x46\x43\x9c\x00", "incan.graph.executable/1/TraitImplementation", [
+        ModelField(identity=b"\x4c\x10\x29\x69\x7e\xe3", name="owner", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x5b\x7e\x6b\xf2\xdc\x4a", name="method", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xda\x31\x01\x2c\x40\x33", name="implementation", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xac\x76\xd7\xa3\x07\xb9", name="slot_arguments", storage="list<enum@b0e0f36c4c22>", canonical=true),
+        ModelField(identity=b"\x09\xba\x95\xab\xc8\x06", name="type_arguments", storage="list<record@511ea945d23c>", canonical=true),
+    ])
+
+def describe_trait_type_argument() -> Description:
+    return model_description(b"\x51\x1e\xa9\x45\xd2\x3c\x00", "incan.graph.executable/1/TraitTypeArgument", [
+        ModelField(identity=b"\x63\x90\x36\x1d\xfd\xff", name="parameter", storage="string", canonical=true),
+        ModelField(identity=b"\xb7\x4f\x83\xc9\x35\x3b", name="argument", storage="enum@b0e0f36c4c22", canonical=true),
+    ])
+
+def describe_type_alias_declaration() -> Description:
+    return model_description(b"\xe4\x8b\x55\x7a\x6f\x93\x00", "incan.graph.executable/1/TypeAliasDeclaration", [
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@b0e0f36c4c22", canonical=true),
+        ModelField(identity=b"\x1e\x61\xb0\x87\xa8\x64", name="named_type_identities", storage="map<string,record@28cdd429f7ec>", canonical=true),
+    ])
+
+def describe_validated_constructor() -> Description:
+    return model_description(b"\x6e\x5a\xca\x22\x09\x9a\x00", "incan.graph.executable/1/ValidatedConstructor", [
+        ModelField(identity=b"\xe3\xc1\x70\x3a\xbf\x8a", name="constructor", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xf8\x2a\xf3\x21\x60\xbc", name="validator", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\xb2\x45\x1d\x4d\x54\x4c", name="required_fields", storage="list<u64>", canonical=true),
+    ])
+
+def describe_value_enum_backing() -> Description:
+    return enum_schema(b"\x78\x9e\x7a\x3d\x6d\x64\x00", "incan.graph.executable/1/ValueEnumBacking", [
+        variant_schema(b"\x0b\x5f\x60\x80\x70\xc6", "Int", []),
+        variant_schema(b"\x80\x84\xa5\x1b\x3c\x64", "Str", []),
+    ])
+
+def describe_value_enum_declaration() -> Description:
+    return model_description(b"\x07\x94\xab\xf1\x85\xdf\x00", "incan.graph.executable/1/ValueEnumDeclaration", [
+        ModelField(identity=b"\xa6\xb0\x5d\x0b\xca\xad", name="direct_declaration_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\xbc\x33\x47\xde\x8e\x8c", name="backing", storage="enum@789e7a3d6d64", canonical=true),
+        ModelField(identity=b"\xda\xd5\x69\xe1\x01\xad", name="variants", storage="list<record@a6f57aa31e69>", canonical=true),
+    ])
+
+def describe_value_enum_variant_declaration() -> Description:
+    return model_description(b"\xa6\xf5\x7a\xa3\x1e\x69\x00", "incan.graph.executable/1/ValueEnumVariantDeclaration", [
+        ModelField(identity=b"\xa6\xb0\x5d\x0b\xca\xad", name="direct_declaration_id", storage="record@18421a55ad93", canonical=true),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@28cdd429f7ec", canonical=true),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string", canonical=true),
+        ModelField(identity=b"\xa1\xae\x8a\x70\x64\x65", name="raw_value", storage="enum@50678bb85abb", canonical=true),
+    ])

@@ -2,15 +2,17 @@
 
 use crate::callable_schema::{CALLABLE_PRODUCT, callable_descriptions};
 use crate::crumb_rows::{field_value, operation_budget, required_value};
-use crate::graph_crumb_fields::{graph_read_budget, items, text};
+use crate::graph_crumb_fields::{graph_read_budget, graph_read_budget_at_depth, items, text};
 use crate::namespace_schema::{
     NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, NAMESPACE_SCHEMA, namespace_descriptions,
     namespace_field_is_canonical, namespace_root,
 };
-use crate::plan_wire_rows::{PreparedWireReader, admit_wire, read_wire, wire_field, write_wire};
+use crate::plan_wire_rows::{
+    PreparedWireReader, admit_wire, read_wire, wire_field, write_wire, write_wire_with_budget,
+};
 use internal_models_bindings::{
     Budget, IntegerValue, MapEntry, MappedView, Projection, RowAdmission, RowRead, Value, ValueField, binary_message,
-    codec_allowance, crumb_message, depth_allowance, read_field_at, settle, value_hash,
+    codec_allowance, crumb_message, depth_allowance, read_field_at, refusal, settle, value_hash,
 };
 
 /// One identity-addressed field of a namespace record or alternative.
@@ -37,6 +39,10 @@ pub enum NamespaceAtom {
     Flag(bool),
     Signed(i64),
     Unsigned(u64),
+    /// A signed logical integer outside the narrow checked declaration domain.
+    WideSigned(i128),
+    /// An unsigned logical integer outside the narrow checked declaration domain.
+    WideUnsigned(u128),
     Real(f64),
     Missing,
     Present(Vec<NamespaceAtom>),
@@ -48,6 +54,9 @@ pub enum NamespaceAtom {
 }
 
 const INVALID_CELL: &str = "invalid logical cell in a checked namespace";
+
+// A single Body IR edge can cross a collection, a typed cell and a nominal record.
+const EXECUTABLE_DEPTH: i64 = 512;
 
 fn selector(number: u64) -> Result<Vec<u8>, String> {
     if number > 0xffff_ffff_ffff {
@@ -76,6 +85,7 @@ fn fields(values: &[NamespaceField]) -> Result<Vec<ValueField>, String> {
         .collect()
 }
 
+/// Convert compiler cells into the logical values required by the declared Crumb shape.
 fn logical(cell: &NamespaceAtom) -> Result<Value, String> {
     Ok(match cell {
         NamespaceAtom::Text(s) => Value::Text(s.clone()),
@@ -83,6 +93,8 @@ fn logical(cell: &NamespaceAtom) -> Result<Value, String> {
         NamespaceAtom::Flag(flag) => Value::Boolean(*flag),
         NamespaceAtom::Signed(number) => Value::Integer(IntegerValue::Signed(i128::from(*number))),
         NamespaceAtom::Unsigned(number) => Value::Integer(IntegerValue::Unsigned(u128::from(*number))),
+        NamespaceAtom::WideSigned(number) => Value::Integer(IntegerValue::Signed(*number)),
+        NamespaceAtom::WideUnsigned(number) => Value::Integer(IntegerValue::Unsigned(*number)),
         NamespaceAtom::Real(number) => Value::Float(64, number.to_bits().to_be_bytes().to_vec()),
         NamespaceAtom::Missing => Value::NoneValue,
         NamespaceAtom::Present(items) => match items.as_slice() {
@@ -124,17 +136,24 @@ fn float_bits(data: &[u8]) -> Option<f64> {
     Some(f64::from_bits(u64::from_be_bytes(bytes)))
 }
 
+/// Keep the ordinary namespace ABI for narrow values and retain exact bits for full-width constants.
+fn signed(number: i128) -> NamespaceAtom {
+    i64::try_from(number).map_or(NamespaceAtom::WideSigned(number), NamespaceAtom::Signed)
+}
+
+/// Keep the ordinary namespace ABI for narrow values and retain exact bits for full-width constants.
+fn unsigned(number: u128) -> NamespaceAtom {
+    u64::try_from(number).map_or(NamespaceAtom::WideUnsigned(number), NamespaceAtom::Unsigned)
+}
+
+/// Reconstruct the compiler ABI from an admitted logical value, retaining full-width integers.
 fn atom(value: &Value) -> Result<NamespaceAtom, String> {
     Ok(match value {
         Value::Text(s) => NamespaceAtom::Text(s.clone()),
         Value::Binary(data) => NamespaceAtom::Binary(data.clone()),
         Value::Boolean(flag) => NamespaceAtom::Flag(*flag),
-        Value::Integer(IntegerValue::Signed(number)) => {
-            NamespaceAtom::Signed(i64::try_from(*number).map_err(|_| INVALID_CELL.to_owned())?)
-        }
-        Value::Integer(IntegerValue::Unsigned(number)) => {
-            NamespaceAtom::Unsigned(u64::try_from(*number).map_err(|_| INVALID_CELL.to_owned())?)
-        }
+        Value::Integer(IntegerValue::Signed(number)) => signed(*number),
+        Value::Integer(IntegerValue::Unsigned(number)) => unsigned(*number),
         Value::Float(64, data) => NamespaceAtom::Real(float_bits(data).ok_or_else(|| INVALID_CELL.to_owned())?),
         Value::NoneValue => NamespaceAtom::Missing,
         Value::Some(items) if items.len() == 1 => NamespaceAtom::Present(vec![atom(&items[0])?]),
@@ -184,8 +203,8 @@ fn read_atom(nodes: &mut RowRead) -> Result<NamespaceAtom, String> {
         0 => NamespaceAtom::Missing,
         1 => NamespaceAtom::Present(vec![read_atom(nodes)?]),
         2 => NamespaceAtom::Flag(nodes.flag()),
-        3 => NamespaceAtom::Signed(i64::try_from(nodes.signed()).map_err(|_| invalid())?),
-        4 => NamespaceAtom::Unsigned(u64::try_from(nodes.unsigned()).map_err(|_| invalid())?),
+        3 => signed(nodes.signed()),
+        4 => unsigned(nodes.unsigned()),
         5 => {
             let data = nodes.bytes();
             if nodes.number() != 64 {
@@ -277,8 +296,13 @@ impl PreparedNamespaceReader {
 /// Project the admitted namespace into the frontend's cells under the remaining allowance.
 fn decode_admitted(row: &RowAdmission, budget: &mut Budget) -> Result<NamespaceAtom, String> {
     let (remaining_bytes, remaining_elements) = codec_allowance(budget);
-    let mut decoded = row.read_record(0, remaining_bytes, remaining_elements, depth_allowance(budget));
+    let decoded = row.read_record(0, remaining_bytes, remaining_elements, depth_allowance(budget));
     settle(&decoded, budget).map_err(|error| binary_message(&error))?;
+    restore_admitted_atoms(decoded)
+}
+
+/// Materialize a validated row from its preorder cursor.
+fn restore_admitted_atoms(mut decoded: RowRead) -> Result<NamespaceAtom, String> {
     let root = read_atom(&mut decoded)?;
     if decoded.next() != -1 {
         return Err("checked namespace row has trailing logical cells".into());
@@ -354,6 +378,76 @@ pub fn encode_namespace_interface(root: &NamespaceAtom) -> Result<Vec<u8>, Strin
 /// Decode a checked namespace interface without a prepared reader.
 pub fn decode_namespace_interface(encoded: &[u8]) -> Result<NamespaceAtom, String> {
     atom(&read_wire(encoded, &namespace_root(), &namespace_descriptions())?)
+}
+
+/// Encode compiler logical cells using the caller's exact Crumb root and reference closure.
+pub fn encode_checked_projection(
+    root: &[u8],
+    descriptions: &Vec<internal_models_bindings::Description>,
+    value: &NamespaceAtom,
+) -> Result<Vec<u8>, String> {
+    write_wire_with_budget(
+        root,
+        descriptions,
+        logical(value)?,
+        &mut graph_read_budget_at_depth(EXECUTABLE_DEPTH)?,
+    )
+}
+
+/// Admit the exact authored root and reference closure before restoring the compiler's logical cells.
+pub fn decode_checked_projection(
+    root: &[u8],
+    descriptions: &Vec<internal_models_bindings::Description>,
+    encoded: &[u8],
+) -> Result<NamespaceAtom, String> {
+    let reader = PreparedWireReader::create(root, descriptions, "checked executable")?;
+    decode_prepared_checked_projection(&reader, encoded)
+}
+
+/// Authenticate owned executable bytes using a dictionary already prepared by the compiler process.
+pub fn decode_prepared_checked_projection(
+    reader: &PreparedWireReader,
+    encoded: &[u8],
+) -> Result<NamespaceAtom, String> {
+    let mut budget = graph_read_budget_at_depth(EXECUTABLE_DEPTH)?;
+    let row = reader.admit(encoded, &mut budget, &mut Vec::new())?;
+    decode_admitted_executable(&row)
+}
+
+/// Reuse the admitted tree under the work already charged for this envelope.
+fn decode_admitted_executable(row: &RowAdmission) -> Result<NamespaceAtom, String> {
+    let decoded = row.read_record(0, row.bytes_charged, row.elements_charged, EXECUTABLE_DEPTH);
+    if !decoded.succeeded() {
+        return Err(binary_message(&refusal(
+            decoded.category,
+            decoded.offset,
+            decoded.field,
+            decoded.variant,
+            decoded.cause,
+        )));
+    }
+    restore_admitted_atoms(decoded)
+}
+
+/// Authenticate a mapped compiler root and materialize only the requested named fields.
+pub fn checked_projection_fields(
+    reader: &PreparedWireReader,
+    view: &MappedView,
+    identities: &[Vec<u8>],
+) -> Result<Vec<NamespaceAtom>, String> {
+    let mut budget = graph_read_budget_at_depth(EXECUTABLE_DEPTH)?;
+    let row = reader.admit_view(view, &mut budget)?;
+    identities
+        .iter()
+        .map(|identity| atom(&wire_field(&row, identity, &mut budget)?))
+        .collect()
+}
+
+/// Open a fully needed executable value in its authenticated mapped backing.
+pub fn decode_checked_projection_view(reader: &PreparedWireReader, view: &MappedView) -> Result<NamespaceAtom, String> {
+    let mut budget = graph_read_budget_at_depth(EXECUTABLE_DEPTH)?;
+    let row = reader.admit_view(view, &mut budget)?;
+    decode_admitted_executable(&row)
 }
 
 /// The module name and path a checked namespace advertises.
@@ -433,4 +527,76 @@ pub fn decode_callable_inventory(encoded: &[u8]) -> Result<NamespaceAtom, String
         _ => return Err("missing callable publication checksum".into()),
     }
     atom(&fields[1].value)
+}
+
+#[cfg(test)]
+mod executable_depth_tests {
+    use super::*;
+    use crate::crumb_rows::{ModelField, model_description};
+    use internal_models_bindings::{complete_view, create_budget, mapped_bytes};
+
+    const ROOT: &[u8] = b"nestd_\0";
+    const CHILDREN: &[u8] = b"child_";
+    const LABEL: &[u8] = b"label_";
+
+    /// Build a finite chain in a recursive model, mirroring the named scopes in deeply nested Body IR.
+    fn nested_value(depth: usize) -> Result<NamespaceAtom, String> {
+        let children = selector_number(CHILDREN)?;
+        let label = selector_number(LABEL)?;
+        let node = |child| {
+            NamespaceAtom::Fields(vec![
+                NamespaceField {
+                    identity: children,
+                    value: NamespaceAtom::Items(child),
+                },
+                NamespaceField {
+                    identity: label,
+                    value: NamespaceAtom::Unsigned(7),
+                },
+            ])
+        };
+        Ok((0..depth).fold(node(Vec::new()), |child, _| node(vec![child])))
+    }
+
+    /// A deeper executable value must round-trip through both admission paths under the same finite budget.
+    #[test]
+    fn executable_projection_round_trips_nested_records() -> Result<(), String> {
+        let descriptions = vec![model_description(
+            ROOT,
+            "DeepExecutableFixture",
+            &[
+                ModelField::new(CHILDREN, "children", "list<record@6e657374645f>"),
+                ModelField::new(LABEL, "label", "u64"),
+            ],
+        )];
+        let expected = nested_value(60)?;
+        let encoded = encode_checked_projection(ROOT, &descriptions, &expected)?;
+        assert_eq!(decode_checked_projection(ROOT, &descriptions, &encoded)?, expected);
+
+        let encoded_again = encode_checked_projection(ROOT, &descriptions, &expected)?;
+        assert_eq!(encoded, encoded_again);
+        let reader = PreparedWireReader::create(ROOT, &descriptions, "deep executable fixture")?;
+        let mapped = mapped_bytes(&encoded)?;
+        let view = complete_view(&mapped).ok_or("deep executable fixture has no complete mapped view")?;
+        assert_eq!(
+            checked_projection_fields(&reader, &view, &[LABEL.to_vec()])?,
+            [NamespaceAtom::Unsigned(7)]
+        );
+        assert_eq!(decode_checked_projection_view(&reader, &view)?, expected);
+
+        let admitted = reader.admit_view(&view, &mut graph_read_budget_at_depth(EXECUTABLE_DEPTH)?)?;
+        let mut exact = create_budget(admitted.bytes_charged, admitted.elements_charged, EXECUTABLE_DEPTH)
+            .map_err(|error| crumb_message(&error))?;
+        let paid = reader.admit_view(&view, &mut exact)?;
+        assert_eq!(codec_allowance(&exact), (0, 0));
+        assert!(decode_admitted(&paid, &mut exact).is_err());
+        assert_eq!(decode_admitted_executable(&paid)?, expected);
+
+        assert!(write_wire(ROOT, &descriptions, logical(&expected)?).is_err());
+        let refused = encode_checked_projection(ROOT, &descriptions, &nested_value(176)?)
+            .err()
+            .ok_or("an over-depth executable frame was accepted")?;
+        assert!(refused.contains("depth"), "{refused}");
+        Ok(())
+    }
 }

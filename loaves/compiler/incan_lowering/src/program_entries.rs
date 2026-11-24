@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use incan_mir_plan_native::{
-    AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, EventPosition, Function, GenericEnumDeclaration,
-    GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport, PlanType, UnitNominals,
-    decode_lowering_event, resolve_nominals, unresolved_nominal,
+    AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, EventPosition, ExternalFunction, Function,
+    FunctionSlot, GenericEnumDeclaration, GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport,
+    PlanType, UnitNominals, decode_lowering_event, resolve_nominals, unresolved_nominal,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{
@@ -20,16 +20,16 @@ use crate::decorator_caches::DecoratorFrame;
 use crate::frame_instances::{
     append_synthesized, external_index, function_names, merge_externals, merge_indexed, named_functions,
 };
-use crate::function_frames::{LoweredFrame, lower_function};
+use crate::function_frames::lower_function;
 use crate::generators::append_generator_constructor;
 use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
-use crate::plan_modules::{ModulePage, admitted_page, report_admitted};
+use crate::plan_modules::{AdmittedProduct, ModulePage, PlanAdmissions, admitted_page, report_admitted};
 use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, producer_generation};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
-use crate::resident_products::RestoreInputs;
+use crate::resident_products::{FinalizedMember, FinalizedSlots, RestoreInputs};
 use crate::scalar_store::{
     ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
     report_scalar_refusal, retained_scalar, scalar_miss,
@@ -95,14 +95,15 @@ pub fn lower_ordinary_bodies(
     scalar_products: Option<String>,
     scalar_bodies: &BTreeMap<CompilerNodeId, String>,
     overflow_checks: bool,
-    record_report: Option<String>,
+    record_report: Option<&str>,
+    admitted_records: &mut PlanAdmissions,
 ) -> Result<(), String> {
     let _ = (source_context, source_files, package_versions, overflow_checks);
     let directory = scalar_products.as_deref();
     let mut keyed = KeyedProducts {
         directory,
         admitted: scalar_bodies,
-        report: record_report.as_deref(),
+        report: record_report,
         generation: producer_generation(directory),
         nominals: product_nominal_table(program, intrinsics, directory),
         linked: linked_crates(context),
@@ -117,33 +118,52 @@ pub fn lower_ordinary_bodies(
     let mut names = function_names();
     let mut signatures = external_index();
     for (index, owner) in owners.iter().enumerate() {
-        let positions = module_bodies.get(owner).cloned().unwrap_or_default();
+        let positions = module_bodies.get(owner).map(Vec::as_slice).unwrap_or_default();
         // The module's admitted plan record and the functions restored from it; without a page every body takes the
         // keyed route.
         let page = admitted_page(keyed.directory, owner, keyed.generation.as_deref());
+        let positioned = kind == "program"
+            && page.positioned_content().is_some_and(|content| {
+                admitted_records
+                    .selection()
+                    .and_then(|selection| selection.module(owner))
+                    .is_some_and(|selected| {
+                        selected.positioned
+                            && selected.digest == hex::encode(content)
+                            && usize::try_from(selected.count).ok() == Some(page.events.len())
+                    })
+            });
         let placement_lines = if !page.events.is_empty() && page.inspect_placement {
             line_starts(&sources[index])
         } else {
             Vec::new()
         };
+        let frame = FrameSource {
+            source: &sources[index],
+            file: &files[index],
+        };
+        let retained = if positioned {
+            positioned_slots(&page, positions, context, program, emitted_frames, &frame, &keyed)
+        } else {
+            None
+        };
+        let seeding = positioned && retained.is_none();
         let mut admission = ModuleAdmission {
             page: &page,
             placement_lines: &placement_lines,
             restored: Vec::new(),
-            frames: Vec::new(),
+            products: Vec::new(),
+            seeding,
+            retained,
+            finalized: FinalizedSlots::new(),
         };
         let mut ordinary = 0;
-        for position in positions {
+        for &position in positions {
             let body = &context.bodies[position];
             if !ordinary_body(context, body, emitted_frames, kind) {
                 continue;
             }
             ordinary += 1;
-            let diagnostic_owner = format!(" in {} at {}", body.name, files[index]);
-            let frame = FrameSource {
-                source: &sources[index],
-                file: &files[index],
-            };
             let restored_before = admission.restored.len();
             let (function, runtime, pending, synthesized) = lower_ordinary_frame(
                 context,
@@ -155,7 +175,7 @@ pub fn lower_ordinary_bodies(
                 &mut keyed,
                 &mut admission,
             )
-            .map_err(|reason| reason + &diagnostic_owner)?;
+            .map_err(|reason| format!("{reason} in {} at {}", body.name, files[index]))?;
             // Only a body that took the keyed route was lowered or looked up; a restored body is not traced.
             if trace && admission.restored.len() == restored_before {
                 emit(
@@ -168,29 +188,36 @@ pub fn lower_ordinary_bodies(
             if !named_functions(&mut names, &inventories.functions, &function.name).is_empty() {
                 return Err(format!("unsupported Body IR overloaded function {}", body.name));
             }
-            let parameters: Vec<PlanType> = function
-                .parameters
-                .iter()
-                .map(|parameter| parameter.ty.clone())
-                .collect();
-            let (planned, return_type, span) = (
-                function.name.clone(),
-                function.return_type.clone(),
-                function.span.clone(),
-            );
-            inventories.functions.push(function.clone());
+            let function_position = inventories.functions.len();
+            inventories.functions.push(function);
             if kind == "library" && body.is_async {
-                inventories.functions.push(boxed_future_constructor(
-                    function_name(context, body),
-                    incan_mir_plan_native::CalleeKind::Planned(planned),
-                    parameters,
-                    return_type,
-                    span,
-                )?);
+                let function = &inventories.functions[function_position];
+                inventories.functions.push(
+                    boxed_future_constructor(
+                        function_name(context, body),
+                        incan_mir_plan_native::CalleeKind::Planned(function.name.clone()),
+                        function
+                            .parameters
+                            .iter()
+                            .map(|parameter| parameter.ty.clone())
+                            .collect(),
+                        function.return_type.clone(),
+                        function.span.clone(),
+                    )?
+                    .into(),
+                );
             }
             emitted_frames.record(body, position);
             append_synthesized(&mut inventories.functions, &mut names, synthesized)?;
-            append_async_entry(context, body, &function, index == entry, tests, intrinsics, inventories)?;
+            append_async_entry(
+                context,
+                body,
+                function_position,
+                index == entry,
+                tests,
+                intrinsics,
+                inventories,
+            )?;
             append_generator_constructor(
                 &program.constructors,
                 &mut inventories.functions,
@@ -203,14 +230,19 @@ pub fn lower_ordinary_bodies(
             merge_indexed(&mut inventories.externals, &mut signatures, runtime)?;
         }
         report_admitted(
-            keyed.report,
+            admitted_records,
+            record_report,
             owner,
-            &admission.restored,
-            &admission.frames,
+            admission.restored,
+            admission.products,
             ordinary,
             page.inspect_placement,
             keyed.directory,
+            page.positioned_content(),
         )?;
+        if positioned && ordinary != 0 && ordinary == admission.finalized.len() && ordinary == page.events.len() {
+            page.keep_finalized(admission.finalized);
+        }
     }
     Ok(())
 }
@@ -234,12 +266,56 @@ pub struct FrameSource<'a> {
 }
 
 /// One module's admitted plan record as its ordinary frames read it: the page, the line index an inspected placement
-/// borrows, the functions restored from the page so far and the helper frames each restored product carries.
+/// borrows, and the functions and exact product evidence restored from the page so far.
 pub struct ModuleAdmission<'a> {
     pub page: &'a ModulePage,
     pub placement_lines: &'a [i64],
     pub restored: Vec<AdmittedFunction>,
-    pub frames: Vec<Vec<String>>,
+    pub(crate) products: Vec<AdmittedProduct>,
+    seeding: bool,
+    retained: Option<BTreeMap<CompilerNodeId, FinalizedMember>>,
+    finalized: FinalizedSlots,
+}
+
+type OrdinaryFrame = (FunctionSlot, Vec<ExternalFunction>, Vec<Instance>, Vec<Function>);
+
+/// Use a retained positioned inventory only when all current ordinary bodies have their exact checked slots.
+fn positioned_slots(
+    page: &ModulePage,
+    positions: &[usize],
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    emitted: &EmittedFrames,
+    frame: &FrameSource<'_>,
+    keyed: &KeyedProducts<'_>,
+) -> Option<BTreeMap<CompilerNodeId, FinalizedMember>> {
+    let slots = page.finalized()?;
+    let mut offered = BTreeSet::new();
+    let mut members = BTreeMap::new();
+    for &position in positions {
+        let body = &context.bodies[position];
+        if !ordinary_body(context, body, emitted, "program") {
+            continue;
+        }
+        let reads = keyed.admitted.get(&body.direct_call_id)?;
+        let identity = body.canonical.as_ref().map(encode_incan_symbol_identity)?;
+        let span = location(&body.span, frame.source, frame.file);
+        let inputs = RestoreInputs {
+            frame: evaluator_name(context, body),
+            file: span.file.to_string(),
+            line: span.line,
+            overflow: program.overflow_checks,
+            reads: reads.clone(),
+            generation: keyed.generation.clone().unwrap_or_default(),
+            positions: None,
+        };
+        let key = (inputs.digest(), identity, span.column);
+        let (kept_key, member) = slots.get_key_value(&key)?;
+        if !offered.insert(kept_key) || members.insert(body.direct_call_id.clone(), member.clone()).is_some() {
+            return None;
+        }
+    }
+    (members.len() == slots.len() && page.current_positioned_bytes()).then_some(members)
 }
 
 /// Read only producer-admitted products, or lower normally and retain an exact witnessed result.
@@ -261,7 +337,27 @@ fn lower_ordinary_frame(
     intrinsics: &mut Vec<EnumDeclaration>,
     keyed: &mut KeyedProducts<'_>,
     admission: &mut ModuleAdmission<'_>,
-) -> Result<LoweredFrame, String> {
+) -> Result<OrdinaryFrame, String> {
+    if let Some(member) = admission
+        .retained
+        .as_mut()
+        .and_then(|slots| slots.remove(&body.direct_call_id))
+    {
+        let event = &member.product.event;
+        admission.restored.push(AdmittedFunction {
+            function: member.slot.name.clone(),
+            identity: event.identity.clone(),
+            references: Vec::new(),
+            placement: None,
+        });
+        admission.products.push(AdmittedProduct {
+            key: event.key.clone(),
+            digest: member.product.digest.clone(),
+            helpers: Vec::new(),
+        });
+        frame_product("direct", "ordinary", &frame_label(body));
+        return Ok((member.slot, Vec::new(), Vec::new(), Vec::new()));
+    }
     match restore_admitted(context, program, body, frame, intrinsics, keyed, admission) {
         Admission::Restored(restored) => {
             frame_product("admitted", "ordinary", &frame_label(body));
@@ -299,6 +395,7 @@ fn lower_ordinary_frame(
             witness,
             &keyed.nominals,
             &keyed.linked,
+            Some(context),
             Some(&current),
             positions,
         ) && let Some(requests) = restore_requests(&encoded, context)
@@ -316,7 +413,7 @@ fn lower_ordinary_frame(
                 ),
             )?;
             frame_product("reused", "ordinary", &frame_label(body));
-            return Ok((function, runtime, requests, frames));
+            return Ok((function.into(), runtime, requests, frames));
         }
         // A witnessed body is lowered again although it may have a kept product: name why the product did not fit.
         if tracing_products() {
@@ -325,6 +422,7 @@ fn lower_ordinary_frame(
                 witness,
                 &keyed.nominals,
                 &keyed.linked,
+                context,
                 Some(&current),
                 positions,
             );
@@ -393,7 +491,8 @@ fn lower_ordinary_frame(
     if inputs.is_some() {
         frame_product(if kept { "lowered" } else { "unkept" }, "ordinary", &frame_label(body));
     }
-    Ok(lowered)
+    let (function, runtime, pending, synthesized) = lowered;
+    Ok((function.into(), runtime, pending, synthesized))
 }
 
 /// The owner a records request reports an ordinary frame's event under: its stable declaration identity and declaring
@@ -469,7 +568,7 @@ enum Admission {
     /// The page has the body's event, but it does not restore, for the reason named.
     Missed(&'static str),
     /// The body's function, runtime demand, generic instance requests and helper frames, restored from the event.
-    Restored(LoweredFrame),
+    Restored(OrdinaryFrame),
 }
 
 /// Restore a body of an admitted module from its final event in the module's plan record.
@@ -539,7 +638,7 @@ fn restore_admitted(
         Ok(admitted) => admitted,
         Err(reason) => return Admission::Missed(reason),
     };
-    let (placed, encoded, previous) = (&payload.0, &payload.1, &payload.2);
+    let (placed, encoded, previous) = (&payload.function, &payload.requests, &payload.event);
     if previous.key != selected.key || previous.function != selected.function || previous.identity != selected.symbol {
         return Admission::Missed("its page entry names another event");
     }
@@ -548,14 +647,15 @@ fn restore_admitted(
             unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
         );
     };
-    let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked) else {
+    let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked, context) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
     let Some(requests) = restore_requests(encoded, context) else {
         return Admission::Missed("a generic instance it requests is gone");
     };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();
-    let moved = current_identity != previous.identity || references != previous.references || !payload.3;
+    let moved =
+        current_identity != previous.identity || references != previous.references || !payload.coordinates_match;
     // A moved function's note names its nodes: the body's current ones, or those its page event recorded.
     let placement = if moved {
         let nodes = match &current {
@@ -572,9 +672,20 @@ fn restore_admitted(
     } else {
         None
     };
-    admission
-        .frames
-        .push(frames.iter().map(|frame| frame.name.clone()).collect());
+    admission.products.push(AdmittedProduct {
+        key: previous.key.clone(),
+        digest: payload.digest.clone(),
+        helpers: frames.iter().map(|frame| frame.name.clone()).collect(),
+    });
+    if admission.seeding && !moved && function.keeps_placement() && requests.is_empty() {
+        admission.finalized.insert(
+            (inputs.digest(), current_identity.clone(), span.column),
+            FinalizedMember {
+                slot: function.clone(),
+                product: payload,
+            },
+        );
+    }
     admission.restored.push(AdmittedFunction {
         function: function.name.clone(),
         identity: current_identity,
@@ -591,7 +702,7 @@ fn recorded_nodes(page: &ModulePage, function: &str) -> Option<Vec<EventPosition
 }
 
 /// A traced frame's module and source name, as the reuse proof matches bodies across captures.
-fn frame_label(body: &Body) -> String {
+pub(crate) fn frame_label(body: &Body) -> String {
     format!("{}::{}", body_module_identity(body).unwrap_or_default(), body.name)
 }
 
@@ -678,17 +789,18 @@ fn async_entry_name(context: &BodyIrModule, body: &Body, in_entry: bool, tests: 
 fn append_async_entry(
     context: &BodyIrModule,
     body: &Body,
-    function: &Function,
+    function_position: usize,
     in_entry: bool,
     tests: &[String],
     intrinsics: &mut Vec<EnumDeclaration>,
     inventories: &mut Inventories,
 ) -> Result<(), String> {
     if let Some(entry_name) = async_entry_name(context, body, in_entry, tests) {
+        let function = &inventories.functions[function_position];
         let (entry_function, entry_constructor, entry_runtime) =
             async_entry(context, function, intrinsics, &entry_name)?;
-        inventories.functions.push(entry_function);
-        inventories.functions.push(entry_constructor);
+        inventories.functions.push(entry_function.into());
+        inventories.functions.push(entry_constructor.into());
         merge_externals(&mut inventories.externals, vec![entry_runtime])?;
     }
     Ok(())
@@ -699,7 +811,7 @@ pub fn collected_test_entries(
     context: &BodyIrModule,
     entry_owner: &str,
     tests: &[String],
-    functions: &[Function],
+    functions: &[FunctionSlot],
     enums: &[EnumDeclaration],
 ) -> Result<Vec<String>, String> {
     let mut entries = Vec::new();

@@ -4,7 +4,7 @@ from rust::std::io import Write, stdin, stdout
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
-from graph_inspection import graph_response, options as graph_options, prepare_inspection
+from graph_inspection import graph_response, mcp_definitions, options as graph_options, prepare_inspection
 from graph_queries import display, nested, text
 from graph_memory import TaskMemory
 from home import TOOLCHAIN
@@ -129,13 +129,26 @@ model GraphServer:
         name = text(params, "name")
         if name not in tool_names():
             return failure(identifier, -32602, "Unknown tool")
-        match self.call(name, nested(params, "arguments")):
-            Ok(content) => return success(identifier, tool_content(content, false))
+        match self.tool_reply(name, nested(params, "arguments")):
+            Ok(content) => return success(identifier, content)
             Err(reason) => return success(identifier, tool_content(reason, true))
+
+    def tool_reply(mut self, name: str, arguments: JsonValue) -> Result[JsonValue, str]:
+        """Return the validated tool's display result and, for definitions, its selected canonical records."""
+        validate_arguments(name, arguments)?
+        if name != "graph_query":
+            return Ok(tool_content(self.call(name, arguments)?, false))
+        kind = text(arguments, "kind")
+        term = text(arguments, "term")
+        if term == "" or kind == "":
+            return Err("kind and term must be nonempty")
+        command = self.graph_command() + ["--query", kind, term]
+        if kind == "defs":
+            return definition_content(mcp_definitions(command)?)
+        return Ok(tool_content(graph_response(command)?, false))
 
     def call(mut self, name: str, arguments: JsonValue) -> Result[str, str]:
         """Share CLI retrieval, ranking and freshness; arguments cannot change this server's selected project."""
-        validate_arguments(name, arguments)?
         mut command = self.graph_command()
         if name in ["context_for_task", "context_for_declaration"]:
             mut task = text(arguments, "task")
@@ -158,12 +171,6 @@ model GraphServer:
             records = parse_records(document)?
             observations = JsonValue.array([record for record in records if text(record, "record") == "risk_signal"])
             return observations.to_json().map_err((error) => error.message())
-        if name == "graph_query":
-            kind = text(arguments, "kind")
-            term = text(arguments, "term")
-            if term == "" or kind == "":
-                return Err("kind and term must be nonempty")
-            return graph_response(command + ["--query", kind, term])
         if name == "snapshot_status":
             return graph_response(command + ["--stale", text(arguments, "snapshot")])
         return self.summary()
@@ -176,11 +183,8 @@ model GraphServer:
     def record_feedback(mut self, arguments: JsonValue) -> Result[str, str]:
         """Accept explicit feedback only for a declaration proved in the client's still-current graph snapshot."""
         prepared = prepare_inspection(graph_options(self.graph_command() + ["--format", "json"])?)?
-        snapshot = prepared.snapshot()?
-        if text(arguments, "snapshot") != snapshot:
-            return Err("feedback snapshot is stale; read the current graph summary")
-        document = prepared.respond()?
-        records = parse_records(document)?
+        answer = prepared.feedback_answer(text(arguments, "snapshot"))?
+        records = parse_records(answer.text)?
         mut keys: list[str] = []
         wanted = text(arguments, "declaration")
         for record in records:
@@ -192,7 +196,7 @@ model GraphServer:
         if len(keys) != 1:
             return Err("feedback requires a unique proved declaration ID, stable_key or qualified label")
         ttl = nested(arguments, "ttl_seconds").expect_int().map_err((_) => "ttl_seconds must be an integer")?
-        retained = self.memory.record(text(arguments, "task"), keys[0], snapshot, ttl)?
+        retained = self.memory.record(text(arguments, "task"), keys[0], answer.snapshot, ttl)?
         return retained.to_json().map_err((error) => error.message())
 
     def summary(self) -> Result[str, str]:
@@ -249,8 +253,27 @@ def failure(identifier: JsonValue, code: int, message: str) -> JsonValue:
 
 def tool_content(content: str, error: bool) -> JsonValue:
     """MCP tools return textual graph output or an actionable execution error."""
-    block = JsonValue.object({"type": JsonValue.string("text"), "text": JsonValue.string(content)})
-    return JsonValue.object({"content": JsonValue.array([block]), "isError": JsonValue.bool(error)})
+    return JsonValue.object({"content": JsonValue.array([text_block(content)]), "isError": JsonValue.bool(error)})
+
+
+def definition_content(answer: JsonValue) -> Result[JsonValue, str]:
+    """Keep the existing display first and provide the same typed records to text and structured consumers."""
+    display = answer.require("display").map_err((error) => error.message())?.expect_str().map_err(
+        (error) => error.message(),
+    )?
+    records = answer.require("records").map_err((error) => error.message())?
+    typed = JsonValue.object({"records": records})
+    serialized = typed.to_json().map_err((error) => error.message())?
+    return Ok(
+        JsonValue.object(
+            {"content": JsonValue.array([text_block(display), text_block(serialized)]), "isError": JsonValue.bool(false), "structuredContent": typed},
+        ),
+    )
+
+
+def text_block(content: str) -> JsonValue:
+    """One MCP text content block."""
+    return JsonValue.object({"type": JsonValue.string("text"), "text": JsonValue.string(content)})
 
 
 def validate_arguments(name: str, arguments: JsonValue) -> Result[None, str]:

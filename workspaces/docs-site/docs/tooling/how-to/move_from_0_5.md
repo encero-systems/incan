@@ -200,6 +200,22 @@ A member reaches a root's environment fragment as `extends = ["workspace:NAME"]`
 
 ## Change the source
 
+### Use graph lookups and operations to access graph members
+
+Import `GraphNode` and `GraphEdge` from `std.graph` as before when you need standalone records. To read or modify a graph's indexed storage, switch from direct field access to graph methods.
+
+| Previous access | Use in 0.6 |
+| --- | --- |
+| `DiGraph.next_node_id`, `DiGraph.nodes` | `active_node_ids()` |
+| `DiGraph.next_edge_id`, `DiGraph.edges` | `active_edge_ids()` |
+| `Dag.graph` | `Dag` methods, including `contains_edge()` and `active_node_ids()` |
+| `MultiDiGraph.graph` | `MultiDiGraph` methods, including `active_edge_ids()` |
+| `DiGraph.insert_edge()` | `add_edge()` or `MultiDiGraph.add_edge()` |
+| `DiGraph.node_index()` | `contains_node()` and `node_payload()` |
+| `DiGraph.edge_index()` | `active_edge_ids()` |
+
+The compiler's migration diagnostics name these replacements when code tries to access private storage or a private method. See the [graph reference](../../language/reference/stdlib/graph.md) for the supported signatures.
+
 ### Methods are private unless marked `pub`
 
 A method called from outside its type must be `pub`.

@@ -23,6 +23,9 @@ pub struct LibraryContractMetadata {
     /// Optional executable publication selected by this exact manifest; linking-only packages may omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_representation: Option<ExecutableRepresentationExport>,
+    /// Exact encoded install record published in the compiled Loaf's facts sidecar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_record_digest: Option<String>,
     /// Publicly referenced union definitions captured from this artifact's final native emission.
     ///
     /// Entries are owned by this containing artifact and retain the exact emitted name and payload order. Typed

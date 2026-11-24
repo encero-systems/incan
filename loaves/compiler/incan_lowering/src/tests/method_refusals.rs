@@ -37,6 +37,7 @@ fn app_symbol(
 
 fn point(canonical: CanonicalSymbolId) -> NominalDeclaration {
     NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),

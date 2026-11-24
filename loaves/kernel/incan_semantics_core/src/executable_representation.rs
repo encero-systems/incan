@@ -14,14 +14,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+mod linked_layout_codec;
 mod module_codec;
 mod namespace_codec;
 mod publication;
 mod surface_build;
 mod surface_reading;
 
+pub use linked_layout_codec::{LINKED_LAYOUT_DIGEST_BYTES, LINKED_LAYOUT_WITNESS_BYTES};
 pub use module_codec::*;
-pub use namespace_codec::{decode_namespace_module, encode_namespace_module};
+pub use namespace_codec::{
+    decode_namespace_module, encode_namespace_module, executable_owner_scopes, executable_scope_directory,
+};
 pub use surface_build::*;
 
 use crate::CanonicalSymbolId;
@@ -311,6 +315,24 @@ impl ExecutableDeclaration {
         }
     }
 
+    /// The mutable enum layout this fragment carries, including the native layout of a value enum.
+    pub fn enum_layout_mut(&mut self) -> Option<&mut EnumDeclaration> {
+        match self {
+            Self::Enum(value) | Self::EnumWithTraits(value, _) | Self::ValueEnumWithLayout(_, value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// A witness retained from this declaration's authenticated fragment, if the producer carried it.
+    pub fn linked_layout_witness(&self) -> Option<&crate::body_ir::LinkedLayoutWitness> {
+        match self {
+            Self::Enum(value) | Self::EnumWithTraits(value, _) | Self::ValueEnumWithLayout(_, value) => {
+                value.linked_layout_witness.as_ref()
+            }
+            _ => self.nominal()?.linked_layout_witness.as_ref(),
+        }
+    }
+
     /// Canonical identity carried by this fragment; it must agree with the selecting index. Native-body records may
     /// transport only exact Rust callable identities, never authorize a package declaration outside that index.
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
@@ -319,11 +341,8 @@ impl ExecutableDeclaration {
             Self::NativeBody { body, callables } => (!callables.is_empty() && valid_native_calls(callables))
                 .then_some(body.canonical.as_ref())
                 .flatten(),
-            Self::CompiledCallableFrame { frame, callables } => (frame.block.stmts.is_empty()
-                && valid_native_calls(callables)
-                && crate::body_ir::LoafCallable::from_body(frame).is_some())
-            .then_some(frame.canonical.as_ref())
-            .flatten(),
+            Self::CompiledCallableFrame { frame, callables } => crate::body_ir::LoafCallable::compiled_identity(frame)
+                .filter(|_| frame.block.stmts.is_empty() && valid_native_calls(callables)),
             Self::InvocationDecoratedBody { .. } => None,
             Self::GenericDecoratedBody {
                 body,
@@ -424,6 +443,14 @@ pub struct SurfaceIndex {
     pub declarations: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
     /// Reachable implementation dependencies; these identities are never public resolution roots.
     pub implementation: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+}
+
+/// A decoded layout witness and the exact immutable frame bytes from which it was admitted.
+/// Only the surface decoder can pair the two. The resolver owns this frame until the checked request settles.
+#[derive(Debug)]
+pub struct AdmittedLayoutFrame {
+    bytes: Vec<u8>,
+    witness: crate::body_ir::LinkedLayoutWitness,
 }
 
 /// One declaration that survived projection, with the canonical identities its execution needs.

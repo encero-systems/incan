@@ -154,6 +154,8 @@ pub model Key:
     # The identity over every authored byte, comments included, for outcomes that show source text or byte offsets:
     # replayed check reports and refusals, and codegraph exports. Empty when it equals `digest`.
     pub replay: str = ""
+    # Project-relative modules of an exact source-only program graph. This is request evidence outside its identity.
+    pub source_modules: Option[list[str]] = None
 
     pub def replayed(self) -> str:
         """The identity of an outcome that renders source: the raw identity, or `digest` when they agree."""
@@ -164,25 +166,42 @@ pub model Key:
 
 pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
     """Reconcile every input of `unit` against the retained observations; the key its outputs are valid for."""
+    key, _reach = unit_key_and_reach(unit, toolchain, compiler)?
+    return Ok(key)
+
+
+pub def unit_key_and_reach(
+    unit: UnitDescription, toolchain: Toolchain, compiler: str = "",
+) -> Result[tuple[Key, Option[SourceGraph]], str]:
+    """Return the native key and the exact scoped graph used to derive it from the same source ledger."""
     match identified_unit(unit, toolchain, compiler):
-        Ok(key) => return Ok(key)
+        Ok(resolved) => return Ok(resolved)
         Err(reason) =>
             if "unit identity refused:" in reason:
                 return Ok(
-                    Key(
+                    (Key(
                         digest="",
                         parts=[],
                         provenance=[unit.project_root, unit.source],
                         refusal=reason,
                         descriptor=fingerprint([json_text(unit.to_json())?])?,
-                    ),
+                    ), None),
                 )
             return Err(reason)
 
 
-def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[Key, str]:
-    """Finish identity only when the compiler and every linked unit have admitted identities."""
+def source_ledger(unit: UnitDescription) -> Ledger:
+    """Open retained observations and prefer the inputs already read and hashed for this activation."""
     mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    project.readings = unit.source_readings
+    return project
+
+
+def identified_unit(
+    unit: UnitDescription, toolchain: Toolchain, compiler: str,
+) -> Result[tuple[Key, Option[SourceGraph]], str]:
+    """Finish identity only when the compiler and every linked unit have admitted identities."""
+    mut project = source_ledger(unit)
     mut base_compiler = compiler
     if base_compiler == "":
         base_compiler = compiler_fingerprint(toolchain)?
@@ -194,12 +213,31 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     mut key = reconciled_key(unit, selected_compiler, described, project, graph)?
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
-    return Ok(key)
+    key.source_modules = collected_project_modules(unit, graph)
+    return Ok((key, graph))
+
+
+def collected_project_modules(unit: UnitDescription, graph: Option[SourceGraph]) -> Option[list[str]]:
+    """Name this key's source-only reach when its paths match the compiler's project-relative record spelling."""
+    if unit.kind != "program" or unit.project_library is not None:
+        return None
+    collected = match graph:
+        Some(value) => value
+        None => return None
+    root = unit.project_root + "/"
+    if unit.source not in collected.read:
+        return None
+    mut modules: list[str] = []
+    for path in collected.read:
+        if not path.startswith(root):
+            return None
+        modules.append(path[len(root):])
+    return Some(unique(modules))
 
 
 pub def collect_program_reach(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[SourceGraph], str]:
     """Collect the ordinary unit-key graph before a standalone program has a recorded capture."""
-    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    mut project = source_ledger(unit)
     compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
     graph = source_graph(unit, toolchain, f"{compiler} {description_digest(unit)?}", project)?
     project.save()?
@@ -211,7 +249,7 @@ pub def graph_imports(unit: UnitDescription, toolchain: Toolchain) -> Result[Opt
     The Rust crate requests recorded with the unit's current source graph under the scope `unit_key` reads, when the
     compiler reported them: the requests `--rust-imports` prints for the same files, compiler and description.
     """
-    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    mut project = source_ledger(unit)
     selected_compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
     return recorded_imports(unit, f"{selected_compiler} {description_digest(unit)?}", project)
 

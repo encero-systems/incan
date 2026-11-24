@@ -53,7 +53,28 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("manifest has no UTF-8 profile directory: {}", path.display()))?;
         let catalog = matches!(profile, "debug" | "release").then(|| catalogs.entry(profile.to_owned()).or_default());
-        export_manifest(output, profile, &manifest_digest, &manifest, &mut records, catalog)?;
+        let install = manifest
+            .contract_metadata
+            .install_record_digest
+            .as_deref()
+            .map(|expected| {
+                incan_frontend::library_manifest::install_record::read_published_install_record(
+                    &path,
+                    &manifest.name,
+                    &manifest_digest,
+                    expected,
+                )
+            })
+            .transpose()?;
+        export_manifest(
+            output,
+            profile,
+            &manifest_digest,
+            &manifest,
+            install,
+            &mut records,
+            catalog,
+        )?;
         if manifest.contract_metadata.executable_representation.is_some() {
             let sidecar = path.with_extension("incnbody");
             match fs::read(&sidecar) {
@@ -122,11 +143,15 @@ fn export_manifest(
     profile: &str,
     manifest_digest: &str,
     manifest: &LibraryManifest,
+    install: Option<incan_frontend::library_manifest::compiler_records::CompilerRecord>,
     records: &mut Vec<ExportedRecord>,
     mut catalog: Option<&mut CapabilityCatalog>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let prefix = format!("loaf/{profile}/{}", manifest.name);
-    for record in manifest.compiler_records(manifest_digest)?.records {
+    for record in manifest
+        .compiler_records_with_install(manifest_digest, install)?
+        .records
+    {
         if record.family == RecordFamily::Metadata
             && let Some(catalog) = catalog.as_deref_mut()
         {

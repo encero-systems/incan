@@ -1,4 +1,5 @@
 def main() -> None:
+    """Print every normalized name, then report how many times each distinct name appears."""
     names = ["Alice", "Alice", "Bob", "Bob", "Cara"]
 
     # 1) Normalize and print.

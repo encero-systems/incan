@@ -40,6 +40,7 @@ commits nothing and adds no bytes.
 
 from rust::std::process import id
 from rust::std::rc import Rc
+from rust::std::str import from_utf8
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
 from std.primitives.locking import LockGuard
@@ -70,19 +71,19 @@ from crate.store.files import (
     sync_directory,
 )
 from crate.store.codec import KIND_TOMBSTONE, KIND_VALUE, Write, encoded_frames, leaf_entries
+from crate.store.manifest import MANIFEST_SCHEMA, check_view_key
+pub from crate.store.manifest import manifest_path
 from crate.store.path import StorePath as Path
 
 const FORMAT: str = "incan.segment-store/4"
 # A store written before index packs; this version reads its page files, and its first commit marks it with `FORMAT`.
 const PAGE_FILE_FORMAT: str = "incan.segment-store/3"
-const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
 const STORE_ID_LENGTH: int = 32
 pub const HOME_VIEW: str = "home"
 pub const EXPECT_ANY: int = 0
 pub const EXPECT_ABSENT: int = 1
 pub const EXPECT_ABSENT_OR_DAMAGED: int = 2
 pub const EXPECT_REPAIR: int = 3
-
 
 pub enum Lookup:
     """What a snapshot holds under one full key; a found value is a view inside its segment, not a copy."""
@@ -148,8 +149,8 @@ pub model Snapshot:
     """
     One committed generation seen through one view; it never changes after it is taken.
 
-    A snapshot is a descriptor, not a cache: it names the generation, the view and that view's index root, and the
-    generation's view roots for publication. An opened nonempty view owns its placement lease
+    A snapshot names the generation, the view and that view's index root, and shares the generation's immutable
+    view inventory with peers. An opened nonempty view owns its placement lease
     through the descriptor's lifetime. It holds no decoded records.
     """
 
@@ -158,7 +159,7 @@ pub model Snapshot:
     pub digest: str
     pub view: str
     pub index: str
-    pub views: list[ViewRoot]
+    pub views: Rc[list[ViewRoot]]
     pub pin: Option[Rc[LockGuard]] = None
 
 
@@ -181,9 +182,9 @@ pub model ReadCounts:
     What this process read so far.
 
     `records` frames found, `bytes` frame bytes checked in place, `pages` index pages read and `checked` the index pages
-    mapped and hashed to check them against their digest; `copied` bytes copied out of mapped pages and frames by
-    lookups (keys compared and locations decoded, never a value); `decoded` bytes of found values copied into owned
-    bytes by `owned`; `listed` keys returned by whole and prefix listings. `index_bytes_checked` counts the bytes
+    mapped and hashed to check them against their digest; `copied` bytes copied out of mapped index pages by
+    lookups; `decoded` bytes of found values copied into owned bytes by `owned`; `listed` keys returned by whole
+    and prefix listings. `index_bytes_checked` counts the bytes
     checked on first access to immutable index pages. `digest_only_payload_bytes` and `digest_only_reads` count
     complete values hashed in place to answer payload-free binding queries.
     """
@@ -253,7 +254,6 @@ pub def finish_frame_reads() -> list[FrameRead]:
     return frame_measurement.finish()
 
 
-
 pub def store_identity(root: Path) -> Result[str, StoreError]:
     """Return the physical store's persistent identity, provisioning it once under the store lifecycle lock."""
     ensure_directory(root)?
@@ -291,7 +291,7 @@ pub def read_counts() -> ReadCounts:
         records=counted.get("records", 0),
         bytes=counted.get("bytes", 0),
         pages=page_reads(),
-        copied=counted.get("copied", 0) + copied_index_bytes(),
+        copied=copied_index_bytes(),
         decoded=counted.get("decoded", 0),
         listed=counted.get("listed", 0),
         checked=pages_checked(),
@@ -308,20 +308,45 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
     An uninitialized store is empty. A missing committed `CURRENT`, an unreadable or malformed pointer, or an
     unknown format is refused; none of them is read as an empty store. A view the generation does not name is empty.
     """
+    return open_snapshot(root, view, None)
+
+
+pub class SnapshotAdmission:
+    """One request's authenticated manifest for a single store, without holding any of its view leases."""
+
+    root: Path
+    manifest: Option[Snapshot] = None
+
+    @staticmethod
+    pub def for_store(root: Path) -> SnapshotAdmission:
+        """Start without an authenticated generation or any selected views."""
+        return SnapshotAdmission(root=root)
+
+    pub def open(mut self, view: str = HOME_VIEW) -> Result[Snapshot, StoreError]:
+        """Select CURRENT for each open and reuse its inventory only while its generation and digest match."""
+        selected = open_snapshot(self.root, view, self.manifest)?
+        mut manifest = selected
+        manifest.pin = None
+        self.manifest = Some(manifest)
+        return Ok(selected)
+
+
+def open_snapshot(root: Path, view: str, manifest: Option[Snapshot]) -> Result[Snapshot, StoreError]:
+    """Hold the lifecycle gate across current-generation admission and registration of the chosen view."""
     check_view_key(view)?
     if not root.joinpath("FORMAT").exists() and not root.joinpath("CURRENT").exists() and not root.is_symlink():
         return Ok(empty_snapshot(root, view))
     ensure_directory(root.joinpath("locks"))?
     gate = root.joinpath("locks/lifecycle").store_lock_exclusive().map_err((error) => io_failure(root, error))?
-    return registered_snapshot(root, view)
+    return registered_snapshot(root, view, manifest)
 
 
 def empty_snapshot(root: Path, view: str) -> Snapshot:
     """An absent selection owns no stored objects and needs neither a lease nor a placement mutation."""
-    return Snapshot(root=root, generation=0, digest="", view=view, index="", views=[])
+    return Snapshot(root=root, generation=0, digest="", view=view, index="", views=Rc.new([]))
 
 
-def registered_snapshot(root: Path, view: str) -> Result[Snapshot, StoreError]:
+def registered_snapshot(root: Path, view: str, manifest: Option[Snapshot]) -> Result[Snapshot, StoreError]:
     """Read CURRENT and acquire its live root under the lifecycle gate, so collection cannot expire it in between."""
     check_format(root)?
     pointer = root.joinpath("CURRENT")
@@ -336,11 +361,21 @@ def registered_snapshot(root: Path, view: str) -> Result[Snapshot, StoreError]:
     match natural(fields[0]):
         None => return Err(failure("format", pointer.value, "malformed generation"))
         Some(generation) =>
-            mut selected = read_manifest(root, generation, fields[1], view)?
+            mut selected = admit_manifest(root, generation, fields[1], view, manifest)?
             if selected.index != "":
                 # The lease names the root just decoded from this manifest under the same gate; it needs no second read.
                 selected.pin = Some(Rc.new(register_lease(selected)?))
             return Ok(selected)
+
+
+def admit_manifest(
+    root: Path, generation: int, digest: str, view: str, manifest: Option[Snapshot],
+) -> Result[Snapshot, StoreError]:
+    """Select from this request's immutable inventory only when CURRENT proves it is still the selected manifest."""
+    if let Some(known) = manifest:
+        if known.generation == generation and known.digest == digest:
+            return Ok(manifest_view(known, view, skip_empty=true))
+    return read_manifest(root, generation, digest, view)
 
 
 pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreError]:
@@ -351,11 +386,19 @@ pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreEr
         if held.generation > 0 and held.index != "" and held.pin is None:
             held.pin = Some(Rc.new(lease(held)?))
         return Ok(held)
+    mut result = manifest_view(selected, name)
+    if result.generation > 0 and result.index != "":
+        result.pin = Some(Rc.new(lease(result)?))
+    return Ok(result)
+
+
+def manifest_view(selected: Snapshot, name: str, skip_empty: bool = false) -> Snapshot:
+    """Share the authenticated inventory and select its exact root without inheriting another view's lease."""
     mut index = ""
-    for entry in selected.views:
-        if entry.view == name:
+    for entry in selected.views.as_ref():
+        if entry.view == name and (not skip_empty or entry.root != ""):
             index = entry.root
-    mut result = Snapshot(
+    return Snapshot(
         root=selected.root,
         generation=selected.generation,
         digest=selected.digest,
@@ -363,9 +406,6 @@ pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreEr
         index=index,
         views=selected.views,
     )
-    if result.generation > 0 and result.index != "":
-        result.pin = Some(Rc.new(lease(result)?))
-    return Ok(result)
 
 
 pub def current(view: Snapshot) -> Result[Snapshot, StoreError]:
@@ -402,21 +442,6 @@ def marked_current(root: Path) -> Result[bool, StoreError]:
         return Ok(false)
     text = marker.store_read_text("utf-8", "strict").map_err((error) => io_failure(marker, error))?
     return Ok(text.strip() == FORMAT)
-
-
-def check_view_key(name: str) -> Result[None, StoreError]:
-    """Validate a nonempty view token before it can enter or select a line-oriented manifest."""
-    if name == "" or name.strip() != name:
-        return Err(failure("format", name, "view key is empty or has surrounding whitespace"))
-    for character in name:
-        if character <= " " or character == "\\x7f":
-            return Err(failure("format", name, "view key contains a manifest delimiter or control character"))
-    return Ok(None)
-
-
-pub def manifest_path(root: Path, generation: int, digest: str) -> Path:
-    """Where the manifest of one generation lives."""
-    return root.joinpath("snapshots").joinpath(f"{generation}.{digest[:16]}.manifest")
 
 
 pub def read_manifest(root: Path, generation: int, digest: str, view: str) -> Result[Snapshot, StoreError]:
@@ -464,7 +489,7 @@ def checked_manifest(root: Path, generation: int, digest: str, view: str) -> Res
                     digest=digest,
                     view=view,
                     index=index,
-                    views=views,
+                    views=Rc.new(views),
                 ),
             )
 
@@ -603,7 +628,7 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
     """
     The frame an index entry names, mapped and checked in place against the entry's digest and full key.
 
-    Only the frame's key is copied out to compare; a found value stays a view inside the segment.
+    Compare the frame's key where it lies and keep a found value as a view inside the segment.
     """
     path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
     mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
@@ -635,10 +660,9 @@ def read_placed_frame(path: Path, mapped: Borrowed[MappedFile], key: str, locati
         None => return Err(failure("integrity", path.value, "malformed frame"))
 
     stored = part(path, frame.slice(8, size), "frame key runs past the frame")?
-    counted["copied"] = counted.get("copied", 0) + size
-    match decode_text(stored.to_bytes()):
-        None => return Err(failure("integrity", path.value, "frame key is not text"))
-        Some(found) =>
+    match from_utf8(stored.0.as_bytes()):
+        Err(_) => return Err(failure("integrity", path.value, "frame key is not text"))
+        Ok(found) =>
             if found != key:
                 return Err(failure("integrity", path.value, "frame holds another key"))
     if location.tombstone:
@@ -725,7 +749,7 @@ pub def segments(view: Snapshot) -> Result[list[str], StoreError]:
     and tests walk the indexes instead, and collection already marks segments by that walk.
     """
     mut found: set[str] = set()
-    for entry in view.views:
+    for entry in view.views.as_ref():
         if entry.root == "":
             continue
         for leaf in index_entries(view.root, entry.root).map_err(index_failure)?:
@@ -821,7 +845,6 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     """Publish one view through the same atomic group boundary used by multi-view requests."""
     return commit_group([transaction])
 
-
 pub model Publication:
     """One atomic generation and its optional already-held execution pin."""
 
@@ -833,12 +856,10 @@ pub def commit_group(transactions: list[Transaction]) -> Result[Snapshot, StoreE
     """Publish all requested views in one durable generation without an execution pin."""
     return publish_group(transactions, "").map((published) => published.snapshot)
 
-
 pub def commit_pinned(transactions: list[Transaction], view: str) -> Result[Publication, StoreError]:
     """Publish a request's durable view under one switch, with its execution pin held before visibility."""
     check_view_key(view)?
     return publish_group(transactions, view)
-
 
 def publish_group(transactions: list[Transaction], execution_view: str) -> Result[Publication, StoreError]:
     """
@@ -859,7 +880,8 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     mut selected_view = transactions[0].view
     if execution_view != "":
         selected_view = execution_view
-    latest = snapshot(root, selected_view)?
+    mut admission = SnapshotAdmission.for_store(root)
+    latest = admission.open(selected_view)?
     staged = root.joinpath("staging").joinpath(transaction_id)
     if len(transactions) == 1 and transactions[0].fork != "":
         if execution_view != "":
@@ -881,15 +903,17 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
         writes[transaction.view].extend(transaction.writes)
         if let Some(revision) = transaction.compared:
             compared[transaction.view] = revision
-    mut changed: Dict[str, list[Write]] = {}
+    mut changed: Dict[str, tuple[Snapshot, list[Write]]] = {}
     for view in sorted([name for name in writes.keys()]):
-        current = view_snapshot(latest, view)?
+        current = match view == selected_view:
+            true => latest
+            false => admission.open(view)?
         remaining = pending_writes(current, writes[view])?
         if len(remaining) > 0:
             # A compared view that moved on since its transaction read it would lose the other publication's writes.
             if view in compared and compared[view] != current.index:
                 return Err(failure("conflict", view, "the view moved on since this transaction read it"))
-            changed[view] = remaining
+            changed[view] = (current, remaining)
     if len(changed) == 0:
         return pinned_publication(latest, execution_view)
 
@@ -901,7 +925,9 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     mut staged_roots: Dict[str, str] = {}
     for name in sorted([view for view in changed.keys()]):
         directory = staged.joinpath(hexlify(sha256.digest(name.encode("utf-8"))))
-        staged_roots[name] = stage_view(root, view_snapshot(latest, name)?, changed[name], directory, writer)?
+        change = changed[name]
+        current, remaining = change
+        staged_roots[name] = stage_view(root, current, remaining, directory, writer)?
     installing = begin_work()
     pages = staged.joinpath("pages")
     ensure_directory(page_directory(root))?
@@ -909,7 +935,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     sync_pages(root)?
     record_work(Operation.StorePagesStage, pages.value, installing)
     publication_boundary("pages-installed")
-    mut views = latest.views
+    mut views = latest.views.as_ref().clone()
     for name in sorted([view for view in staged_roots.keys()]):
         views = with_view(views, name, installed_reference(staged_roots[name], pack))
     # 3. One switch is the only visibility and durability boundary for the entire request.
@@ -921,7 +947,6 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
 pub def durable_commits() -> int:
     """Successful durable generation switches in this process; no-op commits add zero."""
     return counted.get("durable_commits", 0)
-
 
 def stage_view(
     root: Path,
@@ -952,21 +977,21 @@ def stage_view(
 def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged: Path) -> Result[Snapshot, StoreError]:
     """Name a new view at the source view's root; the caller holds the publication lock."""
     check_view_key(transaction.fork)?
-    for existing in latest.views:
+    for existing in latest.views.as_ref():
         if existing.view == transaction.fork:
             remove_tree(staged)
             return Err(failure("conflict", transaction.fork, "a view of this name already exists"))
     published = switch(
         root,
         latest,
-        with_view(latest.views, transaction.fork, latest.index),
+        with_view(latest.views.as_ref(), transaction.fork, latest.index),
         transaction.id,
     )?
     remove_tree(staged)
     return Ok(published)
 
 
-def with_view(views: list[ViewRoot], view: str, index: str) -> list[ViewRoot]:
+def with_view(views: Borrowed[list[ViewRoot]], view: str, index: str) -> list[ViewRoot]:
     """`views` with `view` set to `index`, sorted by view name."""
     mut by_name: Dict[str, str] = {}
     for entry in views:
@@ -1119,7 +1144,7 @@ def publish_switch(
         digest=digest,
         view=returned_view,
         index=selected_index,
-        views=views,
+        views=Rc.new(views),
     )
     pinned = pinned_publication(selected, execution_view)?
     place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?

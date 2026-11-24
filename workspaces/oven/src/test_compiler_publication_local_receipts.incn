@@ -1,0 +1,120 @@
+"""Count the local evaluation selected by both stages of one body publication."""
+
+from std.io import BytesIO
+from pub::incan_platform.store import (
+    Snapshot, begin, commit, delete, finish_frame_reads, fork, locate_value, measure_frame_reads, put, snapshot,
+)
+from pub::incan_platform.store.memory import root as memory_root
+from pub::internal_models import ProducerRank, ProducerStage, StoreRecordSource, encode_read_receipt
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import (
+    PreparationEvidence, ReadReceipt, ReadScope, RecordKey, RecordRead, RecordReads, RecordRequest, RecordSelection,
+    encode_record_key,
+)
+from compiler_graph_records import EditCutoff, evaluation_record_key, publish_evaluation
+from compiler_publication_local_receipts import PublicationLocalReceipts
+from graph_read_demands import begin_graph_demands, finish_graph_demands
+
+
+pub def test_publication_local_receipt_keeps_semantic_demands_and_reads_one_frame() -> Result[None, str]:
+    """Both publication stages receive the same full receipt and preserve the order of their graph selections."""
+    empty = snapshot(memory_root()).map_err((error) => error.message())?
+    input = RecordKey(family="source", identity="input", identity_profile="fixture", origin="publication",
+        facet="checked", context="source")
+    key = RecordKey(family="local", identity="function:main::test", identity_profile="fixture", origin="publication",
+        facet="checked", context="v1")
+    dependency = RecordRequest(key=input, selection=RecordSelection.Field("value"), byte_limit=65536)
+    source_key = encode_record_key(input)?
+    seeded = commit(put(begin(empty), source_key, b"original")).map_err((error) => error.message())?
+    receipt = checked_receipt(seeded, key, dependency)?
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    published = publish_evaluation(seeded, "local-publication", rank, b"selected local product", receipt)?
+    graph = published.snapshot
+    mut missing_key = key
+    missing_key.identity = "function:main::missing"
+    active = EditCutoff(active=true)
+
+    mut local_receipts = PublicationLocalReceipts.open(Some(graph), true)
+    begin_graph_demands(true)
+    measure_frame_reads(true)
+    first = local_receipts.for_spans(graph, key, active)
+    absent = local_receipts.for_lowering(graph, missing_key, active)
+    second = local_receipts.for_lowering(graph, key, active)
+    reads = finish_frame_reads()
+    demands = finish_graph_demands()
+    assert absent? is None
+    match (first?, second?):
+        (Some(spans), Some(lowering)) =>
+            expected = encode_read_receipt(receipt)?
+            assert encode_read_receipt(spans.as_ref())? == expected
+            assert encode_read_receipt(lowering.as_ref())? == expected
+        _ => return Err("one publication stage did not receive its local receipt")
+    assert [entry.key for entry in demands] == [
+        published.evaluation_key,
+        evaluation_record_key(CHECKER_PROFILE, encode_record_key(missing_key)?),
+        published.evaluation_key,
+    ], "publication changed the sequence of semantic demands"
+    for entry in demands:
+        assert entry.role == "evaluation" and entry.view == graph.view and entry.manifest == graph.digest
+    exact = [read for read in reads if read.key == published.value_key]
+    assert len(exact) == 1, "the publication must name one exact physical revision"
+    assert exact[0].reads == 1, f"publication reopened the local frame: {exact[0].reads} opens of {exact[0].frame_bytes} bytes"
+    assert exact[0].frame_bytes > exact[0].value_bytes
+
+    separate = fork(graph, "separate-publication-view").map_err((error) => error.message())?
+    other = commit(delete(begin(separate), published.evaluation_key)).map_err((error) => error.message())?
+    assert other.view == separate.view and other.view != graph.view
+    assert local_receipts.for_lowering(other, key, active)? is None
+    changed = commit(put(begin(graph), source_key, b"changed")).map_err((error) => error.message())?
+    mut changed_receipts = PublicationLocalReceipts.open(Some(changed), true)
+    assert changed_receipts.for_spans(changed, key, active)? is not None
+    assert changed_receipts.for_lowering(changed, key, EditCutoff())? is None
+    assert local_receipts.for_lowering(changed, key, EditCutoff())? is None
+
+    mut new_key = key
+    new_key.context = "v2"
+    replacement = checked_receipt(changed, new_key, dependency)?
+    updated = publish_evaluation(changed, "local-publication", rank, b"new local product", replacement)?
+    match local_receipts.for_lowering(updated.snapshot, new_key, EditCutoff())?:
+        Some(current) => assert encode_read_receipt(current.as_ref())? == encode_read_receipt(replacement)?
+        None => return Err("the newly published local version was not selected")
+
+    malformed = commit(put(begin(updated.snapshot), updated.evaluation_key, b"invalid evaluation")).map_err((error) => error.message())?
+    assert local_receipts.for_lowering(malformed, new_key, active).is_err()
+    damage_frame(graph, published.value_key)?
+    mut first_selection = PublicationLocalReceipts.open(Some(graph), true)
+    match first_selection.for_spans(graph, key, active):
+        Ok(_) => return Err("span selection accepted a physically damaged frame")
+        Err(reason) => assert "frame does not match its digest" in reason, reason
+    return Ok(None)
+
+
+def checked_receipt(graph: Snapshot, key: RecordKey, dependency: RecordRequest) -> Result[ReadReceipt, str]:
+    """Complete a real field witness under the checked producer's profile."""
+    scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+    prepared = PreparationEvidence(output=key, rank_certificate="compiled-check", selector_witnesses="checked")
+    source = StoreRecordSource.open(graph, scope, [encode_record_key(dependency.key)?])
+    mut observed = RecordReads.start(scope, prepared, [dependency])
+    match observed.read(source, dependency):
+        RecordRead.Found(_) => pass
+        _ => return Err("the local publication witness was missing")
+    return observed.finish().map_err((_) => "the local receipt did not complete")
+
+
+def damage_frame(graph: Snapshot, key: str) -> Result[None, str]:
+    """Flip one payload byte without changing the authenticated index or the selected frame's address."""
+    location = match locate_value(graph, key).map_err((error) => error.message())?:
+        Some(found) => found
+        None => return Err("the published record has no frame")
+    segment = graph.root.joinpath("segments").joinpath(f"{location.segment}.seg")
+    stored = segment.store_read_bytes().map_err((error) => error.message())?
+    last = location.offset + location.length - 1
+    mut flipped = b"\x00"
+    if stored[last:last + 1] == b"\x00":
+        flipped = b"\x01"
+    damaged = BytesIO(b"")
+    damaged.write_bytes(stored[:last]).map_err((error) => error.message())?
+    damaged.write_bytes(flipped).map_err((error) => error.message())?
+    damaged.write_bytes(stored[last + 1:]).map_err((error) => error.message())?
+    segment.store_write_bytes(damaged.getvalue()).map_err((error) => error.message())?
+    return Ok(None)

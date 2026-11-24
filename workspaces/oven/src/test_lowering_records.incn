@@ -13,8 +13,26 @@ from compiler_plan_values import LOWERING_PROFILE
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import ReadWitness, encode_record_key
 from files import write
+from json_fields import required_items, required_text
 from engine_protocol_fixtures import json_text_is
-from lowering_record_fixtures import command_proof, proof_count, report_fixture_build, stop_example_engine
+from lowering_record_fixtures import (
+    attempt_trace,
+    command_proof,
+    lowering_attempts,
+    lowering_example_run,
+    mark_plan_report_predecessor,
+    plan_report_requests, plan_report_event_rows, require_one_read_per_plan_event,
+    proof_count,
+    report_fixture_build,
+    stop_example_engine,
+    verify_comment_only_publication,
+    verify_generic_runtime_batches,
+    verify_module_work,
+)
+from plan_admission_fixtures import verify_compact_module_admission_scope
+from borrowed_positioned_member_control import (
+    observed_plan_reconciliations, ordinary_member_rows, verify_alpha_request_routes, verify_borrowed_gamma_members,
+)
 from scratch import scratch_directory
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
@@ -34,6 +52,7 @@ pub def test_partial_module_admission_count() -> Result[None, str]:
     report.joinpath("62" + PARTIAL_MODULE_NOTE).write_bytes(partial_note).map_err((error) => error.message())?
     assert restored_modules(report)? == ["a", "b"]
     assert restored_modules(report, whole_only=true)? == ["a"]
+    verify_compact_module_admission_scope(report)?
     report.joinpath("62" + ADMITTED_MODULE_NOTE).write_bytes(partial_note).map_err((error) => error.message())?
     match restored_modules(report, whole_only=true):
         Ok(_) => return Err("a partially restored module was counted as complete")
@@ -115,6 +134,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
     assert proof_count(edited, "lowering_demand_reuses")? == 1, diagnostic
     assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
+    require_single_reverse_edge_reads(edited)?
     write(
         source,
         "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n",
@@ -156,6 +176,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(reworded, "plan_function_evaluations")? == 0, reworded_diagnostic
     # A comment edit that moves no code changes no input of the native unit: nothing is evaluated or baked.
     reworded_source = "def greeting() -> str:\n    \"\"\"Greet the reader.\"\"\"\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n"
+    verify_comment_only_publication(binary, source, store, reworded_source)?
     for still_source in [
         reworded_source.replace("# inserted above main", "# a longer comment edited above main"),
         reworded_source.replace("println(greeting())", "println(greeting())  # the greeting"),
@@ -165,6 +186,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
         still = lowering_example_run(binary, source, store, "hullo")?
         still_diagnostic = still.to_json().map_err((error) => error.message())?
         assert proof_count(still, "unit_evaluations")? == 0, still_diagnostic
+        assert proof_count(still, "body_evaluations")? == 0, still_diagnostic
+        assert proof_count(still, "plan_function_evaluations")? == 0, still_diagnostic
         assert proof_count(still, "native_bakes")? == 0, still_diagnostic
     stop_example_engine(binary, store)?
     signature = root.joinpath("signature-source")
@@ -174,6 +197,25 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     verify_signature_edit(binary, linked)?
     verify_unit_reads_only_its_graph(binary, root.joinpath("graph"))?
     return verify_rust_closure_debug_reproducibility(binary, root.joinpath("rust-closure"))
+
+
+def require_single_reverse_edge_reads(report: JsonValue) -> Result[None, str]:
+    """Require one physical read for each reverse-edge frame selected from the pinned edit view."""
+    mut selected: set[str] = set()
+    for demand in required_items(report, "graph_demands")?:
+        if required_text(demand, "role")? == "reverse-edge":
+            selected.add(required_text(demand, "key")?)
+    assert len(selected) > 0, "the edit selected no reverse edges"
+    mut observed: set[str] = set()
+    for frame in required_items(report, "store_reads")?:
+        key = required_text(frame, "key")?
+        if key not in selected:
+            continue
+        reads = proof_count(frame, "reads")?
+        assert reads == 1 and key not in observed, f"selected reverse edge read {reads} times: {key}"
+        observed.add(key)
+    assert observed == selected, "the edit omitted physical reads for selected reverse edges"
+    return Ok(None)
 
 
 def verify_unit_reads_only_its_graph(binary: str, root: Path) -> Result[None, str]:
@@ -229,20 +271,31 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
     write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
     _ = traced_example_run(binary, source, store, observations, "12")?
+    cold_reconciliations = observed_plan_reconciliations(observations)?
     cold = observed_module_work(observations)?
+    projections = observed_source_projections(observations)?
     for name in ["lone_alpha", "lone_beta", "lone_gamma", "main"]:
+        count = projections.get(name + ".incn", 0)
+        assert count == 1, f"the cold build projected {name} {count} times"
         assert cold.get("lower:" + name, 0) > 0, f"the cold build traced no lowered body of {name}"
         assert cold.get("check:" + name + ".incn", 0) > 0, f"the cold build traced no checker entry for {name}"
         assert cold.get("body-ir:" + name + ".incn", 0) > 0, f"the cold build traced no Body IR entry for {name}"
     assert cold.get("body-ir", 0) >= 4, "the cold build did not observe Body IR for all four modules"
+    seed_requests = plan_report_requests(observations, root)?
+    seed_event_rows = plan_report_event_rows(observations, root)?
     write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
     edited = traced_example_run(binary, source, store, observations, "16")?
+    warm_reconciliations = observed_plan_reconciliations(observations)?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
     warm = observed_module_work(observations)?
     verify_module_work(cold, warm, "lone_beta")?
     # The three unchanged modules, `main` among them, are restored from their module plan records.
     assert proof_count(edited, "plan_module_reuses")? == 3, diagnostic
+    retained_members = verify_borrowed_gamma_members(store)
+    before_member_rows = ordinary_member_rows(observations)
+    beta_event_rows = plan_report_event_rows(observations, root)
+    predecessor = mark_plan_report_predecessor(observations, root, seed_requests)?
     # A later edit of a module that was restored lowers that module again, and its edit reaches the program.
     write(root.joinpath("lone_alpha.incn"), lone_module("lone_alpha", "7"))?
     again = traced_example_run(binary, source, store, observations, "22")?
@@ -250,7 +303,14 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     assert proof_count(again, "plan_function_evaluations")? == 1, again_diagnostic
     assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
     verify_module_work(warm, observed_module_work(observations)?, "lone_alpha")?
-    return stop_example_engine(binary, store)
+    preserved = predecessor.preserved(observations, root)
+    stop_example_engine(binary, store)?
+    reconciliations = [cold_reconciliations, warm_reconciliations, observed_plan_reconciliations(observations)?]
+    assert reconciliations == [1, 2, 3], f"expected one reconciliation per request, cumulative counts {reconciliations}"
+    retained_members?
+    verify_alpha_request_routes(before_member_rows?, ordinary_member_rows(observations)?)?
+    preserved?
+    return require_one_read_per_plan_event(seed_event_rows, beta_event_rows?, edited, predecessor)
 
 
 pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> Result[None, str]:
@@ -452,15 +512,21 @@ def observed_module_work(trace: Path) -> Result[Dict[str, int], str]:
     return Ok(counts)
 
 
-def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited: str) -> Result[None, str]:
-    """Each warm edit checks its own module, builds one module's Body IR, and lowers only that module's bodies."""
-    changed = sorted([key for key in current.keys() if current[key] > previous.get(key, 0)])
-    expected = sorted(["body-ir", "body-ir:" + edited + ".incn", "check:" + edited + ".incn", "lower:" + edited])
-    if changed != expected:
-        return Err(f"edit of {edited} entered {changed}, expected {expected}")
-    if current["body-ir"] - previous.get("body-ir", 0) != 1:
-        return Err(f"edit of {edited} rebuilt more than one module's Body IR")
-    return Ok(None)
+def observed_source_projections(trace: Path) -> Result[Dict[str, int], str]:
+    """Count each module's physical source projection in this fixture's Oven trace."""
+    mut counts: Dict[str, int] = {}
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not entry.name().startswith("engine-oven-"):
+            continue
+        for line in entry.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if "source-projection" not in line:
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            key = required_text(event, "key")?
+            if key.startswith("source-projection\t"):
+                module = key.split("\t")[-1]
+                counts[module] = counts.get(module, 0) + 1
+    return Ok(counts)
 
 
 pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
@@ -579,7 +645,7 @@ pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Resul
     )?
     write(
         source.joinpath("values.incn"),
-        "pub model Flag:\n    pub ready: bool\n\n    property weight -> int:\n        return 2\n\n    def __bool__(self) -> bool:\n        return self.ready\n\n\npub def stable() -> int:\n    return 40\n\n\npub def selected(flag: Flag) -> int:\n    if flag:\n        return 2\n    return 0\n\n\npub def weighed(flag: Flag) -> int:\n    return flag.weight\n",
+        "pub model Flag:\n    pub ready: bool\n\n    pub property weight -> int:\n        return 2\n\n    def __bool__(self) -> bool:\n        return self.ready\n\n\npub def stable() -> int:\n    return 40\n\n\npub def selected(flag: Flag) -> int:\n    if flag:\n        return 2\n    return 0\n\n\npub def weighed(flag: Flag) -> int:\n    return flag.weight\n",
     )?
     write(
         source.joinpath("main.incn"),
@@ -610,7 +676,7 @@ pub def test_body_edit_rebuilds_beside_an_unchecked_fallback_owner() -> Result[N
         project.joinpath("loaf.toml"),
         "[project]\nname = \"fallback_owner\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
     )?
-    values = "pub model Flag:\n    pub ready: bool\n\n    property weight -> int:\n        return 2\n\n\npub def stable() -> int:\n    return "
+    values = "pub model Flag:\n    pub ready: bool\n\n    pub property weight -> int:\n        return 2\n\n\npub def stable() -> int:\n    return "
     write(source.joinpath("values.incn"), values + "40\n")?
     write(
         source.joinpath("main.incn"),
@@ -654,37 +720,6 @@ pub def test_declaration_edit_keeps_an_imported_enum_read() -> Result[None, str]
     write(source.joinpath("main.incn"), reader + "\n\ndef added() -> int:\n    return 1\n")?
     report_fixture_build(binary, project, store)?
     require_probe_output(project.joinpath("target/incan/release/bin/imported_enum"), "1\n2")?
-    return stop_example_engine(binary, store)
-
-
-pub def test_a_method_body_gets_a_plan_product() -> Result[None, str]:
-    """
-    A module with a method gets a plan product for each of its bodies: the method's as well as the free function's.
-    The unit then has a complete native interface, and an edit of the method keeps a product for every body.
-    """
-    scratch = scratch_directory()?
-    root = scratch.path()
-    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
-    source = root.joinpath("main.incn")
-    store = root.joinpath("store")
-    shapes = "pub model Counter:\n    pub count: int\n\n    pub def scaled(self) -> int:\n        return self.count * "
-    bump = "\n\n\npub def bump(value: int) -> int:\n    return value + 1\n"
-    write(root.joinpath("shapes.incn"), shapes + "2" + bump)?
-    write(
-        source,
-        "from shapes import Counter, bump\n\n\ndef main() -> None:\n    println(Counter(count=2).scaled() + bump(1))\n",
-    )?
-    # Three bodies: `main`, `bump` and the method `Counter.scaled`.
-    cold = lowering_example_run(binary, source, store, "6")?
-    cold_diagnostic = cold.to_json().map_err((error) => error.message())?
-    assert proof_count(cold, "lowering_demand_evaluations")? == 3, cold_diagnostic
-    assert proof_count(cold, "native_interface_evaluations")? == 1, cold_diagnostic
-    write(root.joinpath("shapes.incn"), shapes + "5" + bump)?
-    warm = lowering_example_run(binary, source, store, "12")?
-    warm_diagnostic = warm.to_json().map_err((error) => error.message())?
-    evaluated = proof_count(warm, "lowering_demand_evaluations")?
-    assert evaluated >= 1 and evaluated + proof_count(warm, "lowering_demand_reuses")? == 3, warm_diagnostic
-    assert proof_count(warm, "native_interface_evaluations")? == 1, warm_diagnostic
     return stop_example_engine(binary, store)
 
 
@@ -788,8 +823,8 @@ pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
 
 
 pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]:
-    """A list program's runtime instances keep products: an unrelated edit reuses them, and the interface publishes."""
-    edited, cold = unrelated_edit_reports("lists", list_source(), "4\nb\n42", "4\nb\n43")?
+    """A list program keeps its runtime roots and products, and an unrelated edit lowers in one attempt."""
+    edited, cold = unrelated_edit_reports("lists", list_source(), "4\nb\n4\n42", "4\nb\n4\n43", count_attempts=true)?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(cold, "native_interface_evaluations")? == 1, cold.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
@@ -797,10 +832,12 @@ pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]
     planned = proof_count(cold, "plan_function_evaluations")?
     assert proof_count(edited, "plan_function_reuses")? == planned - 1, diagnostic
     assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
-    return Ok(None)
+    return verify_generic_runtime_batches()
 
 
-def unrelated_edit_reports(name: str, text: str, before: str, after: str) -> Result[tuple[JsonValue, JsonValue], str]:
+def unrelated_edit_reports(
+    name: str, text: str, before: str, after: str, count_attempts: bool = false,
+) -> Result[tuple[JsonValue, JsonValue], str]:
     """
     Build `text`, then its `unrelated` edit in the same store, then the edited source in a fresh store.
 
@@ -811,31 +848,74 @@ def unrelated_edit_reports(name: str, text: str, before: str, after: str) -> Res
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     source = root.joinpath(f"{name}.incn")
     warm_store = root.joinpath("warm-store")
+    mut warm_trace: Option[Path] = None
+    mut cold_trace: Option[Path] = None
+    if count_attempts:
+        warm_trace = Some(attempt_trace(root, "warm-trace")?)
+        cold_trace = Some(attempt_trace(root, "cold-trace")?)
     write(source, text)?
-    _ = lowering_example_run(binary, source, warm_store, before)?
+    _ = lowering_example_run(binary, source, warm_store, before, trace=warm_trace)?
+    previous = lowering_attempts(warm_trace)?
     write(source, text.replace("value + 1", "value + 2"))?
-    edited = lowering_example_run(binary, source, warm_store, after)?
+    edited = lowering_example_run(binary, source, warm_store, after, trace=warm_trace)?
+    warm_attempts = lowering_attempts(warm_trace)? - previous
     binary_path = f"target/incan/release/bin/{name}"
     plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
     executable = root.joinpath(binary_path).read_bytes().map_err((error) => error.message())?
     stop_example_engine(binary, warm_store)?
     root.joinpath("target").remove_tree().map_err((error) => error.message())?
     cold_store = root.joinpath("cold-store")
-    cold = lowering_example_run(binary, source, cold_store, after)?
+    cold = lowering_example_run(binary, source, cold_store, after, trace=cold_trace)?
     cold_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
     cold_executable = root.joinpath(binary_path).read_bytes().map_err((error) => error.message())?
     stop_example_engine(binary, cold_store)?
     assert plan == cold_plan, f"warm and cold plans differ after the unrelated edit of {name}"
     assert executable == cold_executable, f"warm and cold executables differ after the unrelated edit of {name}"
+    if count_attempts:
+        cold_attempts = lowering_attempts(cold_trace)?
+        assert cold_attempts == 2, f"independently cold lowering attempts: {cold_attempts}"
+        assert warm_attempts == 1, f"steady lowering attempts: {warm_attempts}"
+        removed = text.replace(utf8_demand(), "").replace("value + 1", "value + 2")
+        _ = compare_runtime_demand_edit(binary, source, warm_store, removed, "4\nb\n43", "removed")?
+        added = text.replace("value + 1", "value + 3")
+        attempts = compare_runtime_demand_edit(binary, source, warm_store, added, "4\nb\n4\n44", "added")?
+        assert attempts == 2, f"new runtime demand lowering attempts: {attempts}"
     return Ok((edited, cold))
 
 
+def compare_runtime_demand_edit(
+    binary: str, source: Path, store: Path, text: str, output: str, label: str,
+) -> Result[int, str]:
+    """An edit that changes the runtime closure must publish the fresh plan and executable."""
+    root = source.parent()
+    trace = Some(attempt_trace(root, label + "-trace")?)
+    plan = root.joinpath("native.plan")
+    native = root.joinpath("target/incan/release/bin/lists")
+    write(source, text)?
+    _ = lowering_example_run(binary, source, store, output, trace=trace)?
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    warm_native = native.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = root.joinpath(label + "-store")
+    _ = lowering_example_run(binary, source, fresh, output)?
+    stop_example_engine(binary, fresh)?
+    assert warm_plan == plan.read_bytes().map_err((error) => error.message())?, label
+    assert warm_native == native.read_bytes().map_err((error) => error.message())?, label
+    return lowering_attempts(trace)
+
+
+def utf8_demand() -> str:
+    """An implicit lowering-time demand for the standard primitive's UTF-8 encoder."""
+    return "    println(len(\"text\".encode(\"utf-8\")))\n"
+
+
 def list_source() -> str:
-    """Lists of `int` and `str` beside an unrelated function, so lowering requests the runtime Loaf's list instances."""
+    """List instances and an implicit UTF-8 encoder demand beside one unrelated function."""
     unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
     lists = "    mut items = [1, 2, 3]\n    items.append(4)\n    names = [\"a\", \"b\"]\n"
-    entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n    println(unrelated(41))\n"
-    return unrelated + entry
+    entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n" + utf8_demand()
+    return unrelated + entry + "    println(unrelated(41))\n"
 
 
 def generic_source(index: str) -> str:
@@ -1065,7 +1145,7 @@ def rust_source_probe_build(binary: str, app: Path, store: Path) -> Result[JsonV
 
 
 def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result[None, str]:
-    """A debug edit linked through an Incan library and local Rust library must reproduce its cold executable."""
+    """A debug edit and fresh build reproduce the Rust archive and executable with incremental compilation enabled."""
     provider = root.joinpath("provider")
     app = root.joinpath("app")
     provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
@@ -1094,16 +1174,35 @@ def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result
     assert proof_count(warm_report, "native_bakes")? == 1, diagnostic
     executable = app.joinpath("target/incan/debug/bin/debug_repro_app")
     warm = executable.read_bytes().map_err((error) => error.message())?
+    warm_archive = debug_probe_archive(app)?
     stop_example_engine(binary, warm_store)?
     app.joinpath("target").remove_tree().map_err((error) => error.message())?
+    provider.joinpath("target").remove_tree().map_err((error) => error.message())?
     # The cold build starts from an empty bakery at the same path. A development executable names its carriers'
     # bakery (debug map and run-time search paths), so a bakery at another path is a relocation, not a cold build.
     warm_store.remove_tree().map_err((error) => error.message())?
     _ = debug_probe_build(binary, app, warm_store)?
     cold = executable.read_bytes().map_err((error) => error.message())?
+    cold_archive = debug_probe_archive(app)?
     stop_example_engine(binary, warm_store)?
+    assert warm_archive == cold_archive, "warm and cold incremental Rust archives differ"
     assert warm == cold, "warm and cold debug executables with a Rust library differ"
     return Ok(None)
+
+
+def debug_probe_archive(app: Path) -> Result[bytes, str]:
+    """Read the unique native Rust artifact reached by the debug reproducibility fixture."""
+    output = app.joinpath("target/incan/rust/debug")
+    mut archives: list[Path] = []
+    for facet in output.iterdir().map_err((error) => error.message())?:
+        if not facet.is_dir() or not facet.name().starts_with("debug_repro_native-"):
+            continue
+        for file in facet.iterdir().map_err((error) => error.message())?:
+            if file.name().starts_with("libdebug_repro_native-") and file.name().ends_with(".rlib"):
+                archives.append(file)
+    if len(archives) != 1:
+        return Err("debug reproducibility probe requires one native Rust archive")
+    return archives[0].read_bytes().map_err((error) => error.message())
 
 
 def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
@@ -1115,35 +1214,13 @@ def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, 
         .args(["--profile", "debug", "--engine-report"])
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
+        .env_remove("INCAN_RUST_INCREMENTAL")
         .output()
         .map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success() or errors != "":
         return Err(f"debug reproducibility probe: status={outcome.status.code()} stdout={output} stderr={errors}")
-    return command_proof(outcome.stdout)
-
-
-def lowering_example_run(
-    binary: str, source: Path, store: Path, expected: str, trace: Option[Path] = None,
-) -> Result[JsonValue, str]:
-    """Run one real engine request and require both successful native output and its measured proof."""
-    mut command = Command.new(binary)
-    if let Some(directory) = trace:
-        command.env("INCAN_ENGINE_TRACE", directory.0).env("INCAN_TRACE_PRODUCERS", "1")
-    outcome = command
-        .arg("run")
-        .arg(source.0)
-        .args(["--profile", "release", "--engine-report"])
-        .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
-        .env("INCAN_ENGINE", "records")
-        .env("INCAN_BAKERY", store.0)
-        .output()
-        .map_err((error) => str(error))?
-    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
-    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
-    if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
-        return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
 
 

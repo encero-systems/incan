@@ -1,12 +1,14 @@
 //! Reading a unit's sources: bounded source reads and authored-file discovery.
 
 use std::fs;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
 use incan_frontend::ast::Span;
 use incan_frontend::diagnostics;
+use sha2::{Digest, Sha256};
 
 /// Maximum source file size (100 MB)
 ///
@@ -41,8 +43,56 @@ pub fn read_source_for_diagnostics(file_path: &str) -> Result<String, CliDiagnos
     })
 }
 
+/// Take the optional captured-source directory from an activation's private arguments. Durable caller descriptions
+/// never point into another request's temporary directory.
+pub fn captured_source_options(arguments: &[String]) -> Result<(Option<&Path>, &[String]), String> {
+    match arguments {
+        [flag, directory, rest @ ..] if flag == "--captured-sources" => {
+            let directory = Path::new(directory);
+            if !directory.is_absolute() || !directory.is_dir() {
+                return Err(format!("invalid captured source directory: {}", directory.display()));
+            }
+            Ok((Some(directory), rest))
+        }
+        [flag] if flag == "--captured-sources" => Err("--captured-sources requires a request directory".into()),
+        _ => Ok((None, arguments)),
+    }
+}
+
+/// Read the snapshot for one logical source path from this activation's private directory. Only paths the engine
+/// already read have snapshots; a missing member leaves the ordinary source reader in charge of that path.
+pub fn read_captured_source(directory: &Path, logical: &str) -> CliResult<Option<String>> {
+    let name = format!("{:x}.source", Sha256::digest(logical.as_bytes()));
+    let file = match fs::File::open(directory.join(name)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(CliError::failure(format!(
+                "cannot open captured source {logical}: {error}"
+            )));
+        }
+    };
+    let _span =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::read_captured_source", input = logical)
+            .entered();
+    let mut source = String::new();
+    let bytes = file
+        .take(MAX_SOURCE_SIZE + 1)
+        .read_to_string(&mut source)
+        .map_err(|error| CliError::failure(format!("cannot read captured source {logical}: {error}")))?;
+    if bytes as u64 > MAX_SOURCE_SIZE {
+        return Err(CliError::failure(format!(
+            "captured source {logical} exceeds {MAX_SOURCE_SIZE} bytes"
+        )));
+    }
+    Ok(Some(source))
+}
+
 /// Read source once behind both legacy text errors and structured diagnostic reporting.
 fn read_source_checked(file_path: &str) -> Result<String, SourceReadFailure> {
+    let _span =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::read_authored_source", input = file_path)
+            .entered();
     let metadata = fs::metadata(file_path).map_err(|error| SourceReadFailure {
         message: format!("Cannot access file '{}': {}", file_path, error),
     })?;

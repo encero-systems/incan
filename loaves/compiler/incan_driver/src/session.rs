@@ -29,6 +29,9 @@ use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_sem
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 
+#[cfg(test)]
+mod static_storage_tests;
+
 /// Checked products produced by one [`CompilationSession`] analysis pass: each module's checked facts, which Body IR
 /// lowers from, and its portable semantic snapshot, which tooling reads.
 #[derive(Debug, Clone)]
@@ -117,6 +120,8 @@ pub struct CompilationSession {
     desugar_diagnostics: Arc<Mutex<BTreeMap<PathBuf, Vec<diagnostics::CompileError>>>>,
     /// The unit as Oven describes it.
     unit: UnitDescription,
+    /// Logical paths whose current module texts came from this session's private capture.
+    captured_source_paths: Arc<Mutex<BTreeSet<String>>>,
     /// Native-only accepted scalar body products; checking and graph sessions leave this inventory empty.
     callable_body_reuse: Arc<dyn CallableBodySource>,
     /// Graph-selected checker values remain a separate identity-keyed transport and never enter scalar callable-body
@@ -187,7 +192,12 @@ impl CompilationSession {
             }
             deferred.push((key.clone(), loaf.name.clone(), loaf.dir.clone(), loaf.standard));
         }
-        let loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
+        let mut loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
+        loaves.bind_native_loaves(
+            unit.externs
+                .iter()
+                .map(|binding| (binding.name.as_str(), binding.path.as_path())),
+        );
         let loaves = Arc::new(loaves);
         // Prelude names are resolved through the declared owner's named namespace and declaration records.
         // Source-selected conversion and entry contracts perform their own authenticated demands.
@@ -215,6 +225,7 @@ impl CompilationSession {
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
             unit: unit.clone(),
+            captured_source_paths: Arc::default(),
             callable_body_reuse: Arc::new(BTreeMap::new()),
             graph_body_records: incan_frontend::checker_records::GraphBodyRecords::default(),
         })
@@ -223,6 +234,30 @@ impl CompilationSession {
     /// The unit as Oven describes it.
     pub fn unit(&self) -> &UnitDescription {
         &self.unit
+    }
+
+    /// Record which reader supplied the current module text. A later generated-source overlay supersedes a
+    /// captured reading of the same path.
+    pub(crate) fn record_source_origin(&self, path: &str, captured: bool) -> CliResult<()> {
+        let mut paths = self
+            .captured_source_paths
+            .lock()
+            .map_err(|_| CliError::failure("captured source paths are poisoned"))?;
+        if captured {
+            paths.insert(path.to_owned());
+        } else {
+            paths.remove(path);
+        }
+        Ok(())
+    }
+
+    /// Move the capture provenance to the checked program so native compilation can select those exact texts.
+    pub fn take_captured_source_paths(&self) -> CliResult<BTreeSet<String>> {
+        let mut paths = self
+            .captured_source_paths
+            .lock()
+            .map_err(|_| CliError::failure("captured source paths are poisoned"))?;
+        Ok(std::mem::take(&mut *paths))
     }
 
     /// Install products selected against this session's exact parsed inputs. General analysis and inspection do not

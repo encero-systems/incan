@@ -1,6 +1,7 @@
-"""An unchanged namespace is admitted whole by its header (DD-0015 §9): an edit checks its own module, and checking opens
-no unchanged namespace's frame beyond the interfaces it installs; a callee whose settled call contract changes still
-re-checks its callers."""
+"""Check unchanged namespaces and changed call contracts through the records engine.
+
+A checked caller needs only the exact dependency interface it installs. A changed callee contract rechecks its
+callers, and a later caller edit installs the new interface."""
 
 from rust::std::process import Command
 from rust::std::string import String as RustString
@@ -16,15 +17,17 @@ from scratch import scratch_directory
 
 
 pub def test_an_unchanged_namespace_is_admitted_by_its_header_and_a_changed_contract_rechecks_its_callers() -> Result[None, str]:
-    """A body edit of a callee admits its caller by header without opening the caller's frame in checking; a body edit
-    that changes the callee's settled call contract re-checks the caller, and both programs print what a cold build
-    would."""
+    """Track which namespace interfaces checking opens after the callee or caller changes.
+
+    An internal callee edit leaves its caller checked. Repeated caller edits reuse the authenticated callee interface.
+    A changed call contract rechecks the caller and the next caller edit opens the replacement. Every run prints 3.
+    """
     scratch = scratch_directory()?
     root = scratch.path()
     project = root.joinpath("project")
     project.mkdir(true, true).map_err((error) => error.message())?
     main = project.joinpath("main.incn")
-    write(main, "from scale import Box, first\n\ndef main() -> None:\n    box = Box(value=3)\n    println(str(first(box)))\n")?
+    write(main, caller_source("println(str(first(box)))"))?
     callee = project.joinpath("scale.incn")
     write(callee, callee_source("return item.value"))?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
@@ -40,6 +43,11 @@ pub def test_an_unchanged_namespace_is_admitted_by_its_header_and_a_changed_cont
     return exercised
 
 
+def caller_source(line: str) -> str:
+    """Keep the caller's dependency and declarations fixed while changing the way it uses the result."""
+    return f"from scale import Box, first\n\ndef main() -> None:\n    box = Box(value=3)\n    {line}\n"
+
+
 def callee_source(first: str) -> str:
     """The callee module: a model, a function that keeps its argument, and `first` with the body line `first`. The
     declarations and owners stay the same in every edit, so only the body, and with it `first`'s settled call
@@ -48,7 +56,7 @@ def callee_source(first: str) -> str:
 
 
 def exercise_admission(binary: str, root: Path, store: Path, main: Path, callee: Path) -> Result[None, str]:
-    """Build, edit the callee's body twice, and count what each edit's checking opened while the caller owns cleanup.
+    """Apply callee and caller edits in one compiler process and count the work of each checked request.
 
     A resident engine and compiler keep tracing into the directory of the run that started them, so every run shares
     one directory and each edit is measured by what it added."""
@@ -66,12 +74,32 @@ def exercise_admission(binary: str, root: Path, store: Path, main: Path, callee:
         return Err("the unchanged caller was not admitted by its namespace header")
     if body.installed_frames != 0:
         return Err("checking opened the frame of a namespace no checked module imports")
+
+    # Prime the callee's interface, then select the same frame while a different caller body is checked.
+    write(main, caller_source("println(str(first(box) + 0))"))?
+    run(binary, store, main, observations, "prime-interface")?
+    after_prime = counts_of(observations)
+    prime = after_prime.since(after_body)
+    if prime.checked_callers == 0 or prime.installed_frames != 1:
+        return Err(f"first caller edit checked {prime.checked_callers} caller(s) and opened {prime.installed_frames} frames")
+    write(main, caller_source("println(str(first(box) * 1))"))?
+    run(binary, store, main, observations, "reuse-interface")?
+    after_reuse = counts_of(observations)
+    reuse = after_reuse.since(after_prime)
+    if reuse.checked_callers == 0 or reuse.installed_frames != 0:
+        return Err(f"repeated caller edit checked {reuse.checked_callers} caller(s) and opened {reuse.installed_frames} frames")
+
     # Passing the parameter on to a function that keeps it consumes it: `first` no longer only reads its argument.
     write(callee, callee_source("return take(item).value"))?
     run(binary, store, main, observations, "contract-edit")?
-    contract = counts_of(observations).since(after_body)
-    if contract.checked_callers == 0:
+    after_contract = counts_of(observations)
+    if after_contract.since(after_reuse).checked_callers == 0:
         return Err("a changed callee contract did not re-check its caller")
+    write(main, caller_source("println(str(first(box) - 0))"))?
+    run(binary, store, main, observations, "replace-interface")?
+    replacement = counts_of(observations).since(after_contract)
+    if replacement.checked_callers == 0 or replacement.installed_frames != 1:
+        return Err(f"replacement caller edit checked {replacement.checked_callers} caller(s) and opened {replacement.installed_frames} frames")
     return Ok(None)
 
 

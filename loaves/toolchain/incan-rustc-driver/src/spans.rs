@@ -3,11 +3,11 @@
 use crate::error::PlanError;
 use crate::plan::SourceSpan;
 use rustc_span::source_map::SourceMap;
-use rustc_span::{BytePos, DUMMY_SP, SourceFile, Span, SyntaxContext};
+use rustc_span::{BytePos, DUMMY_SP, FileName, SourceFile, Span, StableSourceFileId, SyntaxContext};
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// The test files of the unit this process compiles that were checked with generated case entries
@@ -15,6 +15,71 @@ use std::sync::{Arc, Mutex};
 /// The entries lie past the file's own last line, so their spans resolve only against that copy. The registry is this
 /// process's alone: a plan compiled in another process takes the texts with it ([`checked_texts`]).
 static CHECKED_SOURCES: Mutex<BTreeMap<String, PathBuf>> = Mutex::new(BTreeMap::new());
+static CAPTURED_SOURCES: Mutex<Option<CapturedSources>> = Mutex::new(None);
+
+/// Captured inputs and their registrations in the invocation's single rustc source map.
+struct CapturedSources {
+    directory: PathBuf,
+    texts: BTreeMap<String, String>,
+    registered: BTreeMap<String, StableSourceFileId>,
+}
+
+impl CapturedSources {
+    /// Move checked text into rustc on first use. A fresh process reads the leased file at that same boundary.
+    /// Separate span translators share the registration, including rustc's byte positions and line table.
+    fn load(&mut self, map: &SourceMap, logical: &str, path: &Path) -> Result<Option<Arc<SourceFile>>, String> {
+        if let Some(&registration) = self.registered.get(logical) {
+            return map
+                .source_file_by_stable_id(registration)
+                .map(Some)
+                .ok_or_else(|| format!("captured source {logical} is missing from this rustc source map"));
+        }
+        let text = match self.texts.remove(logical) {
+            Some(text) => text,
+            None => {
+                let Some(text) = incan_driver::sources::read_captured_source(&self.directory, logical)
+                    .map_err(|error| error.message)?
+                else {
+                    return Ok(None);
+                };
+                text
+            }
+        };
+        let name = FileName::Real(map.path_mapping().to_real_filename(map.working_dir(), path));
+        let _registration = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::register_captured_source", input = logical, bytes = text.len()).entered();
+        let source = map.new_source_file(name, text);
+        self.registered.insert(logical.to_owned(), source.stable_id);
+        Ok(Some(source))
+    }
+}
+
+/// Keep the invocation's capture available to rustc query threads only while its source map is active.
+pub(crate) struct CapturedSourceScope(Option<CapturedSources>);
+
+impl Drop for CapturedSourceScope {
+    /// Restore the previous capture so a subsequent resident invocation cannot see these bytes.
+    fn drop(&mut self) {
+        if let Ok(mut directory) = CAPTURED_SOURCES.lock() {
+            *directory = self.0.take();
+        }
+    }
+}
+
+/// Select the request's captured texts and leased directory for a single native compilation.
+pub(crate) fn captured_source_scope(
+    directory: Option<PathBuf>,
+    texts: BTreeMap<String, String>,
+) -> Result<CapturedSourceScope, String> {
+    let mut active = CAPTURED_SOURCES
+        .lock()
+        .map_err(|_| "captured source registry is poisoned")?;
+    let capture = directory.map(|directory| CapturedSources {
+        directory,
+        texts,
+        registered: BTreeMap::new(),
+    });
+    Ok(CapturedSourceScope(std::mem::replace(&mut *active, capture)))
+}
 
 /// Record the texts the unit's files were checked as where they differ from the files, replacing the previous unit's
 /// records, so a file checked as itself resolves against itself. Each copy lives in the temporary directory under its
@@ -78,6 +143,28 @@ impl<'a> Sources<'a> {
         }
     }
 
+    /// Keep rustc's logical filename and remapping while reading a captured file from its private placement.
+    fn load(&self, file: &str) -> Result<Arc<SourceFile>, PlanError> {
+        let failed = |reason: String| PlanError::Invalid {
+            function: file.to_owned(),
+            reason,
+        };
+        let checked = checked_copy(file);
+        let path = checked.as_deref().unwrap_or_else(|| Path::new(file));
+        if checked.is_none() {
+            let mut capture = CAPTURED_SOURCES
+                .lock()
+                .map_err(|_| failed("captured source registry is poisoned".into()))?;
+            if let Some(capture) = capture.as_mut()
+                && let Some(source) = capture.load(self.map, file, path).map_err(failed)?
+            {
+                return Ok(source);
+            }
+        }
+        let _span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::load_source_file", input = %path.display()).entered();
+        self.map.load_file(path).map_err(|error| failed(error.to_string()))
+    }
+
     /// Map a character column into its source line's byte offset, refusing out-of-range coordinates.
     /// Published package identities have no source file; preserve that absence with a dummy span instead of loading
     /// a canonical identity as a path or attributing the declaration to the consumer.
@@ -92,11 +179,7 @@ impl<'a> Sources<'a> {
             reason: "source coordinate is outside the retained file".into(),
         };
         if !self.files.borrow().contains_key(file) {
-            let path = checked_copy(file).unwrap_or_else(|| PathBuf::from(file));
-            let source = self.map.load_file(&path).map_err(|error| PlanError::Invalid {
-                function: file.to_owned(),
-                reason: error.to_string(),
-            })?;
+            let source = self.load(file)?;
             self.files.borrow_mut().insert(file.to_owned(), source);
         }
         let files = self.files.borrow();

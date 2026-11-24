@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 
 use super::declaration_records::{DeclarationFacet, declaration_facts};
 use super::executable_surface::{own_public_identities, runtime_bindings};
+use super::install_record::{LOAF_FACTS_SCHEMA, LoafInstallRecord, PublishedInstallRecord, encode_path_lookup};
 use super::type_scope::module_type_scopes;
 use super::{LibraryManifest, LibraryManifestError};
 
@@ -81,6 +82,8 @@ pub enum RecordFamily {
     EnumVariant,
     /// One module's type scope: the type or trait declaration each spelling among its declarations names.
     TypeScope,
+    /// The checked interface installed before a consumer asks for any individual layout.
+    InstallRecord,
     RustAbi,
 }
 
@@ -115,6 +118,7 @@ impl RecordFamily {
             Self::PublicNamespace => "public-namespace",
             Self::EnumVariant => "enum-variant",
             Self::TypeScope => "type-scope",
+            Self::InstallRecord => "install-record",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -175,18 +179,137 @@ pub struct CompilerRecordSet {
     pub digests: FactDigests,
 }
 
+/// The install value and its independently addressed checked API records, prepared together by the Loaf producer.
+pub struct PreparedInstallRecord {
+    record: CompilerRecord,
+    named: Vec<CompilerRecord>,
+    lookup: Option<String>,
+}
+
 impl LibraryManifest {
+    /// Bind the checked install value and named API receipt to the manifest. The ABI flag records that this
+    /// producer included its explicit Rust re-exports in the manifest-selected ABI index.
+    pub fn prepare_install_record(
+        &mut self,
+        install: &LoafInstallRecord,
+        indexed_rust_reexports: bool,
+    ) -> Result<PreparedInstallRecord, LibraryManifestError> {
+        #[derive(Serialize)]
+        struct InstallValue<'a> {
+            #[serde(flatten)]
+            install: &'a LoafInstallRecord,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            path_lookup_digest: Option<String>,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            indexed_rust_reexports: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            rust_reexport_manifest_format: Option<u32>,
+        }
+
+        let named = api_records(&self.contract_metadata, &self.name)?;
+        let lookup = (!named.is_empty()).then(|| encode_path_lookup(&named)).transpose()?;
+        let indexed_namespaces = self
+            .contract_metadata
+            .api
+            .as_ref()
+            .is_some_and(|api| !api.public_namespaces.is_empty());
+        let value = InstallValue {
+            install,
+            path_lookup_digest: lookup.as_ref().map(|records| sha256_hex(records.as_bytes())),
+            indexed_rust_reexports,
+            rust_reexport_manifest_format: (indexed_rust_reexports && indexed_namespaces)
+                .then_some(self.manifest_format),
+        };
+        let record = record(RecordFamily::InstallRecord, 0, &self.name, &value)?;
+        self.contract_metadata.install_record_digest = Some(sha256_hex(&record.value));
+        Ok(PreparedInstallRecord { record, named, lookup })
+    }
+
+    /// Encode the facts sidecar for this exact manifest and its optional independently named install row.
+    pub fn encode_loaf_facts(
+        &self,
+        encoded: &str,
+        install: Option<PreparedInstallRecord>,
+    ) -> Result<Vec<u8>, LibraryManifestError> {
+        let manifest_digest = sha256_hex(encoded.as_bytes());
+        let (record, published, named, lookup) = match install {
+            Some(install) => {
+                let published = PublishedInstallRecord::new(&install.record);
+                (
+                    Some(install.record),
+                    Some(published),
+                    Some(install.named),
+                    install.lookup,
+                )
+            }
+            None => (None, None, None, None),
+        };
+        let digests = self
+            .compiler_records_with_named_install(&manifest_digest, record, named)?
+            .digests;
+        let mut facts = Map::from_iter([
+            ("schema".to_owned(), LOAF_FACTS_SCHEMA.into()),
+            ("manifest_digest".to_owned(), manifest_digest.into()),
+            ("semantic_facts".to_owned(), digests.semantic_facts.into()),
+            ("record_content".to_owned(), digests.record_content.into()),
+        ]);
+        if let Some(record) = published {
+            facts.insert("install_record".to_owned(), json!(record));
+        }
+        if let Some(lookup) = lookup {
+            facts.insert("path_named_records".to_owned(), Value::String(lookup));
+        }
+        serde_json::to_vec(&facts).map_err(|error| LibraryManifestError::Serialize(error.to_string()))
+    }
+
     /// Split this validated manifest into its installed compiler records; `manifest_digest` names the manifest file.
     pub fn compiler_records(&self, manifest_digest: &str) -> Result<CompilerRecordSet, LibraryManifestError> {
+        self.compiler_records_with_install(manifest_digest, None)
+    }
+
+    /// Project the compiler records with the exact install bytes selected by the manifest's sidecar descriptor.
+    pub fn compiler_records_with_install(
+        &self,
+        manifest_digest: &str,
+        install: Option<CompilerRecord>,
+    ) -> Result<CompilerRecordSet, LibraryManifestError> {
+        self.compiler_records_with_named_install(manifest_digest, install, None)
+    }
+
+    /// Use the producer's prepared API rows if this publication already projected them.
+    fn compiler_records_with_named_install(
+        &self,
+        manifest_digest: &str,
+        install: Option<CompilerRecord>,
+        prepared_api: Option<Vec<CompilerRecord>>,
+    ) -> Result<CompilerRecordSet, LibraryManifestError> {
         let mut records = self.declaration_records()?;
-        let (contract_facts, documentation) = self.contract_metadata.split_documentation();
+        let (mut contract_facts, documentation) = self.contract_metadata.split_documentation();
+        // The row itself carries the install semantics. The descriptor binds the transport and includes source
+        // positions, so carrying it again would rekey consumers for documentation-only changes.
+        contract_facts.install_record_digest = None;
+        match (self.contract_metadata.install_record_digest.as_deref(), install) {
+            (Some(expected), Some(record))
+                if record.family == RecordFamily::InstallRecord
+                    && record.index == 0
+                    && record.name == self.name
+                    && sha256_hex(&record.value) == expected =>
+            {
+                records.push(record);
+            }
+            (None, None) => {}
+            _ => {
+                return Err(LibraryManifestError::Invalid(
+                    "install record disagrees with its manifest".into(),
+                ));
+            }
+        }
         records.push(record(RecordFamily::ContractMetadata, 0, &self.name, &contract_facts)?);
         // A consumer reads one declaration's signature, layout or defaults by name, never the whole checked API.
-        if let Some(api) = &contract_facts.api {
-            records.extend(declaration_fact_records(api)?);
-            records.extend(namespace_records(api, &contract_facts.identity_graph, &self.name)?);
-            records.extend(type_scope_records(api, &contract_facts.identity_graph, &self.name)?);
-        }
+        records.extend(match prepared_api {
+            Some(records) => records,
+            None => api_records(&contract_facts, &self.name)?,
+        });
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
         }
@@ -337,7 +460,21 @@ fn enum_variant_records(
     Ok(())
 }
 
-/// One record per declaration fact of the documentation-free `api`, numbered within its family in declaration order.
+/// Project named declaration, namespace and type-scope values in the order their producer declares them.
+fn api_records(
+    contract: &super::LibraryContractMetadata,
+    name: &str,
+) -> Result<Vec<CompilerRecord>, LibraryManifestError> {
+    let Some(api) = &contract.api else {
+        return Ok(Vec::new());
+    };
+    let mut records = declaration_fact_records(api)?;
+    records.extend(namespace_records(api, &contract.identity_graph, name)?);
+    records.extend(type_scope_records(api, &contract.identity_graph, name)?);
+    Ok(records)
+}
+
+/// One record per declaration fact of `api`, numbered within its family in declaration order.
 fn declaration_fact_records(
     api: &crate::api_metadata::CheckedApiMetadataPackage,
 ) -> Result<Vec<CompilerRecord>, LibraryManifestError> {
@@ -492,6 +629,13 @@ fn canonical_value(family: RecordFamily, value: &[u8]) -> Result<Vec<u8>, Librar
     };
     if let Some(Value::Object(descriptor)) = descriptor {
         descriptor.remove(BODIES_DIGEST_FIELD);
+    }
+    if family == RecordFamily::InstallRecord
+        && let Value::Object(fields) = &mut decoded
+    {
+        // The exact lookup-byte receipt includes source positions. Its semantic rows each carry their own hash.
+        fields.remove("path_lookup_digest");
+        fields.remove("indexed_rust_reexports");
     }
     LibraryManifest::encode_compiler_record_value(&decoded)
 }

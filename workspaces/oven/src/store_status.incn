@@ -14,7 +14,15 @@ from std.fs import Path
 from std.json import JsonValue
 from home_paths import BakeryLocation, bakery_location, storage_policy
 from bakery_records import Fact, staging_root
-from bakery_roots import ProjectRoots, expiring_records, preview_collection, project_roots, reached_from, unit_facts
+from bakery_roots import (
+    ProjectRoots,
+    expiring_records,
+    fact_reaches,
+    preview_collection,
+    project_roots,
+    reached_from,
+    unit_facts,
+)
 from files import json_text
 from observation import now_seconds
 from storage_admission import (
@@ -102,7 +110,7 @@ pub def store_status(location: BakeryLocation) -> Result[StoreStatus, str]:
     facts = unit_facts(location.path)?
     mut reaches: dict[str, list[str]] = {}
     for identity in facts.keys():
-        reaches[identity] = facts[identity].reaches
+        reaches[identity] = fact_reaches(facts[identity])
     mut roots: list[Root] = []
     mut live: dict[str, bool] = {}
     mut live_projects = 0
@@ -173,7 +181,7 @@ def registered_identities(project: ProjectRoots) -> list[str]:
     return identities
 
 
-def retained_by(identities: dict[str, bool], facts: dict[str, Fact]) -> Retained:
+def retained_by(identities: dict[str, bool], facts: dict[str, list[Fact]]) -> Retained:
     """The records `identities` names and the unique logical bytes of their payloads."""
     mut sizes: dict[str, int] = {}
     mut units = 0
@@ -181,8 +189,9 @@ def retained_by(identities: dict[str, bool], facts: dict[str, Fact]) -> Retained
         if identity not in facts:
             continue
         units += 1
-        for file in facts[identity].files:
-            sizes[file.digest] = file.size
+        for fact in facts[identity]:
+            for file in fact.files:
+                sizes[file.digest] = file.size
     mut bytes = 0
     for digest in sizes.keys():
         bytes += sizes[digest]

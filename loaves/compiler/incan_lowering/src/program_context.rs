@@ -9,9 +9,9 @@ use incan_semantics_core::body_ir::{
     BodyIrModule, DecoratedBinding, EnumDeclaration, NominalDeclaration, StaticDeclaration, ValueEnumDeclaration,
 };
 
-use crate::body_index::{BodyIndex, empty_body_index, extend_body_index};
+use crate::body_index::{BodyIndex, empty_body_index};
 use crate::native_type_identity::{ConstructorIndex, extend_constructor_index};
-use crate::nominal_records::DescribedNominals;
+use crate::nominal_records::{DescribedNominals, RecordedLayouts};
 
 /// One validated source body or SDK item rendering a retained nominal through a shared receiver.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,6 +42,8 @@ pub struct ProgramContext {
     pub observe_work: bool,
     /// The rows of these tables a product nominal table has described, shared by the contexts that copy this one.
     pub described: Arc<DescribedNominals>,
+    /// The layout witnesses the program's namespaces recorded, which describe their declarations without a digest.
+    pub recorded: Arc<RecordedLayouts>,
 }
 
 /// Module storage but no dispatch mappings for external-only synthetic frames.
@@ -60,6 +62,7 @@ pub fn synthetic_program_context(module: &BodyIrModule, constructors: Arc<Constr
         overflow_checks: true,
         observe_work: std::env::var_os("INCAN_NATIVE_TIMING").is_some(),
         described: Arc::default(),
+        recorded: Arc::default(),
     }
 }
 
@@ -81,12 +84,14 @@ pub fn retain_nominal_tables(program: &mut ProgramContext, module: &BodyIrModule
     Ok(())
 }
 
-/// Extend retained program lookup and storage generations after runtime resolution without rebuilding dispatch roots.
+/// Extend retained storage and layout generations after runtime resolution.
+///
+/// The caller has already indexed appended bodies and passes only the newly discovered union shapes.
 pub fn extend_program_context(
     program: &mut ProgramContext,
     module: &BodyIrModule,
     constructors: Arc<ConstructorIndex>,
-    unions: &[IncanType],
+    new_unions: &[IncanType],
 ) -> Result<(), String> {
     if program.statics.len() > module.static_declarations.len()
         || program.nominals.len() > module.nominal_declarations.len()
@@ -96,7 +101,6 @@ pub fn extend_program_context(
     {
         return Err("invalid Body IR program context generation".into());
     }
-    extend_body_index(&mut program.body_indices, module)?;
     let statics = program.statics.len();
     Arc::make_mut(&mut program.statics).extend(module.static_declarations[statics..].iter().cloned());
     let nominals = program.nominals.len();
@@ -107,7 +111,7 @@ pub fn extend_program_context(
     Arc::make_mut(&mut program.value_enums).extend(module.value_enum_declarations[value_enums..].iter().cloned());
     let bindings = program.decorated_bindings.len();
     Arc::make_mut(&mut program.decorated_bindings).extend(module.decorated_bindings[bindings..].iter().cloned());
-    for ty in unions {
+    for ty in new_unions {
         Arc::make_mut(&mut program.union_types).insert(ty.clone());
     }
     program.constructors = constructors;

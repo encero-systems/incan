@@ -118,19 +118,24 @@ pub def verify_root_revocation(
     """Verify a delegated-key revocation under the pinned root, never under the delegated key itself."""
     if sequence < 0 or key_id == "" or reason == "" or "\n" in reason or "\r" in reason:
         return Err("the registry signing-key revocation is malformed")
-    text = (
-        "incan-registry-key-revocation-v1\n" +
-        f"registry={root.registry}\n" +
-        f"key={key_id}\n" +
-        f"sequence={sequence}\n" +
-        f"reason={reason}\n"
-    )
-    if not verifies(root.key, text.encode("utf-8"), signature):
+    if not verifies(root.key, root_revocation_payload(root.registry, key_id, sequence, reason), signature):
         return Err("the registry root did not authorize the signing-key revocation")
     return Ok(None)
 
 
-def delegation_payload(registry: str, key: Key) -> bytes:
+pub def root_revocation_payload(registry: str, key_id: str, sequence: int, reason: str) -> bytes:
+    """Canonical root authorization for the permanent removal of a signing key."""
+    text = (
+        "incan-registry-key-revocation-v1\n" +
+        f"registry={registry}\n" +
+        f"key={key_id}\n" +
+        f"sequence={sequence}\n" +
+        f"reason={reason}\n"
+    )
+    return text.encode("utf-8")
+
+
+pub def delegation_payload(registry: str, key: Key) -> bytes:
     """Canonical root authorization for one registry signing key."""
     text = (
         "incan-registry-delegation-v1\n" +
@@ -141,7 +146,7 @@ def delegation_payload(registry: str, key: Key) -> bytes:
     return text.encode("utf-8")
 
 
-def statement_payload(registry: str, key_id: str, kind: StatementKind, sequence: int, digest: str) -> bytes:
+pub def statement_payload(registry: str, key_id: str, kind: StatementKind, sequence: int, digest: str) -> bytes:
     """Canonical signed envelope for one registry statement payload."""
     text = (
         "incan-registry-statement-v1\n" +

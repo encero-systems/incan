@@ -1,9 +1,9 @@
 //! Lazy generator layouts, producer frames and their runtime operations.
 
 use incan_mir_plan_native::{
-    Callee, CalleeKind, EnumDeclaration, ExternalFunction, Function, ListLeaf, Local, Operand, OperandKind, Parameter,
-    Place, PlanType, Projection, RvalueKind, SourceSpan, StatementKind, TerminatorKind, Unwind, assign as plan_assign,
-    block as plan_block, place as plan_place,
+    Callee, CalleeKind, EnumDeclaration, ExternalFunction, Function, FunctionSlot, ListLeaf, Local, Operand,
+    OperandKind, Parameter, Place, PlanType, Projection, RvalueKind, SourceSpan, StatementKind, TerminatorKind, Unwind,
+    assign as plan_assign, block as plan_block, place as plan_place,
 };
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
@@ -225,7 +225,7 @@ pub fn producer_name(name: &str) -> String {
 /// `program_refusals::append_generator_constructor` names.
 pub fn append_generator_constructor(
     constructors: &ConstructorIndex,
-    functions: &mut Vec<Function>,
+    functions: &mut Vec<FunctionSlot>,
     module: &BodyIrModule,
     body: &Body,
     source: &str,
@@ -248,13 +248,16 @@ pub fn append_generator_constructor(
         return Err("unsupported Body IR generator return type".into());
     };
     let parameters = frame_parameters(constructors, module, body, source, file, intrinsics)?;
-    functions.push(generator_constructor(
-        &function_name(module, body),
-        parameters,
-        &leaf,
-        depth,
-        &location(&body.span, source, file),
-    ));
+    functions.push(
+        generator_constructor(
+            &function_name(module, body),
+            parameters,
+            &leaf,
+            depth,
+            &location(&body.span, source, file),
+        )
+        .into(),
+    );
     Ok(())
 }
 

@@ -64,7 +64,14 @@ fn planned(source: &str) -> Result<BTreeMap<String, String>, Box<dyn std::error:
         ..Default::default()
     };
     let mut published = Vec::new();
-    let plan = match incan_lowering::unit_plan(std::slice::from_ref(&module), &inputs, 0, "library", &mut published)? {
+    let plan = match incan_lowering::unit_plan(
+        std::slice::from_ref(&module),
+        &inputs,
+        0,
+        "library",
+        &mut published,
+        &mut incan_lowering::PlanAdmissions::default(),
+    )? {
         incan_lowering::UnitPlanning::Complete(Some(plan)) => plan,
         incan_lowering::UnitPlanning::Complete(None) => return Err("no plan".into()),
         incan_lowering::UnitPlanning::NeedsRuntime(_, requirements) => {

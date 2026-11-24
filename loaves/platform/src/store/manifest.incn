@@ -1,0 +1,21 @@
+"""Names and view keys for the disk store's committed manifests."""
+
+from crate.store.files import StoreError, failure
+from crate.store.path import StorePath as Path
+
+pub const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
+
+
+pub def manifest_path(root: Path, generation: int, digest: str) -> Path:
+    """Where the manifest of one generation lives."""
+    return root.joinpath("snapshots").joinpath(f"{generation}.{digest[:16]}.manifest")
+
+
+pub def check_view_key(name: str) -> Result[None, StoreError]:
+    """Validate a nonempty view token before it can enter or select a line-oriented manifest."""
+    if name == "" or name.strip() != name:
+        return Err(failure("format", name, "view key is empty or has surrounding whitespace"))
+    for character in name:
+        if character <= " " or character == "\\x7f":
+            return Err(failure("format", name, "view key contains a manifest delimiter or control character"))
+    return Ok(None)

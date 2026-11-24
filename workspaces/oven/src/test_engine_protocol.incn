@@ -1,14 +1,14 @@
 """Engine control-channel boundaries reject malformed input before allocating or admitting work."""
 
-from core_process import Process, executable, spawn_detached
+from core_process import executable, spawn_detached
 from rust::std::thread import sleep, spawn
 from rust::std::time import Duration
 from rust::std::string import String as RustString
 from std.environ import get_or
-from std.encoding.hex import hexlify
 from std.fs import Path
 from files import write, json_text
 from bakery_roots import Collected, collect
+from compiler_graph_records import ReceiptProjectionCache
 from engine_programs import (
     read_program,
     select_program,
@@ -19,15 +19,15 @@ from engine_programs import (
     view_sealed,
 )
 from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection
-from engine_epochs import prepare_submit
+from engine_epochs import prepare_admitted_submit, prepare_submit
 from engine_client import service_generation, service_identity
-from pub::incan_platform.store import Transaction, durable_commits, begin, get, put, commit, commit_group
-from store_path_conversion import compact, snapshot
+from pub::incan_platform.store import SnapshotAdmission, Transaction, durable_commits, begin, get, put, commit, commit_group
+from store_path_conversion import compact, snapshot, store_path
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
-from pub::incan_platform.ipc import Connection, dial, listen
-from engine_endpoint import endpoint, handshake, owner_uid, connect_with
+from pub::incan_platform.ipc import Connection, listen
+from engine_endpoint import owner_uid, connect_with
 from engine_service import greet
 from toolchain import load_toolchain, toolchain_directory
 from engine_channel import Channel
@@ -41,7 +41,6 @@ from engine_messages import (
     Captured,
     Event,
     Complete,
-    Release,
     Drain,
     Stop,
     Refused,
@@ -49,7 +48,9 @@ from engine_messages import (
 from engine_state import Identity, ServiceState
 from scratch import scratch_directory
 from engine_wire import RefusalKind, zero_id, joined, scalar
-from engine_protocol_fixtures import await_exit, detail, json_text_is, stop_engine
+from engine_protocol_fixtures import (
+    await_connection, await_exit, await_service, detail, json_text_is, launch_service, release_service_result, stop_engine,
+)
 from trace_adapter import count_work, finish_counting
 
 
@@ -857,10 +858,12 @@ def check_collection_before_selection() -> Result[None, str]:
     source = project.joinpath("hello.incn")
     write(source, "def main() -> None:\n    println(\"hello\")\n")?
     store = root.joinpath("store")
+    mut receipts = ReceiptProjectionCache.empty()
     for turn in range(2):
         view = f"selection-{turn}"
-        captured = prepare_submit(
-            store,
+        mut admission = SnapshotAdmission.for_store(store_path(store))
+        captured = prepare_admitted_submit(
+            admission,
             Submit(
                 command="build",
                 view=view,
@@ -873,9 +876,11 @@ def check_collection_before_selection() -> Result[None, str]:
         handle = program_handle(captured.identity, "collection-proof", view)?
         produced = obtain(
             store,
+            admission,
             captured.revision,
             handle,
             root.joinpath("console").0,
+            receipts,
             Some(captured.epoch),
             "collection-proof",
             Some(captured.selected),
@@ -1132,6 +1137,11 @@ def process_lifecycle() -> Result[None, str]:
     channel.transport.close()?
     await_exit(first, not first_done)?
     await_exit(second, not second_done)?
+    return check_idle_service_reuse(binary, root, identity, source)
+
+
+def check_idle_service_reuse(binary: str, root: Path, identity: Identity, source: Path) -> Result[None, str]:
+    """Require native reuse after restart and verify the service exits when its last connection closes."""
     # A fresh service with a one-second timeout exits after its last client disconnects, without Drain.
     mut idle = launch_service(binary, root, identity)?
     mut idle_channel = await_service(root, identity)?
@@ -1183,7 +1193,6 @@ def check_unchanged_request(mut channel: Channel, root: Path, source: Path) -> R
     assert complete
     release_service_result(channel, request)?
     return Ok(None)
-
 
 def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: int) -> Result[None, str]:
     """A new virtual view reuses the prior build; its unchanged repeat also reads and hashes no source."""
@@ -1241,51 +1250,3 @@ def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: in
     assert completed
     release_service_result(channel, request)?
     return Ok(None)
-
-
-def release_service_result(mut channel: Channel, request: bytes) -> Result[None, str]:
-    """A completed request releases its exact execution lease before another request uses the bounded control window."""
-    token = f"{hexlify(channel.session)}:{hexlify(request)}"
-    _ = channel.send(request, Message.Release(Release(lease_id=token))).map_err(detail)?
-    for _index in range(8):
-        frame = channel.receive().map_err(detail)?
-        channel.acknowledge(frame).map_err(detail)?
-        match frame.message:
-            Message.Event(event) =>
-                if event.status == "Released":
-                    return Ok(None)
-            Message.Refused(value) => return Err(value.detail)
-            _ => pass
-    return Err("service did not release the completed request")
-
-
-def launch_service(binary: str, root: Path, identity: Identity) -> Result[Process, str]:
-    """Launch this test's service against installed standard inputs, independent of the source-build override."""
-    return spawn_detached(
-        binary,
-        [
-            "--internal-engine",
-            root.0,
-            identity.store_id,
-            identity.profile,
-            identity.service_generation,
-            identity.compiler_generation,
-            "1",
-        ],
-        {"INCAN_STDLIB": ""},
-    )
-
-
-def await_service(root: Path, identity: Identity) -> Result[Channel, str]:
-    """Wait for one of the two starters' endpoints, without starting a third process."""
-    return handshake(Channel(transport=await_connection(root, identity)?), identity).map_err(detail)
-
-
-def await_connection(root: Path, identity: Identity) -> Result[Connection, str]:
-    """Wait for a transport to one of the two starters, without beginning its engine handshake."""
-    selected = endpoint(root, identity).map_err(detail)?
-    for _poll in range(2500):
-        match dial(selected.socket):
-            Ok(transport) => return Ok(transport)
-            Err(_) => sleep(Duration.from_millis(2))
-    return Err("test engine did not start")

@@ -3,6 +3,9 @@
 
 use super::*;
 
+mod resident_layouts;
+use resident_layouts::{AuthoredRustLayouts, ReturnedRustLayouts, take_rust_layouts};
+
 /// Recover the declaration that supplies each generated member reachable from the program.
 ///
 /// Checked bodies retain the checker's ownership facts. A whole admitted namespace retains its package roots and
@@ -428,10 +431,15 @@ fn checked_attempt(
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
-    let imports = std::sync::Arc::new(incan_driver::modules::SourceModuleImports::new(
-        &modules,
-        session.own_standard_package(),
-    ));
+    let imports = {
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_source_module_imports")
+                .entered();
+        std::sync::Arc::new(incan_driver::modules::SourceModuleImports::new(
+            &modules,
+            session.own_standard_package(),
+        ))
+    };
     let namespace_indexes = graph_body_output.enabled().then(|| {
         modules
             .iter()
@@ -507,11 +515,12 @@ fn checked_attempt(
     let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
     let checked_local = checked_local_identities(manifest.as_ref());
     let (runtime_callable_bindings, runtime_binding_scopes) = runtime_declarations(&session, manifest.as_ref())?;
-    let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local, &Default::default())?;
     drop(body_ir_inputs_invocation);
 
     // ---- Declarations the program reaches in its Loaves ----
     let mut package_versions = resolved.package_versions;
+    let mut layout_admissions = resolved.layout_admissions;
     package_versions.insert(unit.package.clone(), unit.version.clone());
     let mut reached_loaves = resolved.entries;
     let mut bodies = resolved.modules;
@@ -532,6 +541,9 @@ fn checked_attempt(
         .map(|p| p.to_string_lossy().into_owned())
         .collect::<BTreeSet<_>>();
     let rebound = lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
+    let retained_calls =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::recover_retained_call_requirements")
+            .entered();
     let retained_generated_member_owners =
         retained_generated_member_owners(&modules, &analysis, &bodies[..loaf_modules])?;
     let retained_requirements = retained_body_call_requirements(
@@ -539,12 +551,14 @@ fn checked_attempt(
         package_identity,
         &retained_generated_member_owners,
     );
+    drop(retained_calls);
     if !retained_requirements
         .iter()
         .all(|identity| requested.contains(identity))
     {
         requested.extend(retained_requirements);
-        let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+        let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local, &layout_admissions)?;
+        layout_admissions.extend(resolved.layout_admissions);
         package_versions.extend(resolved.package_versions);
         reached_loaves = resolved.entries;
         let mut authored = bodies.split_off(loaf_modules);
@@ -569,6 +583,9 @@ fn checked_attempt(
     let mut reads_by_module = BTreeMap::new();
     let mut settled_inputs = None;
     if observes_graph || !graph_body_records.is_empty() {
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::settle_checked_call_inputs")
+                .entered();
         let access = incan_frontend::body_ir::SettledCallInputs::from_modules(&bodies[loaf_modules..])?;
         let mut changed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (module, lowered) in modules.iter().zip(&mut bodies[loaf_modules..]) {
@@ -603,6 +620,9 @@ fn checked_attempt(
             settled_inputs = Some(access);
         }
     }
+    let lowering_witnesses =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_lowering_input_witnesses")
+            .entered();
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let mut witnessed = cacheable_bodies
         .iter()
@@ -625,6 +645,7 @@ fn checked_attempt(
     tracing::trace!(target: "incan::invocation", fresh_settled = settled, namespace_witnesses = cacheable_bodies.len() - carried,
         "prepared lowering inputs");
     let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
+    drop(lowering_witnesses);
     graph_body_output.attach_body_ir(
         &modules,
         &mut bodies[loaf_modules..],
@@ -666,10 +687,14 @@ fn checked_attempt(
     entry_module.string_conversion_contract = string_conversion_contract;
     entry_module.runtime_callable_bindings = runtime_callable_bindings;
     entry_module.runtime_binding_scopes = runtime_binding_scopes;
+    let dependency_context =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::complete_checked_dependency_context")
+            .entered();
     let program = complete_dependency_context(
         CheckedProgram {
             cacheable_bodies,
             retained_namespaces,
+            authored_callable_start: None,
             dependencies: RuntimeDependencyContext {
                 loaves: std::sync::Arc::clone(session.loaves()),
                 requested: requested.clone(),
@@ -679,15 +704,14 @@ fn checked_attempt(
                     .collect(),
                 checked_local: checked_local.clone(),
                 package_versions,
+                layout_admissions,
                 package: package_identity.to_owned(),
                 layout_modules: Vec::new(),
-                sources: sources[loaf_modules..].to_vec(),
-                files: files[loaf_modules..].to_vec(),
-                entry: entry - loaf_modules,
             },
             modules: bodies,
             sources,
             files,
+            captured_source_paths: session.take_captured_source_paths().map_err(|error| error.message)?,
             entry,
             own: loaf_modules,
             dependency_modules: loaf_modules,
@@ -701,8 +725,23 @@ fn checked_attempt(
         package_identity,
         &checked_local,
     )?;
+    drop(dependency_context);
     session.loaves().validate_demands().map_err(|error| error.to_string())?;
     Ok(CheckedAttempt::Complete(program))
+}
+
+/// Move the texts that the checker read from this capture after lowering has finished with source diagnostics.
+pub(super) fn take_captured_texts(program: &mut CheckedProgram) -> BTreeMap<String, String> {
+    let mut captured = std::mem::take(&mut program.captured_source_paths);
+    if captured.is_empty() {
+        return BTreeMap::new();
+    }
+    program
+        .files
+        .iter()
+        .zip(&mut program.sources)
+        .filter_map(|(file, text)| captured.remove(file).then(|| (file.clone(), std::mem::take(text))))
+        .collect()
 }
 
 /// Resolve explicit program sources to checked main identities before joining module contexts. Ordinary imported
@@ -766,7 +805,9 @@ pub(super) struct RetainedNamespaceBody {
     source: String,
     offset: usize,
     scopes: Vec<incan_semantics_core::body_ir::SharedIdentities>,
+    callables: std::ops::Range<usize>,
     entry_union_count: Option<usize>,
+    rust_layouts: AuthoredRustLayouts,
 }
 
 /// A restored module can return its exact compiled Body IR once planning drops the invocation's native context.
@@ -780,23 +821,18 @@ fn retained_namespace_bodies(
     project: &Path,
     entry: usize,
 ) -> Vec<RetainedNamespaceBody> {
+    let mut callable_end = 0;
     modules
         .iter()
         .zip(authored)
         .enumerate()
         .filter_map(|(offset, (source, module))| {
+            let start = callable_end;
+            callable_end += module.loaf_callables.len();
+            let callables = start..callable_end;
             let relative = source.file_path.strip_prefix(project).ok()?.to_str()?;
             if !records.retains_namespace(relative)
                 || (restored.contains(relative) && rebound.contains(&source.file_path))
-                || !module.loaf_callables.is_empty()
-                || module
-                    .nominal_declarations
-                    .iter()
-                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
-                || module
-                    .enum_declarations
-                    .iter()
-                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
             {
                 return None;
             }
@@ -827,7 +863,9 @@ fn retained_namespace_bodies(
                 source: relative.to_owned(),
                 offset,
                 scopes,
+                callables,
                 entry_union_count,
+                rust_layouts: AuthoredRustLayouts::default(),
             })
         })
         .collect()
@@ -838,6 +876,21 @@ pub(super) fn return_retained_namespaces(
     program: &mut CheckedProgram,
     records: &incan_frontend::checker_records::GraphBodyRecords,
 ) {
+    let Some(start) = program.authored_callable_start.take() else {
+        return;
+    };
+    let Some(last) = program.retained_namespaces.last() else {
+        return;
+    };
+    let Some(entry) = program.modules.get_mut(program.entry) else {
+        return;
+    };
+    if start + last.callables.end > entry.loaf_callables.len() {
+        return;
+    }
+    let mut callables = std::mem::take(&mut entry.loaf_callables).into_iter().skip(start);
+    let callable_count = callables.len();
+    let mut rust_layouts = ReturnedRustLayouts::take(&mut program.modules[..program.own], &program.retained_namespaces);
     for retained in program.retained_namespaces.drain(..) {
         let Some(module) = program.modules.get_mut(program.own + retained.offset) else {
             continue;
@@ -854,7 +907,25 @@ pub(super) fn return_retained_namespaces(
             module.runtime_callable_bindings.clear();
             module.runtime_binding_scopes.clear();
             module.string_conversion_contract = incan_semantics_core::body_ir::StringConversionContract::Unselected;
-            module.loaf_callables.clear();
+        }
+        let native_layouts = retained.rust_layouts.len();
+        if rust_layouts.restore(module, retained.rust_layouts).is_none() {
+            tracing::trace!(target: "incan::invocation", source = retained.source, "prepared Rust layout could not return to the resident namespace");
+            continue;
+        }
+        if native_layouts != 0 {
+            tracing::trace!(target: "incan::invocation", source = retained.source, layouts = native_layouts, "returned native layouts to their authored namespace");
+        }
+        // Collecting an empty range can leave the preceding skip unevaluated. Count only elements actually moved.
+        let cursor = callable_count - callables.len();
+        module.loaf_callables = callables
+            .by_ref()
+            .skip(retained.callables.start - cursor)
+            .take(retained.callables.len())
+            .collect();
+        if !module.loaf_callables.is_empty() {
+            tracing::trace!(target: "incan::invocation", source = retained.source, callables = module.loaf_callables.len(),
+                "retained namespace with declared callables");
         }
         for (body, scope) in module.bodies.iter_mut().zip(retained.scopes) {
             body.named_type_identities = scope;
@@ -868,21 +939,28 @@ include!("checked_program/dependency_context.rs");
 /// Replace standalone package bodies with linked contracts. Body IR keeps governed templates, including defaults
 /// with an open Self receiver, available for checked adopter specialization. Move existing contracts into the
 /// returned inventory so joining declaration modules cannot publish the same compiled callable twice.
-pub(super) fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) -> Vec<LoafCallable> {
-    let mut loaf_callables = modules
-        .iter_mut()
-        .flat_map(|module| std::mem::take(&mut module.loaf_callables))
-        .collect::<Vec<_>>();
+/// Track the authored tables or the previous catalog at their exact placement in the new inventory.
+pub(super) fn retain_linked_loaf_declarations(
+    modules: &mut [BodyIrModule],
+    linked: usize,
+    track_module: usize,
+) -> (Vec<LoafCallable>, usize) {
+    let mut loaf_callables = Vec::new();
+    let mut position = 0;
+    for (index, module) in modules.iter_mut().enumerate() {
+        if index == track_module {
+            position = loaf_callables.len();
+        }
+        loaf_callables.extend(std::mem::take(&mut module.loaf_callables));
+    }
     for module in modules.iter_mut().take(linked) {
         for declaration in &mut module.nominal_declarations {
-            if declaration.native_item.is_empty()
-                && let Some(item) = linked_type_item(&declaration.canonical, &declaration.type_parameters)
-            {
+            if let Some(item) = incan_frontend::body_ir::linked_model_item(declaration) {
                 declaration.native_item = item;
             }
         }
         for declaration in &mut module.enum_declarations {
-            if let Some(item) = linked_type_item(&declaration.canonical, &declaration.type_parameters) {
+            if let Some(item) = incan_frontend::body_ir::linked_enum_item(declaration) {
                 declaration.native_item = item;
             }
         }
@@ -892,61 +970,16 @@ pub(super) fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], link
             .filter(|body| module.body_requires_instantiation(body))
             .filter_map(|body| body.canonical.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        module.bodies.retain(|body| {
-            if body
-                .canonical
-                .as_ref()
-                .is_some_and(|identity| governed.contains(identity))
-            {
-                return true;
-            }
-            match incan_semantics_core::body_ir::LoafCallable::from_body(body) {
-                Some(callable) => {
-                    loaf_callables.push(callable);
-                    false
-                }
-                None => true,
-            }
-        });
+        loaf_callables.extend(
+            module
+                .bodies
+                .extract_if(.., |body| {
+                    LoafCallable::compiled_identity(body).is_some_and(|identity| !governed.contains(identity))
+                })
+                .filter_map(|body| LoafCallable::from_owned_frame(Box::new(body))),
+        );
     }
-    loaf_callables
-}
-
-/// Move metadata-selected native layouts to their physical declaration scopes, deduplicating identical selections
-/// across source modules. Conflicting layouts cannot authorize construction or projection.
-pub(super) fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclaration>, String> {
-    let mut layouts = std::collections::BTreeMap::<String, NominalDeclaration>::new();
-    for module in modules {
-        for declaration in module.nominal_declarations.extract_if(.., |declaration| {
-            matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
-        }) {
-            if let Some(previous) = layouts.get(&declaration.native_item) {
-                if previous != &declaration {
-                    return Err(format!(
-                        "conflicting native field layouts for {}",
-                        declaration.native_item
-                    ));
-                }
-            } else {
-                layouts.insert(declaration.native_item.clone(), declaration);
-            }
-        }
-    }
-    Ok(layouts.into_values().collect())
-}
-
-/// Select a native carrier or provider-owned Loaf layout. Generic models, classes and enums publish one parameterized
-/// ADT; generic newtypes keep their governed source storage until their native templates are supported.
-pub(super) fn linked_type_item(identity: &CanonicalSymbolId, parameters: &[String]) -> Option<String> {
-    incan_semantics_core::body_ir::native_nominal_item(identity).or_else(|| {
-        (parameters.is_empty()
-            || matches!(
-                identity.kind,
-                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class | SemanticSourceTargetKind::Enum
-            ))
-        .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
-        .flatten()
-    })
+    (loaf_callables, position)
 }
 
 /// Read each selected Loaf's published native union table, preserving its semantic carrier and physical variant
@@ -1035,30 +1068,6 @@ pub(super) fn rust_value_modules(
     owners.into_values().collect()
 }
 
-/// Hoist checked native enum layouts once per foreign owner, refusing conflicting templates from separate modules.
-pub(super) fn take_rust_enums(
-    modules: &mut [BodyIrModule],
-) -> Result<Vec<incan_semantics_core::body_ir::EnumDeclaration>, String> {
-    let mut layouts = std::collections::BTreeMap::new();
-    for module in modules {
-        for declaration in module.enum_declarations.extract_if(.., |declaration| {
-            matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
-        }) {
-            if let Some(previous) = layouts.get(&declaration.native_item) {
-                if previous != &declaration {
-                    return Err(format!(
-                        "conflicting native enum layouts for {}",
-                        declaration.native_item
-                    ));
-                }
-            } else {
-                layouts.insert(declaration.native_item.clone(), declaration);
-            }
-        }
-    }
-    Ok(layouts.into_values().collect())
-}
-
 #[cfg(test)]
 mod shared_identity_tests {
     use super::*;
@@ -1109,8 +1118,128 @@ mod shared_identity_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::canonical_lowering_inputs;
-    use incan_semantics_core::CompilerNodeId;
+    use super::{
+        CheckedProgram, RetainedNamespaceBody, RuntimeDependencyContext, canonical_lowering_inputs,
+        retain_linked_loaf_declarations, return_retained_namespaces,
+    };
+    use incan_frontend::checker_records::GraphBodyRecords;
+    use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable};
+    use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, SemanticSourceTargetKind};
+
+    /// Create distinct declaration markers to test callable order without needing executable bodies.
+    fn catalog_fixture(module: &str, names: &[&str]) -> BodyIrModule {
+        let mut body = BodyIrModule::declarations_only(module.into());
+        body.loaf_callables = names
+            .iter()
+            .map(|name| LoafCallable {
+                canonical: CanonicalSymbolId::module_declaration(
+                    vec![module.into()],
+                    *name,
+                    SemanticSourceTargetKind::Function,
+                    HirSourceSpan::new(0, 1),
+                ),
+                item: (*name).into(),
+                parameters: Vec::new(),
+                return_type: IncanType::Unknown,
+                type_parameters: Vec::new(),
+                native_type_arguments: Vec::new(),
+                native_callable_parameters: Vec::new(),
+                parameter_defaults: Vec::new(),
+                declaration_frame: None,
+            })
+            .collect();
+        body
+    }
+
+    /// A runtime retry may prepend new dependencies, but cannot change authored callable order or ownership.
+    #[test]
+    fn callable_catalog_tracks_original_authored_ranges_across_retries() {
+        let mut modules = [
+            catalog_fixture("loaded", &["dependency"]),
+            catalog_fixture("helper", &["first", "second"]),
+            catalog_fixture("main", &["entry"]),
+        ];
+        let (initial, first_offset) = retain_linked_loaf_declarations(&mut modules, 1, 1);
+        assert_eq!(first_offset, 1);
+        assert!(modules.iter().all(|module| module.loaf_callables.is_empty()));
+        modules[2].loaf_callables = initial;
+        modules[0] = catalog_fixture("loaded", &["runtime-one", "runtime-two"]);
+        let (retried, previous_offset) = retain_linked_loaf_declarations(&mut modules, 1, 2);
+        let start = first_offset + previous_offset;
+        assert_eq!(start, 3);
+        assert_eq!(
+            retried[start..start + 3]
+                .iter()
+                .map(|value| value.item.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second", "entry"]
+        );
+    }
+
+    /// An empty retained namespace cannot consume the skipped callables of an intervening namespace.
+    #[test]
+    fn empty_retained_namespace_does_not_shift_the_next_callable_range() {
+        let mut modules = vec![
+            catalog_fixture("dependency", &["linked"]),
+            catalog_fixture("uncached", &["discarded"]),
+            catalog_fixture("empty", &[]),
+            catalog_fixture("cached", &["first", "second"]),
+            catalog_fixture("main", &["entry"]),
+        ];
+        let (callables, start) = retain_linked_loaf_declarations(&mut modules, 1, 1);
+        modules[4].loaf_callables = callables;
+        let mut program = CheckedProgram {
+            retained_namespaces: vec![
+                RetainedNamespaceBody {
+                    source: "src/empty.incn".into(),
+                    offset: 1,
+                    scopes: Vec::new(),
+                    callables: 1..1,
+                    entry_union_count: None,
+                    rust_layouts: Default::default(),
+                },
+                RetainedNamespaceBody {
+                    source: "src/cached.incn".into(),
+                    offset: 2,
+                    scopes: Vec::new(),
+                    callables: 1..3,
+                    entry_union_count: None,
+                    rust_layouts: Default::default(),
+                },
+            ],
+            authored_callable_start: Some(start),
+            modules,
+            entry: 4,
+            own: 1,
+            dependency_modules: 1,
+            dependencies: RuntimeDependencyContext {
+                loaves: Default::default(),
+                requested: Default::default(),
+                origins: Default::default(),
+                checked_local: Default::default(),
+                package_versions: Default::default(),
+                layout_admissions: Default::default(),
+                package: String::new(),
+                layout_modules: Vec::new(),
+            },
+            cacheable_bodies: Vec::new(),
+            sources: Vec::new(),
+            files: Vec::new(),
+            captured_source_paths: Default::default(),
+            reached_loaves: Default::default(),
+            manifest: None,
+            graph: None,
+            tests: Vec::new(),
+        };
+        return_retained_namespaces(&mut program, &GraphBodyRecords::default());
+        assert!(program.modules[2].loaf_callables.is_empty());
+        let kept: Vec<_> = program.modules[3]
+            .loaf_callables
+            .iter()
+            .map(|value| value.item.as_str())
+            .collect();
+        assert_eq!(kept, ["first", "second"]);
+    }
 
     /// Callable and namespace products may repeat one witness, but may not disagree about an owner.
     #[test]

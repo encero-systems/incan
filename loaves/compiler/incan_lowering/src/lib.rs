@@ -186,7 +186,10 @@ mod value_enums;
 
 pub use incan_mir_plan_native::{Plan, PlanType, SourceSpan};
 pub use lowering::{UnitContinuation, UnitPlanning};
+pub use nominal_records::RecordedLayouts;
+pub use plan_modules::{AuthenticatedWholeAdmission, PlanAdmissions, PlanModuleSelection, read_plan_module_admissions};
 pub use runtime_requirements::{RefusalPlanning, RuntimeRequirement};
+pub use trace_channel::emit as emit_engine_trace;
 
 /// Source provenance, collected tests and the unit's integer overflow policy, aligned with the module list.
 #[derive(Clone, Debug, Default)]
@@ -204,10 +207,26 @@ pub struct SourceInputs {
     pub record_report: Option<String>,
     /// Native bindings selected by this Loaf's executable publication, shared across lowering attempts.
     pub linked_static_exports: Arc<BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>>,
+    /// Checked layout witnesses selected for this request. Dependencies without records use ordinary lowering.
+    pub recorded_layouts: std::sync::Arc<RecordedLayouts>,
+}
+
+/// Borrow the current checked runtime delta without copying the entry module or its source into a retry.
+pub struct RecordedRuntimeInputs<'a> {
+    pub modules: &'a [BodyIrModule],
+    pub sources: &'a [String],
+    pub files: &'a [String],
+    pub selected: &'a [usize],
+    pub entry: usize,
+    pub kind: &'a str,
+    pub tests: &'a [String],
+    pub package_versions: &'a BTreeMap<String, String>,
+    /// The producer-owned static bindings selected for this unit before lowering.
+    pub linked_static_exports: &'a BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
 }
 
 impl SourceInputs {
-    /// Borrow the unit's source provenance and prepared producer exports for one lowering attempt.
+    /// Borrow the checked layout witnesses and linked static exports for one lowering attempt.
     fn unit<'a>(&'a self, entry: i64, kind: &'a str) -> lowering::UnitInputs<'a> {
         lowering::UnitInputs {
             sources: &self.sources,
@@ -221,19 +240,21 @@ impl SourceInputs {
             scalar_bodies: &self.scalar_bodies,
             record_report: self.record_report.clone(),
             linked_static_exports: &self.linked_static_exports,
+            recorded_layouts: &self.recorded_layouts,
         }
     }
 }
 
-/// Lower one checked program, library or collected test unit.
+/// Lower one checked program, library, or collected test unit and retain its settled admissions for publication.
 pub fn unit_plan(
     modules: &[BodyIrModule],
     inputs: &SourceInputs,
     entry: i64,
     kind: &str,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
-    lowering::unit_plan(modules, &inputs.unit(entry, kind), published)
+    lowering::unit_plan(modules, &inputs.unit(entry, kind), published, admissions)
 }
 
 /// Resume retained work against the exact runtime declarations the driver resolved.
@@ -250,6 +271,16 @@ pub fn resume_unit_plan(
     unit.scalar_products = None;
     unit.record_report = None;
     lowering::resume_unit_plan(continuation, modules, &unit, published)
+}
+
+/// Complete a recorded runtime batch within the current request's lowering attempt. The driver authenticated
+/// the batch against the current Loaf closure and confirmed it was exactly the selection of the ordinary frames.
+pub fn complete_recorded_runtime_plan(
+    continuation: UnitContinuation,
+    inputs: &RecordedRuntimeInputs<'_>,
+    published: &mut Vec<NativeUnionDeclaration>,
+) -> Result<UnitPlanning, String> {
+    lowering::complete_recorded_runtime_plan(continuation, inputs, published)
 }
 
 /// Collect every body's first refusal, or all of one selected body's, for the refusal census.
@@ -285,9 +316,14 @@ pub fn owned_capture(ty: PlanType) -> bool {
 }
 
 /// Publish a records request's whole-program plan functions under their keyed products, its entry binding and its
-/// native interface, for Bakery admission.
-pub fn publish_plan_records(plan: &Plan, products: String, report: String) -> Result<(), String> {
-    record_plan_outputs::publish_plan_records(plan, &products, &report)
+/// native interface, for Bakery admission. The admissions are those lowering settled in the same request.
+pub fn publish_plan_records(
+    plan: &Plan,
+    products: &str,
+    report: &str,
+    admissions: &PlanAdmissions,
+) -> Result<Option<incan_mir_plan_native::CompactAdmissionPin>, String> {
+    record_plan_outputs::publish_plan_records(plan, products, report, admissions)
 }
 
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.

@@ -430,7 +430,7 @@ def comparable_matrix_output(relative: str) -> bool:
     if "/.products/" in "/" + relative:
         return relative.endswith(".incnitems") or relative.endswith(".incnfunction")
     if "/release/bin/" in "/" + relative:
-        return true
+        return not relative.endswith(".oven-view")
     if not relative.startswith("incan/loaves/") or "/release/" not in relative:
         return false
     for suffix in [".rlib", ".incnlib", ".incnbody", ".incngraph", ".native.json", ".rustabi"]:

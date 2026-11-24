@@ -43,6 +43,7 @@ from unit_publication import publication, published_identity, record_path, recor
 from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
+from installation_capability import probe_driver_capability
 from installation_page import admitted_identity, restore_selection
 from surfaces import expose_entry_points
 from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
@@ -191,12 +192,16 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "worker_protocol_crumb", JsonValue.bool(true))?
     if toolchain.unit_descriptor_crumb:
         description = replaced(description, "unit_descriptor_crumb", JsonValue.bool(true))?
+    if toolchain.graph_executable_crumb:
+        description = replaced(description, "graph_executable_crumb", JsonValue.bool(true))?
     if toolchain.compiler_record_export_crumb:
         description = replaced(description, "compiler_record_export_crumb", JsonValue.bool(true))?
     if toolchain.namespace_references:
         description = replaced(description, "namespace_references", JsonValue.bool(true))?
     if toolchain.retain_checked_modules:
         description = replaced(description, "retain_checked_modules", JsonValue.bool(true))?
+    if toolchain.captured_source_inputs:
+        description = replaced(description, "captured_source_inputs", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # The release signer the installation carries travels inside the archive (DD-0016).
     _ = ship(directory, stage)?
@@ -212,7 +217,7 @@ def sealed_records(driver: str, stage: Path, manifests: Path, typed: bool) -> Re
 
 pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
     """
-    Copy the shipped manifests and executable sidecars as plain files at their staged relative paths.
+    Copy the shipped manifests and their executable and facts sidecars as plain files at their staged relative paths.
 
     The compiler exports the records of each manifest below one directory and follows no link. The packing home may
     hold Loaves the archive leaves behind, such as a runtime an earlier compiler built, so the sealed set is exported
@@ -227,7 +232,7 @@ pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
             if entry.is_dir():
                 if not entry.is_symlink():
                     pending.append(entry)
-            elif entry.name().endswith(".incnlib") or entry.name().endswith(".incnbody"):
+            elif entry.name().endswith(".incnlib") or entry.name().endswith(".incnbody") or entry.name().endswith(".incnfacts"):
                 copy = view.joinpath(entry.0[len(stage.0) + 1:])
                 make_directory(copy.parent())?
                 contents = entry.read_bytes().map_err((error) => f"staged compiler artifact: cannot {error.message()}")?
@@ -820,9 +825,8 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
 
     0. A release build of `incan` verifies the archive's signature before anything is unpacked, in a fresh home
        as in any other; a local build carries no signer and says that it installs unverified (DD-0016).
-    1. Unpack the archive into a staging directory beside the installation.
-    2. Verify the staged toolchain and publish it, then remove the staging directory and any decompressed archive
-       whatever happened.
+    1. Check the local Rust prerequisites before creating staging or decompressing the archive.
+    2. Unpack, verify and publish the staged toolchain, then remove any staging and decompressed archive.
     3. Expose this program as both `oven` and `incan` beside it (RFC 118).
     4. The home records the signer the archive ships, only when the archive verified.
     """
@@ -833,13 +837,14 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     match verified:
         Some(proof) => println(f"verified release signature: {proof.identity}, log entry {proof.log_index}")
         None => println(f"installing {archive.0} unverified: this incan is a local build and carries no release signer")
+    # 1. Reject missing Rust before allocating an installation stage or decompressing the archive.
+    sysroot = local_sysroot()?
     make_directory(target.parent())?
-    # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.
+    # 2. The archive is unpacked beside the installation so a refusal leaves the installed toolchain intact.
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
     create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
     plain = target.parent().joinpath(f".install-{TOOLCHAIN}.tar")
-    # 2. The stage is verified and published, and removed whatever the outcome.
-    result = install_staged(archive, plain, stage, target)
+    result = install_staged(archive, plain, stage, target, sysroot)
     if stage.is_dir():
         remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
     if plain.is_file():
@@ -854,7 +859,7 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Result[None, str]:
+def install_staged(archive: Path, plain: Path, stage: Path, target: Path, sysroot: Path) -> Result[None, str]:
     """
     Unpack, bind the machine's pinned sysroot and prove driver identity before publishing any installation.
 
@@ -892,22 +897,24 @@ def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Res
     clock = begin()
     toolchain, _initial_admission = prepare_installation(stage)?
     verify_contents(toolchain)?
-    # 5. The machine's Rust installation is linked in, and the driver proves it is the compiler it was built against.
-    sysroot = local_sysroot()?
+    # 5. Link the checked local sysroot and prove the driver was built against it.
     sysroot_link = stage.joinpath("sysroot")
     symlink(sysroot.0, sysroot_link.0).map_err(
         (error) => f"cannot link Rust sysroot {sysroot.0} at {sysroot_link.0}: {error}",
     )?
-    run_command(toolchain.driver, ["--identity", toolchain.sysroot]).map_err(
-        (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
-    )?
+    plan_selection_driver = probe_driver_capability(toolchain.driver, toolchain.sysroot)?
     # A sealed set the archive ships is verified in place; only an archive without one has its records converted.
     pin = installed_records(toolchain.driver, stage, shipped_pin(document)?, toolchain.compiler_record_export_crumb)?
     document = read_json(stage.joinpath("toolchain.json"))?
     document = replaced(document, "compiler_records", pin.to_json())?
     write_json(stage.joinpath("toolchain.json"), document)?
     # 6. The completed pin and its new store are admitted together; only that verified generation is published.
-    _completed, admission = prepare_installation(stage)?
+    _completed, completed_admission = prepare_installation(stage)?
+    admission = InstallationAdmission(
+        payloads=completed_admission.payloads,
+        facts=completed_admission.facts,
+        plan_selection_driver=plan_selection_driver,
+    )
     record(Operation.ToolchainAdmission, stage.0, clock)
     publish_install(stage, target, admission)?
     println(f"installed {TOOLCHAIN}: {target.0}")

@@ -148,7 +148,7 @@ impl BodyBuilder<'_, '_> {
                 direct_call_id,
                 super::bodies::close_self_type(self.checked_type(&binding.return_type), ty),
             )
-        } else if let Some(returned) = self.published_callable_returns.get(&identity) {
+        } else if let Some(returned) = self.published_callable_return(&identity) {
             (None, returned.clone())
         } else {
             return self.unsupported_operand("checked-newtype hook without its declaration".into(), scope, span, out);

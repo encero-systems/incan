@@ -15,7 +15,7 @@ from core_process import executable
 from compiler_worker import collect_console, relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
-from engine_epochs import prepare_submit
+from engine_epochs import probe_submit
 from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
@@ -27,10 +27,10 @@ from engine_wire import Refusal
 from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
-from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, get, put, view_snapshot
-from store_path_conversion import claim, snapshot
+from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, begin, commit, fork, get, put, view_snapshot
+from store_path_conversion import ClientStoreAdmission, claim, snapshot, store_path
 from toolchain import load_toolchain, toolchain_directory
-from installation_page import admitted_identity
+from installation_page import admitted_identity_at
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
@@ -202,7 +202,8 @@ def built_overlay(editor: str, target: Path, request: OverlayRequest) -> Result[
     console_capture["capturing"] = "yes"
     console_capture["captured"] = ""
     console_capture["errors"] = ""
-    built = execute_in("build", target, request.profile, [], None, "", false, editor, None)
+    mut admission = ClientStoreAdmission()
+    built = execute_in("build", target, request.profile, [], None, "", false, editor, None, admission)
     console_capture["capturing"] = ""
     code = built?
     none: list[JsonValue] = []
@@ -310,8 +311,10 @@ pub def execute(
     argv0: Option[str],
     format: str,
     proofs: bool,
+    mut preflight: BorrowedMut[ClientStoreAdmission],
     unit_options: str = "",
     output: str = "",
+    from_directory: bool = false,
 ) -> Result[i32, str]:
     """
     Build or run one file through the selected engine, without a legacy fallback.
@@ -326,9 +329,15 @@ pub def execute(
     mut view_profile = profile
     if command == "check":
         view_profile = profile + "+check"
+    # The directory route has checked the Loaf and its entry. Discard only self-directory components in its view key.
+    mut view_source = absolute.0
+    if from_directory and "/./" in view_source:
+        view_source = "/".join([part for part in view_source.split("/") if part != "."])
     bound = selected_home_view()?
-    view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"), unit_options)?
-    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound, unit_options, output)
+    view = project_view_name(view_scope(bound)?, view_source, view_profile, get_optional("OVEN_BODY_REFUSALS"), unit_options)?
+    return execute_in(
+        command, absolute, profile, arguments, argv0, format, proofs, view, bound, preflight, unit_options, output,
+    )
 
 
 def view_scope(bound: Option[str]) -> Result[str, str]:
@@ -351,6 +360,7 @@ def execute_in(
     proofs: bool,
     view: str,
     bound: Option[str],
+    mut preflight: BorrowedMut[ClientStoreAdmission],
     unit_options: str = "",
     output: str = "",
 ) -> Result[i32, str]:
@@ -364,13 +374,14 @@ def execute_in(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     compiler = installed_compiler()?
-    selected = snapshot(store, view).map_err((error) => error.message())?
+    mut admission = preflight.take_reader(store)
+    selected = admission.open(view).map_err((error) => error.message())?
     if selected.index == "":
         # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
         if let Some(found) = bound:
             fork_project_view(store, found, view)?
     elif not proofs and command != "check" and output == "" and unit_options == "":
-        if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
+        if let Some(code) = execute_local(store, admission, view, compiler, command, absolute, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
     identity = identity_for(store, compiler)?
@@ -461,7 +472,8 @@ def fork_project_view(store: Path, home_view: str, view: str) -> Result[None, st
 
 def execute_local(
     store: Path,
-    selected: Snapshot,
+    mut admission: SnapshotAdmission,
+    view: str,
     compiler: str,
     command: str,
     source: Path,
@@ -470,10 +482,9 @@ def execute_local(
     argv0: Option[str],
 ) -> Result[Option[i32], str]:
     """An unchanged local capture of an existing project view and its selected native record need no service request."""
-    view = selected.view
     capturing = begin_work()
-    captured = prepare_submit(
-        store,
+    probed = probe_submit(
+        admission,
         Submit(
             command=command,
             view=view,
@@ -484,8 +495,9 @@ def execute_local(
         ),
     )?
     record_work(Operation.EngineCapture, source.0, capturing)
-    if captured.commits != 0:
-        return Ok(None)
+    captured = match probed:
+        Some(found) => found
+        None => return Ok(None)
     handle = program_handle(captured.identity, compiler, view)?
     selecting = begin_work()
     exact = view_snapshot(captured.snapshot, view).map_err((error) => error.message())?
@@ -560,10 +572,16 @@ def physical_store_identity(store: Path) -> Result[str, str]:
 def installation_compiler(store: Path, view: str) -> Result[str, str]:
     """Admit a toolchain once per installation in `view` of `store`, independent of project or alternate stores."""
     directory = toolchain_directory()?
-    admission = selected_installation(directory)?
+    admission, catalog = selected_installation(directory)?
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
     key = f"incan.engine.installation\t{fingerprint([directory.0, admission] + configuration)?}"
-    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
+    # The same immutable catalog and view already authenticate both the installation binding and compiler row.
+    mut known: Option[str] = None
+    if catalog.root.value == store_path(store).value and catalog.view == view:
+        known = admitted_compiler(catalog, key, admission)?
+    else:
+        known = admitted_installation(store, view, key, admission)?
+    if let Some(compiler) = known:
         return Ok(compiler)
     _held = claim(store, f"incan.engine.installation\t{view}").map_err((error) => error.message())?
     if let Some(compiler) = admitted_installation(store, view, key, admission)?:
@@ -597,13 +615,16 @@ pub def record_installation(store: Path, view: str, key: str, admission: str, co
     return Ok(compiler)
 
 
-def selected_installation(directory: Path) -> Result[str, str]:
-    """Return the selected installation-page identity, admitting a missing installation once."""
-    if let Some(identity) = admitted_identity(directory)?:
-        return Ok(identity)
+def selected_installation(directory: Path) -> Result[tuple[str, Snapshot], str]:
+    """Return the installation identity and its catalog view, reopening only after a missing page is admitted."""
+    store = installation_catalog()?
+    catalog = snapshot(store).map_err((error) => error.message())?
+    if let Some(identity) = admitted_identity_at(directory, catalog)?:
+        return Ok((identity, catalog))
     _ = load_toolchain()?
-    match admitted_identity(directory)?:
-        Some(identity) => return Ok(identity)
+    admitted = snapshot(store).map_err((error) => error.message())?
+    match admitted_identity_at(directory, admitted)?:
+        Some(identity) => return Ok((identity, admitted))
         None => return Err("toolchain installation did not publish its admitted page")
 
 

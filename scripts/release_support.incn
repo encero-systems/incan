@@ -1,9 +1,11 @@
 """Shared release and installed-verification contracts, evidence models, and process execution."""
 
 from rust::std::cell import RefCell
-from rust::std::fs import File
+from rust::std::fs import File, symlink_metadata
+from rust::std::io import ErrorKind
 from rust::std::os::unix::process import CommandExt
 from rust::std::ops import DerefMut
+from rust::std::path import Path as RustPath
 from rust::std::process import Child, Command, ExitStatus, Stdio, id
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
@@ -593,14 +595,25 @@ pub def verification_program(source: Path) -> Result[Path, str]:
 
 
 pub def tree_bytes(root: Path) -> Result[int, str]:
-    """Measure the logical bytes in regular files under one tree with one descendant walk."""
-    if not root.exists():
+    """Measure logical bytes in regular files under a release tree, without following symbolic links."""
+    if root.is_symlink() or not root.exists():
         return Ok(0)
+    return directory_bytes(root)
+
+
+def directory_bytes(directory: Path) -> Result[int, str]:
+    """Use one metadata observation to count or descend into each owned child."""
     mut total = 0
-    for entry in root.rglob("*").map_err((error) => error.message())?:
-        if entry.is_symlink() or not entry.is_file():
-            continue
-        total += entry.stat().and_then((value) => value.size()).map_err((error) => error.message())?
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        match symlink_metadata(RustPath.new(entry.0)):
+            Ok(metadata) =>
+                if metadata.is_dir():
+                    total += directory_bytes(entry)?
+                elif metadata.is_file():
+                    total += int(metadata.len())
+            Err(error) =>
+                if error.kind() != ErrorKind.NotFound:
+                    return Err(f"cannot measure release entry {entry.0}: {error}")
     return Ok(total)
 
 
@@ -858,13 +871,18 @@ def start_step(step: Step) -> Result[Child, str]:
 
 pub def release_process_tree(rows: list[ProcessResource], root: int) -> list[int]:
     """Return one release root and every currently observed descendant, independent of process-group boundaries."""
-    mut members: set[int] = {root}
+    return release_descendant_pids([(row.pid, row.parent) for row in rows], [root])
+
+
+pub def release_descendant_pids(parents: list[tuple[int, int]], roots: list[int]) -> list[int]:
+    """Follow the parent relations in one process sample from the supplied owned roots."""
+    mut members = set(roots)
     mut changed = true
     while changed:
         changed = false
-        for row in rows:
-            if row.parent in members and row.pid not in members:
-                members.add(row.pid)
+        for pid, parent in parents:
+            if parent in members and pid not in members:
+                members.add(pid)
                 changed = true
     return sorted([pid for pid in members])
 

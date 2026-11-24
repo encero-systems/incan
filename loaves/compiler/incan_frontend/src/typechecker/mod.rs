@@ -184,7 +184,9 @@ use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTarge
 pub(crate) use dependency_interface::{CheckedCellProjection, callable_projection};
 pub use dependency_interface::{
     CheckedNamespaceInterface, DependencyInterfacePreparationCache, ModuleDependencyInterface,
-    ModuleDependencyInterfaceSnapshot, NamespaceCell, NamespaceCrumb,
+    ModuleDependencyInterfaceSnapshot, NamespaceCell, NamespaceCrumb, executable_body_value, executable_frames,
+    executable_module_value, executable_scope_value, restore_executable_body_value, restore_executable_module_value,
+    restore_executable_scope_value, to_atom, to_cell,
 };
 
 /// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the

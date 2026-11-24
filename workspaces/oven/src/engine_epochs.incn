@@ -1,6 +1,8 @@
 """Prepare request captures for atomic publication; idle services retain no decoded inputs."""
 
 from rust::std::str import from_utf8
+from rust::std::rc import Rc
+from rust::std::mem import take
 from std.environ import get_optional
 from std.fs import Path
 from std.encoding.hex import hexlify
@@ -11,16 +13,21 @@ from engine_capture import (
     CaptureRequest,
     CaptureCounters,
     CaptureOutcome,
+    InputPath,
+    InputRole,
     InputSelection,
     SelectedHome,
     capture,
     selected_home,
 )
 from engine_messages import Submit
-from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
-from store_path_conversion import snapshot
+from engine_overlay import is_editor_view
+from pub::incan_platform.store import (
+    Lookup, Snapshot, SnapshotAdmission, Transaction, begin_compared, commit, lookup, owned, put,
+)
+from store_path_conversion import snapshot, store_path
 from features import FeatureRequest
-from observation import children, observe, trace
+from observation import SourceReading, children, observe, trace
 from unit import describe, discovered_project
 from unit_freshness import collect_program_reach, fingerprint
 from unit_sources import SourceGraph, recorded_reach
@@ -44,8 +51,14 @@ pub model CapturedRequest:
     pub identity_encodings: int = 1
     pub head: str = ""
     pub transaction: Option[Transaction] = None
+    # A new head may still contain the provisional project listing when there was no source graph.
+    pub first: bool = false
     # The recorded source-graph reach this request was captured with, which its later capture checks again.
     pub reach: Option[SourceGraph] = None
+    # Whether the request permits capture to select a project's native provider.
+    pub project_library: bool = false
+    # The authority doing this capture shares changed bytes only for this activation.
+    pub readings: Option[Rc[Dict[str, SourceReading]]] = None
 
 
 pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
@@ -62,6 +75,32 @@ pub def prepare_submit(
     discover_standalone: bool = false,
     canonical_source: Option[Path] = None,
 ) -> Result[CapturedRequest, str]:
+    """Capture a request that has no admission scope from a preceding stage."""
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    return prepare_admitted_submit(admission, submit, discover_standalone, canonical_source)
+
+
+pub def prepare_admitted_submit(
+    mut admission: SnapshotAdmission,
+    submit: Submit,
+    discover_standalone: bool = false,
+    canonical_source: Option[Path] = None,
+) -> Result[CapturedRequest, str]:
+    """Prepare this request's authoritative inputs without publishing them."""
+    match prepare_capture(admission, submit, discover_standalone, canonical_source, false)?:
+        Some(captured) => return Ok(captured)
+        None => return Err("authoritative capture returned no input epoch")
+
+
+pub def probe_submit(mut admission: SnapshotAdmission, submit: Submit) -> Result[Option[CapturedRequest], str]:
+    """Select an unchanged caller-local epoch, leaving changed source reads to the producing service."""
+    return prepare_capture(admission, submit, false, None, true)
+
+
+def prepare_capture(
+    mut admission: SnapshotAdmission, submit: Submit, discover_standalone: bool, canonical_source: Option[Path],
+    probe_only: bool,
+) -> Result[Option[CapturedRequest], str]:
     """
     Capture a file request and prepare its revision without publishing any part of the request.
 
@@ -86,10 +125,13 @@ pub def prepare_submit(
         return Err("unit records require one Incan program file and a project view")
     selected = selected_home()?
     admitted = selected.admitted
-    # Previous heads could certify a file while its coarse status timestamp still admitted another write.
-    inputs = ["settled-source-observation/1", submit.view, source.0, submit.input_selection, admitted.pin]
+    # Checks and editor saves need the source bodies. Other builds and runs can select a declared shared provider.
+    project_library = submit.command != "check" and not is_editor_view(submit.view)
+    inputs = [
+        "settled-source-observation/4", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
+    ]
     head = f"incan.engine.capture-head\t{fingerprint(inputs)?}"
-    before = snapshot(store, submit.view).map_err((error) => error.message())?
+    before = admission.open(submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
     # 2. Every engine request starts at its selected source, and build and run select the same program inputs: the verb
     #    is an execution action, not a compiled identity. The unit's recorded source graphs bound its reach once they
@@ -104,16 +146,20 @@ pub def prepare_submit(
         selection=InputSelection(command="run", profile=submit.input_selection, features=diagnostic_features()),
         whole_unit=true,
         reach=reach,
+        project_library=project_library,
     )
     checking = begin_work()
-    captured = capture(request, previous, admitted, 0)?
+    captured = capture(request, previous, admitted, 0, probe_only)?
     record_work(Operation.EngineCaptureInputs, source.0, checking)
     match captured.epoch:
-        None => return Err(f"capture could not settle inputs: {captured.unstable}")
+        None =>
+            if probe_only:
+                return Ok(None)
+            return Err(f"capture could not settle inputs: {captured.unstable}")
         Some(epoch) =>
             if captured.outcome == CaptureOutcome.Unchanged and prior_identity != "":
                 return Ok(
-                    CapturedRequest(
+                    Some(CapturedRequest(
                         epoch=epoch,
                         revision=prior_revision,
                         identity=prior_identity,
@@ -121,12 +167,15 @@ pub def prepare_submit(
                         counters=captured.counters,
                         selected=selected,
                         reach=request.reach,
+                        project_library=project_library,
                         encodings=0,
                         commits=0,
                         identity_encodings=0,
                         head=head,
-                    ),
+                    )),
                 )
+            if probe_only:
+                return Ok(None)
             # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
             publishing = begin_work()
             encoded = encode_epoch(epoch)?
@@ -138,17 +187,20 @@ pub def prepare_submit(
 
             record_work(Operation.EngineCaptureEncode, source.0, publishing)
             return Ok(
-                CapturedRequest(
+                Some(CapturedRequest(
                     epoch=epoch,
                     revision=revision,
                     identity=identity,
                     snapshot=before,
                     head=head,
                     transaction=Some(transaction),
+                    first=prior_revision == "",
                     counters=captured.counters,
                     selected=selected,
                     reach=request.reach,
-                ),
+                    project_library=project_library,
+                    readings=captured.readings,
+                )),
             )
 
 
@@ -207,6 +259,43 @@ pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, s
             return refreshed_request(captured, epoch, captured.reach)
 
 
+pub def initial_program_epoch(
+    mut captured: BorrowedMut[CapturedRequest], graph: SourceGraph, source_root: str,
+) -> Result[None, str]:
+    """Replace a provisional listing only when the compiler collected from this request's captured sources."""
+    readings = match captured.readings:
+        Some(found) => found
+        None => return Ok(None)
+    original = readings.as_ref()
+    for path in graph.read:
+        if path not in original:
+            return Ok(None)
+    # This source-only projection keeps the manifest and its other declared inputs. Outside probes keep the legacy
+    # capture so the published epoch never claims an absence the admitted project scope cannot recheck.
+    for path in graph.absent:
+        if not path.startswith(source_root + "/"):
+            return Ok(None)
+    read_paths = set(graph.read)
+    probed = set(graph.absent)
+    for item in captured.epoch.inputs:
+        if item.path in probed:
+            return Err("captured inputs changed before the source graph was selected")
+    inputs = take(captured.epoch.inputs)
+    captured.epoch.inputs = [item for item in inputs if item.role != InputRole.Member or item.path in read_paths]
+    missing = take(captured.epoch.absent)
+    mut absent = {item.path: item for item in missing if item.role != InputRole.Member}
+    for path in graph.absent:
+        if path not in absent:
+            absent[path] = InputPath(path=path, role=InputRole.Member)
+    captured.epoch.absent = [absent[path] for path in sorted([path for path in absent.keys()])]
+    captured.epoch.listings = []
+    captured.identity = captured.epoch.identity()?
+    captured.identity_encodings += 1
+    captured.encodings += 1
+    captured.reach = Some(graph)
+    return stage_epoch(captured)
+
+
 def graph_published(captured: CapturedRequest) -> Result[Option[CapturedRequest], str]:
     """The request refreshed with its unit's newly recorded graph reach, when that reach captures the same identity."""
     reach = recorded_reach(Path(captured.epoch.roots[0]), captured.epoch.selection.profile)
@@ -223,7 +312,13 @@ def graph_published(captured: CapturedRequest) -> Result[Option[CapturedRequest]
 
 def recaptured(captured: CapturedRequest, reach: Option[SourceGraph]) -> CaptureRequest:
     """The whole-unit request `captured` was taken for, over `reach`."""
-    return CaptureRequest(roots=captured.epoch.roots, selection=captured.epoch.selection, whole_unit=true, reach=reach)
+    return CaptureRequest(
+        roots=captured.epoch.roots,
+        selection=captured.epoch.selection,
+        whole_unit=true,
+        reach=reach,
+        project_library=captured.project_library,
+    )
 
 
 def refreshed_request(
@@ -231,17 +326,23 @@ def refreshed_request(
     epoch: BuildEpoch,
     reach: Option[SourceGraph],
 ) -> Result[CapturedRequest, str]:
-    """`captured` with an epoch of the same identity and fresher metadata, staged for publication with its reach."""
+    """Stage the selected epoch with its reach and the identity already established by the caller."""
     mut refreshed = captured
-    encoded = encode_epoch(epoch)?
     refreshed.epoch = epoch
-    refreshed.revision = hexlify(sha256.digest(encoded))
     refreshed.reach = reach
-    mut transaction = begin_compared(captured.snapshot)
-    transaction = put(transaction, epoch_key(refreshed.revision), encoded)
-    transaction = put(transaction, captured.head, encode_head(refreshed.revision, captured.identity)?)
-    refreshed.transaction = Some(transaction)
+    stage_epoch(refreshed)?
     return Ok(refreshed)
+
+
+def stage_epoch(mut captured: BorrowedMut[CapturedRequest]) -> Result[None, str]:
+    """Replace the tentative capture writes while keeping their original compared snapshot."""
+    encoded = encode_epoch(captured.epoch)?
+    captured.revision = hexlify(sha256.digest(encoded))
+    mut transaction = begin_compared(captured.snapshot)
+    transaction = put(transaction, epoch_key(captured.revision), encoded)
+    transaction = put(transaction, captured.head, encode_head(captured.revision, captured.identity)?)
+    captured.transaction = Some(transaction)
+    return Ok(None)
 
 
 def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[BuildEpoch]], str]:

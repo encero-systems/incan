@@ -13,6 +13,7 @@ use crate::program_context::{retain_nominal_tables, synthetic_program_context};
 
 fn model(name: &str, offset: usize) -> NominalDeclaration {
     NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),

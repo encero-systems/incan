@@ -1,12 +1,14 @@
 # Install and run Incan
 
-Use the `0.6.0-dev.8` Oven executable with a matching toolchain archive for your host. These instructions require the archive and executable to be available; they do not imply that the development release has been published.
+Use an Incan 0.6 executable with a toolchain archive from the same build for your host.
 
 ## Install a toolchain archive
 
 --8<-- "_snippets/learning/install_toolchain.md"
 
-Installation first checks Rust 1.98.0 and `rustc-dev`, then verifies the driver's identity against the local sysroot before replacing an existing toolchain. A missing prerequisite reports the exact `rustup` command to run. A failed installation preserves the existing toolchain. Use a separate `INCAN_HOME` to test an archive without replacing your normal installation.
+The release installer verifies the archive signature, then checks Rust 1.98.0 and `rustc-dev` before unpacking. If a prerequisite is missing, the installer prints the `rustup` command to run. It verifies the staged driver against the local sysroot before publishing the toolchain.
+
+A refusal before publication leaves the existing toolchain in place. If moving the staged toolchain into place or preparing it there fails, the installer attempts to restore the previous installation. Use a separate `INCAN_HOME` to test an archive in its own home.
 
 ## Create and exercise a project
 
@@ -21,7 +23,7 @@ Create `loaf.toml`, `src/main.incn` and `tests/test_main.incn` as shown in [Gett
 ## Pack an installed toolchain
 
 ```bash
-incan toolchain pack incan-0.6.0-dev.8.tar.zst
+incan toolchain pack toolchain.tar.zst
 ```
 
 Packing includes the installed driver, Rust ABI caches, native dependencies, standard Loaves and registry closure. It rewrites paths for relocation and excludes the local sysroot. The destination extension selects tar, gzip or zstd compression.

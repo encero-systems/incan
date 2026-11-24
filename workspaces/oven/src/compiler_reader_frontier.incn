@@ -10,6 +10,7 @@ from pub::internal_models.records import ReadWitness, RecordKey
 from compiler_body_keys import body_key
 from compiler_body_values import SelectedBodyPage, SelectedBodyRecord, select_body_inventory_of
 from compiler_graph_records import readers_of, reusable_evaluation
+from native_references import anchor_arguments
 from publication import publish_binary
 from scratch import scratch_directory
 from toolchain import Toolchain
@@ -163,11 +164,16 @@ pub def evaluate_reader(
     publish_binary(work, encode_demand_page(DemandPage(keys=[demand] + reader.triggers))?)?
     inputs = directory.joinpath("inputs")
     module_page = "namespace-" + hexlify(sha256.digest(reader.module.encode("utf-8")))
-    write_selected_records(inputs, unit, [page for page in pages if page.key != module_page])?
+    # Only the final executable dispatch receives the native predecessor.
+    selected = [page for page in pages if page.key != module_page and page.key != "native-link-predecessor.json"]
+    write_selected_records(inputs, unit, selected)?
     description = write_unit(unit, crate_name(unit), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
     attempt = enter_producer("oven", "reader", demand.identity, reader.module)
-    code = run_compiler(toolchain, ["--check-ranked-reader", description.0, toolchain.sysroot, work.0, directory.0,
-        "--graph-body-records", inputs.0])?
+    arguments = [
+        "--check-ranked-reader", description.0, toolchain.sysroot, work.0, directory.0,
+        "--graph-body-records", inputs.0,
+    ]
+    code = run_compiler(toolchain, arguments + anchor_arguments(toolchain.closure_anchors)?)?
     if code != 0:
         finish_producer(attempt, "refused")
         return Err(f"ranked reader {demand.identity} refused with compiler status {code}")

@@ -116,6 +116,7 @@ fn only_reached_statics_expose_native_accessors() -> Result<(), Box<dyn std::err
         &public,
         &BTreeSet::new(),
         true,
+        None,
     )?;
     let old_reader = SurfaceReader::open(&legacy)?;
     let new_reader = SurfaceReader::open(&prepared.bytes)?;
@@ -342,6 +343,29 @@ fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn st
         reader.declaration(&identity("public", 1))?.direct_call_id.path(),
         "pub::probe::lib#decl.100..199"
     );
+    Ok(())
+}
+
+/// Linked declarations keep the checked frame allocation and immediately retire its implementation statements.
+#[test]
+fn linked_callable_moves_its_frame_without_copying_implementation() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::body_ir::LoafCallable;
+
+    let mut function = Box::new(body("compiled", 1));
+    function.type_parameters.clear();
+    function.block.stmts.push(call(identity("callee", 2)));
+    let original = std::ptr::from_ref(function.as_ref());
+    assert_eq!(
+        LoafCallable::compiled_identity(&function),
+        Some(&identity("compiled", 1))
+    );
+    let callable = LoafCallable::from_owned_frame(function).ok_or("compiled callable contract missing")?;
+    let frame = callable
+        .declaration_frame()
+        .ok_or("compiled declaration frame missing")?;
+    assert_eq!(std::ptr::from_ref(frame), original);
+    assert_eq!(frame.block.stmts.capacity(), 0);
+    assert_eq!(frame.canonical.as_ref(), Some(&callable.canonical));
     Ok(())
 }
 

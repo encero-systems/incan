@@ -94,7 +94,7 @@ pub fn lower_computed_statics(
                 if !named_functions(&mut names, &inventories.functions, &original.name).is_empty() {
                     return Err("unsupported Body IR original callable name collision".into());
                 }
-                inventories.functions.push(original);
+                inventories.functions.push(original.into());
                 append_synthesized(&mut inventories.functions, &mut names, synthesized)?;
                 merge_externals(&mut inventories.externals, runtime)?;
                 merge_instance_requests(&mut inventories.instances, &pending);
@@ -134,7 +134,7 @@ pub fn lower_computed_statics(
                     span: initializer.span.clone(),
                     module_completion: false,
                 });
-                inventories.functions.push(initializer);
+                inventories.functions.push(initializer.into());
                 merge_externals(&mut inventories.externals, runtime)?;
             }
             _ => {}
@@ -211,13 +211,13 @@ fn computed_static_cell(
         keys.push(key);
         inventories
             .functions
-            .push(module_initializer(&program.statics, key, &initializer.span));
+            .push(module_initializer(&program.statics, key, &initializer.span).into());
         merge_externals(
             &mut inventories.externals,
             module_initialization_externals(&initializer.span),
         )?;
     }
-    inventories.functions.push(initializer);
+    inventories.functions.push(initializer.into());
     append_synthesized(&mut inventories.functions, names, synthesized)?;
     merge_externals(&mut inventories.externals, runtime)?;
     merge_instance_requests(&mut inventories.instances, &pending);

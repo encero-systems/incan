@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 const NAMESPACE_REFERENCE_PAGE: &str = "namespace-references.crumb";
 const NAMESPACE_HEADER_REFERENCE_PAGE: &str = "namespace-header-references.crumb";
-pub const NAMESPACE_IDENTITY_PROFILE: &str = "incan.editable-namespace-crumb/7";
+pub const NAMESPACE_IDENTITY_PROFILE: &str = "incan.editable-namespace-crumb/8";
 const ROW: &[u8] = b"nsrefs\x00";
 
 /// An evaluated namespace in an immutable segment under the request's bakery anchor.
@@ -42,6 +42,33 @@ pub fn namespace_reference_filename() -> String {
 /// Name the inventory of namespace header frames in the compiler request directory.
 pub fn namespace_header_reference_filename() -> String {
     NAMESPACE_HEADER_REFERENCE_PAGE.to_owned()
+}
+
+/// A request's offered layout companions. An empty page still requests layout publication.
+pub fn namespace_layout_reference_filename() -> String {
+    "namespace-layout-references.crumb".to_owned()
+}
+
+/// Previously published namespaces used only to bind layout candidates for rechecked modules.
+pub fn namespace_layout_candidate_filename() -> String {
+    "namespace-layout-candidates.crumb".to_owned()
+}
+
+/// Directory of checked layout companion rows beside the compiler's other namespace outputs.
+pub fn namespace_layout_output_directory() -> String {
+    "namespace-layouts".to_owned()
+}
+
+/// Name a checked namespace's layout companion. The context versions the witness and its comparison inputs.
+pub fn namespace_layout_key(origin: &str, module: &str) -> RecordKey {
+    RecordKey {
+        family: "namespace-layout".into(),
+        identity_profile: NAMESPACE_IDENTITY_PROFILE.into(),
+        origin: origin.to_owned(),
+        identity: module.to_owned(),
+        facet: "checked".into(),
+        context: "layout-witnesses/1".into(),
+    }
 }
 
 /// Name one namespace header beside its composite namespace, under the same logical source projection.
@@ -78,11 +105,13 @@ fn description() -> Description {
     )
 }
 
-/// Admit only the canonical namespace or namespace header key and a bounded frame in a content-named segment.
+/// Admit only a canonical namespace record key and a bounded frame in a content-named segment.
 fn validate(reference: &NamespaceReference) -> Result<(), String> {
     let (origin, module) = (&reference.key.origin, &reference.key.identity);
     let key = encode_record_key(&reference.key)?;
-    if (reference.key != namespace_key(origin, module) && reference.key != namespace_header_key(origin, module))
+    if (reference.key != namespace_key(origin, module)
+        && reference.key != namespace_header_key(origin, module)
+        && reference.key != namespace_layout_key(origin, module))
         || !full_digest(&format!("sha256:{}", reference.segment))
         || !full_digest(&format!("sha256:{}", reference.value_digest))
     {

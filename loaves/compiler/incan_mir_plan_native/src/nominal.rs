@@ -5,7 +5,8 @@
 //! first-seen order, and the product names each ordinal's declaration by its stable identity and meaning digest.
 //! Binding replaces each ordinal by the position the current unit resolved for that identity.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use crate::types::{ListLeaf, PlanType, TupleElement};
 
@@ -71,6 +72,8 @@ pub struct NominalRemap {
     pub fold: i64,
     /// The crates, other than Rust's own, that the binding identities restored through this remap name.
     pub crates: Vec<String>,
+    /// Exact call paths this ordinary product will demand from the current runtime resolver before it can finish.
+    pub(crate) pending_runtime: Option<Arc<BTreeSet<String>>>,
 }
 
 impl NominalRemap {
@@ -141,6 +144,7 @@ pub fn capture_remap() -> NominalRemap {
         preserve: false,
         fold: -1,
         crates: Vec::new(),
+        pending_runtime: None,
     }
 }
 
@@ -152,6 +156,7 @@ pub fn binding_remap(references: Vec<NominalReference>) -> NominalRemap {
         preserve: false,
         fold: -1,
         crates: Vec::new(),
+        pending_runtime: None,
     }
 }
 
@@ -163,6 +168,7 @@ pub fn preserving_remap() -> NominalRemap {
         preserve: true,
         fold: -1,
         crates: Vec::new(),
+        pending_runtime: None,
     }
 }
 
@@ -174,6 +180,7 @@ pub fn folding_remap(sources: i64) -> NominalRemap {
         preserve: false,
         fold: sources,
         crates: Vec::new(),
+        pending_runtime: None,
     }
 }
 

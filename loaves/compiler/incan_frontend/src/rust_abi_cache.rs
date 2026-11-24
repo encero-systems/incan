@@ -108,6 +108,13 @@ impl RustTypeAliasLookup {
 
 /// Encode `items` as one ABI cache.
 pub fn encode_rust_abi_cache(items: &BTreeMap<String, RustItemMetadata>) -> Result<Vec<u8>, String> {
+    encode_rust_abi_entries(items.iter().map(|(path, item)| (path.as_str(), item)))
+}
+
+/// Encode checked items borrowed from a producer, in canonical path order.
+pub fn encode_rust_abi_entries<'a>(
+    items: impl ExactSizeIterator<Item = (&'a str, &'a RustItemMetadata)>,
+) -> Result<Vec<u8>, String> {
     let table = RefCell::new(strings::StringTable::default());
     let mut index = Vec::with_capacity(items.len());
     let mut raw_blocks: Vec<Vec<u8>> = Vec::new();
@@ -130,7 +137,7 @@ pub fn encode_rust_abi_cache(items: &BTreeMap<String, RustItemMetadata>) -> Resu
         let block = raw_blocks.len() - 1;
         let current = &mut raw_blocks[block];
         index.push((
-            path.clone(),
+            path.to_owned(),
             Location {
                 block: narrow(block)?,
                 offset: narrow(current.len())?,

@@ -7,7 +7,7 @@ This tutorial runs several independent jobs, preserves their typed results, and 
     <div><dt>Reader</dt><dd>Application or workflow developer</dd></div>
     <div><dt>Prerequisites</dt><dd>Functions, Result, match, and async basics</dd></div>
     <div><dt>Time</dt><dd>20–30 minutes</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
     <div><dt>Status</dt><dd>Requires the compiled async package</dd></div>
     <div><dt>Outcome</dt><dd>A running worker pipeline with typed joins and deadlines</dd></div>
     <div><dt>Artifacts</dt><dd>Worker-pipeline source and native executable</dd></div>

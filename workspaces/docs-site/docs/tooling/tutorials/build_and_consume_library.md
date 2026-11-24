@@ -6,7 +6,7 @@ Create two ordinary Loaves: a producer exporting one function and a consumer cal
 <div><dt>Reader</dt><dd>Package author</dd></div>
 <div><dt>Prerequisites</dt><dd>Getting started and modules</dd></div>
 <div><dt>Time</dt><dd>15 minutes</dd></div>
-<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+<div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.9</code></dd></div>
 <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
 <div><dt>Outcome</dt><dd>A native library consumed by another project</dd></div>
 <div><dt>Artifacts</dt><dd>Two manifests, sources and compiled library sidecars</dd></div>
@@ -76,9 +76,10 @@ def main() -> None:
 
 ```bash
 incan run consumer/src/main.incn
+oven lock consumer
 ```
 
-The program prints `158`. Oven prepares the producer from the declared path before compiling the consumer. The dependency alias `pricing` determines the import namespace. The run writes `consumer/oven.lock` silently; that root lock records the relative producer path and exact graph. No workspace root or explicit bake is required.
+The program prints `158`. Oven prepares the producer from the declared path before compiling the consumer. The dependency alias `pricing` determines the import namespace. The lock command writes the selected graph to `consumer/oven.lock`, including the relative producer path. No workspace root or explicit bake is required.
 
 <section class="inc-learning-panel inc-learning-panel--complete" data-label="Complete" markdown="1">
 

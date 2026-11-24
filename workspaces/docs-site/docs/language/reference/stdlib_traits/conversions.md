@@ -1,13 +1,6 @@
 # Conversion traits (Reference)
 
-This page documents stdlib traits for explicit conversions.
-
-Use these traits when a type should define an explicit conversion from or into another type.
-
-The two main patterns are:
-
-- `From[T]` / `Into[T]` for conversions that should always succeed
-- `TryFrom[T]` / `TryInto[T]` for conversions that may fail
+`std.traits.convert` defines traits for explicit conversion. `From[T]` and `Into[T]` return the converted value directly. `TryFrom[T]` and `TryInto[T]` return a `Result`.
 
 ## From / Into
 
@@ -21,21 +14,22 @@ Example:
 ```incan
 from std.traits.convert import From
 
-model UserId with From[str]:
+model UserId with From[int]:
     value: int
 
     @classmethod
-    def from(cls, value: str) -> Self:
-        # accepts a str and converts it to int
-        return UserId(value=int(value))
+    def from(cls, value: int) -> Self:
+        return UserId(value=value)
 
 
-user_id = UserId.from("42")
+user_id = UserId.from(42)
 ```
 
-A model, class, or enum may adopt multiple `Into[T]` instantiations when the target types differ. A call to `into()` must then have an expected result type so the compiler can select the same-family trait instantiation:
+A model, class, or enum may adopt multiple `Into[T]` instantiations for distinct target types. Each `into()` call on that type requires an expected result type that selects one instantiation.
 
 ```incan
+from std.traits.convert import Into
+
 model Reading with Into[int], Into[float]:
     value: int
 
@@ -50,22 +44,20 @@ as_float: float = reading.into()
 as_int: int = reading.into()
 ```
 
-An untyped call is ambiguous because both `Into[int]` and `Into[float]` have the same method name and no value argument that distinguishes them:
+This `Reading` has two `into()` implementations. A call without an expected result type is ambiguous.
 
 ```incan
-value = reading.into()  # error: add an expected result type
+value = reading.into()  # refused: no expected result type
 ```
 
-Expected type context does not have to be a local binding. Passing the call into a function that expects a concrete target type works too:
+A call argument takes its expected type from the corresponding parameter.
 
 ```incan
 def takes_float(value: float) -> None:
     pass
 
-takes_float(reading.into())  # selects Into[float]
+takes_float(reading.into())  # accepted: selects Into[float]
 ```
-
-Use multiple `Into[T]` adoptions when the target type is the real static distinction. If the conversions need different input parameters or different names in user code, prefer explicit methods such as `to_json()` and `to_yaml()` instead of forcing everything through `into()`.
 
 ## TryFrom / TryInto
 
@@ -74,4 +66,8 @@ Use multiple `Into[T]` adoptions when the target type is the real static distinc
 - **`TryInto[T]`**
     - Hook: `def try_into(self) -> Result[T, str]`
 
-Use `TryFrom[T]` when the conversion needs validation or parsing and may return an error instead of a value.
+`Ok` carries the converted value. `Err` carries the conversion error text.
+
+## See also
+
+- [Trait dispatch and overloading](../../explanation/derives_and_traits.md#trait-dispatch-and-overloading)

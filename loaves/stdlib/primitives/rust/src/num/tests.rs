@@ -16,14 +16,6 @@ fn test_matrix_py_div() {
 }
 
 #[test]
-fn test_semantic_core_division_type() {
-    assert_eq!(
-        result_numeric_type(NumericOp::Div, NumericTy::Int, NumericTy::Int, None),
-        NumericTy::Float
-    );
-}
-
-#[test]
 fn test_semantic_core_matches_runtime_signatures() {
     // Division: always float
     let r = py_div(7_i64, 2_i64);

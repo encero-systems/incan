@@ -8,7 +8,7 @@
 
 //! Here `<name>` is the shared artifact stem: unchanged for bare packages and reversibly encoded for scoped ones.
 
-use incan_loaf_names::artifact_stem;
+use incan_loaf_names::{artifact_stem, native_crate_name};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -33,14 +33,21 @@ use lazy_entry::IndexedLoaf;
 pub use native_reference::{NATIVE_CLOSURE_SCHEMA, NativeAnchors, PublishedNativeClosure};
 
 /// What this process keeps of the Loaves it read: each store, how many readings it holds and their files' bytes.
-pub fn retained_inventory() -> [(&'static str, usize, u64); 2] {
+pub fn retained_inventory() -> [(&'static str, usize, u64); 4] {
     retained::inventory()
 }
 
-/// Release the Loaf manifests and installed record groups this process decoded for the request that just ended: a
-/// resident worker keeps no owned copy of its dependency closure between requests.
+/// Release the decoded Loaf artifacts, their executable surfaces, and installed record groups held by this process.
 pub fn release_retained_loaves() {
-    retained::release_artifacts();
+    settle_retained_loaves(false);
+}
+
+/// Release request-owned installed record groups. A continuing worker can keep bounded, generation-guarded path
+/// manifest and executable surface views for its next request.
+pub fn settle_retained_loaves(keep_path_artifacts: bool) {
+    if !keep_path_artifacts {
+        retained::release_artifacts();
+    }
     compiler_record_set::release_admitted_groups();
 }
 
@@ -72,7 +79,7 @@ use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use crate::library_manifest::executable_ranges::{HEAD, RANGE, RangeHead, RangeRecord};
 use crate::library_manifest::executable_surface::ExecutableSurface;
-use crate::library_manifest::{ExportIdentity, ExportIdentityKind, LibraryManifest};
+use crate::library_manifest::{ExportIdentity, LibraryManifest};
 
 /// The extension of a Loaf's library manifest, `<name>.incnlib`.
 pub const LIBRARY_MANIFEST_EXTENSION: &str = "incnlib";
@@ -121,8 +128,10 @@ pub struct LoafArtifact {
 impl LoafArtifact {
     /// Read and validate the Loaf `name`, deriving its identity from the exact bytes decoded into the manifest.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        if compiler_record_set::configured() {
-            return Self::read_current(dir, name);
+        if compiler_record_set::configured()
+            && let Some((manifest, digest)) = compiler_record_set::read(dir, name)?
+        {
+            return Self::from_records(dir, name, manifest, digest);
         }
         retained::artifact(dir, name)
     }
@@ -162,11 +171,8 @@ impl LoafArtifact {
         })
     }
 
-    /// Read and validate one current generation; process-local reuse must observe every dependent file around it.
-    fn read_current(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        if let Some((manifest, digest)) = compiler_record_set::read(dir, name)? {
-            return Self::from_records(dir, name, manifest, digest);
-        }
+    /// Read and validate an artifact's current filesystem generation on a path cache miss.
+    fn read_path_manifest(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)
                 .entered();
@@ -392,6 +398,8 @@ pub enum LoafIndexError {
 #[derive(Debug, Clone, Default)]
 pub struct LoafIndex {
     entries: BTreeMap<String, IndexedLoaf>,
+    /// Indexed providers whose own native archive the unit selected.
+    native_links: BTreeSet<String>,
     /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled
     /// unit's.
     rust_abi_caches: Vec<Arc<RustAbiCache>>,
@@ -416,6 +424,18 @@ pub struct LoafIndex {
 }
 
 impl LoafIndex {
+    /// Share settled readings while isolating failures from unused runtime prefetches in this request.
+    pub fn runtime_prefetch(&self) -> Self {
+        let mut index = self.clone();
+        for entry in index.entries.values_mut() {
+            entry.isolate_pending_demands();
+        }
+        if index.rust_abi_failure.get().is_none() {
+            index.rust_abi_failure = Arc::default();
+        }
+        index
+    }
+
     /// Read an immutable Rust ABI index under current file-generation guards, opening an unchanged file once per
     /// process: records mode included, since the index is one file whose generation is observed around every
     /// request, whatever names the Loaves beside it. The returned index owns no session or
@@ -438,6 +458,7 @@ impl LoafIndex {
         }
         Ok(Self {
             entries: indexed,
+            native_links: BTreeSet::new(),
             rust_abi_caches: Vec::new(),
             declared_rust_crates: BTreeSet::new(),
             rust_fact_caches: Vec::new(),
@@ -447,6 +468,26 @@ impl LoafIndex {
             resolved_rust_items: Arc::default(),
             rust_abi_failure: Arc::default(),
         })
+    }
+
+    /// Record which indexed providers the unit links from their exact native artifact paths. A source interface
+    /// can have the same manifest name and shape as a compiled Loaf, so only the unit's native inputs settle this.
+    pub fn bind_native_loaves<'a>(&mut self, externs: impl IntoIterator<Item = (&'a str, &'a Path)>) {
+        let externs: BTreeMap<_, _> = externs.into_iter().collect();
+        self.native_links = self
+            .entries
+            .iter()
+            .filter_map(|(key, indexed)| {
+                let alias = native_crate_name(&indexed.name);
+                let artifact = externs.get(alias.as_str())?;
+                (*artifact == indexed.dir.join(format!("lib{alias}.rlib")).as_path()).then(|| key.clone())
+            })
+            .collect();
+    }
+
+    /// Whether this exact inventory entry supplies a native archive to the current unit.
+    pub(crate) fn links_native_loaf(&self, key: &str) -> bool {
+        self.native_links.contains(key)
     }
 
     /// Admit every location's inventory while deferring full manifests to canonical demand. Each inventory records
@@ -504,6 +545,7 @@ impl LoafIndex {
 
     /// Canonical demand with explicit artifact failure, distinct from an absent namespace. Nullable checker lookup
     /// adapters retain failures in the entry; `validate_demands` must gate successful analysis and closure publication.
+    #[track_caller]
     pub fn demand(&self, key: &str) -> Result<Option<&LoafEntry>, LoafIndexError> {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
@@ -700,6 +742,31 @@ impl LoafIndex {
         indexed.names_record(&exports, Some(name))
     }
 
+    /// The admitted records of a root export or authored layout addressed by `family` and `name`. A Loaf without
+    /// the named records returns `None`. An unreadable admitted record is an error.
+    pub(crate) fn named_layout_records(
+        &self,
+        key: &str,
+        family: crate::library_manifest::compiler_records::RecordFamily,
+        name: &str,
+    ) -> Result<Option<Arc<Vec<serde_json::Value>>>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        indexed.named_records(family.as_str(), name)
+    }
+
+    /// The install record selected for one compiled owner, or absence for a legacy publication.
+    pub(crate) fn install_record(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<crate::library_manifest::install_record::LoafInstallRecord>>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        indexed.install_record()
+    }
+
     /// What the index admitted of the entry indexed as `key`, without demanding its manifest.
     pub fn admitted(&self, key: &str) -> Option<AdmittedLoaf> {
         let indexed = self.entries.get(key)?;
@@ -872,8 +939,33 @@ impl LoafIndex {
     }
 
     /// The entry indexed as `key`.
+    #[track_caller]
     pub fn entry(&self, key: &str) -> Option<&LoafEntry> {
         self.demand(key).ok().flatten()
+    }
+
+    /// Reopen fixture inventories without their already decoded manifests.
+    #[cfg(test)]
+    pub(crate) fn with_deferred_fixture_manifests(mut self) -> Result<Self, LoafIndexError> {
+        for entry in self.entries.values_mut() {
+            *entry = IndexedLoaf::known(
+                entry.key.clone(),
+                entry.namespace.clone(),
+                entry.dir.clone(),
+                entry.summary()?.clone(),
+            );
+        }
+        Ok(self)
+    }
+
+    /// Fixture manifests whose contents were demanded, including failed reads.
+    #[cfg(test)]
+    pub(crate) fn demanded_fixture_manifests(&self) -> Vec<&str> {
+        self.entries
+            .values()
+            .filter(|entry| entry.was_demanded())
+            .map(|entry| entry.key.as_str())
+            .collect()
     }
 
     /// The one entry owning `module`, if any.
@@ -902,9 +994,7 @@ impl LoafIndex {
                         .manifest
                         .contract_metadata
                         .identity_graph
-                        .exports
-                        .iter()
-                        .any(|export| export.canonical.as_ref().is_some_and(|id| id.represents(canonical)))
+                        .publishes(canonical)
             })?;
         Some(entry)
     }
@@ -917,28 +1007,12 @@ impl LoafIndex {
             .manifest
             .contract_metadata
             .identity_graph
-            .exports
-            .iter()
-            .filter(|export| export.canonical.as_ref().is_some_and(|id| id.represents(canonical)))
-            .filter(|export| {
-                matches!(
-                    export.kind,
-                    ExportIdentityKind::Model
-                        | ExportIdentityKind::Class
-                        | ExportIdentityKind::Enum
-                        | ExportIdentityKind::Newtype
-                )
-            })
-            .min_by(|left, right| {
-                left.public_path
-                    .len()
-                    .cmp(&right.public_path.len())
-                    .then(left.public_path.cmp(&right.public_path))
-            })?;
+            .public_nominal(canonical)?;
         Some((entry, export))
     }
 
     /// The manifest of the Loaf indexed as `key`.
+    #[track_caller]
     pub fn manifest(&self, key: &str) -> Option<&LibraryManifest> {
         self.entry(key).map(|entry| entry.artifact.manifest.as_ref())
     }
@@ -955,6 +1029,31 @@ impl LoafIndex {
             items.insert(canonical_path.to_owned(), Arc::clone(&resolved));
         }
         Some(resolved)
+    }
+
+    /// Resolve the ABI item shipped by the exact Loaf defining this public Rust re-export.
+    pub(crate) fn indexed_rust_reexport(&self, key: &str, path: &str) -> Option<Arc<RustItemMetadata>> {
+        let entry = self.entries.get(key)?;
+        let cache = match entry.indexed_rust_reexports() {
+            Ok(cache) => cache?,
+            Err(error) => {
+                let _ = self.rust_abi_failure.set(error);
+                return None;
+            }
+        };
+        self.cache_fact(cache.get(path), || entry.dir.clone()).map(Arc::new)
+    }
+
+    /// Select the exact unambiguous package-root Rust re-export and its published identity from the path Loaf.
+    pub(crate) fn root_rust_reexport_target(
+        &self,
+        key: &str,
+        name: &str,
+    ) -> Result<Option<(Vec<String>, CanonicalSymbolId)>, LoafIndexError> {
+        let Some(entry) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        entry.root_rust_reexport_target(name)
     }
 
     /// Release every Rust item decoded so far, for this index and the clones that share its store, when checking is
@@ -1001,6 +1100,19 @@ impl LoafIndex {
         };
         // A Loaf whose demand fails is skipped here; `validate_demands` reports its retained failure.
         for entry in shipping().filter(|entry| entry.summary().is_ok_and(|s| s.rust_paths.contains(canonical_path))) {
+            match entry.indexed_rust_reexports() {
+                Ok(Some(cache)) => {
+                    if let Some(item) = self.cache_fact(read_cache(&cache, canonical_path), || entry.dir.clone()) {
+                        return Some(item);
+                    }
+                    continue;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = self.rust_abi_failure.set(error);
+                    continue;
+                }
+            }
             let Ok(entry) = entry.demand() else {
                 continue;
             };
@@ -1147,90 +1259,7 @@ fn normalize_keyword_registration(key: &str, registration: &KeywordRegistration)
 }
 
 #[cfg(test)]
-mod scoped_name_tests {
-    use super::{LoafArtifact, LoafIdentity, LoafIndex, LoafNamespace};
-    use crate::library_manifest::LibraryManifest;
-    use crate::loaf_index::lazy_entry::IndexedLoaf;
-    use incan_loaf_names::artifact_stem;
-    use std::collections::BTreeSet;
-
-    /// The ordinary retained reader opens encoded filenames while retaining the exact scoped semantic owner.
-    #[test]
-    fn scoped_artifacts_retain_their_producer_name() -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        for name in ["alpha/catalog", "beta/catalog", "scope-a/catalog", "scope/a-catalog"] {
-            let manifest = LibraryManifest::new(name, "1.0.0");
-            let stem = artifact_stem(name);
-            let path = directory.path().join(format!("{stem}.incnlib"));
-            std::fs::write(&path, manifest.to_json_string()?)?;
-            for _ in 0..2 {
-                let artifact = LoafArtifact::read(directory.path(), name)?;
-                assert_eq!(artifact.manifest.name, name);
-                assert_eq!(artifact.identity.name, name);
-                assert_eq!(artifact.manifest_path(), path);
-                assert_eq!(
-                    artifact.bodies_path(),
-                    directory.path().join(format!("{stem}.incnbody"))
-                );
-                assert_eq!(
-                    artifact.native_closure_path(),
-                    directory.path().join(format!("{stem}.native.json"))
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Header-only consumers observe admitted identity records without demanding declaration manifests.
-    #[test]
-    fn admitted_identities_keep_manifests_lazy() -> Result<(), Box<dyn std::error::Error>> {
-        let key = "catalog";
-        let identity = LoafIdentity {
-            name: "alpha/catalog".to_owned(),
-            version: "1.0.0".to_owned(),
-            digest: "admitted-digest".to_owned(),
-            feature_projection: BTreeSet::new(),
-        };
-        let indexed = IndexedLoaf::summary_only(
-            key.to_owned(),
-            LoafNamespace::Dependency { key: key.to_owned() },
-            identity.clone(),
-        );
-        let observation = indexed.clone();
-        let mut index = LoafIndex::default();
-        index.entries.insert(key.to_owned(), indexed);
-
-        let entries = index.admitted_identities().collect::<Vec<_>>();
-
-        assert_eq!(entries.len(), 1);
-        let (observed_key, observed_identity, observed_namespace) = entries
-            .first()
-            .copied()
-            .ok_or("the admitted identity projection is empty")?;
-        assert_eq!(observed_key, key);
-        assert_eq!(observed_identity, &identity);
-        assert_eq!(observed_namespace, &LoafNamespace::Dependency { key: key.to_owned() });
-        assert!(!observation.was_demanded());
-        Ok(())
-    }
-
-    /// A request's decoded Loaf manifests are released when it ends: a resident worker keeps no owned copy of its
-    /// dependency closure between requests, and the next request reads the Loaf again.
-    #[test]
-    fn released_loaf_readings_do_not_outlive_their_request() -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let name = "released/catalog";
-        let manifest = LibraryManifest::new(name, "1.0.0");
-        let path = directory.path().join(format!("{}.incnlib", artifact_stem(name)));
-        std::fs::write(&path, manifest.to_json_string()?)?;
-        LoafArtifact::read(directory.path(), name)?;
-        assert!(super::retained::retains_artifact(directory.path(), name));
-        super::release_retained_loaves();
-        assert!(!super::retained::retains_artifact(directory.path(), name));
-        assert_eq!(LoafArtifact::read(directory.path(), name)?.manifest.name, name);
-        Ok(())
-    }
-}
+mod scoped_name_tests;
 
 #[cfg(test)]
 mod resolved_item_tests;

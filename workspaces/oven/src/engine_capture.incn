@@ -23,6 +23,8 @@ Metadata only detects change. An epoch's identity is the digest of its roots, it
 its inputs, so touching a file without changing its bytes leaves the identity as it was.
 """
 
+from rust::std::mem import take
+from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.fs import Path
@@ -32,11 +34,14 @@ from engine_capture_identity import capture_identity
 from home import StandardPackage, home, standard_library_dir, standard_packages
 from manifest_intent import parse_document
 from loaf_local_graph import unique
-from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
+from observation import SETTLE_SECONDS, FileMetadata, SourceReading, children, file_metadata, source_reading
+from project_library import selects_shared_executable
+from pub::incan_platform.trace import Operation
+from jec import begin as begin_work, record as record_work
 from toolchain import Toolchain, installation, toolchain_file
 from installation_page import admitted_identity
 from unit import manifest_candidates
-from unit_sources import SourceGraph
+from unit_sources import SourceGraph, recorded_linked_reach
 
 const EPOCH_SCHEMA: str = "incan.engine.build-epoch/2"
 # How many times a file that changes while it is read is read before it is reported unstable.
@@ -58,6 +63,7 @@ pub enum InputRole(str):
 
     Root = "root"
     Member = "member"
+    ProjectMember = "project-member"
     Resolved = "resolved"
     Manifest = "manifest"
     Lock = "lock"
@@ -143,7 +149,7 @@ pub model CapturedInput:
 
 @derive(Eq)
 pub model CapturedListing:
-    """One directory of a package's membership: its metadata when listed, and the members and subdirectories it held."""
+    """One directory's source names and candidate subdirectories, which may become separate projects independently."""
 
     pub path: str
     pub metadata: FileMetadata
@@ -167,6 +173,8 @@ pub model Declarations:
     pub rust_source_root: str = ""
     # Editable Incan dependency project roots, made absolute against this manifest.
     pub dependencies: list[str] = []
+    # Distinct script paths when the manifest could select a shared executable provider.
+    pub scripts: list[str] = []
 
 
 
@@ -176,6 +184,7 @@ model SourceMembership:
 
     root: str
     extension: str
+    role: InputRole = InputRole.Member
 
 
 @derive(Eq)
@@ -218,6 +227,16 @@ pub model BuildEpoch:
             if item.path == path:
                 return Some(item)
         return None
+
+    pub def project_sources(self, root: str) -> Option[list[str]]:
+        """The selected shared provider's membership, including its entry if it lies under `root`."""
+        mut sources = [item.path for item in self.inputs if item.role == InputRole.ProjectMember]
+        if len(sources) == 0:
+            return None
+        sources.extend([
+            item.path for item in self.inputs if item.role == InputRole.Root and item.path.startswith(root + "/")
+        ])
+        return Some(sources)
 
 
 pub model ClassCounters:
@@ -262,6 +281,8 @@ pub model CaptureRequest:
     # What the whole unit's recorded source graphs read and probed. Capture checks exactly these paths; without them it
     # lists the authored inventory. A request's later captures pass the same reach, so they compare the same paths.
     pub reach: Option[SourceGraph] = None
+    # A project build or run also reaches the authored inputs of its possible shared library.
+    pub project_library: bool = false
 
 
 pub model AdmittedHome:
@@ -307,6 +328,8 @@ pub model CaptureResult:
     # The inputs that kept changing while they were read.
     pub unstable: list[str]
     pub counters: CaptureCounters
+    # Changed Incan text belongs to this request only, outside the durable epoch.
+    pub readings: Option[Rc[Dict[str, SourceReading]]] = None
 
 
 pub def admitted_home() -> Result[AdmittedHome, str]:
@@ -346,9 +369,10 @@ pub def capture(
     previous: Option[BuildEpoch],
     admitted: AdmittedHome,
     settle: int = SETTLE_SECONDS,
+    probe_only: bool = false,
 ) -> Result[CaptureResult, str]:
-    """Capture `request` against the previous epoch, reading files whole."""
-    return capture_with(request, previous, admitted, settle, (path) => read_file(path))
+    """Capture `request`, or probe an existing epoch without reading candidate source bytes."""
+    return capture_with(request, previous, admitted, settle, (path) => read_file(path), probe_only)
 
 
 pub def capture_with(
@@ -357,6 +381,7 @@ pub def capture_with(
     admitted: AdmittedHome,
     settle: int,
     reader: (Path) -> Result[bytes, str],
+    probe_only: bool = false,
 ) -> Result[CaptureResult, str]:
     """
     Capture `request` against the previous epoch, reading files with `reader`.
@@ -364,23 +389,27 @@ pub def capture_with(
     1. Take the frozen roots: from the previous epoch while the toolchain pin is unchanged, else from the pin's bytes.
     2. Capture the roots with their project configuration: the manifest lookup, the lock, the files it declares.
     3. A `build` or `bake` captures the package's membership. A whole unit captures the paths its recorded source
-       graphs name, and lists its membership only before it has one.
+       graphs name. Project programs also capture their shared library's membership.
     4. Check every recorded lookup, resolved or absent, unless it lies under a frozen root.
     5. Compare with the previous epoch.
     """
     if request.selection.command not in ["run", "build", "bake"]:
         return Err(f"capture knows the roots of `run`, `build` and `bake`, not of `{request.selection.command}`")
-    mut state = Capture(admitted=admitted, settle=settle, reader=reader)
+    mut state = Capture(admitted=admitted, settle=settle, reader=reader, probe_only=probe_only)
     state.remember(previous)
     # 1. Frozen roots come first, so that nothing under them is ever checked.
     state.take_frozen_roots()?
     # 2. The roots and their configuration are always in reach.
     mut membership: list[SourceMembership] = []
     for root in request.roots:
-        membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit, request.reach)?)
+        members = state.root(
+            absolute(root), request.selection.command, request.selection.profile, request.whole_unit, request.reach,
+            request.project_library,
+        )?
+        membership.extend(members)
     # 3. A package's membership is listed with the compiler's collection rules; a graph's paths were checked by name.
     for source in membership:
-        state.members(source.root, source.extension)?
+        state.members(source)?
     # 4. Recorded lookups are checked at their exact paths, and nowhere else.
     state.lookups(request.witnesses)?
     # 5. The previous epoch is returned unchanged when nothing differs.
@@ -393,6 +422,8 @@ model Capture:
     admitted: AdmittedHome
     settle: int
     reader: (Path) -> Result[bytes, str]
+    probe_only: bool
+    readings: Dict[str, SourceReading] = {}
     # The frozen roots: the home's own, and those the pin names (sorted and distinct). A path is frozen when it or one
     # of its ancestors is one of them.
     frozen: list[str] = []
@@ -401,6 +432,8 @@ model Capture:
     found: Dict[str, CapturedInput] = {}
     missing: Dict[str, InputPath] = {}
     listed: Dict[str, CapturedListing] = {}
+    # A directory's nested-project decision is retained only for this observation, across both source facets.
+    member_directories: Dict[str, bool] = {}
     unstable: list[str] = []
     declared: Dict[str, Declarations] = {}
     # The previous epoch, indexed once so that no step copies it.
@@ -432,14 +465,17 @@ model Capture:
         mut self,
         path: str,
         command: str,
+        profile: str,
         whole_unit: bool,
         reach: Option[SourceGraph],
+        project_library: bool,
     ) -> Result[list[SourceMembership], str]:
         """
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
         1. `run` captures its file and looks up its manifest from the file's directory upward. A whole unit captures
-           what its recorded graphs name, or, without them, returns its membership directories.
+           what its recorded graphs name, or, without them, returns its membership directories. An executable
+           selected to share a provider also captures that provider's membership.
         2. `build` and `bake` capture the Loaf root's manifest and list its source root.
         """
         if self.is_frozen(path):
@@ -450,11 +486,19 @@ model Capture:
             match self.editable(path, InputRole.Root)?:
                 Admission.Missing => return Err(f"{path}: no such source file")
                 _ => pass
-            _ = self.manifest_lookup(Path(path))?
+            project = self.manifest_lookup(Path(path))?
             if whole_unit:
+                if project_library:
+                    if let Some(root) = project:
+                        if self.shared_executable(Path(root), path):
+                            if let Some(graph) = recorded_linked_reach(Path(root), Path(path), profile):
+                                self.graph_members(graph)?
+                            if let Some(graph) = reach:
+                                self.graph_members(graph)?
+                            return self.unit_membership(Path(path), project, true)
                 match reach:
-                    Some(graph) => return self.graph_members(graph)
-                    None => return self.unit_membership(Path(path))
+                    Some(graph) => self.graph_members(graph)?
+                    None => return self.unit_membership(Path(path), project, false)
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
@@ -462,7 +506,12 @@ model Capture:
             return Err(f"{manifest}: no such manifest")
         return self.source_memberships(path)
 
-    def graph_members(mut self, graph: SourceGraph) -> Result[list[SourceMembership], str]:
+    def shared_executable(self, project: Path, source: str) -> bool:
+        """Decide from this capture's admitted declaration of the executable's own project."""
+        manifest = project.joinpath("loaf.toml").0
+        return manifest in self.declared and selects_shared_executable(project, source, self.declared[manifest].scripts)
+
+    def graph_members(mut self, graph: SourceGraph) -> Result[None, str]:
         """
         Capture each file a whole unit's recorded graphs read and each absent path they probed, by name, listing no
         directory. A file created at a probed path is found here; one nothing imported or probed is never met.
@@ -472,26 +521,27 @@ model Capture:
                 self.counters.frozen.inputs += 1
                 continue
             _ = self.editable(path, InputRole.Member)?
-        return Ok([])
+        return Ok(None)
 
-    def unit_membership(mut self, source: Path) -> Result[list[SourceMembership], str]:
+    def unit_membership(
+        mut self, source: Path, project: Option[str], project_library: bool,
+    ) -> Result[list[SourceMembership], str]:
         """Capture the whole-unit producer's authored inventory, including an entry outside its source root."""
-        for candidate in manifest_candidates(source):
-            if candidate.0 in self.declared:
-                mut selected = self.source_memberships(candidate.parent().0)?
-                for membership in selected:
-                    if membership.extension == ".incn" and source.0.startswith(membership.root + "/"):
-                        return Ok(selected)
-                selected.append(SourceMembership(root=source.parent().0, extension=".incn"))
-                return Ok(selected)
+        if let Some(root) = project:
+            mut selected = self.source_memberships(root, project_library)?
+            for membership in selected:
+                if membership.extension == ".incn" and source.0.startswith(membership.root + "/"):
+                    return Ok(selected)
+            selected.append(SourceMembership(root=source.parent().0, extension=".incn"))
+            return Ok(selected)
         return Ok([SourceMembership(root=source.parent().0, extension=".incn")])
 
-    def manifest_lookup(mut self, source: Path) -> Result[bool, str]:
-        """Look up the manifest of `source` where the unit description does; each miss is an absent lookup."""
+    def manifest_lookup(mut self, source: Path) -> Result[Option[str], str]:
+        """Find the project root where the unit description does; retain absent manifest lookups on that path."""
         for candidate in manifest_candidates(source):
             if not self.is_frozen(candidate.0) and self.manifest(candidate.0)?:
-                return Ok(true)
-        return Ok(false)
+                return Ok(Some(candidate.parent().0))
+        return Ok(None)
 
     def manifest(mut self, path: str) -> Result[bool, str]:
         """
@@ -520,7 +570,7 @@ model Capture:
         for dependency in self.declared[path].dependencies:
             if self.manifest(Path(dependency).joinpath("loaf.toml").0)?:
                 for source in self.source_memberships(dependency)?:
-                    self.members(source.root, source.extension)?
+                    self.members(source)?
         return Ok(true)
 
     def source_root(mut self, project: str) -> Result[str, str]:
@@ -538,11 +588,14 @@ model Capture:
             None => pass
         return Ok(project)
 
-    def source_memberships(mut self, project: str) -> Result[list[SourceMembership], str]:
+    def source_memberships(mut self, project: str, project_library: bool = false) -> Result[list[SourceMembership], str]:
         """Resolve the Incan source root and any explicit or conventional Rust source tree for one project."""
         root = Path(project)
         manifest = root.joinpath("loaf.toml").0
-        mut sources = [SourceMembership(root=self.source_root(project)?, extension=".incn")]
+        mut incan_role = InputRole.Member
+        if project_library:
+            incan_role = InputRole.ProjectMember
+        mut sources = [SourceMembership(root=self.source_root(project)?, extension=".incn", role=incan_role)]
         if manifest in self.declared and self.declared[manifest].rust_source_root != "":
             sources.append(
                 SourceMembership(root=root.joinpath(self.declared[manifest].rust_source_root).0, extension=".rs"),
@@ -551,13 +604,13 @@ model Capture:
             sources.append(SourceMembership(root=root.joinpath("src").0, extension=".rs"))
         return Ok(sources)
 
-    def members(mut self, top: str, extension: str = ".incn") -> Result[None, str]:
+    def members(mut self, source: SourceMembership) -> Result[None, str]:
         """
-        Capture a source facet's membership under `top`, with each directory listed only when it changed.
+        Capture a source facet's membership under its root, listing each admitted directory only when it changed.
 
         Hidden directories, `target` and `node_modules` are not entered, as the compiler collects a package.
         """
-        mut pending = [top]
+        mut pending = [source.root]
         mut index = 0
         while index < len(pending):
             directory = pending[index]
@@ -565,17 +618,31 @@ model Capture:
             if self.is_frozen(directory):
                 self.counters.frozen.inputs += 1
                 continue
-            match self.listing(directory, extension)?:
+            if directory != source.root and not self.member_directory(directory):
+                continue
+            match self.listing(directory)?:
                 None => pass
                 Some(entry) =>
                     for name in entry.files:
-                        _ = self.editable(Path(directory).joinpath(name).0, InputRole.Member)?
+                        if name.endswith(source.extension):
+                            _ = self.editable(Path(directory).joinpath(name).0, source.role)?
                     for name in entry.directories:
                         pending.append(Path(directory).joinpath(name).0)
         return Ok(None)
 
-    def listing(mut self, directory: str, extension: str) -> Result[Option[CapturedListing], str]:
-        """A membership directory's members: the recorded listing while its metadata is unchanged, else listed now."""
+    def member_directory(mut self, directory: str) -> bool:
+        """Observe a child's manifest boundary even when the parent's cached directory names still hold."""
+        if directory in self.member_directories:
+            return self.member_directories[directory]
+        self.counters.in_reach.stats += 1
+        entered = not Path(directory).joinpath("loaf.toml").is_file()
+        self.member_directories[directory] = entered
+        return entered
+
+    def listing(mut self, directory: str) -> Result[Option[CapturedListing], str]:
+        """Reuse the directory for both source facets. A settled listing also survives unchanged metadata."""
+        if directory in self.listed:
+            return Ok(Some(self.listed[directory]))
         self.counters.in_reach.stats += 1
         match file_metadata(Path(directory))?:
             None => return Ok(None)
@@ -587,14 +654,14 @@ model Capture:
                     if recorded.settled and recorded.metadata == observed:
                         self.listed[directory] = recorded
                         return Ok(Some(recorded))
-                entry = children(Path(directory), extension)?
+                entry = children(Path(directory), "", include_nested=true)?
                 self.counters.in_reach.listings += 1
                 self.counters.in_reach.stats += entry.checked
                 listing = CapturedListing(
                     path=directory,
                     metadata=observed,
                     settled=observed.settled_for_capture(self.settle),
-                    files=entry.files,
+                    files=[name for name in entry.files if name.endswith(".incn") or name.endswith(".rs")],
                     directories=entry.directories,
                 )
                 self.listed[directory] = listing
@@ -625,8 +692,10 @@ model Capture:
         3. A settled record with the same metadata keeps its digest, and the file is not read.
         4. Otherwise the file is read until a read is stable, then hashed.
         """
-        # 1. One path is one input, whichever role reached it first.
+        # 1. A graph lookup and provider membership share one read. The member role retains that boundary.
         if path in self.found:
+            if role == InputRole.ProjectMember and self.found[path].role != InputRole.Root:
+                self.found[path].role = role
             return Ok(Admission.Checked)
         if path in self.missing:
             return Ok(Admission.Missing)
@@ -655,6 +724,9 @@ model Capture:
                 )
                 return Ok(Admission.Reused)
         # 4. Changed or new metadata is a reason to read the bytes.
+        if self.probe_only:
+            self.unstable.append(path)
+            return Ok(Admission.Unstable)
         return self.admit(path, role, observed)
 
     def admit(mut self, path: str, role: InputRole, observed: FileMetadata) -> Result[Admission, str]:
@@ -667,7 +739,9 @@ model Capture:
         for attempt in range(READ_ATTEMPTS):
             if attempt > 0:
                 self.counters.retries += 1
+            reading = begin_work()
             content = read(Path(path))?
+            record_work(Operation.FileRead, path, reading, len(content))
             self.counters.in_reach.reads += 1
             self.counters.in_reach.stats += 1
             match file_metadata(Path(path))?:
@@ -677,7 +751,12 @@ model Capture:
                 Some(after) =>
                     if stable_across_read(before, after):
                         self.counters.in_reach.hashes += 1
+                        hashing = begin_work()
                         digest = hexlify(sha256.digest(content))
+                        record_work(Operation.FileHash, path, hashing, len(content))
+                        if path.endswith(".incn"):
+                            if let Ok(source) = content.decode("utf-8", "strict"):
+                                self.readings[path] = source_reading(source, digest, retain_comments=true)
                         settled = after.settled_for_capture(self.settle)
                         self.found[path] = CapturedInput(
                             path=path,
@@ -703,7 +782,7 @@ model Capture:
             current = parent
         return false
 
-    def result(self, request: CaptureRequest, previous: Option[BuildEpoch]) -> Result[CaptureResult, str]:
+    def result(mut self, request: CaptureRequest, previous: Option[BuildEpoch]) -> Result[CaptureResult, str]:
         """
         The capture's outcome.
 
@@ -726,9 +805,14 @@ model Capture:
                     return Ok(self.outcome(CaptureOutcome.Refreshed, Some(epoch)))
                 return Ok(self.outcome(CaptureOutcome.Changed, Some(epoch)))
 
-    def outcome(self, outcome: CaptureOutcome, epoch: Option[BuildEpoch]) -> CaptureResult:
+    def outcome(mut self, outcome: CaptureOutcome, epoch: Option[BuildEpoch]) -> CaptureResult:
         """A result with this capture's unstable inputs and counters."""
-        return CaptureResult(outcome=outcome, epoch=epoch, unstable=sorted(self.unstable), counters=self.counters)
+        mut readings: Option[Rc[Dict[str, SourceReading]]] = None
+        if len(self.readings) > 0:
+            readings = Some(Rc.new(take(self.readings)))
+        return CaptureResult(
+            outcome=outcome, epoch=epoch, unstable=sorted(self.unstable), counters=self.counters, readings=readings,
+        )
 
     def epoch(self, request: CaptureRequest) -> BuildEpoch:
         """The epoch of what this capture found, each list sorted by path."""
@@ -802,12 +886,16 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
             if let Some(declared_root) = document.rust_source_root:
                 rust_source_root = declared_root
             dependencies = [dependency_root(root, dependency.path) for dependency in intent.dependencies if not dependency.rust_facet]
+            mut scripts = sorted(unique([value for value in intent.scripts.values()]))
+            if len(scripts) < 2:
+                scripts = []
             return Declarations(
                 manifest=manifest,
                 files=files,
                 source_root=source_root,
                 rust_source_root=rust_source_root,
                 dependencies=dependencies,
+                scripts=scripts,
             )
 
 
@@ -953,6 +1041,7 @@ pub def role_of(text: str) -> Result[InputRole, str]:
     roles = [
         InputRole.Root,
         InputRole.Member,
+        InputRole.ProjectMember,
         InputRole.Resolved,
         InputRole.Manifest,
         InputRole.Lock,

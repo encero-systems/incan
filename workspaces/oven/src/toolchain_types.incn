@@ -62,9 +62,15 @@ pub model Toolchain:
     pub checked_body_counts_crumb: bool = false
     pub worker_protocol_crumb: bool = false
     pub unit_descriptor_crumb: bool = false
+    pub graph_executable_crumb: bool = false
     pub compiler_record_export_crumb: bool = false
     pub namespace_references: bool = false
     pub retain_checked_modules: bool = false
+    pub captured_source_inputs: bool = false
+    # The current request owns the files here. Installed compiler records never retain this path.
+    pub captured_source_directory: str = ""
+    # Derived from the selected installation's bound driver document, never from the manifest.
+    pub supports_plan_module_selection_digest: bool = false
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -82,9 +88,11 @@ pub model Toolchain:
             checked_body_counts_crumb=self.checked_body_counts_crumb,
             worker_protocol_crumb=self.worker_protocol_crumb,
             unit_descriptor_crumb=self.unit_descriptor_crumb,
+            graph_executable_crumb=self.graph_executable_crumb,
             compiler_record_export_crumb=self.compiler_record_export_crumb,
             namespace_references=self.namespace_references,
             retain_checked_modules=self.retain_checked_modules,
+            captured_source_inputs=self.captured_source_inputs,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -115,9 +123,11 @@ pub model InstalledCompiler:
     pub checked_body_counts_crumb: bool = false
     pub worker_protocol_crumb: bool = false
     pub unit_descriptor_crumb: bool = false
+    pub graph_executable_crumb: bool = false
     pub compiler_record_export_crumb: bool = false
     pub namespace_references: bool = false
     pub retain_checked_modules: bool = false
+    pub captured_source_inputs: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -130,6 +140,8 @@ pub model InstalledCompiler:
     # Content identities admitted with this installation, ordered as driver then Rust ABI caches.
     pub compiler_facts: list[str] = []
     pub driver_observation: str = ""
+    # Reconstructed from the bound driver document; this field has no separate wire representation.
+    pub supports_plan_module_selection_digest: bool = false
 
     pub def select(self) -> Toolchain:
         """Create fresh request-local state around this admitted compiler description."""
@@ -147,9 +159,11 @@ pub model InstalledCompiler:
             checked_body_counts_crumb=self.checked_body_counts_crumb,
             worker_protocol_crumb=self.worker_protocol_crumb,
             unit_descriptor_crumb=self.unit_descriptor_crumb,
+            graph_executable_crumb=self.graph_executable_crumb,
             compiler_record_export_crumb=self.compiler_record_export_crumb,
             namespace_references=self.namespace_references,
             retain_checked_modules=self.retain_checked_modules,
+            captured_source_inputs=self.captured_source_inputs,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),
@@ -164,4 +178,5 @@ pub model InstalledCompiler:
             compiler_records=self.compiler_records,
             compiler_facts=self.compiler_facts,
             driver_observation=self.driver_observation,
+            supports_plan_module_selection_digest=self.supports_plan_module_selection_digest,
         )

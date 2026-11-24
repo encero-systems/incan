@@ -106,6 +106,40 @@ impl SurfaceIndex {
         identity: &CanonicalSymbolId,
         bytes: &[u8],
     ) -> Result<ExecutableDeclaration, ExecutableRepresentationError> {
+        self.decode_fragment(identity, bytes, None)
+    }
+
+    /// Decode a selected range and transfer its input buffer to the request only when it carries a layout witness.
+    pub fn decode_retaining_layout(
+        &self,
+        identity: &CanonicalSymbolId,
+        bytes: Vec<u8>,
+    ) -> Result<(ExecutableDeclaration, Option<AdmittedLayoutFrame>), ExecutableRepresentationError> {
+        let declaration = self.decode_declaration(identity, &bytes)?;
+        let frame = declaration
+            .linked_layout_witness()
+            .cloned()
+            .map(|witness| AdmittedLayoutFrame { bytes, witness });
+        Ok((declaration, frame))
+    }
+
+    /// Decode a retained declaration for the same authenticated range. The immutable frame owns its witness, so
+    /// a later resolution borrows its bytes and shares the digest without decoding the trailer again.
+    pub fn decode_retained_layout(
+        &self,
+        identity: &CanonicalSymbolId,
+        frame: &AdmittedLayoutFrame,
+    ) -> Result<ExecutableDeclaration, ExecutableRepresentationError> {
+        self.decode_fragment(identity, &frame.bytes, Some(&frame.witness))
+    }
+
+    /// Bind the already authenticated bytes to the selected identity and restore its complete declaration.
+    fn decode_fragment(
+        &self,
+        identity: &CanonicalSymbolId,
+        bytes: &[u8],
+        admitted: Option<&crate::body_ir::LinkedLayoutWitness>,
+    ) -> Result<ExecutableDeclaration, ExecutableRepresentationError> {
         let DeclarationCoverage::Covered { length, .. } = self.execution_coverage(identity)? else {
             return Err(ExecutableRepresentationError::DeclarationNotCovered {
                 declaration: identity.declaration_name.clone(),
@@ -116,6 +150,7 @@ impl SurfaceIndex {
         }
         let (mut declaration, remainder): (ExecutableDeclaration, _) =
             postcard::take_from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        let remainder = linked_layout_codec::restore(&mut declaration, remainder, admitted)?;
         match declaration.nominal_mut() {
             Some(nominal) => restore_trait_fields(std::slice::from_mut(nominal), remainder)?,
             None if !remainder.is_empty() => return Err(malformed("unexpected declaration trailer")),

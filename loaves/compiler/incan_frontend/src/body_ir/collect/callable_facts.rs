@@ -143,14 +143,24 @@ pub(super) fn declared_newtype_return_owner(body: &bir::Body) -> Option<&Canonic
         .filter(|owner| owner.kind == SemanticSourceTargetKind::Newtype)
 }
 
-/// Retain a nongeneric function's or checker-selected validation hook's exact declaration return carrier before its
-/// private aliases leave the provider. Ordinary method results keep their consumer's checked specialization.
-/// Generic callable results keep the consumer's checked instantiation facts; unresolved producer results never
-/// replace a consumer's type. The canonical key identifies the selected declaration, not a written import spelling.
-pub(in crate::body_ir) fn collect_published_callable_returns(
-    context: ContextModules<'_>,
+/// Callable declaration facts borrowed from their admitted provider frames.
+pub(in crate::body_ir) type PublishedCallables<'a> = HashMap<&'a CanonicalSymbolId, PublishedCallable<'a>>;
+
+/// The callable's ordered parameters and its eligible closed return carrier.
+#[derive(Default)]
+pub(in crate::body_ir) struct PublishedCallable<'a> {
+    pub(in crate::body_ir) parameters: &'a [bir::CallableParam],
+    pub(in crate::body_ir) return_type: Option<&'a IncanType>,
+}
+
+/// Index both callable facts in one pass. A generic or unresolved return stays with the consumer's checked
+/// specialization. The latest frame supplies its parameters, and the latest eligible frame supplies its return.
+pub(in crate::body_ir) fn collect_published_callables<'a>(
+    context: ContextModules<'a>,
     facts: &TypeCheckInfo,
-) -> HashMap<CanonicalSymbolId, IncanType> {
+) -> PublishedCallables<'a> {
+    let _prepare =
+        tracing::trace_span!(target: "incan::invocation", "incan_frontend::prepare_published_callables").entered();
     let hooks = facts
         .expressions
         .validated_newtype_coercions
@@ -158,40 +168,29 @@ pub(in crate::body_ir) fn collect_published_callable_returns(
         .flat_map(|coercion| &coercion.steps)
         .filter_map(|step| step.ctor_identity.as_ref())
         .collect::<HashSet<_>>();
-    context
-        .iter()
-        .flat_map(|module| module.callable_declaration_frames())
-        .filter(|body| body.type_parameters.is_empty())
-        .filter(|body| {
-            !matches!(
+    let mut published = PublishedCallables::new();
+    let mut frames = 0;
+    let mut default_slots = 0;
+    let mut return_types = 0;
+    for body in context.iter().flat_map(|module| module.callable_declaration_frames()) {
+        frames += 1;
+        let Some(identity) = &body.canonical else { continue };
+        let declaration = published.entry(identity).or_default();
+        declaration.parameters = &body.params;
+        default_slots += body.params.len();
+        if body.type_parameters.is_empty()
+            && !matches!(
                 body.return_type,
                 IncanType::Unknown | IncanType::Infer | IncanType::SelfType | IncanType::TypeVar(_)
             )
-        })
-        .filter_map(|body| {
-            let identity = body.canonical.as_ref()?;
-            (identity.kind == SemanticSourceTargetKind::Function || hooks.contains(identity))
-                .then(|| (identity.clone(), body.return_type.clone()))
-        })
-        .collect()
-}
-
-/// Retain each published callable's parameter defaults, in parameter order, from its declaration record among the
-/// linked Loaves' declarations, so a call that omits an argument passes the declared default.
-pub(in crate::body_ir) fn collect_published_callable_defaults(
-    context: ContextModules<'_>,
-) -> HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>> {
-    context
-        .iter()
-        .flat_map(|module| module.callable_declaration_frames())
-        .filter_map(|body| {
-            let identity = body.canonical.as_ref()?;
-            Some((
-                identity.clone(),
-                body.params.iter().map(|param| param.default.clone()).collect(),
-            ))
-        })
-        .collect()
+            && (identity.kind == SemanticSourceTargetKind::Function || hooks.contains(identity))
+        {
+            declaration.return_type = Some(&body.return_type);
+            return_types += 1;
+        }
+    }
+    tracing::trace!(target: "incan::invocation", frames, default_slots, return_types, "indexed published callables");
+    published
 }
 
 /// Collect the exact source spans eligible for same-module direct named-call dispatch.

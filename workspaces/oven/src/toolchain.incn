@@ -22,6 +22,7 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
 - `closure_anchors`: this compiler accepts `--toolchain-root` and `--bakery-root` and publishes anchored native
   closures. Its absence keeps those options away from a driver that predates them, as in a release's source closure,
   which the preceding release's driver builds.
+- `graph_executable_crumb` enables typed checked owner and namespace values with snapshot-bound scope records.
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -52,6 +53,7 @@ from apple_sdk import selected_sdk
 from std.environ import get_or
 from jec import begin, record
 from installation_codec import Installation
+from installation_capability import DriverCapabilityIntake
 from frozen_inputs import clear as clear_frozen_inputs
 from installation_page import (
     readmit as readmit_installation_page,
@@ -67,6 +69,7 @@ pub model InstallationAdmission:
 
     pub payloads: list[Tuple[str, PayloadAdmission]]
     pub facts: list[Tuple[str, FactAdmission]]
+    pub plan_selection_driver: Option[FactAdmission] = None
 
 
 pub def prepare_installation(directory: Path) -> Result[tuple[Toolchain, InstallationAdmission], str]:
@@ -90,7 +93,8 @@ pub def finish_installation(directory: Path, admission: InstallationAdmission) -
     toolchain, _ = parsed_toolchain(directory)?
     # The machine-local sysroot exists only after installation has selected and bound it.
     admit_compiler_facts(toolchain)?
-    readmit_installation_page(directory, read_toolchain, Some((toolchain, generation)))?
+    intake = DriverCapabilityIntake.Staged(admission.plan_selection_driver)
+    readmit_installation_page(directory, read_toolchain, Some((toolchain, generation)), intake)?
     retire_legacy_admission(directory)?
     return Ok(None)
 
@@ -139,8 +143,13 @@ pub def installation(directory: Path) -> Result[Installation, str]:
 
 pub def readmit_installation(directory: Path) -> Result[Installation, str]:
     """Replace the admitted page only when the owner of an unfinished build installation changed it."""
+    return readmit_owned_installation(directory, DriverCapabilityIntake.Legacy)
+
+
+def readmit_owned_installation(directory: Path, intake: DriverCapabilityIntake) -> Result[Installation, str]:
+    """Admit the owner's selected generation under the existing installation claim."""
     clock = begin()
-    page = readmit_installation_page(directory, read_toolchain)?
+    page = readmit_installation_page(directory, read_toolchain, None, intake)?
     retire_legacy_admission(directory)?
     record(Operation.ToolchainAdmission, directory.0, clock)
     return Ok(page)
@@ -151,7 +160,7 @@ pub def readmit_selected_installation() -> Result[Installation, str]:
     mut directory = toolchain_directory()?
     if directory.is_dir():
         directory = directory.resolve().map_err((error) => f"cannot {error.message()}")?
-    return readmit_installation(directory)
+    return readmit_owned_installation(directory, DriverCapabilityIntake.Selected)
 
 
 pub def readmit_relinked_installation(removed: list[str]) -> Result[int, str]:
@@ -393,8 +402,10 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             closure_anchors=optional_flag(document, "closure_anchors")?,
             search_index_crumb=optional_flag(document, "search_index_crumb")?,
             checked_body_counts_crumb=optional_flag(document, "checked_body_counts_crumb")?,
+            captured_source_inputs=optional_flag(document, "captured_source_inputs")?,
             worker_protocol_crumb=optional_flag(document, "worker_protocol_crumb")?,
             unit_descriptor_crumb=optional_flag(document, "unit_descriptor_crumb")?,
+            graph_executable_crumb=optional_flag(document, "graph_executable_crumb")?,
             compiler_record_export_crumb=optional_flag(document, "compiler_record_export_crumb")?,
             namespace_references=optional_flag(document, "namespace_references")?,
             retain_checked_modules=optional_flag(document, "retain_checked_modules")?,

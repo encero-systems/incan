@@ -26,7 +26,7 @@ pub fn collect_unions(module: &BodyIrModule) -> Vec<IncanType> {
     let mut added = BTreeSet::new();
     let retained = BTreeSet::new();
     for ty in declaration_storage(module) {
-        retain_union(&mut unions, &retained, &mut added, &ty);
+        retain_union(&mut unions, &retained, &mut added, ty);
     }
     for delegation in &module.loaf_callables {
         if !delegation.type_parameters.is_empty() {
@@ -66,12 +66,29 @@ pub fn collect_unions(module: &BodyIrModule) -> Vec<IncanType> {
 
 /// Append union shapes introduced by resolved runtime facts while preserving every existing native slot.
 pub fn extend_unions(unions: &mut Vec<IncanType>, module: &BodyIrModule) {
+    let previous_count = unions.len();
     let mut retained: BTreeSet<IncanType> = unions.iter().cloned().collect();
-    for ty in collect_unions(module) {
+    let selected = collect_unions(module);
+    let constructed = selected.len();
+    for ty in selected {
         if !retained.contains(&ty) {
             retained.insert(ty.clone());
             unions.push(ty);
         }
+    }
+    trace_union_selection("continuation", constructed, unions.len() - previous_count, unions);
+}
+
+/// Trace the exact ordered union shapes beside the counts of temporary and newly published entries.
+pub(crate) fn trace_union_selection(phase: &str, constructed: usize, appended: usize, unions: &[IncanType]) {
+    if crate::trace_channel::tracing_products() {
+        let row = serde_json::json!({
+            "phase": phase,
+            "constructed": constructed,
+            "appended": appended,
+            "ordered_layouts": unions,
+        });
+        crate::trace_channel::emit("carrier_unions", "", &row.to_string());
     }
 }
 

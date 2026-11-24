@@ -11,7 +11,10 @@ use crate::class_inheritance::specialize_classes;
 use crate::native_type_identity::{
     ConstructorIndex, argument_identities, named_positions, native_owner, representation_arguments,
 };
-use crate::nominal_frames::{SelectedMember, called_members, closed_arguments, declaration_storage, nominal_frames};
+use crate::nominal_frames::{
+    SelectedMember, authored_nominal_frames, called_members, closed_arguments, declaration_storage,
+    instantiated_nominal_frames,
+};
 use crate::symbols::type_component;
 use crate::type_parameters::{close_result_requirements, close_trait_environment, substitute};
 
@@ -130,7 +133,7 @@ pub fn specialize_nominals_with_instances(
         }
     }
     for ty in declaration_storage(module) {
-        collect_nominal_type(constructors, module, &ty, &mut instances, &[])?;
+        collect_nominal_type(constructors, module, ty, &mut instances, &[])?;
     }
     for declaration in enum_layouts {
         for variant in &declaration.variants {
@@ -142,11 +145,14 @@ pub fn specialize_nominals_with_instances(
     for declaration in &module.static_declarations {
         collect_nominal_type(constructors, module, &declaration.ty, &mut instances, &[])?;
     }
-    for body in nominal_frames(constructors, module)? {
-        if owner_template(constructors, module, &body)?.is_none()
+    let instantiated = instantiated_nominal_frames(constructors, module)?;
+    let mut borrowed_frames = 0;
+    for body in authored_nominal_frames(module).chain(&instantiated) {
+        borrowed_frames += 1;
+        if owner_template(constructors, module, body)?.is_none()
             && closed_arguments(std::slice::from_ref(&body.return_type))
         {
-            retain_selected_members(&body, &mut selected);
+            retain_selected_members(body, &mut selected);
         }
         for local in &body.locals {
             collect_nominal_type(constructors, module, &local.ty, &mut instances, &[])?;
@@ -225,28 +231,49 @@ pub fn specialize_nominals_with_instances(
             .or_default()
             .push(position);
     }
-    let mut bodies: Vec<Body> = inherited;
-    for (index, body) in module.bodies.iter().enumerate() {
-        let Some(owner) = templates[index] else {
-            bodies.push(body.clone());
-            continue;
-        };
+    let mut replacements = Vec::new();
+    for (index, owner) in templates.into_iter().enumerate() {
+        let Some(owner) = owner else { continue };
+        let body = &module.bodies[index];
         let canonical = &module.nominal_declarations[owner].canonical;
+        let mut frames = Vec::new();
         if let Some(positions) = owner_instances.get(&canonical.render_compact()) {
             for position in positions {
                 let instance = &instances[*position];
                 if instance.declaration.canonical == *canonical {
                     let closed = close_owner_body(body, instance)?;
                     if retained_body_types(constructors, module, &closed, &instances)? {
-                        bodies.push(closed);
+                        frames.push(closed);
                     }
                 }
             }
         }
+        replacements.push((index, frames));
+    }
+    let retained_bodies = module.bodies.len() - replacements.len();
+    if !inherited.is_empty() || !replacements.is_empty() {
+        let mut bodies = inherited;
+        let mut original = std::mem::take(&mut module.bodies).into_iter();
+        let mut position = 0;
+        for (index, specialized) in replacements {
+            bodies.extend(original.by_ref().take(index - position));
+            let _template = original.next();
+            bodies.extend(specialized);
+            position = index + 1;
+        }
+        bodies.extend(original);
+        module.bodies = bodies;
+    }
+    if crate::trace_channel::tracing_products() {
+        let row = serde_json::json!({
+            "borrowed_source_frames": borrowed_frames - instantiated.len(),
+            "instantiated_frames": instantiated.len(),
+            "retained_source_bodies": retained_bodies,
+        });
+        crate::trace_channel::emit("nominal_frame_ownership", "", &row.to_string());
     }
     module.nominal_declarations = declarations;
     module.trait_implementations = implementations;
-    module.bodies = bodies;
     Ok(instances)
 }
 
@@ -606,6 +633,7 @@ pub fn close_layout(instance: &NominalInstance) -> Result<NominalDeclaration, St
     let template = &instance.declaration;
     let names = &template.type_parameters;
     let mut result = template.clone();
+    result.linked_layout_witness = None;
     if !result.native_item.is_empty() {
         for argument in &template.native_type_arguments {
             substitute(argument, names, &instance.arguments)?;

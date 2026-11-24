@@ -14,7 +14,7 @@ use incan_lang::lang::stdlib;
 use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};
 use crate::session::CompilationSession;
-use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
+use crate::sources::{collect_incan_source_files, read_captured_source, read_source_for_diagnostics};
 use incan_frontend::ast::{Declaration, ImportKind, ImportPath, Program};
 use incan_frontend::module::{
     MissingSourceModule, SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
@@ -268,13 +268,31 @@ fn is_unselected_package_entrypoint(source_root: &Path, source_file: &Path, sele
 ///
 /// A path that cannot be canonicalized keeps its spelling, which is the only identity it has; the file is read next
 /// and reports the real failure. A module's [`ParsedModule::file_path`] keeps the spelling it was reached by, so
-/// callers that located the entry themselves can still find it by the path they passed in. Every caller of
-/// [`topologically_sort_modules`] must key its dependency edges through this same function; the test runner's
-/// collector in `testing::module_graph` is the other one.
+/// callers that located the entry themselves can still find it by the path they passed in. The test runner's
+/// collector keys its edges with this function, which uses the same physical observation as module collection.
 pub(crate) fn source_identity_key(path: &str) -> String {
+    canonical_source_identity(path).unwrap_or_else(|| path.to_owned())
+}
+
+/// Make one physical observation. Callers can preserve the authored spelling when no canonical path is available.
+fn canonical_source_identity(path: &str) -> Option<String> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::source_identity_key", input = path).entered();
     fs::canonicalize(path)
+        .ok()
         .map(|canonical| canonical.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string())
+}
+
+/// Reuse a successful observation for this spelling within one collection. A failed query can be observed again.
+fn observe_source_identity(path: &str, observed: &mut HashMap<String, String>) -> String {
+    if let Some(identity) = observed.get(path) {
+        return identity.clone();
+    }
+    let Some(identity) = canonical_source_identity(path) else {
+        return path.to_owned();
+    };
+    observed.insert(path.to_owned(), identity.clone());
+    identity
 }
 
 /// Collect one source graph from explicit seed modules through an already-resolved compilation session.
@@ -292,15 +310,17 @@ fn collect_modules_detailed_from_seeds(
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let base_dir = path.parent().unwrap_or(Path::new("."));
     let mut modules = Vec::new();
-    let mut processed = HashSet::new();
+    let mut observed_identities = HashMap::new();
+    // Each admitted identity keeps its module's discovery position for ordering.
+    let mut id_by_key = HashMap::new();
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     while let Some((file_path, module_name, path_segments)) = to_process.pop() {
-        let file_key = source_identity_key(&file_path);
-        if processed.contains(&file_key) {
+        let file_key = observe_source_identity(&file_path, &mut observed_identities);
+        let std::collections::hash_map::Entry::Vacant(discovery) = id_by_key.entry(file_key.clone()) else {
             continue;
-        }
-        processed.insert(file_key.clone());
-        dependency_edges.entry(file_key.clone()).or_default();
+        };
+        discovery.insert(modules.len());
+        let dependencies = dependency_edges.entry(file_key).or_default();
 
         reads.read.push(PathBuf::from(&file_path));
         let collected = collect_file(
@@ -313,17 +333,17 @@ fn collect_modules_detailed_from_seeds(
             reads,
         )?;
         for (dep_path_str, dep_name, dep_segments) in collected.seeds {
-            let dep_key = source_identity_key(&dep_path_str);
-            if !processed.contains(&dep_key) {
+            let dep_key = observe_source_identity(&dep_path_str, &mut observed_identities);
+            if !id_by_key.contains_key(&dep_key) {
                 to_process.push((dep_path_str, dep_name, dep_segments));
             }
-            dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
+            dependencies.insert(dep_key);
         }
         reads.surfaces.push(collected.surface);
         modules.push(collected.module);
     }
 
-    Ok(topologically_sort_modules(modules, &dependency_edges)?)
+    Ok(order_source_modules(modules, &dependency_edges, &id_by_key))
 }
 
 /// One source file as module collection reads it: its parsed module, the collection seed of each module its imports
@@ -346,10 +366,25 @@ fn collect_file(
     open_sources: &HashMap<PathBuf, String>,
     reads: &mut SourceGraphReads,
 ) -> Result<CollectedFile, CliDiagnosticFailure> {
-    let source = match open_sources.get(Path::new(&file_path)) {
-        Some(source) => source.clone(),
-        None => read_source_for_diagnostics(&file_path)?,
+    let (source, from_capture) = match open_sources.get(Path::new(&file_path)) {
+        Some(source) => (source.clone(), false),
+        None => {
+            let captured = session
+                .unit()
+                .captured_sources
+                .as_deref()
+                .map(|directory| read_captured_source(directory, file_path))
+                .transpose()?
+                .flatten();
+            match captured {
+                Some(source) => (source, true),
+                None => (read_source_for_diagnostics(file_path)?, false),
+            }
+        }
     };
+    if session.unit().captured_sources.is_some() {
+        session.record_source_origin(file_path, from_capture)?;
+    }
     let file_path_obj = Path::new(&file_path);
     let (mut ast, gated_exports) =
         match session
@@ -383,6 +418,8 @@ fn collect_file(
     };
     let mut seeds = Vec::new();
     let mut missing_modules = Vec::new();
+    let import_reads =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::collect_file_imports").entered();
     for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
         let span = resolved.span;
         for absent in resolved.probed {
@@ -426,6 +463,7 @@ fn collect_file(
         surface.modules.push(module_ref.file_path.clone());
         seeds.push((dep_path_str, dep_name, dep_segments));
     }
+    drop(import_reads);
     // Every import of a module no file defines is refused here, each once, before checking binds its names.
     if !missing_modules.is_empty() {
         return Err(CliDiagnosticFailure::from_errors(
@@ -564,16 +602,30 @@ pub fn topologically_sort_modules(
     modules: Vec<ParsedModule>,
     dependency_edges: &HashMap<String, HashSet<String>>,
 ) -> CliResult<Vec<ParsedModule>> {
-    if modules.is_empty() {
-        return Ok(modules);
-    }
-
-    // A module's id is its discovery position; collection reaches each source identity once.
-    let id_by_key: HashMap<String, usize> = modules
+    let id_by_key = modules
         .iter()
         .enumerate()
         .map(|(id, module)| (source_identity_key(&module.file_path.to_string_lossy()), id))
         .collect();
+    Ok(order_source_modules(modules, dependency_edges, &id_by_key))
+}
+
+/// Order the collected modules using the exact physical identities used when recording the dependency edges.
+fn order_source_modules(
+    modules: Vec<ParsedModule>,
+    dependency_edges: &HashMap<String, HashSet<String>>,
+    id_by_key: &HashMap<String, usize>,
+) -> Vec<ParsedModule> {
+    let _invocation = tracing::trace_span!(
+        target: "incan::invocation",
+        "incan_driver::order_source_modules",
+        modules = modules.len()
+    )
+    .entered();
+    if modules.is_empty() {
+        return modules;
+    }
+
     let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); modules.len()];
     for (module_path, deps) in dependency_edges {
         let Some(&module) = id_by_key.get(module_path) else {
@@ -624,7 +676,7 @@ pub fn topologically_sort_modules(
     }
 
     let mut slots: Vec<Option<ParsedModule>> = modules.into_iter().map(Some).collect();
-    Ok(placed.into_iter().filter_map(|id| slots[id].take()).collect())
+    placed.into_iter().filter_map(|id| slots[id].take()).collect()
 }
 
 /// The strongly connected components of a dependency graph over ids `0..dependencies.len()`: every import cycle as
@@ -1008,14 +1060,35 @@ mod retained_namespace_tests {
 
 #[cfg(test)]
 mod source_surface_tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::{SourceFileSurface, collect_source_graph_reads, source_file_surface};
+    use tracing::Subscriber;
+    use tracing::span::{Attributes, Id};
+    use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+    use super::{
+        SourceFileSurface, collect_document_modules, collect_source_graph_reads, source_file_surface,
+        source_identity_key,
+    };
     use crate::session::CompilationSession;
     use crate::unit::UnitDescription;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Count actual physical source-identity lookups in just this collection.
+    struct SourceIdentityQueries(Arc<AtomicUsize>);
+
+    impl<S: Subscriber> Layer<S> for SourceIdentityQueries {
+        fn on_new_span(&self, attributes: &Attributes<'_>, _: &Id, _: Context<'_, S>) {
+            if attributes.metadata().name() == "incan_driver::source_identity_key" {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
 
     /// A program unit whose entry is `src/main.incn` under `project`, reaching no Loaf.
     fn unit(project: &Path) -> Result<UnitDescription, Box<dyn std::error::Error>> {
@@ -1057,20 +1130,30 @@ mod source_surface_tests {
         fs::create_dir_all(&sources)?;
         fs::write(
             sources.join("main.incn"),
-            "from helper import value\n\ndef main() -> None:\n    println(\"one\")\n",
+            "from helper import value\nfrom helper import value as same_value\n\ndef main() -> None:\n    println(\"one\")\n",
         )?;
         fs::write(sources.join("helper.incn"), "def value() -> int:\n    return 1\n")?;
         fs::write(sources.join("other.incn"), "def thing() -> int:\n    return 0\n")?;
         let unit = unit(root.path())?;
         let session = CompilationSession::for_formatting(&unit).map_err(|error| error.message)?;
-        let (reads, collected) = collect_source_graph_reads(unit.source.clone(), &session);
+        let identity_queries = Arc::new(AtomicUsize::new(0));
+        let observer = tracing_subscriber::registry().with(SourceIdentityQueries(Arc::clone(&identity_queries)));
+        let (reads, collected) =
+            tracing::subscriber::with_default(observer, || collect_source_graph_reads(unit.source.clone(), &session));
         collected.map_err(|failure| failure.render_human())?;
         assert_eq!(reads.surfaces.len(), reads.read.len());
         let helper = recorded(&reads.surfaces, "helper.incn")?.clone();
         let entry = recorded(&reads.surfaces, "main.incn")?;
-        assert_eq!(entry.modules.len(), 1);
+        assert_eq!(entry.modules.len(), 2);
         assert!(entry.modules[0].ends_with("helper.incn"));
+        assert_eq!(entry.modules[0], entry.modules[1]);
         assert!(helper.modules.is_empty());
+        let lookups = identity_queries.load(Ordering::Relaxed);
+        assert!(
+            (1..=reads.read.len()).contains(&lookups),
+            "collection read {} distinct sources and queried {lookups} physical identities",
+            reads.read.len()
+        );
         let collect =
             |path: &Path| source_file_surface(path.to_path_buf(), &session).map_err(|failure| failure.render_human());
         assert_eq!(collect(&helper.path)?.0, helper);
@@ -1083,6 +1166,69 @@ mod source_surface_tests {
         let changed = collect(&helper.path)?.0;
         assert_ne!(changed, helper, "a new import kept the surface");
         assert!(changed.modules[0].ends_with("other.incn"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_symlink_keeps_its_spelling_and_canonical_cycle() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let sources = root.path().join("src");
+        fs::create_dir_all(&sources)?;
+        let main = sources.join("main.incn");
+        let helper = sources.join("helper.incn");
+        let entry = sources.join("entry.incn");
+        fs::write(
+            &main,
+            "from helper import value\n\ndef run() -> int:\n    return value()\n",
+        )?;
+        fs::write(
+            &helper,
+            "from main import run\n\ndef value() -> int:\n    return run()\n",
+        )?;
+        std::os::unix::fs::symlink(&main, &entry)?;
+        let session = CompilationSession::for_formatting(&unit(root.path())?).map_err(|error| error.message)?;
+
+        let (reads, modules) = collect_source_graph_reads(entry.clone(), &session);
+        let modules = modules.map_err(|failure| failure.render_human())?;
+        let helper = helper.canonicalize()?;
+        assert_eq!(reads.read, [entry.clone(), helper.clone()]);
+        assert_eq!(
+            recorded(&reads.surfaces, "helper.incn")?.modules,
+            [main.canonicalize()?]
+        );
+        assert_eq!(modules.len(), 2);
+        assert_eq!(modules[0].file_path, helper);
+        assert_eq!(modules[1].file_path, entry);
+        assert_eq!(modules[1].path_segments, ["entry"]);
+        Ok(())
+    }
+
+    #[test]
+    fn an_open_document_without_a_file_keeps_its_path_and_missing_read_error() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let sources = root.path().join("src");
+        fs::create_dir_all(&sources)?;
+        let entry = sources.join("./virtual.incn");
+        assert!(entry.canonicalize().is_err());
+        assert_eq!(source_identity_key(&entry.to_string_lossy()), entry.to_string_lossy());
+        fs::write(sources.join("helper.incn"), "def value() -> int:\n    return 1\n")?;
+        let session = CompilationSession::for_formatting(&unit(root.path())?).map_err(|error| error.message)?;
+        let collect = |buffers: &HashMap<_, _>| {
+            collect_document_modules(entry.clone(), &session, vec!["virtual".into()], buffers)
+        };
+        let buffers = HashMap::from([(
+            entry.clone(),
+            "from helper import value\n\ndef run() -> int:\n    return value()\n".into(),
+        )]);
+        let modules = collect(&buffers).map_err(|failure| failure.render_human())?;
+        assert_eq!(modules.len(), 2);
+        assert!(modules[0].file_path.ends_with("helper.incn"));
+        assert_eq!(modules[1].file_path.as_os_str(), entry.as_os_str());
+        let Err(failure) = collect(&HashMap::new()) else {
+            return Err("collection read a missing file with no open buffer".into());
+        };
+        assert!(failure.render_human().contains("virtual.incn"));
         Ok(())
     }
 }

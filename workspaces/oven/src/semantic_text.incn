@@ -33,6 +33,7 @@ model LogicalLine:
 class SemanticScanner:
     """A single-pass scanner over one source slice; its state never outlives the slice."""
 
+    retain_text: bool = true
     mode: ScanMode = ScanMode.Code
     quote: str = ""
     triple: bool = false
@@ -46,15 +47,48 @@ class SemanticScanner:
     line_output: bool = false
     has_content: bool = false
     only_strings: bool = true
-    tail: str = ""
+    continued: bool = false
     pub lines: list[LogicalLine] = []
     pub layout: str = ""
+
+    @staticmethod
+    pub def for_boundaries() -> SemanticScanner:
+        """Scan statement boundaries without collecting normalized text."""
+        return SemanticScanner(retain_text=false)
+
+    pub def after_line(mut self, line: str) -> bool:
+        """Read one physical line and report whether its statement continues past it."""
+        for character in line:
+            self.feed(character)
+        if not line.endswith("\n"):
+            self.feed("\n")
+        return self.has_content
 
     pub def scan(mut self, source: str) -> None:
         """Read every character of `source`, then close its last line."""
         for character in source:
             self.feed(character)
         self.feed("\n")
+
+    pub def scan_comments(mut self, source: str) -> str:
+        """Read source with the same scanner and retain ordered comment lexemes."""
+        mut comments: list[str] = []
+        mut lexeme: list[str] = []
+        for character in source:
+            self.feed(character)
+            if self.mode == ScanMode.Comment:
+                lexeme.append(character)
+            elif len(lexeme) > 0:
+                # A CR immediately before this LF belongs to the physical terminator.
+                if lexeme[len(lexeme) - 1] == "\r":
+                    _ = lexeme.pop()
+                comments.append("".join(lexeme))
+                lexeme = []
+        if len(lexeme) > 0:
+            comments.append("".join(lexeme))
+        self.feed("\n")
+        return "\n".join(comments)
+
 
     def feed(mut self, character: str) -> None:
         """Advance by one character in the current mode."""
@@ -74,7 +108,8 @@ class SemanticScanner:
         elif character == "\n":
             self.end_physical_line()
         elif character in " \t\r":
-            self.pending += character
+            if self.retain_text:
+                self.pending += character
         elif character in "\"'":
             self.emit(character)
             self.quote = character
@@ -83,7 +118,7 @@ class SemanticScanner:
         else:
             self.emit(character)
             self.only_strings = false
-            self.remember(character)
+            self.continued = character == "\\"
             if character in "([{":
                 self.depth += 1
             elif character in ")]}" and self.depth > 0:
@@ -93,8 +128,7 @@ class SemanticScanner:
         """Tell an empty string, a one-line string and a triple-quoted string apart by the quotes that open them."""
         if character == self.quote and self.opening < 3:
             self.opening += 1
-            self.line += character
-            self.layout += character
+            self.keep_text(character)
             if self.opening == 3:
                 self.triple = true
                 self.mode = ScanMode.Text
@@ -113,16 +147,13 @@ class SemanticScanner:
         if self.escaped:
             self.escaped = false
             self.closing = 0
-            self.line += character
-            self.layout += character
+            self.keep_text(character)
         elif character == "\\":
             self.escaped = true
             self.closing = 0
-            self.line += character
-            self.layout += character
+            self.keep_text(character)
         elif character == self.quote:
-            self.line += character
-            self.layout += character
+            self.keep_text(character)
             self.closing += 1
             if not self.triple or self.closing == 3:
                 self.closing = 0
@@ -133,44 +164,54 @@ class SemanticScanner:
             self.code(character)
         else:
             self.closing = 0
+            self.keep_text(character)
+
+    def keep_text(mut self, character: str) -> None:
+        """Keep a quoted character when the caller requested source text."""
+        if self.retain_text:
             self.line += character
             self.layout += character
-
-    def remember(mut self, character: str) -> None:
-        """Keep the last two code characters; a trailing backslash continues the statement on the next line."""
-        mut tail = self.tail + character
-        if len(tail) > 2:
-            tail = tail[len(tail) - 2:]
-        self.tail = tail
 
     def emit(mut self, character: str) -> None:
         """Keep held whitespace before new content; the first content of a line fixes its indentation."""
         if not self.has_content:
             self.indentation = self.pending
             self.has_content = true
-        self.line += self.pending + character
-        self.layout += self.pending + character
-        self.pending = ""
+        if self.retain_text:
+            self.line += self.pending + character
+            self.layout += self.pending + character
+            self.pending = ""
         self.line_output = true
 
     def end_physical_line(mut self) -> None:
         """Drop trailing whitespace; continue a bracketed or backslash-continued statement, otherwise close it."""
-        self.layout += "\n"
+        if self.retain_text:
+            self.layout += "\n"
         self.pending = ""
-        if self.depth > 0 or self.tail.endswith("\\"):
-            if self.line_output:
+        if self.depth > 0 or self.continued:
+            if self.retain_text and self.line_output:
                 self.line += "\n"
                 self.line_output = false
-            self.tail = ""
+            self.continued = false
             return
-        if self.has_content:
+        if self.retain_text and self.has_content:
             self.lines.append(LogicalLine(text=self.line, indentation=self.indentation, only_strings=self.only_strings))
         self.line = ""
         self.indentation = ""
         self.line_output = false
         self.has_content = false
         self.only_strings = true
-        self.tail = ""
+        self.continued = false
+
+
+pub class StatementContinuation:
+    """Track where a logical statement ends without retaining its text."""
+
+    scanner: SemanticScanner = SemanticScanner.for_boundaries()
+
+    pub def after_line(mut self, line: str) -> bool:
+        """Read one physical line and report whether its statement continues past it."""
+        return self.scanner.after_line(line)
 
 
 pub def documentation_free(source: str) -> str:
@@ -222,16 +263,24 @@ def documents(lines: list[LogicalLine], index: int) -> bool:
     return false
 
 
-pub def positioned_code(source: str) -> str:
+pub def positioned_source(source: str, retain_comments: bool = false) -> tuple[str, str]:
     """
-    The text of a source file without its comments or trailing whitespace, with every line kept, so every line and
-    column of code is where it was; blank lines after the last code are dropped. Two files with the same positioned
-    code compile to the same native code and line tables: a comment text edit, or a comment ending a line or the file,
-    leaves it unchanged, while a comment line inserted above code moves that code and changes it.
+    Keep the source's code positions, dropping comments, trailing whitespace and blank lines after the last code.
+    When requested, return the original comment lexemes from that same scan in physical order.
     """
     mut scanner = SemanticScanner()
-    scanner.scan(source)
+    mut comments = ""
+    if retain_comments:
+        comments = scanner.scan_comments(source)
+    else:
+        scanner.scan(source)
     mut text = scanner.layout
     while text.endswith("\n"):
         text = text[:len(text) - 1]
-    return text
+    return (text, comments)
+
+
+pub def source_comments(source: str) -> str:
+    """Retain comment lexemes without allocating a positioned or semantic projection."""
+    mut scanner = SemanticScanner.for_boundaries()
+    return scanner.scan_comments(source)

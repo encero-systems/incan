@@ -1,18 +1,28 @@
 """Settle one captured program request, select its result and protect the caller's execution roots."""
 
 from std.fs import Path
+from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
-from rust::std::mem import take
+from rust::std::mem import drop, take
 from std.encoding.hex import hexlify
-from engine_messages import BindingOutcome, Complete, CompletionStatus
+from engine_channel import Channel
+from compiler_graph_records import ReceiptProjectionCache
+from engine_messages import BindingOutcome, Captured, Complete, CompletionStatus, Message
+from engine_overlay import is_editor_view
+from engine_replies import send
 from request_directory import serve_from, served
-from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection, view_sealed
+from engine_programs import (
+    PreparedProgram, ProgramOutcome, check_program, obtain, prepare_program, prepare_selection, program_handle, view_sealed,
+)
 from graph_read_demands import begin_graph_demands, finish_graph_demands, note_graph_demand
-from engine_epochs import CapturedRequest, after_projection
-from engine_capture import CaptureCounters
+from engine_epochs import CapturedRequest, after_projection, initial_program_epoch
+from engine_capture import CaptureCounters, InputRole
 from engine_proofs import retain, prepare_report
-from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts, measure_frame_reads, finish_frame_reads
+from pub::incan_platform.store import (
+    SnapshotAdmission, Transaction, begin as begin_selection, commit, commit_pinned, read_counts,
+    measure_frame_reads, finish_frame_reads,
+)
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
@@ -31,9 +41,9 @@ pub model Pending:
     pub view: str
     pub proofs: bool
     pub producer: str
-    pub handle: str
     pub command: str
     pub format: str
+    pub handle: str = ""
     # The directory the client's command ran in; its compilations are for that directory.
     pub directory: str = ""
     # The canonical unit options the client parsed; empty for an ordinary unit.
@@ -62,7 +72,10 @@ pub model Ready:
     pub pin: Option[ExecutionLease] = None
 
 
-pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
+pub def finish_request(
+    store: Path, mut admission: SnapshotAdmission, pending: Pending, mut channel: BorrowedMut[Channel],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[Ready, str]:
     """
     Capture installed facts once for this activation and resume reconciliation before the next request. The unit
     reasons the request records travel back with its completion, so they reach the caller's own trace channel.
@@ -70,7 +83,8 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     begin_command()
     serve_from(pending.directory)
     collect_reasons()
-    settled = settled_request(store, pending)
+    mut action = pending
+    settled = settled_request(store, admission, action, channel, receipts)
     notes = "\n".join(collected_reasons())
     served()
     end_command()
@@ -79,7 +93,10 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     return Ok(ready)
 
 
-def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
+def settled_request(
+    store: Path, mut admission: SnapshotAdmission, mut pending: Pending, mut channel: BorrowedMut[Channel],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[Ready, str]:
     """
     Settle one request without executing user code in the engine.
 
@@ -92,28 +109,16 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     if pending.command == "check":
-        return settled_check(store, pending, directory.joinpath(run).0)
+        announce_capture(pending, channel)?
+        return settled_check(store, admission, pending, directory.joinpath(run).0)
     producing = begin()
     toolchain = toolchain_directory()?.0 + "/"
     standard = standard_library_dir()?.0 + "/"
     count_frozen_work([toolchain, standard])
     reading = read_counts()
     begin_graph_demands(pending.proofs)
-    if pending.proofs:
-        note_graph_demand("capture-mode", pending.capture.snapshot, pending.capture.revision)
     measure_frame_reads(pending.proofs)
-    produced_result = obtain(
-        store,
-        pending.capture.revision,
-        pending.handle,
-        directory.joinpath(run).0,
-        Some(pending.capture.epoch),
-        pending.producer,
-        Some(pending.capture.selected),
-        pending.unit_options,
-        pending.records,
-        pending.origin,
-    )
+    produced_result = produce_program(store, admission, pending, directory.joinpath(run).0, channel, receipts)
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()
     frozen = finish_frozen_counting()
@@ -164,7 +169,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
             mut captured = after_projection(pending.capture)?
-            mut selection = prepare_selection(store, pending.view, unit, pending.handle)?
+            mut selection = prepare_selection(admission, pending.view, unit, pending.handle)?
             mut group: list[Transaction] = []
             if let Some(transaction) = take(captured.transaction):
                 group.append(transaction)
@@ -174,12 +179,17 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                 group.append(transaction)
             if let Some(transaction) = take(selection.transaction):
                 group.append(transaction)
+            mut warning_claim: Option[LockGuard] = None
+            if let Some(warnings) = take(produced.prepared_warnings):
+                warning_claim = Some(warnings.claim)
+                group.append(warnings.transaction)
             if pending.proofs:
-                group.append(prepare_report(store, run, counters, produced)?)
+                group.append(prepare_report(admission, run, counters, produced)?)
                 observation = run
             if len(group) == 0:
                 group.append(begin_selection(selection.snapshot))
             published = commit_pinned(group, pending.view).map_err((error) => error.message())?
+            drop(warning_claim)
             selected = published.snapshot
             # The commit flushed the baked unit's payloads; only now may the executable be viewed.
             view_sealed(store, produced.sealed)?
@@ -208,6 +218,59 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                     pin=Some(pin),
                 ),
             )
+
+
+def produce_program(
+    store: Path, mut admission: SnapshotAdmission, mut pending: BorrowedMut[Pending], console: str,
+    mut channel: BorrowedMut[Channel], mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[ProgramOutcome, str]:
+    """Announce the selected epoch before using its exact handle, prepared unit and deferred receipt metadata."""
+    prepared = prepare_initial_program(pending, console)?
+    pending.handle = program_handle(pending.capture.identity, pending.producer, pending.view)?
+    announce_capture(pending, channel)?
+    if pending.proofs:
+        note_graph_demand("capture-mode", pending.capture.snapshot, pending.capture.revision)
+    return obtain(
+        store, admission, pending.capture.revision, pending.handle, console, receipts, Some(pending.capture.epoch),
+        pending.producer, Some(pending.capture.selected), pending.unit_options, pending.records, pending.origin,
+        pending.capture.readings, prepared,
+    )
+
+
+def prepare_initial_program(mut pending: BorrowedMut[Pending], console: str) -> Result[Option[PreparedProgram], str]:
+    """Answer a new source-only named project's reach before acknowledging its capture."""
+    let captured: Borrowed[CapturedRequest] = pending.capture
+    if not captured.first or captured.reach is not None or len(captured.epoch.declarations) == 0:
+        return Ok(None)
+    if pending.unit_options != "" or is_editor_view(pending.view) or get_or("OVEN_BODY_REFUSALS", "default") == "list":
+        return Ok(None)
+    if captured.epoch.roots[0].endswith("/lib.incn"):
+        return Ok(None)
+    # The program graph covers its Incan sources. A path dependency or a Rust facet has
+    # its own source membership, which the ordinary capture must keep through publication.
+    for declaration in captured.epoch.declarations:
+        if len(declaration.dependencies) > 0 or declaration.rust_source_root != "":
+            return Ok(None)
+    for item in captured.epoch.inputs:
+        if item.role == InputRole.ProjectMember or (item.role == InputRole.Member and not item.path.endswith(".incn")):
+            return Ok(None)
+    mut prepared = prepare_program(
+        captured.epoch, pending.view, console, Some(captured.selected), pending.unit_options, pending.origin,
+        captured.readings,
+    )?
+    if prepared.toolchain.captured_source_inputs and prepared.unit.project_library is None and prepared.unit.package != "":
+        if let Some(graph) = take(prepared.reach):
+            initial_program_epoch(pending.capture, graph, prepared.unit.source_root)?
+    return Ok(Some(prepared))
+
+
+def announce_capture(pending: Borrowed[Pending], mut channel: BorrowedMut[Channel]) -> Result[None, str]:
+    """Send the single immutable capture identity used by this request's subsequent result selection."""
+    let capture: Borrowed[CapturedRequest] = pending.capture
+    selected = f"snapshot:{capture.snapshot.generation}:{capture.snapshot.digest}"
+    return send(channel, pending.request, Message.Captured(Captured(epoch=capture.identity, snapshot=selected))).map_err(
+        (reason) => reason.detail,
+    )
 
 
 def settled_library(
@@ -244,7 +307,7 @@ def settled_library(
     )
 
 
-def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
+def settled_check(store: Path, mut admission: SnapshotAdmission, pending: Pending, console: str) -> Result[Ready, str]:
     """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
     checking = begin()
     reading = read_counts()
@@ -254,6 +317,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     measure_frame_reads(pending.proofs)
     result = check_program(
         store,
+        admission,
         pending.capture.revision,
         console,
         pending.format,

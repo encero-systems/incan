@@ -3,8 +3,10 @@
 use crate::plan::{CalleeKind, Function, Plan, TerminatorKind, Unwind};
 use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{InstanceKind, ShimKind, TyCtxt};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::io::{self, BufWriter};
 
 /// One unique monomorphized symbol and every codegen unit that contains it.
 struct MonoRecord {
@@ -21,9 +23,93 @@ pub(crate) fn write(plan: &Plan, tcx: TyCtxt<'_>) -> Result<(), String> {
         return Ok(());
     };
     let mut report = String::from("incan-native-plan-report\t2\n");
+    let (bytes, sha256) = whole_plan_digest(plan)?;
+    writeln!(report, "plan-postcard\tbytes\t{bytes}\tsha256\t{}", hex::encode(sha256))
+        .map_err(|error| error.to_string())?;
     write_plan(plan, &mut report)?;
     write_monomorphization(tcx, &mut report)?;
     std::fs::write(&path, report).map_err(|error| format!("cannot write native plan report: {error}"))
+}
+
+/// Hash every ordered input to the adapter without allocating a second encoded native plan.
+fn whole_plan_digest(plan: &Plan) -> Result<(usize, [u8; 32]), String> {
+    let writer = postcard::to_io(plan, BufWriter::with_capacity(64 * 1024, PlanDigest::new(io::sink())))
+        .map_err(|error| error.to_string())?;
+    let digest = writer.into_inner().map_err(|error| error.to_string())?;
+    Ok(digest.finish())
+}
+
+/// Count and fingerprint the bytes an existing serialization feeds to its writer.
+pub(crate) struct PlanDigest<W> {
+    writer: W,
+    bytes: usize,
+    sha256: Sha256,
+}
+
+impl<W> PlanDigest<W> {
+    /// Observe a new byte stream forwarded to `writer`.
+    pub(crate) fn new(writer: W) -> Self {
+        Self {
+            writer,
+            bytes: 0,
+            sha256: Sha256::new(),
+        }
+    }
+
+    /// Consume a completed observation and return its byte count and SHA-256.
+    pub(crate) fn finish(self) -> (usize, [u8; 32]) {
+        (self.bytes, self.sha256.finalize().into())
+    }
+}
+
+impl<W: io::Write> io::Write for PlanDigest<W> {
+    /// Forward this write and fingerprint the exact prefix the destination accepted.
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let accepted = self.writer.write(bytes)?;
+        self.sha256.update(&bytes[..accepted]);
+        self.bytes += accepted;
+        Ok(accepted)
+    }
+
+    /// Flush the underlying stream before its caller releases the digest.
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::{Digest, Plan, PlanDigest, Sha256, whole_plan_digest};
+    use std::io::Write;
+
+    /// The report covers the exact serialized plan, including the buffered tail and entry order.
+    #[test]
+    fn native_plan_digest_covers_exact_postcard_bytes() -> Result<(), String> {
+        let span = incan_mir_plan_native::source_span("fixture.incn", 1, 1);
+        let mut plan = Plan::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), span);
+        plan.programs = vec!["first".repeat(14_000), String::from("second")];
+        let bytes = postcard::to_allocvec(&plan).map_err(|error| error.to_string())?;
+        let expected: [u8; 32] = Sha256::digest(&bytes).into();
+        assert_eq!(whole_plan_digest(&plan)?, (bytes.len(), expected));
+        plan.programs.swap(0, 1);
+        assert_ne!(whole_plan_digest(&plan)?, (bytes.len(), expected));
+        Ok(())
+    }
+
+    /// A short write covers only the prefix accepted by the destination.
+    #[test]
+    fn plan_digest_counts_only_bytes_accepted_by_a_partial_writer() -> std::io::Result<()> {
+        let mut output = [0; 2];
+        let mut digest = PlanDigest::new(&mut output[..]);
+        assert_eq!(digest.write(b"abcdef")?, 2);
+        digest.flush()?;
+        let (count, hash) = digest.finish();
+        assert_eq!(output, *b"ab");
+        assert_eq!(count, 2, "the digest counted {count} bytes but the writer accepted 2");
+        let expected: [u8; 32] = Sha256::digest(b"ab").into();
+        assert_eq!(hash, expected);
+        Ok(())
+    }
 }
 
 /// Record aggregate plan nodes and rank authored functions by their exact retained body-node counts.

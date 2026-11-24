@@ -17,6 +17,7 @@ and the next reconciliation hashes it again.
 """
 
 from rust::std::fs import Metadata, metadata
+from rust::std::rc import Rc
 from rust::std::io import ErrorKind
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::time import SystemTime, UNIX_EPOCH
@@ -29,7 +30,7 @@ from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, items, text, tuple_items
 from publication import publish_binary
-from semantic_text import positioned_code
+from semantic_text import positioned_source
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 from trace_adapter import reason, relay as relay_observations
@@ -111,6 +112,24 @@ pub model Observation:
     pub newest: int
 
 
+pub model SourceReading:
+    """An editable source read once for this request, with both identities its consumers need."""
+
+    pub text: str
+    pub raw_digest: str
+    pub positioned_digest: str
+    pub comments: str = ""
+
+
+pub def source_reading(text: str, raw_digest: str, retain_comments: bool = false) -> SourceReading:
+    """Keep the raw and positioned identities and collect comments for a durable request projection."""
+    positioned, comments = positioned_source(text, retain_comments)
+    mut digest = raw_digest
+    if positioned != text:
+        digest = hexlify(sha256.digest(positioned.encode("utf-8")))
+    return SourceReading(text=text, raw_digest=raw_digest, positioned_digest=digest, comments=comments)
+
+
 model FileEntry:
     """
     A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled. `code` is
@@ -137,6 +156,8 @@ pub model Ledger:
     pub settle: int
     # Which files a listing keeps: those whose names end with this, every file when it is empty.
     pub extension: str = ".incn"
+    # A records request already owns these readings and validates their observations before publication.
+    pub readings: Option[Rc[Dict[str, SourceReading]]] = None
     # Files hashed and directories listed since the ledger was loaded: the work reconciliation could not avoid.
     pub hashed: int = 0
     pub listed: int = 0
@@ -146,6 +167,10 @@ pub model Ledger:
 
     pub def digest(mut self, path: Path) -> Result[str, str]:
         """The digest of `path`'s bytes, read only when its metadata differs from the retained observation."""
+        if let Some(readings) = self.readings:
+            captured = readings.as_ref()
+            if path.0 in captured:
+                return Ok(captured[path.0].raw_digest)
         observed = observe(path)?
         if path.0 in self.files and self.files[path.0].stamp == observed.stamp:
             return Ok(self.files[path.0].digest)
@@ -162,14 +187,21 @@ pub model Ledger:
         metadata differs from the retained observation or no code digest was retained. A comment edit that moves no
         code leaves it unchanged.
         """
+        if let Some(readings) = self.readings:
+            captured = readings.as_ref()
+            if path.0 in captured:
+                return Ok(captured[path.0].positioned_digest)
         observed = observe(path)?
         if path.0 in self.files and self.files[path.0].stamp == observed.stamp and self.files[path.0].code != "":
             return Ok(self.files[path.0].code)
         trace(f"hashing {path.0}")
-        content = file_digest(path)?
+        raw = read_file_bytes(path)?
+        clock = begin()
+        content = hexlify(sha256.digest(raw))
+        record(Operation.FileHash, path.0, clock, len(raw))
         mut code = content
-        match path.read_text("utf-8", "strict"):
-            Ok(text) => code = hexlify(sha256.digest(positioned_code(text).encode("utf-8")))
+        match raw.decode("utf-8", "strict"):
+            Ok(text) => code = source_reading(text, content).positioned_digest
             Err(_) => pass
         self.hashed += 1
         self.changed = true
@@ -180,8 +212,9 @@ pub model Ledger:
         """
         The files under `root` that this ledger keeps (Incan sources unless its extension says otherwise), sorted.
 
-        Only directories whose metadata changed are listed again. The compiler's own collection rules apply: hidden
-        directories, `target` and `node_modules` are not entered.
+        Only directories whose metadata changed are listed again. The compiler's own collection rules exclude
+        hidden directories, build output, vendored packages and nested projects. A child can gain or lose its own
+        manifest while its parent's directory listing stays unchanged, so check the boundary as it is reached.
         """
         mut found: list[str] = []
         mut pending = [root]
@@ -189,6 +222,8 @@ pub model Ledger:
         while index < len(pending):
             directory = pending[index]
             index += 1
+            if index > 1 and not entered(directory):
+                continue
             entry = self.listing(directory)?
             for name in entry.files:
                 found.append(directory.joinpath(name).0)
@@ -199,18 +234,18 @@ pub model Ledger:
 
     def listing(mut self, directory: Path) -> Result[DirectoryEntry, str]:
         """
-        A directory's retained children, listed again only when its metadata changed.
+        A directory's retained file and directory names, listed again only when its metadata changed.
 
         1. An unchanged directory keeps the listing it was retained with.
-        2. A changed one is listed: the files this ledger keeps and the subdirectories worth entering.
+        2. A changed one is listed for file and candidate directory names. Boundary checks happen while walking.
         3. The new listing is retained.
         """
         # 1. A directory whose metadata is as recorded is not listed again.
         observed = observe(directory)?
         if directory.0 in self.directories and self.directories[directory.0].stamp == observed.stamp:
             return Ok(self.directories[directory.0])
-        # 2. A changed directory yields the files this ledger keeps and the subdirectories worth entering.
-        found = children(directory, self.extension)?
+        # 2. Names are stable under this directory's metadata, independently of each child's manifest.
+        found = children(directory, self.extension, include_nested=true)?
         # 3. The new listing is kept under the metadata it was taken at, and counts as work the pass could not avoid.
         entry = DirectoryEntry(stamp=retained(observed, self.settle), files=found.files, directories=found.directories)
         trace(f"listing {directory.0}")
@@ -305,10 +340,11 @@ pub def skipped_directory(name: str) -> bool:
     return name.startswith(".") or name == "target" or name == "node_modules"
 
 
-pub def children(directory: Path, extension: str) -> Result[Children, str]:
+pub def children(directory: Path, extension: str, include_nested: bool = false) -> Result[Children, str]:
     """
     List a directory once: the files whose names end with `extension` (every file when it is empty) and the
-    subdirectories worth entering (see `entered`).
+    subdirectories worth entering (see `entered`). Membership capture may ask for candidate directory names so it can
+    check for a nested project at the child even when its parent's name listing is unchanged.
     """
     mut files: list[str] = []
     mut directories: list[str] = []
@@ -317,9 +353,13 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
         name = child.name()
         checked += 1
         if child.is_dir():
-            checked += 1
-            if entered(child):
-                directories.append(name)
+            if include_nested:
+                if not skipped_directory(name):
+                    directories.append(name)
+            else:
+                checked += 1
+                if entered(child):
+                    directories.append(name)
             continue
         checked += 1
         if child.is_file() and name.endswith(extension):
@@ -329,7 +369,7 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
 
 def ledger_description() -> Description:
     """One local observation cache. Files bind both content digests, and directories retain their immediate children."""
-    return model_description(OBSERVATION_LEDGER, "incan.oven.observations/2", [
+    return model_description(OBSERVATION_LEDGER, "incan.oven.observations/3", [
         ModelField(identity=b"dirs__", name="directories", storage="list<tuple<string,string,list<string>,list<string>>>"),
         ModelField(identity=b"extend", name="extension", storage="string"),
         ModelField(identity=b"files_", name="files", storage="list<tuple<string,string,binary,binary>>"),
@@ -354,11 +394,19 @@ def read_digest(value: Value, optional: bool) -> Result[str, str]:
 
 pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
-    content = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
+    content = read_file_bytes(path)?
     clock = begin()
     result = hexlify(sha256.digest(content))
     record(Operation.FileHash, path.0, clock, len(content))
     return Ok(result)
+
+
+def read_file_bytes(path: Path) -> Result[bytes, str]:
+    """Read bytes without a separate text-mode reopen, and attribute the actual file read."""
+    clock = begin()
+    content = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
+    record(Operation.FileRead, path.0, clock, len(content))
+    return Ok(content)
 
 
 pub def observe(path: Path) -> Result[Observation, str]:

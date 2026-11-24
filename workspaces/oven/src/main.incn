@@ -17,6 +17,7 @@ from engine_settlement import serve as serve_settlement
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
 from storage_admission import take_decision
 from store_status import parse_status, status_command
+from store_path_conversion import ClientStoreAdmission
 from home import dependency_artifact_dir
 from intake import read_project, source_root_of, entry_source
 from files import read
@@ -32,7 +33,7 @@ from rust_registry import read_registry_units
 from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
-from project_lock import ensure_project_lock, lock_project, locked_report, parse_lock_command
+from project_lock import ensure_project_lock_with_admission, lock_project, locked_report, parse_lock_command
 from dependency_commands import dependency_command, parse_dependency_command
 from toolchain import load_toolchain, readmit_relinked_installation, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
@@ -48,7 +49,7 @@ from testing import (
 )
 from runner_options import RUNNER_VALUE_OPTIONS, RunnerOptions, split_runner_options
 from test_batches import batch_groups, batch_of, module_of
-from project_library import with_testing_features
+from project_library import planned_program, with_testing_features
 from inline_source import inline, inline_arguments
 from owner_client import owned, status_code
 from owner_protocol import Reply
@@ -558,10 +559,13 @@ def records_command(command: str, arguments: list[str]) -> None:
                 Ok(text) => unit_options = text
             # Check observes one source reach like the legacy checker; it does not mutate a project lock, and warns of
             # the manifest entries this toolchain tolerates as every other project command does.
+            mut admission = ClientStoreAdmission()
             if command != "check":
-                prepared_lock(command, options)
+                prepared_lock_with_admission(command, options, admission)
             else:
                 warn_tolerated_entries(command, Path(options.path))
+            # An explicit file keeps its path. A changed spelling here is the entry selected from a Loaf directory.
+            from_directory = source.0 != options.path
             built = execute_records(
                 command,
                 source,
@@ -570,8 +574,10 @@ def records_command(command: str, arguments: list[str]) -> None:
                 options.argv0,
                 format,
                 options.engine_report,
+                admission,
                 unit_options,
                 options.output,
+                from_directory,
             )
             finish(command, records_library_graph(command, options, source, built), format)
 
@@ -663,19 +669,26 @@ def enclosing_loaf(directory: Path) -> Result[Path, str]:
 
 
 def prepared_lock(command: str, options: Options) -> None:
+    """Read a project command's lock without rewriting it."""
+    mut admission = ClientStoreAdmission()
+    prepared_lock_with_admission(command, options, admission)
+
+
+def prepared_lock_with_admission(command: str, options: Options, mut admission: BorrowedMut[ClientStoreAdmission]) -> None:
     """
     Read a project command's root lock, which only `oven lock`, `oven add` and `oven update` write, and say in one line
     when it is stale; explicit direct source execution has no project lock.
     """
     if options.direct:
         return
-    match ensure_project_lock(
+    match ensure_project_lock_with_admission(
         Path(options.path),
         options.profile,
         options.request,
         options.substitutes,
         options.manifests,
         options.locked,
+        admission,
     ):
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
         Ok(notice) =>
@@ -747,7 +760,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
-    made = make_unit(unit, toolchain, binary, true)?
+    made = make_unit(planned_program(unit, options.direct)?, toolchain, binary, true)?
     record_work(Operation.LegacyPrepare, options.path, preparing)
     if made.code != 0:
         return Ok(made.code)
@@ -1223,7 +1236,7 @@ def built(options: Options, source: Path) -> Result[i32, str]:
         if status != 0 or not options.codegraph:
             return Ok(status)
         return published_library_graph(ready, toolchain, directory)
-    return delivered(options, compile_unit(unit, toolchain_for(unit)?, output)?, output)
+    return delivered(options, compile_unit(planned_program(unit, false)?, toolchain_for(unit)?, output)?, output)
 
 
 def records_library_graph(command: str, options: Options, source: Path, built: Result[i32, str]) -> Result[i32, str]:

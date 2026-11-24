@@ -29,6 +29,7 @@ mod incan_debug;
 mod input_fields;
 pub mod manifest_cache;
 pub mod namespace_headers;
+pub mod namespace_layout_records;
 pub mod namespace_order;
 pub mod namespace_proof;
 pub mod namespace_references;
@@ -40,6 +41,7 @@ mod published_defaults;
 pub mod read_receipts;
 pub mod record_scope;
 pub mod record_service;
+pub mod runtime_requirement_rows;
 pub mod selection_bindings;
 pub mod settled_call_reads;
 pub mod source_value_records;
@@ -136,17 +138,21 @@ pub use namespace_proof::{
 };
 pub use namespace_references::{
     NAMESPACE_IDENTITY_PROFILE, NamespaceReference, decode_namespace_references, encode_namespace_references,
-    namespace_header_key, namespace_header_reference_filename, namespace_key, namespace_reference_filename,
+    namespace_header_key, namespace_header_reference_filename, namespace_key, namespace_layout_candidate_filename,
+    namespace_layout_key, namespace_layout_output_directory, namespace_layout_reference_filename,
+    namespace_reference_filename,
 };
 pub use namespace_rows::{
     NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader,
-    decode_callable_inventory, decode_namespace_interface, decode_prepared_namespace, decode_prepared_namespace_view,
-    encode_callable_inventory, encode_namespace_interface, identify_prepared_namespace,
-    identify_prepared_namespace_view, namespace_identity, prepare_namespace_reader, publish_namespace_interface,
+    checked_projection_fields, decode_callable_inventory, decode_checked_projection, decode_checked_projection_view,
+    decode_namespace_interface, decode_prepared_checked_projection, decode_prepared_namespace,
+    decode_prepared_namespace_view, encode_callable_inventory, encode_checked_projection, encode_namespace_interface,
+    identify_prepared_namespace, identify_prepared_namespace_view, namespace_identity, prepare_namespace_reader,
+    publish_namespace_interface,
 };
 pub use namespace_schema::{
-    NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, NAMESPACE_SCHEMA, namespace_descriptions,
-    namespace_field_is_canonical, namespace_root,
+    NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, NAMESPACE_SCHEMA, canonical_symbol_descriptions,
+    executable_type_descriptions, namespace_descriptions, namespace_field_is_canonical, namespace_root,
 };
 pub use overload_members::{
     LOOKUP_FILE, MethodLookup, MethodReads, OVERLOAD_MEMBERS, contract_output_suffix, coordinate_output_suffix,
@@ -156,7 +162,7 @@ pub use overload_members::{
 pub use plan_wire_rows::{
     PreparedWireReader, admit_wire, enum_schema, read_wire, variant_schema, wire_field, write_wire,
 };
-pub use read_receipts::{RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt};
+pub use read_receipts::{RECEIPT_SCHEMA, decode_read_receipt, decode_read_receipt_view, encode_read_receipt};
 pub use record_scope::{
     AbsentFact, DEFAULT_READ_BYTES, DeletedFact, MAX_CHECKER_ROW_BYTES, MemberFact, MemberSelection, PayloadSelection,
     PreparationEvidence, READ_SCHEMA, ReadCounters, ReadFault, ReadReceipt, ReadScope, ReadWitness, RecordKey,

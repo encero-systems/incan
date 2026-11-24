@@ -18,8 +18,6 @@ use sha2::{Digest, Sha256};
 use crate::error::{CliError, CliResult};
 use crate::unit::UnitDescription;
 
-/// The schema of the semantic facts a library publishes beside its manifest, read by Oven's publication record.
-const LOAF_FACTS_SCHEMA: &str = "incan.loaf-facts/1";
 use exports::{LibraryReexportResolver, module_key};
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
@@ -32,6 +30,7 @@ use incan_frontend::diagnostics;
 use incan_frontend::library_exports::{
     CheckedNamedExport, checked_exports_by_name, collect_checked_made_private_types, collect_checked_public_exports,
 };
+use incan_frontend::library_manifest::install_record::LoafInstallRecord;
 use incan_frontend::library_manifest::public_identities::public_executable_identities;
 use incan_frontend::library_manifest::{
     ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, NativeUnionExport,
@@ -409,6 +408,7 @@ pub fn prepare_executable_surface(
         &public,
         &unrepresentable,
         native_storage,
+        native_storage.then_some(incan_frontend::body_ir::publish_linked_layout),
     )
     .map_err(|error| {
         CliError::failure(format!(
@@ -433,13 +433,15 @@ pub fn prepare_loaf_publication(
     closure: &LoafNativeClosure,
     anchors: &NativeAnchors,
     graph: Option<&[u8]>,
+    install: Option<&LoafInstallRecord>,
 ) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
     manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
         representation_version: EXECUTABLE_REPRESENTATION_VERSION,
         content_digest: hex::encode(Sha256::digest(&surface)),
     });
-    let rust_abi = prepare_rust_abi_cache(&mut manifest)?;
+    let index_reexports = install.is_some();
+    let rust_abi = prepare_rust_abi_cache(&mut manifest, index_reexports)?;
 
     // ---- Native closure and manifest ----
     let published = closure
@@ -447,10 +449,16 @@ pub fn prepare_loaf_publication(
         .map_err(|error| CliError::failure(format!("cannot publish the native closure of {name}: {error}")))?;
     let closure = serde_json::to_vec_pretty(&published)
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
+    let install = install
+        .map(|install| manifest.prepare_install_record(install, index_reexports && rust_abi.is_some()))
+        .transpose()
+        .map_err(|error| CliError::failure(format!("cannot encode the install record of {name}: {error}")))?;
     let encoded = manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
-    let facts = loaf_facts(&manifest, &encoded)?;
+    let facts = manifest
+        .encode_loaf_facts(&encoded, install)
+        .map_err(|error| CliError::failure(format!("cannot encode the facts of {name}: {error}")))?;
     Ok(PreparedLoafPublication {
         name,
         surface,
@@ -472,29 +480,12 @@ pub fn write_loaf(
     graph: Option<&[u8]>,
 ) -> CliResult<()> {
     let surface = prepare_executable_surface(&manifest, bodies, false)?;
-    prepare_loaf_publication(dir, manifest, surface.bytes, closure, anchors, graph)?.write(dir)
+    prepare_loaf_publication(dir, manifest, surface.bytes, closure, anchors, graph, None)?.write(dir)
 }
 
-/// The semantic facts a library publishes beside its manifest (RFC 179): the digest consumers that only compile
-/// against it are keyed on, bound to the exact manifest bytes it describes.
-fn loaf_facts(manifest: &LibraryManifest, encoded: &str) -> CliResult<Vec<u8>> {
-    let manifest_digest = hex::encode(Sha256::digest(encoded.as_bytes()));
-    let digests = manifest
-        .compiler_records(&manifest_digest)
-        .map_err(|error| CliError::failure(format!("cannot derive the facts of {}: {error}", manifest.name)))?
-        .digests;
-    serde_json::to_vec(&serde_json::json!({
-        "schema": LOAF_FACTS_SCHEMA,
-        "manifest_digest": manifest_digest,
-        "semantic_facts": digests.semantic_facts,
-        "record_content": digests.record_content,
-    }))
-    .map_err(|error| CliError::failure(format!("cannot encode the facts of {}: {error}", manifest.name)))
-}
-
-/// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts
-/// through the existing indexed ABI codec. The manifest digest authenticates the asset without eager item decoding.
-fn prepare_rust_abi_cache(manifest: &mut LibraryManifest) -> CliResult<Option<Vec<u8>>> {
+/// Publish native facts through the indexed ABI codec. An install sidecar lets a consumer select explicit Rust
+/// re-exports from that index. Keep their inline representation for consumers that read the manifest contract.
+fn prepare_rust_abi_cache(manifest: &mut LibraryManifest, index_reexports: bool) -> CliResult<Option<Vec<u8>>> {
     let public = manifest
         .contract_metadata
         .identity_graph
@@ -507,18 +498,18 @@ fn prepare_rust_abi_cache(manifest: &mut LibraryManifest) -> CliResult<Option<Ve
     let Some(abi) = &mut manifest.rust_abi else {
         return Ok(None);
     };
-    let (embedded, indexed): (Vec<_>, Vec<_>) = std::mem::take(&mut abi.items)
-        .into_iter()
-        .partition(|item| public.contains(&item.canonical_path));
-    abi.items = embedded;
+    let indexed = abi
+        .items
+        .iter()
+        .filter(|item| index_reexports || !public.contains(&item.canonical_path))
+        .map(|item| (item.canonical_path.as_str(), item))
+        .collect::<BTreeMap<_, _>>();
     if indexed.is_empty() {
         return Ok(None);
     }
-    let indexed = indexed
-        .into_iter()
-        .map(|item| (item.canonical_path.clone(), item))
-        .collect::<BTreeMap<_, _>>();
-    let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(&indexed).map_err(CliError::failure)?;
+    let bytes =
+        incan_frontend::rust_abi_cache::encode_rust_abi_entries(indexed.into_iter()).map_err(CliError::failure)?;
+    abi.items.retain(|item| public.contains(&item.canonical_path));
     abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
     Ok(Some(bytes))
 }

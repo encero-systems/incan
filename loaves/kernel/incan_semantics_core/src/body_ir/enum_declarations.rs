@@ -75,6 +75,9 @@ pub struct FieldlessEnumDeclaration {
 /// Canonical payload layout of a checked source, SDK or native enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
+    /// The producer's witness for the linked declaration. Source declarations and closed instances use their own.
+    #[serde(skip)]
+    pub linked_layout_witness: Option<super::LinkedLayoutWitness>,
     /// Declared persistent namespace of the source producer; absent for runtime or unscoped declarations.
     #[serde(default)]
     pub record_package_identity: Option<crate::record_identity::RecordPackageIdentity>,
@@ -161,6 +164,7 @@ pub fn native_enum_declaration(
         })
         .collect::<Option<Vec<_>>>()?;
     Some(EnumDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         native_item: path.to_owned(),
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),

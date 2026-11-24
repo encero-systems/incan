@@ -7,8 +7,9 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use crate::dependency_report::RootOrigin;
+use crate::rustc_process::PlanRecordProducts;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
-use incan_driver::diagnostics::CliDiagnosticFailure;
+use incan_driver::diagnostics::{CliDiagnosticFailure, capture_warning_output};
 use incan_driver::loaf_publication::{
     PublicationFacts, prepare_executable_surface, prepare_loaf_publication, publish_native_unions, write_loaf,
 };
@@ -22,8 +23,8 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
 use incan_lowering::{
-    RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
-    resume_unit_plan, unit_plan,
+    PlanAdmissions, RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning,
+    layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{
     BodyIrModule, LinkedStaticAccessors, LoafCallable, NativeUnionDeclaration, NominalDeclaration,
@@ -37,12 +38,18 @@ mod checked_program;
 mod declaration_validation;
 pub(crate) mod decoded_pages;
 mod graph_body_output;
+mod graph_body_pages;
+mod graph_scope_access;
 mod namespace_admission;
 mod namespace_crumb;
+mod namespace_layout_pages;
 pub(crate) mod namespace_pages;
+mod runtime_plan_records;
 
 use checked_program::*;
 use declaration_validation::*;
+use graph_body_pages::read_graph_body_records;
+use runtime_plan_records::{RuntimeCompletion, RuntimePlanRecords, same_requirements};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -77,6 +84,26 @@ impl RefusalReceipt {
             self.deterministic();
         }
         failure.render_human()
+    }
+
+    /// Publish only warnings earned by source checking beside this invocation's private certificate. An empty
+    /// companion certifies a silent check. The caller admits it only after normal compilation and input validation.
+    fn checked_warnings<T, E>(&self, check: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        let Some(certificate) = self.0.as_ref().filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "warning-certificate")
+        }) else {
+            return check();
+        };
+        let (result, warnings) = capture_warning_output(check);
+        let warnings = warnings.concat();
+        eprint!("{warnings}");
+        if result.is_ok() {
+            let mut companion = certificate.as_os_str().to_os_string();
+            companion.push(".warnings");
+            let _ = std::fs::write(companion, warnings);
+        }
+        result
     }
 }
 
@@ -116,33 +143,18 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
     std::fs::write(path, text)
 }
 
-/// Invocation-local source context retained for strictly growing runtime dependency requests. No attempt publishes
-/// its partial plan, and imported declaration spans never acquire the entry source's text.
-struct RuntimeDependencyContext {
-    loaves: std::sync::Arc<LoafIndex>,
-    requested: BTreeSet<CanonicalSymbolId>,
-    /// Why each requested root is requested: checked source, a selected default or a runtime operation.
-    origins: BTreeMap<CanonicalSymbolId, RootOrigin>,
-    checked_local: BTreeSet<CanonicalSymbolId>,
-    /// Exact selected versions from the authenticated executable-resolution closure.
-    package_versions: BTreeMap<String, String>,
-    package: String,
-    /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
-    layout_modules: Vec<BodyIrModule>,
-    sources: Vec<String>,
-    files: Vec<String>,
-    entry: usize,
-}
-
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
     /// Invocation-local producer evidence for self-contained scalar native function products.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     retained_namespaces: Vec<checked_program::RetainedNamespaceBody>,
+    /// Position of the original authored callables in the entry module's current linked catalog.
+    authored_callable_start: Option<usize>,
     dependencies: RuntimeDependencyContext,
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,
     files: Vec<String>,
+    captured_source_paths: BTreeSet<String>,
     entry: usize,
     /// The first of the program's own modules; the Loaf declarations it reaches come before it.
     own: usize,
@@ -189,12 +201,14 @@ pub(crate) struct Dependencies {
     shared_native: Option<PathBuf>,
     /// Separate graph-selected checker values supplied by the engine; these bytes never enter the unit description.
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    /// The same project namespaces used by the checker, available for layout publication after checking ends.
+    namespace_pages: Option<Arc<namespace_pages::NamespacePages>>,
     /// Optional invocation output for freshly produced checker values; it is not a compilation input.
     graph_body_output: Option<PathBuf>,
     /// Request-local directory for actual plan-function producer evaluations and reuses.
     plan_record_report: Option<PathBuf>,
     /// Bakery-selected plan-function products; private target caches are never record authority.
-    plan_record_products: Option<PathBuf>,
+    plan_record_products: Option<PlanRecordProducts>,
     /// The current home's toolchain and bakery roots, which anchor native-closure references (`--toolchain-root`,
     /// `--bakery-root`). A root Oven does not name leaves paths under it absolute.
     pub(crate) anchors: NativeAnchors,
@@ -212,6 +226,13 @@ impl Dependencies {
                 search: self.directories.clone(),
             })),
         }
+    }
+
+    /// The products the current invocation keeps live through Plan publication and native compilation.
+    fn plan_products(&self) -> Option<&Path> {
+        self.plan_record_products
+            .as_ref()
+            .map(|products| products.root.as_path())
     }
 
     /// The engine's graph-selected checker values, which a check installs exactly as a build does.
@@ -247,6 +268,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut graph_body_output = None;
     let mut plan_record_report = None;
     let mut plan_record_products = None;
+    let mut plan_module_selection = None;
     let mut anchors = NativeAnchors::default();
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
@@ -270,10 +292,25 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
             "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
             "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
+            "--plan-module-selection-digest" => {
+                if plan_module_selection.is_some() {
+                    return Err("plan module selection digest was supplied more than once".into());
+                }
+                let mut digest = [0; 32];
+                if !value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                    || hex::decode_to_slice(value, &mut digest).is_err()
+                {
+                    return Err("plan module selection digest must be a canonical SHA-256".into());
+                }
+                plan_module_selection = Some(digest);
+            }
             "--toolchain-root" => anchors.toolchain = Some(PathBuf::from(value)),
             "--bakery-root" => anchors.bakery = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown native source option {option}")),
         }
+    }
+    if plan_module_selection.is_some() && (plan_record_products.is_none() || plan_record_report.is_none()) {
+        return Err("plan module selection requires both native report and products directories".into());
     }
     if shared_native.is_some() && (unit.profile != "debug" || unit.kind == UnitKind::Library || library) {
         return Err("shared native linking requires a debug executable".into());
@@ -282,14 +319,22 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     if shared_native.is_some() && unit.toolchain_access.links_sysroot() {
         return Err("shared native linking cannot link the toolchain's own libraries".into());
     }
-    let graph_body_records = match graph_body_directory {
-        Some(path) => read_graph_body_records(
-            path,
-            anchors.bakery.clone(),
-            &unit.project_root,
-            graph_body_output.is_some() && plan_record_products.is_some() && unit.kind == UnitKind::Program,
-        )?,
-        None => incan_frontend::checker_records::GraphBodyRecords::default(),
+    let (graph_body_records, namespace_pages) = match graph_body_directory {
+        Some(path) => {
+            let (records, pages) = read_graph_body_records(
+                path,
+                anchors.bakery.clone(),
+                &unit.project_root,
+                graph_body_output.is_some() && plan_record_products.is_some() && unit.kind == UnitKind::Program,
+            )?;
+            if let Some(output) = graph_body_output.as_deref()
+                && pages.typed_executable != graph_body_output::typed_executable_output(output)
+            {
+                return Err("selected executable graph input and output formats disagree".into());
+            }
+            (records, Some(pages))
+        }
+        None => (incan_frontend::checker_records::GraphBodyRecords::default(), None),
     };
     Ok(Dependencies {
         externs,
@@ -301,320 +346,87 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         rustc_args,
         shared_native,
         graph_body_records,
+        namespace_pages,
         graph_body_output,
         plan_record_report,
-        plan_record_products,
+        plan_record_products: plan_record_products.map(|root| PlanRecordProducts {
+            root,
+            selection: plan_module_selection,
+            compact_notes: None,
+        }),
         anchors,
     })
 }
 
-/// Filesystem-backed source of independently bounded graph body pages.
-#[derive(Debug)]
-struct GraphBodyRecordPages {
-    root: PathBuf,
-    bakery: Option<PathBuf>,
-    namespaces: namespace_pages::NamespacePages,
-    reopened: std::sync::OnceLock<Result<tempfile::TempDir, String>>,
-}
+#[cfg(test)]
+mod plan_record_option_tests {
+    use super::{UnitDescription, dependencies};
 
-impl GraphBodyRecordPages {
-    fn owner_page(&self, identity: &str) -> PathBuf {
-        let key = hex::encode(Sha256::digest(identity.as_bytes()));
-        if let Some(Ok(directory)) = self.reopened.get() {
-            let supplied = directory.path().join(&key);
-            if supplied.is_file() {
-                return supplied;
-            }
-        }
-        self.root.join(key)
-    }
-}
+    /// The independent digest is a single canonical capability option on a native report and products request.
+    #[test]
+    fn plan_selection_digest_requires_one_canonical_option_and_a_report() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let unit: UnitDescription = serde_json::from_value(serde_json::json!({
+            "schema": "incan.unit/1",
+            "source": root.path().join("main.incn"),
+            "project_root": root.path(),
+            "source_root": root.path(),
+            "package": "selection_probe",
+            "version": "0.1.0",
+            "profile": "debug",
+            "declared_features": [],
+            "active_features": [],
+            "loaves": [],
+            "rust_crates": [],
+            "contract_models": [],
+            "c_headers": [],
+            "externs": [],
+            "search": [],
+            "rust_abi": [],
+        }))?;
+        let products = root.path().join("products");
+        let report = root.path().join("report");
+        let scalar = [
+            "--plan-record-products".to_owned(),
+            products.to_string_lossy().into_owned(),
+            "--plan-record-report".to_owned(),
+            report.to_string_lossy().into_owned(),
+        ];
+        let legacy = dependencies(&unit, &scalar)?;
+        assert_eq!(legacy.plan_products(), Some(products.as_path()));
+        assert_eq!(legacy.plan_record_report.as_deref(), Some(report.as_path()));
 
-impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordPages {
-    fn has_owner(&self, identity: &str) -> bool {
-        self.owner_page(identity).try_exists().unwrap_or(true)
-    }
+        let digest = "ab".repeat(32);
+        let option = "--plan-module-selection-digest";
+        let mut pinned = scalar.to_vec();
+        pinned.extend([option.to_owned(), digest.clone()]);
+        let outcome = dependencies(&unit, &pinned);
+        assert!(
+            outcome.is_ok(),
+            "native compiler refused the canonical selection option: {:?}",
+            outcome.as_ref().err()
+        );
 
-    /// Read only the page addressed by this stable owner; absence keeps that owner on the ordinary checking path.
-    fn read(
-        &self,
-        identity: &str,
-    ) -> Result<
-        Option<incan_frontend::checker_records::GraphBodyRecord>,
-        incan_frontend::checker_records::RecordAdapterFault,
-    > {
-        const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-        let path = self.owner_page(identity);
-        let metadata = match std::fs::metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                    format!("cannot inspect graph body page {}: {error}", path.display()),
-                ));
-            }
-        };
-        if !metadata.is_file() || metadata.len() > MAX_PAGE_BYTES {
-            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                "graph body page is not a bounded regular file".into(),
-            ));
-        }
-        let generation = crate::native_search::FileGeneration::observe(&metadata);
-        if let Some(generation) = generation
-            && let Some(record) = decoded_pages::observed(generation, identity)
-        {
-            tracing::trace!(target: "incan::invocation", phase = "checker_page_retained", owner = identity);
-            return Ok(Some(record));
-        }
-        let _input = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::read_checker_page",
-            owner = identity, bytes = metadata.len())
-        .entered();
-        let (encoded, generation) = read_checker_page(&path, generation, MAX_PAGE_BYTES)?;
-        let digest: [u8; 32] = Sha256::digest(&encoded).into();
-        if let Some(record) = decoded_pages::decoded(digest, identity, generation) {
-            return Ok(Some(record));
-        }
-        // Oven writes each page as one owner's Crumb row (`encode_graph_body_values`); the shared codec decodes and
-        // authenticates it, both checker records included.
-        let mut records = internal_models::decode_graph_checking_inputs(&encoded).map_err(|error| {
-            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                "graph body page refused: {error:?}"
-            ))
-        })?;
-        let record = match (records.pop(), records.is_empty()) {
-            (Some(record), true) if record.identity == identity => record,
-            _ => {
-                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                    "graph body page disagrees with its requested identity".into(),
-                ));
-            }
-        };
-        let frame = if record.body_ir.is_empty() {
-            None
-        } else {
-            let frame =
-                incan_semantics_core::executable_representation::decode_owner(&record.body_ir).map_err(|error| {
-                    incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                        "graph Body IR owner frame refused: {error}"
-                    ))
-                })?;
-            if frame.source.is_empty() || frame.identity != record.identity {
-                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                    "graph Body IR owner frame disagrees with its selected identity".into(),
-                ));
-            }
-            Some(frame)
-        };
-        let record = incan_frontend::checker_records::GraphBodyRecord {
-            identity: record.identity,
-            local: record.local.into(),
-            final_value: record.final_fields.into(),
-            body_ir: frame,
-        };
-        decoded_pages::remember(digest, generation, &record, encoded.len());
-        Ok(Some(record))
-    }
-
-    fn reopen_namespace_peers(&self, source: &str, changed: &std::collections::BTreeSet<String>) -> Result<(), String> {
-        let Some(bakery) = &self.bakery else { return Ok(()) };
-        if !self
-            .root
-            .join("reopen-snapshot.crumb")
-            .try_exists()
-            .map_err(|e| e.to_string())?
-        {
-            return Ok(());
-        }
-        let Some(oven) = std::env::var_os("INCAN_GRAPH_PEER_READER") else {
-            return Ok(());
-        };
-        let temporary = self
-            .reopened
-            .get_or_init(|| {
-                tempfile::Builder::new()
-                    .prefix("incan-reopened-peers-")
-                    .tempdir()
-                    .map_err(|e| e.to_string())
-            })
-            .as_ref()
-            .map_err(Clone::clone)?;
-        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::reopen_namespace_peers", module = source).entered();
-        let status = std::process::Command::new(oven)
-            .arg("--internal-reopened-peers")
-            .arg(bakery)
-            .arg(&self.root)
-            .arg(temporary.path())
-            .arg(source)
-            .args(changed)
-            .status()
-            .map_err(|error| format!("cannot start the selected graph reader: {error}"))?;
-        if !status.success() {
-            return Err(format!("graph reader refused reopened namespace {source} ({status})"));
+        let authority = outcome?.plan_record_products.ok_or("lost plan record authority")?;
+        assert_eq!(authority.root, products);
+        assert_eq!(authority.selection, Some([0xab; 32]));
+        let mut repeated = pinned.clone();
+        repeated.extend([option.to_owned(), digest.clone()]);
+        assert!(dependencies(&unit, &repeated).is_err());
+        assert!(dependencies(&unit, &pinned[2..]).is_err());
+        assert!(dependencies(&unit, &[&scalar[..2], &pinned[4..]].concat()).is_err());
+        assert!(dependencies(&unit, &pinned[..5]).is_err());
+        for malformed in [
+            "ab".repeat(31),
+            "AB".repeat(32),
+            format!("sha256:{digest}"),
+            "zz".repeat(32),
+        ] {
+            pinned[5] = malformed;
+            assert!(dependencies(&unit, &pinned).is_err());
         }
         Ok(())
     }
-
-    /// Read the request's exact namespace selection on demand.
-    fn read_namespace(
-        &self,
-        source: &str,
-    ) -> Result<
-        Option<incan_frontend::checker_records::GraphNamespaceRecord>,
-        incan_frontend::checker_records::RecordAdapterFault,
-    > {
-        self.namespaces.read(&self.root, source)
-    }
-
-    /// Admit an unchanged namespace by the header the request offers beside its frame.
-    fn read_namespace_header(
-        &self,
-        source: &str,
-    ) -> Result<
-        Option<incan_frontend::checker_records::GraphNamespaceAdmission>,
-        incan_frontend::checker_records::RecordAdapterFault,
-    > {
-        self.namespaces.read_header(source)
-    }
-
-    fn publish_namespace(
-        &self,
-        header: std::sync::Arc<incan_frontend::checker_records::GraphNamespaceHeader>,
-        value: String,
-        body_ir: Vec<u8>,
-    ) {
-        self.namespaces.publish(header, value, body_ir);
-    }
-
-    fn retains_namespace(&self, source: &str) -> bool {
-        self.namespaces.retains(source)
-    }
-
-    fn retain_namespace(&self, source: &str, body: &mut BodyIrModule) {
-        self.namespaces.retain(source, body);
-    }
-
-    fn settle_namespace_retention(&self) {
-        self.namespaces.settle();
-    }
-}
-
-/// Read an exact bounded file through one descriptor. A changing read is refused before the codec sees its bytes.
-fn read_checker_page(
-    path: &Path,
-    generation: Option<crate::native_search::FileGeneration>,
-    limit: u64,
-) -> Result<(Vec<u8>, Option<crate::native_search::FileGeneration>), incan_frontend::checker_records::RecordAdapterFault>
-{
-    use crate::native_search::FileGeneration;
-    use incan_frontend::checker_records::RecordAdapterFault;
-    use std::io::Read;
-    let read_failed =
-        |error| RecordAdapterFault::InvalidField(format!("cannot read graph body page {}: {error}", path.display()));
-    let changed = || RecordAdapterFault::InvalidField("graph body page changed during its read".into());
-    let mut file = std::fs::File::open(path).map_err(read_failed)?;
-    let metadata = file.metadata().map_err(read_failed)?;
-    if !metadata.is_file() || metadata.len() > limit || FileGeneration::observe(&metadata) != generation {
-        return Err(changed());
-    }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.by_ref()
-        .take(limit + 1)
-        .read_to_end(&mut bytes)
-        .map_err(read_failed)?;
-    if bytes.len() as u64 != metadata.len()
-        || FileGeneration::observe(&file.metadata().map_err(read_failed)?) != generation
-    {
-        return Err(changed());
-    }
-    Ok((bytes, generation))
-}
-
-/// Bind the engine's keyed graph-record page directory without reading an aggregate inventory.
-fn read_graph_body_records(
-    path: &Path,
-    bakery: Option<PathBuf>,
-    project_root: &Path,
-    retain_namespaces: bool,
-) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
-    if !path.is_dir() {
-        return Err(format!(
-            "graph body record pages are not a directory: {}",
-            path.display()
-        ));
-    }
-    let records =
-        incan_frontend::checker_records::GraphBodyRecords::from_source(std::sync::Arc::new(GraphBodyRecordPages {
-            root: path.to_path_buf(),
-            namespaces: namespace_pages::NamespacePages::open(
-                path,
-                bakery.as_deref(),
-                project_root,
-                retain_namespaces,
-            )?,
-            bakery,
-            reopened: std::sync::OnceLock::new(),
-        }));
-    if path
-        .join("ranked-source-edit.crumb")
-        .try_exists()
-        .map_err(|e| e.to_string())?
-    {
-        return bind_contextual_rank(path, records);
-    }
-    Ok(records)
-}
-
-/// Bind a body-only edit and the exact namespace order the engine selected for it.
-fn bind_contextual_rank(
-    directory: &Path,
-    records: incan_frontend::checker_records::GraphBodyRecords,
-) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
-    let bounded = |name: &str| -> Result<Vec<u8>, String> {
-        use std::io::Read;
-        const LIMIT: u64 = 65_536;
-        let mut bytes = Vec::new();
-        std::fs::File::open(directory.join(name))
-            .map_err(|error| error.to_string())?
-            .take(LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() as u64 > LIMIT {
-            return Err(format!("contextual ranked page {name} exceeds its bound"));
-        }
-        Ok(bytes)
-    };
-    let demand = internal_models::decode_demand_page(&bounded("ranked-source-edit.crumb")?)
-        .map_err(|error| error.to_string())?;
-    let [owner, source]: [_; 2] = demand
-        .keys
-        .try_into()
-        .map_err(|_| "contextual ranked edit requires one owner and its changed source")?;
-    let name = owner
-        .identity
-        .split_once('|')
-        .and_then(|(identity, _)| identity.strip_prefix("function:"))
-        .and_then(|identity| identity.rsplit_once("::"))
-        .map(|(_, name)| name);
-    if owner.family != "ranked-source-edit"
-        || owner.identity_profile != "incan.stable-declaration/1"
-        || source.family != "owner-source"
-        || source.identity_profile != "incan.source-projection/1"
-        || source.origin != owner.origin
-        || source.identity != owner.facet
-        || name != Some(source.facet.as_str())
-        || !owner.facet.ends_with(".incn")
-        || Path::new(&owner.facet)
-            .components()
-            .any(|part| !matches!(part, std::path::Component::Normal(_)))
-    {
-        return Err("contextual ranked edit does not bind a project source owner".into());
-    }
-    let order = internal_models::decode_namespace_order(&bounded("ranked-source-order.crumb")?, &owner.origin)
-        .map_err(|error| error.to_string())?;
-    if order.evidence != owner.context || order.members.as_slice() != [owner.facet.as_str()] {
-        return Err("contextual ranked edit does not match its namespace certificate".into());
-    }
-    Ok(records.for_contextual_ranked_owner(owner.identity, owner.facet, order.rank, order.evidence))
 }
 
 /// Run one ordinary signature reader in the real compiler environment and publish only that owner's two Crumb values.
@@ -728,8 +540,17 @@ fn compile_unit(
     let identity = crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let (certificate, options) = crate::certified_options(&arguments[4..]);
+    let (captured_sources, options) = incan_driver::sources::captured_source_options(options)?;
+    let captured_sources = captured_sources.map(Path::to_path_buf);
+    // Checking owns the unit and may release it before rustc runs; both stages need the directory path, not a copy of
+    // its contents.
+    unit.captured_sources = captured_sources.clone();
     let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
-    let dependencies = dependencies(&unit, options)?;
+    let mut dependencies = dependencies(&unit, options)?;
+    let selection = match &dependencies.plan_record_products {
+        Some(products) => products.read_selection()?,
+        None => None,
+    };
     if dependencies.library {
         if unit.kind == UnitKind::Test {
             return Err("a test unit cannot also be a library".into());
@@ -737,6 +558,7 @@ fn compile_unit(
         unit.kind = UnitKind::Library;
     }
     let kind = unit.kind;
+    let project_root = unit.project_root.clone();
     let overflow_checks = unit.profile != "release";
     let loaves = unit.loaves.clone();
     // A library's closure publishes only the directories beyond the toolchain generation's search index.
@@ -748,8 +570,7 @@ fn compile_unit(
     let cloves = unit.cloves.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
     let native_products = dependencies
-        .plan_record_products
-        .as_ref()
+        .plan_products()
         .map(|path| path.to_string_lossy().into_owned())
         .or_else(|| callable_products::native_directory(&unit));
     let mut program = check_compilation_source(
@@ -765,6 +586,10 @@ fn compile_unit(
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(UnitCompiled::InProcess);
     }
+    let recorded_layouts = match (&dependencies.namespace_pages, &dependencies.graph_body_output) {
+        (Some(pages), Some(output)) => pages.prepare_layouts(&program, &project_root, output)?,
+        _ => Arc::default(),
+    };
     // Checking is done, and the Rust items it decoded are not lowering inputs. Lowering keeps the index for runtime
     // resolution, so release the items rather than carry them through lowering and rustc.
     program.dependencies.loaves.release_resolved_rust_items();
@@ -776,6 +601,8 @@ fn compile_unit(
         Arc::new(std::mem::take(&mut surface.linked_statics))
     });
     let mut published_unions = Vec::new();
+    let mut runtime_records = RuntimePlanRecords::read(dependencies.plan_products());
+    let mut plan_admissions = PlanAdmissions::with_selection(selection);
     let plan = lower_compilation_plan(
         &mut program,
         kind,
@@ -785,20 +612,30 @@ fn compile_unit(
         &mut published_unions,
         &linked_static_exports,
         native_products,
+        recorded_layouts,
         dependencies
             .plan_record_report
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
+        &mut runtime_records,
+        &mut plan_admissions,
     )?;
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
-    if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
-        incan_lowering::publish_plan_records(
+    if let (Some(products), Some(report)) = (&mut dependencies.plan_record_products, &dependencies.plan_record_report) {
+        let _publication = tracing::trace_span!(
+            target: "incan::invocation", "incan_rustc_driver::publish_plan_records",
+        )
+        .entered();
+        products.compact_notes = incan_lowering::publish_plan_records(
             &plan,
-            products.to_string_lossy().into_owned(),
-            report.to_string_lossy().into_owned(),
+            &products.root.to_string_lossy(),
+            &report.to_string_lossy(),
+            &plan_admissions,
         )?;
+        runtime_records.publish(&products.root)?;
     }
+    drop(plan_admissions);
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
@@ -818,6 +655,14 @@ fn compile_unit(
             search: published_search,
             macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
         };
+        let mut checker = incan_frontend::typechecker::TypeChecker::new();
+        checker.set_loaves(std::sync::Arc::clone(&program.dependencies.loaves));
+        let install = checker.loaf_install_record(&manifest.name, &manifest);
+        program
+            .dependencies
+            .loaves
+            .validate_demands()
+            .map_err(|error| error.to_string())?;
         let prepared = prepare_loaf_publication(
             &directory,
             manifest,
@@ -825,6 +670,7 @@ fn compile_unit(
             &closure,
             &dependencies.anchors,
             program.graph.as_deref(),
+            Some(&install),
         )
         .map_err(|error| error.to_string())?;
         Some((directory, prepared))
@@ -834,8 +680,10 @@ fn compile_unit(
     timing.mark("native_inputs_prepared");
     checked_program::return_retained_namespaces(&mut program, &dependencies.graph_body_records);
     dependencies.graph_body_records.settle_namespace_retention();
+    let captured_texts = checked_program::take_captured_texts(&mut program);
     drop(program);
     drop(dependencies.graph_body_records);
+    drop(dependencies.namespace_pages);
     // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc runs
     // here or the footprint that decides a handoff is read, so neither counts the frontend's freed heap.
     incan_platform::release_free_heap();
@@ -860,11 +708,14 @@ fn compile_unit(
         overflow_checks,
         library_facades,
         plan_record_report: dependencies.plan_record_report,
+        plan_record_products: dependencies.plan_record_products,
         tests: (kind == UnitKind::Test)
             .then(|| serde_json::to_vec(&tests))
             .transpose()?,
         publication,
         checked_sources: Vec::new(),
+        captured_sources,
+        captured_texts,
     };
     // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
     if hands_off.is_some_and(|hands_off| hands_off()) {
@@ -888,16 +739,18 @@ fn check_compilation_source(
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(
-            &unit,
-            &rust,
-            resident,
-            &receipt,
-            graph_body_records,
-            graph_body_output,
-            collect_codegraph,
-            false,
-        )
+        receipt.checked_warnings(|| {
+            checked_modules(
+                &unit,
+                &rust,
+                resident,
+                &receipt,
+                graph_body_records,
+                graph_body_output,
+                collect_codegraph,
+                false,
+            )
+        })
     });
     match checked {
         Ok(program) => Ok(program),
@@ -929,7 +782,10 @@ fn lower_compilation_plan(
     published_unions: &mut Vec<NativeUnionDeclaration>,
     linked_static_exports: &Arc<BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>>,
     native_products: Option<String>,
+    recorded_layouts: Arc<RecordedLayouts>,
     plan_record_report: Option<String>,
+    runtime_records: &mut RuntimePlanRecords,
+    admissions: &mut PlanAdmissions,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -945,11 +801,27 @@ fn lower_compilation_plan(
     let mut timing = crate::native_timing::Timing::requested();
     let mut continuation = None;
     let mut retry_indices: Option<Vec<usize>> = None;
+    let tests: Vec<_> = program.tests.iter().map(|test| test.entry.clone()).collect();
+    let completion = RuntimeCompletion {
+        kind: &kind_name,
+        tests: &tests,
+        linked_static_exports,
+        receipt,
+    };
     loop {
+        let prepared = runtime_records.next().and_then(|requirements| {
+            let _prefetch =
+                tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_recorded_runtime")
+                    .entered();
+            let loaves = Arc::new(program.dependencies.loaves.runtime_prefetch());
+            let batch = prepare_runtime_requirements(program, &loaves, requirements).ok()?;
+            loaves.validate_demands().ok()?;
+            Some((loaves, batch))
+        });
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         tracing::debug!(target: "incan::invocation", held = %held_modules(&program.modules), "lowering Body IR modules");
         let mut attempt_unions = Vec::new();
-        let planning = match continuation.take() {
+        let mut planning = match continuation.take() {
             Some(preserved) => {
                 let selected = retry_indices
                     .take()
@@ -965,6 +837,7 @@ fn lower_compilation_plan(
                     overflow_checks,
                     record_report: plan_record_report.clone(),
                     linked_static_exports: Arc::clone(linked_static_exports),
+                    recorded_layouts: Arc::default(),
                 };
                 resume_unit_plan(
                     preserved,
@@ -977,34 +850,62 @@ fn lower_compilation_plan(
                 )
             }
             None => {
+                let entry = program.entry.try_into()?;
+                // SourceInputs owns its buffers. Lend those already in the checked program for this call.
                 let inputs = SourceInputs {
                     scalar_products: native_products.clone(),
                     scalar_bodies: std::mem::take(&mut program.cacheable_bodies),
-                    sources: program.sources.clone(),
-                    files: program.files.clone(),
+                    sources: std::mem::take(&mut program.sources),
+                    files: std::mem::take(&mut program.files),
                     tests: program.tests.iter().map(|test| test.entry.clone()).collect(),
-                    package_versions: program.dependencies.package_versions.clone(),
+                    package_versions: std::mem::take(&mut program.dependencies.package_versions),
                     overflow_checks,
                     record_report: plan_record_report.clone(),
                     linked_static_exports: Arc::clone(linked_static_exports),
+                    recorded_layouts: Arc::clone(&recorded_layouts),
                 };
-                unit_plan(
+                let planned = unit_plan(
                     &program.modules,
                     &inputs,
-                    program.entry.try_into()?,
+                    entry,
                     &kind_name,
                     &mut attempt_unions,
-                )
+                    admissions,
+                );
+                program.sources = inputs.sources;
+                program.files = inputs.files;
+                program.dependencies.package_versions = inputs.package_versions;
+                planned
             }
         }
         .inspect_err(|_| receipt.deterministic())?;
+        // Resolve a recorded batch before lowering, but install it only after these ordinary frames demand it.
+        // The checked delta can finish directly with borrowed modules in the very same frame order as a retry.
+        if let (Some((loaves, prepared)), UnitPlanning::NeedsRuntime(_, requirements)) = (prepared, &planning)
+            && runtime_records
+                .next()
+                .is_some_and(|saved| same_requirements(saved, requirements))
+            && let UnitPlanning::NeedsRuntime(preserved, requirements) = planning
+        {
+            program.dependencies.loaves = loaves;
+            planning = runtime_records.complete_matches(
+                program,
+                preserved,
+                requirements,
+                prepared,
+                &completion,
+                &mut attempt_unions,
+            )?;
+        }
         match planning {
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
                 // The attempt's worker contexts and temporaries are freed; return their pages before runtime
                 // resolution and the resumed attempt allocate.
                 incan_platform::release_free_heap();
                 timing.mark("lowering_attempt_heap_released");
-                retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
+                let prepared = prepare_runtime_requirements(program, &program.dependencies.loaves, &requirements)?;
+                retry_indices = Some(apply_runtime_requirements(program, &requirements, prepared)?);
+                runtime_records.record(requirements);
                 continuation = Some(preserved);
             }
             UnitPlanning::Complete(Some(plan)) => {
@@ -1116,6 +1017,7 @@ fn census_complete(
                 overflow_checks,
                 record_report: None,
                 linked_static_exports: Arc::default(),
+                recorded_layouts: Arc::default(),
             },
             program.entry.try_into()?,
             false,
@@ -1143,6 +1045,7 @@ fn census_complete(
                 overflow_checks,
                 record_report: None,
                 linked_static_exports: Arc::default(),
+                recorded_layouts: Arc::default(),
             },
             program.entry.try_into()?,
             true,
@@ -1193,34 +1096,4 @@ fn macro_externs(
         .filter(|(name, _)| !loaf_links.contains(name))
         .cloned()
         .collect()
-}
-
-#[cfg(test)]
-mod graph_body_page_tests {
-    use super::GraphBodyRecordPages;
-    use incan_frontend::checker_records::GraphBodyRecordSource;
-    use sha2::{Digest, Sha256};
-
-    #[test]
-    fn keyed_body_pages_do_not_scan_unrequested_owners() -> Result<(), Box<dyn std::error::Error>> {
-        let root = std::env::temp_dir().join(format!("incan-graph-body-pages-{}", std::process::id()));
-        if root.exists() {
-            std::fs::remove_dir_all(&root)?;
-        }
-        std::fs::create_dir_all(&root)?;
-        let unrelated = root.join(hex::encode(Sha256::digest(b"unrelated-owner")));
-        std::fs::write(&unrelated, b"malformed unrelated page")?;
-        let source = GraphBodyRecordPages {
-            root: root.clone(),
-            bakery: None,
-            namespaces: Default::default(),
-            reopened: Default::default(),
-        };
-
-        assert!(source.read("requested-owner")?.is_none());
-        assert!(source.read("unrelated-owner").is_err());
-
-        std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
 }

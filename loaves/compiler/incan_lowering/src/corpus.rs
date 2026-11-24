@@ -329,7 +329,9 @@ pub fn renamed_initializers(expected: &[u8], produced: &[u8]) -> Option<(Vec<u8>
 /// Rename a plan's slot-named module initializers and every call to them; returns how many names changed.
 fn rename_plan(plan: &mut Plan, names: &BTreeMap<i64, String>) -> usize {
     let mut renamed = 0;
-    for function in &mut plan.functions {
+    for slot in &mut plan.functions {
+        // This comparison plan was just decoded and owns each slot.
+        let function = slot.make_mut();
         if let Some(name) = slot_name(&function.name, names) {
             function.name = name;
             renamed += 1;

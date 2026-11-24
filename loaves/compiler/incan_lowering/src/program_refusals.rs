@@ -83,12 +83,13 @@ fn body_refusals(modules: &[BodyIrModule], inputs: &CensusInputs<'_>) -> Result<
         &empty_templates,
     )?;
     let mut context = context;
-    let (constructor_table, unions, initial_intrinsics) = layout_tables(
+    let (constructor_table, body_indices, unions, initial_intrinsics) = layout_tables(
         &context,
         &inputs.files[entry],
         &source_files,
         inputs.package_versions,
         Vec::new(),
+        None,
     )?;
     let constructors = Arc::new(with_generic_constructor_arities(
         constructor_table,
@@ -98,6 +99,7 @@ fn body_refusals(modules: &[BodyIrModule], inputs: &CensusInputs<'_>) -> Result<
     let mut inventories = Inventories::default();
     let mut program = initial_plan_roots(
         constructors,
+        body_indices,
         &context,
         &inputs.files[entry],
         &mut intrinsics,
@@ -200,8 +202,8 @@ fn ordinary_refusals(
             match lowered {
                 Ok((function, runtime, pending, synthesized)) => {
                     merge_instance_requests(&mut inventories.instances, &pending);
-                    inventories.functions.push(function);
-                    inventories.functions.extend(synthesized);
+                    inventories.functions.push(function.into());
+                    inventories.functions.extend(synthesized.into_iter().map(Into::into));
                     if let Err(error) = merge_externals(&mut inventories.externals, runtime) {
                         refusals.push(format!("{}: {error}", body.name));
                     }

@@ -1,16 +1,24 @@
 //! Shared Crumb field contracts for ranked compiler work and completed read witnesses.
 
-use crate::crumb_rows::{admit_rows, encode_rows};
+use crate::crumb_rows::{admit_rows, admit_rows_view, encode_rows};
 use crate::record_scope::{MemberSelection, PayloadSelection, RecordKey, RecordRequest, RecordSelection, valid_key};
 use internal_models_bindings::{
-    Budget, Description, DescriptionMode, IntegerValue, RowRecord, RowSet, Value, ValueField, binary_message,
-    create_budget, crumb_message, read_field_at, read_record_at, row_count, row_descriptions,
+    Budget, Description, DescriptionMode, IntegerValue, MappedView, RowRecord, RowSet, Value, ValueField,
+    binary_message, create_budget, crumb_message, read_field_at, read_record_at, row_count, row_descriptions,
 };
 
 pub const KEY_TYPE: &str = "tuple<string,string,string,string,string,string>";
 pub const REQUEST_TYPE: &str =
     "tuple<tuple<string,string,string,string,string,string>,i64,string,list<string>,list<i64>>";
 pub(crate) const MAX_GRAPH_RECORD_BYTES: i64 = 67_108_864;
+
+/// One encoded graph envelope, with a retained anchor when the caller already mapped its bytes.
+pub(crate) enum GraphRowInput<'a> {
+    /// Transport bytes that need immutable backing before Crumb can admit a row.
+    Bytes(&'a [u8]),
+    /// A bounded range whose existing mapping can serve as Crumb's backing.
+    Mapped(&'a MappedView),
+}
 
 /// Serialize exactly one typed compiler graph record through the public Crumb row codec.
 pub fn encode_graph_row(key: &[u8], description: &Description, fields: Vec<ValueField>) -> Result<Vec<u8>, String> {
@@ -28,8 +36,18 @@ pub fn decode_graph_row(
     description: &Description,
     count: usize,
 ) -> Result<Vec<ValueField>, String> {
+    decode_graph_input(GraphRowInput::Bytes(encoded), key, description, count)
+}
+
+/// Check the same row key, field count, and budget regardless of how the encoded bytes are backed.
+pub(crate) fn decode_graph_input(
+    input: GraphRowInput<'_>,
+    key: &[u8],
+    description: &Description,
+    count: usize,
+) -> Result<Vec<ValueField>, String> {
     let mut budget = graph_read_budget()?;
-    let rows = admit_graph_row(encoded, description, &mut budget, MAX_GRAPH_RECORD_BYTES)?;
+    let rows = admit_graph_input(input, description, &mut budget, MAX_GRAPH_RECORD_BYTES)?;
     let row = read_record_at(&rows, 0, &mut budget).map_err(|error| binary_message(&error))?;
     if row.key != key {
         return Err("unexpected compiler graph Crumb row".into());
@@ -215,7 +233,12 @@ pub fn decode_graph_field(encoded: &[u8], description: &Description, field: &[u8
 
 /// Use the same bound whether materializing a graph row or projecting a single field.
 pub fn graph_read_budget() -> Result<Budget, String> {
-    create_budget(MAX_GRAPH_RECORD_BYTES * 4, 4_194_304, 128).map_err(|error| crumb_message(&error))
+    graph_read_budget_at_depth(128)
+}
+
+/// Share the graph byte and element limits with formats that need a different nesting bound.
+pub(crate) fn graph_read_budget_at_depth(depth: i64) -> Result<Budget, String> {
+    create_budget(MAX_GRAPH_RECORD_BYTES * 4, 4_194_304, depth).map_err(|error| crumb_message(&error))
 }
 
 /// Authenticate the sole dictionary schema before exposing any logical fields. The reference default maximum is
@@ -226,7 +249,21 @@ pub fn admit_graph_row(
     budget: &mut Budget,
     maximum: i64,
 ) -> Result<RowSet, String> {
-    let rows = admit_rows(encoded, &vec![description.clone()], maximum, budget)?;
+    admit_graph_input(GraphRowInput::Bytes(encoded), description, budget, maximum)
+}
+
+/// Authenticate the written envelope and its sole schema, reusing existing backing when available.
+fn admit_graph_input(
+    input: GraphRowInput<'_>,
+    description: &Description,
+    budget: &mut Budget,
+    maximum: i64,
+) -> Result<RowSet, String> {
+    let descriptions = vec![description.clone()];
+    let rows = match input {
+        GraphRowInput::Bytes(bytes) => admit_rows(bytes, &descriptions, maximum, budget)?,
+        GraphRowInput::Mapped(view) => admit_rows_view(view, &descriptions, maximum, budget)?,
+    };
     let dictionary = row_descriptions(&rows, budget).map_err(|error| binary_message(&error))?;
     if row_count(&rows) != 1 || dictionary.len() != 1 {
         return Err("unexpected compiler graph Crumb row".into());

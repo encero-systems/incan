@@ -58,9 +58,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-pub use canonical_rebinding::refresh_dependency_call_targets;
+pub use canonical_rebinding::DependencyCallTargets;
 pub use context_modules::{ContextModules, ContextModulesIter};
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
+pub use nominal_carriers::{linked_enum_item, linked_model_item, publish_linked_layout};
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use settled_call_inputs::needs_call_witness;
@@ -170,9 +171,11 @@ pub fn build_body_ir_module_unsettled(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
-    let mut module = build_module_seed(program, module_path, type_info, context);
+    let mut module = tracing::trace_span!(target: "incan::invocation", "incan_frontend::seed_body_ir_module")
+        .in_scope(|| build_module_seed(program, module_path, type_info, context));
     let selected = selected_body_identities(type_info);
-    retain_module_representations(&mut module, program, type_info, context.modules, &selected);
+    tracing::trace_span!(target: "incan::invocation", "incan_frontend::retain_body_ir_representations")
+        .in_scope(|| retain_module_representations(&mut module, program, type_info, context.modules, &selected));
     module
 }
 
@@ -285,10 +288,8 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     model_constants: &'source HashMap<CanonicalSymbolId, model_constants::ModelConstant>,
     /// Checked local and published payload layouts indexed by their exact declaring identity.
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
-    /// Closed return carriers retained by a callable's providing module, keyed by its proven identity.
-    published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
-    /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
-    published_callable_defaults: &'source HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>>,
+    /// Return carriers and parameter defaults borrowed from selected callable declarations.
+    published_callables: &'source collect::PublishedCallables<'source>,
     /// Checked provider-method newtype results; conflicting declarations retain an explicit denial.
     published_newtype_returns: &'source HashMap<CanonicalSymbolId, Option<collect::PublishedNewtypeReturn>>,
     /// Exact checked provider storage types; a conflicting declaration records `None` and cannot authorize a global
@@ -399,10 +400,8 @@ struct BodyBuilder<'type_info, 'source> {
     model_constants: &'source HashMap<CanonicalSymbolId, model_constants::ModelConstant>,
     /// The same retained layouts used to close constructor destinations and pattern payload facts.
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
-    /// Provider-owned closed return carriers; a private import alias is never a consumer-side layout key.
-    published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
-    /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
-    published_callable_defaults: &'source HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>>,
+    /// Return carriers and parameter defaults borrowed from selected callable declarations.
+    published_callables: &'source collect::PublishedCallables<'source>,
     /// Exact provider-method return layouts, selected only by a checked method identity.
     published_newtype_returns: &'source HashMap<CanonicalSymbolId, Option<collect::PublishedNewtypeReturn>>,
     /// Owning declaration types for imported storage, selected only by the checked global identity.

@@ -130,7 +130,7 @@ def read_config(file: Path, project_root: Option[Path]) -> Result[ConfigTrust, s
     return Ok(result)
 
 
-def refuse_project_config(file: Path, project_root: Option[Path]) -> Result[None, str]:
+pub def refuse_project_config(file: Path, project_root: Option[Path]) -> Result[None, str]:
     """Reject a trust source located inside the project whose code the decision would authorize."""
     if let Some(root) = project_root:
         configured = canonical(file)?

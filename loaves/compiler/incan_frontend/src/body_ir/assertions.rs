@@ -304,15 +304,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Read the selected helper's message default from its declaration record among the linked Loaves' declarations;
     /// deferred statements and non-string results grant no message.
     fn testing_raises_default_message(&self, identity: &CanonicalSymbolId) -> Option<String> {
-        let default = self.published_callable_defaults.get(identity)?.get(1)?.clone();
-        let bir::CallableParamDefault::Source(default) = default else {
+        let parameter = self.published_callables.get(identity)?.parameters.get(1)?;
+        let bir::CallableParamDefault::Source(default) = &parameter.default else {
             return None;
         };
         if !default.stmts.is_empty() {
             return None;
         }
-        match default.result {
-            bir::Operand::Constant(bir::Constant::Str(text)) => Some(text),
+        match &default.result {
+            bir::Operand::Constant(bir::Constant::Str(text)) => Some(text.clone()),
             _ => None,
         }
     }

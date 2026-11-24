@@ -1,0 +1,34 @@
+"""Typed executable owner and namespace roots with exact physical provenance."""
+
+from crumb_rows import ModelField, model_description
+from std.primitives.crumb.descriptions import Description
+
+pub const EXECUTABLE_OWNER: bytes = b"exownr\x00"
+pub const EXECUTABLE_NAMESPACE: bytes = b"exnspc\x00"
+
+
+pub def executable_owner_description() -> Description:
+    """Keep metadata addressable independently of executable statements or the shared nominal scope."""
+    return model_description(EXECUTABLE_OWNER, "incan.graph.checked-executable-owner/1", [
+        ModelField(identity=b"bodyir", name="body", storage="record@02ff73c4b317"),
+        ModelField(identity=b"calls_", name="settled_call_reads", storage="option<binary>"),
+        ModelField(identity=b"canon_", name="symbol", storage="string"),
+        ModelField(identity=b"coords", name="coordinates", storage="list<tuple<u32,u32>>"),
+        ModelField(identity=b"ident_", name="owner", storage="string"),
+        ModelField(identity=b"module", name="module", storage="record@18421a55ad93"),
+        ModelField(identity=b"name__", name="name", storage="string"),
+        ModelField(identity=b"physic", name="physical_inputs", storage="option<binary>"),
+        ModelField(identity=b"reader", name="reader", storage="string"),
+        ModelField(identity=b"scope_", name="scope_digest", storage="option<string>"),
+        ModelField(identity=b"source", name="source", storage="string"),
+    ])
+
+
+pub def executable_namespace_description() -> Description:
+    """Associate each outer scope-bearing declaration with one authenticated first-use map slot."""
+    return model_description(EXECUTABLE_NAMESPACE, "incan.graph.checked-executable-namespace/1", [
+        ModelField(identity=b"bodyir", name="module", storage="record@702749a1724a"),
+        ModelField(identity=b"scopes", name="scope_digests", storage="list<option<string>>"),
+        ModelField(identity=b"slots_", name="scope_slots", storage="list<u64>"),
+        ModelField(identity=b"source", name="source", storage="string"),
+    ])

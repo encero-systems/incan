@@ -7,12 +7,21 @@ from std.primitives.locking import LockGuard
 from std.primitives.views import MappedFile
 
 
+@derive(Clone)
+pub model MemoryFile:
+    """An immutable memory object and the generation issued when its bytes were first stored."""
+
+    pub mapping: MappedFile
+    pub generation: int
+
+
 pub class StoreContext:
     """Shared placement state carried explicitly by every path instead of hidden in a captured callback."""
 
-    pub files: dict[str, MappedFile]
+    pub files: dict[str, MemoryFile]
     pub directories: set[str]
     pub leases: dict[str, LockGuard]
+    pub file_generation: int = 0
 
 
 pub type StoreContextRef = Rc[RefCell[StoreContext]]
@@ -69,6 +78,7 @@ pub model StorePathOps:
     pub sync_ordered: (StoreContextRef, str) -> Result[None, str]
     pub barrier: (StoreContextRef, str) -> Result[None, str]
     pub map_read: (StoreContextRef, str) -> Result[MappedFile, str]
+    pub file_generation: (StoreContextRef, str) -> Result[Option[str], str]
     pub lock_shared: (StoreContextRef, str) -> Result[LockGuard, str]
     pub lock_exclusive: (StoreContextRef, str) -> Result[LockGuard, str]
     pub try_lock_exclusive: (StoreContextRef, str) -> Result[Option[LockGuard], str]
@@ -222,6 +232,11 @@ pub model StorePath:
         """Anchor this immutable object behind the shared bounded-view contract."""
         map_read = self.operations.map_read
         return map_read(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
+
+    pub def store_file_generation(self) -> Result[Option[str], StoreIoError]:
+        """Observe an object's backing generation for a reuse check. An unavailable generation requires a read."""
+        observe = self.operations.file_generation
+        return observe(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
     pub def store_lock_shared(self) -> Result[LockGuard, StoreIoError]:
         """Acquire the placement's shared lease guard."""

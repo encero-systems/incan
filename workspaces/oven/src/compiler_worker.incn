@@ -36,6 +36,7 @@ from toolchain import Toolchain
 from request_directory import working_directory
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
+from compiler_plan_values import canonical_digest
 from pub::incan_platform.trace import Operation
 from jec import begin, record, invocation_key
 
@@ -155,10 +156,10 @@ def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
     return Ok(capturing)
 
 
-pub def relay_console(prefix: str) -> Result[None, str]:
-    """Relay exact diagnostic bytes before withdrawing foreground request files, including on a compile refusal."""
-    relay_file(Path(f"{prefix}.out"), false)?
-    relay_file(Path(f"{prefix}.err"), true)?
+pub def relay_console(prefix: str, destination: str = "") -> Result[None, str]:
+    """Withdraw request console files, relaying their exact bytes to the named console or to the current streams."""
+    relay_file(prefix, "out", destination)?
+    relay_file(prefix, "err", destination)?
     return Ok(None)
 
 
@@ -171,17 +172,23 @@ pub def collect_console(prefix: str) -> Result[list[str], str]:
     return Ok(streams)
 
 
-def relay_file(path: Path, error_stream: bool) -> Result[None, str]:
+def relay_file(prefix: str, stream: str, destination: str) -> Result[None, str]:
     """Copy a completed compiler stream without changing its encoding or adding a newline."""
-    contents = collected(path)?
-    if error_stream:
-        mut stream = stderr()
-        console_result(stream.write_all(contents))?
-        console_result(stream.flush())?
+    contents = collected(Path(f"{prefix}.{stream}"))?
+    if destination != "":
+        if len(contents) == 0:
+            return Ok(None)
+        mut file = open_stream(f"{destination}.{stream}")?
+        console_result(file.write_all(contents))?
+        return console_result(file.flush())
+    if stream == "err":
+        mut terminal = stderr()
+        console_result(terminal.write_all(contents))?
+        console_result(terminal.flush())?
     else:
-        mut stream = stdout()
-        console_result(stream.write_all(contents))?
-        console_result(stream.flush())?
+        mut terminal = stdout()
+        console_result(terminal.write_all(contents))?
+        console_result(terminal.flush())?
     return Ok(None)
 
 
@@ -244,6 +251,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
                 toolchain.retire_worker,
             )
             connected.send(frame?)?
+            observe_plan_module_dispatch(arguments, "worker", generation)
             # 3. A completed request grants only its actual exit code, never a retained checking result.
             reply = read_completion(connected.receive()?, generation)?
             record(Operation.DriverRequest, invocation_key(arguments), clock)
@@ -259,6 +267,25 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
                 trace("compiler worker: rustc handed to a fresh process")
                 return Ok(Some(rustc_from_handoff(toolchain, reply.handoff)?))
             return Ok(Some(status_code(reply.status)))
+
+
+pub def observe_plan_module_dispatch(arguments: Borrowed[list[str]], route: str, generation: str = "-") -> None:
+    """Record the issued unit's selection option count and canonical digest with its ordinary input key."""
+    if get_or("INCAN_NATIVE_TIMING", "") != "handoff" or get_or("INCAN_ENGINE_TRACE", "") == "":
+        return
+    if len(arguments) < 2 or arguments[0] != "--unit":
+        return
+    mut count = 0
+    mut selection = "-"
+    for index in range(len(arguments)):
+        if arguments[index] != "--plan-module-selection-digest":
+            continue
+        count += 1
+        if index + 1 < len(arguments) and canonical_digest(arguments[index + 1]):
+            selection = arguments[index + 1]
+    if count != 1:
+        selection = "-"
+    trace(f"plan-module-dispatch\t{route}\t{generation}\t{count}\t{selection}\t{arguments[1]}")
 
 
 def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:

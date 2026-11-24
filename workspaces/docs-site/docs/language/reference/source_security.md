@@ -21,6 +21,6 @@ Oven applies the same refusal before compiling authored Rust and C-family source
 
 ## Confusable identifiers
 
-Within one lexical scope, two different ASCII identifiers whose [Unicode security skeleton](https://www.unicode.org/reports/tr39/) is the same produce warning `INCAN-T0136`. The warning selects the later identifier and labels the earlier declaration. For example, `admin` and `adrnin` share a skeleton because the ASCII `m` maps to `rn`.
+Within one lexical scope, two different ASCII identifiers with the same [Unicode security skeleton](https://www.unicode.org/reports/tr39/) produce warning `INCAN-T0136`. The warning selects the later identifier and labels the earlier declaration. The skeleton maps ASCII `m` to `rn`, so `admin` and `adrnin` trigger the warning when declared in one scope.
 
 The check is scoped: the same pair in separate functions, types, closures or comprehensions does not warn. Exact repeated spellings continue to follow the ordinary duplicate-declaration rules rather than the confusable warning.

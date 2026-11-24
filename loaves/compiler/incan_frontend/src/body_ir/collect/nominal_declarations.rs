@@ -58,6 +58,7 @@ pub(in crate::body_ir) fn collect_local_enum_declarations(
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::EnumDeclaration {
+                linked_layout_witness: None,
                 record_package_identity: type_info.declarations.record_package_identity.clone(),
                 native_item: String::new(),
                 native_type_arguments: Vec::new(),
@@ -142,6 +143,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 .collect::<Option<Vec<_>>>()?;
             let validated_constructor = validated_constructor(&declaration.node, &canonical, type_info);
             let retained = bir::NominalDeclaration {
+                linked_layout_witness: None,
                 record_package_identity: if matches!(&declaration.node, ast::Declaration::Model(_)) {
                     type_info.declarations.record_package_identity.clone()
                 } else {
@@ -484,6 +486,7 @@ pub(super) fn collect_plain_newtype(
     let newtype_string_conversion =
         super::newtype_string_conversion::automatic_candidate(newtype, &canonical, type_info);
     Some(bir::NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: checked_trait_adoptions(&newtype.name, &facts.type_params, type_info),
         native_item: String::new(),

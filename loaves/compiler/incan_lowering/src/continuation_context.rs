@@ -15,16 +15,27 @@ pub struct ContinuationInputs {
     pub entry: usize,
 }
 
-/// Refresh the compact entry-owned facts the frontend can extend while resolving runtime declarations.
-pub fn refresh_entry_context(context: &mut BodyIrModule, entry: &BodyIrModule) {
+/// A refreshed runtime module with the source provenance already assigned by the driver.
+pub(crate) struct RuntimeModule<'a> {
+    pub module: &'a BodyIrModule,
+    pub source: &'a str,
+    pub file: &'a str,
+}
+
+/// Refresh entry-owned facts and report whether the replacement changes the callable layout inputs.
+pub fn refresh_entry_context(context: &mut BodyIrModule, entry: &BodyIrModule) -> bool {
     context.runtime_callable_bindings = entry.runtime_callable_bindings.clone();
     context.runtime_binding_scopes = entry.runtime_binding_scopes.clone();
-    context.loaf_callables = entry.loaf_callables.clone();
+    let callables_changed = context.loaf_callables != entry.loaf_callables;
+    if callables_changed {
+        context.loaf_callables.clone_from(&entry.loaf_callables);
+    }
     context.entrypoint_effects = entry.entrypoint_effects.clone();
     context.program_entrypoints = entry.program_entrypoints.clone();
     context.string_conversion_contract = entry.string_conversion_contract.clone();
     context.constant_declarations = entry.constant_declarations.clone();
     context.type_alias_declarations = entry.type_alias_declarations.clone();
+    callables_changed
 }
 
 /// Select changed modules and their entry, preserving the entry's invocation-only contracts in the reduced slice.
@@ -32,20 +43,15 @@ pub fn continuation_inputs(
     source_context: &BodyIrModule,
     context: &BodyIrModule,
     owners: &[String],
-    modules: &[BodyIrModule],
-    sources: &[String],
-    files: &[String],
+    modules: &[RuntimeModule<'_>],
     entry: usize,
 ) -> Result<ContinuationInputs, String> {
-    if modules.len() != sources.len() || modules.len() != files.len() {
-        return Err("invalid Body IR continuation source provenance".into());
-    }
     if entry >= modules.len() {
         return Err("invalid Body IR continuation entry".into());
     }
-    let changed = modules.iter().any(|module| {
-        let owner = module.module_id.path();
-        !owners.iter().any(|known| known == owner) || adds_checked_facts(source_context, context, module)
+    let changed = modules.iter().any(|row| {
+        let owner = row.module.module_id.path();
+        !owners.iter().any(|known| known == owner) || adds_checked_facts(source_context, context, row.module)
     });
     if !changed {
         return Ok(ContinuationInputs {
@@ -59,7 +65,8 @@ pub fn continuation_inputs(
     let mut addition_sources = Vec::new();
     let mut addition_files = Vec::new();
     let mut addition_entry = 0;
-    for (position, module) in modules.iter().enumerate() {
+    for (position, row) in modules.iter().enumerate() {
+        let module = row.module;
         let owner = module.module_id.path();
         if position != entry
             && owners.iter().any(|known| known == owner)
@@ -71,8 +78,8 @@ pub fn continuation_inputs(
             addition_entry = additions.len();
         }
         additions.push(module.clone());
-        addition_sources.push(sources[position].clone());
-        addition_files.push(files[position].clone());
+        addition_sources.push(row.source.to_owned());
+        addition_files.push(row.file.to_owned());
     }
     Ok(ContinuationInputs {
         modules: Arc::new(additions),

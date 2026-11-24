@@ -10,18 +10,21 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use incan_mir_plan_native::{
-    Callee, EnumDeclaration, ExternalFunction, Function, GenericEnumDeclaration, GenericModelDeclaration,
-    ModelDeclaration, Plan, PlanExport, StaticCell, ZipCarrier, fold_carrier_positions, fold_inventories, source_span,
+    Callee, EnumDeclaration, ExternalFunction, FunctionSlot, GenericEnumDeclaration, GenericModelDeclaration,
+    ModelDeclaration, Plan, PlanExport, StaticCell, ZipCarrier, fold_carrier_positions, fold_function_slots,
+    source_span,
 };
 use incan_semantics_core::body_ir::{BodyIrModule, LinkedStaticAccessors, NativeUnionDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, IncanType};
 
 use crate::async_::validate_futures;
-use crate::body_index::body_index;
+use crate::body_index::{BodyIndex, body_index, extend_body_index};
 use crate::checked_json::lower_checked_deserialize;
 use crate::classes::{body_module_identity, is_program_entry};
 use crate::comparison_methods::{attach_enum_comparisons, comparison_functions};
-use crate::continuation_context::{continuation_inputs, extend_continuation_context, refresh_entry_context};
+use crate::continuation_context::{
+    RuntimeModule, continuation_inputs, extend_continuation_context, refresh_entry_context,
+};
 use crate::decls::{lower_model_declarations, publish_local_layouts};
 use crate::decorator_caches::validate_instance_binding;
 use crate::display_methods::display_functions;
@@ -36,7 +39,8 @@ use crate::native_type_identity::{
     extend_constructor_index, extend_generic_constructor_arities, with_generic_constructor_arities,
 };
 use crate::nominal_instances::{NominalInstance, specialize_nominals_with_instances};
-use crate::options::intrinsic_declarations;
+use crate::options::{ClosedCarrierSignatures, intrinsic_declarations};
+use crate::plan_modules::PlanAdmissions;
 use crate::program_context::{ProgramContext, extend_program_context};
 use crate::program_entries::{
     EmittedFrames, collected_test_entries, comparison_bridge_instances, loaf_exports, lower_ordinary_bodies,
@@ -53,7 +57,7 @@ use crate::string_conversion_contracts::validate_conversion_placement;
 use crate::trace_channel::{emit, traced};
 use crate::trait_links::{has_open_trait_arguments, validate_project_implementation};
 use crate::type_parameters::{Instance, merge_instance_requests};
-use crate::unions::{collect_unions, extend_unions, publish_unions, union_index};
+use crate::unions::{collect_unions, extend_unions, publish_unions, trace_union_selection, union_index};
 
 /// Ordinary-frame work retained while the frontend resolves only the runtime declarations that work selected.
 pub struct UnitContinuation {
@@ -71,9 +75,12 @@ pub struct UnitContinuation {
     pub unions: Vec<IncanType>,
     pub nominal_instances: Vec<NominalInstance>,
     pub intrinsic_layouts: Vec<EnumDeclaration>,
+    closed_carrier_signatures: ClosedCarrierSignatures,
+    /// A suspended generic instance pass appended nominals after these layouts were settled.
+    layout_inputs_grew: bool,
     pub models: Vec<ModelDeclaration>,
     pub enums: Vec<EnumDeclaration>,
-    pub functions: Vec<Function>,
+    pub functions: Vec<FunctionSlot>,
     pub externals: Vec<ExternalFunction>,
     pub instances: Vec<Instance>,
     pub emitted_frames: EmittedFrames,
@@ -179,6 +186,7 @@ pub struct UnitInputs<'a> {
     pub record_report: Option<String>,
     /// Producer-owned native exports chosen before lowering the Loaf.
     pub linked_static_exports: &'a BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
+    pub recorded_layouts: &'a Arc<crate::RecordedLayouts>,
 }
 
 /// Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here.
@@ -186,6 +194,7 @@ pub fn unit_plan(
     modules: &[BodyIrModule],
     inputs: &UnitInputs<'_>,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
     let kind = inputs.kind;
     if kind != "program" && kind != "library" && kind != "test" {
@@ -195,12 +204,16 @@ pub fn unit_plan(
     for (identity, witness) in inputs.scalar_bodies {
         scalar_index.insert(identity.clone(), witness.clone());
     }
-    lowered_plan(modules, inputs, scalar_index, published)
+    lowered_plan(modules, inputs, scalar_index, published, admissions)
 }
 
 /// Freeze program dispatch mappings after layout admission, copying storage once from the still-borrowed module.
+///
+/// The body index was built from this module for carrier discovery. Moving it here keeps both consumers on the
+/// same checked positions.
 pub fn program_context(
     constructors: Arc<ConstructorIndex>,
+    body_indices: BodyIndex,
     module: &BodyIrModule,
     intrinsics: &mut Vec<EnumDeclaration>,
     unions: &[IncanType],
@@ -210,7 +223,7 @@ pub fn program_context(
     let display = display_functions(constructor_view, module, intrinsics)?;
     let comparisons = comparison_functions(constructor_view, module, intrinsics)?;
     Ok(ProgramContext {
-        body_indices: body_index(module),
+        body_indices,
         display_functions: Arc::new(display),
         statics: Arc::new(module.static_declarations.clone()),
         comparison_functions: Arc::new(comparisons),
@@ -223,6 +236,7 @@ pub fn program_context(
         overflow_checks,
         observe_work: std::env::var_os("INCAN_NATIVE_TIMING").is_some(),
         described: Arc::default(),
+        recorded: Arc::default(),
     })
 }
 
@@ -231,7 +245,7 @@ pub fn program_context(
 pub struct Inventories {
     pub models: Vec<ModelDeclaration>,
     pub enums: Vec<EnumDeclaration>,
-    pub functions: Vec<Function>,
+    pub functions: Vec<FunctionSlot>,
     pub externals: Vec<ExternalFunction>,
     pub instances: Vec<Instance>,
 }
@@ -242,6 +256,7 @@ fn lowered_plan(
     inputs: &UnitInputs<'_>,
     scalar_bodies: BTreeMap<CompilerNodeId, String>,
     published: &mut Vec<NativeUnionDeclaration>,
+    admissions: &mut PlanAdmissions,
 ) -> Result<UnitPlanning, String> {
     let trace = traced("INCAN_TRACE_LOWERING");
     let sources = inputs.sources;
@@ -271,12 +286,14 @@ fn lowered_plan(
     } = contexts;
     let shared_source_context = Arc::new(source_context);
     let context = Arc::new(context);
-    let (constructor_table, unions, initial_intrinsics) = layout_tables(
+    let mut closed_carrier_signatures = ClosedCarrierSignatures::default();
+    let (constructor_table, body_indices, unions, initial_intrinsics) = layout_tables(
         &context,
         &files[entry],
         &source_files,
         inputs.package_versions,
         Vec::new(),
+        Some(&mut closed_carrier_signatures),
     )?;
     let constructors = Arc::new(with_generic_constructor_arities(
         constructor_table,
@@ -286,6 +303,7 @@ fn lowered_plan(
     let mut inventories = Inventories::default();
     let mut program = initial_plan_roots(
         constructors.clone(),
+        body_indices,
         &context,
         &files[entry],
         &mut intrinsics,
@@ -296,6 +314,7 @@ fn lowered_plan(
         trace,
         &mut inventories,
     )?;
+    program.recorded = Arc::clone(inputs.recorded_layouts);
     let mut emitted_frames = no_emitted_frames();
     // 2. Lower ordinary frames and static initializers exactly once.
     let instance_products = instance_transport(
@@ -325,7 +344,8 @@ fn lowered_plan(
         inputs.scalar_products.clone(),
         &scalar_bodies,
         inputs.overflow_checks,
-        inputs.record_report.clone(),
+        inputs.record_report.as_deref(),
+        admissions,
     )?;
     let statics = lower_computed_statics(
         &context,
@@ -356,6 +376,8 @@ fn lowered_plan(
                 unions,
                 nominal_instances,
                 intrinsic_layouts: intrinsics,
+                closed_carrier_signatures,
+                layout_inputs_grew: false,
                 models: inventories.models,
                 enums: inventories.enums,
                 functions: inventories.functions,
@@ -385,6 +407,7 @@ fn lowered_plan(
             entry_owner,
             entry_file,
             intrinsics,
+            closed_carrier_signatures,
             inventories,
             emitted_frames,
             statics,
@@ -408,190 +431,7 @@ fn checked_entry(modules: &[BodyIrModule], entry: i64) -> Result<usize, String> 
     Ok(entry as usize)
 }
 
-/// Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved.
-pub fn resume_unit_plan(
-    continuation: UnitContinuation,
-    modules: &[BodyIrModule],
-    inputs: &UnitInputs<'_>,
-    published: &mut Vec<NativeUnionDeclaration>,
-) -> Result<UnitPlanning, String> {
-    let trace = traced("INCAN_TRACE_LOWERING");
-    validate_plan_inputs(
-        modules,
-        inputs.sources,
-        inputs.files,
-        inputs.entry,
-        &continuation.context,
-    )?;
-    let entry = checked_entry(modules, inputs.entry)?;
-    let source_files = source_file_index(modules, inputs.files)?;
-    let UnitContinuation {
-        mut source_context,
-        mut template_constructors,
-        mut owners,
-        sources: mut retained_sources,
-        files: mut retained_files,
-        entry_owner,
-        entry_file,
-        mut context,
-        mut template_references,
-        mut constructors,
-        mut program,
-        mut unions,
-        nominal_instances: mut retained_nominals,
-        intrinsic_layouts: mut intrinsics,
-        models,
-        enums,
-        functions,
-        externals,
-        instances,
-        emitted_frames,
-        mut statics,
-        instance_products,
-    } = continuation;
-    let mut inventories = Inventories {
-        models,
-        enums,
-        functions,
-        externals,
-        instances,
-    };
-    let previous_nominal_count = context.nominal_declarations.len();
-    let previous_model_count = inventories.models.len();
-    let previous_static_count = context.static_declarations.len();
-    refresh_entry_context(Arc::make_mut(&mut context), &modules[entry]);
-    let additions = continuation_inputs(
-        &source_context,
-        &context,
-        &owners,
-        modules,
-        inputs.sources,
-        inputs.files,
-        entry,
-    )?;
-    if !additions.modules.is_empty() {
-        let addition_source_files = source_file_index(&additions.modules, &additions.files)?;
-        let added = plan_contexts_parallel(
-            additions.modules.clone(),
-            &additions.sources,
-            &additions.files,
-            additions.entry as i64,
-            false,
-            &addition_source_files,
-            inputs.package_versions,
-            &context,
-            &template_constructors,
-        )?;
-        extend_continuation_context(
-            Arc::make_mut(&mut source_context),
-            Arc::make_mut(&mut context),
-            Arc::make_mut(&mut template_constructors),
-            &mut owners,
-            &mut retained_sources,
-            &mut retained_files,
-            &mut template_references,
-            &mut retained_nominals,
-            &additions,
-            &added.source_context,
-            &added.context,
-            &added.template_references,
-            &added.nominal_instances,
-        )?;
-    }
-    extend_constructor_authority(
-        Arc::make_mut(&mut template_constructors),
-        &source_files,
-        inputs.package_versions,
-    );
-    extend_constructor_index(Arc::make_mut(&mut constructors), &context.nominal_declarations);
-    extend_generic_constructor_arities(Arc::make_mut(&mut constructors), &template_constructors);
-    extend_constructor_authority(Arc::make_mut(&mut constructors), &source_files, inputs.package_versions);
-    extend_unions(&mut unions, &context);
-    intrinsics = intrinsic_declarations(&constructors, &context, &entry_file, intrinsics)?;
-    resume_plan_roots(
-        &mut program,
-        constructors.clone(),
-        &context,
-        &entry_file,
-        &mut intrinsics,
-        &retained_nominals,
-        inputs.kind,
-        &unions,
-        previous_nominal_count,
-        previous_model_count,
-        &mut inventories,
-    )?;
-    let resolved_statics = lower_computed_statics(
-        &context,
-        &mut program,
-        &unions,
-        &retained_sources,
-        &retained_files,
-        &owners,
-        &mut intrinsics,
-        &mut inventories,
-        previous_static_count,
-    )?;
-    let emitted_frames = rebase_emitted_frames(&context, &emitted_frames);
-    statics.extend(resolved_statics);
-    let requirements = selected_runtime_requirements(&context, &inventories.externals, &inventories.functions)?;
-    if !requirements.is_empty() {
-        return Ok(UnitPlanning::NeedsRuntime(
-            UnitContinuation {
-                source_context,
-                template_constructors,
-                owners,
-                sources: retained_sources,
-                files: retained_files,
-                entry_owner,
-                entry_file,
-                context,
-                template_references,
-                constructors,
-                program,
-                unions,
-                nominal_instances: retained_nominals,
-                intrinsic_layouts: intrinsics,
-                models: inventories.models,
-                enums: inventories.enums,
-                functions: inventories.functions,
-                externals: inventories.externals,
-                instances: inventories.instances,
-                emitted_frames,
-                statics,
-                instance_products,
-            },
-            requirements,
-        ));
-    }
-    finish_unit_plan(
-        Finishing {
-            template_constructors,
-            constructors,
-            source_context,
-            template_references,
-            context,
-            program,
-            owners,
-            sources: retained_sources,
-            files: retained_files,
-            entry_owner,
-            entry_file,
-            intrinsics,
-            inventories,
-            emitted_frames,
-            statics,
-            unions,
-            retained_nominals,
-            products: instance_products,
-        },
-        inputs.kind,
-        inputs.tests,
-        inputs.linked_static_exports,
-        published,
-        trace,
-    )
-}
+include!("runtime_continuation.rs");
 
 /// Rebase ordinary-frame body positions after resolved dependency modules enter before authored modules.
 fn rebase_emitted_frames(context: &BodyIrModule, previous: &EmittedFrames) -> EmittedFrames {
@@ -620,6 +460,7 @@ struct Finishing {
     entry_owner: String,
     entry_file: String,
     intrinsics: Vec<EnumDeclaration>,
+    closed_carrier_signatures: ClosedCarrierSignatures,
     inventories: Inventories,
     emitted_frames: EmittedFrames,
     statics: Vec<StaticCell>,
@@ -650,6 +491,7 @@ fn finish_unit_plan(
         entry_owner,
         entry_file,
         mut intrinsics,
+        closed_carrier_signatures,
         mut inventories,
         emitted_frames,
         mut statics,
@@ -694,9 +536,10 @@ fn finish_unit_plan(
         RuntimeRetention::NeedsRuntime(requests) => {
             inventories.functions.truncate(original_functions);
             for (index, callee) in future_callees {
-                inventories.functions[index].future_callee = Some(callee);
+                inventories.functions[index].make_mut().future_callee = Some(callee);
             }
             let retry = UnitContinuation {
+                layout_inputs_grew: context.nominal_declarations.len() != original_nominal_count,
                 source_context,
                 template_constructors,
                 owners,
@@ -711,6 +554,7 @@ fn finish_unit_plan(
                 unions,
                 nominal_instances: retained_nominals,
                 intrinsic_layouts: retry_intrinsic_layouts,
+                closed_carrier_signatures,
                 models: inventories.models,
                 enums: inventories.enums,
                 functions: inventories.functions,
@@ -727,6 +571,7 @@ fn finish_unit_plan(
             drop(retry_intrinsic_layouts);
             drop(retry_externals);
             drop(retry_instances);
+            drop(closed_carrier_signatures);
             statics.extend(instance_cells);
         }
     }
@@ -815,6 +660,7 @@ fn finish_unit_plan(
 #[allow(clippy::too_many_arguments)]
 pub fn initial_plan_roots(
     constructors: Arc<ConstructorIndex>,
+    body_indices: BodyIndex,
     context: &BodyIrModule,
     file: &str,
     intrinsics: &mut Vec<EnumDeclaration>,
@@ -832,6 +678,7 @@ pub fn initial_plan_roots(
     let (string_functions, conversion_runtime) = lower_string_conversions(&constructors, context, file, intrinsics, 0)?;
     let (prepared_models, prepared_enums, program) = initial_plan_layouts(
         constructors,
+        body_indices,
         context,
         file,
         intrinsics,
@@ -843,8 +690,12 @@ pub fn initial_plan_roots(
     )?;
     inventories.models.extend(prepared_models);
     inventories.enums.extend(prepared_enums);
-    inventories.functions.extend(checked_functions);
-    inventories.functions.extend(string_functions);
+    inventories
+        .functions
+        .extend(checked_functions.into_iter().map(FunctionSlot::from));
+    inventories
+        .functions
+        .extend(string_functions.into_iter().map(FunctionSlot::from));
     inventories.externals.extend(checked_runtime);
     merge_externals(&mut inventories.externals, conversion_runtime)?;
     merge_instance_requests(&mut inventories.instances, &checked_instances);
@@ -857,6 +708,7 @@ pub fn initial_plan_roots(
 ///
 /// `previous_nominal_count` separates newly resolved runtime declarations from layouts an earlier generic-instance
 /// pass appended. `previous_model_count` also admits those already-closed layouts without rebuilding older models.
+/// `new_unions` contains only the suffix the retained program has not indexed yet.
 #[allow(clippy::too_many_arguments)]
 fn resume_plan_roots(
     program: &mut ProgramContext,
@@ -866,7 +718,7 @@ fn resume_plan_roots(
     intrinsics: &mut Vec<EnumDeclaration>,
     nominal_instances: &[NominalInstance],
     kind: &str,
-    unions: &[IncanType],
+    new_unions: &[IncanType],
     previous_nominal_count: usize,
     previous_model_count: usize,
     inventories: &mut Inventories,
@@ -890,9 +742,13 @@ fn resume_plan_roots(
         kind == "library",
         previous_model_count,
     )?;
-    extend_program_context(program, context, constructors, unions)?;
-    inventories.functions.extend(checked_functions);
-    inventories.functions.extend(string_functions);
+    extend_program_context(program, context, constructors, new_unions)?;
+    inventories
+        .functions
+        .extend(checked_functions.into_iter().map(FunctionSlot::from));
+    inventories
+        .functions
+        .extend(string_functions.into_iter().map(FunctionSlot::from));
     inventories.externals.extend(checked_runtime);
     merge_externals(&mut inventories.externals, conversion_runtime)?;
     merge_instance_requests(&mut inventories.instances, &checked_instances);
@@ -906,6 +762,7 @@ fn resume_plan_roots(
 #[allow(clippy::too_many_arguments)]
 fn initial_plan_layouts(
     constructors: Arc<ConstructorIndex>,
+    body_indices: BodyIndex,
     context: &BodyIrModule,
     file: &str,
     intrinsics: &mut Vec<EnumDeclaration>,
@@ -928,22 +785,33 @@ fn initial_plan_layouts(
     trace_lowering(trace, "enum declarations");
     let mut enums = lower_enum_declarations(&constructors, context, file, intrinsics)?;
     attach_enum_comparisons(&constructors, context, &mut enums, intrinsics)?;
-    let program = program_context(constructors, context, intrinsics, unions, overflow_checks)?;
+    let program = program_context(constructors, body_indices, context, intrinsics, unions, overflow_checks)?;
     Ok((models, enums, program))
 }
 
-/// Matched constructor, union and intrinsic tables for either planning entry point.
-pub fn layout_tables(
+/// Prepare matching layout tables and the single specialized body index used by carrier discovery and dispatch.
+pub(crate) fn layout_tables(
     context: &BodyIrModule,
     file: &str,
     source_files: &BTreeMap<String, String>,
     package_versions: &BTreeMap<String, String>,
     retained_intrinsics: Vec<EnumDeclaration>,
-) -> Result<(ConstructorIndex, Vec<IncanType>, Vec<EnumDeclaration>), String> {
+    closed_carrier_signatures: Option<&mut ClosedCarrierSignatures>,
+) -> Result<(ConstructorIndex, BodyIndex, Vec<IncanType>, Vec<EnumDeclaration>), String> {
     let constructors = index_constructors(&context.nominal_declarations, source_files, package_versions);
+    let body_indices = body_index(context);
     let unions = collect_unions(context);
-    let intrinsics = intrinsic_declarations(&constructors, context, file, retained_intrinsics)?;
-    Ok((constructors, unions, intrinsics))
+    let intrinsics = intrinsic_declarations(
+        &constructors,
+        context,
+        &body_indices,
+        file,
+        retained_intrinsics,
+        "initial",
+        closed_carrier_signatures,
+    )?;
+    trace_union_selection("initial", unions.len(), unions.len(), &unions);
+    Ok((constructors, body_indices, unions, intrinsics))
 }
 
 /// Admit the completed unit's test and program entries, then transfer its owned native inventories into the plan.
@@ -1027,7 +895,7 @@ fn finalize_plan_layouts(
     let sources = inventories.enums.len();
     inventories.enums.extend(intrinsics.iter().cloned());
     // No carrier is appended after this point, so each carrier position takes its place in the plan's enum table.
-    fold_inventories(
+    fold_function_slots(
         &mut inventories.functions,
         &mut inventories.models,
         &mut inventories.enums,

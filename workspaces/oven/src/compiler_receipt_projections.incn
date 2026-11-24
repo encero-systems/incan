@@ -1,0 +1,141 @@
+"""Authenticate receipt frames and reuse their verified namespace metadata across leased selections."""
+
+from pub::incan_platform.store import Lookup, Snapshot, locate_value, read_frame
+from pub::incan_platform.store.index import Location
+from pub::incan_platform.trace import Operation
+from pub::internal_models import decode_read_receipt_view
+from pub::internal_models.records import encode_record_key
+from std.primitives.views import MappedView
+from compiler_graph_rows import Evaluation
+from jec import begin as begin_work, record as record_work
+
+const MAX_RECEIPT_PROJECTIONS: int = 1024
+const RECEIPT_PROJECTION_BYTES: int = 2097152
+
+
+pub def authenticated_receipt(selected: Snapshot, receipt_root: str) -> Result[MappedView, str]:
+    """Borrow one receipt from the exact frame named by the pinned graph."""
+    key = "incan.engine.receipt\t" + receipt_root
+    location = receipt_location(selected, key)?
+    return receipt_frame(selected, key, location)
+
+
+def receipt_location(selected: Snapshot, key: str) -> Result[Location, str]:
+    """Require a live receipt in the authenticated index before using its physical location."""
+    match locate_value(selected, key).map_err((error) => error.message())?:
+        Some(location) => return Ok(location)
+        None => return Err("selected compiler evaluation is incomplete")
+
+
+def receipt_frame(selected: Snapshot, key: str, location: Location) -> Result[MappedView, str]:
+    """Authenticate the selected key and digest against the physical frame."""
+    match read_frame(selected.root, key, location).map_err((error) => error.message())?:
+        Lookup.Found(mapped) => return Ok(mapped)
+        Lookup.Deleted | Lookup.Absent => return Err("selected compiler evaluation is incomplete")
+
+
+pub def validate_receipt_authority(profile: str, output: str, evaluation: Evaluation) -> Result[None, str]:
+    """Apply the same producer and output checks to full receipts and cached metadata."""
+    if profile != evaluation.profile or output != evaluation.output:
+        return Err("selected compiler receipt does not describe its evaluation")
+    return Ok(None)
+
+
+model ReceiptProjection:
+    """Verified receipt metadata and the exact backing generation and frame it came from."""
+
+    revision: bytes
+    segment: str
+    offset: int
+    length: int
+    generation: str
+    output: str
+    profile: str
+    certificate: str
+    size: int
+
+    def matches(self, location: Location, generation: str) -> bool:
+        """Require the original authenticated bytes at their current physical placement."""
+        return self.segment == location.segment and self.offset == location.offset and self.length == location.length and self.revision == location.digest and self.generation == generation
+
+
+pub class ReceiptProjectionCache:
+    """A bounded memo scoped to one store path and view, with backing identity checked at each segment."""
+
+    view: tuple[str, str, str] = ("", "", "")
+    entries: Dict[str, ReceiptProjection] = {}
+    retained_bytes: int = 0
+    observed: Dict[str, Option[str]] = {}
+    observations: int = 0
+
+    @staticmethod
+    pub def empty() -> ReceiptProjectionCache:
+        """Start without a selected store or any retained receipt facts."""
+        return ReceiptProjectionCache()
+
+    pub def select_view(mut self, selected: Snapshot) -> None:
+        """Select the store and view for this inventory and renew its backing observations."""
+        view = (selected.root.value, selected.root.placement, selected.view)
+        if view != self.view:
+            self.entries = {}
+            self.retained_bytes = 0
+        self.view = view
+        self.observed = {}
+        self.observations = 0
+
+    pub def generation_observations(self) -> int:
+        """Count the physical backing observations made by the current inventory."""
+        return self.observations
+
+    pub def certificate(mut self, selected: Snapshot, evaluation: Evaluation) -> Result[str, str]:
+        """Reuse verified metadata at the pinned frame revision and the current backing generation."""
+        key = "incan.engine.receipt\t" + evaluation.receipt_root
+        location = receipt_location(selected, key)?
+        mut generation: Option[str] = None
+        if self.view == (selected.root.value, selected.root.placement, selected.view):
+            generation = self.observe_segment(selected, location.segment)
+        if let Some(stamp) = generation:
+            if let Some(prior) = self.entries.get(evaluation.receipt_root):
+                if prior.matches(location, stamp):
+                    validate_receipt_authority(prior.profile, prior.output, evaluation)?
+                    return Ok(prior.certificate)
+        mapped = receipt_frame(selected, key, location)?
+        receipt = decode_read_receipt_view(mapped)?
+        output = encode_record_key(receipt.preparation.output)?
+        certificate = receipt.preparation.rank_certificate
+        validate_receipt_authority(receipt.scope.profile, output, evaluation)?
+        if let Some(stamp) = generation:
+            self.keep(evaluation.receipt_root, location, stamp, output, receipt.scope.profile, certificate)
+        return Ok(certificate)
+
+    def observe_segment(mut self, selected: Snapshot, segment: str) -> Option[str]:
+        """Observe one segment once for this inventory, including a failed or unsettled observation."""
+        if segment in self.observed:
+            return self.observed[segment]
+        path = selected.root.joinpath("segments").joinpath(f"{segment}.seg")
+        clock = begin_work()
+        stamp = match path.store_file_generation():
+            Ok(found) => found
+            Err(_) => None
+        record_work(Operation.EngineSelect, f"namespace-receipt-generation\t{segment}", clock)
+        self.observations += 1
+        self.observed[segment] = stamp
+        return stamp
+
+    def keep(mut self, key: str, location: Location, generation: str, output: str, profile: str, certificate: str) -> None:
+        """Retain only bounded metadata from an authenticated frame."""
+        cost = 4 * (len(output) + len(profile) + len(certificate) + len(location.segment) + len(generation)) + 128
+        if cost > RECEIPT_PROJECTION_BYTES:
+            return
+        mut replaced = 0
+        if let Some(prior) = self.entries.get(key):
+            replaced = prior.size
+        self.retained_bytes -= replaced
+        if (replaced == 0 and len(self.entries) >= MAX_RECEIPT_PROJECTIONS) or self.retained_bytes + cost > RECEIPT_PROJECTION_BYTES:
+            self.entries = {}
+            self.retained_bytes = 0
+        self.entries[key] = ReceiptProjection(
+            revision=location.digest, segment=location.segment, offset=location.offset, length=location.length,
+            generation=generation, output=output, profile=profile, certificate=certificate, size=cost,
+        )
+        self.retained_bytes += cost

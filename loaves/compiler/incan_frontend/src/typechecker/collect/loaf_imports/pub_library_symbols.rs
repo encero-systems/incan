@@ -2,6 +2,9 @@
 
 use super::deferred_layouts::DeclaringScopes;
 use super::*;
+use crate::library_manifest::CanonicalIdentityExport;
+use crate::library_manifest::compiler_records::RecordFamily;
+use crate::library_manifest::install_record::{InstallDeclarationKind, InstallExportKind, LoafInstallRecord};
 use crate::typechecker::TransitiveLayout;
 use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
@@ -52,8 +55,8 @@ impl TypeChecker {
         member: &str,
     ) -> Option<SymbolKind> {
         let manifest = std::sync::Arc::clone(&self.loaves.entry(library)?.artifact.manifest);
-        self.cache_transitive_pub_export_semantics(library, &manifest);
-        let remapping = self.public_library_canonical_type_remapping(library, &manifest);
+        self.cache_transitive_pub_export_semantics(library);
+        let remapping = self.public_library_canonical_type_remapping(library);
         let mut kind = if let Some(kind) = self.pub_library_function_symbol(&manifest, member) {
             kind
         } else {
@@ -139,15 +142,9 @@ impl TypeChecker {
         member: &str,
     ) -> Result<Option<ResolvedPublicModuleSymbol>, Vec<String>> {
         if module_path.is_empty() {
-            let Some(kind) = self.lookup_pub_library_symbol_member(library, member) else {
+            let Some((kind, canonical)) = self.resolve_pub_library_root_member(library, member) else {
                 return Ok(None);
             };
-            let canonical = self.loaves.manifest(library).and_then(|manifest| {
-                manifest
-                    .contract_metadata
-                    .identity_graph
-                    .canonical_for_public_name(member)
-            });
             return Ok(Some(ResolvedPublicModuleSymbol {
                 kind,
                 canonical,
@@ -182,6 +179,30 @@ impl TypeChecker {
         }))
     }
 
+    /// Reuse a bare Rust re-export's admitted identity and ABI. Missing compatible records leave the manifest
+    /// resolver's signature, partial and alias precedence in charge.
+    fn resolve_pub_library_root_member(
+        &mut self,
+        library: &str,
+        member: &str,
+    ) -> Option<(SymbolKind, Option<CanonicalSymbolId>)> {
+        // An error on selected path facts is retained by the index for validate_demands.
+        if let Some((target, canonical)) = self.loaves.root_rust_reexport_target(library, member).ok()?
+            && let Some(kind) = self.indexed_rust_reexport_symbol(library, &target)
+        {
+            self.cache_transitive_pub_export_semantics(library);
+            return Some((kind, Some(canonical)));
+        }
+        let kind = self.lookup_pub_library_symbol_member(library, member)?;
+        let canonical = self
+            .loaves
+            .manifest(library)?
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_name(member);
+        Some((kind, canonical))
+    }
+
     /// Resolve partial-call projection metadata for a member reached through a checked public module namespace.
     pub(in crate::typechecker) fn lookup_pub_library_module_partial_projection(
         &mut self,
@@ -213,120 +234,116 @@ impl TypeChecker {
     /// They do not change source-visible name resolution. Each declaration's layout is deferred (see
     /// [`crate::typechecker::TransitiveLayout`]) and built the first time a lookup reads it; identities, scopes and
     /// alias layouts are installed here, in the order the tables have always been filled.
-    pub(in crate::typechecker) fn cache_transitive_pub_export_semantics(
-        &mut self,
-        library: &str,
-        manifest: &Arc<LibraryManifest>,
-    ) {
-        if !self.cached_pub_libraries.insert(library.to_string()) {
+    pub(in crate::typechecker) fn cache_transitive_pub_export_semantics(&mut self, library: &str) {
+        if self.cached_pub_libraries.contains(library) {
             return;
         }
-        let canonical_remapping = Arc::new(self.public_library_canonical_type_remapping(library, manifest));
-        let root_layout = |declaration, field_provider: Option<&str>| LayoutRecipe {
-            manifest: Arc::clone(manifest),
-            declaration,
+        let Some(record) = self.prepared_install_record(library) else {
+            return;
+        };
+        self.cached_pub_libraries.insert(library.to_owned());
+        let canonical_remapping = Arc::new(self.replay_library_type_remapping(library, &record));
+        let root_layout = |family, name: &str, field_provider: Option<&str>| LayoutRecipe {
+            library: library.to_owned(),
+            declaration: LayoutDeclaration::Root {
+                family,
+                name: name.to_owned(),
+            },
             remappings: Vec::new(),
             field_provider: field_provider.map(str::to_owned),
         };
-        let exports = &manifest.exports;
-        for (index, model) in exports.models.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Model(index), None));
+        let roots = &record.root_exports;
+        for model in &roots.models {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Model, model, None));
+            self.transitive_pub_types.entry(model.clone()).or_default().push(layout);
+        }
+        for class in &roots.classes {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Class, class, Some(library)));
+            self.transitive_pub_types.entry(class.clone()).or_default().push(layout);
+        }
+        for enum_export in &roots.enums {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Enum, enum_export, None));
             self.transitive_pub_types
-                .entry(model.name.clone())
+                .entry(enum_export.clone())
                 .or_default()
                 .push(layout);
         }
-        for (index, class) in exports.classes.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Class(index), Some(library)));
+        for newtype in &roots.newtypes {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Newtype, newtype, None));
             self.transitive_pub_types
-                .entry(class.name.clone())
+                .entry(newtype.clone())
                 .or_default()
                 .push(layout);
         }
-        for (index, enum_export) in exports.enums.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Enum(index), None));
-            self.transitive_pub_types
-                .entry(enum_export.name.clone())
-                .or_default()
-                .push(layout);
-        }
-        for (index, newtype) in exports.newtypes.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Newtype(index), None));
-            self.transitive_pub_types
-                .entry(newtype.name.clone())
-                .or_default()
-                .push(layout);
-        }
-        for (index, trait_export) in exports.traits.iter().enumerate() {
-            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Trait(index), None));
+        for trait_export in &roots.traits {
+            let layout = self.deferred_layout(root_layout(RecordFamily::Trait, trait_export, None));
             self.transitive_pub_traits
-                .entry(trait_export.name.clone())
+                .entry(trait_export.clone())
                 .or_default()
                 .push(layout);
         }
 
-        self.register_pub_library_declarations(library, manifest, &canonical_remapping);
-        if let Some(api) = manifest.contract_metadata.api.as_ref() {
-            for module in &api.modules {
-                let mut public_path = std::iter::once(manifest.name.clone())
-                    .chain(module.module_path.iter().cloned())
-                    .collect::<Vec<_>>();
-                for declaration in &module.declarations {
-                    self.record_provider_type_param_bounds(declaration, || {
-                        public_path.push(Self::api_declaration_name(declaration).to_owned());
-                        let canonical = manifest
-                            .contract_metadata
-                            .identity_graph
-                            .canonical_for_public_path(&public_path);
-                        let _ = public_path.pop();
-                        canonical
-                    });
-                }
+        self.register_recorded_declarations(library, &record, &canonical_remapping);
+        for declared in record.modules.iter().flat_map(|module| &module.declarations) {
+            if matches!(
+                declared.kind,
+                InstallDeclarationKind::Model | InstallDeclarationKind::Class
+            ) {
+                self.record_declared_type_param_bounds(&declared.type_params, || {
+                    declared.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate)
+                });
             }
         }
-        self.cache_canonical_type_layouts(library, manifest, &canonical_remapping);
+        self.cache_canonical_type_layouts(library, &record, &canonical_remapping);
     }
 
     /// Install each nominal public type of `library` under its canonical spelling and its retained carrier key, its
     /// members read in its declaring module's scope and then through `canonical_remapping`.
     ///
-    /// A model, class, enum or newtype export is deferred; an alias export is built now, because it reads the tables,
-    /// and one that names no nominal type is not installed. Every layout is made before any is installed, so an alias
+    /// The exports and the kind of root export each name finds are the Loaf's install record's. A model, class, enum
+    /// or newtype export is deferred; an alias export is built now, because it reads the tables, and one that names no
+    /// nominal type is not installed. Every layout is made before any is installed, so an alias
     /// reads the tables as the install found them.
     fn cache_canonical_type_layouts(
         &mut self,
         library: &str,
-        manifest: &Arc<LibraryManifest>,
+        record: &LoafInstallRecord,
         canonical_remapping: &Arc<HashMap<String, String>>,
     ) {
-        let identity_graph = &manifest.contract_metadata.identity_graph;
+        let identity_graph = &record.identity_graph;
+        let kinds = record.export_kinds_by_name();
         let mut scopes = DeclaringScopes::new();
         let mut layouts = Vec::new();
         for identity in &identity_graph.exports {
             let public_name = identity.public_name.as_str();
-            let (declaration, layout) = if Self::export_layout_is_deferrable(manifest, public_name) {
+            let kind = kinds.get(public_name).copied().flatten();
+            let (declaration, layout) = if let Some(root) = LayoutDeclaration::root_nominal(public_name, kind) {
                 let declaration = identity_graph.canonical_for_public_name(public_name);
-                let scope = self.declaring_module_scope(library, manifest, declaration.as_ref(), &mut scopes);
+                let scope = self.declaring_module_scope(library, record, declaration.as_ref(), &mut scopes);
                 let layout = self.deferred_layout(LayoutRecipe {
-                    manifest: Arc::clone(manifest),
-                    declaration: LayoutDeclaration::Export(public_name.to_owned()),
+                    library: library.to_owned(),
+                    declaration: root,
                     remappings: scope.into_iter().chain([Arc::clone(canonical_remapping)]).collect(),
                     field_provider: Some(library.to_owned()),
                 });
                 (declaration, layout)
-            } else {
-                let Some(info) = self.manifest_nominal_type_info(manifest, public_name) else {
+            } else if kind == Some(InstallExportKind::Alias) {
+                let Some(info) = self.recorded_root_alias_layout(library, record, public_name) else {
                     continue;
                 };
                 let declaration = identity_graph.canonical_for_public_name(public_name);
                 let mut kind = SymbolKind::Type(info);
-                self.remap_symbol_kind_through_declaring_module(library, manifest, declaration.as_ref(), &mut kind);
+                if let Some(scope) = self.declaring_module_scope(library, record, declaration.as_ref(), &mut scopes) {
+                    self.remap_symbol_kind_with_import_aliases(&mut kind, scope.as_ref());
+                }
                 self.remap_symbol_kind_with_import_aliases(&mut kind, canonical_remapping.as_ref());
                 Self::mark_compiled_class_field_provider(&mut kind, library);
                 let SymbolKind::Type(info) = kind else {
                     continue;
                 };
                 (declaration, TransitiveLayout::ready(info))
+            } else {
+                continue;
             };
             layouts.push((
                 canonical_public_library_type_name(library, public_name),

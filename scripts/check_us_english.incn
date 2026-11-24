@@ -8,8 +8,9 @@ from std.regex import Regex
 from check_support import git, read, repository_root, source_lines, write_stderr
 from english_spellings import spellings
 
-const HELP: str = """usage: check_us_english.py [-h] [--root ROOT] [--allow ALLOW] [--fix]
-                           [paths ...]
+const USAGE: str = """usage: incan run scripts/check_us_english.incn -- [-h] [--root ROOT] [--allow ALLOW] [--fix]
+                           [paths ...]"""
+const HELP: str = """
 
 Check tracked text for UK spellings; US English is the repository's standard
 (#1561).
@@ -117,15 +118,11 @@ def run() -> Result[int, str]:
 
 
 def command_options(arguments: list[str]) -> Options:
-    """Preserve argparse's diagnostic stream and exit status for malformed options."""
+    """Print usage to stderr and exit with status 2 on a malformed option."""
     match parse_options(arguments):
         Ok(options) => return options
         Err(message) =>
-            usage = (
-                "usage: check_us_english.py [-h] [--root ROOT] [--allow ALLOW] [--fix]\n"
-                + "                           [paths ...]"
-            )
-            write_stderr(f"{usage}\ncheck_us_english.py: error: {message}\n")
+            write_stderr(f"{USAGE}\ncheck_us_english: error: {message}\n")
             exit(2)
 
 
@@ -137,7 +134,7 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     while index < len(arguments):
         argument = arguments[index]
         if not positional and (argument == "--help" or argument == "-h"):
-            println(HELP)
+            println(f"{USAGE}{HELP}")
             exit(0)
         elif not positional and argument == "--":
             positional = true
@@ -331,7 +328,7 @@ def exempt_hit(path: str, line: str, hit: Hit, rules: list[ExceptionRule]) -> bo
 def read_verbatim(path: Path) -> Result[str, str]:
     """Decode strict UTF-8 without translating CRLF before byte-preserving spelling replacements."""
     data = path.read_bytes().map_err((error) => error.message())?
-    return RustString.from_utf8(data).map_err((error) => error.to_string())
+    return RustString.from_utf8(data).map_err((error) => f"cannot decode {path.0} as UTF-8: {error.to_string()}")
 
 
 def replaced_line(line: str, found: list[Hit]) -> str:

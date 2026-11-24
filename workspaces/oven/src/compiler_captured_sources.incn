@@ -1,22 +1,32 @@
 """Stage captured Incan source projections before compiler-produced records authenticate them."""
 
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.fs.file import _decode_text
+from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
+from pub::incan_platform.trace import Operation
 from pub::internal_models.records import RecordKey, encode_record_key
-from pub::internal_models.source_value_records import source_value
+from pub::internal_models.source_value_records import encode_source_text, source_value
 from compiler_source_projection import (
+    SourceProjection,
     SourceProjectionRecord,
     captured_source_key,
     compiler_generation_record,
     positioned_source_key,
-    project_source,
+    project_source_file,
+    raw_source_key,
     scope_member,
     scope_members,
     signature_record,
+    source_comments_key,
 )
 from core_process import executable
 from observation import observe
+from jec import begin as begin_work, record as record_work
 from engine_capture import CapturedInput, InputRole
+from project_library import provides_source
+from semantic_text import source_comments
 from unit import UnitDescription, dependency_source_roots
 
 
@@ -35,6 +45,15 @@ pub model PreparedSourceInputs:
     pub positioned: Dict[str, bytes] = {}
     # The unit's own modules whose selected projection was carried rather than projected again.
     pub carried: set[str] = set()
+    # Local modules projected from this request's sources for the same feature selection as publication.
+    pub projections: Dict[str, SourceProjection] = {}
+
+
+model CapturedDependencyRoots:
+    """Resolved inputs in one traversal share the ordered Loaf root descriptions."""
+
+    ordered: list[Tuple[str, str]] = []
+    derived: bool = false
 
 
 pub def publish_captured_source_inputs(
@@ -55,6 +74,7 @@ pub def prepare_captured_source_inputs(
     unit: UnitDescription,
     inputs: list[CapturedInput],
     compiler: str = "",
+    retain_projections: bool = false,
 ) -> Result[PreparedSourceInputs, str]:
     """
     Stage captured source projections and report only keys whose semantic values differ from the selected view. The
@@ -64,16 +84,23 @@ pub def prepare_captured_source_inputs(
     mut changed: list[RecordKey] = []
     mut positioned: Dict[str, bytes] = {}
     mut carried: set[str] = set()
-    generation = compiler_generation_record(source_origin(unit), compiler)
+    mut projections: Dict[str, SourceProjection] = {}
+    origin = source_origin(unit)
+    generation = compiler_generation_record(origin, compiler)
     if stage_changed_projection(selected, prepared, encode_record_key(generation.key)?, generation, positioned)?:
         changed.append(generation.key)
     engine = observe(Path(executable()?))?.stamp
+    mut dependency_roots = CapturedDependencyRoots()
     for input in inputs:
-        if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
-            if let Some(identity) = captured_source_identity(unit, input.path)?:
+        if input.path.endswith(".incn") and input.role in [
+            InputRole.Root, InputRole.Member, InputRole.ProjectMember, InputRole.Resolved,
+        ]:
+            project_member = input.role == InputRole.ProjectMember
+            if let Some(identity) = captured_source_identity(unit, input.path, project_member, dependency_roots)?:
                 mut declared: list[str] = []
                 mut active: Option[list[str]] = None
-                if identity[0] == source_origin(unit):
+                local = identity[0] == origin
+                if local:
                     declared = unit.declared_features
                     active = Some(unit.active_features)
                 capture = SourceProjectionRecord(
@@ -85,12 +112,13 @@ pub def prepare_captured_source_inputs(
                 # A module captured with the bytes, features and engine its selected projection was made from projects
                 # to the same records: its positioned record is carried and nothing is projected again.
                 if carried_projection(selected, capture, identity, positioned)?:
-                    if identity[0] == source_origin(unit):
+                    if local:
                         carried.add(identity[1])
                     continue
                 stage_put(prepared, encode_record_key(capture.key)?, capture.encoded()?)
-                source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
-                projection = project_source(identity[0], identity[1], source, declared, active)?
+                path = Path(input.path)
+                source = stage_source_input(prepared, unit, input, identity, path)?
+                projection = project_source_file(identity[0], identity[1], path, declared, active, Some(source))?
                 doc_key = projection.documentation_key()
                 doc_slot = encode_record_key(doc_key)?
                 documentation = projection.encoded_documentation()?
@@ -118,7 +146,7 @@ pub def prepare_captured_source_inputs(
                     if stage_changed_projection(selected, prepared, encode_record_key(placement.key)?, placement, positioned)?:
                         changed.append(placement.key)
                 # Only another unit's checked bodies read a declaration's span: a path dependency's module stages it.
-                if identity[0] != source_origin(unit):
+                if not local:
                     for facet in projection.spans.keys():
                         span = projection.spans[facet]
                         if stage_changed_projection(selected, prepared, encode_record_key(span.key)?, span, positioned)?:
@@ -128,13 +156,51 @@ pub def prepare_captured_source_inputs(
                         key = encode_record_key(record.key)?
                         if stage_changed_projection(selected, prepared, key, record, positioned)?:
                             changed.append(record.key)
-    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried))
+                if retain_projections and local:
+                    projections[identity[1]] = projection
+    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried, projections=projections))
+
+
+def stage_source_input(
+    mut transaction: Transaction, unit: UnitDescription, input: CapturedInput, identity: Tuple[str, str], path: Path,
+) -> Result[str, str]:
+    """Stage the selected UTF-8 and comments, then return the text used by the current semantic projector."""
+    if let Some(readings) = unit.source_readings:
+        captured = readings.as_ref()
+        if path.0 in captured:
+            reading = captured[path.0]
+            if reading.raw_digest != input.digest:
+                return Err(f"captured source {path.0}: selected bytes differ from their input digest")
+            stage_source_witnesses(transaction, identity, reading.text, reading.comments)?
+            return Ok(reading.text)
+
+    # An uncaptured projection still uses filesystem text semantics, derived from the same byte read as the witness.
+    content = path.read_bytes().map_err((error) => error.message())?
+    if hexlify(sha256.digest(content)) != input.digest:
+        return Err(f"captured source {path.0}: file bytes differ from their input digest")
+    raw = match content.decode("utf-8", "strict"):
+        Ok(source) => source
+        Err(_) => return Err(f"captured source {path.0}: invalid UTF-8")
+    semantic = _decode_text(path, content, "utf-8", "strict").map_err((error) => error.message())?
+    stage_source_witnesses(transaction, identity, raw, source_comments(raw))?
+    return Ok(semantic)
+
+
+def stage_source_witnesses(
+    mut transaction: Transaction, identity: Tuple[str, str], raw: str, comments: str,
+) -> Result[None, str]:
+    """Publish observed text in the existing transaction without adding compiler invalidation inputs."""
+    raw_slot = encode_record_key(raw_source_key(identity[0], identity[1]))?
+    comment_slot = encode_record_key(source_comments_key(identity[0], identity[1]))?
+    stage_put(transaction, raw_slot, encode_source_text(raw)?)
+    stage_put(transaction, comment_slot, encode_source_text(comments)?)
+    return Ok(None)
 
 
 def capture_marker(engine: str, digest: str, declared: list[str], active: Option[list[str]]) -> str:
     """Everything one module's projection is a function of, besides its logical path: its captured bytes' digest, its
     feature selection and the engine that projects it."""
-    mut parts = ["incan.source-capture/1", engine, digest, "declared:" + ",".join(declared)]
+    mut parts = ["incan.source-capture/2", engine, digest, "declared:" + ",".join(declared)]
     match active:
         Some(features) => parts.append("active:" + ",".join(features))
         None => parts.append("active:none")
@@ -204,14 +270,32 @@ def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, k
     return Ok(changed)
 
 
-def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:
-    """Compare physical input and root paths so symlinked checkouts cannot omit changed source witnesses."""
+def captured_source_identity(
+    unit: UnitDescription,
+    path: str,
+    project_member: bool,
+    mut roots: CapturedDependencyRoots,
+) -> Result[Option[Tuple[str, str]], str]:
+    """Compare physical paths and keep a linked program's own entry and excluded files under its own authority."""
     normalized = match Path(path).resolve():
         Err(_) => return Ok(None)
         Ok(resolved) => resolved.0
 
-    for dependency in dependency_source_roots(unit):
+    if not roots.derived:
+        clock = begin_work()
+        roots.ordered = dependency_source_roots(unit)
+        if clock is not None:
+            record_work(
+                Operation.EngineSelect,
+                "captured-source-dependency-roots\t" + unit.project_root + "\t" + path,
+                clock,
+            )
+        roots.derived = true
+    for dependency in roots.ordered:
         if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
+            if unit.project_library == Some(dependency[0]):
+                if not project_member or not provides_source(relative):
+                    continue
             return Ok(Some((dependency[0], logical_module(relative))))
     if let Some(relative) = captured_relative_path(normalized, unit.project_root)?:
         return Ok(Some((source_origin(unit), relative)))

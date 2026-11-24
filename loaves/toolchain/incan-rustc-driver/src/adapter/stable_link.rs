@@ -1,16 +1,80 @@
 //! Darwin linker boundary that gives development objects durable, content-derived debug-map paths.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, BufWriter, Read, Seek, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Private argument through which the adapter supplies its already validated absolute native store.
 pub(crate) const STORE_ARGUMENT: &str = "--incan-link-input-store=";
+/// The current compiler's optional completed regular-object handoff, owned by its private output lease.
+pub(crate) const COMPLETED_ARGUMENT: &str = "--incan-link-completed-objects=";
+const COMPLETED_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// A regular object assigned by the actual completed backend, with its independent cache-source outcome.
+#[derive(Deserialize, Serialize)]
+pub(crate) struct CompletedObject {
+    pub group: String,
+    pub source: PathBuf,
+    pub source_identity: String,
+    pub cached_source: Option<PathBuf>,
+    pub same_cache_file: bool,
+    pub saved_name: String,
+    pub device: u64,
+    pub inode: u64,
+    pub length: u64,
+    pub modified: (i64, i64),
+}
+
+/// The completed objects and finalized rustc session of this one ordinary link.
+#[derive(Deserialize, Serialize)]
+pub(crate) struct CompletedObjects {
+    pub finalized: PathBuf,
+    pub entries: Vec<CompletedObject>,
+    pub previous: BTreeMap<String, PreviousObject>,
+}
+
+/// A selected earlier product admitted under the holder before rustc opens that generation.
+#[derive(Deserialize, Serialize)]
+pub(crate) struct PreviousObject {
+    pub saved_name: String,
+    pub selected: PathBuf,
+    pub device: u64,
+    pub inode: u64,
+    pub length: u64,
+    pub modified: (i64, i64),
+}
+
+/// The regular object's identity and selected content path returned by the one real successful link.
+#[derive(Deserialize, Serialize)]
+pub(crate) struct LinkedObject {
+    pub completed: CompletedObject,
+    pub selected: PathBuf,
+}
+
+/// The regular inputs resolved by this invocation, returned only after the ordinary link succeeds.
+#[derive(Deserialize, Serialize)]
+pub(crate) struct LinkedObjects {
+    pub finalized: PathBuf,
+    pub entries: Vec<LinkedObject>,
+}
+
+struct CompletedLink {
+    note: PathBuf,
+    receipt: File,
+    received_identity: String,
+    finalized: PathBuf,
+    sources: BTreeMap<PathBuf, CompletedObject>,
+    previous: BTreeMap<String, PreviousObject>,
+    linked: Vec<LinkedObject>,
+}
+
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 /// The system's `ld` launcher, which finds the selected toolchain's linker on every start.
 const LAUNCHER: &str = "/usr/bin/ld";
@@ -20,7 +84,8 @@ const LAUNCHER: &str = "/usr/bin/ld";
 /// link, preparing the inputs and running ld, are each an invocation span, so a trace splits the link.
 pub(crate) fn run(arguments: &[String]) -> io::Result<i32> {
     let store = link_store(arguments)?;
-    let rewritten = stable_arguments(&store, arguments)?;
+    let mut completed = CompletedLink::open(arguments);
+    let rewritten = stable_arguments(&store, arguments, completed.as_mut())?;
     let linker = linker(arguments, std::env::var_os("TOOLCHAINS").is_some());
     let _invocation =
         tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::run_linker", linker = %linker.display())
@@ -28,24 +93,212 @@ pub(crate) fn run(arguments: &[String]) -> io::Result<i32> {
     // Development links skip ld's deduplication pass: a debug executable gains nothing from folded duplicates, and
     // the pass is a measurable share of an edit's link.
     let status = Command::new(linker).arg("-no_deduplicate").args(rewritten).status()?;
+    drop(_invocation);
+    if status.success()
+        && let Some(completed) = completed
+    {
+        completed.finish();
+    }
     Ok(status.code().unwrap_or(1))
 }
 
 /// The argument vector with every object and archive input named by its content, and the store argument removed.
-fn stable_arguments(store: &Path, arguments: &[String]) -> io::Result<Vec<String>> {
+fn stable_arguments(
+    store: &Path,
+    arguments: &[String],
+    mut completed: Option<&mut CompletedLink>,
+) -> io::Result<Vec<String>> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::link_inputs").entered();
     let mut rewritten = Vec::with_capacity(arguments.len());
     for argument in arguments {
-        if argument.starts_with(STORE_ARGUMENT) {
+        if argument.starts_with(STORE_ARGUMENT) || argument.starts_with(COMPLETED_ARGUMENT) {
             continue;
         }
         let path = Path::new(argument);
         match link_input_suffix(path)? {
-            Some(suffix) => rewritten.push(stable_input(store, path, suffix)?.to_string_lossy().into_owned()),
+            Some(suffix) => {
+                let selected = match completed.as_deref_mut().filter(|_| suffix == "o") {
+                    Some(completed) => completed.select_object(store, path)?,
+                    None => stable_input(store, path, suffix)?,
+                };
+                rewritten.push(selected.to_string_lossy().into_owned());
+            }
             None => rewritten.push(argument.clone()),
         }
     }
     Ok(rewritten)
+}
+
+impl CompletedLink {
+    /// Accept one compiler-owned private note beside the exact output this invocation will link.
+    fn open(arguments: &[String]) -> Option<Self> {
+        let mut notes = arguments
+            .iter()
+            .filter_map(|value| value.strip_prefix(COMPLETED_ARGUMENT));
+        let mut issued = notes.next()?.splitn(3, ':');
+        let device: u64 = issued.next()?.parse().ok()?;
+        let inode: u64 = issued.next()?.parse().ok()?;
+        let note = Path::new(issued.next()?);
+        let mut outputs = arguments.windows(2).filter(|pair| pair[0] == "-o");
+        let output = Path::new(&outputs.next()?[1]);
+        let directory = output.parent()?;
+        if notes.next().is_some()
+            || outputs.next().is_some()
+            || !note.is_absolute()
+            || note.parent()? != directory
+            || !note.file_name()?.to_str()?.starts_with(".incan-completed-objects-")
+            || !fs::symlink_metadata(note).ok()?.is_file()
+        {
+            return None;
+        }
+
+        let mut receipt = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(note)
+            .ok()?;
+        let metadata = receipt.metadata().ok()?;
+        if !metadata.is_file()
+            || metadata.dev() != device
+            || metadata.ino() != inode
+            || metadata.mode() & 0o777 != 0o600
+            || metadata.nlink() != 1
+            || metadata.len() > COMPLETED_LIMIT
+        {
+            return None;
+        }
+        let received_identity = file_identity(&metadata);
+        let completed: CompletedObjects = serde_json::from_reader((&mut receipt).take(COMPLETED_LIMIT)).ok()?;
+        if file_identity(&receipt.metadata().ok()?) != received_identity {
+            return None;
+        }
+        let session_name = completed.finalized.file_name()?.to_str()?;
+        if !completed.finalized.is_absolute() || !session_name.starts_with("s-") || session_name.ends_with("-working") {
+            return None;
+        }
+        let mut sources = BTreeMap::new();
+        for object in completed.entries {
+            if object.source.parent()? != directory
+                || object.source.extension()?.to_str()? != "o"
+                || Path::new(&object.saved_name).file_name()?.to_str()? != object.saved_name
+                || sources.insert(object.source.clone(), object).is_some()
+            {
+                return None;
+            }
+        }
+        Some(Self {
+            note: note.to_owned(),
+            receipt,
+            received_identity,
+            finalized: completed.finalized,
+            sources,
+            previous: completed.previous,
+            linked: Vec::new(),
+        })
+    }
+
+    /// Choose a prior sealed input only for the same successfully transferred regular group and exact current operand.
+    fn select_object(&mut self, store: &Path, source: &Path) -> io::Result<PathBuf> {
+        let Some(completed) = self
+            .sources
+            .remove(source)
+            .filter(|completed| current_object(completed))
+        else {
+            return stable_input(store, source, "o");
+        };
+        let working = self
+            .finalized
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.rsplit_once('-'))
+            .map(|(base, _)| self.finalized.with_file_name(format!("{base}-working")));
+        let previous = self.previous.remove(&completed.group).filter(|prior| {
+            completed.same_cache_file
+                && completed.cached_source.as_deref().is_some_and(|cached| {
+                    cached.parent() == working.as_deref()
+                        && cached
+                            .file_name()
+                            .is_some_and(|name| name == completed.saved_name.as_str())
+                })
+                && completed.saved_name == prior.saved_name
+                && completed.device == prior.device
+                && completed.inode == prior.inode
+                && completed.length == prior.length
+                && completed.modified == prior.modified
+                && verified_content_object(store, &prior.selected)
+        });
+        let selected = match previous.filter(|_| current_object(&completed)) {
+            Some(prior) => prior.selected,
+            None => stable_input(store, source, "o")?,
+        };
+        if current_object(&completed) {
+            self.linked.push(LinkedObject {
+                completed,
+                selected: selected.clone(),
+            });
+        }
+        Ok(selected)
+    }
+
+    /// Return the current link's observed selection through the same private file while its compiler owns it.
+    fn finish(mut self) {
+        let written = (|| -> io::Result<()> {
+            let current = fs::symlink_metadata(&self.note)?;
+            if !current.is_file()
+                || file_identity(&current) != self.received_identity
+                || file_identity(&self.receipt.metadata()?) != self.received_identity
+            {
+                return Ok(());
+            }
+            self.receipt.rewind()?;
+            self.receipt.set_len(0)?;
+            let mut writer = BufWriter::new(self.receipt);
+            let linked = LinkedObjects {
+                finalized: self.finalized,
+                entries: self.linked,
+            };
+            serde_json::to_writer(&mut writer, &linked)?;
+            writer.flush()
+        })();
+        let _ = written;
+    }
+}
+
+/// The current issued argument is still the exact regular file returned by the backend.
+fn current_object(object: &CompletedObject) -> bool {
+    fs::symlink_metadata(&object.source)
+        .is_ok_and(|found| found.is_file() && file_identity(&found) == object.source_identity)
+}
+
+/// A selected stable object must still authenticate under its exact ordinary content name.
+pub(crate) fn content_object_digest<'a>(store: &Path, object: &'a Path) -> Option<&'a str> {
+    let digest = object.file_stem()?.to_str()?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let expected = store
+        .join("link-inputs/sha256")
+        .join(&digest[..2])
+        .join(format!("{digest}.o"));
+    (object == expected).then_some(digest)
+}
+
+/// Verify the predecessor's content name against its current sealed object.
+fn verified_content_object(store: &Path, object: &Path) -> bool {
+    content_object_digest(store, object).is_some_and(|digest| {
+        let Ok(before) = fs::symlink_metadata(object) else {
+            return false;
+        };
+        before.is_file()
+            && before.mode() & 0o222 == 0
+            && identified_digest(store, object, link_input_digest).is_ok_and(|observed| observed == digest)
+            && fs::symlink_metadata(object).is_ok_and(|after| file_identity(&before) == file_identity(&after))
+    })
 }
 
 /// The `ld` a development link runs: the one that ships beside the SDK rustc selected (`-syslibroot`), run directly.
@@ -211,7 +464,7 @@ pub(crate) fn identified_digest(
 }
 
 /// The identity a file's content is recorded under; a write changes its size, modification time or change time.
-fn file_identity(metadata: &fs::Metadata) -> String {
+pub(crate) fn file_identity(metadata: &fs::Metadata) -> String {
     format!(
         "{} {} {} {}.{} {}.{}",
         metadata.dev(),

@@ -23,7 +23,7 @@ const PROVIDER: &str = "from pub::shapes import Outer\nfrom pub::base import Inn
 const CONSUMER: &str = "from provider import make\n\ndef main() -> int:\n    return make().inner.value\n";
 
 /// The installed `base` and `shapes` Loaves.
-fn shapes(root: &Path) -> TestResult<Arc<LoafIndex>> {
+pub(super) fn shapes(root: &Path) -> TestResult<Arc<LoafIndex>> {
     let base = installed(root, &published_root("base", BASE, LoafIndex::default())?)?;
     let shapes = installed(
         root,
@@ -128,4 +128,746 @@ fn a_loafs_type_origins_are_collected_once_per_module_graph() -> TestResult {
         "type origins collected more than once per Loaf: {collections:?}"
     );
     Ok(())
+}
+
+/// A compiled Loaf's install record holds what installing it reads of its manifest, as that manifest gives it: the
+/// nominal public types with their declarations' source paths and identities, the root exports by kind and the type
+/// origins. It reads back as it was written.
+#[test]
+fn a_loafs_install_record_holds_what_install_reads_and_reads_back() -> TestResult {
+    use crate::library_manifest::CanonicalIdentityExport;
+    use crate::library_manifest::install_record::LoafInstallRecord;
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    for library in ["base", "shapes"] {
+        let manifest = loaves.manifest(library).ok_or("missing manifest")?;
+        let mut checker = TypeChecker::new();
+        checker.set_loaves(Arc::clone(&loaves));
+        let record = checker.loaf_install_record(library, manifest);
+        let expected = checker
+            .manifest_nominal_public_types(library, manifest)
+            .iter()
+            .map(|entry| {
+                (
+                    entry.public_name.clone(),
+                    entry.identity.source_path.clone(),
+                    entry.identity.canonical.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let recorded = record
+            .canonical_types
+            .iter()
+            .map(|row| {
+                (
+                    row.public_name.clone(),
+                    row.source_path.clone(),
+                    row.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(!expected.is_empty(), "{library} publishes no nominal type");
+        assert_eq!(recorded, expected, "{library}'s nominal public types");
+        let names = |names: Vec<&String>| names.into_iter().cloned().collect::<Vec<_>>();
+        let exports = &manifest.exports;
+        assert_eq!(
+            record.root_exports.models,
+            names(exports.models.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.classes,
+            names(exports.classes.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.enums,
+            names(exports.enums.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.newtypes,
+            names(exports.newtypes.iter().map(|item| &item.name).collect())
+        );
+        assert_eq!(
+            record.root_exports.traits,
+            names(exports.traits.iter().map(|item| &item.name).collect())
+        );
+        let origins = super::collect_nominal_type_origins(manifest)
+            .into_values()
+            .collect::<Vec<_>>();
+        assert_eq!(record.type_origins, origins, "{library}'s type origins");
+        let encoded = serde_json::to_vec(&record)?;
+        assert_eq!(serde_json::from_slice::<LoafInstallRecord>(&encoded)?, record);
+    }
+    Ok(())
+}
+
+/// A compiled Loaf's install record lists, for each checked API module, the models, classes, enums, newtypes, type
+/// aliases and traits install registers from it: each one's position, name and kind, the canonical identity the
+/// identity graph publishes at its public path, a type alias's target, and the type parameters of a type alias, model
+/// or class.
+#[test]
+fn a_loafs_install_record_lists_each_modules_nominal_declarations() -> TestResult {
+    use crate::api_metadata::ApiDeclaration;
+    use crate::library_manifest::CanonicalIdentityExport;
+    use crate::library_manifest::install_record::InstallDeclarationKind;
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = loaves.manifest("shapes").ok_or("missing manifest")?;
+    let api = manifest
+        .contract_metadata
+        .api
+        .as_ref()
+        .ok_or("shapes has no checked API")?;
+    let graph = &manifest.contract_metadata.identity_graph;
+    let mut checker = TypeChecker::new();
+    checker.set_loaves(Arc::clone(&loaves));
+    let record = checker.loaf_install_record("shapes", manifest);
+    let mut expected = Vec::new();
+    for module in &api.modules {
+        let mut declarations = Vec::new();
+        for (position, declaration) in module.declarations.iter().enumerate() {
+            let (name, kind, alias_target, type_params) = match declaration {
+                ApiDeclaration::Model(item) => (
+                    &item.name,
+                    InstallDeclarationKind::Model,
+                    None,
+                    item.type_params.clone(),
+                ),
+                ApiDeclaration::Class(item) => (
+                    &item.name,
+                    InstallDeclarationKind::Class,
+                    None,
+                    item.type_params.clone(),
+                ),
+                ApiDeclaration::Enum(item) => (&item.name, InstallDeclarationKind::Enum, None, Vec::new()),
+                ApiDeclaration::Newtype(item) => (&item.name, InstallDeclarationKind::Newtype, None, Vec::new()),
+                ApiDeclaration::Trait(item) => (&item.name, InstallDeclarationKind::Trait, None, Vec::new()),
+                ApiDeclaration::TypeAlias(item) => (
+                    &item.name,
+                    InstallDeclarationKind::TypeAlias,
+                    Some(item.type_alias.target.clone()),
+                    item.type_alias.type_params.clone(),
+                ),
+                _ => continue,
+            };
+            let public_path = std::iter::once(manifest.name.clone())
+                .chain(module.module_path.iter().cloned())
+                .chain(std::iter::once(name.clone()))
+                .collect::<Vec<_>>();
+            declarations.push((
+                position,
+                name.clone(),
+                kind,
+                graph.canonical_for_public_path(&public_path),
+                alias_target,
+                type_params,
+            ));
+        }
+        expected.push((module.module_path.clone(), declarations));
+    }
+    let recorded = record
+        .modules
+        .iter()
+        .map(|module| {
+            let declarations = module
+                .declarations
+                .iter()
+                .map(|declaration| {
+                    (
+                        declaration.position,
+                        declaration.name.clone(),
+                        declaration.kind,
+                        declaration
+                            .canonical
+                            .as_ref()
+                            .and_then(CanonicalIdentityExport::hydrate),
+                        declaration.alias_target.clone(),
+                        declaration.type_params.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (module.module_path.clone(), declarations)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        expected.iter().any(|(_, declarations)| declarations.len() >= 5),
+        "the fixture declares too little"
+    );
+    assert_eq!(recorded, expected);
+    Ok(())
+}
+
+/// A compiled Loaf's install record carries its identity graph exports and its root alias exports as the manifest
+/// publishes them, and, for each public name the graph publishes, the kind of root export the name finds first.
+#[test]
+fn a_loafs_install_record_carries_its_identity_exports_and_the_kind_each_name_finds() -> TestResult {
+    use super::ManifestExportRef;
+    use crate::library_manifest::install_record::InstallExportKind;
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    for library in ["base", "shapes"] {
+        let manifest = loaves.manifest(library).ok_or("missing manifest")?;
+        let mut checker = TypeChecker::new();
+        checker.set_loaves(Arc::clone(&loaves));
+        let record = checker.loaf_install_record(library, manifest);
+        let graph = &manifest.contract_metadata.identity_graph;
+        assert!(!graph.exports.is_empty(), "{library} publishes no identity");
+        assert_eq!(record.identity_graph, *graph, "{library}'s identity graph");
+        assert_eq!(record.aliases, manifest.exports.aliases, "{library}'s alias exports");
+        let mut seen = std::collections::HashSet::new();
+        let expected = graph
+            .exports
+            .iter()
+            .filter(|export| seen.insert(export.public_name.clone()))
+            .map(|export| {
+                let kind = TypeChecker::find_manifest_export(manifest, &export.public_name).map(|found| match found {
+                    ManifestExportRef::Alias(_) => InstallExportKind::Alias,
+                    ManifestExportRef::Model(_) => InstallExportKind::Model,
+                    ManifestExportRef::Class(_) => InstallExportKind::Class,
+                    ManifestExportRef::Function(_) => InstallExportKind::Function,
+                    ManifestExportRef::Partial(_) => InstallExportKind::Partial,
+                    ManifestExportRef::Trait(_) => InstallExportKind::Trait,
+                    ManifestExportRef::Enum(_) => InstallExportKind::Enum,
+                    ManifestExportRef::EnumVariant { .. } => InstallExportKind::EnumVariant,
+                    ManifestExportRef::TypeAlias(_) => InstallExportKind::TypeAlias,
+                    ManifestExportRef::Newtype(_) => InstallExportKind::Newtype,
+                    ManifestExportRef::Const(_) => InstallExportKind::Const,
+                    ManifestExportRef::Static(_) => InstallExportKind::Static,
+                });
+                (export.public_name.clone(), kind)
+            })
+            .collect::<Vec<_>>();
+        let recorded = record
+            .export_kinds
+            .iter()
+            .map(|named| (named.public_name.clone(), named.kind))
+            .collect::<Vec<_>>();
+        assert_eq!(recorded, expected, "{library}'s export kinds");
+    }
+    Ok(())
+}
+
+/// Installing a compiled Loaf reads its nominal public types from its install record: given a record that lists one
+/// type fewer than the manifest publishes, the Loaf's canonical type remapping binds only the types the record lists.
+#[test]
+fn a_loafs_canonical_type_remapping_is_the_one_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = loaves.manifest("shapes").ok_or("missing manifest")?;
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", manifest);
+    assert!(record.canonical_types.iter().any(|row| row.public_name == "Unused"));
+    record.canonical_types.retain(|row| row.public_name != "Unused");
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    let remapping = consumer.public_library_canonical_type_remapping("shapes");
+    assert!(
+        remapping.contains_key("Outer"),
+        "the record's types are bound: {remapping:?}"
+    );
+    assert!(
+        !remapping.contains_key("Unused"),
+        "a type the record does not list is bound: {remapping:?}"
+    );
+    Ok(())
+}
+
+/// Installing a compiled Loaf registers the declarations its install record lists: given a record that omits the
+/// Loaf's trait, the trait keeps its root name's entry but is not registered under its declaration key.
+#[test]
+fn a_loaf_registers_the_declarations_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    let module_path = record
+        .modules
+        .iter()
+        .find(|module| module.declarations.iter().any(|declared| declared.name == "Shape"))
+        .map(|module| module.module_path.clone())
+        .ok_or("the record lists no Shape")?;
+    for module in &mut record.modules {
+        module.declarations.retain(|declared| declared.name != "Shape");
+    }
+    let key = TypeChecker::declaration_type_key("shapes", &module_path, "Shape");
+    let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
+    whole.cache_transitive_pub_export_semantics("shapes");
+    assert!(
+        whole.transitive_pub_traits.contains_key(&key),
+        "the whole record registers {key}"
+    );
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes");
+    assert!(
+        consumer.transitive_pub_traits.contains_key("Shape"),
+        "the root trait keeps its root name"
+    );
+    assert!(
+        !consumer.transitive_pub_traits.contains_key(&key),
+        "a declaration the record omits is registered under {key}"
+    );
+    Ok(())
+}
+
+/// Installing a compiled Loaf keys its root exports' layouts by the names its install record lists: given a record
+/// that omits one root model, that model gets no root-name entry while the others do.
+#[test]
+fn a_loaf_keys_the_root_exports_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    assert_eq!(record.root_exports.models, ["Outer", "Unused"]);
+    record.root_exports.models.retain(|name| name != "Unused");
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes");
+    assert!(
+        consumer.transitive_pub_types.contains_key("Outer"),
+        "a listed root model is keyed"
+    );
+    assert!(
+        !consumer.transitive_pub_types.contains_key("Unused"),
+        "a root model the record omits is keyed by its root name"
+    );
+    Ok(())
+}
+
+/// Installing a compiled Loaf lays out its nominal exports under their canonical spellings from the identity graph its
+/// install record carries: given a record whose graph omits one model, that model gets no canonical-spelling entry.
+#[test]
+fn a_loaf_lays_out_the_identity_exports_its_install_record_carries() -> TestResult {
+    use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    let before = record.identity_graph.exports.len();
+    record
+        .identity_graph
+        .exports
+        .retain(|export| export.public_name != "Unused");
+    assert!(
+        record.identity_graph.exports.len() < before,
+        "the graph publishes Unused"
+    );
+    let outer = canonical_public_library_type_name("shapes", "Outer");
+    let unused = canonical_public_library_type_name("shapes", "Unused");
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes");
+    assert!(
+        consumer.transitive_pub_types.contains_key(&outer),
+        "a carried export is laid out"
+    );
+    assert!(
+        !consumer.transitive_pub_types.contains_key(&unused),
+        "an export the record's graph omits is laid out under {unused}"
+    );
+    Ok(())
+}
+
+/// A compiled Loaf's foreign preparation starts from the type origins its install record lists: given a record that
+/// lists none, the Loaf's foreign remapping reaches no other Loaf's type.
+#[test]
+fn a_loafs_foreign_preparation_starts_from_the_origins_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    assert!(!record.type_origins.is_empty(), "shapes names a base type");
+    let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
+    let manifest_record = whole
+        .prepared_install_record("shapes")
+        .ok_or("missing shapes install record")?;
+    assert!(
+        !whole
+            .public_library_foreign_type_remapping("shapes", &manifest_record)
+            .is_empty(),
+        "the whole record reaches base"
+    );
+    record.type_origins.clear();
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    let record = consumer
+        .prepared_install_record("shapes")
+        .ok_or("missing injected shapes install record")?;
+    let remapping = consumer.public_library_foreign_type_remapping("shapes", &record);
+    assert!(remapping.is_empty(), "a record without origins reaches {remapping:?}");
+    Ok(())
+}
+
+/// A compiled Loaf's foreign preparation lays out a reached Loaf's types from the identity graph of that Loaf's install
+/// record: given a record of `base` whose graph omits `Other`, installing `shapes`, which reaches `base`, lays out
+/// `Inner` under its qualified spelling and not `Other`.
+#[test]
+fn a_reached_loaf_is_laid_out_from_the_identity_graph_its_install_record_carries() -> TestResult {
+    use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let base = Arc::clone(&loaves.entry("base").ok_or("missing base")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("base", &base);
+    record
+        .identity_graph
+        .exports
+        .retain(|export| export.public_name != "Other");
+    let inner = canonical_public_library_type_name("base", "Inner");
+    let other = canonical_public_library_type_name("base", "Other");
+    let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
+    whole.cache_transitive_pub_export_semantics("shapes");
+    assert!(
+        whole.transitive_pub_types.contains_key(&other),
+        "the whole record lays out {other}"
+    );
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("base", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes");
+    assert!(
+        consumer.transitive_pub_types.contains_key(&inner),
+        "a carried type is laid out"
+    );
+    assert!(
+        !consumer.transitive_pub_types.contains_key(&other),
+        "a type the reached Loaf's record omits is laid out under {other}"
+    );
+    Ok(())
+}
+
+/// Installing a sealed consumer interface from checked Loaf records preserves its dependency tables and refusals.
+/// Its provider identities come from the admitted inventories without demanding the manifests before a layout read.
+#[test]
+fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manifests() -> TestResult {
+    use super::rust_reexport_chain_tests::published_module;
+    use crate::library_manifest::install_record::LoafInstallRecord;
+    use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
+
+    let root = tempfile::tempdir()?;
+    let shapes_loaves = shapes(root.path())?;
+    let base = shapes_loaves.entry("base").ok_or("missing base")?;
+    let shapes = shapes_loaves.entry("shapes").ok_or("missing shapes")?;
+    let specs = installed(
+        root.path(),
+        &published_module(
+            "specs",
+            "fields",
+            "pub model Holder[T with Clone]:\n    pub item: T\n\npub type Saved = Holder[str]\n",
+            LoafIndex::default(),
+            Vec::new(),
+        )?,
+    )?;
+    let loaves = Arc::new(LoafIndex::new([base.clone(), shapes.clone(), specs.clone()])?);
+    let mut producer = checker("provider", &loaves, &DependencyInterfacePreparationCache::default());
+    let provider = parse(PROVIDER)?;
+    producer
+        .check_program(&provider)
+        .map_err(|errors| format!("{errors:?}"))?;
+    producer.cache_transitive_pub_export_semantics("specs");
+    let interface = producer.seal_current_module_dependency_interface(
+        "provider",
+        &provider,
+        crate::module::exported_symbols(&provider).into(),
+        true,
+    );
+    let cases = [Arc::clone(&loaves), Arc::new(LoafIndex::new([shapes.clone(), specs])?)];
+    for (complete, legacy) in [true, false].into_iter().zip(cases) {
+        let deferred = Arc::new(legacy.as_ref().clone().with_deferred_fixture_manifests()?);
+        let mut expected = checker("consumer", &legacy, &DependencyInterfacePreparationCache::default());
+        let mut replay = DependencyInterfacePreparationCache::default();
+        for library in legacy.keys() {
+            let manifest = legacy.manifest(library).ok_or("missing fixture manifest")?;
+            let record = producer.loaf_install_record(library, manifest);
+            let record = serde_json::from_slice::<LoafInstallRecord>(&serde_json::to_vec(&record)?)?;
+            replay = replay.with_install_record(library, record);
+        }
+        let mut actual = checker("consumer", &deferred, &replay);
+        expected.install_dependency_interfaces_directly(std::slice::from_ref(&interface));
+        actual.install_dependency_interfaces_directly(std::slice::from_ref(&interface));
+
+        let alias = TypeChecker::declaration_type_key("specs", &["fields".to_owned()], "Saved");
+        assert!(expected.type_aliases.contains_key(&alias));
+        assert_eq!(
+            serde_json::to_vec(&actual.type_aliases.get(&alias))?,
+            serde_json::to_vec(&expected.type_aliases.get(&alias))?
+        );
+        assert!(!expected.nominal_type_param_bounds.is_empty());
+        assert_eq!(actual.nominal_type_param_bounds, expected.nominal_type_param_bounds);
+        assert_eq!(actual.errors.is_empty(), complete);
+        assert_eq!(format!("{:?}", actual.errors), format!("{:?}", expected.errors));
+        if complete {
+            let name = canonical_public_library_type_name("base", "Inner");
+            let identity = actual
+                .public_library_type_identities
+                .get(&name)
+                .ok_or("missing Inner identity")?;
+            assert_eq!(identity.selected_provider.as_ref(), Some(&base.artifact.identity));
+        }
+        assert!(
+            deferred.demanded_fixture_manifests().is_empty(),
+            "install opened manifests before a layout read: {:?}",
+            deferred.demanded_fixture_manifests()
+        );
+        assert_eq!(
+            actual.dependency_interface_snapshot(),
+            expected.dependency_interface_snapshot()
+        );
+    }
+    Ok(())
+}
+
+/// Reconstruct root and authored nominal layouts from records addressed by the public or declaration name,
+/// respectively. Check the fixtures and any supplied corpus, including renamed roots and member partials.
+#[test]
+fn root_and_authored_layouts_match_their_named_records() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let mut differences = Vec::new();
+    let mut roots = 0;
+    let mut authored = 0;
+    for entry in loaves.entries() {
+        let (root_count, authored_count) = compare_layouts(
+            &entry.artifact.manifest,
+            &entry.artifact.identity.digest,
+            &mut differences,
+        )?;
+        roots += root_count;
+        authored += authored_count;
+    }
+    assert_eq!(roots, 8, "the fixtures must exercise every root layout kind");
+    assert!(authored > 0, "the fixtures must exercise authored layouts");
+    println!("{roots} fixture roots and {authored} authored layouts");
+
+    if let Some(directory) = std::env::var_os("INCAN_RECORDS_LAYOUT_CORPUS") {
+        use sha2::{Digest, Sha256};
+        let mut paths = std::fs::read_dir(directory)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        paths.sort();
+        let mut manifests = 0;
+        let mut layouts = 0;
+        let mut authored = 0;
+        for path in paths {
+            if path.extension().and_then(|extension| extension.to_str()) != Some("incnlib") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)?;
+            let manifest = crate::library_manifest::LibraryManifest::from_json_str(&text)?;
+            let digest = format!("sha256:{:x}", Sha256::digest(text.as_bytes()));
+            match compare_layouts(&manifest, &digest, &mut differences) {
+                Ok((roots, declarations)) => {
+                    layouts += roots;
+                    authored += declarations;
+                }
+                Err(error) => differences.push(format!("{}: {error}", path.display())),
+            }
+            manifests += 1;
+        }
+        assert!(manifests > 0 && layouts > 0, "the corpus contains no root layouts");
+        println!("{manifests} census Loaves, {layouts} root layouts and {authored} authored layouts");
+    }
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
+    Ok(())
+}
+
+/// Compare both the root projection and the authored declaration layouts with their corresponding record routes.
+fn compare_layouts(
+    manifest: &crate::library_manifest::LibraryManifest,
+    digest: &str,
+    differences: &mut Vec<String>,
+) -> TestResult<(usize, usize)> {
+    use crate::library_manifest::LibraryManifest;
+    use crate::library_manifest::compiler_records::RecordFamily;
+    use crate::symbols::{SymbolKind, TypeInfo};
+    use crate::typechecker::TypeChecker;
+
+    let checker = TypeChecker::new();
+    let exports = &manifest.exports;
+    let layouts = exports
+        .models
+        .iter()
+        .map(|value| {
+            (
+                RecordFamily::Model,
+                &value.name,
+                SymbolKind::Type(TypeInfo::Model(checker.model_info_from_manifest(value))),
+            )
+        })
+        .chain(exports.classes.iter().map(|value| {
+            (
+                RecordFamily::Class,
+                &value.name,
+                SymbolKind::Type(TypeInfo::Class(checker.class_info_from_manifest(value))),
+            )
+        }))
+        .chain(exports.enums.iter().map(|value| {
+            (
+                RecordFamily::Enum,
+                &value.name,
+                SymbolKind::Type(TypeInfo::Enum(checker.enum_info_from_manifest(value))),
+            )
+        }))
+        .chain(exports.newtypes.iter().map(|value| {
+            (
+                RecordFamily::Newtype,
+                &value.name,
+                SymbolKind::Type(TypeInfo::Newtype(checker.newtype_info_from_manifest(value))),
+            )
+        }))
+        .chain(exports.traits.iter().map(|value| {
+            (
+                RecordFamily::Trait,
+                &value.name,
+                SymbolKind::Trait(checker.trait_info_from_manifest(value)),
+            )
+        }));
+    let records = manifest.compiler_records(digest)?;
+    let mut count = 0;
+    for (family, name, mut expected) in layouts {
+        let record = records
+            .records
+            .iter()
+            .find(|record| record.name == *name && record.family == family)
+            .ok_or_else(|| format!("{}::{name} has no {} record", manifest.name, family.as_str()))?;
+        let value = LibraryManifest::decode_compiler_record_value(&record.value)?;
+        let mut actual = checker.layout_from_root_record(family, &value).ok_or_else(|| {
+            format!(
+                "{}::{name} does not restore a {} layout",
+                manifest.name,
+                family.as_str()
+            )
+        })?;
+        TypeChecker::mark_compiled_class_field_provider(&mut expected, &manifest.name);
+        TypeChecker::mark_compiled_class_field_provider(&mut actual, &manifest.name);
+        let mut fields = Vec::new();
+        layout_difference_paths(
+            &serde_json::to_value(actual)?,
+            &serde_json::to_value(expected)?,
+            "",
+            &mut fields,
+        );
+        if !fields.is_empty() {
+            differences.push(format!(
+                "{}::{name} ({digest}) using its {} record: {}",
+                manifest.name,
+                family.as_str(),
+                fields.join(", "),
+            ));
+        }
+        count += 1;
+    }
+    let authored = compare_authored_layouts(&checker, manifest, &records, digest, differences)?;
+    Ok((count, authored))
+}
+
+/// Compare the canonical declaration's layout before any root-export spelling or consumer scope is applied.
+fn compare_authored_layouts(
+    checker: &crate::typechecker::TypeChecker,
+    manifest: &crate::library_manifest::LibraryManifest,
+    records: &crate::library_manifest::compiler_records::CompilerRecordSet,
+    digest: &str,
+    differences: &mut Vec<String>,
+) -> TestResult<usize> {
+    use crate::api_metadata::ApiDeclaration;
+    use crate::library_manifest::LibraryManifest;
+    use crate::library_manifest::compiler_records::RecordFamily;
+    use crate::library_manifest::declaration_records::qualified_name;
+
+    let Some(api) = manifest.contract_metadata.api.as_ref() else {
+        return Ok(0);
+    };
+    let mut count = 0;
+    for module in &api.modules {
+        for declaration in &module.declarations {
+            if !matches!(
+                declaration,
+                ApiDeclaration::Model(_)
+                    | ApiDeclaration::Class(_)
+                    | ApiDeclaration::Enum(_)
+                    | ApiDeclaration::Newtype(_)
+                    | ApiDeclaration::Trait(_)
+            ) {
+                continue;
+            }
+            let name = qualified_name(&module.module_path, declaration.name());
+            let read = |family| {
+                records
+                    .records
+                    .iter()
+                    .filter(|record| record.family == family && record.name == name)
+                    .map(|record| LibraryManifest::decode_compiler_record_value::<serde_json::Value>(&record.value))
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            let signatures = read(RecordFamily::DeclarationSignature)?;
+            let layouts = read(RecordFamily::Layout)?;
+            let defaults = read(RecordFamily::Default)?;
+            let Some(actual) = checker.layout_from_declaration_records(&signatures, &layouts, &defaults) else {
+                differences.push(format!(
+                    "{}::{name} ({digest}): could not restore the declaration",
+                    manifest.name
+                ));
+                continue;
+            };
+            let expected = checker
+                .symbol_kind_from_api_declaration(Some(api), declaration)
+                .ok_or_else(|| format!("{}::{name} has no manifest layout", manifest.name))?;
+            let mut fields = Vec::new();
+            layout_difference_paths(
+                &serde_json::to_value(actual)?,
+                &serde_json::to_value(expected)?,
+                "",
+                &mut fields,
+            );
+            if !fields.is_empty() {
+                differences.push(format!("{}::{name} ({digest}): {}", manifest.name, fields.join(", ")));
+            }
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Identify the checker layout fields that differ without dumping the full symbol tables.
+fn layout_difference_paths(
+    actual: &serde_json::Value,
+    expected: &serde_json::Value,
+    path: &str,
+    fields: &mut Vec<String>,
+) {
+    use std::collections::BTreeSet;
+
+    if actual == expected {
+        return;
+    }
+    let (Some(actual), Some(expected)) = (actual.as_object(), expected.as_object()) else {
+        fields.push(path.to_owned());
+        return;
+    };
+    for name in actual.keys().chain(expected.keys()).collect::<BTreeSet<_>>() {
+        let field = if path.is_empty() {
+            name.clone()
+        } else {
+            format!("{path}.{name}")
+        };
+        match (actual.get(name), expected.get(name)) {
+            (Some(left), Some(right)) => layout_difference_paths(left, right, &field, fields),
+            _ => fields.push(field),
+        }
+    }
 }

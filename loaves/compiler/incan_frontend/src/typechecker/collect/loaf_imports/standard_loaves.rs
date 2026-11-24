@@ -341,7 +341,7 @@ impl TypeChecker {
         self.standard_trait(name)?.methods.get(method).cloned()
     }
 
-    /// The path `library`'s public modules are bound under (see [`LoafEntry::binding_root`]), from the index's
+    /// The path `library`'s public modules use (see [`crate::loaf_index::LoafEntry::binding_root`]), from the index's
     /// admission alone.
     pub(in crate::typechecker) fn loaf_binding_root(&self, library: &str) -> Vec<String> {
         self.loaves

@@ -1,6 +1,7 @@
 //! Manifest export lookup, symbol kinds for manifest and API targets, and public import symbols.
 
 use super::*;
+use incan_lang::interop::RustItemMetadata;
 
 impl TypeChecker {
     /// Return all exported names in a manifest for diagnostics.
@@ -214,12 +215,25 @@ impl TypeChecker {
         else {
             return None;
         };
+        self.symbol_kind_from_nominal_origin(origin, None)
+    }
+
+    /// Resolve a checked nominal projection, requiring its exact selected artifact when used without the facade
+    /// manifest.
+    pub(super) fn symbol_kind_from_nominal_origin(
+        &self,
+        origin: &NominalTypeOriginExport,
+        expected_provider: Option<&crate::loaf_index::LoafIdentity>,
+    ) -> Option<SymbolKind> {
         let canonical = origin.canonical.hydrate()?;
         if canonical.kind == SemanticSourceTargetKind::Trait {
             return self.trait_symbol_kind_from_identity(&canonical, Some(&origin.provider));
         }
         let (entry, identity) = self.loaves.public_nominal(&canonical)?;
         let artifact = &entry.artifact;
+        if expected_provider.is_some_and(|provider| &artifact.identity != provider) {
+            return None;
+        }
         let qualified = canonical_public_library_type_name(&entry.key, &export_public_name(identity));
         if let Some(info) = self
             .transitive_pub_types
@@ -268,7 +282,7 @@ impl TypeChecker {
             })?;
         let declaration = Self::api_declaration_for_target_path(&manifest, &identity.source_path)?;
         let mut kind = self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)?;
-        let root_remapping = self.public_library_canonical_type_remapping(&library, &manifest);
+        let root_remapping = self.public_library_canonical_type_remapping(&library);
         self.remap_symbol_kind_through_declaring_module(&library, &manifest, Some(canonical), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &root_remapping);
         Some(kind)
@@ -368,14 +382,30 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         target_path: &[String],
     ) -> Option<SymbolKind> {
+        Self::rust_reexport_symbol(target_path, |path| {
+            manifest
+                .rust_abi
+                .as_ref()
+                .and_then(|abi| abi.get(path))
+                .map(|metadata| Arc::new(metadata.clone()))
+        })
+    }
+
+    /// Reconstruct a direct Rust re-export using the indexed ABI shipped by its selected Loaf.
+    pub(super) fn indexed_rust_reexport_symbol(&self, library: &str, target_path: &[String]) -> Option<SymbolKind> {
+        let kind = Self::rust_reexport_symbol(target_path, |path| self.loaves.indexed_rust_reexport(library, path))?;
+        matches!(&kind, SymbolKind::RustItem(info) if info.metadata.is_some()).then_some(kind)
+    }
+
+    /// Bind the same Rust item shape for either manifest or indexed ABI authority.
+    fn rust_reexport_symbol(
+        target_path: &[String],
+        lookup: impl FnOnce(&str) -> Option<Arc<RustItemMetadata>>,
+    ) -> Option<SymbolKind> {
         let (crate_name, path) = Self::rust_reexport_target(target_path)?;
         #[cfg(test)]
         RUST_REEXPORT_BUILDS.with(|builds| builds.set(builds.get() + 1));
-        let metadata = manifest
-            .rust_abi
-            .as_ref()
-            .and_then(|abi| abi.get(&path))
-            .map(|metadata| Arc::new(metadata.clone()));
+        let metadata = lookup(&path);
         Some(SymbolKind::RustItem(RustItemInfo {
             crate_name: crate_name.clone(),
             metadata,

@@ -27,6 +27,12 @@ from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
 from pub::incan_platform.store import Snapshot, begin, commit, delete, get, lease, put
 from store_path_conversion import claim, snapshot
 from toolchain_types import NativeCrate, Toolchain
+from installation_capability import (
+    DriverCapabilityIntake,
+    driver_document,
+    plan_selection_capability,
+    probe_driver_capability,
+)
 from installation_documents import capture as capture_documents
 from frozen_inputs import clear as clear_documents, select as select_documents
 
@@ -99,6 +105,11 @@ pub def end_command() -> None:
 pub def admitted_identity(directory: Path) -> Result[Option[str], str]:
     """Name the immutable page admitted for an installation without opening that page or any installed input."""
     view = snapshot(installation_catalog()?).map_err((error) => error.message())?
+    return admitted_identity_at(directory, view)
+
+
+pub def admitted_identity_at(directory: Path, view: Snapshot) -> Result[Option[str], str]:
+    """Read an installation binding from the caller's already authenticated catalog view."""
     match get(view, binding(question(directory))).map_err((error) => error.message())?:
         None => return Ok(None)
         Some(value) =>
@@ -195,17 +206,18 @@ pub def retain(
     First use settles records inside an installation, so another process can change what an attempt just read. That
     attempt describes no single generation, so admission reads again, and only a failure that persists refuses.
     """
-    return retain_generation(directory, producer, prepared, false)
+    return retain_generation(directory, producer, prepared, false, DriverCapabilityIntake.Legacy)
 
 
 pub def readmit(
     directory: Path,
     producer: (Path) -> Result[Toolchain, str],
-    prepared: Option[Tuple[Toolchain, str]] = None,
+    prepared: Option[Tuple[Toolchain, str]],
+    intake: DriverCapabilityIntake,
 ) -> Result[Installation, str]:
-    """Explicitly replace a build installation's admitted page after its owner changed that installation."""
+    """Explicitly replace the owner's admitted installation with its verified selection."""
     SCOPE.forget()
-    return retain_generation(directory, producer, prepared, true)
+    return retain_generation(directory, producer, prepared, true, intake)
 
 
 pub def restore_selection(directory: Path, previous: Option[str]) -> Result[None, str]:
@@ -229,6 +241,7 @@ def retain_generation(
     producer: (Path) -> Result[Toolchain, str],
     prepared: Option[Tuple[Toolchain, str]],
     replace: bool,
+    intake: DriverCapabilityIntake,
 ) -> Result[Installation, str]:
     """Admit through the single installation-page route, optionally replacing an owner-mutated build generation."""
     # Concurrent first admissions recheck under the same installation claim.
@@ -240,7 +253,7 @@ def retain_generation(
             return Ok(page)
     match prepared:
         Some((toolchain, generation)) =>
-            match admit_generation(directory, toolchain, generation, store, key):
+            match admit_generation(directory, toolchain, generation, store, key, intake):
                 Ok(page) => return Ok(page)
                 Err(_reason) => pass
         None => pass
@@ -249,7 +262,7 @@ def retain_generation(
         if attempt > 0:
             sleep(Duration.from_millis(ADMISSION_RETRY_MS))
         generation = observe(directory.joinpath("toolchain.json"))?.stamp
-        match admit_generation(directory, producer(directory)?, generation, store, key):
+        match admit_generation(directory, producer(directory)?, generation, store, key, intake):
             Ok(page) => return Ok(page)
             Err(reason) => failure = reason
     return Err(failure)
@@ -261,6 +274,7 @@ def admit_generation(
     generation: str,
     store: Path,
     key: str,
+    intake: DriverCapabilityIntake,
 ) -> Result[Installation, str]:
     """
     Make one attempt to admit the installation's current generation.
@@ -271,7 +285,7 @@ def admit_generation(
     """
     # 1. An earlier attempt's selected documents never describe this generation.
     clear_documents()
-    page = capture(directory, toolchain, generation)?
+    page = capture(directory, toolchain, generation, intake)?
     data = encode(page)?
     digest = hexlify(sha256.digest(data))
     # 2. Local production uses the same portable admission as a supplied sealed set.
@@ -330,7 +344,12 @@ pub def current(page: Installation) -> bool:
     return true
 
 
-def capture(directory: Path, toolchain: Toolchain, generation: str) -> Result[Installation, str]:
+def capture(
+    directory: Path,
+    toolchain: Toolchain,
+    generation: str,
+    intake: DriverCapabilityIntake,
+) -> Result[Installation, str]:
     """
     Capture manifest membership, complete normalized intent and exact content identities at one generation.
 
@@ -355,6 +374,17 @@ def capture(directory: Path, toolchain: Toolchain, generation: str) -> Result[In
     installed.compiler_facts = [fact_identity(Path(toolchain.driver))?]
     installed.compiler_facts.extend([fact_identity(Path(path))? for path in toolchain.rust_abi])
     installed.driver_observation = observe(Path(toolchain.driver))?.stamp
+    mut documents = captured.documents
+    if plan_selection_capability(installed, documents)?:
+        return Err(f"{toolchain.driver}: installed documents did not authenticate the driver capability")
+    proof = match intake:
+        DriverCapabilityIntake.Legacy => None
+        DriverCapabilityIntake.Selected => probe_driver_capability(toolchain.driver, toolchain.sysroot)?
+        DriverCapabilityIntake.Staged(verified) => verified
+    if let Some(driver) = proof:
+        document = driver_document(installed.driver, driver)
+        installed.supports_plan_module_selection_digest = plan_selection_capability(installed, [document])?
+        documents.append(document)
     rustc = Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
     installed.rust_version = compiler_version(rustc)?
     installed.default_deployment_target = deployment_target(rustc, installed.rust_version, [])?
@@ -375,7 +405,7 @@ def capture(directory: Path, toolchain: Toolchain, generation: str) -> Result[In
         manifests=standard.manifests,
         paths=ordered,
         stamps=[observations[path] for path in ordered],
-        documents=captured.documents,
+        documents=documents,
         payloads=captured.payloads,
     )
     if not current(page):

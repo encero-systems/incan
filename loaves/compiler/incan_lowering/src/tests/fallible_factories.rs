@@ -50,6 +50,7 @@ fn carrier(name: &str, arguments: Vec<IncanType>) -> NominalDeclaration {
         (1000, 1200),
     );
     NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: format!("incan_stdlib_primitives::derives::collection::{name}"),

@@ -197,6 +197,7 @@ fn unit_manifest_and_contributor_records_carry_every_reference_field() {
         declares_abi_cache: false,
         has_abi_cache: false,
         abi_digest: None,
+        install_digest: None,
     };
     let contributors = CompilerContributors {
         profile: "release".into(),

@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
+use incan_mir_plan_native::FunctionSlot;
+
 use incan_mir_plan_native::{PlacedRecord, PlanModuleValue};
 use sha2::{Digest, Sha256};
 
@@ -25,11 +27,25 @@ const MAX_PLACEMENTS: usize = 16384;
 const MAX_PAGES: usize = 4096;
 
 static PLACED: Mutex<Option<HashMap<[u8; 32], (PlacedRecord, u64)>>> = Mutex::new(None);
-static PAGES: Mutex<Option<HashMap<[u8; 32], Arc<ResidentPage>>>> = Mutex::new(None);
+static PAGES: Mutex<Option<ResidentPages>> = Mutex::new(None);
 /// Module pages with their events, by the digest of their bytes, and the bytes they were read from in all.
 static FULL_PAGES: Mutex<Option<(HashMap<[u8; 32], Arc<PlanModuleValue>>, u64)>> = Mutex::new(None);
 /// The bytes of module pages with their events one worker keeps: one program's pages, many times over.
 const MAX_FULL_PAGE_BYTES: u64 = 2 << 30;
+
+#[derive(Clone)]
+pub(crate) struct FinalizedMember {
+    pub slot: FunctionSlot,
+    pub product: Arc<AdmittedPayload>,
+}
+
+pub(crate) type FinalizedSlots = HashMap<([u8; 32], String, i64), FinalizedMember>;
+
+#[derive(Default)]
+struct ResidentPages {
+    pages: HashMap<[u8; 32], Arc<ResidentPage>>,
+    finalized_bytes: u64,
+}
 
 /// What a product restored from a module page is a function of besides the page's bytes: the body's frame name, its
 /// file and line, its overflow policy, its checker witness, the producer profile, and the body's current node
@@ -47,7 +63,7 @@ pub struct RestoreInputs {
 
 impl RestoreInputs {
     /// The digest of every input, each length-prefixed, the positions after whether there are any.
-    fn digest(&self) -> [u8; 32] {
+    pub(crate) fn digest(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         for text in [&self.frame, &self.file, &self.reads, &self.generation] {
             hasher.update((text.len() as u64).to_le_bytes());
@@ -76,8 +92,11 @@ pub struct ResidentPage {
     page: AdmittedPage,
     /// The bytes the page was read from; none for a page read for one request only.
     bytes: u64,
+    cache_key: Option<[u8; 32]>,
     /// Each restored product by the digest of its restore inputs, so a kept product holds no copy of them.
     restored: Mutex<HashMap<[u8; 32], Arc<AdmittedPayload>>>,
+    /// One completed positioned inventory for this content, keyed by the checked body inputs.
+    finalized: Mutex<Option<Arc<FinalizedSlots>>>,
 }
 
 impl Deref for ResidentPage {
@@ -94,7 +113,9 @@ impl ResidentPage {
         Arc::new(Self {
             page,
             bytes: 0,
+            cache_key: None,
             restored: Mutex::new(HashMap::new()),
+            finalized: Mutex::new(None),
         })
     }
 
@@ -117,6 +138,46 @@ impl ResidentPage {
         }
         Ok(payload)
     }
+
+    /// Borrow the prior complete inventory while the current request checks its body witnesses.
+    pub(crate) fn finalized(&self) -> Option<Arc<FinalizedSlots>> {
+        self.finalized.lock().ok()?.clone()
+    }
+
+    /// Retain one complete inventory while its page remains resident and the encoded page budget permits it.
+    pub(crate) fn keep_finalized(&self, slots: FinalizedSlots) {
+        let Some(key) = self.cache_key else {
+            return;
+        };
+        if self.bytes == 0 || self.bytes > MAX_FULL_PAGE_BYTES {
+            return;
+        }
+        if let Ok(mut guard) = PAGES.lock()
+            && let Some(pages) = guard.as_mut()
+        {
+            if !pages
+                .pages
+                .get(&key)
+                .is_some_and(|page| std::ptr::eq(page.as_ref(), self))
+            {
+                return;
+            }
+            if pages.finalized_bytes.saturating_add(self.bytes) > MAX_FULL_PAGE_BYTES {
+                for page in pages.pages.values() {
+                    if let Ok(mut value) = page.finalized.lock() {
+                        *value = None;
+                    }
+                }
+                pages.finalized_bytes = 0;
+            }
+            if let Ok(mut kept) = self.finalized.lock() {
+                if kept.is_none() {
+                    pages.finalized_bytes += self.bytes;
+                }
+                *kept = Some(Arc::new(slots));
+            }
+        }
+    }
 }
 
 /// The page this worker read for the same content, module and placement, or the one `read` makes now with the number
@@ -135,7 +196,7 @@ pub fn resident_page(
     hasher.update(content);
     let key: [u8; 32] = hasher.finalize().into();
     if let Ok(guard) = PAGES.lock()
-        && let Some(kept) = guard.as_ref().and_then(|pages| pages.get(&key))
+        && let Some(kept) = guard.as_ref().and_then(|pages| pages.pages.get(&key))
     {
         return Some(kept.clone());
     }
@@ -143,14 +204,20 @@ pub fn resident_page(
     let page = Arc::new(ResidentPage {
         page,
         bytes,
+        cache_key: Some(key),
         restored: Mutex::new(HashMap::new()),
+        finalized: Mutex::new(None),
     });
     if let Ok(mut guard) = PAGES.lock() {
-        let pages = guard.get_or_insert_with(HashMap::new);
-        if pages.len() >= MAX_PAGES {
-            pages.clear();
+        let pages = guard.get_or_insert_with(ResidentPages::default);
+        if let Some(current) = pages.pages.get(&key) {
+            return Some(current.clone());
         }
-        pages.insert(key, page.clone());
+        if pages.pages.len() >= MAX_PAGES {
+            pages.pages.clear();
+            pages.finalized_bytes = 0;
+        }
+        pages.pages.insert(key, page.clone());
     }
     Some(page)
 }
@@ -211,7 +278,10 @@ pub fn resident_placed(
 pub fn resident_inventory() -> Vec<(&'static str, usize, u64)> {
     let mut inventory = Vec::new();
     if let Ok(guard) = PAGES.lock() {
-        let pages: Vec<&Arc<ResidentPage>> = guard.as_ref().map(|pages| pages.values().collect()).unwrap_or_default();
+        let pages: Vec<&Arc<ResidentPage>> = guard
+            .as_ref()
+            .map(|pages| pages.pages.values().collect())
+            .unwrap_or_default();
         let bytes = pages.iter().map(|page| page.bytes).sum();
         let restored = pages
             .iter()

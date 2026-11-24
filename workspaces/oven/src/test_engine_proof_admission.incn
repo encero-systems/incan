@@ -1,0 +1,92 @@
+"""A requested proof uses the manifest the settlement already authenticated."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import parse
+from engine_protocol_fixtures import stop_engine
+from files import make_directory, read, write
+from scratch import scratch_directory
+
+
+pub def test_a_proof_reuses_the_settlement_manifest_before_publication() -> Result[None, str]:
+    """Observe the worker between native completion and publication of the requested proof."""
+    scratch = scratch_directory()?
+    root = scratch.path().resolve().map_err((error) => error.message())?
+    project = root.joinpath("project")
+    trace = root.joinpath("trace")
+    store = root.joinpath("bakery")
+    make_directory(project)?
+    make_directory(trace)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    exercised = settle_report(binary, project, store, trace)
+    if store.joinpath("CURRENT").is_file():
+        stop_engine(store, binary)?
+    exercised?
+    return check_manifest_reads(trace, store)
+
+
+def settle_report(binary: str, project: Path, store: Path, trace: Path) -> Result[None, str]:
+    """Publish one program and request a proof while an edit publishes its successor."""
+    source = project.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"one\")\n")?
+    first = run_program(binary, project, store, trace, [])?
+    assert first == b"one\n"
+    write(source, "def main() -> None:\n    println(\"two\")\n")?
+    changed = run_program(binary, project, store, trace, ["--engine-report"])?
+    output = str(from_utf8(changed).map_err((error) => str(error))?)
+    assert output.startswith("{") and output.endswith("\ntwo\n")
+    return Ok(None)
+
+
+def run_program(binary: str, project: Path, store: Path, trace: Path, options: list[str]) -> Result[bytes, str]:
+    """Run through the ordinary records entry point, with the same trace destination for the worker."""
+    mut command = Command.new(binary)
+    command.arg("run").arg("hello.incn").args(options).current_dir(project.0)
+    command.env("INCAN_ENGINE", "records").env("OVEN_ENGINE_BINARY", binary)
+    command.env("INCAN_BAKERY", store.0).env("INCAN_ENGINE_TRACE", trace.0)
+    command.env_remove("OVEN_TRACE").env_remove("INCAN_NATIVE_TIMING")
+    outcome = command.output().map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(str(from_utf8(outcome.stderr).map_err((error) => str(error))?))
+    return Ok(outcome.stdout)
+
+
+def check_manifest_reads(trace: Path, store: Path) -> Result[None, str]:
+    """Count pre-commit manifest opens in the settlement process that produced both units."""
+    for log in trace.iterdir().map_err((error) => error.message())?:
+        if not log.name().startswith("engine-oven-") or not log.name().endswith(".jsonl"):
+            continue
+        mut units = 0
+        mut reads = 0
+        mut commits = 0
+        for line in read(log)?.split("\n"):
+            if line == "":
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            kind = event.require("kind").map_err((error) => error.message())?.expect_str().map_err(
+                (error) => error.message(),
+            )?
+            if kind != "span":
+                continue
+            operation = event.require("operation").map_err((error) => error.message())?.expect_str().map_err(
+                (error) => error.message(),
+            )?
+            if operation == "engine_unit":
+                units += 1
+            if units != 2:
+                continue
+            key = event.require("key").map_err((error) => error.message())?.expect_str().map_err(
+                (error) => error.message(),
+            )?
+            if operation == "store_lock" and key == store.0:
+                commits += 1
+                break
+            if operation == "store_manifest_read" and key.startswith(f"{store.0}/snapshots/"):
+                reads += 1
+        if units == 2:
+            assert commits == 1, "the proof request did not enter its publication transaction"
+            assert reads == 0, f"proof preparation reopened the authenticated manifest {reads} times"
+            return Ok(None)
+    return Err("both requests must be observed in the settlement process")

@@ -10,20 +10,22 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from pub::incan_platform.children import reap_retained_children
 from pub::incan_platform.ipc import Connection
+from pub::incan_platform.store import SnapshotAdmission
 from pub::incan_platform.trace import Operation, flush as flush_trace
 from bakery import forget_verified, verification_entries
 from core_process import Process, executable
+from compiler_graph_records import ReceiptProjectionCache
 from engine_actions import ExecutionLease, Pending, Ready, finish_request
 from engine_channel import Channel
 from engine_endpoint import transport
-from engine_epochs import prepare_submit
-from engine_messages import Captured, Event, Message, Submit
-from engine_programs import program_handle
+from engine_epochs import prepare_admitted_submit
+from engine_messages import Event, Message, Submit
 from engine_replies import send, send_request_refusal
 from engine_state import service_generation
 from engine_wire import Refusal, zero_id
 from jec import begin as begin_work, record as record_work
 from observation import trace
+from store_path_conversion import store_path
 
 
 pub model SettlementProgram:
@@ -65,13 +67,14 @@ pub def serve(arguments: list[str]) -> Result[None, Refusal]:
 
 
 class Settlement:
-    """One process's request scopes and live execution pins, owned until release or coordinator shutdown."""
+    """Own one process's request scopes, live execution pins, and bounded deferred receipt metadata."""
 
     store: Path
     producer: str
     records: str
     channel: Channel
     pins: list[ExecutionLease] = []
+    receipt_projections: ReceiptProjectionCache = ReceiptProjectionCache.empty()
     origin: str = ""
     origin_request: bytes = zero_id()
 
@@ -110,26 +113,25 @@ class Settlement:
 
     def settle(mut self, request: bytes, submit: Submit) -> Result[None, Refusal]:
         """
-        1. Capture once and acknowledge the exact epoch about to settle.
-        2. Produce and publish through the existing records activation.
+        1. Observe the request's inputs under its selected view and installation.
+        2. Announce the authoritative capture, then produce and publish the selected result.
         3. Release request observations before sending completion, keeping only the caller's live lease.
         """
         # 1. Capture is ordered with production, so a queued edit sees the preceding request's publication.
         capturing = begin_work()
-        captured = prepare_submit(
-            self.store, submit, discover_standalone=true, canonical_source=Some(Path(submit.requested_roots)),
+        mut admission = SnapshotAdmission.for_store(store_path(self.store))
+        captured = prepare_admitted_submit(
+            admission, submit, discover_standalone=true, canonical_source=Some(Path(submit.requested_roots)),
         )
         record_work(Operation.EngineCapture, submit.requested_roots, capturing)
         match captured:
             Err(reason) =>
                 return send_request_refusal(self.channel, self.store, request, transport(reason), "request")
             Ok(found) =>
-                selected = f"snapshot:{found.snapshot.generation}:{found.snapshot.digest}"
-                handle = program_handle(found.identity, self.producer, submit.view).map_err(transport)?
-                send(self.channel, request, Message.Captured(Captured(epoch=found.identity, snapshot=selected)))?
-                # 2. All staged records and the caller's result still use the original transaction boundary.
+                # 2. The action selects the final capture before replying and stages it with the native result.
                 finished = finish_request(
                     self.store,
+                    admission,
                     Pending(
                         request=request,
                         token=hexlify(request),
@@ -143,8 +145,9 @@ class Settlement:
                         unit_options=submit.unit_options,
                         records=self.records,
                         origin=self.origin,
-                        handle=handle,
                     ),
+                    self.channel,
+                    self.receipt_projections,
                 )
                 # 3. The trace, including the commit and scope teardown, precedes the terminal reply.
                 released = verification_entries()

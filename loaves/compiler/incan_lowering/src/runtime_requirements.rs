@@ -4,7 +4,7 @@ use incan_mir_plan_native::{SourceSpan, StaticCell};
 use incan_semantics_core::CanonicalSymbolId;
 
 /// An authenticated runtime declaration needed at an existing source operation's location.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RuntimeRequirement {
     /// None requests the independently addressed facade before its canonical declaration can be selected.
     pub canonical: Option<CanonicalSymbolId>,

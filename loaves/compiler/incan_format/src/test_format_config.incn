@@ -1,0 +1,21 @@
+from rust::incan_format import FormatConfig, QuoteStyle
+from rust::std::primitive import usize
+
+
+def test_format_config_defaults() -> None:
+    """Preserve the formatter's typed defaults through both constructors."""
+    defaulted: FormatConfig = FormatConfig.default()
+    constructed: FormatConfig = FormatConfig.new()
+    indent_width: usize = defaulted.indent_width
+    line_length: usize = defaulted.line_length
+    quote_style: QuoteStyle = defaulted.quote_style
+    trailing_commas: bool = defaulted.trailing_commas
+
+    assert indent_width == 4usize
+    assert line_length == 120usize
+    assert quote_style == QuoteStyle.Double
+    assert trailing_commas
+    assert constructed.indent_width == indent_width
+    assert constructed.line_length == line_length
+    assert constructed.quote_style == quote_style
+    assert constructed.trailing_commas == trailing_commas

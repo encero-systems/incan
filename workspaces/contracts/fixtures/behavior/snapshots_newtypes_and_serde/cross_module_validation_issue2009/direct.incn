@@ -1,0 +1,9 @@
+"""Observe validation through the directly imported newtype."""
+
+from percentile import Percentile
+
+
+pub def observe() -> None:
+    """Construct a valid value through the imported newtype."""
+    checked = Percentile(0.5)
+    println(checked.0)

@@ -15,9 +15,14 @@ pub struct BodyIndex {
 }
 
 impl BodyIndex {
+    /// Borrow checked candidates in body table order, leaving ambiguity and receiver admission to the caller.
+    pub fn positions(&self, identity: &CanonicalSymbolId) -> &[usize] {
+        self.entries.get(identity).map_or(&[], Vec::as_slice)
+    }
+
     /// Only the selected identity's positions, leaving ambiguity and receiver admission to each caller.
     pub fn candidates(&self, identity: &CanonicalSymbolId) -> Vec<usize> {
-        self.entries.get(identity).cloned().unwrap_or_default()
+        self.positions(identity).to_vec()
     }
 
     /// A position only when exactly one body carries the complete checker identity.

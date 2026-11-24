@@ -264,13 +264,14 @@ fn made_private_refusal_keeps_code_and_explanation() -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// Keep the stable explanation wired to an imported type with a private migration descriptor.
 #[test]
 fn made_private_import_refusal_keeps_code_and_explanation() -> Result<(), Box<dyn std::error::Error>> {
     let refusal = errors::import_made_private(
-        "GraphNode",
-        "std.graph",
-        Some("Use scoped keys"),
-        Some("DiGraph.read_view"),
+        "LegacyLedger",
+        "ledger",
+        Some("Use Ledger"),
+        Some("Ledger"),
         Span::new(4, 13),
     );
     assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0133");

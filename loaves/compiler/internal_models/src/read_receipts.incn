@@ -4,4 +4,5 @@ pub from rust::internal_models_native import (
     RECEIPT_SCHEMA,
     encode_read_receipt,
     decode_read_receipt,
+    decode_read_receipt_view,
 )
