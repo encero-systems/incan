@@ -37,7 +37,7 @@ from graph_snapshot import (
 )
 from graph_context import pack
 from graph_context_index import ContextIndex, with_author
-from graph_context_items import anchor_root
+from graph_context_items import anchor_root, observed_anchor_root
 from graph_process import process_facts
 from graph_rust import inspect_rust
 from json_fields import required_items, string_value
@@ -327,7 +327,11 @@ pub model PreparedInspection:
                     trace(f"graph page {self.key[:12]}: warm")
                     return Ok(Answered(text=text, snapshot=page.snapshot))
             return prepare_cold(self.selected, self.key, self.toolchain)?.answer(preferences, feedback)
-        answered = response(self.paths, self.root, self.selected, self.toolchain, preferences, self.key != "", feedback)?
+        rendered = response(self.paths, self.root, self.selected, self.toolchain, preferences, self.key != "", feedback)
+        if rendered.is_err() and self.key != "":
+            # A refused cold request never reaches keep_page, but still needs to end its input watch.
+            _ = watched_inputs()
+        answered = rendered?
         if self.key != "":
             keep_page(self, preferences, answered)
         return Ok(answered)
@@ -679,7 +683,7 @@ def render(
         started = Instant.now()
         mut author_root: Option[str] = None
         if selected.format == MCP_DEFINITIONS_FORMAT:
-            author_root = Some(anchor_root(Path(root)).0)
+            author_root = Some(observed_anchor_root(Path(root))?.0)
         records = query_records(paths, root, selected, toolchain, degraded, snapshot, author_root)?
         trace(f"graph query records: {started.elapsed().as_millis()} ms")
         if selected.format == "json" and selected.query == "defs":
