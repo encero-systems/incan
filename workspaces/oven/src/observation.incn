@@ -420,19 +420,19 @@ pub def observe(path: Path) -> Result[Observation, str]:
     return Ok(Observation(stamp=info.stamp(), newest=info.newest_second()))
 
 
-pub def file_metadata(path: Path) -> Result[Option[FileMetadata], str]:
-    """One status query of a file or directory, following symbolic links; `None` when nothing is there."""
+pub def file_metadata(path: Path, marker_only: bool = false) -> Result[Option[FileMetadata], str]:
+    """Observe file metadata once, optionally marking an observation used only to choose a display anchor."""
     clock = begin()
     found = metadata(path.0)
     record(Operation.FileStat, path.0, clock)
     match found:
         Ok(info) =>
             described_info = described(info)
-            WATCHED.note(path.0, Some(described_info))
+            WATCHED.note(path.0, Some(described_info), marker_only)
             return Ok(Some(described_info))
         Err(error) =>
             if error.kind() == ErrorKind.NotFound:
-                WATCHED.note(path.0, None)
+                WATCHED.note(path.0, None, marker_only)
                 return Ok(None)
             return Err(f"{path.0}: {error}")
 
@@ -446,6 +446,7 @@ model Watched:
 
     active: bool = false
     seen: Dict[str, str] = {}
+    anchor_markers: Dict[str, bool] = {}
     variables: Dict[str, str] = {}
     fresh: list[str] = []
 
@@ -453,6 +454,7 @@ model Watched:
         """Watch from now, forgetting any earlier watch."""
         self.active = true
         self.seen = {}
+        self.anchor_markers = {}
         self.variables = {}
         self.fresh = []
 
@@ -460,13 +462,20 @@ model Watched:
         """Whether a request is watching its inputs."""
         return self.active
 
-    def note(mut self, path: str, info: Option[FileMetadata]) -> None:
+    def note(mut self, path: str, info: Option[FileMetadata], marker_only: bool = false) -> None:
         """
         Remember a path's first observation while watching: its metadata, empty when nothing was there, and whether it
-        was a file changed too recently for its metadata to vouch for its bytes.
+        was a file changed too recently for its metadata to vouch for its bytes. Any preparation use makes the
+        observation required, even when the same path also serves as an anchor marker.
         """
-        if not self.active or path in self.seen:
+        if not self.active:
             return
+        if path in self.seen:
+            if not marker_only and path in self.anchor_markers:
+                self.anchor_markers[path] = false
+            return
+        if marker_only:
+            self.anchor_markers[path] = true
         match info:
             Some(found) =>
                 self.seen[path] = found.stamp()
@@ -486,8 +495,10 @@ model Watched:
             stamps={path: self.seen[path] for path in self.seen.keys()},
             variables={name: self.variables[name] for name in self.variables.keys()},
             fresh=[path for path in self.fresh],
+            anchor_markers=[path for path in self.anchor_markers.keys() if self.anchor_markers[path]],
         )
         self.seen = {}
+        self.anchor_markers = {}
         self.variables = {}
         self.fresh = []
         return found
@@ -503,6 +514,8 @@ pub model WatchedInputs:
     pub variables: Dict[str, str] = {}
     # The observed files whose last change was too recent for their metadata to vouch for their bytes.
     pub fresh: list[str] = []
+    # These paths were observed only to choose a display anchor, even after ordinary preparation completed.
+    pub anchor_markers: list[str] = []
 
 
 static WATCHED: Watched = Watched()

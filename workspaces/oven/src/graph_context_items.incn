@@ -91,40 +91,70 @@ pub def anchor(record: JsonValue, root: str) -> str:
     return f"{file}:{nested(span, 'start_line').to_json().unwrap_or('0')}"
 
 
+pub model AnchorObservation:
+    """The ordinary display anchor and any failure to observe the markers that select it."""
+
+    pub path: Path
+    pub failure: Option[str] = None
+
+
 pub def anchor_root(path: Path) -> Path:
     """Prefer repository-relative anchors, retaining ordinary paths' absent-on-error behavior."""
-    return resolve_anchor_root(path, false).unwrap_or(path)
+    return resolve_anchor_root(path, false).path
+
+
+pub def observe_anchor_root(path: Path, marker_only: bool = false) -> AnchorObservation:
+    """Watch the marker checks once, preserving both the display anchor and its observation result."""
+    return resolve_anchor_root(path, true, marker_only)
 
 
 pub def observed_anchor_root(path: Path) -> Result[Path, str]:
-    """Choose the same anchor while watching the paths that decide a cached definition's repository boundary."""
-    return resolve_anchor_root(path, true)
+    """Require a fully observed repository boundary to attribute authored evidence."""
+    result = observe_anchor_root(path)
+    if let Some(problem) = result.failure:
+        return Err(problem)
+    return Ok(result.path)
 
 
-def resolve_anchor_root(path: Path, observed: bool) -> Result[Path, str]:
-    """Find the nearest repository, or the nearest owning project when no repository encloses the path."""
+def resolve_anchor_root(path: Path, observed: bool, marker_only: bool = false) -> AnchorObservation:
+    """Find the nearest repository or owning project, retaining the first marker observation failure."""
+    mut result = AnchorObservation(path=path)
     mut directory = path
-    if anchor_marker(directory, false, observed)?:
+    if selected_marker(directory, false, observed, marker_only, result):
         directory = directory.parent()
     mut project = directory
     mut found = false
     while true:
-        if anchor_marker(directory.joinpath(".git"), true, observed)?:
-            return Ok(directory)
-        if not found and anchor_marker(directory.joinpath("loaf.toml"), false, observed)?:
+        if selected_marker(directory.joinpath(".git"), true, observed, marker_only, result):
+            result.path = directory
+            return result
+        if not found and selected_marker(directory.joinpath("loaf.toml"), false, observed, marker_only, result):
             project = directory
             found = true
         parent = directory.parent()
         if parent.0 == directory.0 or parent.0 in [".", ""]:
-            return Ok(project)
+            result.path = project
+            return result
         directory = parent
 
 
-def anchor_marker(path: Path, allow_directory: bool, observed: bool) -> Result[bool, str]:
+def selected_marker(
+    path: Path, allow_directory: bool, observed: bool, marker_only: bool, mut result: AnchorObservation,
+) -> bool:
+    """Treat an unobservable marker as absent for display without marking it safe for attribution or reuse."""
+    match anchor_marker(path, allow_directory, observed, marker_only):
+        Ok(found) => return found
+        Err(problem) =>
+            if result.failure is None:
+                result.failure = Some(problem)
+            return false
+
+
+def anchor_marker(path: Path, allow_directory: bool, observed: bool, marker_only: bool) -> Result[bool, str]:
     """Apply the same file-kind rules, recording present and absent facts for cached definition answers."""
     if not observed:
         return Ok(path.is_file() or (allow_directory and path.is_dir()))
-    if let Some(info) = file_metadata(path)?:
+    if let Some(info) = file_metadata(path, marker_only=marker_only)?:
         return Ok(info.is_file() or (allow_directory and info.is_directory()))
     return Ok(false)
 
