@@ -1,6 +1,13 @@
 //! Planned native types, the active plan, refusals, and the native alias, signature and MIR queries.
 
 use super::*;
+use std::cell::RefCell;
+
+thread_local! {
+    // `psess_created` installs this on the fresh serial compiler thread.
+    // The joined thread drops the reader on normal return or unwind.
+    static REQUEST_PLAN: RefCell<Option<Arc<PlanReader>>> = const { RefCell::new(None) };
+}
 
 /// Preserve a typed plan refusal when an admitted external signature cannot name its native representation.
 pub(super) fn native_type_or_refuse<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Ty<'tcx> {
@@ -10,27 +17,51 @@ pub(super) fn native_type_or_refuse<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> T
     }
 }
 
-/// Make the process-global compilation slots usable again after a contained panic: clear the poison the panic left
-/// on them and drop the plan and failure of the compilation it ended.
+/// Make compilation and typed failure handling usable again after a contained panic.
 pub(crate) fn recover() {
     COMPILATION.clear_poison();
-    PLAN.clear_poison();
     FAILURE.clear_poison();
-    if let Ok(mut plan) = PLAN.lock() {
-        *plan = None;
-    }
     if let Ok(mut failure) = FAILURE.lock() {
         *failure = None;
     }
 }
 
-/// Read the active plan without retaining the slot lock while rustc resolves callees.
+/// Refuse a nested compile before it can wait for the outer compilation's lease.
+pub(super) fn ensure_no_active_plan() -> Result<(), DriverError> {
+    REQUEST_PLAN.with(|slot| {
+        if slot.borrow().is_some() {
+            return Err(DriverError::Invocation(
+                "a native compilation is already active on this thread".into(),
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Transfer the request reader into the actual compiler thread from its session creation callback.
+pub(super) fn install_active_plan(reader: Arc<PlanReader>) -> Result<(), DriverError> {
+    ensure_no_active_plan()?;
+    REQUEST_PLAN.with(|slot| *slot.borrow_mut() = Some(reader));
+    Ok(())
+}
+
+/// Keep refinement on the same request and the same reader generation as the callbacks own.
+pub(super) fn replace_active_plan(expected: &Arc<PlanReader>, reader: Arc<PlanReader>) -> Result<(), DriverError> {
+    REQUEST_PLAN.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        match slot.as_mut() {
+            Some(current) if Arc::ptr_eq(current, expected) => {
+                *current = reader;
+                Ok(())
+            }
+            _ => Err(DriverError::State),
+        }
+    })
+}
+
+/// Get this thread's request plan without retaining the slot borrow across nested rustc queries.
 pub(crate) fn active_plan() -> Result<Arc<PlanReader>, DriverError> {
-    PLAN.lock()
-        .map_err(|_| DriverError::State)?
-        .as_ref()
-        .map(Arc::clone)
-        .ok_or(DriverError::State)
+    REQUEST_PLAN.with(|slot| slot.borrow().as_ref().map(Arc::clone).ok_or(DriverError::State))
 }
 
 /// Register the HIR owner carrying this definition's complete plan-record fingerprint as a query dependency.

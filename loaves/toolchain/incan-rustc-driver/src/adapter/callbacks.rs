@@ -6,11 +6,11 @@ impl Callbacks {
     /// Replace the session's plan with one refined against native metadata; MIR building reads the replacement.
     pub(super) fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
         self.plan = Arc::new(plan);
-        self.reader = Arc::new(self.reader.with_plan(Arc::clone(&self.plan)));
-        match PLAN.lock() {
-            Ok(mut slot) => *slot = Some(Arc::clone(&self.reader)),
-            Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
+        let reader = Arc::new(self.reader.with_plan(Arc::clone(&self.plan)));
+        if let Err(error) = replace_active_plan(&self.reader, Arc::clone(&reader)) {
+            tcx.dcx().fatal(error.to_string());
         }
+        self.reader = reader;
     }
 
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
@@ -138,6 +138,22 @@ impl rustc_driver::Callbacks for Callbacks {
     /// into the trace sink without enabling unstable command-line options or changing compilation policy.
     /// The source map owns one filename copied from the plan's shared file handle.
     fn config(&mut self, config: &mut interface::Config) {
+        if config
+            .opts
+            .unstable_opts
+            .threads
+            .take()
+            .is_some_and(|threads| threads > 1)
+        {
+            rustc_session::EarlyDiagCtxt::new(config.opts.error_format)
+                .early_fatal("Incan requires a serial native front end (-Z threads above 1 is unsupported)");
+        }
+        let reader = Arc::clone(&self.reader);
+        config.psess_created = Some(Box::new(move |session| {
+            if let Err(error) = install_active_plan(reader) {
+                session.dcx().fatal(error.to_string());
+            }
+        }));
         self.timing.mark("rustc_options");
         let mut search = std::mem::take(&mut self.search);
         config
