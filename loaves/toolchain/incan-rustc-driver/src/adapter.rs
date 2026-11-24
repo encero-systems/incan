@@ -34,11 +34,8 @@ use library_verification::*;
 pub(crate) use native_object_products::PREDECESSOR_LOCATOR;
 pub(crate) use rustc_queries::*;
 
-/// Compilation is serialized: `PLAN` and `FAILURE` are process-global slots, also in the resident worker.
+/// Serialize native compiles and the typed failure and extern-binding state they share.
 static COMPILATION: Mutex<()> = Mutex::new(());
-/// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot, with its
-/// name index.
-static PLAN: Mutex<Option<Arc<PlanReader>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
 /// Qualified development reuse requires tracked plan records and content-addressed Darwin link inputs.
@@ -116,6 +113,7 @@ pub fn compile(
     compact_definitions: Vec<incan_mir_plan_native::AdmittedDefinition>,
     previous_link_locator: Option<&Path>,
 ) -> Result<(), DriverError> {
+    ensure_no_active_plan()?;
     let mut timing = crate::native_timing::Timing::requested();
     force_plan_failure_once()?;
     let features = declared_features(access)?;
@@ -153,7 +151,6 @@ pub fn compile(
         PlanReader::new(Arc::clone(&plan), plan_record_report, compact_definitions).map_err(DriverError::Invocation)?,
     );
     reader.write_fingerprint_report()?;
-    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&reader));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
     let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &all);
@@ -232,7 +229,7 @@ fn write_validation_report(plan: &Plan, kind: UnitKind) -> Result<(), DriverErro
     Ok(())
 }
 
-/// Run the ordinary compiler and clear its query slots while the caller still holds the compilation lease.
+/// Run the ordinary compiler and collect its typed failure while the caller holds the compilation lease.
 fn run_plan_compiler(args: &[String], callbacks: &mut Callbacks) -> Result<(), DriverError> {
     let capture = crate::native_timing::Capture::begin();
     crate::native_crates::release_extern_crates();
@@ -240,7 +237,6 @@ fn run_plan_compiler(args: &[String], callbacks: &mut Callbacks) -> Result<(), D
     crate::native_crates::release_extern_crates();
     capture.finish(callbacks.codegen_started.map(|started| started.elapsed()));
     callbacks.timing.mark("rustc_codegen_link_teardown");
-    *PLAN.lock().map_err(|_| DriverError::State)? = None;
     if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
         return Err(DriverError::Plan(error));
     }
