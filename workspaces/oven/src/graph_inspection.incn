@@ -567,7 +567,7 @@ def response(
         status = json_text(snapshot_status(selected.stale, snapshot))?
         return Ok(Answered(text=status, snapshot=snapshot, unchecked=degraded))
     mut author_root: Option[str] = None
-    if selected.format in [MCP_DEFINITIONS_FORMAT, MCP_RELATIONSHIPS_FORMAT]:
+    if selected.format == MCP_DEFINITIONS_FORMAT or selected.format == MCP_RELATIONSHIPS_FORMAT:
         author_root = Some(observed_anchor_root(Path(root))?.0)
     portable = shared_query(selected)
     if paged and not portable:
