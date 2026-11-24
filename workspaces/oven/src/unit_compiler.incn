@@ -23,6 +23,7 @@ from pub::internal_models.executable_body_wire import (
     EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT, executable_graph_output_marker,
 )
 from pub::internal_models.namespace_references import (
+    NamespaceReference,
     decode_namespace_references,
     namespace_key,
     namespace_reference_filename,
@@ -208,25 +209,32 @@ def trace_staged_namespace_references(
 ) -> Result[None, str]:
     """Observe the exact authored bytes from the successful marker and namespace reference publications."""
     name = namespace_reference_filename()
-    mut marker = -1
-    mut reference_page = -1
-    for index, record in enumerate(records):
-        if record.segment != "" and record.digest != "":
+    mut observed_format: Option[str] = None
+    for record in records:
+        if record.key != EXECUTABLE_GRAPH_INPUT or (record.segment != "" and record.digest != ""):
             continue
-        if record.key == EXECUTABLE_GRAPH_INPUT:
-            marker = index
-        elif record.key == name:
-            reference_page = index
-    if marker < 0 or reference_page < 0 or len(records[reference_page].value) != size:
-        return Err("staged namespace reference publication has no exact input bytes")
+        if record.value != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT):
+            return Err("unsupported staged executable graph format")
+        observed_format = Some(record.value.decode("utf-8", "strict").map_err(
+            (_) => "staged executable graph format is not UTF-8",
+        )?)
+        break
+    format_name = match observed_format:
+        Some(value) => value
+        None => return Err("staged namespace reference publication has no exact input bytes")
 
-    if records[marker].value != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT):
-        return Err("unsupported staged executable graph format")
-    format_name = records[marker].value.decode("utf-8", "strict").map_err(
-        (_) => "staged executable graph format is not UTF-8",
-    )?
+    mut observed_references: Option[list[NamespaceReference]] = None
+    for record in records:
+        if record.key != name or (record.segment != "" and record.digest != ""):
+            continue
+        if len(record.value) != size:
+            return Err("staged namespace reference publication has no exact input bytes")
+        observed_references = Some(decode_namespace_references(record.value)?)
+        break
+    references = match observed_references:
+        Some(value) => value
+        None => return Err("staged namespace reference publication has no exact input bytes")
     page = directory.joinpath(name)
-    references = decode_namespace_references(records[reference_page].value)?
     for reference in references:
         if reference.key != namespace_key(reference.key.origin, reference.key.identity):
             return Err("staged namespace references name another record family")
