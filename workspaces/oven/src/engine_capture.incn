@@ -756,7 +756,7 @@ model Capture:
                         record_work(Operation.FileHash, path, hashing, len(content))
                         if path.endswith(".incn"):
                             if let Ok(source) = content.decode("utf-8", "strict"):
-                                self.readings[path] = source_reading(source, digest)
+                                self.readings[path] = source_reading(source, digest, retain_comments=true)
                         settled = after.settled_for_capture(self.settle)
                         self.found[path] = CapturedInput(
                             path=path,

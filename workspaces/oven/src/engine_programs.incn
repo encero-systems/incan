@@ -10,7 +10,7 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from rust::std::mem import drop, take
 from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
-from bakery import fact_file, find_executable_payload
+from bakery import fact_file, find_executable_payload, find_launch_executable_payload
 from bakery_records import Fact
 from bakery_roots import register_root
 from check_pages import check_page_directory, keep_check_pages
@@ -62,6 +62,7 @@ from engine_unit_options import decode_unit_options
 from clove_units import serve_c_compiler
 from unit_compiler import (
     CheckerRecordCounts,
+    CompletedPlanEvents,
     PlanRecordCounts,
     checker_record_counts,
     checker_record_report_path,
@@ -513,10 +514,13 @@ pub def obtain(
     admission_report = records.joinpath("admissions")
     # A bakery hit plans nothing and never reads an earlier report.
     mut plan_counts = PlanRecordCounts()
+    mut completed_plan_events: Option[CompletedPlanEvents] = None
     mut plan_module_reuses = 0
     if produced.evaluations > 0:
         reading_plan_sidecars = begin_work()
-        plan_counts = plan_record_counts(plan_report)?
+        counts, events = plan_record_counts(plan_report, produced.code == 0 and produced.native_bakes == 1)?
+        plan_counts = counts
+        completed_plan_events = events
         record_work(
             Operation.EngineSidecarAuthentication,
             plan_report.0,
@@ -596,6 +600,7 @@ pub def obtain(
             record_writer,
             captured_sources,
             plan_admissions=Some(admissions),
+            completed_plan_events=completed_plan_events,
         )?
         request_transaction = bodies.transaction
         demand_work = bodies.lowering_demands
@@ -989,10 +994,10 @@ def stored_program(selected: Snapshot, key: str) -> Result[Option[NativeUnit], s
 
 pub def restore_program(store: Path, unit: NativeUnit, console: str = "") -> Result[bool, str]:
     """
-    Validate the selected immutable unit and restore only missing or changed derived executable views. False tells the
-    caller to resolve a missing carrier, a superseded executable, or a missing warning result for this selection.
+    Validate the exact selected launch payload and its required companions, restoring only missing or changed views.
+    False tells the caller to resolve a missing carrier, a superseded executable, or a missing warning result.
     """
-    match unit_record(store, unit)?:
+    match find_launch_executable_payload(store, unit.identity, Path(unit.binary).name(), unit.payload)?:
         None => return Ok(false)
         Some(fact) =>
             if not carriers_present(store, fact, Path(unit.binary))?:

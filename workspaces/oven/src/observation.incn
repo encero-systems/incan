@@ -30,7 +30,7 @@ from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, items, text, tuple_items
 from publication import publish_binary
-from semantic_text import positioned_code
+from semantic_text import positioned_source
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 from trace_adapter import reason, relay as relay_observations
@@ -118,15 +118,16 @@ pub model SourceReading:
     pub text: str
     pub raw_digest: str
     pub positioned_digest: str
+    pub comments: str = ""
 
 
-pub def source_reading(text: str, raw_digest: str) -> SourceReading:
-    """Keep the raw identity as the positioned identity when projection changes none of the source bytes."""
-    positioned = positioned_code(text)
+pub def source_reading(text: str, raw_digest: str, retain_comments: bool = false) -> SourceReading:
+    """Keep the raw and positioned identities and collect comments for a durable request projection."""
+    positioned, comments = positioned_source(text, retain_comments)
     mut digest = raw_digest
     if positioned != text:
         digest = hexlify(sha256.digest(positioned.encode("utf-8")))
-    return SourceReading(text=text, raw_digest=raw_digest, positioned_digest=digest)
+    return SourceReading(text=text, raw_digest=raw_digest, positioned_digest=digest, comments=comments)
 
 
 model FileEntry:

@@ -7,7 +7,7 @@ from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.fs import Path
 from std.hash import file_digest
-from bakery import find
+from bakery import find, find_executable_payload
 from compiler_facts import admit_fact
 from compiler_graph_records import ReceiptProjectionCache
 from bakery_roots import collect
@@ -19,10 +19,10 @@ from engine_messages import Submit
 from engine_programs import (
     NativeUnit, PreparedProgram, obtain, prepare_selection, program_handle, read_program, restore_program,
 )
-from incan_units import obtain_executable
+from incan_units import Made, obtain_executable
 from pub::incan_platform.store import SnapshotAdmission, Transaction, commit_group, get, keys_with_prefix
 from scratch import scratch_directory
-from shared_link import linkage_key, shared_arguments
+from shared_link import shared_arguments
 from store_path_conversion import snapshot, store_path
 from toolchain import Toolchain, load_toolchain
 from unit import UnitDescription
@@ -130,16 +130,23 @@ def program_unit(root: Path, standalone: bool = false) -> Result[UnitDescription
     )
 
 
-def selected_unit(store: Path, key: Key, output: Path) -> Result[NativeUnit, str]:
-    """The engine's descriptor of the development executable baked under `key`."""
-    identity = linkage_key(key, true)?.digest
-    match find(store, identity)?:
-        None => return Err("the development executable was not baked")
-        Some(fact) =>
-            for file in fact.files:
-                if file.path == output.name() and file.program:
-                    return Ok(NativeUnit(identity=identity, payload=file.digest, binary=output.0))
-            return Err("the baked unit holds no executable")
+def linked_unit(store: Path, made: Made) -> Result[NativeUnit, str]:
+    """Authenticate the successful producer's executable view against its exact selected fact."""
+    if made.code != 0 or made.identity == "":
+        return Err("the development executable was not baked")
+    binary = made.launch
+    name = binary.name()
+    payload = executable_digest(binary)?
+    fact = match find_executable_payload(store, made.identity, name, payload)?:
+        Some(published) => published
+        None => return Err("the linked development executable is missing its sealed payload")
+    if fact.identity != made.identity:
+        return Err("the linked development executable names a different unit")
+    if let Some(retained) = made.fact:
+        executable = [file for file in retained.files if file.path == name and file.program and file.digest == payload]
+        if retained.identity != fact.identity or len(executable) != 1:
+            return Err("the emitted executable bytes disagree with the producer's selected fact")
+    return Ok(NativeUnit(identity=fact.identity, payload=payload, binary=binary.0))
 
 
 pub def test_a_reused_development_executable_is_linked_again_when_a_carrier_it_loads_is_gone() -> Result[None, str]:
@@ -160,19 +167,25 @@ pub def test_a_reused_development_executable_is_linked_again_when_a_carrier_it_l
     output = root.joinpath("app").joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath("app")
     key = Key(digest="sha256:" + fingerprint(["a development executable with one carrier"])?, parts=["compiler c"])
     # 1. One link, then reuse.
-    assert obtain_executable(unit, toolchain, output, key, true, Some(store))?.native_bakes == 1
-    assert obtain_executable(unit, toolchain, output, key, true, Some(store))?.native_bakes == 0
+    first = obtain_executable(unit, toolchain, output, key, true, Some(store))?
+    assert first.native_bakes == 1
+    reused = obtain_executable(unit, toolchain, output, key, true, Some(store))?
+    assert reused.native_bakes == 0 and reused.fact is not None
     assert read(root.joinpath("attempts"))? == "x"
-    assert restore_program(store, selected_unit(store, key, output)?)?
+    original = linked_unit(store, reused)?
+    assert original.identity == first.identity
+    assert restore_program(store, original)?
     # 2. A removed carrier: the stored executable would fail to load it, so it is linked again.
     carrier.unlink().map_err((error) => error.message())?
-    restored = restore_program(store, selected_unit(store, key, output)?)?
+    restored = restore_program(store, original)?
     assert not restored, "the engine restored a unit whose carrier is gone"
     made = obtain_executable(unit, toolchain, output, key, true, Some(store))?
     assert made.native_bakes == 1, "a development executable was reused after a carrier it loads was removed"
     assert read(root.joinpath("attempts"))? == "xx"
     assert carrier.is_file()
-    assert restore_program(store, selected_unit(store, key, output)?)?
+    relinked = linked_unit(store, made)?
+    assert relinked.identity == original.identity and relinked.payload != original.payload
+    assert restore_program(store, relinked)?
     return Ok(None)
 
 

@@ -3,8 +3,10 @@
 from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
+from rust::std::mem import take
 from pub::incan_mir_plan import (
     INTERFACE_REPORT,
+    LoweringEvent,
     PLAN_MODULE_SELECTION_PAGE,
     decode_lowering_event,
     decode_native_interface,
@@ -26,6 +28,7 @@ from compiler_refusals import PreparedWarnings, check_for_warnings, compile_or_r
 from compiler_worker import compile_resident, served_resident
 from files import discard_file, open_stream, read
 from observation import trace_boundary
+from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from trace_adapter import work, work_clock
 from publication import publish, publish_binary
@@ -46,6 +49,24 @@ pub model PlanRecordCounts:
     pub plan_evaluations: int = 0
     pub plan_reuses: int = 0
     pub native_interface_evaluations: int = 0
+
+
+pub model CompletedPlanEvents:
+    """The selected events of a successfully completed, request-owned report."""
+
+    root: str
+    events: list[LoweringEvent]
+
+    @staticmethod
+    pub def from_census(root: str, events: list[LoweringEvent]) -> Self:
+        """Keep the counted records and their request-owned report together."""
+        return CompletedPlanEvents(root=root, events=events)
+
+    pub def take_for_report(mut self, report: Path) -> Result[list[LoweringEvent], str]:
+        """Move the counted records into publication for the same request-owned report."""
+        if self.root != report.0:
+            return Err("completed Plan events name another report")
+        return Ok(take(self.events))
 
 
 # The schema of the sidecar a check writes with `--checked-bodies`.
@@ -288,24 +309,52 @@ def discard_graph_body_output(output: Path) -> Result[None, str]:
     return Ok(None)
 
 
-pub def plan_record_counts(report: Path) -> Result[PlanRecordCounts, str]:
-    """Count only loss-checked plan products in this activation's report."""
+pub def plan_record_counts(
+    report: Path, retain: bool,
+) -> Result[tuple[PlanRecordCounts, Option[CompletedPlanEvents]], str]:
+    """Count loss-checked products and keep decoded events for the completed request when it will publish them."""
     mut counts = PlanRecordCounts()
     if not report.is_dir():
-        return Ok(counts)
-    for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
+        return Ok((counts, None))
+    entries = report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?
+    mut positions: Dict[str, int] = {}
+    mut slots: list[Option[LoweringEvent]] = []
+    if retain:
+        # Keep the census read order. Popping the slots gives publication its existing sorted path order.
+        names = sorted([entry.0 for entry in entries])
+        for index in range(len(names)):
+            positions[names[index]] = len(names) - 1 - index
+            slots.append(None)
+    for entry in entries:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
-        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
+        reading = begin_work()
+        bytes = entry.read_bytes().map_err((error) => error.message())?
+        record_work(Operation.FileRead, entry.0, reading, len(bytes))
+        event = decode_lowering_event(bytes)?
         if event.reused:
             counts.plan_reuses += 1
         else:
             counts.plan_evaluations += 1
+        if retain:
+            slots[positions[entry.0]] = Some(event)
     interface = report.joinpath(INTERFACE_REPORT)
     if interface.is_file():
         _ = decode_native_interface(interface.read_bytes().map_err((error) => error.message())?)?
         counts.native_interface_evaluations = 1
-    return Ok(counts)
+    if not retain:
+        return Ok((counts, None))
+    mut events: list[LoweringEvent] = []
+    while len(slots) > 0:
+        if let Some(event) = slots.pop():
+            events.append(event)
+    return Ok((counts, Some(CompletedPlanEvents.from_census(report.0, events))))
+
+
+pub def take_completed_plan_events(completed: CompletedPlanEvents, report: Path) -> Result[list[LoweringEvent], str]:
+    """Move the validated event vector into publication for the same request-owned report."""
+    mut selected = completed
+    return selected.take_for_report(report)
 
 
 pub def plan_record_report_path(unit: UnitDescription, key: Key, typed: bool) -> Path:

@@ -356,6 +356,24 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     selection = completion_selection(rust_compiler(toolchain))?
     observed = observe(closure)?
     key = question(closure, observed, selection)?
+    check_retained_registry_page(scratch, closure, first, key)?
+    # 3. Another closure generation is completed again from the producer's metadata.
+    rewrite_in_place(closure, read(closure)?)?
+    next = question(closure, observe(closure)?, selection)?
+    assert next != key
+    assert question(closure, observed, selection + ":changed")? != key
+    # An explicit match keeps this test usable by bootstrap compilers affected by #2431.
+    match recall_catalog(next)?:
+        Some(_) =>
+            assert false, "a rewritten closure reused the previous generation's page"
+        None => pass
+    assert read_registry_units(closure)?.units[0].name == first.name
+    _ = flush_trace()
+    return Ok(None)
+
+
+def check_retained_registry_page(scratch: Path, closure: Path, first: RegistryUnit, key: str) -> Result[None, str]:
+    """Check that the retained typed page answers and that directory and artifact changes invalidate it."""
     match recall_catalog(key)?:
         None =>
             assert false, "the completed closure has no typed page"
@@ -382,18 +400,6 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
                     assert not catalog_current(refreshed)
                     assert read_registry_units(closure)?.units[0] == first
     assert read_registry_units(closure)?.units[0] == first
-    # 3. Another closure generation is completed again from the producer's metadata.
-    rewrite_in_place(closure, read(closure)?)?
-    next = question(closure, observe(closure)?, selection)?
-    assert next != key
-    assert question(closure, observed, selection + ":changed")? != key
-    # An explicit match keeps this test usable by bootstrap compilers affected by #2431.
-    match recall_catalog(next)?:
-        Some(_) =>
-            assert false, "a rewritten closure reused the previous generation's page"
-        None => pass
-    assert read_registry_units(closure)?.units[0].name == first.name
-    _ = flush_trace()
     return Ok(None)
 
 
