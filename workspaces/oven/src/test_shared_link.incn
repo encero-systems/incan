@@ -8,19 +8,23 @@ from std.environ import get_or
 from std.fs import Path
 from std.hash import file_digest
 from bakery import find
-from bakery_records import Fact
+from compiler_facts import admit_fact
+from compiler_graph_records import ReceiptProjectionCache
 from bakery_roots import collect
 from engine_program_records import decode_program
 from files import make_directory, read, write
 from home_paths import bakery
-from engine_programs import NativeUnit, index_program, restore_program
+from engine_epochs import prepare_admitted_submit
+from engine_messages import Submit
+from engine_programs import NativeUnit, PreparedProgram, obtain, program_handle, restore_program
 from incan_units import obtain_executable
-from pub::incan_platform.store import commit, get
+from pub::incan_platform.store import SnapshotAdmission, Transaction, commit_group, get, keys_with_prefix
 from scratch import scratch_directory
 from shared_link import linkage_key, shared_arguments
-from store_path_conversion import snapshot
-from toolchain import Toolchain
+from store_path_conversion import snapshot, store_path
+from toolchain import Toolchain, load_toolchain
 from unit import UnitDescription
+from unit_transport import CompilerSourceCapture
 from unit_freshness import Key, fingerprint
 
 
@@ -66,6 +70,10 @@ def carrier_toolchain(scratch: Path, carrier: Path, programs: list[Path] = []) -
         assert len(programs) == 2
         script += f"if [ \"$(cat '{attempts.0}')\" = x ]; then\n"
         script += f"  cp '{programs[0].0}' \"$4\" || exit 1\nelse\n  cp '{programs[1].0}' \"$4\" || exit 1\nfi\n"
+        # The ordinary producer associates its successful, silent checker result with the linked descriptor.
+        script += "previous=\nfor argument in \"$@\"; do\n"
+        script += "  if [ \"$previous\" = --certify ]; then\n    : > \"$argument.warnings\" || exit 1\n    break\n  fi\n"
+        script += "  previous=\"$argument\"\ndone\n"
     script += "chmod +x \"$4\"\n"
     script += f"mkdir -p '{directory.0}'\nprintf carrier > '{carrier.0}'\n"
     script += "printf '%s' '" + witness + "' > \"$4.native-shared.json\"\nexit 0\n"
@@ -73,19 +81,40 @@ def carrier_toolchain(scratch: Path, carrier: Path, programs: list[Path] = []) -
     write(driver, script)?
     mut chmod = Command.new("/bin/chmod")
     assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
-    return Ok(Toolchain(driver=driver.0, sysroot="/rust/1.98.0", rust_abi=[], externs=[], search=[], registry_units=""))
+    mut toolchain = Toolchain(
+        driver=driver.0,
+        sysroot="/rust/1.98.0",
+        rust_abi=[],
+        externs=[],
+        search=[],
+        registry_units="",
+    )
+    if len(programs) > 0:
+        installed = load_toolchain()?
+        admit_fact(driver)?
+        toolchain.sysroot = installed.sysroot
+        toolchain.target = installed.target
+        toolchain.rust_version = installed.rust_version
+        toolchain.default_deployment_target = installed.default_deployment_target
+        toolchain.default_sdk_identity = installed.default_sdk_identity
+    return Ok(toolchain)
 
 
-def program_unit(root: Path) -> Result[UnitDescription, str]:
-    """A debug program unit of a project at `root` with one source and no Loaves."""
-    make_directory(root.joinpath("src"))?
-    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
-    write(root.joinpath("src").joinpath("main.incn"), "def main() -> None:\n    pass\n")?
+def program_unit(root: Path, standalone: bool = false) -> Result[UnitDescription, str]:
+    """A debug program unit with one source and no dependencies, with or without a manifest."""
+    mut sources = root
+    if not standalone:
+        sources = root.joinpath("src")
+    make_directory(sources)?
+    if not standalone:
+        write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
+    main = sources.joinpath("main.incn")
+    write(main, "def main() -> None:\n    pass\n")?
     return Ok(
         UnitDescription(
-            source=root.joinpath("src").joinpath("main.incn").0,
+            source=main.0,
             project_root=root.0,
-            source_root=root.joinpath("src").0,
+            source_root=sources.0,
             package="app",
             version="0.1.0",
             profile="debug",
@@ -165,15 +194,15 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     assert known_test in test_payload.stdout.split("\n"), test_payload.stdout
     assert launcher_payload.digest != test_payload.digest
     toolchain = carrier_toolchain(root, carrier, [launcher, test_runner])?
-    unit = program_unit(root.joinpath("app"))?
-    output = root.joinpath("app").joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath("app")
-    key = Key(digest="sha256:" + fingerprint(["a standalone executable linked again"])?, parts=["compiler c"])
-    selector = "incan.engine.standalone-program\t" + fingerprint(["a standalone selector"])?
-    # 1. One link, sealed and indexed together.
-    first = indexed_link(store, unit, toolchain, output, key, selector)?
-    assert first.payload == launcher_payload.digest
-    assert indexed_payload(store, selector)? == Some(first.payload)
-    assert selected_unit(store, key, output)?.payload == first.payload
+    unit = program_unit(root.joinpath("app"), standalone=true)?
+    # 1. One link, sealed and indexed together under the production selector.
+    first = indexed_link(store, unit, toolchain)?
+    output = Path(first.binary)
+    assert first.payload == launcher_payload.digest and indexed_payload(store)? == first.payload
+    match find(store, first.identity)?:
+        None => return Err("the single payload's bare unit record was missing")
+        Some(fact) =>
+            assert fact.identity == first.identity
     # Deferred publication seals and indexes the payload without creating the executable view.
     assert restore_program(store, first)?
     require_executable(output, launcher_payload)?
@@ -182,9 +211,9 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     # 2. A removed carrier: linked again, to different bytes.
     carrier.unlink().map_err((error) => error.message())?
     assert not restore_program(store, first)?
-    second = indexed_link(store, unit, toolchain, output, key, selector)?
+    second = indexed_link(store, unit, toolchain)?
     assert second.identity == first.identity and second.payload == test_payload.digest
-    assert indexed_payload(store, selector)? == Some(second.payload), "the index still names the earlier payload"
+    assert indexed_payload(store)? == second.payload, "the index still names the earlier payload"
     assert read(root.joinpath("attempts"))? == "xx" and carrier.is_file()
 
     # The ordinary project registration must keep both payloads reachable during collection.
@@ -203,6 +232,19 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     ambiguity = lookup_ambiguity(store, first, second)
     observed = f"first={first_restored}; second={second_restored}; unit-only={ambiguity}"
     assert first_restored and second_restored and ambiguity == "ambiguous", f"same-unit payload resolution: {observed}"
+
+    # An ordinary retry must still link when the selected variant loses its carrier again.
+    carrier.unlink().map_err((error) => error.message())?
+    assert not restore_program(store, second)?
+    assert indexed_payload(store)? == second.payload
+    retried = indexed_link(store, unit, toolchain).map_err(
+        (reason) => f"second carrier loss prevented the selected payload from relinking: {reason}",
+    )?
+    assert retried.identity == second.identity and retried.payload == second.payload
+    assert read(root.joinpath("attempts"))? == "xxx" and carrier.is_file()
+    assert indexed_payload(store)? == retried.payload
+    assert restore_program(store, retried)? and lookup_ambiguity(store, first, retried) == "ambiguous"
+    require_executable(output, test_payload)?
     return Ok(None)
 
 
@@ -288,42 +330,66 @@ def lookup_ambiguity(store: Path, first: NativeUnit, second: NativeUnit) -> str:
             return f"other refusal: {reason}"
 
 
-def indexed_link(
-    store: Path,
-    unit: UnitDescription,
-    toolchain: Toolchain,
-    output: Path,
-    key: Key,
-    selector: str,
-) -> Result[NativeUnit, str]:
-    """Link the executable as the engine does: seal it and index it under `selector` in one commit."""
-    made = obtain_executable(unit, toolchain, output, key, true, Some(store), true)?
-    assert made.native_bakes == 1, "the executable was not linked"
-    linked = selected_fact_unit(made.fact, made.identity, output)?
-    match index_program(store, Some(selector), linked, made.transaction)?:
-        None => return Err("the link was not indexed")
-        Some(transaction) => _ = commit(transaction).map_err((error) => error.message())?
-    return Ok(linked)
+def indexed_link(store: Path, unit: UnitDescription, toolchain: Toolchain) -> Result[NativeUnit, str]:
+    """Run an ordinary captured standalone request through the installed engine's index and link path."""
+    view = "rfc124-standalone"
+    producer = "rfc124-link-proof"
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    captured = prepare_admitted_submit(
+        admission,
+        Submit(
+            command="build",
+            view=view,
+            input_selection="debug",
+            requested_roots=unit.source,
+            options="",
+            observation_policy="",
+        ),
+    )?
+    handle = program_handle(captured.identity, producer, view)?
+    preparation = PreparedProgram(
+        unit=unit,
+        toolchain=toolchain,
+        sources=CompilerSourceCapture.stage(toolchain, None)?,
+        whole="fixture compiler",
+    )
+    mut receipts = ReceiptProjectionCache.empty()
+    produced = obtain(
+        store,
+        admission,
+        captured.revision,
+        handle,
+        "",
+        receipts,
+        Some(captured.epoch),
+        producer,
+        Some(captured.selected),
+        prepared=Some(preparation),
+    )?
+    assert produced.code == 0 and produced.native_bakes == 1, "the executable was not linked"
+    mut group: list[Transaction] = []
+    if let Some(transaction) = captured.transaction:
+        group.append(transaction)
+    if let Some(transaction) = produced.transaction:
+        group.append(transaction)
+    if let Some(warnings) = produced.prepared_warnings:
+        group.append(warnings.transaction)
+    _ = commit_group(group).map_err((error) => error.message())?
+    match produced.unit:
+        None => return Err("the link selected no executable")
+        Some(linked) => return Ok(linked)
 
 
-def selected_fact_unit(fact: Option[Fact], identity: str, output: Path) -> Result[NativeUnit, str]:
-    """The engine's descriptor of the executable in a freshly sealed fact."""
-    match fact:
-        None => return Err("the link sealed no fact")
-        Some(sealed) =>
-            for file in sealed.files:
-                if file.path == output.name() and file.program:
-                    return Ok(NativeUnit(identity=identity, payload=file.digest, binary=output.0))
-            return Err("the sealed fact holds no executable")
-
-
-def indexed_payload(store: Path, selector: str) -> Result[Option[str], str]:
-    """The executable payload the standalone index names under `selector`."""
+def indexed_payload(store: Path) -> Result[str, str]:
+    """Read the single exact selector the normal request published for this fixture."""
     selected = snapshot(store).map_err((error) => error.message())?
+    indexes = keys_with_prefix(selected, "incan.engine.standalone-program\t").map_err((error) => error.message())?
+    assert len(indexes) == 1, "the standalone request did not publish exactly one index"
+    selector = indexes[0]
     match get(selected, selector).map_err((error) => error.message())?:
-        None => return Ok(None)
+        None => return Err("the standalone index disappeared")
         Some(data) =>
             assert data[:4] == b"CRMB", "the standalone index must carry a typed descriptor"
             unit = decode_program(selector, data)?
             assert Path(unit.binary).name() == unit.binary
-            return Ok(Some(unit.payload))
+            return Ok(unit.payload)
