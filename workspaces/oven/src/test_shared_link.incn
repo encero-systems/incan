@@ -22,7 +22,7 @@ from engine_programs import (
 from incan_units import Made, obtain_executable
 from pub::incan_platform.store import SnapshotAdmission, Transaction, commit_group, get, keys_with_prefix
 from scratch import scratch_directory
-from shared_link import linkage_key, shared_arguments
+from shared_link import shared_arguments
 from store_path_conversion import snapshot, store_path
 from toolchain import Toolchain, load_toolchain
 from unit import UnitDescription
@@ -136,7 +136,7 @@ def linked_unit(store: Path, made: Made) -> Result[NativeUnit, str]:
         return Err("the development executable was not baked")
     binary = made.launch
     name = binary.name()
-    payload = hexlify(file_digest(binary, "sha256").map_err((error) => error.message())?)
+    payload = executable_digest(binary)?
     fact = match find_executable_payload(store, made.identity, name, payload)?:
         Some(published) => published
         None => return Err("the linked development executable is missing its sealed payload")
