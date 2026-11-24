@@ -224,6 +224,7 @@ def hover_answer(
         text,
         request.hover_line,
         request.hover_column,
+        request.declaration_end_column,
     )?:
         hover = JsonValue.string(signature)
     answer = {"schema": JsonValue.string(OVERLAY_HOVER_SCHEMA), "version": JsonValue.int(request.version), "editor_view": JsonValue.string(

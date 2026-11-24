@@ -25,6 +25,8 @@ pub model OverlayRequest:
     # A hover's one-based line and column in the buffer; 0 asks for diagnostics instead.
     pub hover_line: int = 0
     pub hover_column: int = 0
+    # The exclusive column of a function name the editor resolved to its checked declaration.
+    pub declaration_end_column: Option[int] = None
 
 
 pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
@@ -58,6 +60,8 @@ pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
             return Err("a hover names a line and a column")
         answered.hover_line = place[0].expect_int().map_err((error) => error.message())?
         answered.hover_column = place[1].expect_int().map_err((error) => error.message())?
+        if let Some(end_column) = request.get("declaration_end_column"):
+            answered.declaration_end_column = Some(end_column.expect_int().map_err((error) => error.message())?)
     return Ok(answered)
 
 

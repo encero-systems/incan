@@ -39,6 +39,7 @@ impl IncanLanguageServer {
         let sessions = Arc::clone(&self.analysis_sessions);
         let profile = Arc::clone(&self.profile);
         let source = source.to_owned();
+        let analysis_ticket = Arc::clone(&ticket);
         let result = tokio::task::spawn_blocking(move || match analysis_uri.to_file_path() {
             Ok(path) => {
                 let path = path.canonicalize().unwrap_or(path);
@@ -51,6 +52,7 @@ impl IncanLanguageServer {
                     &path,
                     &source,
                     version,
+                    analysis_ticket,
                     &open_sources,
                     &sessions,
                     &profile,
@@ -193,6 +195,7 @@ fn analyze(
     path: &Path,
     source: &str,
     version: i32,
+    analysis_ticket: Arc<()>,
     open_sources: &HashMap<PathBuf, String>,
     sessions: &std::sync::Mutex<super::analysis_cache::Sessions>,
     profile: &str,
@@ -277,6 +280,7 @@ fn analyze(
         source: source.to_string(),
         ast: Some(source_ast),
         version,
+        analysis_ticket,
         graph_navigation,
         checked_identities: CheckedIdentitySnapshot {
             type_info: facts.type_info,

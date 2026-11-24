@@ -375,11 +375,61 @@ pub(super) fn definition_location_for_identity(
     })
 }
 
-/// Render hover data from the compiler-owned identity itself, preserving alias/re-export provenance.
-pub(super) fn checked_identity_hover(source: &str, occurrence: &CheckedIdentityOccurrence) -> Hover {
-    let spelling = source
-        .get(occurrence.span.start..occurrence.span.end)
-        .unwrap_or(&occurrence.identity.declaration_name);
+/// Recognize the exact name token of a private checked module function in this document.
+pub(super) fn is_private_function_binding(
+    uri: &Url,
+    doc: &DocumentState,
+    ast: &Program,
+    occurrence: &CheckedIdentityOccurrence,
+) -> bool {
+    use incan_frontend::ast::Visibility;
+    use incan_semantics_core::{SemanticSourceTargetKind, SymbolNamespace};
+
+    let identity = &occurrence.identity;
+    if identity.kind != SemanticSourceTargetKind::Function
+        || identity.namespace != SymbolNamespace::OrdinaryLexical
+        || identity.scope_discriminant.is_some()
+        || !matches!(&identity.origin, SymbolOrigin::Module(_))
+    {
+        return false;
+    }
+
+    let span = identity.declaration_span;
+    let name = &identity.declaration_name;
+    let snapshot = &doc.checked_identities;
+    snapshot
+        .declaration_sources
+        .get(&identity.origin)
+        .is_some_and(|origin| &origin.uri == uri && origin.source == doc.source)
+        && ast.declarations.iter().any(|declaration| {
+            declaration.span == span
+                && matches!(&declaration.node, Declaration::Function(function)
+                if function.visibility == Visibility::Private && &function.name == name)
+        })
+        && snapshot
+            .type_info
+            .declarations
+            .hir_bindings_by_span
+            .get(&span)
+            .is_some_and(|bindings| {
+                bindings
+                    .iter()
+                    .any(|binding| &binding.local_name == name && binding.canonical.as_ref() == Some(identity))
+            })
+        && checked_declaration_binding_span(ast, &doc.source, span, name) == Some(occurrence.span)
+}
+
+/// Render the compiler-owned identity and its authored signature when one was requested.
+pub(super) fn checked_identity_hover(
+    source: &str,
+    occurrence: &CheckedIdentityOccurrence,
+    signature: Option<&str>,
+) -> Hover {
+    let spelling = signature.unwrap_or_else(|| {
+        source
+            .get(occurrence.span.start..occurrence.span.end)
+            .unwrap_or(&occurrence.identity.declaration_name)
+    });
     let markdown = format!(
         "```incan\n{}\n```\n\n*resolved {}*\n\nCanonical declaration: `{}`",
         spelling,

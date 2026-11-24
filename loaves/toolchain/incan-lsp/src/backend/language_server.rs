@@ -188,6 +188,7 @@ impl LanguageServer for IncanLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
+        let tickets = self.analysis_tickets.read().await;
         let docs = self.documents.read().await;
         let doc = match docs.get(uri) {
             Some(doc) => doc,
@@ -211,27 +212,30 @@ impl LanguageServer for IncanLanguageServer {
             }
 
             if let Some(hover) = resolved_value_hover(uri, doc, ast, offset, &aliases) {
-                return Ok(Some(hover));
+                let hover = match hover {
+                    ResolvedValueHover::Ready(hover) => Some(hover),
+                    ResolvedValueHover::PrivateFunction(occurrence) => {
+                        if !tickets
+                            .get(uri)
+                            .is_some_and(|latest| Arc::ptr_eq(latest, &doc.analysis_ticket))
+                            || doc.version < 0
+                        {
+                            return Ok(None);
+                        }
+                        let ticket = Arc::clone(&doc.analysis_ticket);
+                        let version = doc.version;
+                        let source = doc.source.clone();
+                        drop(docs);
+                        drop(tickets);
+                        self.private_function_hover(uri, ticket, version, source, occurrence)
+                            .await
+                    }
+                };
+                return Ok(hover);
             }
 
-            // Call-site explicit type arguments: `f[T](...)`, `_.method[U](...)`
-            if let Some(ty_spanned) = call_site_type_args::call_site_innermost_type_at_offset(ast, offset) {
-                let display = format_type(&ty_spanned.node);
-                let markdown = match &ty_spanned.node {
-                    Type::Infer => "```incan\n_\n```\n\n*Call-site inference placeholder* — this type parameter is filled from the value arguments (RFC 054)."
-                        .to_string(),
-                    Type::Simple(_) => {
-                        format!("```incan\n{display}\n```\n\n*Unresolved builtin or unqualified type argument.*")
-                    }
-                    _ => format!("```incan\n{display}\n```\n\n*Type argument* at call site (RFC 054)."),
-                };
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: Some(span_to_range(&doc.source, ty_spanned.span.start, ty_spanned.span.end)),
-                }));
+            if let Some(hover) = call_site_type_hover(ast, &doc.source, offset) {
+                return Ok(Some(hover));
             }
 
             if let Some(preview) = api_metadata_preview_at_offset(&doc.api_metadata_previews, offset) {
@@ -563,5 +567,57 @@ impl LanguageServer for IncanLanguageServer {
         );
 
         Ok(Some(CompletionResponse::Array(items)))
+    }
+}
+
+/// Explain an explicit type argument or inference placeholder at a call site.
+fn call_site_type_hover(ast: &Program, source: &str, offset: usize) -> Option<Hover> {
+    let ty_spanned = call_site_type_args::call_site_innermost_type_at_offset(ast, offset)?;
+    let display = format_type(&ty_spanned.node);
+    let markdown = match &ty_spanned.node {
+        Type::Infer => "```incan\n_\n```\n\n*Call-site inference placeholder* — this type parameter is filled from the value arguments (RFC 054)."
+            .to_string(),
+        Type::Simple(_) => {
+            format!("```incan\n{display}\n```\n\n*Unresolved builtin or unqualified type argument.*")
+        }
+        _ => format!("```incan\n{display}\n```\n\n*Type argument* at call site (RFC 054)."),
+    };
+    Some(source_markdown_hover(source, markdown, Some(ty_spanned.span)))
+}
+
+impl IncanLanguageServer {
+    /// Adopt the authored signature only while the exact checked document remains current.
+    async fn private_function_hover(
+        &self,
+        uri: &Url,
+        ticket: Arc<()>,
+        version: i32,
+        source: String,
+        occurrence: CheckedIdentityOccurrence,
+    ) -> Option<Hover> {
+        let path = uri.to_file_path().ok()?;
+        let profile = Arc::clone(&self.profile);
+        let span = occurrence.span;
+        let (source, signature) = tokio::task::spawn_blocking(move || {
+            let path = path.canonicalize().unwrap_or(path);
+            let signature =
+                engine_overlay::private_function_signature(&path, &source, version, &profile, span).ok()??;
+            Some((source, signature))
+        })
+        .await
+        .ok()??;
+
+        // A newer analysis can invalidate the state while the serialized exchange answers.
+        let tickets = self.analysis_tickets.read().await;
+        let documents = self.documents.read().await;
+        let current = documents.get(uri)?;
+        if !tickets.get(uri).is_some_and(|latest| Arc::ptr_eq(latest, &ticket))
+            || !Arc::ptr_eq(&current.analysis_ticket, &ticket)
+            || current.version != version
+            || current.source != source
+        {
+            return None;
+        }
+        Some(checked_identity_hover(&current.source, &occurrence, Some(&signature)))
     }
 }

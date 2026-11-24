@@ -1,4 +1,4 @@
-//! Versioned diagnostics and saved builds through Incan's persistent editor overlay.
+//! Versioned diagnostics, checked signatures and saved builds through Incan's persistent editor overlay.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
+use incan_frontend::ast::Span;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
 
 /// The document an overlay request answers with.
 const OVERLAY_SCHEMA: &str = "incan.overlay-diagnostics/1";
+const HOVER_SCHEMA: &str = "incan.overlay-hover/1";
 /// Requests of one program share its editor view's overlay root, so this server sends them one at a time; the lock
 /// also owns the persistent Oven, when one is running.
 static REQUESTS: Mutex<Option<OverlayServer>> = Mutex::new(None);
@@ -37,21 +39,64 @@ pub(super) fn diagnostics(
     profile: &str,
     open_sources: &HashMap<PathBuf, String>,
 ) -> Result<Vec<Diagnostic>, String> {
+    let version = version.max(0);
+    let answer = buffered_answer(path, source, version, profile, Ask::Diagnostics(open_sources))?;
+    document_diagnostics(path, uri, source, &answer, version)
+}
+
+/// Ask the same served overlay for the signature at the checked declaration token.
+pub(super) fn private_function_signature(
+    path: &Path,
+    source: &str,
+    version: i32,
+    profile: &str,
+    span: Span,
+) -> Result<Option<String>, String> {
+    let prefix = source.get(..span.start).ok_or("invalid declaration start")?;
+    let token = source.get(span.start..span.end).ok_or("invalid declaration range")?;
+    // The authored overlay reads Unicode scalar columns. The LSP response retains UTF-16 coordinates.
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix.rsplit('\n').next().map_or(0, |row| row.chars().count()) + 1;
+    let end_column = column + token.chars().count();
+    let answer = buffered_answer(
+        path,
+        source,
+        version,
+        profile,
+        Ask::Hover {
+            line,
+            column,
+            end_column,
+        },
+    )?;
+    if let Some(reason) = answer["error"].as_str() {
+        return Err(reason.to_string());
+    }
+    if answer["schema"] != HOVER_SCHEMA || answer["version"] != i64::from(version) {
+        return Err("overlay hover answer names another schema or document version".into());
+    }
+    match answer.get("hover") {
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(signature)) => Ok(Some(signature.clone())),
+        _ => Err("overlay hover answer has no signature field".into()),
+    }
+}
+
+/// Serve an unsaved buffer under the same lock that serializes the request with its response.
+fn buffered_answer(
+    path: &Path,
+    source: &str,
+    version: i32,
+    profile: &str,
+    ask: Ask<'_>,
+) -> Result<serde_json::Value, String> {
     let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let buffer = buffer_path(path);
     std::fs::write(&buffer, source)
         .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
-    let version = version.max(0);
-    let answered = served_answer(
-        &mut server,
-        path,
-        &buffer,
-        version,
-        profile,
-        Ask::Diagnostics(open_sources),
-    );
+    let answer = served_answer(&mut server, path, &buffer, version, profile, ask);
     let _ = std::fs::remove_file(&buffer);
-    document_diagnostics(path, uri, source, &answered?, version)
+    answer
 }
 
 /// Build the saved document in its editor view, so the project's next build of the same bytes reuses the unit.
@@ -71,6 +116,11 @@ pub(super) fn saved(path: &Path, profile: &str) -> Result<(), String> {
 enum Ask<'a> {
     Diagnostics(&'a HashMap<PathBuf, String>),
     Build,
+    Hover {
+        line: usize,
+        column: usize,
+        end_column: usize,
+    },
 }
 
 /// One answer from the persistent Oven, starting it when none runs and once more if it stopped answering.
@@ -93,6 +143,14 @@ fn served_answer(
                 serde_json::to_value(siblings).map_err(|error| format!("cannot encode editor buffers: {error}"))?;
         }
         Ask::Build => request["build"] = serde_json::json!(true),
+        Ask::Hover {
+            line,
+            column,
+            end_column,
+        } => {
+            request["hover"] = serde_json::json!([line, column]);
+            request["declaration_end_column"] = serde_json::json!(end_column);
+        }
     }
     let request = request.to_string();
     let mut last = String::new();
