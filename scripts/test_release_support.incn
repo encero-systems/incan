@@ -1178,14 +1178,17 @@ def require_repacked_registry_archive(root: Path) -> Result[None, str]:
     assert seed_closure.read_text("utf-8", "strict").map_err((error) => error.message())? == closure_text
     assert pins.read_text("utf-8", "strict").map_err((error) => error.message())? == pins_text
     wrong_archive = closure_text.replace(archive, upstream)
-    require_repacked_writer_refusal(root, pins, wrong_archive)?
+    require_repacked_writer_refusal(root.joinpath("archive-mismatch"), pins, wrong_archive, "checksum")?
+    refusal = "{\"loaf\":\"crates-io/hex\",\"version\":\"0.4.3\",\"reason\":\"producer refused the locked unit\"}"
+    refused = closure_text.replace("\"units\":[", f"\"refused\":[{refusal}],\"units\":[")
+    require_repacked_writer_refusal(root.joinpath("producer-refusal"), pins, refused, "refused")?
     return require_repacked_registry_refusals(closure_text, pins_text, archive, upstream)
 
 
-def require_repacked_writer_refusal(root: Path, pins: Path, closure: str) -> Result[None, str]:
-    """Validate the supplied source identity before touching a fresh candidate."""
-    seed = root.joinpath("wrong-archive/closure.json")
-    candidate = root.joinpath("wrong-candidate")
+def require_repacked_writer_refusal(root: Path, pins: Path, closure: str, reason_text: str) -> Result[None, str]:
+    """Validate source identity and producer outcome before touching a fresh candidate."""
+    seed = root.joinpath("seed/closure.json")
+    candidate = root.joinpath("candidate")
     seed.parent().mkdir(true, true).map_err((error) => error.message())?
     candidate.mkdir(true, true).map_err((error) => error.message())?
     seed.write_text(closure, "utf-8", "strict", None).map_err((error) => error.message())?
@@ -1193,8 +1196,8 @@ def require_repacked_writer_refusal(root: Path, pins: Path, closure: str) -> Res
     before = "{\"registry_units\":\"" + seed.0 + "\"}"
     manifest.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
     match write_checksummed_registry(candidate, pins):
-        Ok(_) => return Err("the release writer accepted the upstream digest as its issued archive checksum")
-        Err(reason) => assert "checksum" in reason, reason
+        Ok(_) => return Err(f"the release writer accepted the invalid {reason_text} candidate")
+        Err(reason) => assert reason_text in reason, reason
     assert manifest.read_text("utf-8", "strict").map_err((error) => error.message())? == before
     registry = candidate.joinpath("registry")
     assert not registry.exists() and not registry.is_symlink(), "a refused candidate created its registry directory"
