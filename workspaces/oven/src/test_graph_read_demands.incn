@@ -1,9 +1,16 @@
 """An immutable semantic demand names only its selected revision even when later or unrelated values exist."""
 
 from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
 from std.json import JsonValue
-from pub::incan_platform.store import begin, commit, put
+from pub::incan_platform.store import Snapshot, begin, commit, put
 from pub::incan_platform.store.index import find
+from pub::internal_models import encode_read_receipt
+from pub::internal_models.records import (
+    PreparationEvidence, ReadScope, RecordKey, RecordRead, RecordReads, RecordRequest, RecordSelection,
+    StoreRecordSource, encode_record_key,
+)
 from benchmark_graph_frames import required_graph_frames
 from graph_read_demands import GraphDemand, begin_graph_demands, finish_graph_demands, note_graph_demand
 from scratch import scratch_directory
@@ -11,6 +18,7 @@ from store_path_conversion import snapshot
 
 
 pub def test_graph_oracle_selects_a_past_revision_without_read_counters() -> Result[None, str]:
+    """Check generation, index-only and typed payload selections in the same pinned oracle fixture."""
     scratch = scratch_directory()?
     store = scratch.path().joinpath("bakery")
     empty = snapshot(store).map_err((error) => error.message())?
@@ -61,4 +69,50 @@ pub def test_graph_oracle_selects_a_past_revision_without_read_counters() -> Res
         else:
             assert len(frames.lengths) == 1
             assert frames.lengths[wanted] == 15
+    typed_receipt_controls(store, later)?
+    return Ok(None)
+
+
+def typed_receipt_controls(store: Path, start: Snapshot) -> Result[None, str]:
+    """Select a receipt and its exact witness independently, preserving the full key's trailing empty field."""
+    key = RecordKey(family="source", identity_profile="fixture", origin="oracle", identity="é",
+        facet="value", context="")
+    encoded = encode_record_key(key)?
+    input = b"selected witness"
+    seeded = commit(put(begin(start), encoded, input)).map_err((error) => error.message())?
+    request = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=65536)
+    scope = ReadScope(snapshot=seeded.digest, profile="oracle")
+    preparation = PreparationEvidence(output=key, rank_certificate="fixture", selector_witnesses="fixture")
+    source = StoreRecordSource.open(seeded, scope, [encoded])
+    mut reads = RecordReads.start(scope, preparation, [request])
+    match reads.read(source, request):
+        RecordRead.Found(_) => pass
+        _ => return Err("fixture lacks a typed witness")
+    receipt = encode_read_receipt(reads.finish().map_err((_) => "fixture receipt did not complete")?)?
+    root = hexlify(sha256.digest(receipt))
+    receipt_key = "incan.engine.receipt\t" + root
+    selected = commit(put(begin(seeded), receipt_key, receipt)).map_err((error) => error.message())?
+
+    begin_graph_demands(true)
+    note_graph_demand("capture-mode", selected, "".join(list.repeat("a", 64)))
+    note_graph_demand("receipt-frame", selected, receipt_key)
+    note_graph_demand("witness", selected, f"{root}\t0\t{encoded}")
+    demands = finish_graph_demands()
+    report = JsonValue.object({"graph_demands": JsonValue.array([item.to_json() for item in demands])})
+    frames = required_graph_frames(report, store)?
+    assert len(frames.unknown) == 0
+    assert len(frames.lengths) == 2
+    for key_and_size in [(encoded, len(input)), (receipt_key, len(receipt))]:
+        wanted_key, size = key_and_size
+        match find(selected.root, selected.index, wanted_key).map_err((error) => error.detail)?:
+            Some(location) =>
+                identity = hexlify(location.digest) + "\t" + wanted_key
+                assert frames.lengths.get(identity) == Some(8 + len(wanted_key.encode("utf-8")) + size)
+            None => return Err("fixture's selected graph frame is absent")
+
+    for malformed in [f"{root}\t1\t{encoded}", f"{root}\t0\t{encoded[:-1]}"]:
+        demand = GraphDemand(role="witness", store=store.0, generation=selected.generation,
+            manifest=selected.digest, view=selected.view, key=malformed)
+        invalid = JsonValue.object({"graph_demands": JsonValue.array([demands[0].to_json(), demand.to_json()])})
+        assert required_graph_frames(invalid, store).is_err(), "accepted a mistargeted typed witness"
     return Ok(None)
