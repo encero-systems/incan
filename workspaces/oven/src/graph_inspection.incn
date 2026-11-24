@@ -46,10 +46,10 @@ from graph_snapshot import (
 )
 from graph_context import pack
 from graph_context_index import ContextIndex, with_author
-from graph_context_items import anchor_root, observed_anchor_root, written_by
+from graph_context_items import anchor_root, observe_anchor_root, observed_anchor_root, written_by
 from graph_process import process_facts
 from graph_rust import inspect_rust
-from json_fields import required_items, string_value
+from json_fields import required_items, required_text, string_value
 from publication import publish
 from rust_manifest import rust_facet
 from toolchain import Toolchain, load_toolchain
@@ -78,6 +78,7 @@ const EXPORT_PRESENTATION_DOMAIN: str = "incan.codegraph.export-presentation/1"
 # Keep the private typed envelope distinct from either CLI definitions format in the existing answer cache.
 const MCP_DEFINITIONS_FORMAT: str = "mcp-definitions/1"
 const MCP_RELATIONSHIPS_FORMAT: str = "mcp-relationships/1"
+const RELATIONSHIP_HITS_FORMAT: str = "relationship-hits/1"
 
 
 pub model GraphOptions:
@@ -335,7 +336,10 @@ pub model PreparedInspection:
 
     pub def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
         """Render the admitted request for the selected preferences."""
-        return Ok(self.answer(preferences)?.text)
+        answered = self.answer(preferences)?
+        if shared_relationship_hits(self.selected):
+            return present_relationship_hits(answered.text, self.selected.format == MCP_RELATIONSHIPS_FORMAT)
+        return Ok(answered.text)
 
     pub def feedback_answer(self, expected: str) -> Result[Answered, str]:
         """Validate a current feedback snapshot and return its graph under the service's canonical identity."""
@@ -434,7 +438,7 @@ def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result
     if selected.risk:
         return Ok("")
     source = entry_source(path)
-    mut parts = [presentation_domain(selected), path.0, source.0, selected.profile, selected.format, selected.query]
+    mut parts = [presentation_domain(selected), path.0, source.0, selected.profile, cached_format(selected), selected.query]
     parts = parts + [selected.term]
     parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
     if selected.match_export_modes:
@@ -444,6 +448,18 @@ def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result
     for name in sorted([name for name in selected.substitutes.keys()]):
         parts.append(f"substitute:{name}={selected.substitutes[name]}")
     return request_key(parts, toolchain)
+
+
+def shared_relationship_hits(selected: GraphOptions) -> bool:
+    """Plain and attributed relationships select the same checked hits under the same source anchor."""
+    return selected.query != "" and selected.query != "defs" and selected.stale == "" and selected.task == "" and not selected.risk
+
+
+def cached_format(selected: GraphOptions) -> str:
+    """Key relationship facts by their shared encoding and other answers by their rendered format."""
+    if shared_relationship_hits(selected):
+        return RELATIONSHIP_HITS_FORMAT
+    return selected.format
 
 
 def presentation_domain(selected: GraphOptions) -> str:
@@ -477,7 +493,7 @@ def keep_checked_page(
 ) -> Result[bool, str]:
     """Publish the page of a checked answer; `false` when an input is unsettled or a unit is unchecked."""
     observed = watched_inputs()
-    if answered.unchecked:
+    if answered.unchecked or not answered.cacheable:
         return Ok(false)
     return publish_page(prepared.key, observed, answered.snapshot, preferences, answered.text)
 
@@ -489,6 +505,8 @@ pub model Answered:
     pub snapshot: str = ""
     # Whether a selected unit failed checking, so the answer carries warnings that belong to its request.
     pub unchecked: bool = false
+    # A plain relationship can be displayed when a marker cannot be observed. It is not a reusable authored answer.
+    pub cacheable: bool = true
 
 
 def inspected_path(selected: GraphOptions) -> Result[Path, str]:
@@ -576,13 +594,21 @@ def response(
         status = json_text(snapshot_status(selected.stale, snapshot))?
         return Ok(Answered(text=status, snapshot=snapshot, unchecked=degraded))
     mut author_root: Option[str] = None
-    if selected.format == MCP_DEFINITIONS_FORMAT or selected.format == MCP_RELATIONSHIPS_FORMAT:
+    mut cacheable = true
+    if shared_relationship_hits(selected):
+        anchors = observe_anchor_root(Path(root), marker_only=true)
+        if let Some(problem) = anchors.failure:
+            if selected.format == MCP_RELATIONSHIPS_FORMAT:
+                return Err(problem)
+            cacheable = false
+        author_root = Some(anchors.path.0)
+    elif selected.format == MCP_DEFINITIONS_FORMAT or selected.format == MCP_RELATIONSHIPS_FORMAT:
         author_root = Some(observed_anchor_root(Path(root))?.0)
     portable = shared_query(selected)
-    if paged and not portable:
-        # The request's page keeps this answer; a presentation cache keyed by the same root would only duplicate it.
+    if not cacheable or (paged and not portable):
+        # An unobserved anchor cannot back a cache. A same-root paged answer already has a home in its page.
         rendered = render(paths, root, selected, toolchain, degraded, snapshot, process, preferences, author_root)?
-        return Ok(Answered(text=rendered.text, snapshot=snapshot, unchecked=degraded))
+        return Ok(Answered(text=rendered.text, snapshot=snapshot, unchecked=degraded, cacheable=cacheable))
     mut inputs: list[str] = []
     match presentation_inputs(paths, root, selected, snapshot, preferences, portable, author_root)?:
         None =>
@@ -634,7 +660,7 @@ def presentation_inputs(
         snapshot,
         key_root,
         selected.profile,
-        selected.format,
+        cached_format(selected),
         selected.query,
         selected.term,
     ]
@@ -727,7 +753,10 @@ def render(
         if let Some(anchors) = author_root:
             if selected.format == MCP_DEFINITIONS_FORMAT:
                 return Ok(RenderedGraph(text=mcp_definition_response(records, selected.term, selected.limit, anchors)?))
-            return render_hits(query(records, selected.query, selected.term, anchors), selected.limit, true)
+            hits = query(records, selected.query, selected.term, anchors)
+            if shared_relationship_hits(selected):
+                return encode_relationship_hits(hits, selected.limit)
+            return render_hits(hits, selected.limit, true)
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         return render_hits(hits, selected.limit, false)
     records = export_records(paths, root, selected, toolchain, degraded, snapshot)? + process
@@ -736,9 +765,48 @@ def render(
     return Ok(RenderedGraph(text="\n".join([json_text(record)? for record in records])))
 
 
-def render_hits(hits: list[QueryHit], limit: int, authored: bool) -> Result[RenderedGraph, str]:
-    """Render the same winning hits in order, with quoting after checking their original anchors."""
+def encode_relationship_hits(hits: list[QueryHit], limit: int) -> Result[RenderedGraph, str]:
+    """Cache the bounded hit selection once, including the record author used by the MCP view."""
     included = hits[:limit]
+    mut entries: list[JsonValue] = []
+    mut portable = true
+    for hit in included:
+        portable = portable and portable_source_anchor(hit.anchor) and portable_answer(hit.plain())
+        entries.append(JsonValue.object({
+            "kind": JsonValue.string(hit.kind), "label": JsonValue.string(hit.label),
+            "anchor": JsonValue.string(hit.anchor), "status": JsonValue.string(hit.status), "author": hit.author,
+        }))
+    encoded = json_text(JsonValue.object({
+        "hits": JsonValue.array(entries), "remaining": JsonValue.int(len(hits) - len(included)),
+    }))?
+    return Ok(RenderedGraph(text=encoded, portable=portable))
+
+
+def present_relationship_hits(encoded: str, authored: bool) -> Result[str, str]:
+    """Render the existing CLI or attributed MCP answer from one checked relationship selection."""
+    document = parse(encoded).map_err((error) => error.message())?
+    count = document.require("remaining").map_err((error) => error.message())?
+    remaining = count.expect_int().map_err((error) => error.message())?
+    if remaining < 0:
+        return Err("cached graph relationship count is negative")
+    mut hits: list[QueryHit] = []
+    for entry in required_items(document, "hits")?:
+        hits.append(QueryHit(
+            kind=required_text(entry, "kind")?, label=required_text(entry, "label")?,
+            anchor=required_text(entry, "anchor")?, status=required_text(entry, "status")?,
+            author=entry.require("author").map_err((error) => error.message())?,
+        ))
+    return Ok(render_selected_hits(hits, remaining, authored)?.text)
+
+
+def render_hits(hits: list[QueryHit], limit: int, authored: bool) -> Result[RenderedGraph, str]:
+    """Render the bounded selection in the existing CLI or attributed form."""
+    included = hits[:limit]
+    return render_selected_hits(included, len(hits) - len(included), authored)
+
+
+def render_selected_hits(included: list[QueryHit], remaining: int, authored: bool) -> Result[RenderedGraph, str]:
+    """Render winning hits in order, checking their original anchors before quoting."""
     mut portable = true
     mut lines: list[str] = []
     if authored:
@@ -753,8 +821,8 @@ def render_hits(hits: list[QueryHit], limit: int, authored: bool) -> Result[Rend
     else:
         lines = [hit.plain() for hit in included]
         portable = portable_answer("\n".join(lines))
-    if len(hits) > limit:
-        lines.append(f"… {len(hits) - limit} more")
+    if remaining > 0:
+        lines.append(f"… {remaining} more")
     return Ok(RenderedGraph(text="\n".join(lines), portable=portable))
 
 
