@@ -57,6 +57,17 @@ pub model CompletedPlanEvents:
     root: str
     events: list[LoweringEvent]
 
+    @staticmethod
+    pub def from_census(root: str, events: list[LoweringEvent]) -> Self:
+        """Keep the counted records and their request-owned report together."""
+        return CompletedPlanEvents(root=root, events=events)
+
+    pub def take_for_report(mut self, report: Path) -> Result[list[LoweringEvent], str]:
+        """Move the counted records into publication for the same request-owned report."""
+        if self.root != report.0:
+            return Err("completed Plan events name another report")
+        return Ok(take(self.events))
+
 
 # The schema of the sidecar a check writes with `--checked-bodies`.
 const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
@@ -337,14 +348,13 @@ pub def plan_record_counts(
     while len(slots) > 0:
         if let Some(event) = slots.pop():
             events.append(event)
-    return Ok((counts, Some(CompletedPlanEvents(root=report.0, events=events))))
+    return Ok((counts, Some(CompletedPlanEvents.from_census(report.0, events))))
 
 
-pub def take_completed_plan_events(mut completed: CompletedPlanEvents, report: Path) -> Result[list[LoweringEvent], str]:
+pub def take_completed_plan_events(completed: CompletedPlanEvents, report: Path) -> Result[list[LoweringEvent], str]:
     """Move the validated event vector into publication for the same request-owned report."""
-    if completed.root != report.0:
-        return Err("completed Plan events name another report")
-    return Ok(take(completed.events))
+    mut selected = completed
+    return selected.take_for_report(report)
 
 
 pub def plan_record_report_path(unit: UnitDescription, key: Key, typed: bool) -> Path:
