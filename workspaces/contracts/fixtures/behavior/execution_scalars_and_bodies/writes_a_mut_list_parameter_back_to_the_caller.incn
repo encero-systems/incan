@@ -1,8 +1,9 @@
-# behavior: writes a mut list parameter back to the caller (#2022)
+# behavior: element updates and whole-list assignment through a mut list parameter reach the caller (#2022, RFC 129)
 # expect-stdout:
 #   310
+#   [0]
 
-"""Writes a mut list parameter back to the caller (#2022)."""
+"""Observe both element updates and whole-list assignment through a mutable parameter."""
 def bump(mut items: List[int]) -> None:
   """Increment the first element of the caller-owned list."""
   items[0] = items[0] + 1
@@ -21,6 +22,14 @@ def program_result() -> int:
   return items[0] * 100 + n
 
 
+def reset(mut items: list[int]) -> None:
+    """Replace the caller's list through its mutable parameter."""
+    items = [0]
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    mut items = [1, 2]
+    reset(items)
+    println(items)
