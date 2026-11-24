@@ -43,6 +43,13 @@ pub model PreparedSourceInputs:
     pub projections: Dict[str, SourceProjection] = {}
 
 
+model CapturedDependencyRoots:
+    """Resolved inputs in one traversal share the ordered Loaf root descriptions."""
+
+    ordered: list[Tuple[str, str]] = []
+    derived: bool = false
+
+
 pub def publish_captured_source_inputs(
     selected: Snapshot,
     unit: UnitDescription,
@@ -77,11 +84,13 @@ pub def prepare_captured_source_inputs(
     if stage_changed_projection(selected, prepared, encode_record_key(generation.key)?, generation, positioned)?:
         changed.append(generation.key)
     engine = observe(Path(executable()?))?.stamp
+    mut dependency_roots = CapturedDependencyRoots()
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [
             InputRole.Root, InputRole.Member, InputRole.ProjectMember, InputRole.Resolved,
         ]:
-            if let Some(identity) = captured_source_identity(unit, input.path, input.role == InputRole.ProjectMember)?:
+            project_member = input.role == InputRole.ProjectMember
+            if let Some(identity) = captured_source_identity(unit, input.path, project_member, dependency_roots)?:
                 mut declared: list[str] = []
                 mut active: Option[list[str]] = None
                 local = identity[0] == origin
@@ -220,22 +229,27 @@ def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, k
 
 
 def captured_source_identity(
-    unit: UnitDescription, path: str, project_member: bool,
+    unit: UnitDescription,
+    path: str,
+    project_member: bool,
+    mut roots: CapturedDependencyRoots,
 ) -> Result[Option[Tuple[str, str]], str]:
     """Compare physical paths and keep a linked program's own entry and excluded files under its own authority."""
     normalized = match Path(path).resolve():
         Err(_) => return Ok(None)
         Ok(resolved) => resolved.0
 
-    clock = begin_work()
-    roots = dependency_source_roots(unit)
-    if clock is not None:
-        record_work(
-            Operation.EngineSelect,
-            "captured-source-dependency-roots\t" + unit.project_root + "\t" + path,
-            clock,
-        )
-    for dependency in roots:
+    if not roots.derived:
+        clock = begin_work()
+        roots.ordered = dependency_source_roots(unit)
+        if clock is not None:
+            record_work(
+                Operation.EngineSelect,
+                "captured-source-dependency-roots\t" + unit.project_root + "\t" + path,
+                clock,
+            )
+        roots.derived = true
+    for dependency in roots.ordered:
         if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
             if unit.project_library == Some(dependency[0]):
                 if not project_member or not provides_source(relative):
