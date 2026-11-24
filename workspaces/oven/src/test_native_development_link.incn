@@ -5,7 +5,7 @@ from rust::std::process import Command
 from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
-from std.json import parse
+from std.json import JsonValue, parse
 from files import read, write
 from observation import file_digest
 from engine_protocol_fixtures import json_text_is, stop_engine
@@ -48,6 +48,7 @@ def exercise_development_link(root: Path, binary: str) -> Result[None, str]:
     trace = root.joinpath("trace")
     trace.mkdir(true, true).map_err((error) => error.message())?
     seed = link_edit(root, binary, "hello", [])?
+    signature = verify_main_signature(root, trace)
     seen = trace_names(trace)?
     warm = link_edit(root, binary, "hullo", seen)?
     if (
@@ -65,7 +66,7 @@ def exercise_development_link(root: Path, binary: str) -> Result[None, str]:
     if seed.main_hashes != 1 or seed.greeting_hashes != 1 or warm.greeting_hashes != 1:
         return Err(f"unexpected development-link setup: seed main={seed.main_hashes} seed greeting={seed.greeting_hashes} warm greeting={warm.greeting_hashes}")
     assert warm.main_hashes == 0, f"selected unchanged main regular object rehashed on edit: {warm.main_hashes}, expected 0"
-    return Ok(None)
+    return signature
 
 
 def link_edit(root: Path, binary: str, greeting: str, seen: list[str]) -> Result[EditLink, str]:
@@ -82,6 +83,7 @@ def link_edit(root: Path, binary: str, greeting: str, seen: list[str]) -> Result
         .env("INCAN_BAKERY", bakery.0)
         .env("INCAN_ENGINE_TRACE", trace.0)
         .env("INCAN_NATIVE_PLAN_REPORT", plan.0)
+        .env("INCAN_NATIVE_FINGERPRINT_REPORT", root.joinpath("native.fingerprints").0)
         .env("INCAN_NATIVE_TIMING", "incremental")
         .env_remove("INCAN_RUST_INCREMENTAL")
         .output()
@@ -104,6 +106,100 @@ def link_edit(root: Path, binary: str, greeting: str, seen: list[str]) -> Result
     main = select_callable(native, debug_map, source, bakery, "main")?
     changed = select_callable(native, debug_map, source, bakery, "greeting")?
     return issued_hash_counts(root, trace, seen, main, changed)
+
+
+def verify_main_signature(root: Path, trace: Path) -> Result[None, str]:
+    """Join a completed natural signature to the seed's independently issued main input."""
+    report = read(root.joinpath("native.fingerprints"))?
+    mut selected: list[str] = []
+    for line in report.split("\n"):
+        fields = line.split("\t")
+        if len(fields) == 4 and fields[0] != "" and fields[1] == "main" and len(fields[2]) == 64:
+            selected.append(line)
+    if len(selected) != 1:
+        return Err("seed did not issue one selected native main")
+    input = selected[0]
+    fields = input.split("\t")
+    fingerprint = fields[2]
+    source = root.joinpath("main.incn").0
+    mut counts: list[int] = []
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if entry.is_file() and entry.name().startswith("engine-compiler-"):
+            if let Some(count) = main_signature_count(read(entry)?, source, input, fingerprint)?:
+                counts.append(count)
+    if len(counts) != 1:
+        return Err("seed did not produce one complete resident native span for main")
+    count = counts[0]
+    if count != 1:
+        return Err(f"expected one exact completed native main signature before analysis, observed {count}")
+    return Ok(None)
+
+
+def main_signature_count(lines: str, source: str, input: str, fingerprint: str) -> Result[Option[int], str]:
+    """Count only observations inside the seed's native span before its analysis completion."""
+    mut compile = ""
+    mut native = ""
+    mut count = 0
+    mut analysis = 0
+    mut completed = false
+    for line in lines.split("\n"):
+        if line == "":
+            continue
+        row = parse(line).map_err((error) => error.message())?
+        if json_text_is(row, "kind", "begin"):
+            if json_text_is(row, "function", "incan_rustc_driver::compile_unit"):
+                fields = row.require("fields").map_err((error) => error.message())?
+                if json_text_is(fields, "input", source):
+                    if compile != "" or completed:
+                        return Err("seed compiler observed main twice")
+                    compile = signature_text(row, "id")?
+            if compile != "" and json_text_is(row, "parent", compile) and json_text_is(row, "function", "incan_rustc_driver::native_compile"):
+                if native != "" or completed:
+                    return Err("seed compiler observed main's native span twice")
+                native = signature_text(row, "id")?
+        if compile != "" and json_text_is(row, "kind", "end") and json_text_is(row, "id", compile):
+            if not completed:
+                return Err("seed compiler did not complete main's native span")
+            compile = ""
+        if native == "":
+            continue
+        if json_text_is(row, "kind", "end") and json_text_is(row, "id", native):
+            if analysis != 1:
+                return Err(f"seed native span recorded {analysis} analysis completions")
+            native = ""
+            completed = true
+            continue
+        if not json_text_is(row, "kind", "line") or not json_text_is(row, "operation", "native_timing"):
+            continue
+        key = signature_text(row, "key")?
+        if key.startswith("native-time: "):
+            timing = parse(key[len("native-time: "):]).map_err((error) => error.message())?
+            if json_text_is(timing, "boundary", "rustc_analysis"):
+                analysis += 1
+        if key.startswith("native-fn-sig: "):
+            value = parse(key[len("native-fn-sig: "):]).map_err((error) => error.message())?
+            if (
+                analysis != 0
+                or not json_text_is(value, "source", source)
+                or not json_text_is(value, "input", input)
+                or not json_text_is(value, "marker", fingerprint)
+                or signature_text(value, "owner")? == ""
+            ):
+                return Err("native signature completion did not match its selected declaration and analysis")
+            for field in ["selected", "closed", "typed_equal"]:
+                if not value.require(field).and_then((item) => item.expect_bool()).map_err((error) => error.message())?:
+                    return Err(f"native main signature did not prove {field}")
+            count += 1
+    if compile != "" or native != "":
+        return Err("seed native span did not close")
+    if completed:
+        return Ok(Some(count))
+    return Ok(None)
+
+
+def signature_text(row: JsonValue, field: str) -> Result[str, str]:
+    """Read a required string from the existing trace format."""
+    return row.require(field).and_then((value) => value.expect_str()).map_err((error) => error.message())
 
 
 def select_callable(native: str, debug_map: str, source: Path, bakery: Path, name: str) -> Result[CallableObject, str]:
