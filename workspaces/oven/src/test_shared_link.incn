@@ -1,7 +1,12 @@
 """Development executables link shared carriers from the bakery every home on it reads."""
 
+from rust::std::env import current_exe
 from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.environ import get_or
 from std.fs import Path
+from std.hash import file_digest
 from bakery import find
 from bakery_records import Fact
 from engine_program_records import decode_program
@@ -41,11 +46,11 @@ pub def test_development_executables_link_carriers_from_the_bakery() -> Result[N
     return Ok(None)
 
 
-def carrier_toolchain(scratch: Path, carrier: Path) -> Result[Toolchain, str]:
+def carrier_toolchain(scratch: Path, carrier: Path, programs: list[Path] = []) -> Result[Toolchain, str]:
     """
     A compiler that cannot start a worker and counts each compilation. Each compilation writes different executable
-    bytes, the count so far, puts `carrier` in place and names it in the executable's loader witness, as a development
-    link does.
+    bytes, puts `carrier` in place and names it in the executable's loader witness, as a development link does.
+    By default the bytes contain the attempt count. Tests that start the result supply two real programs instead.
     """
     driver = scratch.joinpath("toolchain").joinpath("driver")
     attempts = scratch.joinpath("attempts")
@@ -53,7 +58,13 @@ def carrier_toolchain(scratch: Path, carrier: Path) -> Result[Toolchain, str]:
     listed = "{\"schema\":\"incan.native-shared/1\",\"libraries\":[{\"path\":\""
     witness = listed + carrier.0 + "\",\"identity\":\"stub\"}]}"
     mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n[ \"$1\" = --resident ] && exit 1\n"
-    script += f"printf x >> '{attempts.0}'\nprintf 'compiled program ' > \"$4\"\ncat '{attempts.0}' >> \"$4\"\n"
+    script += f"printf x >> '{attempts.0}'\n"
+    if len(programs) == 0:
+        script += f"printf 'compiled program ' > \"$4\"\ncat '{attempts.0}' >> \"$4\"\n"
+    else:
+        assert len(programs) == 2
+        script += f"if [ \"$(cat '{attempts.0}')\" = x ]; then\n"
+        script += f"  cp '{programs[0].0}' \"$4\" || exit 1\nelse\n  cp '{programs[1].0}' \"$4\" || exit 1\nfi\n"
     script += "chmod +x \"$4\"\n"
     script += f"mkdir -p '{directory.0}'\nprintf carrier > '{carrier.0}'\n"
     script += "printf '%s' '" + witness + "' > \"$4.native-shared.json\"\nexit 0\n"
@@ -135,37 +146,142 @@ pub def test_a_reused_development_executable_is_linked_again_when_a_carrier_it_l
 
 pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_index() -> Result[None, str]:
     """
-    A unit linked again may hold different executable bytes under the same identity. Its sealed record is replaced, so
-    the standalone index that names it is replaced with it in the same request, and an older selection of it is
-    resolved again instead of failing.
+    Relinking updates the standalone index and retains both actual executables under their original payload digests.
 
-    1. The first request links the executable, seals it and indexes it under its standalone selector in one commit.
-    2. With a carrier removed, the next request links it again. The stub writes different bytes, so the payload differs.
-       Its commit replaces the index, which then names the new payload.
-    3. The earlier selection names a payload the record no longer holds: it is not restored, and the new one is.
+    A single payload can be looked up by unit identity. A second link after carrier loss retains both payloads and
+    makes unit-only selection ambiguous. An unknown digest never restores another executable.
     """
     scratch = scratch_directory()?
     root = scratch.path()
     store = root.joinpath("home").joinpath("bakery")
     carrier = root.joinpath("native-shared").joinpath("libincan_debug_shared_0123456789abcdef.dylib")
-    toolchain = carrier_toolchain(root, carrier)?
+    test_runner = Path(str(current_exe().map_err((error) => str(error))?.to_string_lossy().into_owned()))
+    launcher = Path(get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan"))
+    launcher_payload = observe_executable(launcher, ["--version"])?
+    assert launcher_payload.stdout.startswith("incan "), launcher_payload.stdout
+    test_payload = observe_executable(test_runner, ["--list", "--format", "terse"])?
+    known_test = "test_development_executables_link_carriers_from_the_bakery: test"
+    assert known_test in test_payload.stdout.split("\n"), test_payload.stdout
+    assert launcher_payload.digest != test_payload.digest
+    toolchain = carrier_toolchain(root, carrier, [launcher, test_runner])?
     unit = program_unit(root.joinpath("app"))?
     output = root.joinpath("app").joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath("app")
     key = Key(digest="sha256:" + fingerprint(["a standalone executable linked again"])?, parts=["compiler c"])
     selector = "incan.engine.standalone-program\t" + fingerprint(["a standalone selector"])?
     # 1. One link, sealed and indexed together.
     first = indexed_link(store, unit, toolchain, output, key, selector)?
+    assert first.payload == launcher_payload.digest
     assert indexed_payload(store, selector)? == Some(first.payload)
+    assert selected_unit(store, key, output)?.payload == first.payload
+    # Deferred publication seals and indexes the payload without creating the executable view.
+    assert restore_program(store, first)?
+    require_executable(output, launcher_payload)?
+    assert read(root.joinpath("attempts"))? == "x"
+
     # 2. A removed carrier: linked again, to different bytes.
     carrier.unlink().map_err((error) => error.message())?
     assert not restore_program(store, first)?
     second = indexed_link(store, unit, toolchain, output, key, selector)?
-    assert second.identity == first.identity and second.payload != first.payload
+    assert second.identity == first.identity and second.payload == test_payload.digest
     assert indexed_payload(store, selector)? == Some(second.payload), "the index still names the earlier payload"
-    # 3. Only the new selection is restored.
-    assert not restore_program(store, first)?, "an earlier selection of a unit linked again was restored"
-    assert restore_program(store, second)?
+    assert read(root.joinpath("attempts"))? == "xx" and carrier.is_file()
+
+    first_restored = restore_into(store, first, root.joinpath("first"), launcher_payload)?
+    second_restored = restore_into(store, second, root.joinpath("second"), test_payload)?
+    absent_view = fresh_view(root.joinpath("absent"))?
+    absent = NativeUnit(
+        identity=first.identity,
+        payload=fingerprint(["nonexistent executable payload"])?,
+        binary=absent_view.0,
+    )
+    assert absent.payload != first.payload and absent.payload != second.payload
+    assert not restore_program(store, absent)? and not absent_view.exists(), "an unknown pin restored another payload"
+    ambiguity = lookup_ambiguity(store, first, second)
+    observed = f"first={first_restored}; second={second_restored}; unit-only={ambiguity}"
+    assert first_restored and second_restored and ambiguity == "ambiguous", f"same-unit payload resolution: {observed}"
     return Ok(None)
+
+
+model ExecutableFixture:
+    """The digest and behavior of one executable observed before Bakery admission."""
+
+    digest: str
+    arguments: list[str]
+    stdout: str
+
+
+def observe_executable(output: Path, arguments: list[str]) -> Result[ExecutableFixture, str]:
+    """Measure the executable bytes and direct subprocess output at this location."""
+    return Ok(
+        ExecutableFixture(
+            digest=executable_digest(output)?,
+            arguments=arguments,
+            stdout=executable_stdout(output, arguments)?,
+        ),
+    )
+
+
+def executable_digest(output: Path) -> Result[str, str]:
+    """Read a payload digest without loading the entire executable into memory."""
+    return Ok(
+        hexlify(
+            file_digest(output, "sha256").map_err((error) => f"cannot hash executable {output.0}: {error.message()}")?,
+        ),
+    )
+
+
+def executable_stdout(output: Path, arguments: list[str]) -> Result[str, str]:
+    """Require a successful executable and decode the output of its read-only command."""
+    result = Command
+        .new(output.0)
+        .args(arguments)
+        .output()
+        .map_err((error) => f"cannot start executable {output.0}: {error}")?
+    assert result.status.success() and len(result.stderr) == 0, f"executable did not run cleanly at {output.0}"
+    stdout = RustString.from_utf8(result.stdout).map_err((error) => str(error))?
+    return Ok(str(stdout))
+
+
+def require_executable(output: Path, fixture: ExecutableFixture) -> Result[None, str]:
+    """Verify that an admitted executable matches the independently observed input."""
+    assert executable_digest(output)? == fixture.digest, f"wrong executable digest at {output.0}"
+    assert executable_stdout(output, fixture.arguments)? == fixture.stdout, f"executable changed behavior at {output.0}"
+    return Ok(None)
+
+
+def restore_into(store: Path, selection: NativeUnit, project: Path, fixture: ExecutableFixture) -> Result[bool, str]:
+    """Restore an exact descriptor into a fresh view and verify its executable behavior."""
+    output = fresh_view(project)?
+    pinned = NativeUnit(identity=selection.identity, payload=selection.payload, binary=output.0)
+    if not restore_program(store, pinned)?:
+        assert not output.exists(), f"a missing payload wrote {output.0}"
+        return Ok(false)
+    require_executable(output, fixture)?
+    return Ok(true)
+
+
+def fresh_view(project: Path) -> Result[Path, str]:
+    """Prepare a separate conventional executable directory for an isolated restore."""
+    directory = project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin")
+    make_directory(directory)?
+    output = directory.joinpath("app")
+    assert not output.exists(), f"restore view already exists at {output.0}"
+    return Ok(output)
+
+
+def lookup_ambiguity(store: Path, first: NativeUnit, second: NativeUnit) -> str:
+    """Distinguish selection or absence from a refusal that names the two candidate payloads."""
+    match find(store, first.identity):
+        Ok(Some(_)) => return "selected"
+        Ok(None) => return "missing"
+        Err(reason) =>
+            if (
+                reason.startswith(f"ambiguous unit {first.identity}:")
+                and first.payload in reason
+                and second.payload in reason
+            ):
+                return "ambiguous"
+            return f"other refusal: {reason}"
 
 
 def indexed_link(
