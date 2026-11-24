@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use incan_mir_plan_native::{
-    Callee, CalleeKind, EnumDeclaration, ExternalFunction, Function, ListLeaf, Local, PlanType, source_span,
+    Callee, CalleeKind, EnumDeclaration, ExternalFunction, Function, FunctionSlot, ListLeaf, Local, PlanType,
+    source_span,
 };
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
@@ -18,7 +19,7 @@ use crate::type_parameters::Instance;
 
 /// The unit's inventories after runtime retention of a declarations-only module with no runtime bodies.
 struct Retained {
-    functions: Vec<Function>,
+    functions: Vec<FunctionSlot>,
     externals: Vec<ExternalFunction>,
     instances: Vec<Instance>,
     redirects: RuntimeRedirects,
@@ -30,7 +31,7 @@ fn retain(functions: Vec<Function>, externals: Vec<ExternalFunction>) -> Result<
     let templates = BodyIrModule::declarations_only("main".into());
     let mut program = synthetic_program_context(&module, Arc::new(ConstructorIndex::default()));
     let mut retained = Retained {
-        functions,
+        functions: functions.into_iter().map(FunctionSlot::from).collect(),
         externals,
         instances: Vec::new(),
         redirects: runtime_redirects(),

@@ -12,8 +12,8 @@ use crate::body::{
 };
 use crate::nominal::{NominalKind, NominalRemap, folding_remap, remap_element, remap_leaf, remap_type, remap_types};
 use crate::plan::{
-    EnumDeclaration, ExternalFunction, Function, GenericEnumDeclaration, GenericLayoutType, GenericModelDeclaration,
-    ModelDeclaration, Plan, ZipCarrier,
+    EnumDeclaration, ExternalFunction, Function, FunctionSlot, GenericEnumDeclaration, GenericLayoutType,
+    GenericModelDeclaration, ModelDeclaration, Plan, ZipCarrier,
 };
 
 /// Name every carrier by its place in the plan's enum table, after the `sources` source enums.
@@ -33,7 +33,10 @@ pub fn fold_carrier_positions(mut plan: Plan, sources: i64) -> Result<Plan, Stri
         };
     }
     fold_tables(
-        &mut plan.functions,
+        plan.functions
+            .iter_mut()
+            .filter(|slot| !slot.keeps_placement())
+            .map(FunctionSlot::make_mut),
         &mut plan.models,
         &mut plan.enums,
         &mut plan.externals,
@@ -59,15 +62,35 @@ pub fn fold_inventories(
     fold_tables(functions, models, enums, externals, &mut folding_remap(sources))
 }
 
+/// Fold the ordinary inventory, retaining slots whose checked products carry no nominal positions.
+pub fn fold_function_slots(
+    functions: &mut [FunctionSlot],
+    models: &mut [ModelDeclaration],
+    enums: &mut [EnumDeclaration],
+    externals: &mut [ExternalFunction],
+    sources: i64,
+) -> Result<(), String> {
+    fold_tables(
+        functions
+            .iter_mut()
+            .filter(|slot| !slot.keeps_placement())
+            .map(FunctionSlot::make_mut),
+        models,
+        enums,
+        externals,
+        &mut folding_remap(sources),
+    )
+}
+
 /// Fold every function, model, enum and external of a unit in place through one fold.
-fn fold_tables(
-    functions: &mut [Function],
+fn fold_tables<'a>(
+    functions: impl IntoIterator<Item = &'a mut Function>,
     models: &mut [ModelDeclaration],
     enums: &mut [EnumDeclaration],
     externals: &mut [ExternalFunction],
     remap: &mut NominalRemap,
 ) -> Result<(), String> {
-    for function in functions.iter_mut() {
+    for function in functions {
         fold_function(function, remap)?;
     }
     for model in models.iter_mut() {

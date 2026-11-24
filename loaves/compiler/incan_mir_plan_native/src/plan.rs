@@ -1,6 +1,10 @@
 //! Native crate, callable, nominal, export, and entry declarations shared by lowering and the plan codec.
 
-use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::ops::Deref;
+use std::sync::Arc;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::body::{BasicBlock, Callee, FieldMetadata, Local, Parameter};
 use crate::record_types::CheckedType;
@@ -90,6 +94,74 @@ impl Function {
     }
 }
 
+/// An ordered Plan slot that can retain a finalized function from a previous request.
+// E2-finalized-plan-slot-interop: the authored PlacedRecord result cannot lend a finalized native Function.
+#[derive(Clone)]
+pub struct FunctionSlot {
+    function: Arc<Function>,
+    placement_independent: bool,
+}
+
+impl FunctionSlot {
+    /// Mark a checked function whose product has no position-dependent nominal references.
+    pub(crate) fn keep_placement(&mut self) {
+        self.placement_independent = true;
+    }
+
+    /// Whether the checked product can keep its current body during the carrier fold.
+    pub fn keeps_placement(&self) -> bool {
+        self.placement_independent
+    }
+
+    /// Change this request's function without changing a previously retained value.
+    pub fn make_mut(&mut self) -> &mut Function {
+        self.placement_independent = false;
+        Arc::make_mut(&mut self.function)
+    }
+}
+
+impl From<Function> for FunctionSlot {
+    fn from(function: Function) -> Self {
+        Self {
+            function: Arc::new(function),
+            placement_independent: false,
+        }
+    }
+}
+
+impl Deref for FunctionSlot {
+    type Target = Function;
+
+    fn deref(&self) -> &Function {
+        &self.function
+    }
+}
+
+impl PartialEq for FunctionSlot {
+    fn eq(&self, other: &Self) -> bool {
+        self.function == other.function
+    }
+}
+
+impl fmt::Debug for FunctionSlot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.function.as_ref().fmt(formatter)
+    }
+}
+
+impl Serialize for FunctionSlot {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.function.as_ref().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for FunctionSlot {
+    /// Decode the same function bytes as an ordinary slot with no in-process placement evidence.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Function::deserialize(deserializer).map(Self::from)
+    }
+}
+
 /// A native crate with scalar functions, plain nominal layouts and normal enums; external functions are admitted by
 /// canonical path.
 ///
@@ -99,7 +171,7 @@ impl Function {
 pub struct Plan {
     pub enums: Vec<EnumDeclaration>,
     pub models: Vec<ModelDeclaration>,
-    pub functions: Vec<Function>,
+    pub functions: Vec<FunctionSlot>,
     pub externals: Vec<ExternalFunction>,
     pub span: SourceSpan,
     /// Computed static storage the adapter declares, each initialized by its planned initializer function.
@@ -129,7 +201,7 @@ impl Plan {
         Self {
             enums,
             models,
-            functions,
+            functions: functions.into_iter().map(FunctionSlot::from).collect(),
             externals,
             span,
             statics: Vec::new(),

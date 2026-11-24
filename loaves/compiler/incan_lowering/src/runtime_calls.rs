@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use incan_mir_plan_native::{
-    CalleeKind, EnumDeclaration, ExternalFunction, Function, SourceSpan, TerminatorKind, source_span,
+    CalleeKind, EnumDeclaration, ExternalFunction, Function, FunctionSlot, SourceSpan, TerminatorKind, source_span,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin};
@@ -50,7 +50,7 @@ pub fn runtime_redirects() -> RuntimeRedirects {
 pub fn selected_runtime_requirements(
     module: &BodyIrModule,
     externals: &[ExternalFunction],
-    functions: &[Function],
+    functions: &[FunctionSlot],
 ) -> Result<Vec<RuntimeRequirement>, String> {
     let mut redirects = runtime_redirects();
     defer_missing_runtime(module, externals, functions, &mut redirects)?;
@@ -124,7 +124,7 @@ fn settled_native(redirects: &RuntimeRedirects, external: &ExternalFunction) -> 
 fn defer_missing_runtime(
     module: &BodyIrModule,
     externals: &[ExternalFunction],
-    functions: &[Function],
+    functions: &[FunctionSlot],
     redirects: &mut RuntimeRedirects,
 ) -> Result<(), String> {
     for external in externals {
@@ -245,7 +245,7 @@ pub fn runtime_body(module: &BodyIrModule, path: &str) -> Result<Option<Body>, S
 
 #[cfg(test)]
 mod tests {
-    use incan_mir_plan_native::{ExternalFunction, PlanType, source_span};
+    use incan_mir_plan_native::{ExternalFunction, FunctionSlot, PlanType, source_span};
     use incan_semantics_core::body_ir::{BodyIrModule, RuntimeCallableBinding};
     use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
@@ -302,7 +302,7 @@ mod tests {
 
 /// The unit's retained inventories that runtime retention reads and extends.
 pub struct RuntimeInventories<'a> {
-    pub functions: &'a mut Vec<Function>,
+    pub functions: &'a mut Vec<FunctionSlot>,
     pub externals: &'a mut Vec<ExternalFunction>,
     pub intrinsics: &'a mut Vec<EnumDeclaration>,
     pub unions: &'a mut Vec<IncanType>,
@@ -418,7 +418,7 @@ struct GovernedRuntime<'a, 'b> {
 fn retain_governed_body(
     module: &mut BodyIrModule,
     governed: &mut GovernedRuntime<'_, '_>,
-    functions: &mut Vec<Function>,
+    functions: &mut Vec<FunctionSlot>,
     external: &ExternalFunction,
     body: &Body,
     redirects: &mut RuntimeRedirects,
@@ -548,7 +548,7 @@ struct RuntimeFrameCall<'a> {
 /// Forward a runtime call: 1. Read its public frame. 2. Adapt its ABI. 3. Retain its canonical callee.
 fn retain_runtime_frame_call(
     tables: &RuntimeFrameCall<'_>,
-    functions: &mut Vec<Function>,
+    functions: &mut Vec<FunctionSlot>,
     externals: &mut Vec<ExternalFunction>,
     external: &ExternalFunction,
     redirects: &mut RuntimeRedirects,
@@ -605,7 +605,7 @@ fn retain_runtime_frame_call(
 }
 
 /// Reuse one canonical forwarder across call-site spans, refusing conflicting parameter or result storage.
-fn retain_runtime_adapter(functions: &mut Vec<Function>, adapter: Function) -> Result<(), String> {
+fn retain_runtime_adapter(functions: &mut Vec<FunctionSlot>, adapter: Function) -> Result<(), String> {
     for function in functions.iter() {
         if function.name != adapter.name {
             continue;
@@ -626,7 +626,7 @@ fn retain_runtime_adapter(functions: &mut Vec<Function>, adapter: Function) -> R
         }
         return Ok(());
     }
-    functions.push(adapter);
+    functions.push(adapter.into());
     Ok(())
 }
 
@@ -704,10 +704,10 @@ fn retain_runtime_redirect(
 }
 
 /// Rewrite every redirected runtime call, preserving operands and edges and refusing reentry.
-pub fn redirect_runtime_calls(functions: &mut [Function], redirects: &RuntimeRedirects) -> Result<(), String> {
+pub fn redirect_runtime_calls(functions: &mut [FunctionSlot], redirects: &RuntimeRedirects) -> Result<(), String> {
     for function in functions.iter_mut() {
-        for block in function.blocks.iter_mut() {
-            let TerminatorKind::Call(callee, ..) = &block.terminator.kind else {
+        for position in 0..function.blocks.len() {
+            let TerminatorKind::Call(callee, ..) = &function.blocks[position].terminator.kind else {
                 continue;
             };
             let Some(index) = runtime_redirect(redirects, &callee.kind) else {
@@ -720,7 +720,7 @@ pub fn redirect_runtime_calls(functions: &mut [Function], redirects: &RuntimeRed
                     binding.path
                 ));
             }
-            if let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind {
+            if let TerminatorKind::Call(callee, ..) = &mut function.make_mut().blocks[position].terminator.kind {
                 callee.kind = binding.replacement.clone();
             }
         }
