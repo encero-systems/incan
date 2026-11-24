@@ -99,7 +99,7 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     mut positional = false
     while index < len(arguments):
         argument = arguments[index]
-        if not positional and (argument == "--help" or argument == "-h"):
+        if not positional and argument in ["--help", "-h"]:
             println(f"{USAGE}{HELP}")
             exit(0)
         elif not positional and argument == "--":
