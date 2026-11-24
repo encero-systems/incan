@@ -368,6 +368,7 @@ def select_evaluation(
     else:
         # The store has just checked the value's frame against the index; the evaluation's value digest was bound to
         # this frame when both were published in one transaction, so the value is hashed once, there.
+        note_graph_demand("evaluation-value", selected, value_key)
         value = required_value(selected, value_key)?
     if cutoff.revalidates(value_key) and not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
