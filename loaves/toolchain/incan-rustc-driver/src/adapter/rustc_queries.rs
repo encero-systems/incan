@@ -1,6 +1,13 @@
 //! Planned native types, the active plan, refusals, and the native alias, signature and MIR queries.
 
 use super::*;
+use std::cell::RefCell;
+
+thread_local! {
+    // `psess_created` installs this on the fresh serial compiler thread.
+    // The joined thread drops the reader on normal return or unwind.
+    static REQUEST_PLAN: RefCell<Option<Arc<PlanReader>>> = const { RefCell::new(None) };
+}
 
 /// Preserve a typed plan refusal when an admitted external signature cannot name its native representation.
 pub(super) fn native_type_or_refuse<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Ty<'tcx> {
@@ -10,31 +17,66 @@ pub(super) fn native_type_or_refuse<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> T
     }
 }
 
-/// Make the process-global compilation slots usable again after a contained panic: clear the poison the panic left
-/// on them and drop the plan and failure of the compilation it ended.
+/// Make compilation and typed failure handling usable again after a contained panic.
 pub(crate) fn recover() {
     COMPILATION.clear_poison();
-    PLAN.clear_poison();
     FAILURE.clear_poison();
-    if let Ok(mut plan) = PLAN.lock() {
-        *plan = None;
-    }
     if let Ok(mut failure) = FAILURE.lock() {
         *failure = None;
     }
 }
 
-/// Read the active plan without retaining the slot lock while rustc resolves callees.
+/// Refuse a nested compile before it can wait for the outer compilation's lease.
+pub(super) fn ensure_no_active_plan() -> Result<(), DriverError> {
+    REQUEST_PLAN.with(|slot| {
+        if slot.borrow().is_some() {
+            return Err(DriverError::Invocation(
+                "a native compilation is already active on this thread".into(),
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Transfer the request reader into the actual compiler thread from its session creation callback.
+pub(super) fn install_active_plan(reader: Arc<PlanReader>) -> Result<(), DriverError> {
+    ensure_no_active_plan()?;
+    REQUEST_PLAN.with(|slot| *slot.borrow_mut() = Some(reader));
+    Ok(())
+}
+
+/// Keep refinement on the same request and the same reader generation as the callbacks own.
+pub(super) fn replace_active_plan(expected: &Arc<PlanReader>, reader: Arc<PlanReader>) -> Result<(), DriverError> {
+    REQUEST_PLAN.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        match slot.as_mut() {
+            Some(current) if Arc::ptr_eq(current, expected) => {
+                *current = reader;
+                Ok(())
+            }
+            _ => Err(DriverError::State),
+        }
+    })
+}
+
+/// Get this thread's request plan without retaining the slot borrow across nested rustc queries.
 pub(crate) fn active_plan() -> Result<Arc<PlanReader>, DriverError> {
-    PLAN.lock()
-        .map_err(|_| DriverError::State)?
-        .as_ref()
-        .map(Arc::clone)
-        .ok_or(DriverError::State)
+    REQUEST_PLAN.with(|slot| slot.borrow().as_ref().map(Arc::clone).ok_or(DriverError::State))
+}
+
+/// The existing selected input and HIR map read by its query.
+struct TrackedDefinition<'tcx, 'plan> {
+    input: &'plan active_plan::DefinitionInput,
+    hir: rustc_hir::HirId,
+    attrs: &'tcx rustc_hir::AttributeMap<'tcx>,
 }
 
 /// Register the HIR owner carrying this definition's complete plan-record fingerprint as a query dependency.
-fn track_definition(tcx: TyCtxt<'_>, def: LocalDefId, plan: &PlanReader) {
+fn track_definition<'tcx, 'plan>(
+    tcx: TyCtxt<'tcx>,
+    def: LocalDefId,
+    plan: &'plan PlanReader,
+) -> Option<TrackedDefinition<'tcx, 'plan>> {
     let direct = tcx.opt_item_name(def.to_def_id()).map(|name| name.as_str().to_owned());
     let parent = tcx
         .opt_item_name(tcx.parent(def.to_def_id()))
@@ -43,10 +85,10 @@ fn track_definition(tcx: TyCtxt<'_>, def: LocalDefId, plan: &PlanReader) {
         .as_deref()
         .and_then(|name| plan.function_input(name).or_else(|| plan.alias_input(name)))
         .or_else(|| parent.as_deref().and_then(|name| plan.function_input(name)));
-    if tracked.is_some() {
-        let owner = tcx.local_def_id_to_hir_id(def).owner;
-        let _ = tcx.hir_attr_map(owner);
-    }
+    let input = tracked?;
+    let hir = tcx.local_def_id_to_hir_id(def);
+    let attrs = tcx.hir_attr_map(hir.owner);
+    Some(TrackedDefinition { input, hir, attrs })
 }
 
 /// Retain a typed adapter error, then abort this rustc invocation through its diagnostic boundary.
@@ -72,7 +114,7 @@ pub(super) fn native_alias_type<'tcx>(
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
-    track_definition(tcx, def, &plan);
+    let _ = track_definition(tcx, def, &plan);
     let name = tcx.item_name(def.to_def_id());
     if let Some(carrier) = plan
         .enums
@@ -160,14 +202,15 @@ pub(super) fn native_function_signature<'tcx>(
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
-    track_definition(tcx, def, &plan);
+    let tracked = track_definition(tcx, def, &plan);
     (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.fn_sig)(tcx, def).map_bound(|signature| {
         let sites = planned_function(tcx, def, &plan).map_or(&[][..], |function| function.generic_loans.as_slice());
         let retained = match crate::generic_loans::signature(tcx, signature, sites) {
             Ok(signature) => signature,
             Err(error) => refuse(tcx, error),
         };
-        let retained = match planned_function(tcx, def, &plan) {
+        let function = planned_function(tcx, def, &plan);
+        let retained = match function {
             Some(function) => {
                 match crate::retained_result_loans::signature(tcx, retained, function.retained_result_source) {
                     Ok(signature) => signature,
@@ -176,8 +219,72 @@ pub(super) fn native_function_signature<'tcx>(
             }
             None => retained,
         };
-        crate::native_loans::signature(tcx, retained)
+        let native = crate::native_loans::signature(tcx, retained);
+        if let (Some(function), Some(tracked)) = (function, tracked.as_ref())
+            && function.name == "main"
+        {
+            record_main_signature(tcx, def, &plan, function, tracked, (signature, native));
+        }
+        native
     })
+}
+
+/// Observe the already-computed closed main signature and exactly the HIR attribute map the provider read.
+fn record_main_signature<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def: LocalDefId,
+    plan: &PlanReader,
+    function: &crate::plan::Function,
+    tracked: &TrackedDefinition<'tcx, '_>,
+    (stock, native): (rustc_middle::ty::PolyFnSig<'tcx>, rustc_middle::ty::PolyFnSig<'tcx>),
+) {
+    if std::env::var_os("INCAN_NATIVE_TIMING").as_deref() != Some(std::ffi::OsStr::new("incremental"))
+        || std::env::var_os("INCAN_NATIVE_FINGERPRINT_REPORT").is_none()
+        || std::env::var_os("INCAN_ENGINE_TRACE").is_none()
+    {
+        return;
+    }
+    let input = tracked.input;
+    let selected = tracked.hir.is_owner()
+        && tracked.hir.owner.def_id == def
+        && plan
+            .function_input(&function.name)
+            .is_some_and(|current| std::ptr::eq(current, input));
+    let mut markers = tracked
+        .attrs
+        .get(tracked.hir.local_id)
+        .iter()
+        .filter_map(rustc_hir::Attribute::doc_str)
+        .filter_map(|doc| doc.as_str().strip_prefix("incan-native-input:").map(str::to_owned));
+    let marker = markers.next().filter(|_| markers.next().is_none());
+    let raw = stock.skip_binder();
+    let closed = function.parameters.is_empty()
+        && function.return_type == PlanType::Unit
+        && !function.is_async
+        && function.future_callee.is_none()
+        && function.attributes.is_empty()
+        && function.signature_lifetimes.iter().all(Vec::is_empty)
+        && function.generic_loans.is_empty()
+        && function.retained_result_source < 0
+        && stock.bound_vars().is_empty()
+        && raw.inputs().is_empty()
+        && raw.output().is_unit()
+        && raw.abi() == rustc_abi::ExternAbi::Rust
+        && raw.safety() == rustc_hir::Safety::Safe
+        && !raw.c_variadic();
+    let record = serde_json::json!({
+        "owner": format!("{:?}", tcx.def_path_hash(def.to_def_id())),
+        "source": function.span.file.as_str(),
+        "input": format!("{}\t{}\t{}\t{}", input.identity(), function.name, input.fingerprint(), input.partition()),
+        "marker": marker,
+        "selected": selected,
+        "closed": closed,
+        "typed_equal": stock == native,
+    });
+    incan_frontend::trace_flags::emit(
+        incan_frontend::trace_flags::Category::NativeTiming,
+        &format!("native-fn-sig: {record}"),
+    );
 }
 
 /// Select only the plan's source-named root functions; synthesized closures retain their separate contracts.
@@ -209,7 +316,7 @@ pub(super) fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
-    track_definition(tcx, def, &plan);
+    let _ = track_definition(tcx, def, &plan);
     let function = planned_function(tcx, def, &plan);
     match function {
         // A closure constructor keeps rustc's own body, built from its injected boxing expression.

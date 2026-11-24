@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.fs.file import _decode_text
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
+from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin, commit, get, lookup, stage_put
 from pub::incan_platform.trace import Operation
 from pub::internal_models.records import RecordKey, encode_record_key
 from pub::internal_models.source_value_records import encode_source_text, source_value
@@ -214,10 +214,10 @@ def carried_projection(
     mut positioned: Dict[str, bytes],
 ) -> Result[bool, str]:
     """Carry a module's selected positioned record when its selected projection was made from this capture."""
-    match get(selected, encode_record_key(capture.key)?).map_err((error) => error.message())?:
-        None => return Ok(false)
-        Some(stored) =>
-            if source_value(capture.key, stored)? != capture.text.encode("utf-8"):
+    match lookup(selected, encode_record_key(capture.key)?).map_err((error) => error.message())?:
+        Lookup.Absent | Lookup.Deleted => return Ok(false)
+        Lookup.Found(stored) =>
+            if source_value(capture.key, stored.0.as_bytes())? != capture.text.encode("utf-8"):
                 return Ok(false)
     slot = encode_record_key(positioned_source_key(identity[0], identity[1]))?
     match get(selected, slot).map_err((error) => error.message())?:

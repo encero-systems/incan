@@ -13,6 +13,7 @@ from pub::incan_platform.store import (
     get,
     measure_frame_reads,
     put,
+    read_counts,
 )
 from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store import snapshot as store_snapshot
@@ -66,7 +67,13 @@ from trace_adapter import flush as flush_trace
 from pub::incan_mir_plan import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
 from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons, namespace_witnessed_event
-from compiler_source_projection import project_source, publish_source_projection, signature_record
+from compiler_source_projection import (
+    captured_source_key,
+    compiler_generation_record,
+    project_source,
+    publish_source_projection,
+    signature_record,
+)
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription, UnitLoaf
@@ -693,11 +700,28 @@ def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None,
     original = path.read_text("utf-8", "strict").map_err((error) => error.message())?
     # The capture vouches for the bytes: a module captured as before is not read, even if its file no longer decodes.
     publish_binary(path, b"\xff\xfe not utf-8")?
-    carried = prepare_captured_source_inputs(first, begin(first), unit, inputs)?
+    before = read_counts()
+    measure_frame_reads(true)
+    reused = prepare_captured_source_inputs(first, begin(first), unit, inputs)
+    frames = finish_frame_reads()
+    decoded = read_counts().decoded - before.decoded
+    carried = reused?
     assert len(carried.keys) == 0, "an unchanged capture reported changed source records"
     assert len(carried.positioned) == 2, "an unchanged capture dropped a positioned record"
     for slot in carried.positioned.keys():
         assert Some(carried.positioned[slot]) == get(first, slot).map_err((error) => error.message())?
+    capture_keys = [
+        encode_record_key(captured_source_key("app", "src/main.incn"))?,
+        encode_record_key(captured_source_key("provider", "lib"))?,
+    ]
+    checked = [frame for frame in frames if frame.key in capture_keys]
+    assert len(checked) == 2 and sum([frame.reads for frame in checked]) == 2, "each capture marker must authenticate once"
+    generation_key = encode_record_key(compiler_generation_record("app", "").key)?
+    owned_keys = [generation_key] + [slot for slot in carried.positioned.keys()]
+    owned_frames = [frame for frame in frames if frame.key in owned_keys]
+    assert len(owned_frames) == 3, "the warm capture must read its generation and both positioned records"
+    expected = sum([frame.value_bytes * frame.reads for frame in owned_frames])
+    assert decoded == expected, f"warm capture copied {decoded - expected} marker bytes out of the store"
     extra = "\n\ndef additional(value: int) -> int:\n    return value\n"
     path.write_text(original + extra, "utf-8", "strict", None).map_err((error) => error.message())?
     added = publish_captured_source_inputs(first, unit, captured(paths)?)?

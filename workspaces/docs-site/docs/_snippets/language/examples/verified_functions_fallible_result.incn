@@ -1,4 +1,5 @@
 def validate_port(port: int) -> Result[int, str]:
+    """Return the port for values from 1 through 65535, or an error."""
     if port < 1 or port > 65535:
         return Err("port must be between 1 and 65535")
     return Ok(port)
