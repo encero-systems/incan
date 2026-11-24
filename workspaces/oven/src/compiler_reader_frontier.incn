@@ -164,7 +164,9 @@ pub def evaluate_reader(
     publish_binary(work, encode_demand_page(DemandPage(keys=[demand] + reader.triggers))?)?
     inputs = directory.joinpath("inputs")
     module_page = "namespace-" + hexlify(sha256.digest(reader.module.encode("utf-8")))
-    write_selected_records(inputs, unit, [page for page in pages if page.key != module_page])?
+    # Only the final executable dispatch receives the native predecessor.
+    selected = [page for page in pages if page.key != module_page and page.key != "native-link-predecessor.json"]
+    write_selected_records(inputs, unit, selected)?
     description = write_unit(unit, crate_name(unit), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
     attempt = enter_producer("oven", "reader", demand.identity, reader.module)
     arguments = [
