@@ -170,6 +170,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     # A comment edit that moves no code changes no input of the native unit: nothing is evaluated or baked.
     reworded_source = "def greeting() -> str:\n    \"\"\"Greet the reader.\"\"\"\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n"
     for still_source in [
+        reworded_source.replace("# inserted above main", "# retained above main"),
         reworded_source.replace("# inserted above main", "# a longer comment edited above main"),
         reworded_source.replace("println(greeting())", "println(greeting())  # the greeting"),
         reworded_source + "\n# the end of the file\n",
@@ -178,6 +179,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
         still = lowering_example_run(binary, source, store, "hullo")?
         still_diagnostic = still.to_json().map_err((error) => error.message())?
         assert proof_count(still, "unit_evaluations")? == 0, still_diagnostic
+        assert proof_count(still, "body_evaluations")? == 0, still_diagnostic
+        assert proof_count(still, "plan_function_evaluations")? == 0, still_diagnostic
         assert proof_count(still, "native_bakes")? == 0, still_diagnostic
     stop_example_engine(binary, store)?
     signature = root.joinpath("signature-source")

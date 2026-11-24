@@ -4,11 +4,22 @@ callee contract, and a rechecked namespace reads the imports whose bodies were r
 from checker_record_fixtures import empty_checker_record
 from compiler_graph_record_fixtures import required
 from store_selection_records import read_binding
-from pub::incan_platform.store import begin, commit, delete, finish_frame_reads, get, measure_frame_reads, put
+from pub::incan_platform.store import (
+    Snapshot,
+    begin,
+    commit,
+    delete,
+    finish_frame_reads,
+    get,
+    measure_frame_reads,
+    put,
+)
+from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.trace import Operation
 from pub::internal_models.records import ReadScope, ReadWitness, RecordKey, encode_record_key
+from pub::internal_models.source_value_records import SOURCE_PROFILE, read_documentation, source_value
 from pub::internal_models import (
     CompiledBodyFallback,
     SettledCallRead,
@@ -451,7 +462,8 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     changed = edited.owners[0].key
     projected = publish_source_projection(published.snapshot, edited)?
     assert invalid_body_owners(projected.snapshot, [changed], CHECKER_PROFILE)? == [identity]
-    return verify_linked_capture(unit, scratch.path())
+    verify_linked_capture(unit, scratch.path())?
+    return verify_durable_source_values(scratch.path().joinpath("durable-source"))
 
 
 pub def test_executable_reads_require_the_current_callee_contract() -> Result[None, str]:
@@ -682,6 +694,93 @@ def verify_project_member_capture(mut unit: UnitDescription, project: Path) -> R
     fallback_declarations = [key for key in fallback.keys if key.family == "declaration-index"]
     assert len(fallback_declarations) == 1
     assert fallback_declarations[0].origin == "app" and fallback_declarations[0].identity == "src/helper.incn"
+    return Ok(None)
+
+
+def verify_durable_source_values(root: Path) -> Result[None, str]:
+    """Change raw source and comments while preserving the persisted checked code and documentation."""
+    path = root.joinpath("src").joinpath("main.incn")
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=path.0,
+        project_root=root.0,
+        source_root=path.parent().0,
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    source = (
+        "# Standalone note\n"
+        + "def main() -> None:\n"
+        + "    \"\"\"Explain # in documentation.\"\"\"\n"
+        + "    println(\"left#right\")  # first note\n"
+    )
+    changed = source.replace("# first note", "# later note")
+    assert source != changed and len(source.encode("utf-8")) == len(changed.encode("utf-8"))
+    store = disk_root(root.joinpath("source-value-store").0)
+    empty = store_snapshot(store).map_err((error) => error.message())?
+    publish_binary(path, source.encode("utf-8"))?
+    first = publish_captured_source_inputs(empty, unit, captured([path])?)?
+    before = store_snapshot(store).map_err((error) => error.message())?
+    assert before.digest == first.snapshot.digest
+    publish_binary(path, changed.encode("utf-8"))?
+    second = publish_captured_source_inputs(before, unit, captured([path])?)?
+    after = store_snapshot(store).map_err((error) => error.message())?
+    assert after.digest == second.snapshot.digest and after.generation > before.generation
+
+    module = "src/main.incn"
+    original = project_source(unit.package, module, source)?
+    edited = project_source(unit.package, module, changed)?
+    assert original.documentation_key() == edited.documentation_key()
+    assert len(original.owners) == 1 and len(edited.owners) == 1
+    code_key = original.owners[0].key
+    docs_key = original.documentation_key()
+    assert code_key == edited.owners[0].key
+    assert code_key not in second.keys and docs_key not in second.keys
+    code_slot = encode_record_key(code_key)?
+    docs_slot = encode_record_key(docs_key)?
+    original_code = required(before, code_slot)?
+    original_docs = required(before, docs_slot)?
+    assert required(after, code_slot)? == original_code
+    assert required(after, docs_slot)? == original_docs
+    assert source_value(code_key, original_code)? == b"def main() -> None:\n    println(\"left#right\")"
+    assert read_documentation(original_docs)? == [("main", "    \"\"\"Explain # in documentation.\"\"\"")]
+    return verify_raw_and_comment_values(before, after, unit.package, module, source, changed)
+
+
+def verify_raw_and_comment_values(
+    before: Snapshot, after: Snapshot, origin: str, module: str, source: str, changed: str,
+) -> Result[None, str]:
+    """Read both dedicated values from each selected disk generation under stable module keys."""
+    raw_key = RecordKey(
+        family="source-raw", identity_profile=SOURCE_PROFILE, origin=origin,
+        identity=module, facet="module", context="",
+    )
+    comments_key = RecordKey(
+        family="source-comments", identity_profile=SOURCE_PROFILE, origin=origin,
+        identity=module, facet="module", context="",
+    )
+    raw_slot = encode_record_key(raw_key)?
+    comments_slot = encode_record_key(comments_key)?
+    raw_before = get(before, raw_slot).map_err((error) => error.message())?
+    raw_after = get(after, raw_slot).map_err((error) => error.message())?
+    comments_before = get(before, comments_slot).map_err((error) => error.message())?
+    comments_after = get(after, comments_slot).map_err((error) => error.message())?
+    selected = [raw_before, raw_after, comments_before, comments_after]
+    retained = len([value for value in selected if value.is_some()])
+    assert retained == 4, f"expected 4 durable raw/comment values across two generations, found {retained}"
+    for value in selected:
+        assert value.unwrap_or(b"")[:4] == b"CRMB", "raw source and comments require typed stored values"
+    assert source_value(raw_key, raw_before.unwrap_or(b""))? == source.encode("utf-8")
+    assert source_value(raw_key, raw_after.unwrap_or(b""))? == changed.encode("utf-8")
+    assert source_value(comments_key, comments_before.unwrap_or(b""))? == b"# Standalone note\n# first note"
+    assert source_value(comments_key, comments_after.unwrap_or(b""))? == b"# Standalone note\n# later note"
     return Ok(None)
 
 
