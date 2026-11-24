@@ -38,13 +38,17 @@ pub def required_graph_frames(report: JsonValue, store: Path) -> Result[GraphFra
             reported += 1
             if directory != store.0 or len(key) != 64:
                 return Err("capture belongs to another bakery or lacks a revision")
-        if role not in ["capture-mode", "program-handle", "standalone-selector", "baked-unit", "bakery-name", "output-slot", "reverse-edge", "evaluation", "evaluation-digest"]:
+        if role not in [
+            "capture-mode", "program-handle", "standalone-selector", "baked-unit", "bakery-name", "output-slot",
+            "reverse-edge", "evaluation", "evaluation-digest", "evaluation-frame", "evaluation-value",
+        ]:
             return Err(f"unknown graph selector {role}")
+        value_selection = role in ["evaluation-frame", "evaluation-value"]
         if directory != store.0:
             result.unknown.append(f"independent store root required for {directory}: {role} {key}")
             continue
         result.roots.append(f"{role}\t{generation}\t{manifest}\t{view}\t{key}")
-        if generation == 0 and manifest == "":
+        if generation == 0 and manifest == "" and not value_selection:
             continue
         if generation <= 0 or len(manifest) != 64:
             return Err("incomplete graph snapshot identity")
@@ -52,13 +56,22 @@ pub def required_graph_frames(report: JsonValue, store: Path) -> Result[GraphFra
         if witness not in snapshots:
             snapshots[witness] = read_manifest(store_path(store), generation, manifest, view).map_err((error) => error.message())?
         selected = snapshots[witness]
+        if selected.generation != generation:
+            return Err("graph selector generation differs from its selected snapshot")
         if role == "capture-mode":
             continue
         location = find(selected.root, selected.index, key).map_err((error) => f"{error.object}: {error.detail}")?
-        if let Some(found) = location:
-            add_frame(result, key, found)
-            if role == "evaluation" and not found.tombstone:
-                evaluation_closure(selected, key, result)?
+        match location:
+            Some(found) =>
+                if value_selection and found.tombstone:
+                    return Err(f"selected graph value is deleted: {key}")
+                if role != "evaluation-frame":
+                    add_frame(result, key, found)
+                if role == "evaluation" and not found.tombstone:
+                    evaluation_closure(selected, key, result)?
+            None =>
+                if value_selection:
+                    return Err(f"selected graph value is absent: {key}")
     if reported != 1:
         return Err(f"request records {reported} capture roots")
     return Ok(result)
