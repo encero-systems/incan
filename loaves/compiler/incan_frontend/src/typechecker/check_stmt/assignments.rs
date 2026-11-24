@@ -136,7 +136,7 @@ impl TypeChecker {
                 self.errors
                     .push(errors::mutation_without_mut(&assign.name, target_span));
             } else if through.is_none() {
-                self.refuse_caller_visible_mut_param_rebinding(&assign.name, target_span);
+                self.note_caller_visible_mut_param_assignment(&assign.name, target_span);
             }
             self.note_local_reassignment(&assign.name);
             let value_view = crate::typechecker::helpers::borrowed_value_type(value_ty.clone());
@@ -563,7 +563,7 @@ impl TypeChecker {
                 if !is_mutable {
                     self.errors.push(errors::mutation_without_mut(name, target_span));
                 } else {
-                    self.refuse_caller_visible_mut_param_rebinding(name, target_span);
+                    self.note_caller_visible_mut_param_assignment(name, target_span);
                 }
                 self.note_local_reassignment(name);
                 if !self.types_compatible(&value_ty, &declared_ty) {

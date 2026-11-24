@@ -223,7 +223,7 @@ impl TypeChecker {
                         self.errors
                             .push(errors::mutation_without_mut(&compound.name, stmt.span));
                     } else if referent.is_none() {
-                        self.refuse_caller_visible_mut_param_rebinding(&compound.name, stmt.span);
+                        self.note_caller_visible_mut_param_assignment(&compound.name, compound.name_span);
                     }
                     // Type check the value expression, read through any borrow it is.
                     let value_ty = crate::typechecker::helpers::borrowed_value_type(self.check_expr(&compound.value));

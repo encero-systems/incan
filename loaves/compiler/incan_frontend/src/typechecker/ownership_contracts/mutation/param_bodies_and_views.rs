@@ -129,10 +129,9 @@ impl TypeChecker {
 
     /// Make a parameter declared `mut` a mutable binding of the body it belongs to.
     ///
-    /// `mut` on a parameter always lets the body change it in place; a scalar parameter may also be rebound, a
-    /// caller-visible one may not (see [`Self::refuse_caller_visible_mut_param_rebinding`]). The name joins the
-    /// checker's mutable bindings as a `mut` local does, so a Rust or C boundary that needs a mutable argument accepts
-    /// the parameter too.
+    /// Assignment replaces the caller's value for a caller-visible parameter or the local value for a scalar
+    /// parameter. The name joins the checker's mutable bindings as a `mut` local does, so a Rust or C boundary
+    /// that needs a mutable argument accepts the parameter too.
     pub(in crate::typechecker) fn bind_mut_param_as_mutable(&mut self, param: &Param) {
         if param.is_mut {
             self.mutable_bindings.insert(param.name.clone());
