@@ -1,0 +1,54 @@
+"""Oven's typed MCP registration for task context."""
+
+from std.json import JsonValue
+from std.mcp import IntegerBounds, ToolSpec, closed_tool_arguments
+from std.serde.json import Deserialize
+from graph_inspection import MAXIMUM_CONTEXT_BUDGET, MINIMUM_CONTEXT_BUDGET
+
+pub const GRAPH_TASK_TOOL_NAME: str = "context_for_task"
+
+
+@derive(Deserialize)
+pub model GraphTaskArguments:
+    """The task and context budget received by the graph handler."""
+
+    pub task: str
+    pub budget: int
+
+
+pub def graph_task_spec() -> Result[JsonValue, str]:
+    """Publish the first graph tool's spec from the checked argument declaration."""
+    spec = ToolSpec(
+        name=GRAPH_TASK_TOOL_NAME,
+        description="Pack task-ranked current graph context within a token budget",
+        fields=GraphTaskArguments.__fields__(),
+        read_only=true,
+        open_world=false,
+        integer_bounds=Some(IntegerBounds(minimum=MINIMUM_CONTEXT_BUDGET, maximum=MAXIMUM_CONTEXT_BUDGET)),
+    )
+    return spec.to_json_value()
+
+
+pub def decode_graph_task(arguments: JsonValue) -> Result[GraphTaskArguments, str]:
+    """Decode the same declared value after the original graph argument checks."""
+    declared = GraphTaskArguments.__fields__()
+    fields = closed_tool_arguments(arguments, declared)?
+    mut empty_task = false
+    mut invalid_budget = false
+    for field in declared:
+        name = str(field.wire_name)
+        type_name = str(field.type_name)
+        if name not in fields:
+            if not field.has_default:
+                return Err(f"missing argument `{name}`")
+        elif type_name == "str":
+            match fields[name].as_str():
+                Some(task) => empty_task = task.strip() == ""
+                None => return Err(f"{name} must be a string")
+        elif type_name == "int":
+            invalid_budget = fields[name].as_int() is None
+    if empty_task:
+        return Err("a nonempty task or declaration is required")
+    if invalid_budget:
+        return Err("budget must be an integer")
+    return GraphTaskArguments.from_json(arguments.to_json().map_err((error) => error.message())?)

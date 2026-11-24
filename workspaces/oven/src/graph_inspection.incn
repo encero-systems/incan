@@ -59,6 +59,8 @@ from cli_help import refused_option, render as render_help
 
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
 pub const USAGE: str = "incan inspect codegraph PATH [GRAPH OPTIONS]"
+pub const MINIMUM_CONTEXT_BUDGET: int = 128
+pub const MAXIMUM_CONTEXT_BUDGET: int = 1000000
 pub const VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--query",
@@ -190,7 +192,7 @@ pub def help_text() -> str:
             "  --query KIND TERM           Query defs, refs, callers, callees or imports.",
             "  --limit N                   Maximum query hits (default 20; minimum 0).",
             "  --task TASK                 Select a context pack; excludes --query and --stale.",
-            "  --budget N                  Context byte bound (default 8000; 128..1000000).",
+            f"  --budget N                  Context byte bound (default 8000; {MINIMUM_CONTEXT_BUDGET}..{MAXIMUM_CONTEXT_BUDGET}).",
             "  --stale SNAPSHOT            Check an exported snapshot: identity.",
             "  --strict                    Refuse unchecked units. Plain exports check by default.",
             "  --allow-errors              Export unchecked units' parseable facts.",
@@ -258,8 +260,13 @@ def budget_of(item: str) -> Result[int, str]:
     """Accept the context byte bound only within the public token-budget range."""
     refusal = "--budget needs an integer"
     budget = parse(item).map_err((_) => refusal)?.expect_int().map_err((_) => refusal)?
-    if budget < 128 or budget > 1000000:
-        return Err("--budget must be between 128 and 1000000")
+    return validate_context_budget(budget)
+
+
+pub def validate_context_budget(budget: int) -> Result[int, str]:
+    """Check the inclusive range shared by CLI and MCP graph-context inputs."""
+    if budget < MINIMUM_CONTEXT_BUDGET or budget > MAXIMUM_CONTEXT_BUDGET:
+        return Err(f"--budget must be between {MINIMUM_CONTEXT_BUDGET} and {MAXIMUM_CONTEXT_BUDGET}")
     return Ok(budget)
 
 
