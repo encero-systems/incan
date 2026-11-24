@@ -420,6 +420,14 @@ A duration is a nonnegative integer of at most twelve digits followed by `s`, `m
 
 Graph options, schemas, queries, context packs and snapshot checks are specified in [Agent context CLI and MCP](agent_context_cli.md). `--profile NAME` selects the artifact profile as specified under [Unit options](#unit-options). A plain raw export requires each selected unit to pass checking by default. `--strict` selects the same checked mode explicitly. `--allow-errors` returns available facts and warns about unchecked units.
 
+## `incan inspect context`
+
+Get a [ranked context pack](agent_context_cli.md#context-selection) for a task in the current directory. This uses the same packer as `incan inspect codegraph . --task`.
+
+```bash
+incan inspect context --task "add strict padding validation to base32 decoding" --budget 8000 --format compact
+```
+
 ## `incan inspect bindings`
 
 `incan inspect bindings [--format text|json|receipt] [--target TRIPLE] [--features A,B] [--no-default-features] [--all-features] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The feature options select the root package features the export is checked with, as for [`incan inspect codegraph`](agent_context_cli.md). The text report is:
