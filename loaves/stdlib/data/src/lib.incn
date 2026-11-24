@@ -7,6 +7,7 @@ import hash._core as hash_core
 import hash._streaming
 import hash.prelude as hash_prelude
 import json
+import mcp
 import toml
 import math
 import uuid
