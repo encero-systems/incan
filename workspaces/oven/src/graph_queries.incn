@@ -268,6 +268,18 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
     return sorted(hits)
 
 
+pub def definition_hits(records: list[JsonValue], term: str, root: str) -> list[tuple[str, list[JsonValue]]]:
+    """Keep every selected declaration behind each distinct line in ordinary definition query order."""
+    index = indexed(records, term)
+    mut hits: Dict[str, list[JsonValue]] = {}
+    for record in records:
+        for line in index.lines(record, "defs", term, root):
+            if line not in hits:
+                hits[line] = []
+            hits[line].append(record)
+    return [(line, hits[line]) for line in sorted([key for key in hits.keys()])]
+
+
 def indexed(records: list[JsonValue], term: str) -> Index:
     """Index every module and declaration by id, the declarations and identities `term` names, and its modules."""
     mut index = Index.new()

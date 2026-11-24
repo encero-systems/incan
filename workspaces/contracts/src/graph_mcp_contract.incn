@@ -3,12 +3,14 @@
 from rust::std::fs import File
 from rust::std::process import Command
 from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
-from files import make_directory, parse_json, read, remove, required_text, optional_text as text
+from files import items, make_directory, parse_json, read, remove, required_text, write, optional_text as text
 
 
-pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
+pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: str = "") -> Result[None, str]:
     """
     Require MCP graph parity and continued serving after malformed or refused requests.
 
@@ -16,48 +18,45 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
     2. Collect replies by request identity.
     3. Compare graph results, resources and protocol errors.
     """
+    mut term = "helper"
+    mut budget = 4096
+    if external_anchor != "":
+        term = "checked_helper"
+        budget = 32000
+
     # 1. The real server receives both valid requests and explicit protocol refusals.
     messages = [
-        request(1, "initialize", JsonValue.object({
-            "protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}),
-            "clientInfo": JsonValue.object({
-                "name": JsonValue.string("graph-contract"), "version": JsonValue.string("1"),
-            }),
-        })),
+        request(
+            1,
+            "initialize",
+            JsonValue.object(
+                {"protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}), "clientInfo": JsonValue.object(
+                    {"name": JsonValue.string("graph-contract"), "version": JsonValue.string("1")},
+                )},
+            ),
+        ),
         JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
         request(2, "tools/list", JsonValue.object({})),
         call(3, "graph_summary", JsonValue.object({})),
-        call(4, "context_for_task", JsonValue.object({
-            "task": JsonValue.string("helper"), "budget": JsonValue.int(4096),
-        })),
-        call(5, "graph_query", JsonValue.object({
-            "kind": JsonValue.string("defs"), "term": JsonValue.string("helper"),
-        })),
+        call(4, "context_for_task", JsonValue.object({"task": JsonValue.string(term), "budget": JsonValue.int(budget)})),
+        call(5, "graph_query", JsonValue.object({"kind": JsonValue.string("defs"), "term": JsonValue.string(term)})),
         request(6, "missing/method", JsonValue.object({})),
         call(7, "missing_tool", JsonValue.object({})),
-        call(8, "context_for_task", JsonValue.object({
-            "task": JsonValue.string("helper"), "budget": JsonValue.string("invalid"),
-        })),
+        call(
+            8,
+            "context_for_task",
+            JsonValue.object({"task": JsonValue.string("helper"), "budget": JsonValue.string("invalid")}),
+        ),
         request(9, "resources/list", JsonValue.object({})),
-        request(10, "resources/read", JsonValue.object({"uri": JsonValue.string("incan://graph/summary")}))
+        request(10, "resources/read", JsonValue.object({"uri": JsonValue.string("incan://graph/summary")})),
     ]
     protocol = project.joinpath(".mcp-requests")
     data = "\n".join([item.to_json().map_err((error) => error.message())? for item in messages]) + "\n{\n"
     protocol.write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
-    mut command = Command.new(incan)
-    command.arg("mcp").arg(".").current_dir(project.0)
     observations = project.joinpath(".mcp-preparation")
     make_directory(observations)?
-    command.env("INCAN_ENGINE_TRACE", observations.0)
-    command.stdin(File.open(protocol.0).map_err((error) => str(error))?)
-    output = command.output().map_err((error) => str(error))?
-    protocol.unlink().map_err((error) => error.message())?
-    if not output.status.success():
-        return Err("MCP server failed instead of serving graph requests")
-    mut stdout = ""
-    match RustString.from_utf8(output.stdout):
-        Ok(value) => stdout = str(value)
-        Err(_) => return Err("MCP output is not UTF-8")
+    stdout = mcp_output(incan, project, protocol, bakery, observations.0)?
+    remove(protocol)?
     # 2. Reply identities distinguish parse errors from requests and notifications.
     mut replies: Dict[int, JsonValue] = {}
     mut parse_errors = 0
@@ -98,6 +97,202 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
     if "incan://graph/snapshot" not in resources or "snapshot_id" not in summary:
         return Err("MCP orientation resources are missing current snapshot facts")
     check_preparations(observations)?
+    if external_anchor == "":
+        return Ok(None)
+    return check_external_definition(replies[4], replies[5], project, external_anchor)
+
+
+pub def check_mcp_definition_boundary(incan: str, project: Path, boundary: Path, provider: Path) -> Result[None, str]:
+    """Invalidate a checked definitions page when its local provider becomes part of the requester's repository."""
+    scratch = boundary.joinpath(".mcp-definition-boundary")
+    traces = scratch.joinpath("traces")
+    bakery = scratch.joinpath("bakery")
+    fresh_bakery = scratch.joinpath("fresh-bakery")
+    make_directory(traces)?
+    make_directory(bakery)?
+    make_directory(fresh_bakery)?
+    protocol = scratch.joinpath("requests")
+    calls = [
+        request(1, "initialize", JsonValue.object({"protocolVersion": JsonValue.string("2025-11-25")})),
+        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
+        call(
+            2,
+            "graph_query",
+            JsonValue.object({"kind": JsonValue.string("defs"), "term": JsonValue.string("checked_helper")}),
+        ),
+    ]
+    write(protocol, "\n".join([item.to_json().map_err((error) => error.message())? for item in calls]) + "\n")?
+    # The first request may create dependency graph files. Wait for those files to settle before seeding the page.
+    seed = definition_reply(incan, project, protocol, bakery.0)?
+    check_boundary_author(seed, provider, f"{provider.0}:6", "dependency", "graph_checked@0.1.0")?
+    sleep(Duration.from_secs(3))
+    _ = definition_reply(incan, project, protocol, bakery.0)?
+    warm = definition_reply(incan, project, protocol, bakery.0, traces.0)?
+    if seed.to_json().map_err((error) => error.message())? != warm.to_json().map_err((error) => error.message())?:
+        return Err("unchanged checked MCP definitions changed the selected response")
+    if not warm_boundary_page(traces)?:
+        return Err("unchanged checked MCP definitions did not replay their admitted page")
+    # The marker is the sole change to the request's source tree.
+    make_directory(boundary.joinpath(".git"))?
+    current = definition_reply(incan, project, protocol, bakery.0)?
+    fresh = definition_reply(incan, project, protocol, fresh_bakery.0)?
+    check_boundary_author(fresh, provider, "provider/src/lib.incn:6", "workspace", "")?
+    if current.to_json().map_err((error) => error.message())? != fresh.to_json().map_err((error) => error.message())?:
+        return Err("warm MCP definitions disagree with fresh selection after the repository root changes")
+    return Ok(None)
+
+
+def mcp_output(incan: str, project: Path, protocol: Path, bakery: str, trace: str) -> Result[str, str]:
+    """Run normal stdin/stdout MCP with the selected Bakery and operation trace."""
+    mut command = Command.new(incan)
+    command.arg("mcp").arg(".").current_dir(project.0)
+    if bakery != "":
+        command.env("INCAN_BAKERY", bakery)
+    if trace != "":
+        command.env("INCAN_ENGINE_TRACE", trace)
+    command.stdin(File.open(protocol.0).map_err((error) => str(error))?)
+    output = command.output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err("MCP server failed instead of serving graph requests")
+    match RustString.from_utf8(output.stdout):
+        Ok(value) => return Ok(str(value))
+        Err(_) => return Err("MCP output is not UTF-8")
+
+
+def definition_reply(incan: str, project: Path, protocol: Path, bakery: str, trace: str = "") -> Result[JsonValue, str]:
+    """Read the one definition result after MCP initialization."""
+    stdout = mcp_output(incan, project, protocol, bakery, trace)?
+    replies = [line for line in stdout.split("\n") if line != ""]
+    if len(replies) != 2:
+        return Err("MCP repository boundary control did not receive its two replies")
+    reply = parse_json(replies[1])?
+    identifier = reply.require("id").map_err((error) => error.message())?.expect_int().map_err(
+        (error) => error.message(),
+    )?
+    if identifier != 2:
+        return Err("MCP repository boundary control received another response")
+    if reply.get("result") is None:
+        return Err(f"MCP repository boundary request was refused: {replies[1]}")
+    return Ok(reply)
+
+
+def warm_boundary_page(traces: Path) -> Result[bool, str]:
+    """Require the ordinary page-hit observation so a fresh render cannot satisfy the warm control."""
+    for path in traces.iterdir().map_err((error) => error.message())?:
+        for line in read(path)?.split("\n"):
+            if line == "":
+                continue
+            record = parse_json(line)?
+            key = text(record, "key")
+            if text(record, "operation") == "reason" and key.startswith("oven: graph page ") and key.endswith(": warm"):
+                return Ok(true)
+    return Ok(false)
+
+
+def check_boundary_author(
+    reply: JsonValue,
+    provider: Path,
+    shown_span: str,
+    author_kind: str,
+    identity: str,
+) -> Result[None, str]:
+    """Match the selected provider span in both the display and its typed authority."""
+    label = "graph_checked::main::checked_helper"
+    if f"declaration {label} {shown_span}" not in content(reply)?.split("\n"):
+        return Err("MCP definitions displayed the provider under a different repository root")
+    response = result(reply)?
+    structured = response.require("structuredContent").map_err((error) => error.message())?
+    records = items(structured.require("records").map_err((error) => error.message())?)?
+    mut matches = 0
+    for record in records:
+        if text(record, "name") != "checked_helper":
+            continue
+        span = record.require("span").map_err((error) => error.message())?
+        if text(span, "file") != provider.0:
+            continue
+        matches += 1
+        line = span.require("start_line").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )?
+        author = record.require("author").map_err((error) => error.message())?
+        if line != 6 or text(author, "kind") != author_kind or text(author, "identity") != identity:
+            return Err("MCP definitions did not attribute the provider span under the expected repository root")
+    if matches != 1:
+        return Err("MCP repository boundary control lost the exact provider definition")
+    return Ok(None)
+
+
+def check_external_definition(
+    context_reply: JsonValue,
+    definition_reply: JsonValue,
+    project: Path,
+    external_anchor: str,
+) -> Result[None, str]:
+    """Match one external definition's display span and canonical author to the same-session context."""
+    label = "graph_checked::main::checked_helper"
+    context = content(context_reply)?
+    author = "author=dependency:\"graph_checked@0.1.0\""
+    authored = [line for line in context.split("\n") if label in line and external_anchor in line and author in line]
+    if len(authored) != 1 or "authored_text=quoted_evidence" not in context.split("\n")[0]:
+        return Err("MCP task context lost the exact authored external definition")
+    definition = content(definition_reply)?
+    hits = definition.split("\n")
+    external_hit = f"declaration {label} {external_anchor}"
+    if len(hits) != 3 or external_hit not in hits or hits != sorted(hits):
+        return Err("MCP definition lookup lost the ordered ambiguous declarations or the external source span")
+    unchecked_hits = [line for line in hits if line.endswith("degraded/src/lib.incn:4 (unchecked)")]
+    if len(unchecked_hits) != 1:
+        return Err("MCP definition display lost the unchecked sibling")
+    response = result(definition_reply)?
+    structured = response
+        .require("structuredContent")
+        .map_err((_) => "MCP definition lookup omitted structured authorship for the external declaration")?
+    records = items(structured.require("records").map_err((error) => error.message())?)?
+    if len(records) != 4 or text(records[0], "record") != "header":
+        return Err("MCP structured definition selection differs from the displayed external hit")
+    degraded_anchor = "degraded/src/lib.incn:4"
+    expected = [external_anchor, "src/main.incn:4", degraded_anchor]
+    mut observed: list[str] = []
+    for index, selected in enumerate(records[1:]):
+        if text(selected, "record") != "declaration" or text(selected, "name") != "checked_helper":
+            return Err("MCP returned a different declaration than the matched display hit")
+        span = selected.require("span").map_err((error) => error.message())?
+        line = span.require("start_line").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )?
+        mut source = text(span, "file")
+        if source.startswith(f"{project.0}/"):
+            source = source[len(project.0) + 1:]
+        anchor = f"{source}:{line}"
+        if anchor not in expected or anchor in observed:
+            return Err("MCP definitions returned a duplicate or unrelated source span")
+        observed.append(anchor)
+
+        authority = selected.require("author").map_err((error) => error.message())?
+        kind = text(authority, "kind")
+        identity = text(authority, "identity")
+        if anchor == external_anchor:
+            if kind != "dependency" or identity != "graph_checked@0.1.0":
+                return Err("MCP external definition lost its dependency authority")
+        elif kind != "workspace" or identity != "":
+            return Err("MCP workspace definition acquired an unrelated dependency authority")
+        unchecked = anchor == degraded_anchor
+        degraded = selected.get("degraded").unwrap_or(JsonValue.bool(false)).as_bool().unwrap_or(false)
+        mut display_span = anchor
+        if unchecked:
+            display_span += " (unchecked)"
+        if (
+            not hits[index].endswith(display_span)
+            or degraded != unchecked
+            or (anchor == external_anchor and not text(selected, "stable_key").startswith("symbol:"))
+        ):
+            return Err("MCP structured definition disagrees with its displayed span, author or checked status")
+    blocks = items(response.require("content").map_err((error) => error.message())?)?
+    if len(blocks) != 2:
+        return Err("MCP typed definitions must keep the display and one serialized result")
+    documented = structured.to_json().map_err((error) => error.message())?
+    if text(blocks[1], "type") != "text" or text(blocks[1], "text") != documented:
+        return Err("MCP serialized text differs from the typed definitions result")
     return Ok(None)
 
 
@@ -120,10 +315,9 @@ def check_preparations(directory: Path) -> Result[None, str]:
 
 def request(identifier: int, method: str, params: JsonValue) -> JsonValue:
     """Construct a JSON-RPC request without textual escaping conventions in fixture programs."""
-    return JsonValue.object({
-        "jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier),
-        "method": JsonValue.string(method), "params": params,
-    })
+    return JsonValue.object(
+        {"jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier), "method": JsonValue.string(method), "params": params},
+    )
 
 
 def call(identifier: int, name: str, arguments: JsonValue) -> JsonValue:

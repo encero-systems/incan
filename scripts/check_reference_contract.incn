@@ -182,7 +182,7 @@ def is_reference_page(path: str) -> bool:
 
 
 def load_allow(path: Path) -> Result[list[tuple[str, str]], str]:
-    """Read optional reference exceptions and require a nonempty exact phrase."""
+    """Read optional reference exceptions and require an exact phrase and a nonempty reason."""
     if not path.exists():
         return Ok([])
     mut allowed: list[tuple[str, str]] = []
@@ -197,6 +197,8 @@ def load_allow(path: Path) -> Result[list[tuple[str, str]], str]:
         phrase = fields[1]
         if phrase.strip() == "":
             return Err(f"{path.0}:{index + 1}: expected a nonempty exact phrase")
+        if len(fields) < 3 or fields[2].strip() == "":
+            return Err(f"{path.0}:{index + 1}: expected a nonempty exception reason")
         allowed.append((fields[0].strip(), phrase))
     return Ok(allowed)
 

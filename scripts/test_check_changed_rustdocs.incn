@@ -6,13 +6,16 @@ from std.fs import Path
 
 
 def test_a_doc_block_directly_above_the_signature_counts() -> None:
-    """A directly preceding rustdoc block documents its function."""
+    """Recognize adjacent rustdoc and require the reason a path cannot locate a checkout."""
     assert has_doc_comment(["/// Doc.", "fn f() {}"], 1)
-    # Repository discovery refuses paths with no checkout, including filesystem roots and relative paths.
-    for path in ["/", ".", ""]:
+    for path, expected in [
+        ("/", "cannot find repository above /"),
+        (".", "cannot find repository above a relative path: ."),
+        ("", "cannot find repository above a relative path: "),
+    ]:
         match repository_above(Path(path)):
             Ok(_) => assert false, "a path without a checkout was accepted"
-            Err(_) => pass
+            Err(message) => assert message == expected, f"{path}: {message}"
 
 
 def test_a_single_line_attribute_between_doc_and_signature_is_stepped_over() -> None:

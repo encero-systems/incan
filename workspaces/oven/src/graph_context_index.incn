@@ -304,7 +304,7 @@ pub class ContextIndex:
             Err(_) => return Err("context index record is not UTF-8")
 
 
-def with_author(record: JsonValue, author: JsonValue) -> Result[JsonValue, str]:
+pub def with_author(record: JsonValue, author: JsonValue) -> Result[JsonValue, str]:
     """One record with the author of the text it carries."""
     mut fields = record.expect_object().map_err((error) => error.message())?
     fields["author"] = author
@@ -327,14 +327,7 @@ def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, 
     if unit.root.0.startswith("@"):
         projection_root = ""
     key = fingerprint(
-        [
-            INDEX_DOMAIN,
-            projection_root,
-            unit.root.0,
-            unit.package,
-            unit.version,
-            artifact_identity(stamp_file(unit))?,
-        ],
+        [INDEX_DOMAIN, projection_root, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?],
     )?
     path = Path(f"{cache_file(key)?.0}.context-index")
     if path.is_file() and Path(f"{path.0}.records").is_file() and Path(f"{path.0}.terms").is_file():
