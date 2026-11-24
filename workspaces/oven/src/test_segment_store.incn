@@ -409,7 +409,7 @@ def verify_bulk_index_preflight(root: Path) -> Result[None, str]:
     assert after.pages - before.pages == 1 and after.records == before.records, "preflight changed the lookup shape"
     copied = after.copied - before.copied
     missing = entries_for_keys(leaf.root, leaf.index, ["missing"]).map_err((error) => error.detail)?
-    assert missing == []
+    assert len(missing) == 0
     updated = commit(delete(begin(leaf), "k-1002")).map_err((error) => error.message())?
     matched = entries_for_keys(updated.root, updated.index, ["k-1002", "k-1000", "absent", "k-1002"]).map_err(
         (error) => error.detail,
