@@ -96,7 +96,9 @@ pub def test_a_library_build_asked_for_its_graph_publishes_it() -> Result[None, 
     project = scratch.path().joinpath("graphlib")
     project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
     write(project.joinpath("loaf.toml"), "[project]\nname = \"graphlib\"\nversion = \"0.1.0\"\n")?
-    write(project.joinpath("src/lib.incn"), "pub def helper() -> int:\n    return 7\n")?
+    scalar = "pub def helper() -> int:\n    return 7\n"
+    nominal = "\npub model RetainedInline:\n    pub value: int\n"
+    write(project.joinpath("src/lib.incn"), scalar + nominal)?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = scratch.path().joinpath("store")
     outcome = Command
@@ -165,9 +167,39 @@ def verify_callable_entry(entry: NamespaceAtom) -> Result[None, str]:
             assert callable_text(callable_field(typed, 109270115774047u64)?)? != ""
             body = callable_fields(callable_field(typed, 108230566570354u64)?)?
             assert callable_text(callable_field(body, 143637992173787u64)?)? == "helper"
-            assert callable_field(body, 15318956776891u64)? == NamespaceAtom.Present([canonical])
+            assert callable_field(body, 15318956776891u64)? == NamespaceAtom.Present([canonical.clone()])
+            assert callable_field(typed, 126870908593503u64)? == NamespaceAtom.Missing
+            assert callable_field(typed, 109270082024287u64)? == NamespaceAtom.Missing
+            assert callable_field(typed, 123594016516451u64)? == NamespaceAtom.Missing
+            assert callable_field(typed, 109330262287475u64)? == NamespaceAtom.Items([])
+            helper_identity = callable_fields(canonical)?
+            origin = callable_field(helper_identity, 26525135469642u64)?
+            verify_inline_nominal(body, origin)?
         _ => return Err("graphlib callable owner has no nested executable bytes")
     return Ok(None)
+
+
+def verify_inline_nominal(body: Borrowed[list[NamespaceField]], owner_origin: NamespaceAtom) -> Result[None, str]:
+    """Require the exact source-owned nominal in the selected scalar body itself."""
+    match callable_field(body, 33404922341476u64)?:
+        NamespaceAtom.Mapping(bindings) =>
+            for entry in bindings:
+                if entry.key == NamespaceAtom.Text("RetainedInline"):
+                    identity = callable_fields(entry.value.clone())?
+                    assert callable_field(identity, 26525135469642u64)? == owner_origin
+                    assert callable_text(callable_field(identity, 235552561301414u64)?)? == "RetainedInline"
+                    lexical = NamespaceAtom.Alternative(52363337397491u64, [])
+                    assert callable_field(identity, 162014550503162u64)? == lexical
+                    nominal_kind = NamespaceAtom.Alternative(103544703951856u64, [])
+                    assert callable_field(identity, 12265375465139u64)? == nominal_kind
+                    assert callable_field(identity, 251177442890846u64)? == NamespaceAtom.Missing
+                    span = callable_fields(callable_field(identity, 206641408467676u64)?)?
+                    assert callable_field(span, 179159109532334u64)? == NamespaceAtom.Unsigned(39u64)
+                    assert callable_field(span, 253676589352418u64)? == NamespaceAtom.Unsigned(84u64)
+                    assert callable_field(span, 24735866884595u64)? == NamespaceAtom.Missing
+                    return Ok(None)
+        _ => return Err("callable body did not retain a typed inline nominal map")
+    return Err("callable body did not retain the checked RetainedInline nominal")
 
 
 def graphlib_callable_owner(identity: Borrowed[list[NamespaceField]]) -> Result[str, str]:
