@@ -76,9 +76,10 @@ def main() -> Result[None, str]:
     println(f"reference contract check failed: {len(findings)} finding(s) in {len(affected)} page(s)")
     for finding in findings:
         println(f"  {finding.page}:{finding.line}: {finding.rule}: {finding.text[:160]}")
-    println(
-        "A reference page states the contract only; see *Reference pages state the contract only* in" + " .agents/skills/review-docs-claims/SKILL.md. Move removed true sentences to the matching how-to or" + " explanation page. Record a justified exception in scripts/check_reference_contract.allow.",
-    )
+    guidance = "A reference page states the contract only; see *Reference pages state the contract only* in"
+    checklist = " .agents/skills/review-docs-claims/SKILL.md. Move removed true sentences to the matching how-to or"
+    exception_note = " explanation page. Record a justified exception in scripts/check_reference_contract.allow."
+    println(guidance + checklist + exception_note)
     exit(1)
 
 
@@ -259,35 +260,24 @@ pub def page_findings(source: str, page: str, allowed: list[tuple[str, str]]) ->
 
 def prose_rules(internal: bool) -> Result[list[Rule], str]:
     """Compile the original lexical rules, expressing the issue-prefix boundary without lookbehind."""
+    time_words = "(?i)\\bcurrently\\b|\\btoday\\b|\\byet\\b|\\bfor now\\b|\\bno longer\\b|"
+    time_bound = time_words + "\\bat present\\b|\\bat the moment\\b"
+    advice_words = "(?i)\\byou should\\b|\\bprefer\\b|\\brecommend(?:ed|s)?\\b|\\bconsider\\b|\\bmake sure\\b"
+    advice = advice_words + "|\\bkeep in mind\\b|\\bbest practice\\b|\\bwe suggest\\b|\\btip:"
     mut rules = [
         Rule(
             name="comparison with another language",
             pattern=regex("\\bPython\\b|\\bRust's\\b|\\blike Rust\\b|\\bas in Rust\\b")?,
         ),
-        Rule(
-            name="time-bound wording",
-            pattern=regex(
-                "(?i)\\bcurrently\\b|\\btoday\\b|\\byet\\b|\\bfor now\\b|\\bno longer\\b|" + "\\bat present\\b|\\bat the moment\\b",
-            )?,
-        ),
+        Rule(name="time-bound wording", pattern=regex(time_bound)?),
         Rule(name="issue or RFC number", pattern=regex("(?:^|[^\\w`/\\[#&-])#\\d{3,5}\\b|\\bRFC[ -]?\\d{2,3}\\b")?),
-        Rule(
-            name="advice",
-            pattern=regex(
-                "(?i)\\byou should\\b|\\bprefer\\b|\\brecommend(?:ed|s)?\\b|\\bconsider\\b|\\bmake sure\\b" + "|\\bkeep in mind\\b|\\bbest practice\\b|\\bwe suggest\\b|\\btip:",
-            )?,
-        ),
+        Rule(name="advice", pattern=regex(advice)?),
         Rule(name="rationale", pattern=regex("(?i)\\bbecause\\b|\\bso that\\b")?),
     ]
     if internal:
-        rules.append(
-            Rule(
-                name="compiler-internal vocabulary",
-                pattern=regex(
-                    "(?i)\\blowering\\b|\\blowers? to\\b|\\bemitter\\b|\\bcodegen\\b|\\bthe checker\\b" + "|\\btype ?checker\\b|\\bgenerated Rust\\b",
-                )?,
-            ),
-        )
+        compiler_words = "(?i)\\blowering\\b|\\blowers? to\\b|\\bemitter\\b|\\bcodegen\\b|\\bthe checker\\b"
+        compiler_terms = compiler_words + "|\\btype ?checker\\b|\\bgenerated Rust\\b"
+        rules.append(Rule(name="compiler-internal vocabulary", pattern=regex(compiler_terms)?))
     return Ok(rules)
 
 
