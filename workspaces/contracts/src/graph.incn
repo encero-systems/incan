@@ -174,7 +174,7 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
         return Err("an unchanged snapshot is stale")
     check_identity_queries(incan, project, original)?
     check_context(incan, project)?
-    check_mcp(incan, project)?
+    check_mcp(incan, project, workspace_records=original_records)?
     if library_artifacts(project)? != existing:
         return Err("graph inspection created or changed a compiled Incan library")
     check_rust_links(original)?

@@ -11,7 +11,13 @@ from std.tempfile import TemporaryDirectory
 from files import items, make_directory, parse_json, read, remove, required_text, write, optional_text as text
 
 
-pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: str = "") -> Result[None, str]:
+pub def check_mcp(
+    incan: str,
+    project: Path,
+    external_anchor: str = "",
+    bakery: str = "",
+    workspace_records: list[JsonValue] = [],
+) -> Result[None, str]:
     """
     Require MCP graph parity and continued serving after malformed or refused requests.
 
@@ -102,7 +108,8 @@ pub def check_mcp(incan: str, project: Path, external_anchor: str = "", bakery: 
         return check_external_definition(replies[4], replies[5], project, external_anchor)
     if project.joinpath("deps/checked/loaf.toml").is_file():
         check_workspace_definition(replies[5], project)?
-        return check_authored_relationships(incan, project)
+        module_id = workspace_module(workspace_records, project.joinpath("src/main.incn"))?
+        return check_authored_relationships(incan, project, module_id)
     return Ok(None)
 
 
@@ -133,7 +140,20 @@ def check_workspace_definition(reply: JsonValue, project: Path) -> Result[None, 
     return Ok(None)
 
 
-def check_authored_relationships(incan: str, project: Path) -> Result[None, str]:
+def workspace_module(records: list[JsonValue], source: Path) -> Result[str, str]:
+    """Select the emitting module of the fixture's main declaration from its ordinary graph."""
+    mut modules: list[str] = []
+    for record in records:
+        if text(record, "record") == "declaration" and text(record, "name") == "main":
+            span = record.get("span").unwrap_or(JsonValue.null())
+            if text(span, "file") == source.0:
+                modules.append(required_text(record, "module_id")?)
+    if len(modules) != 1 or modules[0] == "":
+        return Err("the relationship graph did not identify its workspace module")
+    return Ok(modules[0])
+
+
+def check_authored_relationships(incan: str, project: Path, module_id: str) -> Result[None, str]:
     """Keep the exact emitter and workspace author across ordinary cold and warm MCP relationships."""
     scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = scratch.path().resolve().map_err((error) => error.message())?
@@ -145,7 +165,7 @@ def check_authored_relationships(incan: str, project: Path) -> Result[None, str]
         ("refs", "helper", "reference \"provider::helper\" [author=workspace] \"src/main.incn:29\""),
         ("callers", "helper", "call \"main\" [author=workspace] \"src/main.incn:29\""),
         ("callees", "main", "call \"provider::helper\" [author=workspace] \"src/main.incn:29\""),
-        ("imports", "main", "import \"provider::helper\" [author=workspace] \"src/main.incn:22\""),
+        ("imports", module_id, "import \"provider::helper\" [author=workspace] \"src/main.incn:22\""),
     ]
     mut calls = [
         request(1, "initialize", JsonValue.object({"protocolVersion": JsonValue.string("2025-11-25")})),
