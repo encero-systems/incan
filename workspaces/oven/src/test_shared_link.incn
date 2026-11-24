@@ -290,7 +290,7 @@ def verify_project_view_retry(
     assert second.identity == first.identity and second.payload == test_payload.digest
     selected = snapshot(store).map_err((error) => error.message())?
     indexes = keys_with_prefix(selected, "incan.engine.standalone-program\t").map_err((error) => error.message())?
-    assert not indexes, "the manifest-backed request unexpectedly has a standalone index"
+    assert len(indexes) == 0, "the manifest-backed request unexpectedly has a standalone index"
     assert lookup_ambiguity(store, first, second) == "ambiguous"
     carrier.unlink().map_err((error) => error.message())?
     assert not restore_program(store, second)?
@@ -317,7 +317,7 @@ def require_old_bakery(oven: Path, store: Path, variants: bool) -> Result[None, 
         stdout = str(RustString.from_utf8(result.stdout).map_err((error) => str(error))?)
         stderr = str(RustString.from_utf8(result.stderr).map_err((error) => str(error))?)
         if variants:
-            assert result.status.code() == Some(1)
+            assert result.status.code() == Some(1i32)
             assert "integrity" in stdout + stderr and "invalid unit record" in stdout + stderr, stdout + stderr
         else:
             assert result.status.success(), stdout + stderr
