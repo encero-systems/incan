@@ -46,8 +46,9 @@ def main() -> Result[None, str]:
 
 def check_manifest(docs: Path, mut errors: list[str]) -> Result[int, str]:
     """Check complete, nonoverlapping semantic pools and exact generated JavaScript bytes."""
-    source = read(docs.joinpath("shared/incapunk/incus-library/manifest.json"))?
-    manifest = parse(source).map_err((error) => error.message())?
+    manifest_path = docs.joinpath("shared/incapunk/incus-library/manifest.json")
+    source = read(manifest_path)?
+    manifest = parse(source).map_err((error) => f"cannot parse {manifest_path.0}: {error.message()}")?
     pools = manifest.get("pools").unwrap_or(JsonValue.object({}))
     sprites = manifest.get("sprites").unwrap_or(JsonValue.array([])).as_array().unwrap_or([])
     keys = object_key_order(source, "pools")?
