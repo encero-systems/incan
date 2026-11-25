@@ -233,32 +233,59 @@ fn restore_noted_product(
 
 type RestoredProduct = (Function, Vec<ExternalFunction>, Vec<Function>);
 
-/// Restore a product and record whether it needs any linked crate after checking every exact referenced crate.
+/// The link and pending-runtime decisions consumed while admitting an ordinary Plan slot.
+// E2-current-whole-plan-applicability: the authored Plan boundary cannot read these exact restore facts.
+pub struct RestoreApplicability {
+    crates: Vec<String>,
+    pending_runtime: Option<Arc<BTreeSet<String>>>,
+}
+
+impl RestoreApplicability {
+    /// Whether the same product can use the decisions made when its slot was restored.
+    pub fn applies_to(&self, product: &PlacedRecord, linked: &BTreeSet<String>, allows: &dyn Fn(&str) -> bool) -> bool {
+        self.crates.iter().all(|name| linked.contains(name))
+            && runtime_candidates(&product.stored)
+                .all(|path| self.pending_runtime.as_ref().is_some_and(|paths| paths.contains(path)) == allows(path))
+    }
+}
+
+/// Runtime call paths for which this product can defer binding to the current unit.
+fn runtime_candidates(stored: &StoredProduct) -> impl Iterator<Item = &str> {
+    stored
+        .runtime
+        .iter()
+        .filter_map(|external| external.path.strip_prefix(RUST_BINDING))
+}
+
+/// Restore a product and return the exact linkage and runtime decisions used by that restore.
 fn restore_for_unit(
     stored: &StoredProduct,
     references: &[NominalReference],
     linked: &BTreeSet<String>,
     can_request_runtime: Option<&dyn Fn(&str) -> bool>,
-) -> Result<(RestoredProduct, bool), String> {
+) -> Result<(RestoredProduct, RestoreApplicability), String> {
     let pending_runtime = can_request_runtime.and_then(|allows| {
-        let paths: BTreeSet<_> = stored
-            .runtime
-            .iter()
-            .filter_map(|external| external.path.strip_prefix(RUST_BINDING))
+        let paths: BTreeSet<_> = runtime_candidates(stored)
             .filter(|path| allows(path))
             .map(str::to_owned)
             .collect();
         (!paths.is_empty()).then(|| Arc::new(paths))
     });
     let (function, runtime, mut crates) = restore_noted_product(stored, references, pending_runtime.clone())?;
-    let (frames, frame_crates) = restore_noted_frames(stored, references, pending_runtime)?;
+    let (frames, frame_crates) = restore_noted_frames(stored, references, pending_runtime.clone())?;
     crates.extend(frame_crates);
     if let Some(name) = crates.iter().find(|name| !linked.contains(*name)) {
         return Err(format!(
             "plan product names crate {name}, which this unit does not link"
         ));
     }
-    Ok(((function, runtime, frames), !crates.is_empty()))
+    Ok((
+        (function, runtime, frames),
+        RestoreApplicability {
+            crates,
+            pending_runtime,
+        },
+    ))
 }
 
 /// Bind a retained product to this unit and restore its function and helper frames from one typed decode.
@@ -390,6 +417,14 @@ pub struct PlacedRecord {
     stored: StoredProduct,
 }
 
+/// A restored ordinary slot and the current-unit inputs needed to use it again.
+pub struct RestoredSlot {
+    pub slot: FunctionSlot,
+    pub runtime: Vec<ExternalFunction>,
+    pub frames: Vec<Function>,
+    pub applicability: RestoreApplicability,
+}
+
 impl PlacedRecord {
     /// The declarations the product names, in its ordinal order.
     pub fn nominals(&self) -> &[ProductNominal] {
@@ -426,13 +461,13 @@ impl PlacedRecord {
         references: &[NominalReference],
         linked: &BTreeSet<String>,
         can_request_runtime: Option<&dyn Fn(&str) -> bool>,
-    ) -> Result<(FunctionSlot, Vec<ExternalFunction>, Vec<Function>), String> {
-        let ((function, runtime, frames), uses_linked_crates) =
+    ) -> Result<RestoredSlot, String> {
+        let ((function, runtime, frames), applicability) =
             restore_for_unit(&self.stored, references, linked, can_request_runtime)?;
         let mut slot = FunctionSlot::from(function);
         // Every carrier position in a stored product is recorded in its nominal inventory. Avoid keeping a body whose
         // call target or runtime mode may still change in the current request.
-        if !uses_linked_crates
+        if applicability.crates.is_empty()
             && self.stored.nominals.is_empty()
             && runtime.is_empty()
             && frames.is_empty()
@@ -444,7 +479,12 @@ impl PlacedRecord {
         {
             slot.keep_placement();
         }
-        Ok((slot, runtime, frames))
+        Ok(RestoredSlot {
+            slot,
+            runtime,
+            frames,
+            applicability,
+        })
     }
 
     /// Whether the product restores with every declaration bound to its own product-local ordinal.

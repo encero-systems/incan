@@ -1,11 +1,12 @@
 //! Lower a program's ordinary bodies, entrypoints, async entries, tests, and Loaf exports.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use incan_mir_plan_native::{
     AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, EventPosition, ExternalFunction, Function,
     FunctionSlot, GenericEnumDeclaration, GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport,
-    PlanType, UnitNominals, decode_lowering_event, resolve_nominals, unresolved_nominal,
+    PlanType, RestoredSlot, UnitNominals, decode_lowering_event, resolve_nominals, unresolved_nominal,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{
@@ -30,6 +31,7 @@ use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, produce
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
 use crate::resident_products::{FinalizedMember, FinalizedSlots, RestoreInputs};
+use crate::runtime_calls::sealed_runtime_path;
 use crate::scalar_store::{
     ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
     report_scalar_refusal, retained_scalar, scalar_miss,
@@ -143,6 +145,7 @@ pub fn lower_ordinary_bodies(
             file: &files[index],
         };
         let retained = if positioned {
+            sync_carriers(&mut keyed.nominals, intrinsics);
             positioned_slots(&page, positions, context, program, emitted_frames, &frame, &keyed)
         } else {
             None
@@ -273,7 +276,7 @@ pub struct ModuleAdmission<'a> {
     pub restored: Vec<AdmittedFunction>,
     pub(crate) products: Vec<AdmittedProduct>,
     seeding: bool,
-    retained: Option<BTreeMap<CompilerNodeId, FinalizedMember>>,
+    retained: Option<BTreeMap<CompilerNodeId, Arc<FinalizedMember>>>,
     finalized: FinalizedSlots,
 }
 
@@ -288,10 +291,12 @@ fn positioned_slots(
     emitted: &EmittedFrames,
     frame: &FrameSource<'_>,
     keyed: &KeyedProducts<'_>,
-) -> Option<BTreeMap<CompilerNodeId, FinalizedMember>> {
+) -> Option<BTreeMap<CompilerNodeId, Arc<FinalizedMember>>> {
     let slots = page.finalized()?;
     let mut offered = BTreeSet::new();
     let mut members = BTreeMap::new();
+    let mut resolved = BTreeMap::new();
+    let allows = |path: &str| sealed_runtime_path(context, path);
     for &position in positions {
         let body = &context.bodies[position];
         if !ordinary_body(context, body, emitted, "program") {
@@ -311,7 +316,27 @@ fn positioned_slots(
         };
         let key = (inputs.digest(), identity, span.column);
         let (kept_key, member) = slots.get_key_value(&key)?;
-        if !offered.insert(kept_key) || members.insert(body.direct_call_id.clone(), member.clone()).is_some() {
+        let placed = &member.product.function;
+        let nominals = placed.nominals();
+        if !member.applicability.applies_to(placed, &keyed.linked, &allows) || nominals.len() != member.references.len()
+        {
+            return None;
+        }
+        for (nominal, reference) in nominals.iter().zip(&member.references) {
+            let key = (nominal.kind.value(), nominal.identity.as_str(), nominal.digest.as_str());
+            let current = resolved.entry(key).or_insert_with(|| {
+                resolve_nominals(std::slice::from_ref(nominal), &keyed.nominals)
+                    .and_then(|mut references| references.pop())
+            });
+            if current.as_ref() != Some(reference) {
+                return None;
+            }
+        }
+        if !offered.insert(kept_key)
+            || members
+                .insert(body.direct_call_id.clone(), Arc::clone(member))
+                .is_some()
+        {
             return None;
         }
     }
@@ -347,7 +372,7 @@ fn lower_ordinary_frame(
         admission.restored.push(AdmittedFunction {
             function: member.slot.name.clone(),
             identity: event.identity.clone(),
-            references: Vec::new(),
+            references: member.references.iter().map(event_reference).collect(),
             placement: None,
         });
         admission.products.push(AdmittedProduct {
@@ -356,7 +381,7 @@ fn lower_ordinary_frame(
             helpers: Vec::new(),
         });
         frame_product("direct", "ordinary", &frame_label(body));
-        return Ok((member.slot, Vec::new(), Vec::new(), Vec::new()));
+        return Ok((member.slot.clone(), member.runtime.clone(), Vec::new(), Vec::new()));
     }
     match restore_admitted(context, program, body, frame, intrinsics, keyed, admission) {
         Admission::Restored(restored) => {
@@ -647,7 +672,13 @@ fn restore_admitted(
             unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
         );
     };
-    let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked, context) else {
+    let Some(RestoredSlot {
+        slot: function,
+        runtime,
+        frames,
+        applicability,
+    }) = admitted_function(placed, &resolved, &keyed.linked, context)
+    else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
     let Some(requests) = restore_requests(encoded, context) else {
@@ -677,13 +708,16 @@ fn restore_admitted(
         digest: payload.digest.clone(),
         helpers: frames.iter().map(|frame| frame.name.clone()).collect(),
     });
-    if admission.seeding && !moved && function.keeps_placement() && requests.is_empty() {
+    if admission.seeding && !moved && function.future_callee.is_none() && requests.is_empty() && frames.is_empty() {
         admission.finalized.insert(
             (inputs.digest(), current_identity.clone(), span.column),
-            FinalizedMember {
+            Arc::new(FinalizedMember {
                 slot: function.clone(),
                 product: payload,
-            },
+                runtime: runtime.clone(),
+                references: resolved,
+                applicability,
+            }),
         );
     }
     admission.restored.push(AdmittedFunction {
