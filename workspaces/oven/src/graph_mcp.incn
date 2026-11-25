@@ -20,7 +20,7 @@ from graph_memory import TaskMemory
 from home import TOOLCHAIN
 from cli_help import render
 
-pub const USAGE: str = "incan mcp PATH [--profile NAME]"
+pub const USAGE: str = "incan mcp PATH [--profile NAME] [--coverage-report PATH]"
 const PROTOCOL_VERSION: str = "2026-07-28"
 
 
@@ -29,15 +29,23 @@ pub model McpOptions:
 
     pub path: Path
     pub profile: str = "debug"
+    pub coverage_report: Option[str] = None
 
 
 pub def help_text() -> str:
     """Describe the stdio graph server before opening its project or transport."""
-    return render(USAGE, ["  --profile NAME  Select the artifact profile (default debug)."], "incan mcp .")
+    return render(
+        USAGE,
+        [
+            "  --profile NAME          Select the artifact profile (default debug).",
+            "  --coverage-report PATH  Read this report for process_risk calls.",
+        ],
+        "incan mcp .",
+    )
 
 
 pub def options(arguments: list[str]) -> Result[McpOptions, str]:
-    """Require one path and accept one artifact profile before reading the project."""
+    """Select the project, artifact profile and optional report before starting the server."""
     mut selected = McpOptions(path=Path(""))
     mut index = 0
     while index < len(arguments):
@@ -46,6 +54,17 @@ pub def options(arguments: list[str]) -> Result[McpOptions, str]:
             if index + 1 >= len(arguments):
                 return Err("--profile needs a value")
             selected.profile = arguments[index + 1]
+            index += 2
+        elif value == "--coverage-report":
+            if index + 1 >= len(arguments):
+                return Err("--coverage-report needs a path")
+            report = arguments[index + 1]
+            if report.strip() == "" or report.startswith("--"):
+                return Err("--coverage-report needs a path")
+            if selected.coverage_report is not None:
+                return Err("--coverage-report can be given only once")
+            path = Path(report).absolute().map_err((error) => error.message())?
+            selected.coverage_report = Some(path.0)
             index += 2
         elif value.startswith("-"):
             return Err(f"unknown option `{value}`")
@@ -65,7 +84,9 @@ pub def serve_graph(selected: McpOptions) -> Result[i32, str]:
     root = selected.path.resolve().map_err((error) => f"cannot {error.message()}")?
     if not root.is_file() and not root.is_dir():
         return Err("MCP PATH does not exist")
-    mut server = GraphServer(root=root.0, profile=selected.profile, tools=catalog())
+    mut server = GraphServer(
+        root=root.0, profile=selected.profile, tools=catalog(), coverage_report=selected.coverage_report,
+    )
     # 2. Read requests serially.
     # Explicit reads avoid the native Lines iterator's ownership refusal tracked under #2256.
     input = stdin()
@@ -97,6 +118,7 @@ model GraphServer:
     root: str
     profile: str
     tools: Result[JsonValue, str]
+    coverage_report: Option[str]
     memory: TaskMemory = TaskMemory()
 
     def handle(mut self, request: JsonValue) -> JsonValue:
@@ -166,7 +188,10 @@ model GraphServer:
             retained = self.memory.read(text(arguments, "task"), self.current_snapshot()?)
             return retained.to_json().map_err((error) => error.message())
         if name == "process_risk":
-            document = graph_response(command + ["--risk", "--format", "json"])?
+            command.extend(["--risk", "--format", "json"])
+            if let Some(report) = self.coverage_report:
+                command.extend(["--coverage-report", report])
+            document = graph_response(command)?
             records = parse_records(document)?
             observations = JsonValue.array([record for record in records if text(record, "record") == "risk_signal"])
             return observations.to_json().map_err((error) => error.message())
@@ -365,7 +390,15 @@ def tool_names() -> list[str]:
 
 def description(name: str) -> str:
     """Describe each public tool without exposing implementation details."""
-    descriptions = {"context_for_declaration": "Pack a declaration and its graph neighborhood", "graph_query": "Explore checked definitions, references, callers, callees or imports", "graph_summary": "Read current snapshot, provenance and record counts", "snapshot_status": "Compare a retained snapshot with current graph inputs", "process_risk": "Read optional local git churn, ownership and co-change observations", "task_memory": "Read unexpired feedback for this exact task and current snapshot", "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry"}
+    descriptions = {
+        "context_for_declaration": "Pack a declaration and its graph neighborhood",
+        "graph_query": "Explore checked definitions, references, callers, callees or imports",
+        "graph_summary": "Read current snapshot, provenance and record counts",
+        "snapshot_status": "Compare a retained snapshot with current graph inputs",
+        "process_risk": "Read optional local Git history and coverage evidence",
+        "task_memory": "Read unexpired feedback for this exact task and current snapshot",
+        "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry",
+    }
     return descriptions[name]
 
 
