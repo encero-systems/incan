@@ -108,4 +108,6 @@ A closure bound to a new name without an annotation has no such context, so its 
 
 ## How a closure captures outer locals
 
-A closure reads an outer local as the value that local holds when the closure is constructed. When code after the closure also needs that local, such as a later statement of the same block or the next pass of an enclosing loop, the closure receives its own snapshot of the value, so a later change to the outer binding does not reach the closure. For the same reason a closure does not change a local it reads: the change would land in the closure's copy, not in the local, so it is refused. The exact rule is in [Closure captures](../reference/functions.md#closure-captures).
+An ordinary capture uses the value the outer binding held when the closure was constructed. A later statement or loop iteration can change the binding without changing the closure's snapshot. Incan refuses writes to that snapshot.
+
+Capturing a writable alias keeps a borrow of the original place. When the closure calls a mutating method through the alias, each call updates the same place. A helper that only calls the closure can use that borrow during the call. After the closure's last use, the owner can read the updated field. See the [capture rules](../reference/functions.md#closure-captures) and [function parameter rules](../reference/functions.md#closures-that-capture-local-values).

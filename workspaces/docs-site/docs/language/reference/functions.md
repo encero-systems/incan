@@ -58,9 +58,9 @@ def main() -> None:
 
 ### Closure captures
 
-A closure reads each ordinary captured value as it was when the closure was constructed. A later change to the outer binding does not change that captured value. A closure that captures a writable alias borrows its field through the closure's last call. Each write through that alias changes the original field. How a closure captures a local: [Closures](../explanation/closures.md#how-a-closure-captures-outer-locals).
+A closure reads each ordinary captured value as it was when the closure was constructed. A later change to the outer binding does not change that captured value. A closure that captures a writable alias borrows the original field through the closure's last call, including calls inside a qualifying function that receives it as an argument. Each write through the alias changes the original field. See [Closures](../explanation/closures.md#how-a-closure-captures-outer-locals).
 
-A closure does not change an outer local it reads, a local bound to a static included: a call of a method that changes it, a write to a field or element of it, a loop, comprehension or pattern that changes its items, and passing it to a `mut` parameter the call changes are refused with `INCAN-T0001`, the argument with `INCAN-T0117`. A closure changes a static through the static's own name.
+An ordinary snapshot capture cannot be mutated. Mutating methods, writes to fields or elements, and loops, comprehensions or patterns that change captured items are refused with `INCAN-T0001`. Passing a snapshot to a `mut` parameter that the call changes is refused with `INCAN-T0117`. An ordinary snapshot of a local bound to a static follows the same rule. A closure changes a static through the static's own name.
 
 ```incan
 def main() -> None:
