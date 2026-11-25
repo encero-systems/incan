@@ -79,8 +79,197 @@ impl TypeChecker {
             params: caller_visible,
             closure_depth: 0,
             views: Vec::new(),
+            inferred_fields: None,
         };
         MutParamBodyState(self.mutation.current.replace(next))
+    }
+
+    /// Recognize one checked stored field of a direct caller-visible parameter in its original statement owner.
+    pub(in crate::typechecker) fn is_current_mut_parameter_field(&self, value: &Spanned<Expr>) -> bool {
+        use super::super::flow::{Projection, Root};
+
+        let mut field = value;
+        while let Expr::Paren(inner) = &field.node {
+            field = inner;
+        }
+        let Expr::Field(base, _) = &field.node else {
+            return false;
+        };
+        let Expr::Ident(name) = &base.node else {
+            return false;
+        };
+        let Some(frame) = self.mutation.current.as_ref() else {
+            return false;
+        };
+        let Some(parameter) = frame.params.get(name) else {
+            return false;
+        };
+        if frame.inferred_fields.is_none()
+            || frame.closure_depth != 0
+            || field.span.expansion.is_some()
+            || self.type_info.computed_property_access(field.span).is_some()
+        {
+            return false;
+        }
+        let Some(place) = super::super::checked_graph_place(field, &self.type_info) else {
+            return false;
+        };
+        let (Root::Binding(root), [Projection::Field(member)]) = (&place.root, place.projection.as_slice()) else {
+            return false;
+        };
+        root.kind == SemanticSourceTargetKind::Parameter
+            && root.declaration_span == *parameter
+            && self.type_info.resolved_write_identity(*parameter, name) == Some(root)
+            && member.origin == frame.identity.origin
+    }
+
+    /// Bind provisional fields to the actual statement writer before it can emit warnings or child outputs.
+    pub(in crate::typechecker) fn begin_inferred_parameter_fields(&mut self) {
+        if let Some(frame) = self.mutation.current.as_mut().filter(|frame| !frame.params.is_empty()) {
+            debug_assert!(frame.inferred_fields.is_none());
+            frame.inferred_fields = Some(InferredParameterFields {
+                warning_start: self.warnings.len(),
+                child_start: self.diagnostic_owner_ranges.len(),
+                output_start: self.body_checks.len(),
+                locals: Vec::new(),
+                closure_bindings: Vec::new(),
+            });
+        }
+    }
+
+    /// Remember the new checked destination without publishing a mode or changing the existing warning writer.
+    pub(in crate::typechecker) fn stage_inferred_parameter_field(
+        &mut self,
+        name: &str,
+        declaration: Span,
+        statement: Span,
+        initializer: Span,
+        warning_slot: usize,
+    ) {
+        let Some(destination) = self.type_info.resolved_write_identity(declaration, name) else {
+            return;
+        };
+        if destination.kind == SemanticSourceTargetKind::Local
+            && destination.declaration_span == declaration
+            && let Some(fields) = self
+                .mutation
+                .current
+                .as_mut()
+                .and_then(|frame| frame.inferred_fields.as_mut())
+        {
+            fields.locals.push(InferredParameterField {
+                destination: destination.clone(),
+                statement,
+                initializer,
+                warning_slot,
+            });
+        }
+    }
+
+    /// Remember the span of a fresh local's direct closure, the assignment form selected by the flow builder.
+    pub(in crate::typechecker) fn note_inferred_field_capture(&mut self, assignment: &crate::ast::AssignmentStmt) {
+        if !matches!(assignment.value.node, Expr::Closure(..))
+            || assignment.value.span.expansion.is_some()
+            || assignment.name_span.expansion.is_some()
+        {
+            return;
+        }
+        let Some(fields) = self
+            .mutation
+            .current
+            .as_mut()
+            .filter(|frame| frame.closure_depth == 0)
+            .and_then(|frame| frame.inferred_fields.as_mut())
+        else {
+            return;
+        };
+        if !fields.locals.is_empty()
+            && let Some(binding) = self
+                .type_info
+                .resolved_write_identity(assignment.name_span, &assignment.name)
+            && binding.kind == SemanticSourceTargetKind::Local
+            && binding.declaration_span == assignment.name_span
+            && !self.type_info.protocols.explicit_local_modes.contains_key(binding)
+        {
+            fields.closure_bindings.push(assignment.value.span);
+        }
+    }
+
+    /// Offer shared modes to the checked locals captured by this ordinary completed statement writer.
+    pub(in crate::typechecker) fn settle_inferred_parameter_fields(&mut self) {
+        use super::super::LocalMode;
+        use incan_lang::lang::types::ownership::OwnershipMode;
+
+        let Some(frame) = self.mutation.current.as_mut() else {
+            return;
+        };
+        let Some(fields) = frame.inferred_fields.take() else {
+            return;
+        };
+        let owner = &frame.identity;
+        // Older native/conditional activations retain their modes, reservations and original warning order.
+        if fields.closure_bindings.is_empty()
+            || self.native_borrow_bodies.contains(owner)
+            || self.iteration_replacement_bodies.contains(owner)
+            || self.dictionary_lookup_bodies.contains(owner)
+            || self.loop_item_bodies.contains(owner)
+            || self.lazy_result_bodies.contains(owner)
+            || fields.child_start != self.diagnostic_owner_ranges.len()
+            || fields.output_start != self.body_checks.len()
+        {
+            return;
+        }
+
+        let owner = owner.clone();
+        let captures = fields
+            .closure_bindings
+            .iter()
+            .filter_map(|span| self.closure_captures(*span))
+            .filter(|captures| captures.iter().all(|capture| capture.identity.is_some()))
+            .flatten()
+            .filter_map(|capture| capture.identity.as_ref())
+            .collect::<BTreeSet<_>>();
+        let mut first_allowed_slot = fields.warning_start;
+        let mut seen = BTreeSet::new();
+        let mut checked = Vec::with_capacity(fields.locals.len());
+        for field in fields.locals {
+            if !captures.contains(&field.destination) {
+                continue;
+            }
+            let Some(value_type) = self.type_info.assignment_binding_type(field.statement) else {
+                return;
+            };
+            if field.warning_slot < first_allowed_slot
+                || !self.warnings.get(field.warning_slot).is_some_and(|warning| {
+                    warning.stable_code() == Some("INCAN-T0125") && warning.span == field.initializer
+                })
+                || self.type_info.expr_type(field.initializer) != Some(value_type)
+                || self
+                    .type_info
+                    .protocols
+                    .explicit_local_modes
+                    .contains_key(&field.destination)
+                || !seen.insert(field.destination.clone())
+            {
+                return;
+            }
+
+            first_allowed_slot = field.warning_slot + 1;
+            let mode = LocalMode {
+                owner: owner.clone(),
+                mode: OwnershipMode::Borrowed,
+                value_type: value_type.clone(),
+                writable: false,
+                annotation: field.destination.declaration_span,
+            };
+            checked.push((field.warning_slot, field.destination, mode));
+        }
+
+        // These are uncommitted slots in the current writer's suffix. Reverse removal preserves earlier indices.
+        for (warning_slot, destination, mode) in checked.into_iter().rev() {
+            self.warnings.remove(warning_slot);
+            self.type_info.protocols.explicit_local_modes.insert(destination, mode);
+        }
     }
 
     /// Return the declaration identity of the function or method whose body is being checked, if any.
