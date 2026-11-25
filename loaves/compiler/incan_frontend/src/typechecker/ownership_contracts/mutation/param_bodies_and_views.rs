@@ -132,6 +132,7 @@ impl TypeChecker {
                 child_start: self.diagnostic_owner_ranges.len(),
                 output_start: self.body_checks.len(),
                 locals: Vec::new(),
+                closure_bindings: Vec::new(),
             });
         }
     }
@@ -165,7 +166,36 @@ impl TypeChecker {
         }
     }
 
-    /// Offer shared modes only to an ordinary completed statement writer, before its existing flow-profile gate.
+    /// Remember the span of a fresh local's direct closure, the assignment form selected by the flow builder.
+    pub(in crate::typechecker) fn note_inferred_field_capture(&mut self, assignment: &crate::ast::AssignmentStmt) {
+        if !matches!(assignment.value.node, Expr::Closure(..))
+            || assignment.value.span.expansion.is_some()
+            || assignment.name_span.expansion.is_some()
+        {
+            return;
+        }
+        let Some(fields) = self
+            .mutation
+            .current
+            .as_mut()
+            .filter(|frame| frame.closure_depth == 0)
+            .and_then(|frame| frame.inferred_fields.as_mut())
+        else {
+            return;
+        };
+        if !fields.locals.is_empty()
+            && let Some(binding) = self
+                .type_info
+                .resolved_write_identity(assignment.name_span, &assignment.name)
+            && binding.kind == SemanticSourceTargetKind::Local
+            && binding.declaration_span == assignment.name_span
+            && !self.type_info.protocols.explicit_local_modes.contains_key(binding)
+        {
+            fields.closure_bindings.push(assignment.value.span);
+        }
+    }
+
+    /// Offer shared modes to the checked locals captured by this ordinary completed statement writer.
     pub(in crate::typechecker) fn settle_inferred_parameter_fields(&mut self) {
         use super::super::LocalMode;
         use incan_lang::lang::types::ownership::OwnershipMode;
@@ -178,7 +208,7 @@ impl TypeChecker {
         };
         let owner = &frame.identity;
         // Older native/conditional activations retain their modes, reservations and original warning order.
-        if fields.locals.is_empty()
+        if fields.closure_bindings.is_empty()
             || self.native_borrow_bodies.contains(owner)
             || self.iteration_replacement_bodies.contains(owner)
             || self.dictionary_lookup_bodies.contains(owner)
@@ -190,10 +220,22 @@ impl TypeChecker {
             return;
         }
 
+        let owner = owner.clone();
+        let captures = fields
+            .closure_bindings
+            .iter()
+            .filter_map(|span| self.closure_captures(*span))
+            .filter(|captures| captures.iter().all(|capture| capture.identity.is_some()))
+            .flatten()
+            .filter_map(|capture| capture.identity.as_ref())
+            .collect::<BTreeSet<_>>();
         let mut first_allowed_slot = fields.warning_start;
         let mut seen = BTreeSet::new();
         let mut checked = Vec::with_capacity(fields.locals.len());
         for field in fields.locals {
+            if !captures.contains(&field.destination) {
+                continue;
+            }
             let Some(value_type) = self.type_info.assignment_binding_type(field.statement) else {
                 return;
             };

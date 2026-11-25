@@ -24,6 +24,7 @@ impl TypeChecker {
             .is_some_and(|symbol| symbol.span == assign.name_span);
         if declares {
             self.note_capturing_binding(&assign.value, assign.name_span, span);
+            self.note_inferred_field_capture(assign);
         } else {
             self.refuse_capturing_reassignment(Some(&assign.name), &assign.value, assign.name_span);
         }

@@ -243,6 +243,7 @@ struct InferredParameterFields {
     child_start: usize,
     output_start: usize,
     locals: Vec<InferredParameterField>,
+    closure_bindings: Vec<Span>,
 }
 
 #[derive(Debug, Clone)]
