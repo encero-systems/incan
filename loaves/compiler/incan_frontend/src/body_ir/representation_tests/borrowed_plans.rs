@@ -214,6 +214,66 @@ fn explicit_route_shapes_plan_through_borrow_parameters() -> Result<(), Box<dyn 
             assert!(!plan.contains("nsupported"), "{name}: {plan}");
         }
     }
+
+    let source = r#"
+class Cart:
+    pub items: list[str]
+
+def add_twice(mut cart: Cart) -> None:
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    add("plum")
+    add("fig")
+    println(cart.items)
+
+def count_items(mut cart: Cart) -> int:
+    items = cart.items
+    count: () -> int = () => len(items)
+    return count()
+"#;
+    let (_, _, module) = checked_seed(source)?;
+    for (name, expected) in [
+        ("count_items", bir::OwnershipFact::Borrow),
+        ("add_twice", bir::OwnershipFact::MutBorrow),
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing body")?;
+        let (capture, local) = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue:
+                        bir::Rvalue::Closure {
+                            captured_operands,
+                            body,
+                            ..
+                        },
+                    ..
+                } => match (captured_operands.as_slice(), body.capture_locals.as_slice()) {
+                    ([bir::Operand::Place(capture)], [local]) => Some((capture, local)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or("missing checked field capture")?;
+        assert_eq!(capture.fact, expected, "{name}");
+        assert!(!capture.last_use, "{name}");
+        assert_eq!(capture.place.local_id(), Some(body.params[0].local), "{name}");
+        assert!(matches!(
+            capture.place.projection.last(),
+            Some(bir::PlaceElem::Field { name, canonical: Some(_), .. }) if name == "items"
+        ));
+        assert_eq!(
+            matches!(body.locals[local.index()].ty, IncanType::RefMut(_)),
+            expected == bir::OwnershipFact::MutBorrow,
+            "{name}"
+        );
+    }
     Ok(())
 }
 
