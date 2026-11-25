@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{InputCall, InputCallKind, InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
@@ -325,11 +325,14 @@ impl TypeCheckInfo {
                             | crate::symbols::ResolvedType::Numeric(_)
                     )
                 });
-                if (binding.is_async && !async_by_modes)
+                let async_with_mut_input = call.callee.kind == SemanticSourceTargetKind::Function
+                    && call.receiver.is_none()
+                    && binding.params.iter().any(|parameter| parameter.is_mut);
+                if (binding.is_async && !(async_by_modes || async_with_mut_input))
                     || !ordinary_header_matches(&binding.params, &call.parameters)
                     || free_parameter_types_changed
                 {
-                    return Err("ordinary invocation differs from its synchronous concrete header");
+                    return Err("ordinary invocation differs from its supported concrete header");
                 }
                 Ok(None)
             }
@@ -344,6 +347,26 @@ impl TypeCheckInfo {
                 Ok(None)
             }
         }
+    }
+
+    /// Read slot access from an authenticated call header. An ordinary async function's caller-visible
+    /// mutable parameter lends its place exclusively to the selected future.
+    pub(super) fn selected_input_access(
+        &self,
+        call: &InputCall,
+        contract: Option<&crate::ownership_metadata::CheckedOwnershipContract>,
+        slot: usize,
+    ) -> Result<IncanInputAccess, &'static str> {
+        let parameter = call.parameters.get(slot).ok_or("invocation parameter is absent")?;
+        let access = crate::ownership_metadata::slot_input_access(contract, slot, &parameter.ty)?;
+        if access == IncanInputAccess::Inferred
+            && call.kind == InputCallKind::Ordinary
+            && parameter.is_mut
+            && self.calls.body_ir_async_call_targets.get(&call.site) == Some(&call.callee)
+        {
+            return Ok(IncanInputAccess::Exclusive);
+        }
+        Ok(access)
     }
 
     /// A local without an ownership annotation may alias only a returned-view call's result: its loan is that call's
@@ -557,7 +580,6 @@ impl TypeCheckInfo {
             {
                 return Err("invocation omits a required selected parameter");
             }
-            let contract = self.selected_input_contract(call)?;
             if call.kind == InputCallKind::Indirect {
                 for (slot, parameter) in call.parameters.iter().enumerate() {
                     // A closure local passed to a function-typed parameter: checking admits a capturing closure only
@@ -600,12 +622,7 @@ impl TypeCheckInfo {
                 call.kind != InputCallKind::Indirect && call.receiver.is_none(),
             )?;
             for argument in &invocation.arguments {
-                let parameter_type = &call
-                    .parameters
-                    .get(argument.slot)
-                    .ok_or("invocation parameter is absent")?
-                    .ty;
-                let access = crate::ownership_metadata::slot_input_access(contract, argument.slot, parameter_type)?;
+                let access = self.selected_input_access(call, contract, argument.slot)?;
                 let classified_move = graph
                     .value_uses
                     .get(&argument.span)

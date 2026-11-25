@@ -244,6 +244,7 @@ struct InferredParameterFields {
     output_start: usize,
     locals: Vec<InferredParameterField>,
     closure_bindings: Vec<Span>,
+    last_suspension: Option<Span>,
 }
 
 #[derive(Debug, Clone)]

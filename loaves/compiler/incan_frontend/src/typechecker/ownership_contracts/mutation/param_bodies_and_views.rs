@@ -133,6 +133,7 @@ impl TypeChecker {
                 output_start: self.body_checks.len(),
                 locals: Vec::new(),
                 closure_bindings: Vec::new(),
+                last_suspension: None,
             });
         }
     }
@@ -168,7 +169,8 @@ impl TypeChecker {
 
     /// Remember the span of a fresh local's direct closure, the assignment form selected by the flow builder.
     pub(in crate::typechecker) fn note_inferred_field_capture(&mut self, assignment: &crate::ast::AssignmentStmt) {
-        if !matches!(assignment.value.node, Expr::Closure(..))
+        if self.in_async_body
+            || !matches!(assignment.value.node, Expr::Closure(..))
             || assignment.value.span.expansion.is_some()
             || assignment.name_span.expansion.is_some()
         {
@@ -195,7 +197,26 @@ impl TypeChecker {
         }
     }
 
-    /// Offer shared modes to the checked locals captured by this ordinary completed statement writer.
+    /// Remember an authored suspension when this writer has direct field bindings to offer to flow analysis.
+    pub(in crate::typechecker) fn note_inferred_field_suspension(&mut self, span: Span) {
+        if span.expansion.is_none()
+            && let Some(fields) = self
+                .mutation
+                .current
+                .as_mut()
+                .filter(|frame| frame.closure_depth == 0)
+                .and_then(|frame| frame.inferred_fields.as_mut())
+            && !fields.locals.is_empty()
+            && fields
+                .last_suspension
+                .is_none_or(|previous| previous.start < span.start)
+        {
+            fields.last_suspension = Some(span);
+        }
+    }
+
+    /// Offer checked direct field bindings captured by a closure or declared before a suspension to the flow solver.
+    /// The solver's graph decides whether a loan is live at a competing operation.
     pub(in crate::typechecker) fn settle_inferred_parameter_fields(&mut self) {
         use super::super::LocalMode;
         use incan_lang::lang::types::ownership::OwnershipMode;
@@ -208,7 +229,7 @@ impl TypeChecker {
         };
         let owner = &frame.identity;
         // Older native/conditional activations retain their modes, reservations and original warning order.
-        if fields.closure_bindings.is_empty()
+        if (fields.closure_bindings.is_empty() && fields.last_suspension.is_none())
             || self.native_borrow_bodies.contains(owner)
             || self.iteration_replacement_bodies.contains(owner)
             || self.dictionary_lookup_bodies.contains(owner)
@@ -233,7 +254,10 @@ impl TypeChecker {
         let mut seen = BTreeSet::new();
         let mut checked = Vec::with_capacity(fields.locals.len());
         for field in fields.locals {
-            if !captures.contains(&field.destination) {
+            let declared_before_suspension = fields
+                .last_suspension
+                .is_some_and(|suspension| field.initializer.end <= suspension.start);
+            if !declared_before_suspension && !captures.contains(&field.destination) {
                 continue;
             }
             let Some(value_type) = self.type_info.assignment_binding_type(field.statement) else {
