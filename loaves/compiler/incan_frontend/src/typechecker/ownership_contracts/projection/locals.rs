@@ -171,12 +171,23 @@ impl<'a> CheckedInputBody<'a> {
             .map(|closure| closure.captures.as_slice())
     }
 
-    /// Whether this exact closure retains `capture` through a checked loan rather than a Copy read.
-    pub(crate) fn closure_borrows_capture(&self, span: HirSourceSpan, capture: &CanonicalSymbolId) -> bool {
-        self.graph
+    /// Access of the checked loan retained by this exact closure and capture, if the closure borrows it.
+    pub(crate) fn closure_capture_access(
+        &self,
+        span: HirSourceSpan,
+        capture: &CanonicalSymbolId,
+    ) -> Option<IncanInputAccess> {
+        let (_, loan) = self
+            .graph
             .closures
-            .get(&span)
-            .is_some_and(|closure| closure.loans.iter().any(|(identity, _)| identity == capture))
+            .get(&span)?
+            .loans
+            .iter()
+            .find(|(identity, _)| identity == capture)?;
+        Some(match self.graph.loans.get(loan.0)?.kind {
+            super::flow::LoanKind::Shared => IncanInputAccess::Shared,
+            super::flow::LoanKind::Exclusive => IncanInputAccess::Exclusive,
+        })
     }
 
     /// The checked referent type of a local alias: an explicit borrowed annotation's underlying value or the closed

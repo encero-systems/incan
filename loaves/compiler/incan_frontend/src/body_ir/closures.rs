@@ -4,6 +4,7 @@ use super::free_vars::*;
 use super::reads::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_semantics_core::IncanInputAccess;
 
 /// Follow straight-line whole-local moves to a checked canonical zip producer, refusing intervening control flow.
 fn canonical_zip_local(mut local: bir::LocalId, mut statements: &[bir::Statement]) -> bool {
@@ -153,8 +154,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // captured. The closure body resolves that source reference independently from its canonical identity,
             // yielding a global place for a `const`/`static` or an explicit unsupported operand for an identity
             // Body IR cannot represent.
-            // A captured `Borrowed[T]` local of an explicit body has no local of its own: the closure copies the Copy
-            // value of the place it borrows, or borrows any other value, while the checker keeps that place borrowed.
+            // A captured local alias has no storage of its own. The closure evaluates its checked field directly.
             let Some((outer_place, outer_ty, fact, last_use, identity, previous)) =
                 self.closure_capture(name, expr_span)
             else {
@@ -211,7 +211,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.settle_open_result_value(body_expr, &return_type);
         }
         let mut body_stmts = Vec::new();
-        // Deferred code needs its own source flow; the enclosing callable's checked loans authorize no capture.
+        // The deferred frame reads its capture locals. It cannot access the enclosing body's alias map directly.
         let saved_input_body = std::mem::replace(&mut self.input_body, Ok(None));
         let result = self.lower_expr_to_operand(body_expr, closure_scope, &mut body_stmts);
         self.input_body = saved_input_body;
@@ -255,52 +255,50 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Option<CanonicalSymbolId>,
         Option<bir::LocalId>,
     )> {
-        if let Some(outer_local) = self.bindings.get(name).copied() {
-            let ty = self.locals[outer_local.index()].ty.clone();
-            let place = bir::Place::from_local(outer_local);
-            let identity = self.locals[outer_local.index()].identity.as_deref().cloned();
-            let (mut fact, mut last_use) = self.ownership_fact_for_place(&place, &ty);
-            if identity.as_ref().is_some_and(|identity| {
-                self.input_body
-                    .as_ref()
-                    .ok()
-                    .and_then(|proof| proof.as_ref())
-                    .is_some_and(|proof| proof.closure_borrows_capture(hir_span(span), identity))
-            }) {
-                fact = bir::OwnershipFact::Borrow;
-                last_use = false;
-            }
-            // RFC 164: a closure reading an exclusive borrow local holds a shared reborrow of what it borrows (`&*x`)
-            // until its last call, as the explicit spelling's exclusive input did.
-            if let IncanType::RefMut(referent) = &ty
-                && fact != bir::OwnershipFact::Move
-            {
-                let mut reborrowed = place;
-                reborrowed.projection.push(bir::PlaceElem::Deref);
-                let shared = IncanType::Ref(referent.clone());
-                return Some((
-                    reborrowed,
-                    shared,
-                    bir::OwnershipFact::Borrow,
-                    false,
-                    identity,
-                    Some(outer_local),
-                ));
-            }
-            return Some((place, ty, fact, last_use, identity, Some(outer_local)));
+        if let Some((identity, place, ty, fact)) = self.closure_alias_capture(name, span) {
+            return Some((place, ty, fact, false, Some(identity), None));
         }
-        let (identity, place, referent) = self.closure_alias_capture(name, span)?;
-        let fact = if referent.abi_v0_facts().ownership.is_trivially_copy() {
-            bir::OwnershipFact::Copy
-        } else {
-            bir::OwnershipFact::Borrow
-        };
-        Some((place, referent, fact, false, Some(identity), None))
+        let outer_local = self.bindings.get(name).copied()?;
+        let ty = self.locals[outer_local.index()].ty.clone();
+        let place = bir::Place::from_local(outer_local);
+        let identity = self.locals[outer_local.index()].identity.as_deref().cloned();
+        let (mut fact, mut last_use) = self.ownership_fact_for_place(&place, &ty);
+        if identity.as_ref().is_some_and(|identity| {
+            self.input_body
+                .as_ref()
+                .ok()
+                .and_then(|proof| proof.as_ref())
+                .is_some_and(|proof| proof.closure_capture_access(hir_span(span), identity).is_some())
+        }) {
+            fact = bir::OwnershipFact::Borrow;
+            last_use = false;
+        }
+        // RFC 164: a closure reading an exclusive borrow local holds a shared reborrow of what it borrows (`&*x`)
+        // until its last call, as the explicit spelling's exclusive input did.
+        if let IncanType::RefMut(referent) = &ty
+            && fact != bir::OwnershipFact::Move
+        {
+            let mut reborrowed = place;
+            reborrowed.projection.push(bir::PlaceElem::Deref);
+            let shared = IncanType::Ref(referent.clone());
+            return Some((
+                reborrowed,
+                shared,
+                bir::OwnershipFact::Borrow,
+                false,
+                identity,
+                Some(outer_local),
+            ));
+        }
+        Some((place, ty, fact, last_use, identity, Some(outer_local)))
     }
 
-    /// A `Borrowed[T]` local of an explicit body that the closure at `span` captures, as the body's ownership graph
-    /// records the capture: its declaration, the place it borrows and its referent type.
-    fn closure_alias_capture(&self, name: &str, span: ast::Span) -> Option<(CanonicalSymbolId, bir::Place, IncanType)> {
+    /// Capture the place selected by a checked alias, preserving a writable reborrow in the deferred frame.
+    fn closure_alias_capture(
+        &self,
+        name: &str,
+        span: ast::Span,
+    ) -> Option<(CanonicalSymbolId, bir::Place, IncanType, bir::OwnershipFact)> {
         let proof = self.input_body.as_ref().ok()?.as_ref()?;
         let identity = proof
             .closure_captures(hir_span(span))?
@@ -308,7 +306,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .find(|identity| identity.declaration_name == name)?;
         let alias = self.input_alias(identity)?;
         let referent = self.checked_type(proof.local_value_type(identity)?);
-        Some((identity.clone(), alias.place.clone(), referent))
+        let (ty, fact) = if proof.closure_capture_access(hir_span(span), identity) == Some(IncanInputAccess::Exclusive)
+        {
+            (IncanType::RefMut(Box::new(referent)), bir::OwnershipFact::MutBorrow)
+        } else if referent.abi_v0_facts().ownership.is_trivially_copy() {
+            (referent, bir::OwnershipFact::Copy)
+        } else {
+            (referent, bir::OwnershipFact::Borrow)
+        };
+        Some((identity.clone(), alias.place.clone(), ty, fact))
     }
 
     /// Retain the checked closure parameter surface after its invocation-frame locals have been declared.
