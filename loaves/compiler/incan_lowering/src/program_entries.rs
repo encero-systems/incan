@@ -6,7 +6,7 @@ use std::sync::Arc;
 use incan_mir_plan_native::{
     AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, EventPosition, ExternalFunction, Function,
     FunctionSlot, GenericEnumDeclaration, GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport,
-    PlanType, RestoredSlot, UnitNominals, decode_lowering_event, resolve_nominals, unresolved_nominal,
+    PlanType, UnitNominals, decode_lowering_event, resolve_nominals, unresolved_nominal,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{
@@ -33,7 +33,7 @@ use crate::program_context::ProgramContext;
 use crate::resident_products::{FinalizedMember, FinalizedSlots, RestoreInputs};
 use crate::runtime_calls::sealed_runtime_path;
 use crate::scalar_store::{
-    ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
+    AdmittedPayload, ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
     report_scalar_refusal, retained_scalar, scalar_miss,
 };
 use crate::trace_channel::{emit, frame_product, tracing_products};
@@ -280,6 +280,17 @@ pub struct ModuleAdmission<'a> {
     finalized: FinalizedSlots,
 }
 
+impl ModuleAdmission<'_> {
+    /// Record a received product and the helper names emitted with it.
+    fn report_product(&mut self, payload: &AdmittedPayload, frames: &[Function]) {
+        self.products.push(AdmittedProduct {
+            key: payload.event.key.clone(),
+            digest: payload.digest.clone(),
+            helpers: frames.iter().map(|frame| frame.name.clone()).collect(),
+        });
+    }
+}
+
 type OrdinaryFrame = (FunctionSlot, Vec<ExternalFunction>, Vec<Instance>, Vec<Function>);
 
 /// Use a retained positioned inventory only when all current ordinary bodies have their exact checked slots.
@@ -375,11 +386,7 @@ fn lower_ordinary_frame(
             references: member.references.iter().map(event_reference).collect(),
             placement: None,
         });
-        admission.products.push(AdmittedProduct {
-            key: event.key.clone(),
-            digest: member.product.digest.clone(),
-            helpers: Vec::new(),
-        });
+        admission.report_product(&member.product, &[]);
         frame_product("direct", "ordinary", &frame_label(body));
         return Ok((member.slot.clone(), member.runtime.clone(), Vec::new(), Vec::new()));
     }
@@ -672,13 +679,7 @@ fn restore_admitted(
             unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
         );
     };
-    let Some(RestoredSlot {
-        slot: function,
-        runtime,
-        frames,
-        applicability,
-    }) = admitted_function(placed, &resolved, &keyed.linked, context)
-    else {
+    let Some(restored) = admitted_function(placed, &resolved, &keyed.linked, context) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
     let Some(requests) = restore_requests(encoded, context) else {
@@ -703,30 +704,28 @@ fn restore_admitted(
     } else {
         None
     };
-    admission.products.push(AdmittedProduct {
-        key: previous.key.clone(),
-        digest: payload.digest.clone(),
-        helpers: frames.iter().map(|frame| frame.name.clone()).collect(),
-    });
-    if admission.seeding && !moved && function.future_callee.is_none() && requests.is_empty() && frames.is_empty() {
+    admission.report_product(&payload, &restored.frames);
+    let no_deferred_frames = restored.slot.future_callee.is_none() && restored.frames.is_empty();
+    if admission.seeding && !moved && no_deferred_frames && requests.is_empty() {
+        let key = (inputs.digest(), current_identity.clone(), span.column);
         admission.finalized.insert(
-            (inputs.digest(), current_identity.clone(), span.column),
-            Arc::new(FinalizedMember {
-                slot: function.clone(),
-                product: payload,
-                runtime: runtime.clone(),
-                references: resolved,
-                applicability,
-            }),
+            key,
+            FinalizedMember::retain(
+                payload,
+                resolved,
+                &restored.slot,
+                &restored.runtime,
+                restored.applicability,
+            ),
         );
     }
     admission.restored.push(AdmittedFunction {
-        function: function.name.clone(),
+        function: restored.slot.name.clone(),
         identity: current_identity,
         references,
         placement,
     });
-    Admission::Restored((function, runtime, requests, frames))
+    Admission::Restored((restored.slot, restored.runtime, requests, restored.frames))
 }
 
 /// The node positions the page event of `function` recorded, read from this request's page.

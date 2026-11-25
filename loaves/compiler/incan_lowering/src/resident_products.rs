@@ -43,6 +43,25 @@ pub(crate) struct FinalizedMember {
     pub applicability: RestoreApplicability,
 }
 
+impl FinalizedMember {
+    /// Store the ordinary restore result before the unit changes its calls or positions.
+    pub(crate) fn retain(
+        product: Arc<AdmittedPayload>,
+        references: Vec<NominalReference>,
+        slot: &FunctionSlot,
+        runtime: &[ExternalFunction],
+        applicability: RestoreApplicability,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            slot: slot.clone(),
+            product,
+            runtime: runtime.to_vec(),
+            references,
+            applicability,
+        })
+    }
+}
+
 pub(crate) type FinalizedSlots = HashMap<([u8; 32], String, i64), Arc<FinalizedMember>>;
 
 #[derive(Default)]
