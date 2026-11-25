@@ -30,6 +30,13 @@ pub def check_context(incan: str, project: Path) -> Result[None, str]:
         or " author=workspace] " not in first.stdout
     ):
         return Err("context omitted the declaration, source snapshot, proved call neighborhood or an author")
+    context_arguments = ["inspect", "context", "--task", "helper", "--budget", "4096", "--format", "compact"]
+    context = invoke(incan, context_arguments, project)?
+    if context.code != Some(0):
+        return Err(f"inspect context refused the RFC 106 task command: {context.stderr}")
+    if context.stdout != first.stdout:
+        return Err("inspect context changed the selected graph context")
+
     # 2. Task matching and budget refusals preserve their public behavior.
     natural = invoke(
         incan,

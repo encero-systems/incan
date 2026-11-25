@@ -24,6 +24,7 @@ impl TypeChecker {
             .is_some_and(|symbol| symbol.span == assign.name_span);
         if declares {
             self.note_capturing_binding(&assign.value, assign.name_span, span);
+            self.note_inferred_field_capture(assign);
         } else {
             self.refuse_capturing_reassignment(Some(&assign.name), &assign.value, assign.name_span);
         }
@@ -111,71 +112,24 @@ impl TypeChecker {
             self.refuse_mut_param_held_by(&assign.value);
         }
 
-        // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
-        // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it
-        // is a request for a `static`, and the generic "variable is immutable" error would send the reader the
-        // wrong way. A `let`/`mut` declaration that shadows a const is a new binding and never reaches here.
-        if !introduces_binding && self.active_binding_is_const(&assign.name) {
-            self.errors
-                .push(errors::const_reassignment_suggests_static(&assign.name, target_span));
-            return;
-        }
-
-        // Check if it's a re-assignment
-        if let Some(var_info) = (!introduces_binding)
-            .then(|| self.lookup_variable_info_in_scope_chain(&assign.name))
-            .flatten()
-        {
-            let is_mutable = var_info.is_mutable;
-            let var_ty = var_info.ty.clone();
-            // RFC 164: assigning a value to an exclusive borrow writes through it, as for `BorrowedMut[T]`; only a
-            // reference value rebinds the name.
-            let through = written_through_referent(&var_ty, &value_ty);
-
-            if !is_mutable {
-                self.errors
-                    .push(errors::mutation_without_mut(&assign.name, target_span));
-            } else if through.is_none() {
-                self.note_caller_visible_mut_param_assignment(&assign.name, target_span);
-            }
-            self.note_local_reassignment(&assign.name);
-            let value_view = crate::typechecker::helpers::borrowed_value_type(value_ty.clone());
-            let compatible = match through {
-                Some(referent) => self.types_compatible(&value_view, referent),
-                None => self.types_compatible(&value_ty, &var_ty),
-            };
-            if !compatible {
-                let error = self.reassignment_mismatch(&assign.name, &var_ty, &value_ty, assign.value.span);
-                self.errors.push(error);
-            }
-            self.consumed_iterator_bindings.remove(&assign.name);
-            self.transferred_c_resource_bindings.remove(&assign.name);
-            self.mark_open_rust_generic_binding_read(&assign.name, assign.name_span);
-            return;
-        }
-
-        if let Some(static_info) = self.lookup_static_info(&assign.name) {
-            if static_info.is_imported {
-                self.errors.push(errors::imported_static_reassignment_not_allowed(
-                    &assign.name,
-                    target_span,
-                ));
-                return;
-            }
-            let static_ty = static_info.ty.clone();
-            let value_ty = self.check_expr_with_expected(&assign.value, Some(&static_ty));
-            if !self.types_compatible(&value_ty, &static_ty) {
-                self.errors.push(errors::type_mismatch(
-                    &static_ty.to_string(),
-                    &value_ty.to_string(),
-                    assign.value.span,
-                ));
-            }
+        if self.check_existing_assignment(assign, introduces_binding, &value_ty) {
             return;
         }
 
         // A local borrow takes a reference to the place rather than copying it, so it is not a place copy.
         let local_borrow = matches!(annotated_ty, Some(ResolvedType::Ref(_) | ResolvedType::RefMut(_)));
+        let inferred_shared_field = explicit_mode.is_none()
+            && !local_borrow
+            && new_local
+            && matches!(assign.binding, BindingKind::Inferred | BindingKind::Let)
+            && assign.name_span.expansion.is_none()
+            && annotated_ty.as_ref().is_none_or(|annotation| annotation == &value_ty)
+            && !matches!(
+                &value_ty,
+                ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::Ref(_) | ResolvedType::RefMut(_)
+            )
+            && self.is_current_mut_parameter_field(&assign.value);
+        let warning_slot = self.warnings.len();
         if explicit_mode.is_none() && !local_borrow {
             self.warn_place_binding_migration(assign);
         }
@@ -198,9 +152,86 @@ impl TypeChecker {
         self.declare_assignment_binding(assign, ty.clone(), is_mutable, introduces_binding, span);
         self.retain_qualified_assignment_storage(assign, span);
         self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+        if inferred_shared_field {
+            self.stage_inferred_parameter_field(&assign.name, assign.name_span, span, assign.value.span, warning_slot);
+        }
         if local_borrow_of_value {
             self.record_native_local_borrow(assign, ty, is_mutable);
         }
+    }
+
+    /// Check an assignment to an existing binding, returning whether it was handled.
+    /// A module static rechecks the value against its own type.
+    fn check_existing_assignment(
+        &mut self,
+        assign: &AssignmentStmt,
+        introduces_binding: bool,
+        value_ty: &ResolvedType,
+    ) -> bool {
+        let target_span = assign.name_span;
+        // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
+        // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it
+        // is a request for a `static`, and the generic "variable is immutable" error would send the reader the
+        // wrong way. A `let`/`mut` declaration that shadows a const is a new binding and never reaches here.
+        if !introduces_binding && self.active_binding_is_const(&assign.name) {
+            self.errors
+                .push(errors::const_reassignment_suggests_static(&assign.name, target_span));
+            return true;
+        }
+
+        // Check if it's a re-assignment
+        if let Some(var_info) = (!introduces_binding)
+            .then(|| self.lookup_variable_info_in_scope_chain(&assign.name))
+            .flatten()
+        {
+            let is_mutable = var_info.is_mutable;
+            let var_ty = var_info.ty.clone();
+            // RFC 164: assigning a value to an exclusive borrow writes through it, as for `BorrowedMut[T]`; only a
+            // reference value rebinds the name.
+            let through = written_through_referent(&var_ty, value_ty);
+
+            if !is_mutable {
+                self.errors
+                    .push(errors::mutation_without_mut(&assign.name, target_span));
+            } else if through.is_none() {
+                self.note_caller_visible_mut_param_assignment(&assign.name, target_span);
+            }
+            self.note_local_reassignment(&assign.name);
+            let value_view = crate::typechecker::helpers::borrowed_value_type(value_ty.clone());
+            let compatible = match through {
+                Some(referent) => self.types_compatible(&value_view, referent),
+                None => self.types_compatible(value_ty, &var_ty),
+            };
+            if !compatible {
+                let error = self.reassignment_mismatch(&assign.name, &var_ty, value_ty, assign.value.span);
+                self.errors.push(error);
+            }
+            self.consumed_iterator_bindings.remove(&assign.name);
+            self.transferred_c_resource_bindings.remove(&assign.name);
+            self.mark_open_rust_generic_binding_read(&assign.name, assign.name_span);
+            return true;
+        }
+
+        if let Some(static_info) = self.lookup_static_info(&assign.name) {
+            if static_info.is_imported {
+                self.errors.push(errors::imported_static_reassignment_not_allowed(
+                    &assign.name,
+                    target_span,
+                ));
+                return true;
+            }
+            let static_ty = static_info.ty.clone();
+            let value_ty = self.check_expr_with_expected(&assign.value, Some(&static_ty));
+            if !self.types_compatible(&value_ty, &static_ty) {
+                self.errors.push(errors::type_mismatch(
+                    &static_ty.to_string(),
+                    &value_ty.to_string(),
+                    assign.value.span,
+                ));
+            }
+            return true;
+        }
+        false
     }
 
     /// RFC 164: a local borrow of a value outside the whole-body proof keeps its loan for the conflict pass, which

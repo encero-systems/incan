@@ -14,9 +14,10 @@ from std.environ import get_or
 from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
+from std.json import JsonValue
 from pub::incan_platform.children import retain_child
 from pub::incan_platform.ipc import Connection, Listener, listen
-from files import discard_file, open_stream
+from files import discard_file, json_text, open_stream
 from home import owners_dir
 from pub::incan_worker_host.protocol import SCHEMA, compile_frame, read_completion, read_ready
 from pub::incan_worker_host.worker_packets import PREFIX
@@ -270,22 +271,41 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
 
 
 pub def observe_plan_module_dispatch(arguments: Borrowed[list[str]], route: str, generation: str = "-") -> None:
-    """Record the issued unit's selection option count and canonical digest with its ordinary input key."""
+    """Record the issued unit's Plan selection and its exact staged graph argument for an opt-in handoff."""
     if get_or("INCAN_NATIVE_TIMING", "") != "handoff" or get_or("INCAN_ENGINE_TRACE", "") == "":
         return
     if len(arguments) < 2 or arguments[0] != "--unit":
         return
     mut count = 0
     mut selection = "-"
+    mut records_count = 0
+    mut records: Option[str] = None
     for index in range(len(arguments)):
-        if arguments[index] != "--plan-module-selection-digest":
-            continue
-        count += 1
-        if index + 1 < len(arguments) and canonical_digest(arguments[index + 1]):
-            selection = arguments[index + 1]
+        if arguments[index] == "--plan-module-selection-digest":
+            count += 1
+            if index + 1 < len(arguments) and canonical_digest(arguments[index + 1]):
+                selection = arguments[index + 1]
+        elif index >= 5 and arguments[index] == "--graph-body-records":
+            records_count += 1
+            if index + 1 < len(arguments) and arguments[index + 1] != "":
+                records = Some(arguments[index + 1])
     if count != 1:
         selection = "-"
     trace(f"plan-module-dispatch\t{route}\t{generation}\t{count}\t{selection}\t{arguments[1]}")
+    # A staged page is evidence for this argv only when one submitted argument selects its directory.
+    if records_count != 1:
+        return
+    if let Some(directory) = records:
+        issued = json_text(JsonValue.object({
+            "route": JsonValue.string(route),
+            "generation": JsonValue.string(generation),
+            "unit": JsonValue.string(arguments[1]),
+            "output": JsonValue.string(arguments[3]),
+            "records": JsonValue.string(directory),
+            "records_count": JsonValue.int(records_count),
+        }))
+        if let Ok(detail) = issued:
+            trace("issued-graph-body-records\t" + detail)
 
 
 def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:

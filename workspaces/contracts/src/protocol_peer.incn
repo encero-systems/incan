@@ -20,9 +20,15 @@ const MAX_LSP_HEADER_BYTES: int = 8192
 const MAX_LSP_PAYLOAD_BYTES: int = 16_777_216
 
 
-pub def start(binary: str, project: Path, arguments: list[str] = [], framing: str = "lsp") -> Result[Peer, str]:
-    """Start the real stdio server through the peer's class-owned construction path."""
-    return Peer.start(binary, project, arguments, framing)
+pub def start(
+    binary: str,
+    project: Path,
+    arguments: list[str] = [],
+    framing: str = "lsp",
+    remove_environment: list[str] = [],
+) -> Result[Peer, str]:
+    """Start the real stdio server with any named selectors explicitly removed from its environment."""
+    return Peer.start(binary, project, arguments, framing, remove_environment)
 
 
 pub class Peer:
@@ -34,7 +40,13 @@ pub class Peer:
     framing: str = "lsp"
 
     @staticmethod
-    pub def start(binary: str, project: Path, arguments: list[str], framing: str) -> Result[Peer, str]:
+    pub def start(
+        binary: str,
+        project: Path,
+        arguments: list[str],
+        framing: str,
+        remove_environment: list[str] = [],
+    ) -> Result[Peer, str]:
         """Start the real stdio server: 1. Configure streams. 2. Record ownership. 3. Retain shared handles."""
         # 1. Configure streams and diagnostic output.
         pid_file = project.joinpath(f".{framing}-pid")
@@ -48,6 +60,8 @@ pub class Peer:
         command.stdin(Stdio.from(OwnedFd.from(child_input))).stdout(Stdio.from(OwnedFd.from(child_output)))
         for argument in arguments:
             command.arg(argument)
+        for variable in remove_environment:
+            command.env_remove(variable)
         child = Rc.new(RefCell.new(command.spawn().map_err((error) => str(error))?))
         # 2. Record process ownership.
         pid_file.write_text(str(child.borrow().id()), "utf-8", "strict", None).map_err((error) => error.message())?
@@ -106,19 +120,28 @@ pub class Peer:
 
     pub def diagnostics(mut self, uri: str, version: int) -> Result[None, str]:
         """Wait for the LSP's completed checking pass before asking navigation questions."""
+        for diagnostic in self.diagnostic_items(uri, Some(version))?:
+            if diagnostic.require("severity").map_err((error) => error.message())?.as_int() == Some(1):
+                return Err(f"LSP analysis refused the fixture: {diagnostic.to_json().unwrap_or("")}")
+        return Ok(None)
+
+    pub def diagnostic_items(mut self, uri: str, version: Option[int]) -> Result[list[JsonValue], str]:
+        """Read the diagnostics for the exact version, or the unversioned notification after closing the document."""
         for attempt in range(MAX_RESPONSE_MESSAGES):
             reply = self.receive()?
             if string(reply, "method") != "textDocument/publishDiagnostics":
                 continue
             params = reply.require("params").map_err((error) => error.message())?
-            actual_version = params.require("version").map_err((error) => error.message())?.as_int()
-            if string(params, "uri") != uri or actual_version != Some(version):
+            if string(params, "uri") != uri:
+                continue
+            mut actual_version: Option[int] = None
+            if let Some(value) = params.get("version"):
+                if not value.is_null():
+                    actual_version = Some(value.expect_int().map_err((error) => error.message())?)
+            if actual_version != version:
                 continue
             diagnostics = params.require("diagnostics").map_err((error) => error.message())?
-            for diagnostic in diagnostics.expect_array().map_err((error) => error.message())?:
-                if diagnostic.require("severity").map_err((error) => error.message())?.as_int() == Some(1):
-                    return Err(f"LSP analysis refused the fixture: {diagnostic.to_json().unwrap_or("")}")
-            return Ok(None)
+            return diagnostics.expect_array().map_err((error) => error.message())
         return Err("LSP did not publish this live snapshot's diagnostics")
 
     def receive(mut self) -> Result[JsonValue, str]:

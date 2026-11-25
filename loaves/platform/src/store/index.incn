@@ -411,20 +411,16 @@ pub def entries_for_keys(root: Path, top: str, keys: list[str]) -> Result[list[E
     """
     if top == "" or len(keys) == 0:
         return Ok([])
-    return entries_below(root, read_page(root, top)?, sorted(keys))
+    return entries_below(root, top, sorted(keys))
 
 
-def entries_below(root: Path, page: Page, keys: list[str]) -> Result[list[Entry], IndexError]:
-    """The leaf entries below `page` whose keys are among the sorted `keys`."""
+def entries_below(root: Path, reference: str, keys: list[str]) -> Result[list[Entry], IndexError]:
+    """The entries for these sorted keys, after validating this page including its unrequested neighbors."""
+    mapped = mapped_page(root, reference)?
+    if mapped.level == 0:
+        return selected_leaf_entries(mapped, keys).map_err((detail) => malformed_at(reference, detail))
+    page = decoded_page(mapped, reference)?
     mut result: list[Entry] = []
-    if page.level == 0:
-        mut wanted: set[str] = set()
-        for key in keys:
-            wanted.add(key)
-        for entry in page.entries:
-            if entry.key in wanted:
-                result.append(entry)
-        return Ok(result)
     mut taken = 0
     for position in range(len(page.entries)):
         mut group: list[str] = []
@@ -435,13 +431,35 @@ def entries_below(root: Path, page: Page, keys: list[str]) -> Result[list[Entry]
                 group.append(keys[taken])
             taken += 1
         if len(group) > 0:
-            result.extend(entries_below(root, read_page(root, page.entries[position].child)?, group)?)
+            result.extend(entries_below(root, page.entries[position].child, group)?)
+    return Ok(result)
+
+
+def selected_leaf_entries(page: Borrowed[Layout], keys: list[str]) -> Result[list[Entry], str]:
+    """Compare borrowed ordered keys and copy only selected locations, still validating all segment names."""
+    mut result: list[Entry] = []
+    mut wanted = 0
+    for span in page.spans.as_ref():
+        candidate = key_view(page.view, span)?
+        text = from_utf8(candidate.0.as_bytes()).map_err((_) => "not text")?
+        while wanted < len(keys) and text > keys[wanted]:
+            wanted += 1
+        if wanted < len(keys) and text == keys[wanted]:
+            result.append(entry_at(page, span)?)
+        else:
+            # Layout already checked the extent of the numeric fields, digest and kind byte.
+            segment = field_view(page.view, span.field, NAME_BYTES)?
+            _ = from_utf8(segment.0.as_bytes()).map_err((_) => "not text")?
     return Ok(result)
 
 
 pub def read_page(root: Path, reference: str) -> Result[Page, IndexError]:
     """One page, checked against its content digest and decoded into owned entries, children named absolutely."""
-    page = mapped_page(root, reference)?
+    return decoded_page(mapped_page(root, reference)?, reference)
+
+
+def decoded_page(page: Layout, reference: str) -> Result[Page, IndexError]:
+    """Decode all checked entries in order and qualify failures by their page reference."""
     mut result: list[Entry] = []
     for span in page.spans.as_ref():
         result.append(entry_at(page, span).map_err((detail) => malformed_at(reference, detail))?)
@@ -593,11 +611,16 @@ def location_at(view: MappedView, span: Span) -> Result[Location, str]:
 
 def copied(view: MappedView, offset: int, size: int) -> Result[bytes, str]:
     """`size` bytes at `offset` of a mapped page, copied out and counted."""
+    part = field_view(view, offset, size)?
+    pages_read["copied"] = pages_read.get("copied", 0) + size
+    return Ok(part.to_bytes())
+
+
+def field_view(view: MappedView, offset: int, size: int) -> Result[MappedView, str]:
+    """A bounded field within the checked page."""
     match view.slice(offset, size):
         None => return Err("field runs past the page")
-        Some(part) =>
-            pages_read["copied"] = pages_read.get("copied", 0) + size
-            return Ok(part.to_bytes())
+        Some(part) => return Ok(part)
 
 
 def scalar(view: MappedView, offset: int) -> Result[int, str]:

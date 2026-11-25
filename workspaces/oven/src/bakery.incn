@@ -336,28 +336,35 @@ pub def staging(store: Path, identity: str, estimate: int = 0, claimed: str = ""
 
 pub def prior_size(store: Path, name: str) -> int:
     """The payload bytes of the unit last baked under `name`, an estimate of what its next bake stages; else zero."""
-    match prior_fact(store, name):
-        Ok(found) =>
-            if let Some(fact) = found:
-                return fact_bytes(fact)
-        Err(_) => pass
+    if let Ok(Some(size)) = prior_bake(store, name):
+        return size
     return 0
 
 
-def prior_fact(store: Path, name: str) -> Result[Option[Fact], str]:
-    """The record last baked under `name`, read without verifying its payloads."""
-    match lookup(store, name)?:
+pub def prior_bake(store: Path, name: str) -> Result[Option[int], str]:
+    """
+    Return the staging estimate for a bound name, `None` for an absent name, or an error for an unreadable binding.
+
+    A bound name with an unavailable Unit Fact returns `Some(0)`, preserving the evidence of a prior bake.
+    """
+    if let Some(identity) = lookup(store, name)?:
+        if let Ok(Some(fact)) = prior_fact(store, identity):
+            return Ok(Some(fact_bytes(fact)))
+        return Ok(Some(0))
+    return Ok(None)
+
+
+def prior_fact(store: Path, identity: str) -> Result[Option[Fact], str]:
+    """Read the largest Fact for the selected identity without verifying its payloads."""
+    match get(snapshot(store).map_err(store_failure)?, record_key(identity)).map_err(store_failure)?:
         None => return Ok(None)
-        Some(identity) =>
-            match get(snapshot(store).map_err(store_failure)?, record_key(identity)).map_err(store_failure)?:
-                None => return Ok(None)
-                Some(value) =>
-                    variants = checked_rows(identity, value)?
-                    mut largest = variants[0].fact
-                    for variant in variants[1:]:
-                        if fact_bytes(variant.fact) > fact_bytes(largest):
-                            largest = variant.fact
-                    return Ok(Some(largest))
+        Some(value) =>
+            variants = checked_rows(identity, value)?
+            mut largest = variants[0].fact
+            for variant in variants[1:]:
+                if fact_bytes(variant.fact) > fact_bytes(largest):
+                    largest = variant.fact
+            return Ok(Some(largest))
 
 
 def fact_bytes(fact: Fact) -> int:

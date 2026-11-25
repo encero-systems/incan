@@ -1,17 +1,22 @@
 """Replay the measured request's semantic graph selections against the committed index for each selection."""
 
+from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
-from pub::incan_platform.store import Snapshot, get, read_manifest
-from pub::incan_platform.store.index import Location, entries_with_prefix, find
+from pub::incan_platform.store import Snapshot, get, lookup_members, read_manifest
+from pub::incan_platform.store.index import Location, find
 from pub::internal_models import decode_read_receipt
-from pub::internal_models.records import ReadWitness, RecordSelection, encode_record_key
+from pub::internal_models.overload_members import OVERLOAD_MEMBERS
+from pub::internal_models.records import ReadReceipt, ReadWitness, RecordRequest, RecordSelection, encode_record_key
 from compiler_graph_rows import read_evaluation
 from compiler_graph_records import evaluation_record_key
+from decimal_text import digits_only
 from json_fields import required_items, required_text
 from store_path_conversion import store_path
+
+const RECEIPT_KEY_PREFIX: str = "incan.engine.receipt\t"
 
 
 pub model GraphFrames:
@@ -23,9 +28,14 @@ pub model GraphFrames:
 
 
 pub def required_graph_frames(report: JsonValue, store: Path) -> Result[GraphFrames, str]:
-    """Resolve selectors without looking at store_reads, then expand evaluated outputs through their sealed receipts."""
+    """
+    Derive required frame identities and widths without consulting the measured read inventory.
+
+    Read each demand's pinned view, then resolve only the frame or typed request it selects.
+    """
     mut result = GraphFrames()
     mut snapshots: Dict[str, Snapshot] = {}
+    mut receipts = ReceiptViews()
     mut reported = 0
     for demand in required_items(report, "graph_demands")?:
         role = required_text(demand, "role")?
@@ -38,13 +48,18 @@ pub def required_graph_frames(report: JsonValue, store: Path) -> Result[GraphFra
             reported += 1
             if directory != store.0 or len(key) != 64:
                 return Err("capture belongs to another bakery or lacks a revision")
-        if role not in ["capture-mode", "program-handle", "standalone-selector", "baked-unit", "bakery-name", "output-slot", "reverse-edge", "evaluation", "evaluation-digest"]:
+        if role not in [
+            "capture-mode", "program-handle", "standalone-selector", "baked-unit", "bakery-name", "output-slot",
+            "reverse-edge", "evaluation", "evaluation-digest", "evaluation-frame", "evaluation-value", "receipt-frame",
+            "witness",
+        ]:
             return Err(f"unknown graph selector {role}")
         if directory != store.0:
             result.unknown.append(f"independent store root required for {directory}: {role} {key}")
             continue
         result.roots.append(f"{role}\t{generation}\t{manifest}\t{view}\t{key}")
-        if generation == 0 and manifest == "":
+        needs_view = role in ["evaluation-frame", "evaluation-value", "receipt-frame", "witness"]
+        if generation == 0 and manifest == "" and not needs_view:
             continue
         if generation <= 0 or len(manifest) != 64:
             return Err("incomplete graph snapshot identity")
@@ -52,88 +67,121 @@ pub def required_graph_frames(report: JsonValue, store: Path) -> Result[GraphFra
         if witness not in snapshots:
             snapshots[witness] = read_manifest(store_path(store), generation, manifest, view).map_err((error) => error.message())?
         selected = snapshots[witness]
-        if role == "capture-mode":
-            continue
-        location = find(selected.root, selected.index, key).map_err((error) => f"{error.object}: {error.detail}")?
-        if let Some(found) = location:
-            add_frame(result, key, found)
-            if role == "evaluation" and not found.tombstone:
-                evaluation_closure(selected, key, result)?
+        if selected.generation != generation:
+            return Err("graph selector generation differs from its selected snapshot")
+        if role != "capture-mode":
+            select_graph_frames(selected, role, key, receipts, result)?
     if reported != 1:
         return Err(f"request records {reported} capture roots")
     return Ok(result)
 
 
-def evaluation_closure(selected: Snapshot, key: str, mut result: GraphFrames) -> Result[None, str]:
-    """Authenticate the logical output and read receipt, then apply its declared input kind and member bounds."""
-    evaluation = read_evaluation(required_value(selected, key)?)?
-    if evaluation_record_key(evaluation.profile, evaluation.output) != key:
-        return Err("graph evaluation differs from its selected key")
-    receipt_key = "incan.engine.receipt\t" + evaluation.receipt_root
-    for dependency in [evaluation.output, receipt_key]:
-        match find(selected.root, selected.index, dependency).map_err((error) => f"{error.object}: {error.detail}")?:
-            Some(found) => add_frame(result, dependency, found)
-            None => return Err("evaluation lacks a required value: " + dependency)
-    encoded = required_value(selected, receipt_key)?
-    if hexlify(sha256.digest(encoded)) != evaluation.receipt_root or hexlify(sha256.digest(required_value(selected, evaluation.output)?)) != evaluation.value_digest:
-        return Err("evaluation depends on different output or receipt bytes")
-    receipt = decode_read_receipt(encoded)?
-    if receipt.scope.profile != evaluation.profile or encode_record_key(receipt.preparation.output)? != evaluation.output:
-        return Err("evaluation receipt names a different logical output")
-    for witness in receipt.witnesses:
-        match witness:
-            ReadWitness.Members(_, request, membership, continuation) =>
-                # Recompute the page membership and continuation solely from the snapshot's authenticated index.
-                match request.selection:
-                    RecordSelection.Members(page) =>
-                        prefix = encode_record_key(request.key)? + "\t"
-                        if page.order != "canonical" or request.byte_limit <= 0:
-                            return Err("invalid membership request in certified receipt")
-                        mut names: list[str] = []
-                        mut next = "end"
-                        for entry in entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => f"{error.object}: {error.detail}")?:
-                            if (page.lower != "" and entry.key < page.lower) or (page.upper != "" and entry.key >= page.upper):
-                                continue
-                            if page.continuation not in ["", "end"] and entry.key <= page.continuation:
-                                continue
-                            if let Some(found) = entry.location:
-                                if not found.tombstone:
-                                    if len(names) == request.byte_limit:
-                                        next = entry.key
-                                        break
-                                    add_frame(result, entry.key, found)
-                                    names.append(entry.key[len(prefix):])
-                        values = "\n".join(names).encode("utf-8")
-                        if len(values) > request.byte_limit:
-                            return Err("membership result exceeds the certified request's byte limit")
-                        witness_text = "\n".join([page.selector, page.order, page.lower, page.upper, next, hexlify(sha256.digest(values))])
-                        if next != continuation or hexlify(sha256.digest(witness_text.encode("utf-8"))) != membership:
-                            return Ok(None)
-                    _ => return Err("membership witness has a nonmember request")
-            ReadWitness.Found(previous, _) =>
-                record = encode_record_key(previous.request.key)?
-                match find(selected.root, selected.index, record).map_err((error) => f"{error.object}: {error.detail}")?:
-                    None => return Ok(None)
-                    Some(found) =>
-                        add_frame(result, record, found)
-                        if found.tombstone or hexlify(sha256.digest(required_value(selected, record)?)) != previous.semantic_digest:
-                            return Ok(None)
-            ReadWitness.Deleted(previous) =>
-                record = encode_record_key(previous.request.key)?
-                if let Some(found) = find(selected.root, selected.index, record).map_err((error) => f"{error.object}: {error.detail}")?:
-                    add_frame(result, record, found)
-                    if not found.tombstone:
-                        return Ok(None)
-            ReadWitness.Absent(previous) =>
-                record = encode_record_key(previous.request.key)?
-                if let Some(found) = find(selected.root, selected.index, record).map_err((error) => f"{error.object}: {error.detail}")?:
-                    add_frame(result, record, found)
-                    return Ok(None)
+def select_graph_frames(
+    selected: Snapshot, role: str, key: str, mut receipts: ReceiptViews, mut result: GraphFrames,
+) -> Result[None, str]:
+    """Budget one ordinary lookup or expand an actual typed witness read."""
+    if role == "witness":
+        return select_witness_frames(selected, key, receipts, result)
+    live = role in ["evaluation-frame", "evaluation-value", "receipt-frame"]
+    match frame_location(selected, key)?:
+        Some(found) =>
+            if live and found.tombstone:
+                return Err(f"selected graph value is deleted: {key}")
+            if role == "receipt-frame":
+                _ = receipts.read(selected, key)?
+            if role == "evaluation" and not found.tombstone:
+                evaluation = read_evaluation(required_value(selected, key)?)?
+                if evaluation_record_key(evaluation.profile, evaluation.output) != key:
+                    return Err("graph evaluation differs from its selected key")
+            if role != "evaluation-frame":
+                add_frame(result, key, found)
+        None =>
+            if live:
+                return Err(f"selected graph value is absent: {key}")
     return Ok(None)
 
 
+def select_witness_frames(
+    selected: Snapshot, selection: str, mut receipts: ReceiptViews, mut result: GraphFrames,
+) -> Result[None, str]:
+    """Recover the exact typed request and independently resolve its selected frame or page."""
+    fields = selection.split("\t")
+    if len(fields) < 3 or len(fields[0]) != 64:
+        return Err("invalid graph witness identity")
+    ordinal_text = fields[1]
+    if ordinal_text == "" or len(ordinal_text) > 9 or not digits_only(ordinal_text):
+        return Err("invalid graph witness ordinal")
+    ordinal = int(ordinal_text)
+    # Only the first two delimiters belong to the event. The canonical key can end in an empty field.
+    key = selection[len(fields[0]) + len(ordinal_text) + 2:]
+    receipt = receipts.read(selected, RECEIPT_KEY_PREFIX + fields[0])?
+    selected_receipt = receipt.as_ref()
+    if ordinal >= len(selected_receipt.witnesses) or str(ordinal) != ordinal_text:
+        return Err("graph witness ordinal is outside its receipt")
+    request = witness_request(selected_receipt.witnesses[ordinal])
+    if encode_record_key(request.key)? != key:
+        return Err("graph witness key differs from its receipt request")
+    if let RecordSelection.Members(page) = request.selection:
+        if request.key.family != OVERLOAD_MEMBERS:
+            if page.order != "canonical" or request.byte_limit <= 0:
+                return Err("invalid membership request in graph witness")
+            members = lookup_members(
+                selected, key, page.lower, page.upper, page.continuation, request.byte_limit,
+            ).map_err((error) => error.message())?
+            names = [member.key[len(key) + 1:] for member in members.members]
+            if len("\n".join(names).encode("utf-8")) > request.byte_limit:
+                return Err("membership result exceeds the graph witness's byte limit")
+            for member in members.members:
+                match frame_location(selected, member.key)?:
+                    Some(found) =>
+                        if found.tombstone or hexlify(found.digest) != member.revision:
+                            return Err("graph member frame differs from its selected revision")
+                        add_frame(result, member.key, found)
+                    None => return Err("graph member frame is missing")
+            return Ok(None)
+    # Slot, range, digest-only and overload reads authenticate a point frame, including a selected tombstone.
+    if let Some(found) = frame_location(selected, key)?:
+        add_frame(result, key, found)
+    return Ok(None)
+
+
+def witness_request(witness: ReadWitness) -> RecordRequest:
+    """Recover all selection fields, including the exact byte allowance, from the recorded witness."""
+    match witness:
+        ReadWitness.Found(found, _) => return found.request
+        ReadWitness.Deleted(deleted) => return deleted.request
+        ReadWitness.Absent(absent) => return absent.request
+        ReadWitness.Members(_, request, _, _) => return request
+
+
+class ReceiptViews:
+    """Reuse decoded receipts only within the same authenticated immutable view of this store."""
+
+    by_view: Dict[str, Rc[ReadReceipt]] = {}
+
+    pub def read(mut self, selected: Snapshot, key: str) -> Result[Rc[ReadReceipt], str]:
+        """Authenticate the selected content root once, sharing the immutable receipt across its witnesses."""
+        if not key.startswith(RECEIPT_KEY_PREFIX) or len(key) != len(RECEIPT_KEY_PREFIX) + 64:
+            return Err("invalid graph receipt key")
+        # The view length keeps arbitrary view text separate from the canonical receipt key.
+        identity = f"{selected.generation}:{selected.digest}:{len(selected.view)}:{selected.view}{key}"
+        if let Some(prior) = self.by_view.get(identity):
+            return Ok(prior)
+        payload = required_value(selected, key)?
+        if hexlify(sha256.digest(payload)) != key[len(RECEIPT_KEY_PREFIX):]:
+            return Err("graph receipt payload differs from its content root")
+        receipt = Rc.new(decode_read_receipt(payload)?)
+        self.by_view[identity] = receipt.clone()
+        return Ok(receipt)
+
+
+def frame_location(selected: Snapshot, key: str) -> Result[Option[Location], str]:
+    """Return the authenticated index's physical address, including a tombstone selection."""
+    return find(selected.root, selected.index, key).map_err((error) => f"{error.object}: {error.detail}")
+
+
 def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
-    """A completed evaluation certifies the presence of its receipt and value."""
+    """Read the bytes of a live graph record selected by the current pinned view."""
     match get(selected, key).map_err((error) => error.message())?:
         Some(value) => return Ok(value)
         None => return Err("missing certified graph value: " + key)

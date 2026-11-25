@@ -5,8 +5,9 @@ use super::*;
 use crate::declaration_interface::callable_module::{CallableEntry, CallableLookupWitness};
 use crate::library_manifest::CheckedExportReplay;
 use crate::typechecker::callable_projection::{CallableHeader, CallableInventory, CallableOwner, CallableRead};
+use crate::typechecker::executable_frames::{encode_inline_executable_owner, open_inline_executable_owner};
 use crate::typechecker::{CheckedCellProjection, NamespaceCell};
-use incan_semantics_core::{CompilerNodeId, executable_representation};
+use incan_semantics_core::CompilerNodeId;
 
 /// The driver supplies the ordinary Incan checker row codec to the already checked frontend.
 pub trait CallableCheckerRows {
@@ -118,6 +119,7 @@ impl CallableRead {
 }
 
 impl CallableOwner {
+    /// Encode one checked callable and its inline executable owner under the current module and source.
     fn from_owner(
         entry: &BodyProduct,
         module: &CompilerNodeId,
@@ -154,12 +156,17 @@ impl CallableOwner {
                 .iter()
                 .map(|(item, owner, ordinal)| ((item.clone(), owner.clone()), *ordinal))
                 .collect(),
-            body: executable_representation::encode_owner(module, source_path, &identity, body)
-                .map_err(|e| e.to_string())?,
+            body: encode_inline_executable_owner(module, source_path, &identity, body)?,
         })
     }
 
-    fn into_owner(self, source_path: &str, rows: &impl CallableCheckerRows) -> Result<BodyProduct, String> {
+    /// Restore one checked callable after its inline executable frame agrees with the module, source and header.
+    fn into_owner(
+        self,
+        module: &CompilerNodeId,
+        source_path: &str,
+        rows: &impl CallableCheckerRows,
+    ) -> Result<BodyProduct, String> {
         let Self {
             header,
             signature,
@@ -175,12 +182,13 @@ impl CallableOwner {
         } = self;
         let header = header.into_header()?;
         let identity = header.identity.render_compact();
-        let executable = executable_representation::decode_owner(&body).map_err(|e| e.to_string())?;
+        let executable = open_inline_executable_owner(&body)?;
         if executable.identity != identity
+            || &executable.module != module
             || executable.source != source_path
             || executable.body.canonical.as_ref() != Some(&header.canonical)
         {
-            return Err("callable owner frame, source and header disagree".into());
+            return Err("callable owner frame, module, source and header disagree".into());
         }
         Ok(BodyProduct {
             fingerprints: CheckedDeclarationFingerprints {
@@ -239,8 +247,10 @@ impl CallableBodyProducts {
         .project())
     }
 
+    /// Restore the typed callable inventory and bind every owner to the caller-provided module and source.
     pub fn from_crumb_fields(
         root: NamespaceCell,
+        module: &CompilerNodeId,
         source_path: &str,
         rows: &impl CallableCheckerRows,
     ) -> Result<Self, String> {
@@ -270,7 +280,7 @@ impl CallableBodyProducts {
             },
             entries: entries
                 .into_iter()
-                .map(|e| e.into_owner(source_path, rows))
+                .map(|entry| entry.into_owner(module, source_path, rows))
                 .collect::<Result<_, _>>()?,
         };
         result.validate().map_err(|e| e.to_string())?;

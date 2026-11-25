@@ -8,7 +8,7 @@ from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
 from std.io import BytesIO
-from pub::incan_platform.store.index import Entry, Location
+from pub::incan_platform.store.index import Entry, Location, entries_for_keys, pack_path, page_file, read_page
 from pub::incan_platform.store.index import write_index, entries as index_entries, pages_written, copied_index_bytes
 from store_path_conversion import collect_layouts, store_path
 from std.fs import Path
@@ -392,6 +392,87 @@ pub def test_a_commit_reads_each_index_page_it_changes_once_however_many_keys_it
     assert text(lookup(latest, "k-1500-73")) == "concentrated"
     assert text(lookup(latest, "k-1994-spread")) == "spread"
     assert text(lookup(latest, "k-1999")) == "earlier"
+    return verify_bulk_index_preflight(scratch.path().joinpath("bulk-preflight"))
+
+
+def verify_bulk_index_preflight(root: Path) -> Result[None, str]:
+    """Count only the requested leaf data and keep sorted, missing, tombstone, and malformed-neighbor behavior."""
+    mut writes = begin(snapshot(root).map_err((error) => error.message())?)
+    for key in ["k-1000", "k-1001", "k-1002"]:
+        writes = put(writes, key, b"earlier")
+    leaf = commit(writes).map_err((error) => error.message())?
+    assert index_levels(leaf).map_err((error) => error.message())? == 1, "copy fixture must use one leaf"
+    before = read_counts()
+    selected = entries_for_keys(leaf.root, leaf.index, ["k-1001"]).map_err((error) => error.detail)?
+    after = read_counts()
+    assert [entry.key for entry in selected] == ["k-1001"]
+    assert after.pages - before.pages == 1 and after.records == before.records, "preflight changed the lookup shape"
+    copied = after.copied - before.copied
+    missing = entries_for_keys(leaf.root, leaf.index, ["missing"]).map_err((error) => error.detail)?
+    assert len(missing) == 0
+    updated = commit(delete(begin(leaf), "k-1002")).map_err((error) => error.message())?
+    matched = entries_for_keys(updated.root, updated.index, ["k-1002", "k-1000", "absent", "k-1002"]).map_err(
+        (error) => error.detail,
+    )?
+    assert [entry.key for entry in matched] == ["k-1000", "k-1002"]
+    match matched[1].location:
+        Some(location) =>
+            assert location.tombstone, "bulk lookup lost the selected tombstone"
+        None => return Err("bulk lookup lost the selected location")
+
+    # The second six-byte leaf key follows a 24-byte header and a complete first leaf entry.
+    leaf_neighbor = 24 + (8 + 6 + 64 + 16 + 32 + 1) + 8 + 6
+    refuse_bulk_index_neighbor(leaf.root, leaf.index, leaf_neighbor)?
+    refuse_bulk_index_inner_neighbor(root.joinpath("ancestor"))?
+
+    # The result owns one six-byte key, one 64-byte segment name, and one 32-byte frame digest.
+    assert copied == 102, f"preflight copied {copied} index bytes for one selected entry"
+    return Ok(None)
+
+
+def refuse_bulk_index_inner_neighbor(root: Path) -> Result[None, str]:
+    """Build a real two-child inner page through commit and corrupt only its unrequested reference text."""
+    mut writes = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(33):
+        writes = put(writes, f"k-{1000 + item}", b"earlier")
+    view = commit(writes).map_err((error) => error.message())?
+    page = read_page(view.root, view.index).map_err((error) => error.detail)?
+    assert page.level == 1 and len(page.entries) == 2, "fixture must use an inner page with two children"
+    first = page.entries[0]
+    second = page.entries[1]
+    pack = view.index.split(":")[0]
+    assert first.child.startswith(pack + ":") and second.child.startswith(pack + ":")
+    actual = entries_for_keys(view.root, view.index, [first.key]).map_err((error) => error.detail)?
+    assert [entry.key for entry in actual] == [first.key], "the selected child must be readable"
+    first_size = len(first.child[len(pack):].encode("utf-8"))
+    key_sizes = len(first.key.encode("utf-8")) + len(second.key.encode("utf-8"))
+    # Header, both key and child length fields, both keys, and the first relative child reference.
+    neighbor = 24 + 4 * 8 + key_sizes + first_size
+    return refuse_bulk_index_neighbor(view.root, view.index, neighbor)
+
+
+def refuse_bulk_index_neighbor(root: StorePath, reference: str, offset: int) -> Result[None, str]:
+    """Rename the damaged page and pack by content while leaving any reachable child page in the same pack."""
+    path = page_file(root, reference).map_err((error) => error.detail)?
+    original = path.store_read_bytes().map_err((error) => error.message())?
+    parts = reference.split(":")
+    assert len(parts) == 4, "fixture must use an installed pack"
+    start = int(parts[1])
+    end = start + int(parts[2])
+    assert start >= 0 and end <= len(original) and 0 <= offset and start + offset < end
+    at = start + offset
+    buffer = BytesIO(original)
+    buffer.seek(at, 0).map_err((error) => error.message())?
+    buffer.write_bytes(b"\xff").map_err((error) => error.message())?
+    changed = buffer.getvalue()
+    pack = hexlify(sha256.digest(changed))
+    digest = hexlify(sha256.digest(changed[start:end]))
+    pack_path(root, pack).store_write_bytes(changed).map_err((error) => error.message())?
+    damaged = f"{pack}:{parts[1]}:{parts[2]}:{digest}"
+    match entries_for_keys(root, damaged, ["k-1000"]):
+        Ok(_) => return Err("bulk lookup accepted malformed unrequested neighbor text")
+        Err(error) =>
+            assert error.object == damaged and error.detail == "malformed index page: not text", error.detail
     return Ok(None)
 
 

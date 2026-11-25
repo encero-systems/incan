@@ -1,4 +1,5 @@
 def classify(n: int) -> str:
+    """Describe an integer as negative, zero, or positive."""
     if n < 0:
         return "negative"
     elif n == 0:
@@ -8,18 +9,21 @@ def classify(n: int) -> str:
 
 
 def validate_port(port: int) -> Result[int, str]:
+    """Return the port for values from 1 through 65535, or an error."""
     if port < 1 or port > 65535:
         return Err("port must be between 1 and 65535")
     return Ok(port)
 
 
 def next_value(values: list[Option[int]], idx: int) -> Option[int]:
+    """Return the optional value at the current index, or None at the end."""
     if idx < len(values):
         return values[idx]
     return None
 
 
 def main() -> None:
+    """Run the branching, pattern matching, and loop examples from the exercise."""
     println(classify(-1))  # negative
     println(classify(0))  # zero
     println(classify(2))  # positive

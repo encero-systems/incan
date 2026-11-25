@@ -126,6 +126,7 @@ fn unfinished_or_unrepresented_facts_are_never_discarded() {
                     params: HashMap::new(),
                     closure_depth: 0,
                     views: Vec::new(),
+                    inferred_fields: None,
                 }),
                 ..MutationLocal::default()
             },

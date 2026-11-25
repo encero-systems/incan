@@ -27,7 +27,7 @@ from run import Outcome, invoke, invoke_side_by_side
 from graph_context_contract import check_context
 from graph_relocation_contract import check_relocation
 from graph_mcp_contract import check_mcp
-from graph_lsp_contract import check_lsp
+from graph_lsp_contract import check_lsp, check_untrusted_vocabulary
 from graph_process_contract import check_process
 from graph_document import GraphDocument, check_reader, document
 from graph_preparation_contract import check_registry_preparation, check_source_preparation
@@ -40,7 +40,7 @@ pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list
 
     1. Resolve the fixture path and run each inspection twice; the warm answer must equal the first.
     2. Their answers together, with the project path removed, meet the header's expectations.
-    3. When every inspection succeeded, the exported documents are checked too.
+    3. Check exported documents from successful inspections and the editor's report of an expected vocabulary refusal.
     """
     # Resolve once so graph file records, git history and editor URIs share the same project identity.
     project = selected.resolve().map_err((error) => error.message())?
@@ -71,13 +71,15 @@ pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list
         failures.append(failure)
     if len(failures) > 0 and stderr.strip() != "":
         failures.append(stderr)
-    # 3. Only when every inspection succeeded are the exported documents checked as well.
+    # 3. Successful inspections have documents. For the untrusted vocabulary case, the editor reports the stop.
     if code == Some(0):
         check_registry_preparation(incan, project)?
         check_source_preparation(incan, project)?
         check_warm_pages(incan, project)?
         for failure in check_documents(incan, project, existing)?:
             failures.append(failure)
+    elif len(failures) == 0 and "error[INCAN-T0134]" in header.items("expect-stderr-contains"):
+        check_untrusted_vocabulary(incan, project)?
     return Ok(failures)
 
 
@@ -174,7 +176,7 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
         return Err("an unchanged snapshot is stale")
     check_identity_queries(incan, project, original)?
     check_context(incan, project)?
-    check_mcp(incan, project)?
+    check_mcp(incan, project, workspace_records=original_records)?
     if library_artifacts(project)? != existing:
         return Err("graph inspection created or changed a compiled Incan library")
     check_rust_links(original)?

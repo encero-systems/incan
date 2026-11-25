@@ -84,9 +84,9 @@ JSON is an array whose first element is the header, followed by nodes and then e
 
 ## MCP transport
 
-`incan mcp PATH [--profile NAME]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. The server advertises protocol version `2025-11-25`, tools and resources. Clients send `initialize`, then `notifications/initialized`, before using tools/resources. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
+`incan mcp PATH [--profile NAME]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. Call `server/discover` for `supportedVersions`, server information, and the fixed tool and resource capabilities. The supported version is `2026-07-28`. Clients can call `tools/list`, `tools/call`, `resources/list`, and `resources/read` directly. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
 
-Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`; use before initialization returns `-32002`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls return a text content block and `isError: false`. Definition queries also return the structured records described below.
+Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`. `initialize` returns `-32022` with `error.data.supportedVersions`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls return a text content block and `isError: false`. Definition queries also return the structured records described below.
 
 ### Tools
 
@@ -96,12 +96,14 @@ Every argument object rejects unknown fields. Fields listed below are required; 
 | --- | --- | --- |
 | `context_for_task` | `task: string`, `budget: integer` | Compact context for task text. |
 | `context_for_declaration` | `declaration: string`, `budget: integer` | Compact context using the declaration selector as its task. |
-| `graph_query` | `kind: string`, `term: string` | CLI query hits (default limit `20`). For `kind: "defs"`, `structuredContent.records` contains a header followed by the selected declaration records, each with its `author` and any available `span`. The first text block keeps the CLI display. The second serializes the same object as `structuredContent`. |
+| `graph_query` | `kind: string`, `term: string` | Selected query hits (default limit `20`). For `kind: "defs"`, `structuredContent.records` contains a header followed by the selected declaration records, each with its `author` and any available `span`. The first text block keeps the CLI display. The second serializes the same object as `structuredContent`. |
 | `graph_summary` | `{}` or omitted | JSON object with `snapshot_id`, `degraded`, `languages`, `semantic_contexts` and `counts`, an object from record kind to count. |
 | `snapshot_status` | `snapshot: string` | Freshness JSON comparing the supplied ID with the service snapshot reported by `graph_summary`. |
 | `process_risk` | `{}` or omitted | JSON array of optional process observations. |
 | `record_feedback` | `task: string`, `declaration: string`, `snapshot: string`, `ttl_seconds: integer` | The retained feedback object. Mutates only this MCP session. |
 | `task_memory` | `task: string` | JSON array of current feedback for that exact task. |
+
+A nonempty `refs`, `callers`, `callees` or `imports` reply begins with `authored_text=quoted_evidence`. Each hit gives its JSON-quoted label and source anchor and identifies the author of the record at that anchor.
 
 Feedback requires a nonempty task, a unique proved declaration and a TTL in `1..86400` seconds. For `snapshot`, use the current ID from `graph_summary` or the exact current checked or tolerant export ID for the same selection. The server rejects stale snapshots, snapshots for another selection and IDs it cannot verify. The declaration selector accepts an exported ID, stable key or exact qualified label.
 

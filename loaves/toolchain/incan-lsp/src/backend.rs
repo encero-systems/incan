@@ -98,6 +98,8 @@ pub struct DocumentState {
     pub source: String,
     pub ast: Option<Program>,
     pub version: i32,
+    /// The analysis ticket under which these checked identities were published.
+    analysis_ticket: Arc<()>,
     /// Exporter-owned graph records for this live analysis; invalidated before dependent buffers change.
     graph_navigation: Option<graph_navigation::GraphSnapshot>,
     /// Canonical source identities produced by the same typecheck as this document state.

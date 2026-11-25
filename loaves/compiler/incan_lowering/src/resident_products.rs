@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use incan_mir_plan_native::FunctionSlot;
-
-use incan_mir_plan_native::{PlacedRecord, PlanModuleValue};
+use incan_mir_plan_native::{
+    ExternalFunction, FunctionSlot, NominalReference, PlacedRecord, PlanModuleValue, RestoreApplicability,
+};
 use sha2::{Digest, Sha256};
 
 use crate::plan_modules::AdmittedPage;
@@ -33,13 +33,36 @@ static FULL_PAGES: Mutex<Option<(HashMap<[u8; 32], Arc<PlanModuleValue>>, u64)>>
 /// The bytes of module pages with their events one worker keeps: one program's pages, many times over.
 const MAX_FULL_PAGE_BYTES: u64 = 2 << 30;
 
-#[derive(Clone)]
+/// A slot before the current unit's carrier fold and runtime redirects.
+// E2-finalized-plan-slot-interop and E2-current-whole-plan-applicability retain the native restore result together.
 pub(crate) struct FinalizedMember {
     pub slot: FunctionSlot,
     pub product: Arc<AdmittedPayload>,
+    pub runtime: Vec<ExternalFunction>,
+    pub references: Vec<NominalReference>,
+    pub applicability: RestoreApplicability,
 }
 
-pub(crate) type FinalizedSlots = HashMap<([u8; 32], String, i64), FinalizedMember>;
+impl FinalizedMember {
+    /// Store the ordinary restore result before the unit changes its calls or positions.
+    pub(crate) fn retain(
+        product: Arc<AdmittedPayload>,
+        references: Vec<NominalReference>,
+        slot: &FunctionSlot,
+        runtime: &[ExternalFunction],
+        applicability: RestoreApplicability,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            slot: slot.clone(),
+            product,
+            runtime: runtime.to_vec(),
+            references,
+            applicability,
+        })
+    }
+}
+
+pub(crate) type FinalizedSlots = HashMap<([u8; 32], String, i64), Arc<FinalizedMember>>;
 
 #[derive(Default)]
 struct ResidentPages {

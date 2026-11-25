@@ -160,11 +160,17 @@ fn lowering_identity(body: &Body) -> String {
         .unwrap_or_default()
 }
 
-/// Encode an owner and its physical attachments. Only the outer scope is moved out of the body for projection.
-pub fn encode_graph_executable_owner(input: ExecutableOwnerInputs<'_>, body: &mut Body) -> Result<Vec<u8>, String> {
+/// Both modes require the current source, stable owner and an executable Body with no retired ABI payload.
+fn validate_owner_provenance(input: &ExecutableOwnerInputs<'_>, body: &Body) -> Result<(), String> {
     if input.source.is_empty() || input.identity.is_empty() || body.retired_rust_facade_wire.is_some() {
         return Err("invalid checked executable owner provenance".into());
     }
+    Ok(())
+}
+
+/// Encode an owner and its physical attachments. Only the outer scope is moved out of the body for projection.
+pub fn encode_graph_executable_owner(input: ExecutableOwnerInputs<'_>, body: &mut Body) -> Result<Vec<u8>, String> {
+    validate_owner_provenance(&input, body)?;
     let scope_present = !body.named_type_identities.is_empty();
     if input.scope_digest.is_some() != scope_present
         || input.scope_digest.is_some_and(|digest| !valid_scope_digest(digest))
@@ -175,6 +181,31 @@ pub fn encode_graph_executable_owner(input: ExecutableOwnerInputs<'_>, body: &mu
     let scope = std::mem::take(&mut body.named_type_identities);
     let body_value = body.project();
     body.named_type_identities = scope;
+    encode_owner_projection(input, body, body_value)
+}
+
+/// Project the private callable's checked nominal bindings inline through the existing authored owner codec.
+pub(crate) fn encode_inline_executable_owner(
+    module: &CompilerNodeId,
+    source: &str,
+    identity: &str,
+    body: &Body,
+) -> Result<Vec<u8>, String> {
+    let input = ExecutableOwnerInputs {
+        module,
+        source,
+        identity,
+        physical_inputs: None,
+        coordinates: &[],
+        call_witness: None,
+        scope_digest: None,
+    };
+    validate_owner_provenance(&input, body)?;
+    encode_owner_projection(input, body, body.project())
+}
+
+/// Assemble the shared owner root after the caller supplies its exact checked nominal scope placement.
+fn encode_owner_projection(input: ExecutableOwnerInputs<'_>, body: &Body, body_value: Cell) -> Result<Vec<u8>, String> {
     let values = [
         body_value,
         input.call_witness.map(<[u8]>::to_vec).project(),
@@ -193,9 +224,32 @@ pub fn encode_graph_executable_owner(input: ExecutableOwnerInputs<'_>, body: &mu
     )))
 }
 
+/// The caller chooses where its checked nominal bindings live before interpreting any owner fields.
+enum OwnerScope {
+    Graph,
+    Inline,
+}
+
 /// Admit one full checked owner, including its settled call witness, without looking up unselected scope values.
 pub fn open_graph_executable_owner(encoded: &[u8]) -> Result<OpenExecutableOwner, String> {
-    let Cell::Record(fields) = to_cell(internal_models::decode_executable_owner_frame(&encoded.to_vec())?)? else {
+    decode_owner_projection(
+        internal_models::decode_executable_owner_frame(&encoded.to_vec())?,
+        OwnerScope::Graph,
+    )
+}
+
+/// Admit the caller's standalone value and refuse graph-only attachments, even for an empty inline scope.
+pub(crate) fn open_inline_executable_owner(encoded: &Vec<u8>) -> Result<EncodedOwnerRepresentation, String> {
+    let opened = decode_owner_projection(
+        internal_models::decode_executable_owner_frame(encoded)?,
+        OwnerScope::Inline,
+    )?;
+    Ok(opened.frame)
+}
+
+/// Restore the existing shared provenance and the Body in the scope placement chosen by the caller.
+fn decode_owner_projection(value: NamespaceAtom, placement: OwnerScope) -> Result<OpenExecutableOwner, String> {
+    let Cell::Record(fields) = to_cell(value)? else {
         return Err("expected checked executable owner".into());
     };
     let [
@@ -224,12 +278,27 @@ pub fn open_graph_executable_owner(encoded: &[u8]) -> Result<OpenExecutableOwner
         || String::restore(name)? != body.name
         || reader != body.direct_call_id.path()
         || String::restore(canonical)? != lowering_identity(&body)
-        || !body.named_type_identities.is_empty()
-        || scope_digest
-            .as_deref()
-            .is_some_and(|digest| !valid_scope_digest(digest))
     {
         return Err("checked executable owner disagrees with its provenance".into());
+    }
+    match placement {
+        OwnerScope::Graph
+            if !body.named_type_identities.is_empty()
+                || scope_digest
+                    .as_deref()
+                    .is_some_and(|digest| !valid_scope_digest(digest)) =>
+        {
+            return Err("checked executable owner disagrees with its provenance".into());
+        }
+        OwnerScope::Inline
+            if scope_digest.is_some()
+                || call_witness.is_some()
+                || physical_inputs.is_some()
+                || !coordinates.is_empty() =>
+        {
+            return Err("standalone callable owner contains graph attachments".into());
+        }
+        _ => {}
     }
     validate_coordinates(physical_inputs, &coordinates)?;
     if let Some(witness) = &call_witness {

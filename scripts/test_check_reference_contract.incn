@@ -4,11 +4,11 @@ from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
+from std.regex import Regex
 from std.tempfile import TemporaryDirectory
 from check_reference_contract import page_findings, changed_pages
 from check_support import git, read, repository_root
 from check_test_support import Outcome, write
-
 
 const FULL_REFERENCE_SCAN: str = "incan run scripts/check_reference_contract.incn -- --all"
 
@@ -42,13 +42,13 @@ def require_specific_exception_phrases() -> Result[None, str]:
     page = "tooling/reference/example.md"
     allow = "scripts/check_reference_contract.allow"
     write(root, f"workspaces/docs-site/docs/{page}", "Prefer this call.\nThis is currently refused.\n")?
-    absent = invoke_checker(root, "check_reference_contract", "--all")?
+    absent = invoke_checker(root, "check_reference_contract", ["--all"])?
     assert absent.code == 1 and "2 finding(s) in 1 page(s)" in absent.stdout, absent.stdout
     assert f"{page}:1: advice:" in absent.stdout and f"{page}:2: time-bound wording:" in absent.stdout
 
     for scope in [page, "*"]:
         write(root, allow, f"{scope}\tPrefer this call.\tFixture explanation\n")?
-        scoped = invoke_checker(root, "check_reference_contract", "--all")?
+        scoped = invoke_checker(root, "check_reference_contract", ["--all"])?
         assert scoped.code == 1 and "1 finding(s) in 1 page(s)" in scoped.stdout, scoped.stdout
         assert f"{page}:1: advice:" not in scoped.stdout and f"{page}:2: time-bound wording:" in scoped.stdout
 
@@ -56,7 +56,7 @@ def require_specific_exception_phrases() -> Result[None, str]:
     mut failures: list[str] = []
     for phrase in ["", " "]:
         write(root, allow, f"# Scoped prose exceptions\n{page}\t{phrase}\tFixture explanation\n")?
-        result = invoke_checker(root, "check_reference_contract", "--all")?
+        result = invoke_checker(root, "check_reference_contract", ["--all"])?
         if result.code != 1 or expected not in result.stderr or "reference contract check passed" in result.stdout:
             failures.append(f"phrase length {len(phrase)} exited {result.code}: {result.stdout}{result.stderr}")
     assert failures == [], "\n".join(failures)
@@ -65,7 +65,7 @@ def require_specific_exception_phrases() -> Result[None, str]:
     expected_reason = f"{root.joinpath(allow).0}:2: expected a nonempty exception reason"
     for suffix in ["", "\t "]:
         write(root, allow, f"# Scoped prose exceptions\n{page}\tPrefer this call.{suffix}\n")?
-        result = invoke_checker(root, "check_reference_contract", "--all")?
+        result = invoke_checker(root, "check_reference_contract", ["--all"])?
         if result.code != 1 or result.stdout != "" or expected_reason not in result.stderr:
             failures.append(f"reason suffix {suffix:?} exited {result.code}: {result.stdout}{result.stderr}")
     assert failures == [], "\n".join(failures)
@@ -140,7 +140,7 @@ def test_make_checks_every_reference_page() -> Result[None, str]:
     function_row = function_rows[0]
     assert "`native_attribute`" not in function_row, "the checked API function row names the retired attribute field"
     assert "`decorators`" in function_row, "the checked API function row omits the decorators field"
-    return Ok(None)
+    return check_reference_option_grouping(root)
 
 
 def invokes_full_reference_scan(commands: str) -> bool:
@@ -153,21 +153,51 @@ def check_repository_checker_usage(root: Path) -> Result[None, str]:
     mut mismatches: list[str] = []
     for name in ["check_changed_rustdocs", "check_doc_paths", "check_reference_contract", "check_us_english"]:
         invocation = f"usage: incan run scripts/{name}.incn --"
-        help = invoke_checker(root, name, "--help")?
+        help = invoke_checker(root, name, ["--help"])?
         if help.code != 0 or invocation not in help.stdout:
             mismatches.append(f"{name} help exited {help.code} or did not name the current invocation")
-        refused = invoke_checker(root, name, "--unknown-option")?
+        refused = invoke_checker(root, name, ["--unknown-option"])?
         expected_error = f"{name}: error: unrecognized arguments: --unknown-option"
         if refused.code != 2 or invocation not in refused.stderr or expected_error not in refused.stderr:
             mismatches.append(f"{name} did not report the invalid option with its current invocation")
+        if name == "check_reference_contract":
+            check_reference_help_aliases(root, help)?
     assert mismatches == [], "\n".join(mismatches)
     return Ok(None)
 
 
-def invoke_checker(root: Path, name: str, flag: str) -> Result[Outcome, str]:
+def check_reference_help_aliases(root: Path, long_help: Outcome) -> Result[None, str]:
+    """Match short-option help to the ordinary long-option run and preserve path interpretation."""
+    short_help = invoke_checker(root, "check_reference_contract", ["-h"])?
+    assert long_help.code == 0 and short_help.code == 0
+    assert "show this help message and exit" in long_help.stdout
+    assert short_help.stdout == long_help.stdout and short_help.stderr == long_help.stderr
+    for flag in ["--help", "-h"]:
+        positional = invoke_checker(root, "check_reference_contract", ["--", flag])?
+        path = root.joinpath(f"workspaces/docs-site/docs/{flag}").0
+        assert positional.code == 1 and path in positional.stderr, positional.stderr
+        assert positional.stdout == "", positional.stdout
+    return Ok(None)
+
+
+def check_reference_option_grouping(root: Path) -> Result[None, str]:
+    """Reject repeated option comparisons in the reference parser."""
+    source = read(root.joinpath("scripts/check_reference_contract.incn"))?
+    sections = source.split("\ndef parse_options(")
+    assert len(sections) == 2, "expected one reference option parser"
+    parser = sections[1].split("\ndef ")[0]
+    pattern = "argument\\s*==\\s*\"[^\"]*\"\\s+or\\s+argument\\s*==\\s*\""
+    repeated = Regex(pattern).map_err((error) => f"cannot compile the option grouping check: {error.message()}")?
+    assert not repeated.is_match(parser), "parse_options repeats a string comparison for the same option"
+    return Ok(None)
+
+
+def invoke_checker(root: Path, name: str, arguments: list[str]) -> Result[Outcome, str]:
     """Run one checker from the checkout and capture its exit status and both text streams."""
     mut command = Command.new(get_or("INCAN", "incan"))
-    command.current_dir(root.0).arg("run").arg(f"scripts/{name}.incn").arg("--").arg(flag)
+    command.current_dir(root.0).arg("run").arg(f"scripts/{name}.incn").arg("--")
+    for argument in arguments:
+        command.arg(argument)
     output = command.output().map_err((error) => f"cannot run {name}: {error}")?
     stdout = RustString.from_utf8(output.stdout).map_err((error) => f"invalid {name} stdout: {error}")?
     stderr = RustString.from_utf8(output.stderr).map_err((error) => f"invalid {name} stderr: {error}")?
