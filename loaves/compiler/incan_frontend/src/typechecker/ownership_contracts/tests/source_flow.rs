@@ -1027,6 +1027,71 @@ def add_twice(mut cart: Cart) -> None:
         "a direct caller-visible field loan must permit writes through the closure: {:?}",
         checker.errors
     );
+    assert_writable_async_field_effect()?;
+    Ok(())
+}
+
+/// A write through an admitted field loan publishes the owning parameter's mutation to known callers.
+fn assert_writable_async_field_effect() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+class Cart:
+    pub items: list[str]
+
+async def pause() -> None:
+    pass
+
+async def tally(mut cart: Cart) -> int:
+    mut items = cart.items
+    items.append("plum")
+    await pause()
+    items.append("fig")
+    return len(cart.items)
+
+async def accepted() -> int:
+    mut cart = Cart(items=["apple"])
+    return await tally(cart)
+"#;
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "mutable caller: {:?}", checker.errors);
+    let graph = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find_map(|(owner, flow)| match flow {
+            InputFlow::Checked { graph, .. } if owner.declaration_name == "tally" => Some(graph),
+            _ => None,
+        })
+        .ok_or("missing checked tally ownership graph")?;
+    let loan = graph
+        .local_loans
+        .iter()
+        .find_map(|(identity, loan)| (identity.declaration_name == "items").then_some(*loan))
+        .ok_or("missing writable field loan")?;
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.event, flow::Event::Access { access: flow::Access::Write, through: Some(id), .. } if id == loan))
+            .count(),
+        2
+    );
+
+    let immutable = format!(
+        "{source}\nasync def rejected() -> int:\n    let cart = Cart(items=[\"apple\"])\n    return await tally(cart)\n"
+    );
+    let checker = checked(&immutable)?;
+    assert!(
+        checker.errors.iter().any(|error| {
+            error.stable_code() == Some("INCAN-T0117")
+                && error
+                    .notes()
+                    .iter()
+                    .any(|note| note.contains("'tally' changes the parameter 'cart'"))
+        }),
+        "the known tally call must refuse an immutable cart: {:?}",
+        checker.errors
+    );
     Ok(())
 }
 
