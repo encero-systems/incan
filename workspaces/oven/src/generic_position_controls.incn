@@ -5,6 +5,7 @@ from std.json import parse
 from pub::incan_platform.store import Snapshot, get
 from pub::incan_mir_plan import PLAN_MODULE_FAMILY, decode_lowering_event, decode_plan_module
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.executable_body_wire import NamespaceAtom, decode_executable_owner_frame
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from compiler_body_keys import EXECUTABLE_BODY_PROFILE, IDENTITY_PROFILE, body_key
 from compiler_executable_metadata import typed_owner_metadata, typed_owner_reader
@@ -14,7 +15,7 @@ from compiler_plan_values import LOWERING_PROFILE
 from compiler_prepared_records import prepared_product_request
 from compiler_source_projection import project_source
 from files import write
-from json_fields import required_text
+from json_fields import required_items, required_text, string_value
 from lowering_record_fixtures import attempt_trace, lowering_example_run, proof_count, stop_example_engine
 from scratch import scratch_directory
 from store_path_conversion import snapshot as store_snapshot
@@ -126,27 +127,81 @@ model SelectedFact:
     digest: str
 
 
-def checked_template(graph: Snapshot) -> Result[SelectedFact, str]:
-    """Resolve the selected generic template through the current typed Body IR owner frame."""
+def require_frame_placement(frame: bytes, name: str) -> Result[None, str]:
+    """Prove that the ordinary producer published both relocation coordinates and their physical digest."""
+    if let NamespaceAtom.Fields(fields) = decode_executable_owner_frame(frame)?:
+        mut coordinates = false
+        mut digest = false
+        for field in fields:
+            if field.identity == 109330262287475u64:  # coords
+                if let NamespaceAtom.Items(spans) = field.value:
+                    coordinates = len(spans) > 0
+            elif field.identity == 123594016516451u64:  # physic
+                if let NamespaceAtom.Present(values) = field.value:
+                    if len(values) == 1:
+                        if let NamespaceAtom.Binary(value) = values[0]:
+                            digest = len(value) == 32
+        if coordinates and digest:
+            return Ok(None)
+    return Err(f"selected {name} frame has no authenticated physical placement")
+
+
+def checked_fixture_owners(graph: Snapshot, seed: bool) -> Result[Dict[str, SelectedFact], str]:
+    """Read the exact named owners and require placement evidence on the seed's two unchanged callers."""
     scope = OutputSlots(origin="main", identity_profile=EXECUTABLE_BODY_PROFILE)
     records = reusable_family_records(graph, "body-ir", CHECKER_PROFILE, Some(scope))?
     reader = typed_owner_reader()?
-    mut templates: list[SelectedFact] = []
+    mut owners: Dict[str, SelectedFact] = {}
     for record in records:
         frame = read_body_frame(record.key, CHECKER_PROFILE, record.value)?
         owner = typed_owner_metadata(reader, frame)?
-        if owner.name == "pick":
-            assert owner.identity == record.key.identity and record.key.facet == "checked", (
-                f"generic Body IR owner {owner.identity} does not match checked record " +
-                f"{record.key.identity} with facet {record.key.facet}"
-            )
-            assert owner.source == "main.incn" or owner.source.endswith("/main.incn"), (
-                f"generic Body IR owner source is {owner.source}, expected main.incn"
-            )
-            templates.append(SelectedFact(key=record.key, digest=record.value_digest))
-    if len(templates) != 1:
-        return Err(f"expected one selected typed generic Body IR root, found {len(templates)}")
-    return Ok(templates[0])
+        if owner.name not in ["pick", "unrelated", "main"]:
+            continue
+        if owner.name in owners:
+            return Err(f"more than one selected Body IR frame for {owner.name}")
+        assert owner.identity == record.key.identity and record.key.facet == "checked", (
+            f"Body IR owner {owner.identity} does not match checked record " +
+            f"{record.key.identity} with facet {record.key.facet}"
+        )
+        assert owner.source == "main.incn" or owner.source.endswith("/main.incn"), (
+            f"Body IR owner source is {owner.source}, expected main.incn"
+        )
+        if seed and owner.name != "pick":
+            require_frame_placement(frame, owner.name)?
+        owners[owner.name] = SelectedFact(key=record.key, digest=record.value_digest)
+    if len(owners) != 3:
+        return Err(f"expected one selected frame per fixture owner, found {sorted([name for name in owners.keys()])}")
+    return Ok(owners)
+
+
+def verify_restored_frames(trace: Path, root: Path, owners: list[str]) -> Result[None, str]:
+    """Join one ordinary checker report to the two unchanged fixture owners before scratch teardown."""
+    prefix = "oven: checker-record-counts\t"
+    reports = root.joinpath("target/incan/units").0 + "/"
+    mut matching = 0
+    mut observed: list[str] = []
+    for path in trace.iterdir().map_err((error) => error.message())?:
+        if not path.name().startswith("engine-oven-") or not path.name().endswith(".jsonl"):
+            continue
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if '"operation":"reason"' not in line or "checker-record-counts" not in line:
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            key = required_text(row, "key")?
+            if not key.startswith(prefix):
+                continue
+            detail = key[len(prefix):]
+            report = parse(detail).map_err((error) => error.message())?
+            if not required_text(report, "report")?.startswith(reports):
+                continue
+            restored = sorted([string_value(value)? for value in required_items(report, "restored")?])
+            frames = sorted([string_value(value)? for value in required_items(report, "restored_body_ir")?])
+            if restored == owners and frames == owners:
+                matching += 1
+            observed.append(detail)
+    assert matching == 1, f"expected one checker report restoring {owners}, observed {observed}"
+    return Ok(None)
 
 
 def confirmed_read(witnesses: Borrowed[list[ReadWitness]], supplier: Borrowed[SelectedFact]) -> Result[bool, str]:
@@ -271,7 +326,8 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     stop_example_engine(binary, store)?
     _ = cold?
     graph = store_snapshot(store).map_err((error) => error.message())?
-    before_root = checked_template(graph)?
+    old_owners = checked_fixture_owners(graph, seed=true)?
+    before_root = old_owners["pick"]
     before = selected_fanout(graph, before_root)?
     main_before, old_positions = main_product(store, seed)?
     counts_before = lowered_products(trace)?
@@ -289,7 +345,8 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     stop_example_engine(binary, store)?
     report = warm?
     current = store_snapshot(store).map_err((error) => error.message())?
-    after_root = checked_template(current)?
+    new_owners = checked_fixture_owners(current, seed=false)?
+    after_root = new_owners["pick"]
     after = selected_fanout(current, after_root)?
     main_after, new_positions = main_product(store, length_edit)?
     assert after_root.key.identity == before_root.key.identity, (
@@ -353,4 +410,8 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
         f"generic body edit evaluated {proof_count(report, "plan_function_evaluations")?} Plan functions, " +
         f"expected {len(expected)}"
     )
+    owners = ["main", "unrelated"]
+    for name in owners:
+        assert new_owners[name].key.identity == old_owners[name].key.identity, f"{name} changed checked owner"
+    verify_restored_frames(trace, root, sorted([new_owners[name].key.identity for name in owners]))?
     return Ok(None)

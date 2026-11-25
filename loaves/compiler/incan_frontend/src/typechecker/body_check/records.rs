@@ -418,6 +418,7 @@ impl Positions {
             .iter()
             .map(|(here, context)| Some((span(here)?, (target(&context.owner), context.binding_ordinal))))
             .collect::<Option<BTreeMap<_, _>>>()?;
+        let nested = placement::nested_bindings(local, placement)?;
         // The checked record codecs read persisted handles from complete cells. Type payloads also carry lexical
         // spellings, so bind their current checked aliases where present. The read sets are derived from the owner
         // records, independent of other declarations the checker happened to load in this activation.
@@ -476,7 +477,7 @@ impl Positions {
             handles,
             type_handles,
             type_names,
-            &local.nested,
+            nested,
             references,
             writes,
             types,
