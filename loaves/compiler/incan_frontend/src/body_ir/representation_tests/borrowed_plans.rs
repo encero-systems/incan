@@ -251,6 +251,16 @@ def add_twice(mut cart: Cart) -> None:
     add("fig")
     println(cart.items)
 
+def call_twice(callback: (str) -> None) -> None:
+    callback("plum")
+    callback("fig")
+
+def forward_twice(mut cart: Cart) -> None:
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    call_twice(add)
+    println(cart.items)
+
 def count_items(mut cart: Cart) -> int:
     items = cart.items
     count: () -> int = () => len(items)
@@ -303,6 +313,11 @@ def count_items(mut cart: Cart) -> int:
     let writable = function(&plans, "add_twice")?;
     assert!(!writable.contains("nsupported"), "{writable}");
     assert_eq!(writable.matches("CallExclusiveClosure").count(), 2, "{writable}");
+    let forwarded = function(&plans, "forward_twice")?;
+    assert!(!forwarded.contains("nsupported"), "{forwarded}");
+    let helper = function(&plans, "call_twice")?;
+    assert!(!helper.contains("nsupported"), "{helper}");
+    assert_eq!(helper.matches("CallExclusiveClosure").count(), 2, "{helper}");
     let shared = function(&plans, "count_items")?;
     assert!(!shared.contains("nsupported"), "{shared}");
     assert_eq!(shared.matches("CallBorrowingClosure").count(), 1, "{shared}");
