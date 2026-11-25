@@ -1,8 +1,11 @@
-# behavior: a closure that writes through a writable alias changes the field the alias borrows, on every call through its last; an async body's writable alias stays the same borrow across an await, so the changes before and after the suspension both reach the field (RFC 129, #1846).
+# behavior: repeated calls through a helper preserve each closure's capture access, including writes to the original field. A direct writable closure call and a writable alias across an actual await also update the borrowed field (RFC 129, #1846).
 # expect-stdout:
 #   ["apple", "plum", "fig"]
 #   3
 #   ["apple", "plum", "fig"]
+#   ["apple", "plum", "fig"]
+#   plum: 1
+#   fig: 1
 
 """A writable alias captured by a closure and held across a suspension."""
 
@@ -24,6 +27,27 @@ def add_twice(mut cart: Cart) -> None:
     println(cart.items)
 
 
+def call_twice(callback: (str) -> None) -> None:
+    """Invoke a callable twice without keeping it."""
+    callback("plum")
+    callback("fig")
+
+
+def forward_twice(mut cart: Cart) -> None:
+    """Forward a writable closure and observe both writes on its owner."""
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    call_twice(add)
+    println(cart.items)
+
+
+def show_twice(cart: Cart) -> None:
+    """Forward a closure that reads a shared list alias on each call."""
+    items = cart.items
+    show: (str) -> None = (item) => println(f"{item}: {len(items)}")
+    call_twice(show)
+
+
 async def tally(mut cart: Cart) -> int:
     """Write through the same alias on each side of a scheduler yield."""
     mut items = cart.items
@@ -34,9 +58,12 @@ async def tally(mut cart: Cart) -> int:
 
 
 async def main() -> None:
-    """Observe both owners after their final borrow ends."""
+    """Observe the owners after their final borrows end."""
     mut first = Cart(items=["apple"])
     add_twice(first)
     mut second = Cart(items=["apple"])
     println(await tally(second))
     println(second.items)
+    mut third = Cart(items=["apple"])
+    forward_twice(third)
+    show_twice(Cart(items=["apple"]))

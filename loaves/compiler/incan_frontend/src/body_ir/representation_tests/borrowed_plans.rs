@@ -261,6 +261,11 @@ def forward_twice(mut cart: Cart) -> None:
     call_twice(add)
     println(cart.items)
 
+def show_twice(cart: Cart) -> None:
+    items = cart.items
+    show: (str) -> None = (item) => println(f"{item}: {len(items)}")
+    call_twice(show)
+
 def count_items(mut cart: Cart) -> int:
     items = cart.items
     count: () -> int = () => len(items)
@@ -318,6 +323,8 @@ def count_items(mut cart: Cart) -> int:
     let helper = function(&plans, "call_twice")?;
     assert!(!helper.contains("nsupported"), "{helper}");
     assert_eq!(helper.matches("CallExclusiveClosure").count(), 2, "{helper}");
+    let forwarded_shared = function(&plans, "show_twice")?;
+    assert!(!forwarded_shared.contains("nsupported"), "{forwarded_shared}");
     let shared = function(&plans, "count_items")?;
     assert!(!shared.contains("nsupported"), "{shared}");
     assert_eq!(shared.matches("CallBorrowingClosure").count(), 1, "{shared}");
