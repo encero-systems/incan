@@ -13,10 +13,18 @@ from files import items, json_text, optional_text as text, parse_json, remove, r
 from protocol_peer import Peer, decode, start
 
 
-pub def check_process(incan: str, project: Path) -> Result[None, str]:
+pub model CoverageFixture:
+    """The represented file to cover and the separate source that the report omits."""
+
+    pub covered: str
+    pub unreported: str
+    pub provider_root: Option[str] = None
+
+
+pub def check_process(incan: str, project: Path, coverage: Option[CoverageFixture]) -> Result[None, str]:
     """Verify process evidence: 1. Isolate coverage and absence. 2. Observe Git. 3. Check identity and MCP expiry."""
     # 1. Isolate coverage from Git and verify absent inputs.
-    absent = check_without_git(incan, project)?
+    absent = check_without_git(incan, project, coverage)?
     # 2. Observe deterministic, opt-in fixture history.
     git(project, ["init"])?
     mut paths: list[str] = []
@@ -48,46 +56,48 @@ pub def check_process(incan: str, project: Path) -> Result[None, str]:
     return check_memory(incan, project, foreign)
 
 
-def check_without_git(incan: str, project: Path) -> Result[GraphDocument, str]:
+def check_without_git(incan: str, project: Path, coverage: Option[CoverageFixture]) -> Result[GraphDocument, str]:
     """Park only the fixture's Git directory and restore it even when an assertion fails."""
     git_path = project.joinpath(".git")
     saved = project.joinpath(".git-contract-history")
     parked = git_path.is_dir()
     if parked:
         rename(git_path.0, saved.0).map_err((error) => str(error))?
-    result = check_optional_evidence(incan, project)
+    result = check_optional_evidence(incan, project, coverage)
     if parked:
         rename(saved.0, git_path.0).map_err((error) => str(error))?
     return result
 
 
-def check_optional_evidence(incan: str, project: Path) -> Result[GraphDocument, str]:
-    """Retain absent-input behavior and exercise coverage only in the existing Incan fixture."""
+def check_optional_evidence(
+    incan: str, project: Path, coverage: Option[CoverageFixture],
+) -> Result[GraphDocument, str]:
+    """Retain absent-input behavior and run coverage controls for the selected relationship fixture."""
     absent = graph(incan, project, true)?
     if len(risks(absent.records)) != 0:
         return Err("unavailable Git history invented process observations")
-    if project.joinpath("src").joinpath("main.incn").is_file():
+    if let Some(fixture) = coverage:
         base = document(incan, project, "jsonl", allow_errors=true)?
         snapshot = text(base.records[0], "snapshot_id")
         if not snapshot.startswith("snapshot:"):
             return Err("coverage fixture has no tolerant graph snapshot")
         report = "target/graph-contract/coverage-report.json"
         path = project.joinpath(report)
-        report_text = coverage_report(snapshot)?
+        report_text = coverage_report(snapshot, fixture.covered)?
         write(path, report_text)?
-        checked = check_coverage_observation(incan, project, base, report, report_text)
+        checked = check_coverage_observation(incan, project, base, report, report_text, fixture)
         remove(path)?
         checked?
-        check_unavailable_coverage(incan, project, report)?
+        check_unavailable_coverage(incan, project, report, fixture.covered)?
     return Ok(absent)
 
 
-def coverage_report(snapshot: str) -> Result[str, str]:
+def coverage_report(snapshot: str, covered: str) -> Result[str, str]:
     """Encode one represented source and one unmatched path while leaving the known provider unreported."""
     return json_text(JsonValue.object({
         "schema": JsonValue.string("incan.coverage-report/1"),
         "snapshot_id": JsonValue.string(snapshot),
-        "files": JsonValue.array([coverage_row("src/main.incn", 3, 5), coverage_row("src/unmatched.incn", 1, 2)]),
+        "files": JsonValue.array([coverage_row(covered, 3, 5), coverage_row("src/unmatched.incn", 1, 2)]),
     }))
 
 
@@ -106,20 +116,20 @@ def check_coverage_observation(
     base: GraphDocument,
     report: str,
     contents: str,
+    fixture: CoverageFixture,
 ) -> Result[None, str]:
     """Match the selected source and original report digest through the ordinary CLI and MCP."""
     selected = document(incan, project, "jsonl", risk=true, allow_errors=true, coverage_report=Some(report))?
     observations = risks(selected.records)
     if len(observations) != 1:
         return Err(f"coverage report produced {len(observations)} observations, expected one represented source")
-    main_path = project.joinpath("src").joinpath("main.incn").0
-    provider_path = project.joinpath("src").joinpath("provider.incn").0
+    covered_path = project.joinpath(fixture.covered).0
     files = [record for record in base.records if text(record, "record") == "file"]
-    sources = [record for record in files if text(record, "path") == main_path]
-    if len(sources) != 1 or provider_path not in [text(file, "path") for file in files]:
-        return Err("coverage fixture must represent exactly one main source and an unreported provider")
+    sources = [record for record in files if text(record, "path") == covered_path]
+    if len(sources) != 1 or not unreported_source_present(project, base.records[0], files, fixture)?:
+        return Err("coverage fixture must represent exactly one covered source and an unreported provider")
     digest = hexlify(sha256.digest(contents.encode("utf-8")))
-    require_coverage_record(observations[0], sources[0], f"sha256:{digest}")?
+    require_coverage_record(observations[0], sources[0], fixture.covered, f"sha256:{digest}")?
     if text(selected.records[0], "snapshot_id") == text(base.records[0], "snapshot_id"):
         return Err("coverage evidence did not change the process snapshot")
     current = document(incan, project, "jsonl", allow_errors=true)?
@@ -128,14 +138,27 @@ def check_coverage_observation(
     return check_coverage_mcp(incan, project, report, observations[0])
 
 
-def require_coverage_record(observation: JsonValue, source: JsonValue, digest: str) -> Result[None, str]:
+def unreported_source_present(
+    project: Path, header: JsonValue, files: list[JsonValue], fixture: CoverageFixture,
+) -> Result[bool, str]:
+    """Accept the omitted source in the root graph or under the referenced provider's source root."""
+    unreported = project.joinpath(fixture.unreported)
+    if let Some(relative_root) = fixture.provider_root:
+        # The root export references the provider graph without copying its file records.
+        provider = project.joinpath(relative_root).0
+        references = items(required(header, "dependencies")?)?
+        return Ok(unreported.is_file() and provider in [text(reference, "root_path") for reference in references])
+    return Ok(unreported.0 in [text(file, "path") for file in files])
+
+
+def require_coverage_record(observation: JsonValue, source: JsonValue, path: str, digest: str) -> Result[None, str]:
     """Require provenance, precise file identity, raw counts and one digest from the report bytes."""
     expected = [
         ("schema", "incan.process-risk/1"),
         ("source", "coverage_report"),
         ("provenance", "process_observed"),
-        ("path", "src/main.incn"),
-        ("name", "src/main.incn"),
+        ("path", path),
+        ("name", path),
         ("target_id", text(source, "id")),
         ("language", text(source, "language")),
         ("report_digest", digest),
@@ -175,13 +198,14 @@ def check_unavailable_coverage(
     incan: str,
     project: Path,
     report: str,
+    covered: str,
 ) -> Result[None, str]:
     """A missing and a stale report both produce no observations under an explicit selector."""
     missing = document(incan, project, "jsonl", risk=true, allow_errors=true, coverage_report=Some(report))?
     if len(risks(missing.records)) != 0:
         return Err("a missing coverage report invented a process observation")
     path = project.joinpath(report)
-    write(path, coverage_report("snapshot:stale")?)?
+    write(path, coverage_report("snapshot:stale", covered)?)?
     stale = document(incan, project, "jsonl", risk=true, allow_errors=true, coverage_report=Some(report))
     remove(path)?
     if len(risks(stale?.records)) != 0:

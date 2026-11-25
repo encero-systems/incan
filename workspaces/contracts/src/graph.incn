@@ -28,7 +28,7 @@ from graph_context_contract import check_context
 from graph_relocation_contract import check_relocation
 from graph_mcp_contract import check_mcp
 from graph_lsp_contract import check_lsp, check_untrusted_vocabulary
-from graph_process_contract import check_process
+from graph_process_contract import CoverageFixture, check_process
 from graph_document import GraphDocument, check_reader, document
 from graph_preparation_contract import check_registry_preparation, check_source_preparation
 from graph_page_contract import check_warm_pages
@@ -191,7 +191,14 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     check_tolerant_export(incan, project)?
     check_published_graph(incan, project)?
     check_lsp(incan, project)?
-    check_process(incan, project)?
+    package = string_field(original_records[0].get("package").unwrap_or(JsonValue.null()), "name")
+    coverage = match package:
+        "relationships" => Some(CoverageFixture(covered="src/main.incn", unreported="src/provider.incn"))
+        "rust_relationships" => Some(CoverageFixture(
+            covered="src/lib.rs", unreported="deps/provider/src/lib.rs", provider_root=Some("deps/provider"),
+        ))
+        _ => None
+    check_process(incan, project, coverage)?
     check_relocation(incan, project)?
     return Ok(failures)
 
