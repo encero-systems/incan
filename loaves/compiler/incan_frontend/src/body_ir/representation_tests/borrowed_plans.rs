@@ -300,10 +300,12 @@ def count_items(mut cart: Cart) -> int:
         );
     }
     let plans = planned(source)?;
-    for name in ["add_twice", "count_items"] {
-        let plan = function(&plans, name)?;
-        assert!(!plan.contains("nsupported"), "{name}: {plan}");
-    }
+    let writable = function(&plans, "add_twice")?;
+    assert!(!writable.contains("nsupported"), "{writable}");
+    assert_eq!(writable.matches("CallExclusiveClosure").count(), 2, "{writable}");
+    let shared = function(&plans, "count_items")?;
+    assert!(!shared.contains("nsupported"), "{shared}");
+    assert_eq!(shared.matches("CallBorrowingClosure").count(), 1, "{shared}");
     Ok(())
 }
 
