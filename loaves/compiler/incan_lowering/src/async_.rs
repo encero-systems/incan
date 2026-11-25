@@ -10,6 +10,7 @@ use incan_semantics_core::{
     IncanCallableParamKind, IncanInputAccess, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
 };
 
+use crate::call_arguments::stored_parameter_type;
 use crate::classes::{frame_type, function_name, is_program_entry};
 use crate::explicit_arguments::direct_view_access;
 use crate::frame::{
@@ -63,8 +64,8 @@ pub fn async_test_name(native: &str) -> String {
     format!("__incan_test_{native}")
 }
 
-/// Retain owned captures, including declaration-owned rest packs, and at most one nominal loan. An explicit borrowed
-/// input is captured as its loan, which the future holds until it completes.
+/// Retain owned captures, including declaration-owned rest packs, and at most one nominal loan. A borrowed input
+/// is captured as its loan, which the future holds until it completes.
 fn capture_types(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
@@ -86,6 +87,10 @@ fn capture_types(
         match parameter.input_access {
             IncanInputAccess::Shared | IncanInputAccess::InferredShared => ty = shared_receiver_type(ty)?,
             IncanInputAccess::Exclusive => ty = mutable_receiver_type(ty)?,
+            // The ordinary caller and evaluator already agree on nominal slot storage, including a `mut` loan.
+            IncanInputAccess::Inferred if matches!(ty, PlanType::Model(..)) => {
+                ty = stored_parameter_type(body, parameter, ty)?;
+            }
             _ => {}
         }
         validate_collection_capture(parameter.kind, &ty)?;
