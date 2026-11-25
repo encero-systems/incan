@@ -993,6 +993,40 @@ async def overlap(mut cart: Cart) -> int:
         "the inferred field loan must remain live across the awaited write: {:?}",
         checker.errors
     );
+
+    let copied_capture = r#"
+def copy_reject() -> None:
+    mut items = ["apple"]
+    add: (str) -> None = (item) => items.append(item)
+    add("plum")
+"#;
+    let checker = checked(copied_capture)?;
+    assert!(
+        checker
+            .errors
+            .iter()
+            .any(|error| error.message.contains("Cannot change 'items' inside a closure")),
+        "a captured owned local must still refuse a write: {:?}",
+        checker.errors
+    );
+
+    let writable_capture = r#"
+class Cart:
+    pub items: list[str]
+
+def add_twice(mut cart: Cart) -> None:
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    add("plum")
+    add("fig")
+    println(cart.items)
+"#;
+    let checker = checked(writable_capture)?;
+    assert!(
+        checker.errors.is_empty(),
+        "a direct caller-visible field loan must permit writes through the closure: {:?}",
+        checker.errors
+    );
     Ok(())
 }
 
