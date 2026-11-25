@@ -497,6 +497,32 @@ fn lower_ordinary_frame(
             frame_product("unreused", "ordinary", &format!("{} {reason}", frame_label(body)));
         }
     }
+    lower_fresh_ordinary_frame(
+        context,
+        program,
+        body,
+        unions,
+        frame,
+        intrinsics,
+        keyed,
+        &owner,
+        inputs.as_ref(),
+    )
+}
+
+/// Lower an ordinary frame and retain its product only after lowering succeeds.
+#[allow(clippy::too_many_arguments)]
+fn lower_fresh_ordinary_frame(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    body: &Body,
+    unions: &[IncanType],
+    frame: &FrameSource<'_>,
+    intrinsics: &mut Vec<EnumDeclaration>,
+    keyed: &mut KeyedProducts<'_>,
+    owner: &RecordOwner,
+    inputs: Option<&ProductInputs>,
+) -> Result<OrdinaryFrame, String> {
     let attempt = enter_producer(
         "compiler",
         "plan-function",
@@ -515,15 +541,7 @@ fn lower_ordinary_frame(
         DecoratorFrame::Normal,
     )?;
     finish_producer(attempt, "produced");
-    record_lowered_ordinary(
-        body,
-        &lowered,
-        intrinsics,
-        keyed,
-        &owner,
-        inputs.as_ref(),
-        (context, program),
-    )?;
+    record_lowered_ordinary(body, &lowered, intrinsics, keyed, owner, inputs, (context, program))?;
     let (function, runtime, pending, synthesized) = lowered;
     Ok((function.into(), runtime, pending, synthesized))
 }
