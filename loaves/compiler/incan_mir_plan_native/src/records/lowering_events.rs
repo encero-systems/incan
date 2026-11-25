@@ -17,6 +17,7 @@ use crate::wire::{
 
 const EVENT: &[u8] = b"lowevt\x00";
 const REFUSAL: &[u8] = b"lowref\x00";
+const EVALUATED_REFUSAL: &[u8] = b"lowevr\x00";
 const INTERFACE: &[u8] = b"lowint\x00";
 const DEFINITIONS: &[u8] = b"admdef\x00";
 const NOTE: &[u8] = b"admnot\x00";
@@ -69,6 +70,18 @@ static REFUSAL_SHAPE: Shape = Shape {
     ]),
 };
 static REFUSAL_SCHEMA: Schema = Schema::new(&[&REFUSAL_SHAPE]);
+static EVALUATED_REFUSAL_SHAPE: Shape = Shape {
+    selector: EVALUATED_REFUSAL,
+    path: "incan.evaluated-lowering-refusal/1",
+    body: ShapeBody::Record(&[
+        field(b"funct_", "function", "string"),
+        field(b"identi", "identity", "string"),
+        field(b"key___", "key", "string"),
+        field(b"reason", "refusal", "string"),
+    ]),
+};
+static EVALUATED_REFUSAL_SCHEMA: Schema = Schema::new(&[&EVALUATED_REFUSAL_SHAPE]);
+static REQUEST_REFUSAL_SCHEMA: Schema = Schema::new(&[&REFUSAL_SHAPE, &EVALUATED_REFUSAL_SHAPE]);
 
 static INTERFACE_SHAPE: Shape = Shape {
     selector: INTERFACE,
@@ -401,25 +414,74 @@ pub(crate) fn projected_definition(
 
 /// Encode one explicit skipped producer.
 pub fn encode_lowering_refusal(value: &LoweringRefusal) -> Result<Vec<u8>, String> {
-    encode_graph_row(
-        REFUSAL,
-        &REFUSAL_SCHEMA,
-        vec![
-            required(b"funct_", Wire::Text(value.function.clone())),
-            required(b"identi", Wire::Text(value.identity.clone())),
-            required(b"reason", Wire::Text(value.refusal.clone())),
-        ],
-    )
+    encode_refusal(value, None)
 }
 
-/// Authenticate all three fields before accepting an omitted native interface.
+/// Record the witnessed key of a lowered ordinary frame whose reusable product was refused.
+pub fn encode_evaluated_lowering_refusal(value: &LoweringRefusal, key: &str) -> Result<Vec<u8>, String> {
+    require_evaluated_refusal_key(key, &value.identity)?;
+    encode_refusal(value, Some(key))
+}
+
+/// Encode a refusal using the record variant selected by its optional scalar key.
+fn encode_refusal(value: &LoweringRefusal, key: Option<&str>) -> Result<Vec<u8>, String> {
+    let mut fields = vec![
+        required(b"funct_", Wire::Text(value.function.clone())),
+        required(b"identi", Wire::Text(value.identity.clone())),
+    ];
+    let (selector, schema) = if let Some(key) = key {
+        fields.push(required(b"key___", Wire::Text(key.to_owned())));
+        (EVALUATED_REFUSAL, &EVALUATED_REFUSAL_SCHEMA)
+    } else {
+        (REFUSAL, &REFUSAL_SCHEMA)
+    };
+    fields.push(required(b"reason", Wire::Text(value.refusal.clone())));
+    encode_graph_row(selector, schema, fields)
+}
+
+/// Authenticate a reported refusal before accepting an omitted native interface.
 pub fn decode_lowering_refusal(encoded: &[u8]) -> Result<LoweringRefusal, String> {
-    let fields = decode_graph_row(encoded, REFUSAL, &REFUSAL_SCHEMA, 3)?;
-    Ok(LoweringRefusal {
+    lowering_refusal_evidence(encoded).map(|(refusal, _)| refusal)
+}
+
+/// Preserve a witnessed evaluation key only on the typed evaluated refusal record.
+pub fn lowering_refusal_evidence(encoded: &[u8]) -> Result<(LoweringRefusal, Option<String>), String> {
+    let (row, dictionary) = admit_row(encoded, &REQUEST_REFUSAL_SCHEMA, MAX_RECORD_BYTES)?;
+    if row.records() != 1 || dictionary.entries != 1 || dictionary.inline {
+        return Err("lowering refusal must contain one exact described row".into());
+    }
+    let (selector, value) = row.read_root()?;
+    let Wire::Record(fields) = value else {
+        return Err("expected a lowering refusal record".into());
+    };
+    let (reason, key) = match (selector.as_slice(), fields.as_slice()) {
+        (REFUSAL, [_, _, reason]) => (reason, None),
+        (EVALUATED_REFUSAL, [_, identity, key, reason]) => {
+            let key = text(&key.value)?;
+            require_evaluated_refusal_key(&key, &text(&identity.value)?)?;
+            (reason, Some(key))
+        }
+        _ => return Err("unexpected lowering refusal selector or fields".into()),
+    };
+    let refusal = LoweringRefusal {
         function: text(&fields[0].value)?,
         identity: text(&fields[1].value)?,
-        refusal: text(&fields[2].value)?,
-    })
+        refusal: text(&reason.value)?,
+    };
+    Ok((refusal, key))
+}
+
+/// Require a nonempty owner and a lowercase hexadecimal scalar key for an evaluated refusal.
+fn require_evaluated_refusal_key(key: &str, identity: &str) -> Result<(), String> {
+    if identity.is_empty()
+        || key.len() != 64
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err("evaluated lowering refusal lacks a witnessed owner and scalar key".into());
+    }
+    Ok(())
 }
 
 /// Bind the keyed entry to the native plan verified by the producer.

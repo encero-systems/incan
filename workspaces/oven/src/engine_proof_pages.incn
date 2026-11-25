@@ -2,100 +2,187 @@
 
 from std.encoding.hex import hexlify
 from std.hash import sha256
+from std.json import JsonValue
 from std.primitives.crumb.descriptions import Description
-from std.primitives.crumb.values import Value
+from std.primitives.crumb.values import Value, ValueField
 from pub::incan_platform.store import FrameRead, Snapshot, Transaction, get, stage_put
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, items, number, text
+from pub::internal_models_bindings import single_row_reference_prefix
+from engine_lowering_evidence import BODY_ROWS, FUNCTION_ROWS, LoweringEvidence, LoweringWork, ProofSelection, body_values, function_values
 from engine_proof_records import ProofEvidence, append_evidence, render_report, report_json
 from graph_read_demands import GraphDemand
 
 pub const PAGE_ROWS: int = 128
 const HEAD: bytes = b"prfhed\x00"
 const PAGE: bytes = b"prfseg\x00"
+const LOWERING_HEAD: bytes = b"prfh2d\x00"
+const LOWERING_PAGE: bytes = b"prfp2g\x00"
 
 
-def head_description() -> Description:
-    return model_description(HEAD, "incan.engine.proof-pages/1", [
+model ProofRow:
+    """The selector and admitted field shape shared by a row's reader and writer."""
+
+    selector: bytes
+    description: Description
+    count: int
+
+    @staticmethod
+    def describe(selector: bytes, schema: str, fields: list[ModelField]) -> Self:
+        """Derive the row's exact field count from its declared wire contract."""
+        return ProofRow(selector=selector, description=model_description(selector, schema, fields), count=len(fields))
+
+
+def head_shape(lowering: bool) -> ProofRow:
+    """Use the v1 manifest for historical observation lanes and v2 when the activation reports lowering."""
+    mut schema = "incan.engine.proof-pages/1"
+    mut selector = HEAD
+    mut fields = [
         ModelField(identity=b"demand", name="demand_count", storage="i64"),
         ModelField(identity=b"frames", name="frame_count", storage="i64"),
         ModelField(identity=b"pages_", name="page_digests", storage="list<string>"),
         ModelField(identity=b"run_id", name="run", storage="string"),
         ModelField(identity=b"summry", name="summary_digest", storage="string"),
-    ])
+    ]
+    if lowering:
+        schema = "incan.engine.proof-pages/2"
+        selector = LOWERING_HEAD
+        fields = [
+            ModelField(identity=b"bodies", name="body_count", storage="i64"),
+            fields[0],
+            ModelField(identity=b"fnwork", name="function_count", storage="i64"),
+        ] + fields[1:] + [ModelField(identity=b"tracer", name="trace_request", storage="string")]
+    return ProofRow.describe(selector, schema, fields)
 
 
-def page_description() -> Description:
-    return model_description(PAGE, "incan.engine.proof-page/1", [
+def page_shape(lowering: bool) -> ProofRow:
+    """Describe the same ordered page with the additional typed lanes when the manifest names them."""
+    mut schema = "incan.engine.proof-page/1"
+    mut selector = PAGE
+    mut fields = [
         ModelField(identity=b"demand", name="graph_demands", storage="list<tuple<string,string,i64,string,string,string>>"),
         ModelField(identity=b"frames", name="store_reads", storage="list<tuple<string,string,i64,i64,i64>>"),
         ModelField(identity=b"number", name="ordinal", storage="i64"),
-    ])
+    ]
+    if lowering:
+        schema = "incan.engine.proof-page/2"
+        selector = LOWERING_PAGE
+        fields = [
+            ModelField(identity=b"bodies", name="body_roots", storage=BODY_ROWS),
+            fields[0],
+            ModelField(identity=b"fnwork", name="functions", storage=FUNCTION_ROWS),
+        ] + fields[1:]
+    return ProofRow.describe(selector, schema, fields)
 
 
 pub def frame_values(rows: list[FrameRead]) -> list[Value]:
+    """Encode physical observations in their captured order."""
     return [Value.Tuple([Value.Text(row.key), Value.Text(row.revision), signed(row.reads), signed(row.frame_bytes),
         signed(row.value_bytes)]) for row in rows]
 
 
 pub def demand_values(rows: list[GraphDemand]) -> list[Value]:
+    """Encode logical demand observations in their captured order."""
     return [Value.Tuple([Value.Text(row.role), Value.Text(row.store), signed(row.generation), Value.Text(row.manifest),
         Value.Text(row.view), Value.Text(row.key)]) for row in rows]
 
 
+model LaneCounts:
+    """Cumulative lengths in the four independent observation lanes."""
+
+    demands: int
+    frames: int
+    bodies: int = 0
+    functions: int = 0
+
+    def width(self) -> int:
+        """Page offsets are measured in the longest lane."""
+        return max([self.demands, self.frames, self.bodies, self.functions])
+
+    def valid_page(self, previous: int, actual: Borrowed[LaneCounts]) -> bool:
+        """Every lane must progress to the same end or to its own declared total."""
+        end = actual.width()
+        return (end > previous and end - previous <= PAGE_ROWS and actual.demands == min([self.demands, end])
+            and actual.frames == min([self.frames, end]) and actual.bodies == min([self.bodies, end])
+            and actual.functions == min([self.functions, end]))
+
+
 pub def stage_pages(
     mut transaction: Transaction, key: str, run: str, summary: bytes, frames: list[FrameRead], demands: list[GraphDemand],
+    lowering: Option[LoweringWork] = None,
 ) -> Result[None, str]:
-    """Publish the verified summary, every ordered observation page, and their manifest in one transaction."""
+    """Publish the summary, every ordered observation page, and their manifest in one transaction."""
     summary_digest = stage_content(transaction, summary)
+    mut counts = LaneCounts(demands=len(demands), frames=len(frames))
+    if let Some(work) = lowering:
+        counts.bodies = len(work.body_roots)
+        counts.functions = len(work.functions)
+    page_count = counts.width()
+    shape = page_shape(lowering is not None)
     mut pages: list[Value] = []
     mut offset = 0
-    while offset < len(frames) or offset < len(demands):
-        mut width = min([PAGE_ROWS, max([len(frames), len(demands)]) - offset])
-        mut rows = b""
+    while offset < page_count:
+        mut width = min([PAGE_ROWS, page_count - offset])
         while true:
             end = offset + width
-            attempted = encode_graph_row(PAGE, page_description(), [
+            mut fields = [
                 required_value(b"demand", Value.List(demand_values(demands[offset:end]))),
                 required_value(b"frames", Value.List(frame_values(frames[offset:end]))),
                 required_value(b"number", signed(len(pages))),
-            ])
-            match attempted:
+            ]
+            if let Some(work) = lowering:
+                fields = [
+                    required_value(b"bodies", Value.List(body_values(work.body_roots[offset:end]))),
+                    fields[0],
+                    required_value(b"fnwork", Value.List(function_values(work.functions[offset:end]))),
+                ] + fields[1:]
+            match encode_graph_row(shape.selector, shape.description, fields):
                 Ok(encoded) =>
-                    rows = encoded
+                    pages.append(Value.Text(stage_content(transaction, encoded)))
                     break
                 Err(reason) =>
                     if width == 1 or not byte_limit(reason):
                         return Err(reason)
                     width = width // 2
-        pages.append(Value.Text(stage_content(transaction, rows)))
         offset += width
-    head = encode_graph_row(HEAD, head_description(), [
-        required_value(b"demand", signed(len(demands))),
-        required_value(b"frames", signed(len(frames))),
+    mut manifest = [
+        required_value(b"demand", signed(counts.demands)),
+        required_value(b"frames", signed(counts.frames)),
         required_value(b"pages_", Value.List(pages)),
         required_value(b"run_id", Value.Text(run)),
         required_value(b"summry", Value.Text(summary_digest)),
-    ])?
+    ]
+    if let Some(work) = lowering:
+        manifest = [
+            required_value(b"bodies", signed(counts.bodies)),
+            manifest[0],
+            required_value(b"fnwork", signed(counts.functions)),
+        ] + manifest[1:] + [required_value(b"tracer", Value.Text(work.trace_request))]
+    manifest_shape = head_shape(lowering is not None)
+    head = encode_graph_row(manifest_shape.selector, manifest_shape.description, manifest)?
     stage_put(transaction, key, head)
     return Ok(None)
 
 
 pub def byte_limit(reason: str) -> bool:
+    """A page can shrink only when the encoder rejects its byte budget."""
     return reason == "Crumb request limit exceeded: bytes" or reason.startswith("encoded Crumb rows need ")
 
 
 def stage_content(mut transaction: Transaction, encoded: bytes) -> str:
+    """Stage the page once at its immutable content identity."""
     digest = hexlify(sha256.digest(encoded))
     stage_put(transaction, content_key(digest), encoded)
     return digest
 
 
 def content_key(digest: str) -> str:
+    """Address both page versions and summary rows in the existing content family."""
     return "incan.engine.proof-page/1\t" + digest
 
 
 def content(selected: Snapshot, digest: str) -> Result[bytes, str]:
+    """Verify the page bytes against the immutable root named by the manifest."""
     if len(digest) != 64:
         return Err("invalid engine proof content identity")
     match get(selected, content_key(digest)).map_err((error) => error.message())?:
@@ -106,31 +193,72 @@ def content(selected: Snapshot, digest: str) -> Result[bytes, str]:
             return Ok(encoded)
 
 
-pub def render_proof(selected: Snapshot, encoded: bytes, run: str) -> Result[str, str]:
+def decode_fields(encoded: bytes, shape: Borrowed[ProofRow]) -> Result[list[ValueField], str]:
+    """Admit the bounded row once using its version's shape before selecting any fields."""
+    count = match shape.count.try_resize[usize]():
+        Some(value) => value
+        None => return Err("proof row field count is outside the supported range")
+    return decode_graph_row(encoded, shape.selector, shape.description, count)
+
+
+def required_field_index(fields: Borrowed[list[ValueField]], identity: bytes) -> Result[int, str]:
+    """Find a required binary field identity in the admitted row without copying its value."""
+    for index in range(len(fields)):
+        if fields[index].identity == identity:
+            return Ok(index)
+    return Err("engine proof row is missing required field " + hexlify(identity))
+
+
+pub def render_proof(selected: Snapshot, encoded: bytes, run: str, selection: Option[ProofSelection] = None) -> Result[str, str]:
     """Validate the page count, ordinals, content digests, observation counts and exact request."""
-    fields = match decode_graph_row(encoded, HEAD, head_description(), 5):
-        Ok(decoded) => decoded
-        Err(_other_schema) => return report_json(encoded, run)
-    if text(fields[3].value)? != run:
+    prefix = encoded[:min([len(encoded), 32])]
+    lowering = single_row_reference_prefix(prefix, LOWERING_HEAD)
+    if not lowering and not single_row_reference_prefix(prefix, HEAD):
+        return report_json(encoded, run)
+    fields = decode_fields(encoded, head_shape(lowering))?
+    if text(fields[required_field_index(fields, b"run_id")?].value)? != run:
         return Err("proof page manifest names another run")
-    demands = number(fields[0].value)?
-    frames = number(fields[1].value)?
-    digests = items(fields[2].value)?
-    count = max([demands, frames])
-    if demands < 0 or frames < 0 or count == 0 or len(digests) < ((count - 1) // PAGE_ROWS) + 1 or len(digests) > count:
+    mut counts = LaneCounts(
+        demands=number(fields[required_field_index(fields, b"demand")?].value)?,
+        frames=number(fields[required_field_index(fields, b"frames")?].value)?,
+    )
+    digests = items(fields[required_field_index(fields, b"pages_")?].value)?
+    mut trace_request = ""
+    if lowering:
+        counts.bodies = number(fields[required_field_index(fields, b"bodies")?].value)?
+        counts.functions = number(fields[required_field_index(fields, b"fnwork")?].value)?
+        trace_request = text(fields[required_field_index(fields, b"tracer")?].value)?
+        if trace_request == "" or counts.bodies <= 0 or counts.functions <= 0:
+            return Err("engine proof manifest has no request or complete lowering cohort")
+    count = counts.width()
+    if counts.demands < 0 or counts.frames < 0 or count == 0 or len(digests) < ((count - 1) // PAGE_ROWS) + 1 or len(digests) > count:
         return Err("engine proof page manifest has invalid counts")
     mut evidence = ProofEvidence()
+    mut work = LoweringEvidence()
     mut consumed = 0
+    shape = page_shape(lowering)
     for ordinal in range(len(digests)):
         page = content(selected, text(digests[ordinal])?)?
-        row = decode_graph_row(page, PAGE, page_description(), 3)?
-        if number(row[2].value)? != ordinal:
+        row = decode_fields(page, shape)?
+        if number(row[required_field_index(row, b"number")?].value)? != ordinal:
             return Err("engine proof page is out of order")
-        append_evidence(row[1].value, row[0].value, evidence)?
-        end = max([len(evidence.frames), len(evidence.demands)])
-        if end <= consumed or end - consumed > PAGE_ROWS or len(evidence.demands) != min([demands, end]) or len(evidence.frames) != min([frames, end]):
+        append_evidence(
+            row[required_field_index(row, b"frames")?].value,
+            row[required_field_index(row, b"demand")?].value,
+            evidence,
+        )?
+        if lowering:
+            work.append(row[required_field_index(row, b"bodies")?].value, row[required_field_index(row, b"fnwork")?].value)?
+        actual = LaneCounts(demands=len(evidence.demands), frames=len(evidence.frames), bodies=len(work.bodies), functions=len(work.functions))
+        if not counts.valid_page(consumed, actual):
             return Err("engine proof page has incomplete or extra observations")
-        consumed = end
+        consumed = actual.width()
     if consumed != count:
         return Err("engine proof manifest omits observations")
-    return render_report(content(selected, text(fields[4].value)?)?, run, evidence)
+    work.check_owners()?
+    mut rendered: Option[JsonValue] = None
+    if lowering:
+        if let Some(completed) = selection:
+            rendered = Some(work.render(trace_request, completed))
+    summary = text(fields[required_field_index(fields, b"summry")?].value)?
+    return render_report(content(selected, summary)?, run, evidence, rendered)

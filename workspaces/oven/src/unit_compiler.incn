@@ -10,6 +10,7 @@ from pub::incan_mir_plan import (
     PLAN_MODULE_SELECTION_PAGE,
     decode_lowering_event,
     decode_native_interface,
+    lowering_refusal_evidence,
 )
 pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
@@ -38,6 +39,7 @@ from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import PreparedWarnings, check_for_warnings, compile_or_replay, replay_checked_warnings
 from compiler_worker import compile_resident, served_resident
+from engine_lowering_evidence import EvaluatedLoweringRefusal, PlanRefusalReport
 from files import discard_file, json_text, open_stream, read
 from observation import trace, trace_boundary
 from jec import begin as begin_work, record as record_work
@@ -68,17 +70,18 @@ pub model CompletedPlanEvents:
 
     root: str
     events: list[LoweringEvent]
+    refusals: Option[PlanRefusalReport] = None
 
     @staticmethod
-    pub def from_census(root: str, events: list[LoweringEvent]) -> Self:
+    pub def from_census(root: str, events: list[LoweringEvent], refusals: Option[PlanRefusalReport]) -> Self:
         """Keep the counted records and their request-owned report together."""
-        return CompletedPlanEvents(root=root, events=events)
+        return CompletedPlanEvents(root=root, events=events, refusals=refusals)
 
-    pub def take_for_report(mut self, report: Path) -> Result[list[LoweringEvent], str]:
+    pub def take_for_report(mut self, report: Path) -> Result[tuple[list[LoweringEvent], Option[PlanRefusalReport]], str]:
         """Move the counted records into publication for the same request-owned report."""
         if self.root != report.0:
             return Err("completed Plan events name another report")
-        return Ok(take(self.events))
+        return Ok((take(self.events), take(self.refusals)))
 
 
 # The schema of the sidecar a check writes with `--checked-bodies`.
@@ -398,7 +401,7 @@ def discard_graph_body_output(output: Path) -> Result[None, str]:
 
 
 pub def plan_record_counts(
-    report: Path, retain: bool,
+    report: Path, retain: bool, report_lowering: bool = false,
 ) -> Result[tuple[PlanRecordCounts, Option[CompletedPlanEvents]], str]:
     """Count loss-checked products and keep decoded events for the completed request when it will publish them."""
     mut counts = PlanRecordCounts()
@@ -407,6 +410,8 @@ pub def plan_record_counts(
     entries = report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?
     mut positions: Dict[str, int] = {}
     mut slots: list[Option[LoweringEvent]] = []
+    read_refusals = retain and report_lowering
+    mut refusals = PlanRefusalReport()
     if retain:
         # Keep the census read order. Popping the slots gives publication its existing sorted path order.
         names = sorted([entry.0 for entry in entries])
@@ -414,12 +419,32 @@ pub def plan_record_counts(
             positions[names[index]] = len(names) - 1 - index
             slots.append(None)
     for entry in entries:
-        if not entry.is_file() or not entry.name().endswith(".event"):
+        if not entry.is_file():
+            continue
+        name = entry.name()
+        if read_refusals and name.endswith(".refusal"):
+            if entry.is_symlink():
+                return Err("lowering refusal is not an ordinary request report file")
+            reading = begin_work()
+            bytes = entry.read_bytes().map_err((error) => error.message())?
+            record_work(Operation.FileRead, entry.0, reading, len(bytes))
+            observed, key = lowering_refusal_evidence(bytes)?
+            refusals.present = true
+            if let Some(product) = key:
+                if name != product + ".refusal" or observed.identity == "" or observed.function == "":
+                    return Err("evaluated lowering refusal differs from its request filename or owner")
+                refusals.evaluated.append(
+                    EvaluatedLoweringRefusal(key=product, symbol=observed.identity, function=observed.function),
+                )
+            continue
+        if not name.endswith(".event"):
             continue
         reading = begin_work()
         bytes = entry.read_bytes().map_err((error) => error.message())?
         record_work(Operation.FileRead, entry.0, reading, len(bytes))
         event = decode_lowering_event(bytes)?
+        if read_refusals and name != event.key + ".event":
+            return Err("lowering event differs from its request filename")
         if event.reused:
             counts.plan_reuses += 1
         else:
@@ -436,10 +461,15 @@ pub def plan_record_counts(
     while len(slots) > 0:
         if let Some(event) = slots.pop():
             events.append(event)
-    return Ok((counts, Some(CompletedPlanEvents.from_census(report.0, events))))
+    retained_refusals = match read_refusals:
+        true => Some(refusals)
+        false => None
+    return Ok((counts, Some(CompletedPlanEvents.from_census(report.0, events, retained_refusals))))
 
 
-pub def take_completed_plan_events(completed: CompletedPlanEvents, report: Path) -> Result[list[LoweringEvent], str]:
+pub def take_completed_plan_events(
+    completed: CompletedPlanEvents, report: Path,
+) -> Result[tuple[list[LoweringEvent], Option[PlanRefusalReport]], str]:
     """Move the validated event vector into publication for the same request-owned report."""
     mut selected = completed
     return selected.take_for_report(report)

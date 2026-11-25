@@ -8,6 +8,7 @@ from engine_capture import (
     AdmittedHome,
     BuildEpoch,
     CaptureOutcome,
+    CaptureCounters,
     CaptureRequest,
     CaptureResult,
     InputClass,
@@ -24,6 +25,7 @@ from engine_epochs import capture_submit, prepare_submit, after_projection
 from pub::incan_platform.store import FrameRead, begin, commit, get, keys_with_prefix, put
 from store_path_conversion import snapshot
 from graph_read_demands import GraphDemand
+from engine_lowering_evidence import BodyRootAuthority, LoweredFunction, LoweringDisposition, LoweringKind, LoweringWork, ProofSelection, SelectedBodyRoot
 from engine_messages import Submit
 from engine_programs import ProgramOutcome
 from engine_proofs import retain as retain_report, report as read_report
@@ -257,14 +259,53 @@ pub def test_frozen_inputs_get_zero_stats() -> Result[None, str]:
     retained = snapshot(reports).map_err((error) => error.message())?
     content = keys_with_prefix(retained, "incan.engine.proof-page/1\t").map_err((error) => error.message())?
     assert len(content) == 3
-    _ = commit(put(begin(retained), content[0], b"changed")).map_err((error) => error.message())?
-    match read_report(reports, paged_run):
-        Ok(_corrupt) => return Err("engine report accepted changed page content")
-        Err(reason) => assert reason.contains("differs from its root")
+    verify_retained_lowering_pages(reports, counters, demand, content)?
+    verify_damaged_proof_page(reports, paged_run, content[0])?
     assert proof.require("artifact_refusals").map_err((error) => error.message())?.equals(expected_refusals)
     assert proof.require("frozen_stats").map_err((error) => error.message())?.expect_int().map_err(
         (error) => error.message(),
     )? == 1
+    return Ok(None)
+
+
+def verify_retained_lowering_pages(
+    reports: Path, counters: CaptureCounters, demand: GraphDemand, earlier: list[str],
+) -> Result[None, str]:
+    """Retain two unequal typed lanes through the existing pager and bind them only at the live selector."""
+    run = "30000000000000000000000000000000"
+    bodies = [SelectedBodyRoot(owner=f"owner-{ordinal}", function=f"function-{ordinal}", root=f"root-{ordinal}", authority=BodyRootAuthority.CompilerPublished) for ordinal in range(PAGE_ROWS + 2)]
+    ordinary = [LoweredFunction(key=f"plan-{ordinal}", kind=LoweringKind.Ordinary, disposition=LoweringDisposition.Admitted,
+        owner=f"owner-{ordinal}") for ordinal in range(PAGE_ROWS + 2)]
+    helper = LoweredFunction(key="synthesized", kind=LoweringKind.Synthesized, disposition=LoweringDisposition.Evaluated)
+    functions = ordinary + [helper]
+    work = LoweringWork(trace_request="request", body_roots=bodies, functions=functions)
+    _ = retain_report(reports, run, counters, ProgramOutcome(code=0, graph_demands=[demand], lowering_work=Some(work)))?
+    selected = snapshot(reports).map_err((error) => error.message())?
+    historical = parse(read_report(reports, run)?).map_err((error) => error.message())?
+    assert historical.get("lowering_work").is_none()
+    live = ProofSelection(view=selected.view, snapshot=selected.digest)
+    rendered = parse(read_report(reports, run, Some(live))?).map_err((error) => error.message())?
+    lowering = rendered.require("lowering_work").map_err((error) => error.message())?
+    rows = lowering.require("body_roots").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+    observed = lowering.require("functions").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+    assert len(rows) == PAGE_ROWS + 2 and len(observed) == PAGE_ROWS + 3
+    assert lowering.require("snapshot").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())? == selected.digest
+    assert rows[PAGE_ROWS + 1].require("root").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())? == f"root-{PAGE_ROWS + 1}"
+    assert rows[PAGE_ROWS + 1].require("authority").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())? == "compiler-published"
+    assert observed[PAGE_ROWS].require("key").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())? == f"plan-{PAGE_ROWS}"
+    keys = keys_with_prefix(selected, "incan.engine.proof-page/1\t").map_err((error) => error.message())?
+    content = [key for key in keys if key not in earlier]
+    assert len(content) == 3
+    return verify_damaged_proof_page(reports, run, content[0])
+
+
+def verify_damaged_proof_page(reports: Path, run: str, key: str) -> Result[None, str]:
+    """An authentic manifest must refuse content that changed at its retained digest."""
+    retained = snapshot(reports).map_err((error) => error.message())?
+    _ = commit(put(begin(retained), key, b"changed")).map_err((error) => error.message())?
+    match read_report(reports, run):
+        Ok(_corrupt) => return Err("engine report accepted changed page content")
+        Err(reason) => assert reason.contains("differs from its root")
     return Ok(None)
 
 

@@ -21,7 +21,7 @@ from engine_protocol_fixtures import json_text_is
 from engine_messages import Message, Stop
 from engine_wire import zero_id
 from files import write
-from json_fields import required_text
+from json_fields import required_items, required_text
 from scratch import scratch_directory
 from store_path_conversion import snapshot
 
@@ -232,49 +232,161 @@ def plan_events_same_owner(issue: JsonValue, row: JsonValue) -> Result[bool, str
     return Ok(proof_count(issue, "process")? == proof_count(row, "process")?)
 
 
-pub def require_one_read_per_plan_event(
-    seed: Dict[str, str], beta: Dict[str, str], edited: JsonValue, predecessor: Borrowed[PlanReportPredecessor],
+pub def verify_one_module_counts(report: JsonValue) -> Result[None, str]:
+    """Preserve the warm request's aggregate lowering and whole-module admission controls."""
+    diagnostic = report.to_json().map_err((error) => error.message())?
+    assert proof_count(report, "plan_function_evaluations")? == 1, diagnostic
+    assert proof_count(report, "plan_module_reuses")? == 3, diagnostic
+    return Ok(None)
+
+
+pub model LoweringReportSnapshot:
+    """The engine report and the selected snapshot observed for that request."""
+
+    pub report: JsonValue
+    pub selected: str
+
+
+pub def capture_lowering_report(report: JsonValue, store: Path) -> Result[LoweringReportSnapshot, str]:
+    """Read the reported project view immediately after the engine completes this fixture request."""
+    if let Some(evidence) = report.get("lowering_work"):
+        view = required_text(evidence, "view")?
+        if view == "":
+            return Err("lowering evidence has no selected project view")
+        selected = snapshot(store, view).map_err((error) => error.message())?
+        return Ok(LoweringReportSnapshot(report=report, selected=selected.digest))
+    # Let both edits finish and keep the ordinary C71 controls before reporting missing evidence.
+    return Ok(LoweringReportSnapshot(report=report, selected=""))
+
+
+pub def require_two_edit_lowering(
+    traces: list[Dict[str, str]], proofs: list[LoweringReportSnapshot], predecessor: Borrowed[PlanReportPredecessor],
 ) -> Result[None, str]:
-    """Join the beta request and the same event bytes read by census and publication."""
-    for work in seed.keys():
-        if beta.get(work) != Some(seed[work]):
+    """Check each retained report window, then match its complete lowering work to the preceding Body roots."""
+    mut issued: list[str] = []
+    for edge in [1, 2]:
+        report = proofs[edge].report
+        issued.append(require_one_read_per_plan_event(traces[edge - 1], traces[edge], report, predecessor)?)
+    if not proofs[1].report.get("lowering_work").is_some() or not proofs[2].report.get("lowering_work").is_some():
+        return Err("2.5: warm reports omit request-bound Body roots and complete keyed lowering work")
+    seed = (selected_body_roots(proofs[0])?)[0]
+    beta, beta_names, beta_work = selected_body_roots(proofs[1])?
+    alpha, alpha_names, alpha_work = selected_body_roots(proofs[2])?
+    require_lowering_match(seed, beta, beta_names, beta_work, issued[0], "lone_beta_one")?
+    return require_lowering_match(beta, alpha, alpha_names, alpha_work, issued[1], "lone_alpha_one")
+
+
+def selected_body_roots(
+    proof: Borrowed[LoweringReportSnapshot],
+) -> Result[tuple[Dict[str, str], Dict[str, str], JsonValue], str]:
+    """Keep each canonical owner and its semantic Body root once at the actual selected snapshot."""
+    evidence = proof.report.require("lowering_work").map_err((error) => error.message())?
+    if proof.selected == "" or not json_text_is(evidence, "snapshot", proof.selected):
+        return Err("lowering evidence names another committed snapshot")
+    mut roots: Dict[str, str] = {}
+    mut names: Dict[str, str] = {}
+    for row in required_items(evidence, "body_roots")?:
+        owner = required_text(row, "owner")?
+        root = required_text(row, "root")?
+        name = required_text(row, "function")?
+        if owner == "" or root == "" or name == "" or owner in roots:
+            return Err("selected Body root lacks a unique owner, semantic root or function")
+        roots[owner] = root
+        names[owner] = name
+    return Ok((roots, names, evidence))
+
+
+def require_lowering_match(
+    before: Borrowed[Dict[str, str]], after: Borrowed[Dict[str, str]], names: Borrowed[Dict[str, str]],
+    evidence: JsonValue, request: str, expected: str,
+) -> Result[None, str]:
+    """Compare exact ordinary evaluations to changed roots and require admission of every unchanged owner."""
+    if request == "" or not json_text_is(evidence, "request", request):
+        return Err("lowering evidence names another engine request")
+    fixture_functions = [
+        "lone_alpha_one", "lone_alpha_two", "lone_beta_one", "lone_beta_two", "lone_gamma_one", "lone_gamma_two", "main",
+    ]
+    if sorted([name for name in names.values()]) != fixture_functions:
+        return Err("selected Body roots differ from the fixture's declared functions")
+    if sorted([owner for owner in before.keys()]) != sorted([owner for owner in after.keys()]):
+        return Err("selected Body roots omit a fixture owner or publish a foreign owner")
+    changed = [owner for owner in after.keys() if after[owner] != before[owner]]
+    if len(changed) != 1 or names[changed[0]] != expected:
+        return Err(f"expected only {expected} to change its semantic Body root")
+    return require_ordinary_dispositions(evidence, after, changed[0])
+
+
+def require_ordinary_dispositions(
+    evidence: JsonValue, roots: Borrowed[Dict[str, str]], changed: str,
+) -> Result[None, str]:
+    """Check the complete keyed work cohort, keeping synthesized routes separate from ordinary owners."""
+    mut keys: set[str] = set()
+    mut ordinary: set[str] = set()
+    for row in required_items(evidence, "functions")?:
+        key = required_text(row, "key")?
+        kind = required_text(row, "kind")?
+        disposition = required_text(row, "disposition")?
+        if key == "" or key in keys or disposition not in ["evaluated", "admitted", "reused"]:
+            return Err("lowering work lacks a unique key or a known disposition")
+        keys.add(key)
+        if kind in ["entry", "synthesized", "recovery", "finalization"]:
+            continue
+        owner = required_text(row, "owner")?
+        if kind != "ordinary" or owner not in roots or owner in ordinary:
+            return Err("lowering work names an unknown route or a foreign or repeated ordinary owner")
+        ordinary.add(owner)
+        if (disposition == "evaluated") != (owner == changed):
+            return Err("ordinary lowering evaluations differ from changed semantic Body roots")
+    if len(ordinary) != len(roots):
+        return Err("lowering work omits an ordinary Body owner")
+    return Ok(None)
+
+
+def require_one_read_per_plan_event(
+    before: Borrowed[Dict[str, str]], after: Borrowed[Dict[str, str]],
+    edited: JsonValue, predecessor: Borrowed[PlanReportPredecessor],
+) -> Result[str, str]:
+    """Join one edit's actual request to the exact event files read by census and publication."""
+    for work in before.keys():
+        if after.get(work) != Some(before[work]):
             return Err("the preceding Plan event trace changed")
     mut rows: list[JsonValue] = []
     mut issued: list[JsonValue] = []
-    for work in beta.keys():
-        if work in seed:
+    for work in after.keys():
+        if work in before:
             continue
-        row = parse(beta[work]).map_err((error) => error.message())?
+        row = parse(after[work]).map_err((error) => error.message())?
         if json_text_is(row, "operation", "driver_request"):
             issued.append(row)
         else:
             rows.append(row)
     if len(issued) != 1:
-        return Err("the beta edit did not issue one Plan report request")
+        return Err("the edit did not issue one Plan report request")
     if not predecessor.matches_driver_request(issued[0]):
-        return Err("the beta report counts name another descriptor")
-    return require_beta_event_windows(issued[0], rows, edited)
+        return Err("the edited report counts name another descriptor")
+    require_plan_event_windows(issued[0], rows, edited)?
+    return required_text(issued[0], "request")
 
 
-def require_beta_event_windows(issue: JsonValue, rows: list[JsonValue], edited: JsonValue) -> Result[None, str]:
+def require_plan_event_windows(issue: JsonValue, rows: list[JsonValue], edited: JsonValue) -> Result[None, str]:
     """Establish the two disjoint report consumers after the selected compiler request."""
     mut reports: list[JsonValue] = []
     mut lowering: list[JsonValue] = []
     mut reads: list[JsonValue] = []
     for row in rows:
         if not plan_events_same_owner(issue, row)?:
-            return Err("the beta Plan event trace spans another request owner")
+            return Err("the edited Plan event trace spans another request owner")
         match required_text(row, "operation")?:
             "engine_sidecar_authentication" => reports.append(row)
             "engine_graph_staging" => lowering.append(row)
             "file_read" => reads.append(row)
-            _ => return Err("unexpected beta Plan event operation")
+            _ => return Err("unexpected Plan event operation")
     if len(reports) != 1 or len(lowering) != 1:
-        return Err("the beta request has no unique Plan census and publication windows")
+        return Err("the edited request has no unique Plan census and publication windows")
     report = reports[0]
     after = lowering[0]
     if proof_count(issue, "end_ns")? > proof_count(report, "start_ns")? or proof_count(report, "end_ns")? > proof_count(after, "start_ns")?:
-        return Err("the beta Plan event windows overlap or precede compiler completion")
+        return Err("the edited Plan event windows overlap or precede compiler completion")
     expected = proof_count(edited, "plan_function_evaluations")? + proof_count(edited, "plan_function_reuses")?
     return require_event_file_cohort(reads, report, after, expected)
 
@@ -295,17 +407,17 @@ def require_event_file_cohort(reads: list[JsonValue], census: JsonValue, publica
         path = required_text(row, "key")?
         size = proof_count(row, "bytes")?
         if Path(path).parent().0 != report or size <= 0 or proof_count(row, "calls")? != 1:
-            return Err("the beta Plan reader named a foreign or empty event")
+            return Err("the edited Plan reader named a foreign or empty event")
         if span_contains(census, row)? and path not in first:
             first[path] = size
         elif span_contains(publication, row)? and path not in second:
             second[path] = size
         else:
-            return Err("a beta Plan event read was duplicated inside one phase or outside both")
+            return Err("a Plan event read was duplicated inside one phase or outside both")
     if expected <= 0 or len(first) != expected or (len(second) != 0 and second != first):
-        return Err("the beta Plan event reads lack the complete actual file cohort")
+        return Err("the edited Plan event reads lack the complete actual file cohort")
     observed = len(first) + len(second)
-    assert observed == expected, f"the beta Plan report read {observed} events; expected {expected} from one read per file"
+    assert observed == expected, f"the edited Plan report read {observed} events; expected {expected} from one read per file"
     return Ok(None)
 
 
