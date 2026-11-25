@@ -255,8 +255,8 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
 
 pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     """
-    A body edit in one module of a four-module unit lowers that module alone: lowering visits no body of the three
-    unchanged modules, which are admitted whole, and evaluates one plan function.
+    A one-module edit evaluates one plan function. The three unchanged modules are admitted whole, including a
+    module with one scalar member and another that slices a list and joins its strings.
     """
     scratch = scratch_directory()?
     root = scratch.path()
@@ -265,12 +265,14 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     store = root.joinpath("store")
     observations = root.joinpath("trace")
     observations.mkdir(true, true).map_err((error) => error.message())?
-    for name in ["lone_alpha", "lone_beta", "lone_gamma"]:
+    for name in ["lone_alpha", "lone_beta"]:
         write(root.joinpath(name + ".incn"), lone_module(name, "1"))?
+    joined_result = 'value * 2 + len(" ".join(["a", "b", "c"][:value + 1]))'
+    write(root.joinpath("lone_gamma.incn"), lone_module("lone_gamma", "1", joined_result))?
     imports = "from lone_alpha import lone_alpha_one, lone_alpha_two\nfrom lone_beta import lone_beta_one, lone_beta_two\nfrom lone_gamma import lone_gamma_one, lone_gamma_two\n"
     calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
     write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
-    _ = traced_example_run(binary, source, store, observations, "12")?
+    _ = traced_example_run(binary, source, store, observations, "15")?
     cold_reconciliations = observed_plan_reconciliations(observations)?
     cold = observed_module_work(observations)?
     projections = observed_source_projections(observations)?
@@ -284,21 +286,19 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     seed_requests = plan_report_requests(observations, root)?
     seed_event_rows = plan_report_event_rows(observations, root)?
     write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
-    edited = traced_example_run(binary, source, store, observations, "16")?
+    edited = traced_example_run(binary, source, store, observations, "19")?
     warm_reconciliations = observed_plan_reconciliations(observations)?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
     warm = observed_module_work(observations)?
     verify_module_work(cold, warm, "lone_beta")?
-    # The three unchanged modules, `main` among them, are restored from their module plan records.
     assert proof_count(edited, "plan_module_reuses")? == 3, diagnostic
     retained_members = verify_borrowed_gamma_members(store)
     before_member_rows = ordinary_member_rows(observations)
     beta_event_rows = plan_report_event_rows(observations, root)
     predecessor = mark_plan_report_predecessor(observations, root, seed_requests)?
-    # A later edit of a module that was restored lowers that module again, and its edit reaches the program.
     write(root.joinpath("lone_alpha.incn"), lone_module("lone_alpha", "7"))?
-    again = traced_example_run(binary, source, store, observations, "22")?
+    again = traced_example_run(binary, source, store, observations, "25")?
     again_diagnostic = again.to_json().map_err((error) => error.message())?
     assert proof_count(again, "plan_function_evaluations")? == 1, again_diagnostic
     assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
@@ -459,10 +459,10 @@ pub def test_unchanged_import_cycle_is_admitted_as_one_component() -> Result[Non
     return stop_example_engine(binary, store)
 
 
-def lone_module(name: str, addend: str) -> str:
-    """One module of two functions; `addend` is the text a body edit changes."""
+def lone_module(name: str, addend: str, second_result: str = "value * 2") -> str:
+    """Write source for an edited first body and an unchanged second body."""
     one = f"pub def {name}_one(value: int) -> int:\n    return value + {addend}\n\n\n"
-    return one + f"pub def {name}_two(value: int) -> int:\n    return value * 2\n"
+    return one + f"pub def {name}_two(value: int) -> int:\n    return {second_result}\n"
 
 
 def traced_example_run(binary: str, source: Path, store: Path, trace: Path, expected: str) -> Result[JsonValue, str]:
