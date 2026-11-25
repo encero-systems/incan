@@ -526,11 +526,21 @@ impl TypeChecker {
     /// graph carries the authenticated owner and facts without forcing unrelated bodies through explicit-flow
     /// admission. There is never a second graph for the same callable.
     pub(in crate::typechecker) fn record_mutation_flow(&mut self, span: Span) {
-        let Some(owner) = self.current_body_identity().cloned() else {
+        let Some(body) = self.mutation.current.as_ref() else {
             return;
         };
+        let owner = body.identity.clone();
         if !self.mutation.activates_graph(&owner) {
             return;
+        }
+        let field_changes = self.inferred_parameter_field_changes(body);
+        if !field_changes.is_empty() {
+            self.mutation
+                .source
+                .changed
+                .entry(owner.clone())
+                .or_default()
+                .extend(field_changes);
         }
         let mutation = self.mutation.graph_body(&owner);
         let existing = self.type_info.protocols.explicit_input_flow.get_mut(&owner);
@@ -545,6 +555,59 @@ impl TypeChecker {
                     .insert(owner.clone(), super::flow::Graph::mutation_only(owner, span, mutation));
             }
         }
+    }
+
+    /// Add reachable writes through admitted direct field aliases to their caller-visible parameter's effects.
+    fn inferred_parameter_field_changes(&self, body: &MutParamBody) -> BTreeSet<String> {
+        use super::flow::{Access, Event, LoanKind, Projection, Root};
+
+        let protocols = &self.type_info.protocols;
+        let Some(super::InputFlow::Checked { graph, analysis }) = protocols.explicit_input_flow.get(&body.identity)
+        else {
+            return BTreeSet::new();
+        };
+        if !analysis.conflicts.is_empty() {
+            return BTreeSet::new();
+        }
+        let fields: BTreeMap<_, _> = graph
+            .local_loans
+            .iter()
+            .filter_map(|(binding, id)| {
+                let mode = protocols.explicit_local_modes.get(binding)?;
+                // An inferred field mode is anchored at the binding rather than an authored ownership annotation.
+                if mode.owner != body.identity || !mode.writable || mode.annotation != binding.declaration_span {
+                    return None;
+                }
+                let loan = graph.loans.get(id.0)?;
+                let (Root::Binding(parameter), [Projection::Field(_)]) =
+                    (&loan.source.root, loan.source.projection.as_slice())
+                else {
+                    return None;
+                };
+                (loan.kind == LoanKind::Exclusive
+                    && loan.writable
+                    && loan.parent.is_none()
+                    && parameter.kind == SemanticSourceTargetKind::Parameter
+                    && body.params.get(&parameter.declaration_name) == Some(&parameter.declaration_span))
+                .then_some((*id, parameter.declaration_name.as_str()))
+            })
+            .collect();
+        let mut changes = BTreeSet::new();
+        if !fields.is_empty() {
+            for (node, live) in graph.nodes.iter().zip(&analysis.live_before) {
+                if let Event::Access {
+                    access: Access::Write,
+                    through: Some(loan),
+                    ..
+                } = &node.event
+                    && live.contains(loan)
+                    && let Some(parameter) = fields.get(loan)
+                {
+                    changes.insert((*parameter).to_owned());
+                }
+            }
+        }
+        changes
     }
 }
 
