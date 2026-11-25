@@ -75,7 +75,7 @@ pub def verify_generic_main_position_controls(binary: str, seed: str) -> Result[
     assert seed_rebuilds == 1, "the trace control did not capture one actual cold ordinary main product"
 
     moved = seed.replace("def main() -> None:", "# move only main\ndef main() -> None:")
-    assert moved != seed and moved.count("# move only main") == 1
+    assert moved != seed and len(moved.split("# move only main")) == 2
     write(source, moved)?
     repositioned = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
     stop_example_engine(binary, store)?
@@ -257,7 +257,7 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     assert counts_before.get("lowered ordinary main::main", 0) == 1
 
     length_edit = seed.replace("return items[0]", "picked = items[0]\n    return picked")
-    assert length_edit != seed and length_edit.count("\n") == seed.count("\n") + 1
+    assert length_edit != seed and len(length_edit.split("\n")) == len(seed.split("\n")) + 1
     write(source, length_edit)?
     warm = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
     stop_example_engine(binary, store)?
