@@ -1226,7 +1226,7 @@ mod tests {
                 layout_modules: Vec::new(),
             },
             cacheable_bodies: Vec::new(),
-            member_owners: BTreeMap::new(),
+            member_owners: Default::default(),
             sources: Vec::new(),
             files: Vec::new(),
             captured_source_paths: Default::default(),
