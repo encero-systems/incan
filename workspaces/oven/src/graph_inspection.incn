@@ -71,6 +71,7 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
     "--stale",
     "--task",
     "--budget",
+    "--coverage-report",
 ]
 # The versions of the cache keys for ordinary answers and raw exports.
 const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/19"
@@ -100,6 +101,7 @@ pub model GraphOptions:
     pub task: str = ""
     pub budget: int = 8000
     pub risk: bool = false
+    pub coverage_report: Option[str] = None
     # 0.5.1's feature options: the root package's features the inspected unit is checked with.
     pub request: FeatureRequest = FeatureRequest()
 
@@ -168,6 +170,8 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
             index += 1
     if result.path == "":
         return Err("a PATH is required")
+    if result.coverage_report is not None and not result.risk:
+        return Err("--coverage-report requires --risk")
     if result.strict and result.allow_errors:
         return Err("--allow-errors cannot be combined with --strict")
     if result.format not in ["json", "jsonl", "compact"]:
@@ -197,7 +201,8 @@ pub def help_text() -> str:
             "  --stale SNAPSHOT            Check an exported snapshot: identity.",
             "  --strict                    Refuse unchecked units. Plain exports check by default.",
             "  --allow-errors              Export unchecked units' parseable facts.",
-            "  --risk                      Include optional local git observations.",
+            "  --risk                      Include optional Git and coverage evidence.",
+            "  --coverage-report PATH      Read one coverage report with --risk.",
             "  --substitute NAME=DIR       Select a local dependency source; repeatable.",
             "  --features A,B              Add public root-package features.",
             "  --no-default-features       Disable the root package's default feature.",
@@ -232,6 +237,12 @@ def apply_flag(mut result: GraphOptions, flag: str, item: str) -> Result[None, s
         result.task = item
     elif flag == "--budget":
         result.budget = budget_of(item)?
+    elif flag == "--coverage-report":
+        if item.strip() == "" or item.startswith("--"):
+            return Err("--coverage-report needs a path")
+        if result.coverage_report is not None:
+            return Err("--coverage-report can be given only once")
+        result.coverage_report = Some(item)
     elif flag == "--stale":
         if not item.startswith("snapshot:"):
             return Err("--stale needs an exported snapshot: identity")
@@ -586,7 +597,7 @@ def response(
     mut process: list[JsonValue] = []
     if selected.risk:
         files = read_records(paths, root, toolchain, "file", selected.strict, len(notes) > 0, snapshot)?
-        process = process_facts(anchor_root(Path(root)), files)?
+        process = process_facts(anchor_root(Path(root)), files, snapshot, selected.coverage_report)?
         if len(process) > 0:
             observed = JsonValue.array(process).to_json().map_err((error) => error.message())?
             snapshot = f"snapshot:{fingerprint([snapshot, observed])?}"

@@ -1,9 +1,10 @@
-"""Optional process observations over local git history; absence never becomes a zero-risk claim."""
+"""Optional process observations from the selected local Git and coverage evidence."""
 
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue, parse
 from graph_cache import output_text
+from graph_coverage import coverage_facts
 from graph_queries import nested, text
 from unit_freshness import fingerprint
 
@@ -56,12 +57,22 @@ def history(document: str) -> Result[list[Commit], str]:
     return Ok(commits)
 
 
-pub def process_facts(root: Path, records: list[JsonValue]) -> Result[list[JsonValue], str]:
+pub def process_facts(
+    root: Path, records: list[JsonValue], snapshot: str, coverage_report: Option[str],
+) -> Result[list[JsonValue], str]:
+    """Combine available local evidence; each contributor keeps its own absence and provenance rules."""
+    facts = git_facts(root, records)?
+    if let Some(report) = coverage_report:
+        return Ok(facts + coverage_facts(root, records, snapshot, Path(report))?)
+    return Ok(facts)
+
+
+def git_facts(root: Path, records: list[JsonValue]) -> Result[list[JsonValue], str]:
     """Observe at most 100 non-merge commits for represented files, with raw churn, author touches and co-change.
 
     1. Read local history without optional locks. 2. Select represented repository files. 3. Attach raw evidence.
     Co-change excludes commits touching more than 256 paths, an explicit bulk-change control. These observations
-    make no defect predictions, and unavailable coverage or git inputs produce no corresponding records.
+    make no defect predictions. Unavailable Git history produces no Git observations.
     """
     # 1. Read bounded local history.
     repository = git(root, ["rev-parse", "--show-toplevel"]).strip()
