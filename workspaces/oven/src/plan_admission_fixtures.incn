@@ -15,12 +15,15 @@ from pub::incan_mir_plan import (
     encode_whole_module_admission,
     write_module_placement,
 )
-from pub::internal_models.records import encode_record_key
-from pub::incan_platform.store import snapshot
+from pub::internal_models.records import RecordKey, encode_record_key
+from pub::incan_platform.store import Snapshot, snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from compiler_body_keys import body_key
-from compiler_plan_modules import plan_module_admissions
+from compiler_plan_modules import PlanModuleAdmissions, plan_module_admissions
 from compiler_plan_values import AdmittedPlanModule
+from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord
+from compiler_selected_body_roots import BodyRootSelection
+from graph_read_demands import begin_graph_demands, finish_graph_demands
 
 
 pub def verify_compact_module_admission_scope(report: Path) -> Result[None, str]:
@@ -83,4 +86,39 @@ pub def verify_compact_module_admission_scope(report: Path) -> Result[None, str]
     empty = plan_module_admissions(products.joinpath("admissions"), Some(graph), [], Some(pin))?
     assert empty.restored_modules() == [] and len(empty.compact) == 0
     saved.unlink().map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def verify_report_only_owner_reads(
+    graph: Snapshot, local: RecordKey, final: RecordKey, body: RecordKey,
+) -> Result[None, str]:
+    """A whole admitted member reports from the Body frame alone and still refuses an invalid owner header."""
+    owner = body.identity
+    file = "src/main.incn"
+    key = body_key("plan-module", body.origin, file, "checked", "report-fixture")
+    symbol = "function:main::member"
+    member = PlanModuleFunction(identity=owner, symbol=symbol, function="main_member", key="product", event=b"")
+    module = AdmittedPlanModule(key=key, plan=PlanModuleValue(module="main", functions=[member]), value_digest="plan",
+        namespace=0, certificate="rank", admitted_snapshot=graph.digest, placement_current=true)
+    note = WholeModuleAdmission(module="main", output=encode_record_key(key)?, digest="plan", count=1, selection="pin")
+    admissions = PlanModuleAdmissions(compact={"main": note})
+    mut covered = CoveredBodyOwners()
+    covered.include(file, owner, symbol)?
+    mut selection = BodyRootSelection(enabled=true)
+    body_key_text = encode_record_key(body)?
+    local_key = encode_record_key(local)?
+    final_key = encode_record_key(final)?
+    checker_keys = [local_key, final_key]
+
+    demanded: list[str] = []
+    retained: list[SelectedBodyRecord] = []
+    fresh: set[str] = set()
+    begin_graph_demands(true)
+    result = selection.select_rescued(Some(graph), body.origin, demanded, covered, [module], admissions, retained, fresh, true)
+    demands = finish_graph_demands()
+    assert len([item for item in demands if item.role == "evaluation-value" and item.key == body_key_text]) == 1
+    checker_values = [item for item in demands if item.role == "evaluation-value" and item.key in checker_keys]
+    assert len(checker_values) == 0, f"report-only owner opened {len(checker_values)} Local and Final values"
+    assert result.is_err(), "the report accepted an invalid Body IR owner header"
+    assert selection.selected() is None
     return Ok(None)
