@@ -61,6 +61,7 @@ pub model SelectedBodyRecord:
     pub local: bytes
     pub final: bytes
     pub body_ir: bytes
+    pub semantic_root: str = ""
 
 
 pub model SelectedBodyPage:
@@ -301,12 +302,14 @@ def paired_records(
         if owner not in final_positions:
             continue
         mut frame = b""
+        mut semantic_root = ""
         if owner in body_positions:
             index = body_positions[owner]
             frame = read_body_frame(bodies[index].key, profile, bodies[index].value)?
+            semantic_root = bodies[index].key.context
         if len(frame) > 0 or allow_checking_pair:
             selected_records.append(SelectedBodyRecord(identity=local.key.identity, local=local.value,
-                final=finals[final_positions[owner]].value, body_ir=frame))
+                final=finals[final_positions[owner]].value, body_ir=frame, semantic_root=semantic_root))
     return Ok(selected_records)
 
 

@@ -234,7 +234,7 @@ def produce_program(
     return obtain(
         store, admission, pending.capture.revision, pending.handle, console, receipts, Some(pending.capture.epoch),
         pending.producer, Some(pending.capture.selected), pending.unit_options, pending.records, pending.origin,
-        pending.capture.readings, prepared,
+        pending.capture.readings, prepared, report_lowering=pending.proofs,
     )
 
 

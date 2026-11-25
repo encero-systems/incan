@@ -8,6 +8,7 @@ from pub::internal_models.crumb_rows import required_value
 from pub::internal_models.graph_crumb_fields import encode_graph_row, integer as signed
 from engine_proof_pages import PAGE_ROWS, byte_limit, demand_values, frame_values, render_proof, stage_pages
 from engine_proof_records import PROOF, proof_description
+from engine_lowering_evidence import LoweringWork, ProofSelection
 from engine_programs import ProgramOutcome
 from pub::incan_platform.store import SnapshotAdmission, Transaction, begin, commit, get, put
 from store_path_conversion import snapshot, store_path
@@ -69,7 +70,11 @@ pub def prepare_report(
     }
     selected = admission.open().map_err((error) => error.message())?
     mut transaction = begin(selected)
-    if len(produced.frame_reads) + len(produced.graph_demands) <= PAGE_ROWS:
+    mut lowering: Option[LoweringWork] = None
+    if let Some(work) = produced.lowering_work:
+        if work.complete():
+            lowering = Some(work)
+    if lowering is None and len(produced.frame_reads) + len(produced.graph_demands) <= PAGE_ROWS:
         small = encode_proof(run, produced.checker_reuse, counts, produced.artifact_refusals,
             frame_values(produced.frame_reads), demand_values(produced.graph_demands))
         match small:
@@ -78,7 +83,7 @@ pub def prepare_report(
                 if not byte_limit(reason):
                     return Err(reason)
     summary = encode_proof(run, produced.checker_reuse, counts, produced.artifact_refusals, [], [])?
-    stage_pages(transaction, report_key(run), run, summary, produced.frame_reads, produced.graph_demands)?
+    stage_pages(transaction, report_key(run), run, summary, produced.frame_reads, produced.graph_demands, lowering)?
     return Ok(transaction)
 
 
@@ -99,8 +104,8 @@ def integer_map(values: Dict[str, int]) -> Value:
     return Value.List([Value.Tuple([Value.Text(name), signed(values[name])]) for name in sorted([key for key in values.keys()])])
 
 
-pub def report(store: Path, run: str) -> Result[str, str]:
-    """Read exactly one explicitly retained proof report by its run id."""
+pub def report(store: Path, run: str, selection: Option[ProofSelection] = None) -> Result[str, str]:
+    """Read one retained proof, binding its lowering work only when the caller has the exact completion."""
     if len(run) != 32:
         return Err("a proof run id must contain 32 hexadecimal digits")
     for character in run:
@@ -112,7 +117,7 @@ pub def report(store: Path, run: str) -> Result[str, str]:
         Some(encoded) =>
             if encoded[:4] != b"CRMB":
                 return Ok(str(from_utf8(encoded).map_err((error) => str(error))?))
-            return render_proof(selected, encoded, run)
+            return render_proof(selected, encoded, run, selection)
 
 
 def report_key(run: str) -> str:

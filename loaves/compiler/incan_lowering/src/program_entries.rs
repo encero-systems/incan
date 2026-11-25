@@ -34,8 +34,8 @@ use crate::program_context::ProgramContext;
 use crate::resident_products::{FinalizedMember, FinalizedSlots, RestoreInputs};
 use crate::runtime_calls::sealed_runtime_path;
 use crate::scalar_store::{
-    AdmittedPayload, ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
-    report_scalar_refusal, retained_scalar, scalar_miss,
+    AdmittedPayload, ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference,
+    report_evaluated_scalar_refusal, report_scalar, report_scalar_refusal, retained_scalar, scalar_miss,
 };
 use crate::trace_channel::{emit, frame_product, tracing_products};
 use crate::traits::is_lazy_method_body;
@@ -587,13 +587,19 @@ fn record_lowered_ordinary(
                         );
                         report_scalar(keyed.report, &event)?;
                     }
-                    Err(reason) => report_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason)?,
+                    Err(reason) => report_evaluated_scalar_refusal(
+                        keyed.report,
+                        &owner.identity,
+                        &function.name,
+                        &reason,
+                        witness,
+                    )?,
                 }
             }
         }
         Err(reason) => {
-            if inputs.is_some() {
-                report_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason)?;
+            if let Some((witness, _)) = inputs {
+                report_evaluated_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason, witness)?;
             }
         }
     }

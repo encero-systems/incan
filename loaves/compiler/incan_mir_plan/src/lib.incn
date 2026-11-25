@@ -200,6 +200,7 @@ pub from rust::incan_mir_plan_native import (
     encode_lowering_refusal,
     encode_module_note,
     encode_native_interface,
+    lowering_refusal_evidence,
     native_interface_filename,
     placed_admission,
 )

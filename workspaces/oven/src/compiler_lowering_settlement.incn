@@ -1,0 +1,167 @@
+"""Join actual lowering outcomes to the selected Body and Plan authorities of one compiler request."""
+
+from pub::incan_mir_plan import LoweringEvent
+from pub::incan_platform.store import Snapshot
+from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
+from compiler_lowering_sources import LoweringBody
+from compiler_plan_modules import PlanModuleAdmissions
+from compiler_plan_values import AdmittedPlanModule, canonical_digest
+from engine_lowering_evidence import (
+    EvaluatedLoweringRefusal, LoweredFunction, LoweringDisposition, LoweringKind, PlanRefusalReport, SelectedBodyRoot,
+)
+
+
+pub def settle_reported_lowering(
+    roots: Borrowed[list[SelectedBodyRoot]], witnesses: Borrowed[list[LoweringBody]], events: Borrowed[list[LoweringEvent]],
+    refusals: Borrowed[PlanRefusalReport], selected: Option[Snapshot], origin: str,
+    modules: Borrowed[list[AdmittedPlanModule]], admissions: Borrowed[PlanModuleAdmissions],
+) -> list[LoweredFunction]:
+    """Return evidence only when every reported ordinary outcome has one selected Body authority."""
+    owners = set([root.owner for root in roots])
+    mut symbols: Dict[str, str] = {}
+    for witness in witnesses:
+        if witness.identity not in owners:
+            continue
+        if witness.symbol == "" or witness.symbol in symbols:
+            return []
+        symbols[witness.symbol] = witness.identity
+    admitted = match selected_admissions(selected, origin, modules, admissions):
+        Ok(value) => value
+        Err(_) => return []
+    for row in admitted:
+        if row.owner not in owners or symbols.get(row.symbol, row.owner) != row.owner:
+            return []
+        symbols[row.symbol] = row.owner
+    mut outcomes = LoweringOutcomes()
+    match outcomes.record_scoped(events, refusals.evaluated, symbols):
+        Err(_) => return []
+        Ok(_) => pass
+    for row in admitted:
+        match outcomes.record_admitted(row.key, row.owner):
+            Err(_) => return []
+            Ok(_) => pass
+    return outcomes.complete(owners)
+
+
+model LoweringOutcomes:
+    """Select each actual product disposition once within the request."""
+
+    rows: Dict[str, LoweredFunction] = {}
+    owner_keys: Dict[str, str] = {}
+
+    def record_scoped(
+        mut self, events: Borrowed[list[LoweringEvent]], refusals: Borrowed[list[EvaluatedLoweringRefusal]],
+        symbols: Borrowed[Dict[str, str]],
+    ) -> Result[None, str]:
+        """Reconcile witnessed evaluations with the retained events from the same report."""
+        mut evaluated: Dict[str, EvaluatedLoweringRefusal] = {}
+        for refusal in refusals:
+            if refusal.symbol not in symbols or refusal.key in evaluated:
+                return Err("evaluated lowering refusal lacks one selected Body owner")
+            evaluated[refusal.key] = refusal
+            self.record(refusal.key, LoweringKind.Ordinary, LoweringDisposition.Evaluated, symbols[refusal.symbol])?
+        mut offered: set[str] = set()
+        for event in events:
+            if event.key in offered:
+                return Err("compiler report repeats a scalar product")
+            offered.add(event.key)
+            if event.key in evaluated:
+                refusal = evaluated[event.key]
+                if event.role != "" or event.identity != refusal.symbol or event.function != refusal.function:
+                    return Err("retained product differs from its evaluated refusal")
+                continue
+            disposition = match (event.admitted, event.reused):
+                (true, _) => LoweringDisposition.Admitted
+                (false, true) => LoweringDisposition.Reused
+                _ => LoweringDisposition.Evaluated
+            if event.role == "entry":
+                self.record(event.key, LoweringKind.Entry, disposition, "")?
+            elif event.role == "" and event.identity in symbols:
+                self.record(event.key, LoweringKind.Ordinary, disposition, symbols[event.identity])?
+            elif event.role == "" and event.identity.startswith(RUNTIME_INSTANCE_IDENTITY):
+                self.record(event.key, LoweringKind.Synthesized, disposition, "")?
+            else:
+                return Err("compiler product has no admitted lowering route")
+        return Ok(None)
+
+    def record_admitted(mut self, key: str, owner: str) -> Result[None, str]:
+        """Reconcile a scalar event with its module admission without counting it twice."""
+        if key in self.rows:
+            if self.rows[key].owner != owner or self.rows[key].kind != LoweringKind.Ordinary:
+                return Err("admitted key disagrees with its request's scalar product")
+            return Ok(None)
+        return self.record(key, LoweringKind.Ordinary, LoweringDisposition.Admitted, owner)
+
+    def record(mut self, key: str, kind: LoweringKind, verdict: LoweringDisposition, owner: str) -> Result[None, str]:
+        """Keep the unique scalar key and, for ordinary products, unique selected Body owner."""
+        if not canonical_digest(key) or key in self.rows:
+            return Err("invalid or duplicate lowering product key")
+        if kind == LoweringKind.Ordinary:
+            if owner == "" or owner in self.owner_keys:
+                return Err("ordinary lowering outcome has no unique selected owner")
+            self.owner_keys[owner] = key
+        self.rows[key] = LoweredFunction(key=key, kind=kind, disposition=verdict, owner=owner)
+        return Ok(None)
+
+    def complete(self, owners: Borrowed[set[str]]) -> list[LoweredFunction]:
+        """Withhold the proof if the report has no outcome for a selected ordinary owner."""
+        if len(self.owner_keys) != len(owners):
+            return []
+        for owner in owners:
+            if owner not in self.owner_keys:
+                return []
+        return [self.rows[key] for key in sorted([key for key in self.rows.keys()])]
+
+model AdmittedOutcome:
+    """One product proven by the actual admission and its selected Plan page."""
+
+    key: str
+    owner: str
+    symbol: str
+
+
+def selected_admissions(
+    selected: Option[Snapshot], origin: str, modules: Borrowed[list[AdmittedPlanModule]],
+    admissions: Borrowed[PlanModuleAdmissions],
+) -> Result[list[AdmittedOutcome], str]:
+    """Join authenticated admission notes to the keys of the pages selected for this request."""
+    mut rows: list[AdmittedOutcome] = []
+    mut observed: set[str] = set()
+    for module in modules:
+        name = module.plan.module
+        compact = name in admissions.compact
+        if not compact and name not in admissions.scalar:
+            continue
+        graph = match selected:
+            Some(value) => value
+            None => return Err("admitted lowering product has no selected graph")
+        if module.admitted_snapshot != graph.digest or module.key.origin != origin or name in observed:
+            return Err("admitted lowering product belongs to another selected request")
+        observed.add(name)
+        if compact:
+            for member in module.plan.functions:
+                rows.append(AdmittedOutcome(key=member.key, owner=member.identity, symbol=member.symbol))
+            continue
+        scalar = admissions.scalar[name].functions
+        mut member_indices: Dict[str, int] = {}
+        for index in range(len(module.plan.functions)):
+            member = module.plan.functions[index]
+            if member.function in member_indices:
+                return Err("admitted Plan page repeats a function")
+            member_indices[member.function] = index
+        mut scalar_names: set[str] = set()
+        for admitted in scalar:
+            if admitted.function not in member_indices or admitted.function in scalar_names:
+                return Err("scalar admission has no unique function in its selected Plan page")
+            scalar_names.add(admitted.function)
+            member = module.plan.functions[member_indices[admitted.function]]
+            if admitted.identity != member.symbol:
+                placement = match admitted.placement:
+                    Some(value) => value
+                    None => return Err("scalar admission changed a symbol without its placement")
+                if placement.key != member.key:
+                    return Err("scalar admission changed its selected product")
+            rows.append(AdmittedOutcome(key=member.key, owner=member.identity, symbol=admitted.identity))
+    if len(observed) != len(admissions.scalar) + len(admissions.compact):
+        return Err("lowering admission has no selected Plan page")
+    return Ok(rows)

@@ -43,13 +43,15 @@ pub def report_json(encoded: bytes, run: str) -> Result[str, str]:
     return render_report(encoded, run, evidence)
 
 
-pub def render_report(encoded: bytes, run: str, mut evidence: ProofEvidence) -> Result[str, str]:
+pub def render_report(
+    encoded: bytes, run: str, mut evidence: ProofEvidence, lowering: Option[JsonValue] = None,
+) -> Result[str, str]:
     """Render the public report only after the expected schema and run are admitted."""
     fields = decode_graph_row(encoded, PROOF, proof_description(), 6)?
     if text(fields[5].value)? != run:
         return Err("proof record names another run")
     mut document = read_counts(fields[1].value)?
-    for reserved in ["schema", "run", "granularity", "checker_reuse", "artifact_refusals", "store_reads", "graph_demands"]:
+    for reserved in ["schema", "run", "granularity", "checker_reuse", "artifact_refusals", "store_reads", "graph_demands", "lowering_work"]:
         if reserved in document:
             return Err(f"invalid engine proof counter {reserved}")
     document["schema"] = JsonValue.string("incan.engine.proofs/3")
@@ -62,6 +64,8 @@ pub def render_report(encoded: bytes, run: str, mut evidence: ProofEvidence) -> 
     append_evidence(fields[3].value, fields[2].value, evidence)?
     document["store_reads"] = JsonValue.array(evidence.frames)
     document["graph_demands"] = JsonValue.array(evidence.demands)
+    if let Some(work) = lowering:
+        document["lowering_work"] = work
     return json_text(JsonValue.object(document))
 
 

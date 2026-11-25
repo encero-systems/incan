@@ -54,7 +54,7 @@ model ObservationChannels:
         self.legacy_reason = get_or("OVEN_TRACE", "")
         if directory == "" and self.legacy_work == "" and self.legacy_reason == "":
             return
-        self.process = int(id())
+        self.load_request_label()
         # A former variable still works for one release, and names its replacement once, where it writes; an owner's
         # `OVEN_TRACE` is its internal mailbox, which names nothing.
         if self.legacy_reason != "" and not internal_role():
@@ -66,11 +66,21 @@ model ObservationChannels:
         if directory != "":
             self.canonical = Path(directory).joinpath(f"engine-oven-{self.process}.jsonl").0
         self.run = get_or("INCAN_ENGINE_RUN", "")
-        self.request = get_or("INCAN_ENGINE_REQUEST", f"oven-{self.process}")
         if self.canonical != "":
             match Emitter.open(self.canonical, "oven", self.run, self.request):
                 Ok(emitter) => self.emitter = Some(emitter)
                 Err(error) => self.remember(Err(error))
+
+    def request_label(mut self) -> str:
+        """Use the same request label for proof binding even when no trace sink is requested."""
+        self.load_request_label()
+        return self.request
+
+    def load_request_label(mut self) -> None:
+        """Resolve the process and request label once for tracing and the settled proof."""
+        if self.process == 0:
+            self.process = int(id())
+            self.request = get_or("INCAN_ENGINE_REQUEST", f"oven-{self.process}")
 
     def work_clock(mut self) -> Option[Clock]:
         """Start only a requested JEC or canonical engine observation."""
@@ -269,6 +279,11 @@ pub def count_frozen_work(prefixes: list[str]) -> None:
 pub def finish_frozen_counting() -> WorkCounts:
     """Release the request's frozen-input observer and return its measured operation counts."""
     return CHANNELS.finish_frozen_counting()
+
+
+pub def request_label() -> str:
+    """The existing canonical correlation label for this engine process."""
+    return CHANNELS.request_label()
 
 
 pub def work_clock() -> Option[Clock]:
