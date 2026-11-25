@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
-use super::flow::{Access, Analysis, ConflictKind, Event, Graph, LoanId, Place, Root};
+use super::flow::{Access, Analysis, ConflictKind, Event, Graph, LoanId, LoanKind, Place, Projection, Root};
 use crate::ast::Span;
 use crate::diagnostics::CompileError;
 use crate::typechecker::TypeCheckInfo;
@@ -85,8 +85,16 @@ pub(super) fn conflicts(graph: &Graph, analysis: &Analysis, facts: &TypeCheckInf
                 .with_related_span(graph.loans[loan.0].span, "this borrow is established here")
                 .with_hint("Establish the borrow on every path that reaches its use"),
             ConflictKind::ActiveLoan(loan) => {
-                let mut error = error.with_related_span(graph.loans[loan.0].span, "conflicting borrow starts here");
-                if let Some(use_) = dependent_use(graph, analysis, conflict.node, loan) {
+                let use_ = dependent_use(graph, analysis, conflict.node, loan);
+                let mut error = error;
+                if let Some(origin) = use_
+                    .as_ref()
+                    .and_then(|use_| captured_shared_field_origin(graph, facts, loan, use_))
+                {
+                    error = error.with_related_span(origin, "the captured local first borrows this field here");
+                }
+                error = error.with_related_span(graph.loans[loan.0].span, "conflicting borrow starts here");
+                if let Some(use_) = use_ {
                     error = error.with_related_span(use_.span, "this reachable use keeps the borrow live");
                 }
                 error.with_hint("Finish the dependent use before accessing the overlapping place")
@@ -420,6 +428,45 @@ fn permission_origin(error: CompileError, graph: &Graph, event: &Event) -> Compi
         },
     };
     error.with_hint(request)
+}
+
+/// Recover the original shared field loan only through the captured binding and its checked parent.
+fn captured_shared_field_origin(
+    graph: &Graph,
+    facts: &TypeCheckInfo,
+    child: LoanId,
+    later: &DependentUse,
+) -> Option<Span> {
+    use incan_lang::lang::types::ownership::OwnershipMode;
+
+    let capture = graph.loans.get(child.0)?;
+    let parent_id = capture.parent?;
+    let parent = graph.loans.get(parent_id.0)?;
+    if later.loan != child
+        || capture.kind != LoanKind::Shared
+        || parent.kind != LoanKind::Shared
+        || capture.writable
+        || parent.writable
+        || capture.source != parent.source
+        || !matches!(parent.source.projection.as_slice(), [Projection::Field(_)])
+    {
+        return None;
+    }
+    graph
+        .closures
+        .get(&capture.span)?
+        .loans
+        .iter()
+        .find_map(|(binding, loan)| {
+            let mode = facts.protocols.explicit_local_modes.get(binding)?;
+            (*loan == child
+                && graph.local_loans.get(binding) == Some(&parent_id)
+                && mode.owner == graph.owner
+                && mode.mode == OwnershipMode::Borrowed
+                && mode.annotation == binding.declaration_span
+                && !mode.writable)
+                .then_some(parent.span)
+        })
 }
 
 /// Find one reachable dependent access that witnesses a conflicting loan's liveness. Traversal is restricted to

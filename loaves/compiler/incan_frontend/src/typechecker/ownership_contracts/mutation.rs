@@ -233,6 +233,24 @@ struct MutParamBody {
     /// and the names a `match`, `if let` or `while let` pattern binds. A change through a view is a change to the
     /// place, and to the caller-visible parameter the place belongs to, if any.
     views: Vec<ParamView>,
+    /// Provisional fields of this callable's active statement writer, drained before graph selection.
+    inferred_fields: Option<InferredParameterFields>,
+}
+
+#[derive(Debug, Clone)]
+struct InferredParameterFields {
+    warning_start: usize,
+    child_start: usize,
+    output_start: usize,
+    locals: Vec<InferredParameterField>,
+}
+
+#[derive(Debug, Clone)]
+struct InferredParameterField {
+    destination: CanonicalSymbolId,
+    statement: Span,
+    initializer: Span,
+    warning_slot: usize,
 }
 
 /// Checker state for caller-visible `mut` parameters across one module's check.
