@@ -256,7 +256,7 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     counts_before = lowered_products(trace)?
     assert counts_before.get("lowered ordinary main::main", 0) == 1
 
-    length_edit = seed.replace("return items[0]", "picked = items[0]\n    return picked")
+    length_edit = seed.replace("return items[0]", "offset = 0\n    return items[offset]")
     assert length_edit != seed and len(length_edit.split("\n")) == len(seed.split("\n")) + 1
     write(source, length_edit)?
     warm = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
