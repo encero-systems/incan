@@ -183,6 +183,8 @@ pub struct UnitInputs<'a> {
     pub overflow_checks: bool,
     pub scalar_products: Option<String>,
     pub scalar_bodies: &'a [(CompilerNodeId, String)],
+    /// Checker-qualified generic method names for this invocation.
+    pub member_owners: &'a Arc<BTreeMap<CanonicalSymbolId, String>>,
     pub record_report: Option<String>,
     /// Producer-owned native exports chosen before lowering the Loaf.
     pub linked_static_exports: &'a BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
@@ -224,6 +226,7 @@ pub fn program_context(
     let comparisons = comparison_functions(constructor_view, module, intrinsics)?;
     Ok(ProgramContext {
         body_indices,
+        member_owners: Arc::default(),
         display_functions: Arc::new(display),
         statics: Arc::new(module.static_declarations.clone()),
         comparison_functions: Arc::new(comparisons),
@@ -315,6 +318,7 @@ fn lowered_plan(
         &mut inventories,
     )?;
     program.recorded = Arc::clone(inputs.recorded_layouts);
+    program.member_owners = Arc::clone(inputs.member_owners);
     let mut emitted_frames = no_emitted_frames();
     // 2. Lower ordinary frames and static initializers exactly once.
     let instance_products = instance_transport(

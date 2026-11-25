@@ -51,7 +51,9 @@ pub from compiler_captured_sources import (
 )
 from compiler_prepared_records import PreparedBodyRecordSource
 pub from compiler_prepared_records import prepared_product_request
-from compiler_namespace_products import ExecutableCallInputs, member_plan_inputs, prepare_namespace_products, stage_call_contracts
+from compiler_namespace_products import (
+    ExecutableCallInputs, member_plan_inputs, prepare_namespace_products, retained_member_product, stage_call_contracts,
+)
 from compiler_lowering_order import LoweringOrder, LoweringOrders
 from compiler_plan_modules import (
     PlanModuleAdmissions,
@@ -1046,10 +1048,9 @@ def prepare_lowering_records(
         event_identity = event.identity
         # A toolchain runtime instance reads no authored record: lowering keys it by the runtime body's checked meaning.
         runtime = event_identity.startswith(RUNTIME_INSTANCE_IDENTITY)
-        if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
-            continue
+        retained = event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?
         mut member = false
-        if not runtime and event_identity not in bodies and namespace_witnessed_event(unit, fallbacks, event_identity)?:
+        if not retained and not runtime and event_identity not in bodies and namespace_witnessed_event(unit, fallbacks, event_identity)?:
             member = true
         key = event.key
         function = event.function
@@ -1059,7 +1060,14 @@ def prepare_lowering_records(
         mut body_reads: list[RecordRequest] = []
         mut module_file = ""
         mut position = LoweringOrder()
-        if member:
+        if retained:
+            match retained_member_product(source, orders, selected, cutoff, unit, origin, event)?:
+                Some((module, reads, order)) =>
+                    module_file = module
+                    body_reads = reads
+                    position = order
+                None => continue
+        elif member:
             match member_namespace(unit, namespace_files, event_identity)?:
                 None => continue
                 Some(module) =>

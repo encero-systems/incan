@@ -59,7 +59,7 @@ fn generic_instance_requests_select_the_exact_overload() -> Result<(), String> {
         short, long,
         "distinct checked signatures produced identical request bytes"
     );
-    let Some(found) = restore_requests(&[short.clone(), long.clone()], &module) else {
+    let Some(found) = restore_requests(&[short.clone(), long.clone()], &module, None) else {
         return Err("signed overload requests did not restore".into());
     };
     assert_eq!(found.len(), 2, "one of two restored overloads disappeared");
@@ -76,17 +76,17 @@ fn generic_instance_requests_select_the_exact_overload() -> Result<(), String> {
     let unsigned = stable.split('|').next().unwrap_or_default().to_owned();
     let old = encode_instance_request(&unsigned, &arguments, &slots, original)?;
     assert!(
-        restore_requests(&[old.clone()], &module).is_none(),
+        restore_requests(&[old.clone()], &module, None).is_none(),
         "an ambiguous legacy request was accepted"
     );
     module.bodies = vec![one];
     assert!(
-        restore_requests(&[old], &module).is_some(),
+        restore_requests(&[old], &module, None).is_some(),
         "a uniquely identified historical request was lost"
     );
     module.bodies = vec![two.clone(), two];
     assert!(
-        restore_requests(&[long], &module).is_none(),
+        restore_requests(&[long], &module, None).is_none(),
         "two current bodies had the same signed identity"
     );
     Ok(())

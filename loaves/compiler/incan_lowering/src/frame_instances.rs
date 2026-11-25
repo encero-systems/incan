@@ -187,7 +187,15 @@ fn lower_instance_frame(
     };
     if let Some(transport) = products {
         sync_carriers(nominals, intrinsics);
-        if let Some(product) = reused_instance(transport, context, frame.request, frame.body, &source, nominals)? {
+        if let Some(product) = reused_instance(
+            transport,
+            context,
+            program,
+            frame.request,
+            frame.body,
+            &source,
+            nominals,
+        )? {
             retain_instance(&mut inventories.functions, names, product.function)?;
             append_synthesized(&mut inventories.functions, names, product.frames)?;
             append_generator_constructor(
@@ -227,7 +235,7 @@ fn lower_instance_frame(
             synthesized.as_slice(),
             pending.as_slice(),
         );
-        retain_instance_product(transport, context, frame.request, lowered, &source, nominals)?;
+        retain_instance_product(transport, context, program, frame.request, lowered, &source, nominals)?;
     }
     retain_instance(&mut inventories.functions, names, retained_function)?;
     append_synthesized(&mut inventories.functions, names, synthesized)?;

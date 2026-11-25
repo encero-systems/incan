@@ -27,6 +27,7 @@ pub def verify_generic_receiver_dependencies(binary: str, root: Path) -> Result[
 
     1. Run the original source and require two distinct keyed products.
     2. Edit only the method body and require both products to read the new checked witness.
+    3. Edit the caller alone, then verify the replayed products against a fresh build.
     """
     root.mkdir(true, true).map_err((error) => error.message())?
     main = root.joinpath("main.incn")
@@ -36,19 +37,48 @@ pub def verify_generic_receiver_dependencies(binary: str, root: Path) -> Result[
     # 1. Record the original receivers and their shared checked input.
     write(main, main_source())?
     write(template, shelf_source("0"))?
-    initial = lowering_example_run(binary, main, store, "11\n1\nshelf\n2")
-    stop_example_engine(binary, store)?
-    _ = initial?
-    names, receivers, before, body_before = instance_dependencies(store, report)?
+    names, receivers, before, body_before = run_receiver_products(binary, main, store, report, "11\n1\nshelf\n2")?
     # 2. Change the body while preserving both closed receiver identities.
     write(template, shelf_source("1"))?
-    edited = lowering_example_run(binary, main, store, "11\n2\nshelf\n3")
-    stop_example_engine(binary, store)?
-    _ = edited?
-    after_names, after_receivers, after, body_after = instance_dependencies(store, report)?
+    current = run_receiver_products(binary, main, store, report, "11\n2\nshelf\n3")?
+    after_names, after_receivers, after, body_after = current
     assert after_names == names and after_receivers == receivers, "the body edit changed checked closed identity"
     assert before != after and body_before != body_after, "the two instances kept the old checked template-body witness"
+    # 3. Retain the provider while the caller changes, then compare both exact supplier chains with a fresh run.
+    return verify_retained_receiver_replay(binary, root, current)
+
+
+def verify_retained_receiver_replay(
+    binary: str, root: Path, expected: tuple[list[str], list[str], str, bytes],
+) -> Result[None, str]:
+    """An unrelated caller change keeps both checked dependencies and reproduces cold artifacts at the same path."""
+    main = root.joinpath("main.incn")
+    report = root.joinpath("native.plan")
+    target = root.joinpath("target")
+    executable = target.joinpath("incan/release/bin/main")
+    write(main, main_source().replace("println(low)", "println(low + 10)"))?
+    output = "11\n12\nshelf\n3"
+    warm = run_receiver_products(binary, main, root.joinpath("store"), report, output)?
+    assert warm == expected, "the caller edit changed its closed receiver dependencies"
+    warm_plan = report.read_bytes().map_err((error) => error.message())?
+    warm_binary = executable.read_bytes().map_err((error) => error.message())?
+    target.remove_tree().map_err((error) => error.message())?
+    fresh = run_receiver_products(binary, main, root.joinpath("fresh-store"), report, output)?
+    assert fresh == warm, "retained and fresh closed receiver dependencies differ"
+    assert warm_plan == report.read_bytes().map_err((error) => error.message())?, "closed receiver plans differ"
+    fresh_binary = executable.read_bytes().map_err((error) => error.message())?
+    assert warm_binary == fresh_binary, "closed receiver binaries differ"
     return Ok(None)
+
+
+def run_receiver_products(
+    binary: str, main: Path, store: Path, report: Path, output: str,
+) -> Result[tuple[list[str], list[str], str, bytes], str]:
+    """Read the successful ordinary request's closed products after reaping its worker."""
+    run = lowering_example_run(binary, main, store, output)
+    stop_example_engine(binary, store)?
+    _ = run?
+    return instance_dependencies(store, report)
 
 
 def main_source() -> str:

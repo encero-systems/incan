@@ -466,7 +466,7 @@ fn lower_ordinary_frame(
             Some(context),
             Some(&current),
             positions,
-        ) && let Some(requests) = restore_requests(&encoded, context)
+        ) && let Some(requests) = restore_requests(&encoded, context, Some(program))
         {
             report_scalar(
                 keyed.report,
@@ -515,7 +515,15 @@ fn lower_ordinary_frame(
         DecoratorFrame::Normal,
     )?;
     finish_producer(attempt, "produced");
-    record_lowered_ordinary(body, &lowered, intrinsics, keyed, &owner, inputs.as_ref())?;
+    record_lowered_ordinary(
+        body,
+        &lowered,
+        intrinsics,
+        keyed,
+        &owner,
+        inputs.as_ref(),
+        (context, program),
+    )?;
     let (function, runtime, pending, synthesized) = lowered;
     Ok((function.into(), runtime, pending, synthesized))
 }
@@ -528,10 +536,11 @@ fn record_lowered_ordinary(
     keyed: &mut KeyedProducts<'_>,
     owner: &RecordOwner,
     inputs: Option<&ProductInputs>,
+    (context, program): (&BodyIrModule, &ProgramContext),
 ) -> Result<(), String> {
     let (function, runtime, pending, synthesized) = lowered;
     let mut kept = false;
-    match encode_requests(pending) {
+    match encode_requests(pending, context, program) {
         Ok(requests) => {
             if let (Some(directory), Some((witness, positions))) = (keyed.directory, inputs) {
                 sync_carriers(&mut keyed.nominals, intrinsics);
@@ -731,7 +740,7 @@ fn restore_admitted(
     let Some(restored) = admitted_function(placed, &resolved, &keyed.linked, context) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
-    let Some(requests) = restore_requests(encoded, context) else {
+    let Some(requests) = restore_requests(encoded, context, Some(program)) else {
         return Admission::Missed("a generic instance it requests is gone");
     };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();
