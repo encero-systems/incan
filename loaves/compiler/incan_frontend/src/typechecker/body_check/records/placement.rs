@@ -1,11 +1,13 @@
-//! Relocate straight-line scalar frames only when their original full physical-input digest can be reproduced.
+//! Relocate straight-line frames of primitive values only when their full historical physical-input digest matches.
 
 use std::collections::BTreeMap;
 
 use super::{BodyLocal, CanonicalSymbolId, Fields, Positions, Span};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::body_ir as ir;
 use incan_semantics_core::{
-    CompilerNodeId, IncanType, SemanticSourceTargetKind, SymbolOrigin, canonical_module_identity,
+    CompilerNodeId, IncanCallableParamKind, IncanInputAccess, IncanType, SemanticSourceTargetKind, SymbolNamespace,
+    SymbolOrigin, canonical_module_identity,
 };
 
 /// Each historical range is paired with the same structured syntax path in this invocation.
@@ -95,6 +97,30 @@ impl Placement {
     }
 }
 
+/// Both variants serialize as the original ordered map. The current proof borrows the checked map directly.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+pub(super) enum NestedBindings<'a> {
+    Current(&'a BTreeMap<Span, CanonicalSymbolId>),
+    Historical(BTreeMap<Span, &'a CanonicalSymbolId>),
+}
+
+/// Project local declaration coordinates and targets through the same map as the historical reads and writes.
+pub(super) fn nested_bindings<'a>(
+    local: &'a BodyLocal,
+    placement: Option<&'a Placement>,
+) -> Option<NestedBindings<'a>> {
+    let Some(layout) = placement else {
+        return Some(NestedBindings::Current(&local.nested));
+    };
+    let historical = local
+        .nested
+        .iter()
+        .map(|(span, identity)| Some((layout.prior_span(*span)?, layout.prior_target(identity))))
+        .collect::<Option<_>>()?;
+    Some(NestedBindings::Historical(historical))
+}
+
 /// Rebuild a direct-call id only when the old module and declaration span reproduce it exactly.
 fn direct_id(id: &mut CompilerNodeId, old: &CanonicalSymbolId, current: &CanonicalSymbolId) -> Option<()> {
     let module = canonical_module_identity(current)?;
@@ -128,8 +154,98 @@ fn plain_operand(op: &ir::Operand) -> bool {
     }
 }
 
-/// The supported graph contains only local scalar reads, direct checked calls and straight-line operations.
-/// Other executable forms retain the normal physical proof and use fresh lowering if anything moved.
+/// A parameter must be a required ordinary primitive in its producer's corresponding frame slot.
+fn plain_parameter(body: &ir::Body, slot: usize, parameter: &ir::CallableParam) -> bool {
+    let Some(local) = body.locals.get(slot) else {
+        return false;
+    };
+    let Some(identity) = local.identity.as_deref() else {
+        return false;
+    };
+    body.param_locals.get(slot) == Some(&parameter.local)
+        && parameter.local.index() == slot
+        && local.id == parameter.local
+        && local.origin == ir::LocalOrigin::Parameter
+        && local.scope == body.block.scope
+        && local.name.as_deref() == Some(parameter.name.as_str())
+        && local.span == parameter.span
+        && local.ty == parameter.ty
+        && matches!(parameter.ty, IncanType::Primitive(_))
+        && parameter.kind == IncanCallableParamKind::Normal
+        && matches!(parameter.default, ir::CallableParamDefault::Required)
+        && !parameter.mutable
+        && !parameter.native_owned
+        && parameter.input_access == IncanInputAccess::Inferred
+        && identity.kind == SemanticSourceTargetKind::Parameter
+        && identity.namespace == SymbolNamespace::OrdinaryLexical
+        && identity.declaration_name == parameter.name
+        && identity.declaration_span == parameter.span
+}
+
+/// Admit only a built-in list with one primitive element type and no nested or borrowed storage type.
+fn primitive_list(ty: &IncanType) -> bool {
+    matches!(
+        ty.collection_arguments(CollectionTypeId::List),
+        Some([IncanType::Primitive(_)])
+    )
+}
+
+/// Resolve an unprojected local to its declared placement slot.
+fn placement_local<'a>(body: &'a ir::Body, place: &ir::Place) -> Option<&'a ir::LocalDecl> {
+    if !plain_place(place) {
+        return None;
+    }
+    body.locals.get(place.local_id()?.index())
+}
+
+/// Preserve primitive argument behavior while requiring fixed list arguments to have known, nonexclusive access.
+fn placement_call_operand(body: &ir::Body, operand: &ir::Operand) -> bool {
+    if let ir::Operand::Place(read) = operand
+        && let Some(local) = placement_local(body, &read.place)
+        && primitive_list(&local.ty)
+    {
+        return !matches!(read.fact, ir::OwnershipFact::MutBorrow | ir::OwnershipFact::Unknown);
+    }
+    plain_operand(operand)
+}
+
+/// Select primitive operands with no projections or exclusive loans for newly admitted rvalues.
+fn primitive_operand(body: &ir::Body, operand: &ir::Operand) -> bool {
+    match operand {
+        ir::Operand::Constant(_) => plain_operand(operand),
+        ir::Operand::Place(read) => {
+            !matches!(read.fact, ir::OwnershipFact::MutBorrow | ir::OwnershipFact::Unknown)
+                && placement_local(body, &read.place).is_some_and(|local| matches!(local.ty, IncanType::Primitive(_)))
+        }
+    }
+}
+
+/// Keep assignments within unprojected compiler temporaries whose allowed rvalues carry no extra source coordinates.
+fn plain_assignment(body: &ir::Body, place: &ir::Place, value: &ir::Rvalue) -> bool {
+    let Some(local) = placement_local(body, place) else {
+        return false;
+    };
+    if local.origin != ir::LocalOrigin::Temporary {
+        return false;
+    }
+    match value {
+        ir::Rvalue::BinaryOp(ir::BinOp::Add, left, right) => {
+            matches!(local.ty, IncanType::Primitive(_))
+                && primitive_operand(body, left)
+                && primitive_operand(body, right)
+        }
+        ir::Rvalue::Aggregate(ir::AggregateKind::List, items) => {
+            primitive_list(&local.ty)
+                && items
+                    .iter()
+                    .all(|item| matches!(item, ir::ArgumentElement::One(element) if primitive_operand(body, element)))
+        }
+        _ => false,
+    }
+}
+
+/// Offer coordinates for straight-line primitive values and fixed lists passed through checked direct calls.
+/// Other executable forms retain the unmodified physical proof and can only be reused at their original placement.
 pub fn scalar_frame(body: &ir::Body) -> bool {
     body.type_parameters.is_empty()
         && body.nominal_instantiation.is_empty()
@@ -143,32 +259,62 @@ pub fn scalar_frame(body: &ir::Body) -> bool {
         && body.panic_facts.is_empty()
         && body.retired_rust_facade_wire.is_none()
         && matches!(body.return_type, IncanType::Primitive(_))
-        && body.params.is_empty()
-        && body.param_locals.is_empty()
+        && body.params.len() == body.param_locals.len()
         && body
-            .locals
+            .params
             .iter()
-            .all(|l| matches!(l.ty, IncanType::Primitive(_)) && l.identity.is_none())
+            .enumerate()
+            .all(|(slot, parameter)| plain_parameter(body, slot, parameter))
+        && body.locals.iter().skip(body.params.len()).all(|local| {
+            local.origin != ir::LocalOrigin::Parameter
+                && local.identity.is_none()
+                && (matches!(local.ty, IncanType::Primitive(_))
+                    || (local.origin == ir::LocalOrigin::Temporary && primitive_list(&local.ty)))
+        })
         && body.block.stmts.iter().all(|statement| match &statement.kind {
             ir::StatementKind::Return { value } => value.as_ref().is_none_or(plain_operand),
             ir::StatementKind::Drop { .. } => true,
             ir::StatementKind::Expr { value } => plain_operand(value),
+            ir::StatementKind::Assign { place, rvalue } => plain_assignment(body, place, rvalue),
             ir::StatementKind::Call {
                 destination,
                 callee: ir::Callee::Function(ir::CallableTarget::Named(call)),
                 args,
                 ..
             } => {
-                destination.as_ref().is_none_or(plain_place)
-                    && call.receiver_type.is_none()
-                    && call.type_args.is_empty()
+                destination.as_ref().is_none_or(|place| {
+                    placement_local(body, place).is_some_and(|local| matches!(local.ty, IncanType::Primitive(_)))
+                }) && call.receiver_type.is_none()
+                    && (call.type_args.is_empty()
+                        || call.direct_call_id.is_some()
+                            && call.builtin.is_none()
+                            && call.type_args.iter().all(|ty| matches!(ty, IncanType::Primitive(_))))
                     && call.canonical.is_some()
                     && args
                         .iter()
-                        .all(|arg| matches!(arg,ir::ArgumentElement::One(op) if plain_operand(op)))
+                        .all(|arg| matches!(arg, ir::ArgumentElement::One(op) if placement_call_operand(body, op)))
             }
             _ => false,
         })
+}
+
+/// Rebind the parameter and local through the settled write fact used by fresh Body IR construction.
+/// The declaration owns that fact even when the independently selected statement record omits it.
+fn relocate_parameters(
+    layout: &mut Placement,
+    facts: &crate::typechecker::TypeCheckInfo,
+    body: &mut ir::Body,
+) -> Option<()> {
+    for parameter in &mut body.params {
+        layout.span(&mut parameter.span)?;
+        let current = facts.resolved_write_identity(parameter.span, &parameter.name)?;
+        if current.declaration_span != parameter.span {
+            return None;
+        }
+        let previous = body.locals.get_mut(parameter.local.index())?.identity.as_deref_mut()?;
+        layout.symbol(previous, current)?;
+    }
+    Some(())
 }
 
 /// Restore an eligible native frame and authenticate its historical coordinates against the full input digest.
@@ -200,6 +346,7 @@ pub(super) fn relocate(
     for scope in &mut body.scopes {
         layout.span(&mut scope.span)?;
     }
+    relocate_parameters(&mut layout, facts, body)?;
     for decl in &mut body.locals {
         layout.span(&mut decl.span)?;
     }
