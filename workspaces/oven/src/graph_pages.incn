@@ -69,23 +69,37 @@ pub def request_key(parts: list[str], toolchain: Toolchain) -> Result[str, str]:
 pub def warm_page(key: str) -> Result[Option[GraphPage], str]:
     """
     The page of `key` when every input it was answered from still has the metadata it had, and every environment
-    variable its preparation read still has the value it had.
+    variable its preparation read still has the value it had. Unobservable anchor-only markers invalidate the page;
+    an unobservable preparation input still refuses before the graph is prepared again.
     """
     match record(key)?:
         None => return Ok(None)
         Some(document) =>
+            mut anchor_changed = false
             for item in required_items(document, "inputs")?:
                 fields = item.expect_array().map_err((error) => error.message())?
                 path = string_value(fields[0])?
-                if current_stamp(Path(path))? != string_value(fields[1])?:
-                    trace(f"graph page {key[:12]}: {path} changed")
-                    return Ok(None)
+                anchor_only = len(fields) == 3 and fields[2].expect_bool().map_err((error) => error.message())?
+                match current_stamp(Path(path)):
+                    Ok(stamp) =>
+                        if stamp != string_value(fields[1])?:
+                            if not anchor_only:
+                                trace(f"graph page {key[:12]}: {path} changed")
+                                return Ok(None)
+                            anchor_changed = true
+                    Err(problem) =>
+                        if not anchor_only:
+                            return Err(problem)
+                        anchor_changed = true
             for item in required_items(document, "variables")?:
                 fields = item.expect_array().map_err((error) => error.message())?
                 name = string_value(fields[0])?
                 if environment_observation(name)? != string_value(fields[1])?:
                     trace(f"graph page {key[:12]}: environment variable {name} changed")
                     return Ok(None)
+            if anchor_changed:
+                trace(f"graph page {key[:12]}: anchor marker changed or is unobservable")
+                return Ok(None)
             return Ok(Some(page_of(key, document)?))
 
 
@@ -113,7 +127,10 @@ pub def publish_page(
             return Ok(false)
     mut inputs: list[JsonValue] = []
     for path in sorted([name for name in observed.stamps.keys()]):
-        inputs.append(JsonValue.array([JsonValue.string(path), JsonValue.string(observed.stamps[path])]))
+        mut input = [JsonValue.string(path), JsonValue.string(observed.stamps[path])]
+        if path in observed.anchor_markers:
+            input.append(JsonValue.bool(true))
+        inputs.append(JsonValue.array(input))
     # Each environment variable is recorded as its first read observed it.
     mut variables: list[JsonValue] = []
     for name in sorted([name for name in observed.variables.keys()]):

@@ -84,9 +84,9 @@ JSON is an array whose first element is the header, followed by nodes and then e
 
 ## MCP transport
 
-`incan mcp PATH [--profile NAME]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. The server advertises protocol version `2025-11-25`, tools and resources. Clients send `initialize`, then `notifications/initialized`, before using tools/resources. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
+`incan mcp PATH [--profile NAME]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. Call `server/discover` for `supportedVersions`, server information, and the fixed tool and resource capabilities. The supported version is `2026-07-28`. Clients can call `tools/list`, `tools/call`, `resources/list`, and `resources/read` directly. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
 
-Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`; use before initialization returns `-32002`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls return a text content block and `isError: false`. Definition queries also return the structured records described below.
+Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`. `initialize` returns `-32022` with `error.data.supportedVersions`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls return a text content block and `isError: false`. Definition queries also return the structured records described below.
 
 ### Tools
 
