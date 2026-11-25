@@ -970,6 +970,29 @@ fn local_loan_destinations_keep_checked_sources() -> Result<(), Box<dyn std::err
     invalid.kind = incan_semantics_core::SemanticSourceTargetKind::Parameter;
     graph.local_loans.insert(invalid, child_loan);
     assert!(flow::analyze(&graph).is_err());
+
+    let source = r#"
+class Cart:
+    pub items: list[str]
+
+async def grow(mut cart: Cart, item: str) -> int:
+    cart.items.append(item)
+    return len(cart.items)
+
+async def overlap(mut cart: Cart) -> int:
+    items = cart.items
+    grown = await grow(cart, "plum")
+    return grown + len(items)
+"#;
+    let checker = checked(source)?;
+    assert!(
+        checker
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "the inferred field loan must remain live across the awaited write: {:?}",
+        checker.errors
+    );
     Ok(())
 }
 
