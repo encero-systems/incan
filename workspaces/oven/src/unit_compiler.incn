@@ -383,6 +383,16 @@ pub def checker_record_counts(unit: UnitDescription, key: Key, typed: bool, exec
     if not report.is_file():
         return Ok(CheckerRecordCounts())
     counts = decode_checker_counts(report.read_bytes().map_err((error) => error.message())?)?
+    if get_or("INCAN_ENGINE_TRACE", "") != "":
+        observed = json_text(JsonValue.object({
+            "report": JsonValue.string(report.0),
+            "all_declarations": JsonValue.int(counts.all_declarations),
+            "reusable_declarations": JsonValue.int(counts.reusable_declarations),
+            "restored": JsonValue.array([JsonValue.string(owner) for owner in counts.restored]),
+            "restored_body_ir": JsonValue.array([JsonValue.string(owner) for owner in counts.restored_body_ir]),
+        }))
+        if let Ok(detail) = observed:
+            trace("checker-record-counts\t" + detail)
     discard_file(report)
     return Ok(counts)
 
