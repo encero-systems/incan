@@ -8,7 +8,9 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
 from std.tempfile import TemporaryDirectory
-from files import items, make_directory, parse_json, read, remove, required_text, write, optional_text as text
+from files import items, make_directory, parse_json, read, remove, required_text, string_of, write, optional_text as text
+
+const MCP_VERSION: str = "2026-07-28"
 
 
 pub def check_mcp(
@@ -21,7 +23,7 @@ pub def check_mcp(
     """
     Require MCP graph parity and continued serving after malformed or refused requests.
 
-    1. Send initialization, tool and resource requests to the real server.
+    1. Send discovery, unsupported initialization and stateless graph requests to the real server.
     2. Collect replies by request identity.
     3. Compare graph results, resources and protocol errors.
     """
@@ -33,16 +35,10 @@ pub def check_mcp(
 
     # 1. The real server receives both valid requests and explicit protocol refusals.
     messages = [
-        request(
-            1,
-            "initialize",
-            JsonValue.object(
-                {"protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}), "clientInfo": JsonValue.object(
-                    {"name": JsonValue.string("graph-contract"), "version": JsonValue.string("1")},
-                )},
-            ),
-        ),
-        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
+        request(11, "server/discover", JsonValue.object({})),
+        initialize_request(1, "2025-11-25"),
+        initialize_request(12, MCP_VERSION),
+        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("ping")}),
         request(2, "tools/list", JsonValue.object({})),
         call(3, "graph_summary", JsonValue.object({})),
         call(4, "context_for_task", JsonValue.object({"task": JsonValue.string(term), "budget": JsonValue.int(budget)})),
@@ -55,10 +51,13 @@ pub def check_mcp(
             JsonValue.object({"task": JsonValue.string("helper"), "budget": JsonValue.string("invalid")}),
         ),
         request(9, "resources/list", JsonValue.object({})),
-        request(10, "resources/read", JsonValue.object({"uri": JsonValue.string("incan://graph/summary")})),
     ]
+    # A valid resource read must still be served after the malformed line.
+    final_request = request(10, "resources/read", JsonValue.object({"uri": JsonValue.string("incan://graph/summary")}))
+    lines = [item.to_json().map_err((error) => error.message())? for item in messages]
+    tail = ["{", final_request.to_json().map_err((error) => error.message())?]
     protocol = project.joinpath(".mcp-requests")
-    data = "\n".join([item.to_json().map_err((error) => error.message())? for item in messages]) + "\n{\n"
+    data = "\n".join(lines + tail) + "\n"
     protocol.write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
     observations = project.joinpath(".mcp-preparation")
     make_directory(observations)?
@@ -73,16 +72,20 @@ pub def check_mcp(
         reply = parse(line).map_err((error) => error.message())?
         identifier = reply.require("id").map_err((error) => error.message())?
         if identifier.is_null():
+            failure = reply.require("error").map_err((error) => error.message())?
+            code = failure.require("code").map_err((error) => error.message())?
+            if code.expect_int().map_err((error) => error.message())? != -32700:
+                return Err("MCP did not return the parse error for malformed JSON")
             parse_errors += 1
             continue
         replies[identifier.expect_int().map_err((error) => error.message())?] = reply
     # 3. Graph facts, resources and refusals match their public contracts.
-    if len(replies) != 10 or parse_errors != 1:
+    if len(replies) != 12 or parse_errors != 1:
         return Err("MCP dropped requests, replied to a notification, or contaminated stdout")
-    if text(result(replies[1])?, "protocolVersion") != "2025-11-25":
-        return Err("MCP did not negotiate its documented protocol revision")
-    if "context_for_task" not in result(replies[2])?.to_json().map_err((error) => error.message())?:
-        return Err("MCP did not publish its context tool schema")
+    check_discovery(replies[11])?
+    check_initialize_refusal(replies[1])?
+    check_initialize_refusal(replies[12])?
+    check_graph_task_schema(replies[2])?
     if (
         "snapshot_id" not in content(replies[3])?
         or "helper" not in content(replies[4])?
@@ -99,6 +102,8 @@ pub def check_mcp(
     refused = result(replies[8])?.require("isError").map_err((error) => error.message())?
     if not refused.expect_bool().map_err((error) => error.message())?:
         return Err("MCP accepted an invalid context budget")
+    if content(replies[8])? != "budget must be an integer":
+        return Err("MCP changed the invalid context budget explanation")
     resources = result(replies[9])?.to_json().map_err((error) => error.message())?
     summary = result(replies[10])?.to_json().map_err((error) => error.message())?
     if "incan://graph/snapshot" not in resources or "snapshot_id" not in summary:
@@ -110,6 +115,73 @@ pub def check_mcp(
         check_workspace_definition(replies[5], project)?
         module_id = workspace_module(workspace_records, project.joinpath("src/main.incn"))?
         return check_authored_relationships(incan, project, module_id)
+    return Ok(None)
+
+
+def check_discovery(reply: JsonValue) -> Result[None, str]:
+    """Require the ordinary server to advertise its only stateless revision before any other request."""
+    if let Some(protocol_error) = reply.get("error"):
+        detail = protocol_error.to_json().map_err((error) => error.message())?
+        return Err(f"MCP pre-initialization server/discover failed: {detail}")
+    if supported_versions(result(reply)?)? != [MCP_VERSION]:
+        return Err(f"MCP server/discover must advertise only protocol revision {MCP_VERSION}")
+    return Ok(None)
+
+
+def check_initialize_refusal(reply: JsonValue) -> Result[None, str]:
+    """Require the exact protocol error and its supported versions even when initialize names the current revision."""
+    if reply.get("result") is not None:
+        return Err("MCP unexpectedly initialized a session")
+    error = reply.require("error").map_err((error) => error.message())?
+    code = error.require("code").map_err((error) => error.message())?
+    if code.expect_int().map_err((error) => error.message())? != -32022:
+        return Err("MCP initialize did not use the unsupported protocol version error")
+    data = error.require("data").map_err((error) => error.message())?
+    if supported_versions(data)? != [MCP_VERSION]:
+        return Err(f"MCP initialize refusal must name only protocol revision {MCP_VERSION}")
+    return Ok(None)
+
+
+def supported_versions(payload: JsonValue) -> Result[list[str], str]:
+    """Decode the same supported-revision list from discovery and the initialize refusal."""
+    versions = items(payload.require("supportedVersions").map_err((error) => error.message())?)?
+    return Ok([string_of(version)? for version in versions])
+
+
+def check_graph_task_schema(reply: JsonValue) -> Result[None, str]:
+    """Verify the first catalog tool's closed, typed context arguments and annotations."""
+    tools = items(result(reply)?.require("tools").map_err((error) => error.message())?)?
+    if len(tools) == 0 or text(tools[0], "name") != "context_for_task":
+        return Err("MCP did not publish its context tool schema")
+    first = tools[0]
+    schema = first.require("inputSchema").map_err((error) => error.message())?
+    additional = schema.require("additionalProperties").map_err((error) => error.message())?
+    if text(schema, "type") != "object" or additional.expect_bool().map_err((error) => error.message())?:
+        return Err("MCP context tool arguments must form a closed object")
+    required = items(schema.require("required").map_err((error) => error.message())?)?
+    if sorted([string_of(name)? for name in required]) != ["budget", "task"]:
+        return Err("MCP context tool must require exactly task and budget")
+    properties = schema.require("properties").map_err((error) => error.message())?.expect_object().map_err(
+        (error) => error.message(),
+    )?
+    if len(properties) != 2 or "task" not in properties or "budget" not in properties:
+        return Err("MCP context tool has a different argument schema")
+    budget = properties["budget"]
+    if text(properties["task"], "type") != "string" or text(budget, "type") != "integer":
+        return Err("MCP context tool changed the task or budget type")
+    minimum = budget.require("minimum").map_err((error) => error.message())?
+    maximum = budget.require("maximum").map_err((error) => error.message())?
+    if minimum.expect_int().map_err((error) => error.message())? != 128 or maximum.expect_int().map_err(
+        (error) => error.message(),
+    )? != 1000000:
+        return Err("MCP context tool changed the budget limits")
+    annotations = first.require("annotations").map_err((error) => error.message())?
+    read_only = annotations.require("readOnlyHint").map_err((error) => error.message())?
+    open_world = annotations.require("openWorldHint").map_err((error) => error.message())?
+    if not read_only.expect_bool().map_err((error) => error.message())? or open_world.expect_bool().map_err(
+        (error) => error.message(),
+    )?:
+        return Err("MCP context tool lost its read-only and closed-world annotations")
     return Ok(None)
 
 
@@ -167,10 +239,7 @@ def check_authored_relationships(incan: str, project: Path, module_id: str) -> R
         ("callees", "main", "call \"provider::helper\" [author=workspace] \"src/main.incn:29\""),
         ("imports", module_id, "import \"provider::helper\" [author=workspace] \"src/main.incn:22\""),
     ]
-    mut calls = [
-        request(1, "initialize", JsonValue.object({"protocolVersion": JsonValue.string("2025-11-25")})),
-        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
-    ]
+    mut calls = [request(1, "server/discover", JsonValue.object({}))]
     for index in range(len(queries)):
         kind, term, _ = queries[index]
         arguments = JsonValue.object({"kind": JsonValue.string(kind), "term": JsonValue.string(term)})
@@ -178,7 +247,7 @@ def check_authored_relationships(incan: str, project: Path, module_id: str) -> R
     write(protocol, "\n".join([item.to_json().map_err((error) => error.message())? for item in calls]) + "\n")?
     cold = mcp_output(incan, project, protocol, bakery.0, "")?
     replies = [parse_json(line)? for line in cold.split("\n") if line != ""]
-    if len(replies) != len(calls) - 1:
+    if len(replies) != len(calls):
         return Err("MCP authored relationship queries did not each receive a response")
     for index in range(len(queries)):
         kind, _, expected = queries[index]
@@ -220,8 +289,7 @@ pub def check_mcp_definition_boundary(incan: str, project: Path, boundary: Path,
     make_directory(fresh_bakery)?
     protocol = scratch.joinpath("requests")
     calls = [
-        request(1, "initialize", JsonValue.object({"protocolVersion": JsonValue.string("2025-11-25")})),
-        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
+        request(1, "server/discover", JsonValue.object({})),
         call(
             2,
             "graph_query",
@@ -286,7 +354,7 @@ def boundary_replies(
     bakery: str,
     trace: str = "",
 ) -> Result[list[JsonValue], str]:
-    """Read the definition and both relationship results after MCP initialization."""
+    """Read the definition and both stateless relationship results after discovery."""
     stdout = mcp_output(incan, project, protocol, bakery, trace)?
     replies = [line for line in stdout.split("\n") if line != ""]
     if len(replies) != 4:
@@ -472,6 +540,15 @@ def request(identifier: int, method: str, params: JsonValue) -> JsonValue:
     return JsonValue.object(
         {"jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier), "method": JsonValue.string(method), "params": params},
     )
+
+
+def initialize_request(identifier: int, version: str) -> JsonValue:
+    """Use the legacy handshake envelope to check that neither requested revision starts a session."""
+    client = JsonValue.object({"name": JsonValue.string("graph-contract"), "version": JsonValue.string("1")})
+    params = JsonValue.object(
+        {"protocolVersion": JsonValue.string(version), "capabilities": JsonValue.object({}), "clientInfo": client},
+    )
+    return request(identifier, "initialize", params)
 
 
 def call(identifier: int, name: str, arguments: JsonValue) -> JsonValue:

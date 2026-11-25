@@ -7,7 +7,7 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
 from graph_document import GraphDocument, document
-from files import optional_text as text, parse_json
+from files import items, optional_text as text, parse_json, string_of
 from protocol_peer import Peer, decode, start
 
 
@@ -92,12 +92,10 @@ def check_memory(incan: str, project: Path, foreign: str) -> Result[None, str]:
     tolerant = document(incan, project, "jsonl", allow_errors=true)?.records
     tolerant_snapshot = text(tolerant[0], "snapshot_id")
     mut peer = start(incan, project, ["mcp", "."], "jsonl")?
-    client = JsonValue.object({"name": JsonValue.string("graph-memory-contract"), "version": JsonValue.string("1")})
-    initialization = JsonValue.object(
-        {"protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}), "clientInfo": client},
-    )
-    peer.request(1, "initialize", initialization)?
-    peer.notify("notifications/initialized", JsonValue.object({}))?
+    discovered = peer.request(1, "server/discover", JsonValue.object({}))?
+    versions = items(discovered.require("supportedVersions").map_err((error) => error.message())?)?
+    if [string_of(version)? for version in versions] != ["2026-07-28"]:
+        return Err("MCP feedback discovered an unexpected protocol")
     summary = parse_json(tool(peer, 2, "graph_summary", JsonValue.object({}))?)?
     canonical = text(summary, "snapshot_id")
     if canonical == "" or canonical != tolerant_snapshot or canonical == checked or foreign in [checked, canonical]:
