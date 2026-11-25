@@ -141,6 +141,31 @@ fn writes_through_an_exclusive_borrow_replace_its_referent() -> Result<(), Box<d
             );
         }
     }
+    let source = r#"
+class Cart:
+    pub items: list[str]
+
+async def pause() -> None:
+    pass
+
+async def tally(mut cart: Cart) -> int:
+    mut items = cart.items
+    items.append("plum")
+    await pause()
+    items.append("fig")
+    return len(cart.items)
+
+async def observe(mut cart: Cart) -> int:
+    return await tally(cart)
+"#;
+    let plans = planned(source)?;
+    let tally = function(&plans, "__incan_async_body_tally")?;
+    assert!(tally.contains("ModelMutRef(") && tally.contains("Await("), "{tally}");
+    let (_, future) = plans
+        .iter()
+        .find(|(name, _)| name.starts_with("__incan_future_ctor_") && name.contains("observe"))
+        .ok_or("missing ordinary caller's tally future constructor")?;
+    assert!(future.contains("ModelMutRef("), "{future}");
     Ok(())
 }
 
