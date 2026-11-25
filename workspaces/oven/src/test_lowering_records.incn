@@ -15,13 +15,15 @@ from pub::internal_models.records import ReadWitness, encode_record_key
 from files import write
 from json_fields import required_items, required_text
 from engine_protocol_fixtures import json_text_is
+from generic_member_record_fixture import verify_generic_receiver_dependencies
 from lowering_record_fixtures import (
     attempt_trace,
     command_proof,
     lowering_attempts,
     lowering_example_run,
     mark_plan_report_predecessor,
-    plan_report_requests, plan_report_event_rows, require_one_read_per_plan_event,
+    plan_report_requests, plan_report_event_rows, require_two_edit_lowering,
+    capture_lowering_report, verify_one_module_counts,
     proof_count,
     report_fixture_build,
     stop_example_engine,
@@ -254,10 +256,7 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
 
 
 pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
-    """
-    A one-module edit evaluates one plan function. The three unchanged modules are admitted whole, including a
-    module with one scalar member and another that slices a list and joins its strings.
-    """
+    """Two one-line edits each lower one changed function and admit three unchanged modules."""
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
@@ -272,7 +271,8 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     imports = "from lone_alpha import lone_alpha_one, lone_alpha_two\nfrom lone_beta import lone_beta_one, lone_beta_two\nfrom lone_gamma import lone_gamma_one, lone_gamma_two\n"
     calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
     write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
-    _ = traced_example_run(binary, source, store, observations, "15")?
+    seed = traced_example_run(binary, source, store, observations, "15")?
+    seed_proof = capture_lowering_report(seed, store)?
     cold_reconciliations = observed_plan_reconciliations(observations)?
     cold = observed_module_work(observations)?
     projections = observed_source_projections(observations)?
@@ -287,21 +287,19 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     seed_event_rows = plan_report_event_rows(observations, root)?
     write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
     edited = traced_example_run(binary, source, store, observations, "19")?
+    beta_proof = capture_lowering_report(edited, store)?
     warm_reconciliations = observed_plan_reconciliations(observations)?
-    diagnostic = edited.to_json().map_err((error) => error.message())?
-    assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
+    verify_one_module_counts(beta_proof.report)?
     warm = observed_module_work(observations)?
     verify_module_work(cold, warm, "lone_beta")?
-    assert proof_count(edited, "plan_module_reuses")? == 3, diagnostic
     retained_members = verify_borrowed_gamma_members(store)
     before_member_rows = ordinary_member_rows(observations)
     beta_event_rows = plan_report_event_rows(observations, root)
     predecessor = mark_plan_report_predecessor(observations, root, seed_requests)?
     write(root.joinpath("lone_alpha.incn"), lone_module("lone_alpha", "7"))?
     again = traced_example_run(binary, source, store, observations, "25")?
-    again_diagnostic = again.to_json().map_err((error) => error.message())?
-    assert proof_count(again, "plan_function_evaluations")? == 1, again_diagnostic
-    assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
+    alpha_proof = capture_lowering_report(again, store)?
+    verify_one_module_counts(alpha_proof.report)?
     verify_module_work(warm, observed_module_work(observations)?, "lone_alpha")?
     preserved = predecessor.preserved(observations, root)
     stop_example_engine(binary, store)?
@@ -310,7 +308,10 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     retained_members?
     verify_alpha_request_routes(before_member_rows?, ordinary_member_rows(observations)?)?
     preserved?
-    return require_one_read_per_plan_event(seed_event_rows, beta_event_rows?, edited, predecessor)
+    return require_two_edit_lowering(
+        [seed_event_rows, beta_event_rows?, plan_report_event_rows(observations, root)?],
+        [seed_proof, beta_proof, alpha_proof], predecessor,
+    )
 
 
 pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> Result[None, str]:
@@ -724,10 +725,7 @@ pub def test_declaration_edit_keeps_an_imported_enum_read() -> Result[None, str]
 
 
 pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
-    """
-    A generic body edit in a warm store reproduces the cold plan, executable and output for both instances, and a
-    deleted imported module is refused warm exactly as cold.
-    """
+    """Compare warm and cold generic builds and prove exact body reads for two closed receivers."""
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
@@ -749,7 +747,8 @@ pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     assert plan == cold_plan, "warm and cold generic plans differ"
     assert executable == cold_executable, "warm and cold generic executables differ"
     verify_deleted_module_matches_cold(binary, root.joinpath("deleted-module"))?
-    return verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))
+    verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))?
+    return verify_generic_receiver_dependencies(binary, root.joinpath("closed-member"))
 
 
 def verify_deleted_module_matches_cold(binary: str, root: Path) -> Result[None, str]:

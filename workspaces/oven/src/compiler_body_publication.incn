@@ -20,11 +20,9 @@ from pub::internal_models import (
     namespace_header_of,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
-from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from pub::internal_models.records import (
     ReadScope,
     RecordKey,
-    RecordRequest,
     ReadWitness,
     encode_record_key,
 )
@@ -35,7 +33,7 @@ from compiler_owner_records import encode_body_frame, encode_eligibility, read_b
 from store_selection_records import encode_binding
 from compiler_graph_records import EditCutoff, prepare_evaluation, reusable_evaluation
 from compiler_publication_local_receipts import PublicationLocalReceipts
-from compiler_body_authentication import authenticate_compiled_bodies
+from compiler_body_authentication import AuthenticatedCompiledBodies, authenticate_compiled_bodies
 from compiler_executable_metadata import predecessor_owner_metadata, selected_owner_metadata_reader, typed_owner_metadata
 from compiler_executable_scopes import ExecutableScopeInputs, stage_executable_scopes
 from pub::internal_models.executable_scope import executable_scope_key
@@ -51,8 +49,11 @@ pub from compiler_captured_sources import (
 )
 from compiler_prepared_records import PreparedBodyRecordSource
 pub from compiler_prepared_records import prepared_product_request
-from compiler_namespace_products import ExecutableCallInputs, member_plan_inputs, prepare_namespace_products, stage_call_contracts
-from compiler_lowering_order import LoweringOrder, LoweringOrders
+from compiler_namespace_products import (
+    ExecutableCallInputs, prepare_namespace_products, stage_call_contracts,
+)
+from compiler_lowering_order import LoweringOrders
+from compiler_lowering_sources import LoweringBody, body_value, lowering_event_source
 from compiler_plan_modules import (
     PlanModuleAdmissions,
     StagedPlan,
@@ -61,13 +62,7 @@ from compiler_plan_modules import (
     staged_plan,
 )
 from compiler_plan_values import AdmittedPlanModule, RetainedPlanInputs, carried_lowering_demand
-from compiler_body_fallbacks import (
-    fallback_lowering_event,
-    fallback_reasons,
-    member_namespace,
-    namespace_witnessed_event,
-    retained_namespace_event,
-)
+from compiler_body_fallbacks import fallback_lowering_event, retained_namespace_event
 from compiler_body_projection import (
     dependency_projection_refusal,
     dependency_read_key,
@@ -79,7 +74,10 @@ from compiler_body_projection import (
 )
 from compiler_body_keys import body_key, eligibility_key, namespace_header_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE
-from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord, select_body_inventory_of
+from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord
+from compiler_selected_body_roots import BodyRootSelection
+from compiler_lowering_settlement import settle_reported_lowering
+from engine_lowering_evidence import LoweredFunction, PlanRefusalReport, SelectedBodyRoot
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
@@ -105,18 +103,6 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from unit import UnitDescription, dependency_source_roots
 from unit_compiler import CompletedPlanEvents, take_completed_plan_events
-
-
-model LoweringBody:
-    """An actual fresh or graph-selected owner witness; retained owners are never claimed as fresh checker output."""
-
-    identity: str
-    symbol: str
-    module: str
-    final: bytes
-    order: LoweringOrder
-    retained: bool = false
-    signature_reads: list[RecordKey] = []
 
 
 pub model PublishedCompiledBodies:
@@ -147,6 +133,8 @@ pub model PreparedCompiledBodies:
     # Bodies the compiler restored from selected records instead of checking them.
     pub body_reuses: int = 0
     pub lowering_demands: LoweringDemandWork = LoweringDemandWork()
+    pub selected_body_roots: Option[list[SelectedBodyRoot]] = None
+    pub lowered_functions: list[LoweredFunction] = []
 
 
 model StagedCompiledBodySources:
@@ -200,6 +188,7 @@ pub def prepare_compiled_bodies(
     mut captured_sources: Dict[str, SourceProjection] = {},
     plan_admissions: Option[PlanModuleAdmissions] = None,
     completed_plan_events: Option[CompletedPlanEvents] = None,
+    report_roots: bool = false,
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -226,32 +215,14 @@ pub def prepare_compiled_bodies(
         staged.source.add(positioned, captured_positions[positioned])
 
     record_work(Operation.EngineGraphStaging, "compiled-source-staging", staging_sources)
-    staging_scope = begin_work()
-    stage_executable_scopes(staged.transaction, staged.source, authenticated.scopes)
-
-    # 3. A cold whole check stages the same graph values later edited activations replace independently.
     order = authenticated.order
-    mut staged_certificates: set[str] = set()
-    for module in order.keys():
-        position = order[module]
-        if position.evidence not in staged_certificates:
-            stage_put(staged.transaction, "incan.compiler.namespace-order\t" + position.evidence, position.certificate)
-            staged_certificates.add(position.evidence)
-    if let Some(prior) = selected:
-        retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
-    executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
-    mut local_receipts = PublicationLocalReceipts.open(selected, plan_output is not None)
-    spans = module_spans(
-        staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff,
-        local_receipts, authenticated.scopes.typed,
+    executable, local_receipts = stage_compiled_scope_and_namespaces(
+        staged, authenticated, origin, selected, changed_sources, retained, cutoff, plan_output is not None,
     )?
-    for slot in spans.retained.keys():
-        staged.source.add(slot, spans.retained[slot])
-    record_work(Operation.EngineGraphStaging, "compiled-scope-order", staging_scope)
-    staging_namespaces = begin_work()
-    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts, authenticated.scopes)?
-    record_work(Operation.EngineGraphStaging, "compiled-namespace-staging", staging_namespaces)
     staging_bodies = begin_work()
+    mut body_roots = BodyRootSelection(enabled=report_roots)
+    if report_roots:
+        body_roots.restored = set(restored_body_ir)
     published = stage_compiled_body_values(
         staged.transaction,
         staged.source,
@@ -266,11 +237,11 @@ pub def prepare_compiled_bodies(
         set([namespace.module for namespace in authenticated.outputs.namespaces]),
         order,
         executable,
-        authenticated.scopes,
+        authenticated.scopes, body_roots,
     )?
     record_work(Operation.EngineGraphStaging, "compiled-body-staging", staging_bodies)
     staging_lowering = begin_work()
-    lowering_demands = prepare_optional_lowering_records(
+    lowering_demands, selected_roots, lowered_functions = prepare_optional_lowering_records(
         staged.transaction,
         staged.source,
         staged.projections,
@@ -290,7 +261,7 @@ pub def prepare_compiled_bodies(
         cutoff,
         authenticated.scopes,
         plan_admissions,
-        completed_plan_events,
+        completed_plan_events, body_roots,
     )?
     record_work(Operation.EngineGraphStaging, "compiled-lowering-staging", staging_lowering)
     record_work(Operation.EngineGraphStaging, output.0, staging)
@@ -302,9 +273,44 @@ pub def prepare_compiled_bodies(
             checking_evaluations=owner_evaluations,
             body_ir_evaluations=authenticated.body_ir_evaluations,
             body_reuses=owner_reuses,
-            lowering_demands=lowering_demands,
+            lowering_demands=lowering_demands, selected_body_roots=selected_roots,
+            lowered_functions=lowered_functions,
         ),
     )
+
+
+def stage_compiled_scope_and_namespaces(
+    mut staged: BorrowedMut[StagedCompiledBodySources], authenticated: Borrowed[AuthenticatedCompiledBodies],
+    origin: str, selected: Option[Snapshot], changed_sources: list[RecordKey], retained: list[SelectedBodyRecord],
+    cutoff: EditCutoff, has_plan: bool,
+) -> Result[tuple[ExecutableCallInputs, PublicationLocalReceipts], str]:
+    """Stage scope, namespace order and namespaces in the same transaction as their dependent bodies."""
+    staging_scope = begin_work()
+    stage_executable_scopes(staged.transaction, staged.source, authenticated.scopes)
+
+    # A cold whole check stages the same graph values later edited activations replace independently.
+    let order: Borrowed[Dict[str, NamespaceOrder]] = authenticated.order
+    mut staged_certificates: set[str] = set()
+    for module in order.keys():
+        position = order[module]
+        if position.evidence not in staged_certificates:
+            stage_put(staged.transaction, "incan.compiler.namespace-order\t" + position.evidence, position.certificate)
+            staged_certificates.add(position.evidence)
+    if let Some(prior) = selected:
+        retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
+    executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
+    mut local_receipts = PublicationLocalReceipts.open(selected, has_plan)
+    spans = module_spans(
+        staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff,
+        local_receipts, authenticated.scopes.typed,
+    )?
+    for slot in spans.retained.keys():
+        staged.source.add(slot, spans.retained[slot])
+    record_work(Operation.EngineGraphStaging, "compiled-scope-order", staging_scope)
+    staging_namespaces = begin_work()
+    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts, authenticated.scopes)?
+    record_work(Operation.EngineGraphStaging, "compiled-namespace-staging", staging_namespaces)
+    return Ok((executable, local_receipts))
 
 
 def stage_compiled_body_values(
@@ -321,7 +327,7 @@ def stage_compiled_body_values(
     checked_namespaces: set[str],
     order: Borrowed[Dict[str, NamespaceOrder]],
     executable: Borrowed[ExecutableCallInputs],
-    scopes: Borrowed[ExecutableScopeInputs],
+    scopes: Borrowed[ExecutableScopeInputs], mut body_roots: BorrowedMut[BodyRootSelection],
 ) -> Result[int, str]:
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
@@ -401,7 +407,7 @@ def stage_compiled_body_values(
         else:
             stage_delete(prepared, checking_basis_key(final_key)?)
         source.add(encode_record_key(final_key)?, value.final)
-        body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
+        body_ir_key = body_key("body-ir", origin, value.identity, "checked", final_key.context)
         body_frame = encode_body_frame(body_ir_key, scope.profile, value.body_ir)?
         mut frame_reads = [prepared_product_request(final_key), prepared_product_request(projection.placements[owner.key.facet].key)]
         if value.identity in executable.owners:
@@ -418,6 +424,7 @@ def stage_compiled_body_values(
             body_ir_receipt,
         )?
         source.add(encode_record_key(body_ir_key)?, body_frame)
+        body_roots.published(body_ir_key, value.name)
         published += 1
     return Ok(published)
 
@@ -524,13 +531,14 @@ def prepare_optional_lowering_records(
     cutoff: EditCutoff = EditCutoff(),
     scopes: Borrowed[ExecutableScopeInputs],
     plan_admissions: Option[PlanModuleAdmissions],
-    completed_plan_events: Option[CompletedPlanEvents],
-) -> Result[LoweringDemandWork, str]:
+    completed_plan_events: Option[CompletedPlanEvents], mut body_roots: BorrowedMut[BodyRootSelection],
+) -> Result[tuple[LoweringDemandWork, Option[list[SelectedBodyRoot]], list[LoweredFunction]], str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
-        events = match completed_plan_events:
+        no_refusals: Option[PlanRefusalReport] = None
+        events, refusals = match completed_plan_events:
             Some(current) => take_completed_plan_events(current, report)?
-            None => lowering_events(report)?
+            None => (lowering_events(report)?, no_refusals)
         mut fresh = set([value.identity for value in outputs.values])
         notes = admission_report.unwrap_or(report)
         admissions = match plan_admissions:
@@ -542,19 +550,20 @@ def prepare_optional_lowering_records(
             if let Some(owner) = fallback.identity:
                 fresh.add(owner)
         demanded = covered.lowering_demands(events, fresh, complete)
-        mut rescued: list[SelectedBodyRecord] = []
-        if len(demanded) > 0:
-            match selected:
-                None => return Err("covered lowering owner has no selected graph")
-                Some(graph) =>
-                    rescued = select_body_inventory_of(graph, CHECKER_PROFILE, origin, demanded)?
+        rescued = body_roots.select_rescued(selected, origin, demanded, covered, plan_modules, admissions, retained, fresh, scopes.typed)?
         if len(rescued) != len(demanded):
             return Err("partially restored plan did not retain its demanded checked owner")
         witnesses = lowering_witnesses(
             projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, scopes,
-            local_receipts, cutoff,
+            local_receipts, cutoff, body_roots,
         )?
-        return prepare_lowering_records(
+        selected_roots = body_roots.selected()
+        functions: list[LoweredFunction] = match (selected_roots, refusals):
+            (Some(roots), Some(observed)) => settle_reported_lowering(
+                roots, witnesses, events, observed, selected, origin, plan_modules, admissions,
+            )
+            _ => []
+        work = prepare_lowering_records(
             projections,
             prepared,
             source,
@@ -572,9 +581,10 @@ def prepare_optional_lowering_records(
             [module for module in covered.module_owners.keys()],
             retained_plans,
             cutoff,
-            admissions,
-        )
-    return Ok(LoweringDemandWork())
+            admissions, refusals,
+        )?
+        return Ok((work, selected_roots, functions))
+    return Ok((LoweringDemandWork(), body_roots.selected(), []))
 
 
 def stage_compiled_body_sources(
@@ -817,7 +827,7 @@ def lowering_witnesses(
     mut orders: LoweringOrders,
     scopes: Borrowed[ExecutableScopeInputs],
     local_receipts: Borrowed[PublicationLocalReceipts],
-    cutoff: EditCutoff = EditCutoff(),
+    cutoff: EditCutoff, mut body_roots: BorrowedMut[BodyRootSelection],
 ) -> Result[list[LoweringBody], str]:
     """
     Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts. A
@@ -825,45 +835,7 @@ def lowering_witnesses(
     """
     mut witnesses: list[LoweringBody] = []
     mut witnessed: set[str] = set()
-    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
-    for value in fresh:
-        projection = projections[value.module]
-        mut signatures = [body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)]
-        if len(value.scope_names) == 0:
-            signatures.append(projection.census.key)
-        else:
-            for name in value.scope_names:
-                signatures.append(scope_key(projection.census, name))
-        for feature in projections[value.module].feature_inputs:
-            signatures.append(feature.key)
-        for dependency in value.dependency_reads:
-            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) => signatures.append(key)
-                None => pass
-            match dependency_span_key(projections, dependency, editable_packages)?:
-                Some(key) => signatures.append(key)
-                None => pass
-            match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) =>
-                    signatures.append(key)
-                    signatures.append(signature_scope_key(key))
-                None => pass
-        header = match value.identity in scopes.owners:
-            true => scopes.owners[value.identity]
-            false => predecessor_owner_metadata(value.body_ir)?
-        if header.identity != value.identity:
-            return Err("graph-eligible Body IR disagrees with its stable owner")
-        witnesses.append(
-            LoweringBody(
-                identity=value.identity,
-                symbol=header.symbol,
-                module=value.module,
-                order=orders.fresh(value.module),
-                final=value.final,
-                signature_reads=signatures,
-            ),
-        )
-        witnessed.add(value.identity)
+    add_fresh_lowering_witnesses(witnesses, witnessed, projections, fresh, unit, origin, orders, scopes)?
     reader = selected_owner_metadata_reader(scopes.typed and len(retained) > 0)?
     for record in retained:
         if record.identity in witnessed:
@@ -937,7 +909,56 @@ def lowering_witnesses(
             ),
         )
         witnessed.add(record.identity)
+        body_roots.retained(key, decoded.name, decoded.source, decoded.symbol)
     return Ok(witnesses)
+
+
+def add_fresh_lowering_witnesses(
+    mut witnesses: BorrowedMut[list[LoweringBody]], mut witnessed: BorrowedMut[set[str]],
+    projections: Borrowed[Dict[str, SourceProjection]], fresh: list[CompiledBodyValue], unit: UnitDescription,
+    origin: str, orders: Borrowed[LoweringOrders], scopes: Borrowed[ExecutableScopeInputs],
+) -> Result[None, str]:
+    """Read the current checker outputs and collect the exact inputs each fresh lowering owner consumed."""
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in fresh:
+        projection = projections[value.module]
+        mut signatures = [body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)]
+        if len(value.scope_names) == 0:
+            signatures.append(projection.census.key)
+        else:
+            for name in value.scope_names:
+                signatures.append(scope_key(projection.census, name))
+        for feature in projections[value.module].feature_inputs:
+            signatures.append(feature.key)
+        for dependency in value.dependency_reads:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_span_key(projections, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) =>
+                    signatures.append(key)
+                    signatures.append(signature_scope_key(key))
+                None => pass
+        header = match value.identity in scopes.owners:
+            true => scopes.owners[value.identity]
+            false => predecessor_owner_metadata(value.body_ir)?
+        if header.identity != value.identity:
+            return Err("graph-eligible Body IR disagrees with its stable owner")
+        witnesses.append(
+            LoweringBody(
+                identity=value.identity,
+                symbol=header.symbol,
+                module=value.module,
+                order=orders.fresh(value.module),
+                final=value.final,
+                signature_reads=signatures,
+            ),
+        )
+        witnessed.add(value.identity)
+    return Ok(None)
 
 
 def retained_sources_current(
@@ -1009,7 +1030,7 @@ def prepare_lowering_records(
     covered_modules: list[str] = [],
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
     cutoff: EditCutoff = EditCutoff(),
-    admissions: Borrowed[PlanModuleAdmissions],
+    admissions: Borrowed[PlanModuleAdmissions], refusals: Option[PlanRefusalReport] = None,
 ) -> Result[LoweringDemandWork, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
@@ -1044,38 +1065,28 @@ def prepare_lowering_records(
         if event.role == "entry":
             continue
         event_identity = event.identity
-        # A toolchain runtime instance reads no authored record: lowering keys it by the runtime body's checked meaning.
-        runtime = event_identity.startswith(RUNTIME_INSTANCE_IDENTITY)
-        if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
-            continue
-        mut member = false
-        if not runtime and event_identity not in bodies and namespace_witnessed_event(unit, fallbacks, event_identity)?:
-            member = true
+        witness = match lowering_event_source(
+            source,
+            orders,
+            selected,
+            cutoff,
+            unit,
+            origin,
+            event,
+            bodies,
+            rechecked,
+            fallbacks,
+            namespace_files,
+            member_inputs,
+        )?:
+            Some(value) => value
+            None => continue
+
         key = event.key
         function = event.function
         product = event.product
-        mut identity = event_identity
-        mut signature_reads: list[RecordRequest] = []
-        mut body_reads: list[RecordRequest] = []
-        mut module_file = ""
-        mut position = LoweringOrder()
-        if member:
-            match member_namespace(unit, namespace_files, event_identity)?:
-                None => continue
-                Some(module) =>
-                    body_reads = member_plan_inputs(origin, module, event_identity, member_inputs)?
-                    module_file = module
-                    position = orders.fresh(module)
-        elif not runtime:
-            body = body_value(bodies, fallbacks, event_identity)?
-            # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
-            # when a linked Rust unit changed without changing the checked source body or its callable signature.
-            identity = body.identity
-            module_file = body.module
-            position = body.order
-            signature_reads = [prepared_product_request(key) for key in body.signature_reads]
-            body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
-            body_reads = [prepared_product_request(body_ir_key)] + signature_reads
+        identity = witness.identity
+        position = witness.order
         if position.rank > interface_namespace:
             interface_namespace = position.rank
         demand_key = body_key("lowering-demand", origin, identity, function, key)
@@ -1095,7 +1106,7 @@ def prepare_lowering_records(
             demand_value = demands.encode(record.inputs, record.function)?
             finish_producer(attempt, "produced")
             work.evaluations += 1
-        demand_receipt = source.receipt(scope, demand_key, body_reads, position.evidence)?
+        demand_receipt = source.receipt(scope, demand_key, witness.body_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "lowering-demand-" + identity,
@@ -1105,7 +1116,12 @@ def prepare_lowering_records(
             expected_value_digest=expected_digest,
         )?
         source.add(encode_record_key(demand_key)?, demand_value)
-        plan_receipt = source.receipt(scope, plan_key, [prepared_product_request(demand_key)] + signature_reads, position.evidence)?
+        plan_receipt = source.receipt(
+            scope,
+            plan_key,
+            [prepared_product_request(demand_key)] + witness.signature_reads,
+            position.evidence,
+        )?
         _ = prepare_evaluation(
             prepared,
             "plan-function-" + identity,
@@ -1115,7 +1131,7 @@ def prepare_lowering_records(
         )?
         source.add(encode_record_key(plan_key)?, product)
         plan_keys.append(plan_key)
-        staged.append(staged_plan(module_file, event, identity, event_identity, function, key, plan_key, position)?)
+        staged.append(staged_plan(witness.module, event, identity, event_identity, function, key, plan_key, position)?)
     for event in events:
         if event.role != "entry":
             continue
@@ -1184,7 +1200,7 @@ def prepare_lowering_records(
         cutoff,
     )?
     if not report.joinpath(INTERFACE_REPORT).is_file():
-        require_plan_refusal(report)?
+        require_plan_refusal(report, refusals)?
         return Ok(work)
     prepare_native_interface(
         projections, prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
@@ -1193,12 +1209,17 @@ def prepare_lowering_records(
     return Ok(work)
 
 
-def require_plan_refusal(report: Path) -> Result[None, str]:
-    """Accept an incomplete native interface only when lowering retained an explicit per-function refusal."""
-    for entry in report.iterdir().map_err((error) => error.message())?:
-        if entry.is_file() and entry.name().endswith(".refusal"):
-            _ = decode_lowering_refusal(entry.read_bytes().map_err((error) => error.message())?)?
-            return Ok(None)
+def require_plan_refusal(report: Path, decoded: Option[PlanRefusalReport]) -> Result[None, str]:
+    """Accept an incomplete native interface only with an explicit per-function refusal."""
+    match decoded:
+        Some(observed) =>
+            if observed.present:
+                return Ok(None)
+        None =>
+            for entry in report.iterdir().map_err((error) => error.message())?:
+                if entry.is_file() and entry.name().endswith(".refusal"):
+                    _ = decode_lowering_refusal(entry.read_bytes().map_err((error) => error.message())?)?
+                    return Ok(None)
     return Err("successful records compile omitted its native interface without a lowering refusal")
 
 
@@ -1267,18 +1288,3 @@ def prepare_native_interface(
         receipt,
     )?
     return Ok(None)
-
-
-def body_value(
-    values: Dict[str, LoweringBody],
-    fallbacks: list[CompiledBodyFallback],
-    identity: str,
-) -> Result[LoweringBody, str]:
-    """Authenticate one lowering event against graph-eligible Body IR, retaining an exact checker fallback reason."""
-    if identity in values:
-        return Ok(values[identity])
-    available = sorted([symbol for symbol in values.keys()])
-    reasons = "; ".join(fallback_reasons(fallbacks))
-    return Err(
-        f"lowering output owner {identity} is absent from graph-eligible Body IR: {available}; checker-record fallbacks: {reasons}",
-    )

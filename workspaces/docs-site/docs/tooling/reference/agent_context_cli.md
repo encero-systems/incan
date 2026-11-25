@@ -5,11 +5,11 @@ This page specifies `incan inspect codegraph` retrieval, context packing and sna
 ## CLI signatures
 
 ```text
-incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict | --allow-errors] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict | --allow-errors] [--risk [--coverage-report PATH]] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan inspect codegraph PATH --query KIND TERM [--profile NAME] [--limit N] [--format json|jsonl] [--strict] [--substitute NAME=DIR]... [FEATURE OPTIONS]
-incan inspect codegraph PATH --task TASK [--profile NAME] [--budget N] [--format compact|json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
-incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict | --allow-errors] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
-incan mcp PATH [--profile NAME]
+incan inspect codegraph PATH --task TASK [--profile NAME] [--budget N] [--format compact|json|jsonl] [--strict] [--risk [--coverage-report PATH]] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict | --allow-errors] [--risk [--coverage-report PATH]] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan mcp PATH [--profile NAME] [--coverage-report PATH]
 ```
 
 | Argument | Type and default | Contract |
@@ -24,7 +24,8 @@ incan mcp PATH [--profile NAME]
 | `--stale SNAPSHOT` | String beginning `snapshot:` | Returns a JSON object with `record: "snapshot_status"`, `expected`, the current `snapshot_id` and Boolean `stale`. A stale snapshot is a successful status response. It takes precedence over a simultaneous query. |
 | `--strict` | Boolean flag | Refuses if any selected unit fails checking and reports its diagnostics. A plain raw export uses this mode by default. |
 | `--allow-errors` | Boolean flag | Selects a tolerant raw export that keeps available facts and warns about unchecked units on stderr. Combined with `--strict` it exits `1` with `--allow-errors cannot be combined with --strict`. |
-| `--risk` | Boolean, default `false` | Adds optional local git observations. Missing git history contributes no risk records. |
+| `--risk` | Boolean, default `false` | Adds optional local Git and coverage observations when their inputs are available. |
+| `--coverage-report PATH` | Optional file path | Selects one coverage report relative to the invocation directory. With `incan inspect`, requires `--risk`. With `incan mcp`, fixes the report path for `process_risk` requests. |
 | `--substitute NAME=DIR` | Repeatable dependency mapping | Replaces the local dependency of package `NAME` with the project at `DIR` wherever the dependency graph reaches it. |
 | `--features A,B`, `--no-default-features`, `--all-features` | Root-package feature selection, as for [unit commands](cli_reference.md#unit-options); default features | The inspected unit and its dependencies are checked with this selection. A source outside any project refuses it. Each selection has its own export. |
 
@@ -70,7 +71,7 @@ The first line has this shape:
 incan.context/1 SNAPSHOT CONTEXT degraded=BOOL unresolved_calls=N budget=N tokens<=utf8_bytes authored_text=quoted_evidence
 ```
 
-Each node line starts with a response-local `nN`, followed by its record kind, a JSON-quoted label, bracketed provenance and degraded state, quoted source anchor, signature and `why=` inclusion reason. Optional details follow. Anchors and reasons are JSON-quoted. Each edge line has `nSOURCE -KIND-> nTARGET`, bracketed provenance/degraded state and a quoted source anchor. Local IDs are valid only within that response. Diagnostic details contain the code and message; process details contain the raw git evidence and its controls.
+Each node line starts with a response-local `nN`, followed by its record kind, a JSON-quoted label, bracketed provenance and degraded state, quoted source anchor, signature and `why=` inclusion reason. Optional details follow. Anchors and reasons are JSON-quoted. Each edge line has `nSOURCE -KIND-> nTARGET`, bracketed provenance/degraded state and a quoted source anchor. Local IDs are valid only within that response. Diagnostic details contain the code and message; process details contain the raw evidence and its controls.
 
 ### JSON and JSONL
 
@@ -78,13 +79,29 @@ JSON is an array whose first element is the header, followed by nodes and then e
 
 ## Optional process observations
 
-`--risk` and the MCP `process_risk` tool expose `risk_signal` records with schema `incan.process-risk/1` and provenance `process_observed`. They observe at most the latest 100 non-merge commits. Fields include the represented `target_id`, repository-relative `path`, `head`, `sample_commits`, `history_truncated`, `churn`, `ownership`, `co_changes`, `evidence`, `co_change_excluded_commits` and `controls`.
+`--risk` and the MCP `process_risk` tool expose `risk_signal` records with schema `incan.process-risk/1` and provenance `process_observed`. The Git source observes at most the latest 100 non-merge commits. Fields include the represented `target_id`, repository-relative `path`, `head`, `sample_commits`, `history_truncated`, `churn`, `ownership`, `co_changes`, `evidence`, `co_change_excluded_commits` and `controls`.
 
 `churn` reports commit touches, added/removed lines and binary changes. `ownership` counts touches per git author identity. `co_changes` counts paths changed in the same commits; commits touching more than 256 paths are excluded from this measure and cited separately. Binary changes have no line totals; quoted paths are omitted. Evidence lists the contributing commit IDs. Missing inputs or no observed touches produce no corresponding record.
 
+A coverage report is a UTF-8 JSON file of at most 1 MiB. Set `snapshot_id` to the current export's snapshot ID without `--risk`. Use `incan inspect codegraph PATH --allow-errors` to obtain the tolerant snapshot that matches MCP.
+
+```json
+{
+  "schema": "incan.coverage-report/1",
+  "snapshot_id": "snapshot:<current-graph-id>",
+  "files": [
+    {"path": "src/main.incn", "covered_lines": 3, "instrumented_lines": 5}
+  ]
+}
+```
+
+Report paths are slash-separated and relative to the repository root, or the owning project outside Git. A path may appear once. Counts are integers with `0 <= covered_lines <= instrumented_lines` and a positive `instrumented_lines`. A row contributes only when the export contains one file with that path. Missing, invalid or stale reports contribute no coverage observations. Git observations are independent.
+
+Each coverage observation has `source: "coverage_report"`, the represented file's `target_id`, the two raw counts, and a `report_digest` in `sha256:<hex>` form over the original bytes. Its `evidence` lists that same digest. The counts describe the instrumented lines reported for the file. Coverage observations change the risk-enabled snapshot while the risk-free export retains its original identity.
+
 ## MCP transport
 
-`incan mcp PATH [--profile NAME]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. Call `server/discover` for `supportedVersions`, server information, and the fixed tool and resource capabilities. The supported version is `2026-07-28`. Clients can call `tools/list`, `tools/call`, `resources/list`, and `resources/read` directly. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
+`incan mcp PATH [--profile NAME] [--coverage-report PATH]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. Call `server/discover` for `supportedVersions`, server information, and the fixed tool and resource capabilities. The supported version is `2026-07-28`. Clients can call `tools/list`, `tools/call`, `resources/list`, and `resources/read` directly. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
 
 Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`. `initialize` returns `-32022` with `error.data.supportedVersions`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls return a text content block and `isError: false`. Definition queries also return the structured records described below.
 

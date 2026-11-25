@@ -32,8 +32,8 @@ pub struct TypecheckedModules {
     pub namespace_bodies: Vec<Option<incan_semantics_core::body_ir::BodyIrModule>>,
     /// External package declarations witnessed by restored modules before their type facts were released.
     pub namespace_package_roots: std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-    /// Lowering witnesses carried by the complete namespace records admitted in this pass.
-    pub namespace_lowering_inputs: Vec<Arc<[(incan_semantics_core::CompilerNodeId, String)]>>,
+    /// The checked headers of complete Body IR namespaces admitted in this pass.
+    pub lowering_namespaces: Vec<Arc<incan_frontend::checker_records::GraphNamespaceHeader>>,
     /// Modules admitted whole by their namespace header, aligned with `type_infos`: checking read no frame of theirs
     /// beyond the interfaces it installed, so their Body IR, witnesses and package roots are still to be read by a
     /// consumer that lowers them.
@@ -99,7 +99,7 @@ pub(crate) fn typecheck_modules(
     let mut type_infos = Vec::with_capacity(modules.len());
     let mut namespace_bodies = Vec::with_capacity(modules.len());
     let mut namespace_package_roots = std::collections::BTreeSet::new();
-    let mut namespace_lowering_inputs = Vec::new();
+    let mut lowering_namespaces = Vec::new();
     let mut header_admitted = vec![false; modules.len()];
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = imports.cycle_peers();
@@ -217,7 +217,7 @@ pub(crate) fn typecheck_modules(
             match admitted {
                 NamespaceAdmission::Record(record) => {
                     namespace_bodies.push(Some(record.body_ir));
-                    namespace_lowering_inputs.push(Arc::clone(&record.header.lowering_inputs));
+                    lowering_namespaces.push(Arc::clone(&record.header));
                     namespace_package_roots.extend(record.header.package_roots.iter().cloned());
                 }
                 NamespaceAdmission::Header(_) => {
@@ -400,7 +400,7 @@ pub(crate) fn typecheck_modules(
         Ok(TypecheckedModules {
             type_infos,
             namespace_bodies,
-            namespace_lowering_inputs,
+            lowering_namespaces,
             namespace_package_roots,
             header_admitted,
             warnings: warnings_out,

@@ -57,13 +57,13 @@ pub use records::lowering_events::{
     EventReference, INTERFACE_REPORT, LoweringEvent, LoweringRefusal, NATIVE_DEFINITIONS, NativeInterface,
     RequestModuleNote, admitted_definitions_filename, decode_admitted_definitions, decode_lowering_event,
     decode_lowering_refusal, decode_module_note, decode_native_interface, decode_request_module_note,
-    encode_admitted_definitions, encode_lowering_event, encode_lowering_refusal, encode_module_note,
-    encode_native_interface, native_interface_filename, place_admitted_event, placed_admission, read_module_admission,
-    write_module_placement,
+    encode_admitted_definitions, encode_evaluated_lowering_refusal, encode_lowering_event, encode_lowering_refusal,
+    encode_module_note, encode_native_interface, lowering_refusal_evidence, native_interface_filename,
+    place_admitted_event, placed_admission, read_module_admission, write_module_placement,
 };
 pub use records::plan_function::{
-    LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,
-    encode_plan_function_record, plan_function_digest, verify_entry_record,
+    CHECKED_MEMBER_INSTANCE, LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record,
+    encode_lowering_demand, encode_plan_function_record, plan_function_digest, verify_entry_record,
 };
 pub use records::plan_module::{
     ADMITTED_MODULE_NOTE, CompactAdmissionPin, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,

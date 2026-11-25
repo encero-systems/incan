@@ -147,6 +147,8 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
 struct CheckedProgram {
     /// Invocation-local producer evidence for self-contained scalar native function products.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    /// Existing checker authority for selected generic methods, without source positions in their stable names.
+    member_owners: BTreeMap<CanonicalSymbolId, String>,
     retained_namespaces: Vec<checked_program::RetainedNamespaceBody>,
     /// Position of the original authored callables in the entry module's current linked catalog.
     authored_callable_start: Option<usize>,
@@ -830,6 +832,7 @@ fn lower_compilation_plan(
                 let inputs = SourceInputs {
                     scalar_products: None,
                     scalar_bodies: Vec::new(),
+                    member_owners: Arc::default(),
                     sources: retry.sources,
                     files: retry.files,
                     tests: program.tests.iter().map(|test| test.entry.clone()).collect(),
@@ -855,6 +858,7 @@ fn lower_compilation_plan(
                 let inputs = SourceInputs {
                     scalar_products: native_products.clone(),
                     scalar_bodies: std::mem::take(&mut program.cacheable_bodies),
+                    member_owners: Arc::new(std::mem::take(&mut program.member_owners)),
                     sources: std::mem::take(&mut program.sources),
                     files: std::mem::take(&mut program.files),
                     tests: program.tests.iter().map(|test| test.entry.clone()).collect(),
@@ -1010,6 +1014,7 @@ fn census_complete(
             &SourceInputs {
                 scalar_products: None,
                 scalar_bodies: Vec::new(),
+                member_owners: Arc::default(),
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),
@@ -1038,6 +1043,7 @@ fn census_complete(
             &SourceInputs {
                 scalar_products: None,
                 scalar_bodies: Vec::new(),
+                member_owners: Arc::default(),
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),

@@ -34,8 +34,8 @@ use crate::program_context::ProgramContext;
 use crate::resident_products::{FinalizedMember, FinalizedSlots, RestoreInputs};
 use crate::runtime_calls::sealed_runtime_path;
 use crate::scalar_store::{
-    AdmittedPayload, ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
-    report_scalar_refusal, retained_scalar, scalar_miss,
+    AdmittedPayload, ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference,
+    report_evaluated_scalar_refusal, report_scalar, report_scalar_refusal, retained_scalar, scalar_miss,
 };
 use crate::trace_channel::{emit, frame_product, tracing_products};
 use crate::traits::is_lazy_method_body;
@@ -466,7 +466,7 @@ fn lower_ordinary_frame(
             Some(context),
             Some(&current),
             positions,
-        ) && let Some(requests) = restore_requests(&encoded, context)
+        ) && let Some(requests) = restore_requests(&encoded, context, Some(program))
         {
             report_scalar(
                 keyed.report,
@@ -497,6 +497,32 @@ fn lower_ordinary_frame(
             frame_product("unreused", "ordinary", &format!("{} {reason}", frame_label(body)));
         }
     }
+    lower_fresh_ordinary_frame(
+        context,
+        program,
+        body,
+        unions,
+        frame,
+        intrinsics,
+        keyed,
+        &owner,
+        inputs.as_ref(),
+    )
+}
+
+/// Lower an ordinary frame and retain its product only after lowering succeeds.
+#[allow(clippy::too_many_arguments)]
+fn lower_fresh_ordinary_frame(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    body: &Body,
+    unions: &[IncanType],
+    frame: &FrameSource<'_>,
+    intrinsics: &mut Vec<EnumDeclaration>,
+    keyed: &mut KeyedProducts<'_>,
+    owner: &RecordOwner,
+    inputs: Option<&ProductInputs>,
+) -> Result<OrdinaryFrame, String> {
     let attempt = enter_producer(
         "compiler",
         "plan-function",
@@ -515,7 +541,7 @@ fn lower_ordinary_frame(
         DecoratorFrame::Normal,
     )?;
     finish_producer(attempt, "produced");
-    record_lowered_ordinary(body, &lowered, intrinsics, keyed, &owner, inputs.as_ref())?;
+    record_lowered_ordinary(body, &lowered, intrinsics, keyed, owner, inputs, (context, program))?;
     let (function, runtime, pending, synthesized) = lowered;
     Ok((function.into(), runtime, pending, synthesized))
 }
@@ -528,10 +554,11 @@ fn record_lowered_ordinary(
     keyed: &mut KeyedProducts<'_>,
     owner: &RecordOwner,
     inputs: Option<&ProductInputs>,
+    (context, program): (&BodyIrModule, &ProgramContext),
 ) -> Result<(), String> {
     let (function, runtime, pending, synthesized) = lowered;
     let mut kept = false;
-    match encode_requests(pending) {
+    match encode_requests(pending, context, program) {
         Ok(requests) => {
             if let (Some(directory), Some((witness, positions))) = (keyed.directory, inputs) {
                 sync_carriers(&mut keyed.nominals, intrinsics);
@@ -560,13 +587,19 @@ fn record_lowered_ordinary(
                         );
                         report_scalar(keyed.report, &event)?;
                     }
-                    Err(reason) => report_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason)?,
+                    Err(reason) => report_evaluated_scalar_refusal(
+                        keyed.report,
+                        &owner.identity,
+                        &function.name,
+                        &reason,
+                        witness,
+                    )?,
                 }
             }
         }
         Err(reason) => {
-            if inputs.is_some() {
-                report_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason)?;
+            if let Some((witness, _)) = inputs {
+                report_evaluated_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason, witness)?;
             }
         }
     }
@@ -731,7 +764,7 @@ fn restore_admitted(
     let Some(restored) = admitted_function(placed, &resolved, &keyed.linked, context) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
-    let Some(requests) = restore_requests(encoded, context) else {
+    let Some(requests) = restore_requests(encoded, context, Some(program)) else {
         return Admission::Missed("a generic instance it requests is gone");
     };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();

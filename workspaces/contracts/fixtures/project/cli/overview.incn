@@ -13,7 +13,7 @@
 #   incan build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 #   incan fmt [--check] [--diff] [PATH...]
 #   incan inspect codegraph PATH [GRAPH OPTIONS]
-#   incan mcp PATH [--profile NAME]
+#   incan mcp PATH [--profile NAME] [--coverage-report PATH]
 #   incan toolchain pack OUT
 #   incan toolchain install ARCHIVE
 #   incan toolchain verify ASSET

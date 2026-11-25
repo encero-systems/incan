@@ -173,6 +173,9 @@ def node_details(record: JsonValue) -> JsonValue:
     if kind == "diagnostic":
         return JsonValue.object({key: nested(record, key) for key in ["code", "message"]})
     if kind == "risk_signal":
+        if text(record, "source") == "coverage_report":
+            keys = ["source", "covered_lines", "instrumented_lines", "report_digest", "evidence", "controls"]
+            return JsonValue.object({key: nested(record, key) for key in keys})
         keys = ["source", "head", "churn", "ownership", "co_changes", "evidence", "controls"]
         return JsonValue.object({key: nested(record, key) for key in keys})
     return JsonValue.null()

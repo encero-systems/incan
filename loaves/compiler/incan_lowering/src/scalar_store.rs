@@ -11,9 +11,9 @@ use incan_mir_plan_native::{
     EventPosition, EventReference, ExternalFunction, Function, LoweringEvent, LoweringRefusal, NominalKind,
     NominalReference, PlacedRecord, PlanFunctionRecord, PositionChange, ProductNominal, RestoredSlot, SourceSpan,
     UnitNominals, WirePositions, decode_lowering_event, decode_plan_function_record, decode_product_parts,
-    encode_lowering_event, encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product,
-    place_product_record, plan_function_digest, positioned_product_requirements, product_nominals, resolve_nominals,
-    unresolved_nominal,
+    encode_evaluated_lowering_refusal, encode_lowering_event, encode_lowering_refusal, encode_plan_function_record,
+    encode_product, matches_product, place_product_record, plan_function_digest, positioned_product_requirements,
+    product_nominals, resolve_nominals, unresolved_nominal,
 };
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::semantic_digest::semantic_digest;
@@ -185,14 +185,13 @@ pub fn report_scalar(directory: Option<&str>, event: &ProductEvent<'_>) -> Resul
     let Some(root) = directory else {
         return Ok(());
     };
-    let digest = fingerprint(event.inputs)?;
-    let encoded = std::fs::read(scalar_path(event.products, event.inputs)?)
+    let key = scalar_key(event.inputs)?;
+    let encoded = std::fs::read(scalar_path_for_key(event.products, &key))
         .map_err(|error| format!("cannot read plan-function product {error}"))?;
     // Revalidate the exact bytes before they cross from private lowering transport into Bakery publication.
     if !valid_record(&encoded, event.inputs) {
         return Err("plan-function product failed its lowering codec round trip".into());
     }
-    let key = digest.replace("sha256:", "");
     let path = Path::new(root).join(format!("{key}.event"));
     let mut reused = event.reused;
     // Oven empties this report for each compiler request. A runtime retry can read a product this request just
@@ -232,19 +231,48 @@ pub fn report_scalar_refusal(
     function: &str,
     refusal: &str,
 ) -> Result<(), String> {
+    write_scalar_refusal(directory, identity, function, refusal, None)
+}
+
+/// Preserve the product key when an ordinary witnessed evaluation cannot be retained.
+pub fn report_evaluated_scalar_refusal(
+    directory: Option<&str>,
+    identity: &str,
+    function: &str,
+    refusal: &str,
+    inputs: &[String],
+) -> Result<(), String> {
+    write_scalar_refusal(directory, identity, function, refusal, Some(inputs))
+}
+
+/// Write one refusal record and preserve its scalar key when the evaluation was witnessed.
+fn write_scalar_refusal(
+    directory: Option<&str>,
+    identity: &str,
+    function: &str,
+    reason: &str,
+    inputs: Option<&[String]>,
+) -> Result<(), String> {
     let Some(root) = directory else {
         return Ok(());
     };
-    let encoded = encode_lowering_refusal(&LoweringRefusal {
+    let refusal = LoweringRefusal {
         identity: identity.to_owned(),
         function: function.to_owned(),
-        refusal: refusal.to_owned(),
-    })?;
-    let digest = fingerprint(&[identity.to_owned(), function.to_owned(), refusal.to_owned()])?;
-    write_report(
-        &Path::new(root).join(format!("{}.refusal", digest.replace("sha256:", ""))),
-        &encoded,
-    )
+        refusal: reason.to_owned(),
+    };
+    let (key, encoded) = match inputs {
+        Some(inputs) if !identity.is_empty() => {
+            let key = scalar_key(inputs)?;
+            let encoded = encode_evaluated_lowering_refusal(&refusal, &key)?;
+            (key, encoded)
+        }
+        _ => (
+            scalar_key(&[identity.to_owned(), function.to_owned(), reason.to_owned()])?,
+            encode_lowering_refusal(&refusal)?,
+        ),
+    };
+    write_report(&Path::new(root).join(format!("{key}.refusal")), &encoded)
 }
 
 /// Write one report record, creating the report directory when it is missing.
@@ -610,8 +638,17 @@ fn restore_scalar_product(
 
 /// Name a native product by the existing semantic digest owner's unambiguous framed serialization.
 pub fn scalar_path(directory: &str, inputs: &[String]) -> Result<PathBuf, String> {
-    let digest = fingerprint(inputs)?;
-    Ok(Path::new(directory).join(format!("{}.incnfunction", digest.replace("sha256:", ""))))
+    Ok(scalar_path_for_key(directory, &scalar_key(inputs)?))
+}
+
+/// Locate the retained scalar product for an existing key.
+fn scalar_path_for_key(directory: &str, key: &str) -> PathBuf {
+    Path::new(directory).join(format!("{key}.incnfunction"))
+}
+
+/// Use the semantic digest without its algorithm prefix as the scalar product key.
+fn scalar_key(inputs: &[String]) -> Result<String, String> {
+    Ok(fingerprint(inputs)?.replace("sha256:", ""))
 }
 
 /// Use the existing digest owner; these fingerprints never define a second declaration identity.

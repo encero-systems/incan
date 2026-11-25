@@ -138,6 +138,7 @@ fn interfaces_and_definitions_read_back_unchanged() {
     assert_eq!(read, expected);
 }
 
+/// Check refusal variants, notes and pages against their original typed records.
 #[test]
 fn refusals_notes_and_pages_read_back_unchanged() {
     let refusal = native::LoweringRefusal {
@@ -146,7 +147,22 @@ fn refusals_notes_and_pages_read_back_unchanged() {
         refusal: "checker supplied no complete scalar body witness".into(),
     };
     let encoded = native::encode_lowering_refusal(&refusal).expect("refusal");
+    assert_eq!(
+        native::lowering_refusal_evidence(&encoded).expect("legacy evidence"),
+        (refusal.clone(), None)
+    );
     assert_eq!(native::decode_lowering_refusal(&encoded).expect("round trip"), refusal);
+    let key = "a".repeat(64);
+    let evaluated = native::encode_evaluated_lowering_refusal(&refusal, &key).expect("evaluated refusal");
+    assert_eq!(
+        native::lowering_refusal_evidence(&evaluated).expect("evaluated evidence"),
+        (refusal.clone(), Some(key))
+    );
+    assert_eq!(
+        native::decode_lowering_refusal(&evaluated).expect("interface refusal"),
+        refusal
+    );
+    assert!(native::encode_evaluated_lowering_refusal(&refusal, "unkeyed").is_err());
     let note = native::AdmittedModule {
         module: "demo::main".into(),
         complete: true,

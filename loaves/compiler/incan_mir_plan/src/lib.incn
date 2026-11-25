@@ -167,6 +167,7 @@ pub def encode_record_plan_products(
     """Encode a complete interface while retaining its keyed function-product bytes in declaration order."""
     return native_encode_record_plan_products(plan, functions, references)
 pub from rust::incan_mir_plan_native import (
+    CHECKED_MEMBER_INSTANCE,
     LoweringDemands,
     PlanFunctionRecord,
     decode_plan_function_record,
@@ -199,6 +200,7 @@ pub from rust::incan_mir_plan_native import (
     encode_lowering_refusal,
     encode_module_note,
     encode_native_interface,
+    lowering_refusal_evidence,
     native_interface_filename,
     placed_admission,
 )
