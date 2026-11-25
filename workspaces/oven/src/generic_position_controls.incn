@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.json import parse
-from pub::incan_platform.store import Snapshot
+from pub::incan_platform.store import Snapshot, get
 from pub::incan_mir_plan import PLAN_MODULE_FAMILY, decode_lowering_event, decode_plan_module
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
@@ -12,6 +12,7 @@ from compiler_graph_records import OutputSlots, readers_of, reusable_evaluation,
 from compiler_owner_records import read_body_frame
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_prepared_records import prepared_product_request
+from compiler_source_projection import project_source
 from files import write
 from json_fields import required_text
 from lowering_record_fixtures import attempt_trace, lowering_example_run, proof_count, stop_example_engine
@@ -27,9 +28,24 @@ pub def generic_source(index: str) -> str:
     return generic + unrelated + entry
 
 
-def main_product(store: Path) -> Result[tuple[str, list[int]], str]:
-    """Read the selected stable scalar and the current placed main event's source lines independently."""
+def main_owner_line(graph: Snapshot, source: str) -> Result[int, str]:
+    """Find main's file line and verify the selected owner placement for those fixture bytes."""
+    parts = source.split("def main() -> None:")
+    if len(parts) != 2 or not parts[0].endswith("\n"):
+        return Err("the fixture needs one top-level main declaration")
+    projection = project_source("main", "main.incn", source)?
+    if "main" not in projection.placements or projection.placements["main"].start != len(parts[0]):
+        return Err("the source projector and fixture disagree on main's start")
+    stored = get(graph, encode_record_key(projection.placements["main"].key)?).map_err((error) => error.message())?
+    if stored != Some(projection.placements["main"].encoded()?):
+        return Err("the selected main placement differs from the fixture source")
+    return Ok(len(parts[0].split("\n")))
+
+
+def main_product(store: Path, source: str) -> Result[tuple[str, list[int]], str]:
+    """Read the selected scalar key and place the module event's relative positions in the file."""
     graph = store_snapshot(store).map_err((error) => error.message())?
+    owner_line = main_owner_line(graph, source)?
     scope = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE)
     keys = reusable_family_records(graph, "plan-function", LOWERING_PROFILE, Some(scope))?
     placed = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE, included=Some(["main.incn"]))
@@ -46,7 +62,7 @@ def main_product(store: Path) -> Result[tuple[str, list[int]], str]:
             if function.function != "main":
                 continue
             event = decode_lowering_event(function.event)?
-            lines = [position.line for position in event.positions]
+            lines = [owner_line + position.line for position in event.positions]
             count += 1
     if count != 1 or len(lines) == 0:
         return Err("the current module lacks main's unique nonempty placed event")
@@ -70,7 +86,7 @@ pub def verify_generic_main_position_controls(binary: str, seed: str) -> Result[
     initial = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
     stop_example_engine(binary, store)?
     _ = initial?
-    original, original_lines = main_product(store)?
+    original, original_lines = main_product(store, seed)?
     seed_rebuilds = ordinary_main_rebuilds(trace)?
     assert seed_rebuilds == 1, "the trace control did not capture one actual cold ordinary main product"
 
@@ -80,7 +96,7 @@ pub def verify_generic_main_position_controls(binary: str, seed: str) -> Result[
     repositioned = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
     stop_example_engine(binary, store)?
     pure = repositioned?
-    moved_key, moved_lines = main_product(store)?
+    moved_key, moved_lines = main_product(store, moved)?
     assert moved_key == original and moved_lines == [line + 1 for line in original_lines]
     assert proof_count(pure, "body_ir_evaluations")? == 0
     assert proof_count(pure, "plan_function_evaluations")? == 0
@@ -94,7 +110,7 @@ pub def verify_generic_main_position_controls(binary: str, seed: str) -> Result[
     edited = lowering_example_run(binary, source, store, "1\na\n41", trace=Some(trace))
     stop_example_engine(binary, store)?
     changed = edited?
-    edited_key, edited_lines = main_product(store)?
+    edited_key, edited_lines = main_product(store, semantic)?
     assert edited_key != moved_key and edited_lines == moved_lines
     assert proof_count(changed, "body_ir_evaluations")? == 1
     assert proof_count(changed, "lowering_demand_evaluations")? == 1
@@ -252,7 +268,7 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     graph = store_snapshot(store).map_err((error) => error.message())?
     before_root = checked_template(graph)?
     before = selected_fanout(graph, before_root)?
-    main_before, old_positions = main_product(store)?
+    main_before, old_positions = main_product(store, seed)?
     counts_before = lowered_products(trace)?
     assert counts_before.get("lowered ordinary main::main", 0) == 1
 
@@ -265,7 +281,7 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     current = store_snapshot(store).map_err((error) => error.message())?
     after_root = checked_template(current)?
     after = selected_fanout(current, after_root)?
-    main_after, new_positions = main_product(store)?
+    main_after, new_positions = main_product(store, length_edit)?
     assert after_root.key.identity == before_root.key.identity
     assert after_root.key != before_root.key and after_root.digest != before_root.digest
     names = sorted([function for function in before.plans.keys()])
