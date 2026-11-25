@@ -46,7 +46,7 @@ incan inspect registry IDENTITY [--project PATH] [--format json]
 incan tools metadata api [PATH] [--format json|markdown]
 incan tools metadata model PATH MODEL [--format incan|json]
 incan tools doctor [--format text|json]
-incan mcp PATH [--profile NAME]
+incan mcp PATH [--profile NAME] [--coverage-report PATH]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
 incan toolchain verify ASSET

@@ -25,6 +25,7 @@ pub def document(
     format: str,
     risk: bool = false,
     allow_errors: bool = false,
+    coverage_report: Option[str] = None,
 ) -> Result[GraphDocument, str]:
     """
     Read an export without capturing its text or building a JSON tree for the whole answer.
@@ -43,6 +44,8 @@ pub def document(
         arguments.append("--risk")
     if allow_errors:
         arguments.append("--allow-errors")
+    if let Some(report) = coverage_report:
+        arguments.extend(["--coverage-report", report])
     outcome = invoke_to_file(incan, arguments, project, path)?
     if outcome.code != Some(0):
         remove(path)?
