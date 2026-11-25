@@ -335,7 +335,7 @@ fn construct_environment(
         span,
         native_send,
         native_sync,
-        borrowing,
+        false,
     );
     let object_type = constructor.return_type.clone();
     synthesize(builder, constructor);

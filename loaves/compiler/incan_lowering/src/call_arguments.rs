@@ -241,7 +241,7 @@ pub fn call_argument_operand(
     }
     match ty {
         PlanType::ClosureRef(signature) => return callable_argument(builder, value, signature, span, false),
-        PlanType::BorrowingClosure(signature) | PlanType::BorrowingClosureRef(signature) => {
+        PlanType::ExclusiveClosure(signature) => {
             return callable_argument(builder, value, signature, span, true);
         }
         PlanType::StringRef => return borrow_text_operand(builder, value, span),

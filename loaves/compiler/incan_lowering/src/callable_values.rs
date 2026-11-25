@@ -195,7 +195,7 @@ fn packed_arguments(
     Ok(packed)
 }
 
-/// Borrow an owned closure, or copy a received view, as the shared callable object a call takes.
+/// Borrow an owned closure with its access, or copy a received shared callable view.
 pub fn callable_object(
     builder: &mut Builder,
     callable: Place,
@@ -374,17 +374,8 @@ fn borrowed_callable_argument(
     signature: &[PlanType],
     span: &SourceSpan,
 ) -> Result<Operand, String> {
-    let borrowing_source = match place_type(&builder.locals, &callable) {
-        PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_) => true,
-        PlanType::Closure(_) | PlanType::ClosureRef(_) => false,
-        _ => return Err("unsupported Body IR borrowing callable argument".into()),
-    };
     let source = callable_object(builder, callable, signature, span)?;
-    let capture = if borrowing_source {
-        PlanType::BorrowingClosureRef(signature.to_vec())
-    } else {
-        PlanType::ClosureRef(signature.to_vec())
-    };
+    let capture = value_type(builder, &source)?;
     let name = format!(
         "__incan_borrowed_callable_{}_{}",
         builder.name,
@@ -392,24 +383,22 @@ fn borrowed_callable_argument(
     );
     synthesize(
         builder,
-        borrowed_callable_forwarder(&name, signature, borrowing_source, span)?,
+        borrowed_callable_forwarder(&name, signature, capture.clone(), span)?,
     );
     let constructor = format!("{name}_new");
-    synthesize(
-        builder,
-        closure_constructor(
-            &constructor,
-            &name,
-            &[capture],
-            signature,
-            false,
-            span,
-            false,
-            false,
-            true,
-        ),
+    let environment = closure_constructor(
+        &constructor,
+        &name,
+        &[capture],
+        signature,
+        false,
+        span,
+        false,
+        false,
+        true,
     );
-    let boxed = temporary(builder, PlanType::BorrowingClosure(signature.to_vec()), span);
+    let boxed = temporary(builder, environment.return_type.clone(), span);
+    synthesize(builder, environment);
     terminate_call(
         builder,
         CalleeKind::Planned(constructor),

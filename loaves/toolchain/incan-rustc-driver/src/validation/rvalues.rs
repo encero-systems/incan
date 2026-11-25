@@ -614,7 +614,10 @@ pub(super) fn validate_closure_constructor(function: &Function) -> Result<(), Pl
         .iter()
         .any(|parameter| crate::plan::exclusive_capture(&parameter.ty));
     let exclusive = matches!(function.return_type, PlanType::ExclusiveClosure(_));
-    if exclusive != has_exclusive_capture
+    // A shared lending adapter implements Fn and can fill the call-only FnMut carrier.
+    let lends_shared_callable = matches!(function.parameters.as_slice(), [parameter]
+        if matches!(parameter.ty, PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_)));
+    if (exclusive != has_exclusive_capture && !(exclusive && lends_shared_callable))
         || consumes_environment != matches!(callee.kind, CalleeKind::ClosureBodyOnce(..))
         || (consumes_environment && function.parameters.is_empty())
     {

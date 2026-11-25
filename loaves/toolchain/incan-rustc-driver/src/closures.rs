@@ -121,8 +121,8 @@ fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
 /// Declare `::std::boxed::Box::new(move |_: A, ...| -> R { let _ = (&capture, ...); loop {} })` as the constructor's
 /// tail, spelled from the crate root so a source declaration named `Box` cannot shadow it.
 ///
-/// The placeholder borrows captures for `Fn` or consumes them for `FnOnce`; it never runs because [`callback`]
-/// replaces its MIR. Preflight proves the constructor's object kind and exact capture parameters.
+/// The placeholder selects closure access from the captures. It never runs because [`callback`] replaces its MIR.
+/// Preflight proves the constructor's object kind and exact capture parameters.
 pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Block>> {
     constructor(function)?;
     let (PlanType::Closure(signature)
@@ -270,7 +270,10 @@ pub fn callback<'tcx>(
     let span = body.span;
     let environment = body.local_decls[mir::Local::from_usize(1)].ty;
     let consumes_environment = matches!(constructor_function.return_type, PlanType::ClosureOnce(_));
-    let exclusive = matches!(constructor_function.return_type, PlanType::ExclusiveClosure(_));
+    let mutable_receiver = constructor_function
+        .parameters
+        .iter()
+        .any(|parameter| crate::plan::exclusive_capture(&parameter.ty));
     let closure = if consumes_environment {
         environment
     } else {
@@ -280,7 +283,7 @@ pub fn callback<'tcx>(
                 reason: "reusable closure environment is not borrowed".into(),
             });
         };
-        if mutability.is_mut() != exclusive {
+        if mutability.is_mut() != mutable_receiver {
             return Err(PlanError::Invalid {
                 function: constructor_function.name.clone(),
                 reason: "closure receiver disagrees with its planned access".into(),
@@ -314,7 +317,7 @@ pub fn callback<'tcx>(
         let capture_type = &constructor_function.parameters[index].ty;
         let node = if consumes_environment {
             mir::Operand::Move(field)
-        } else if exclusive && crate::plan::exclusive_capture(capture_type) {
+        } else if crate::plan::exclusive_capture(capture_type) {
             let (loan, reference) = reborrow_capture(tcx, &mut body, field, ty, span);
             loans.push(loan);
             mir::Operand::Move(reference.into())
