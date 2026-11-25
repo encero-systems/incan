@@ -433,8 +433,8 @@ impl Graph {
     }
 }
 
-/// A closure bound to a local. It reads each captured Copy value when it is built and retains one shared loan for
-/// every other capture, reborrowing a captured alias through its existing loan. Every call of the local uses all of
+/// A closure bound to a local. It reads each captured Copy value when it is built and retains a loan for every
+/// other capture, reborrowing a captured alias through its existing loan. Every call of the local uses all of
 /// those retained loans.
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct ClosureCaptures {
@@ -447,7 +447,7 @@ pub(in crate::typechecker) struct ClosureCaptures {
     pub reads: Vec<(CanonicalSymbolId, usize)>,
 }
 
-/// Each capture is either one shared retained loan or one read at the closure itself. The retained links are
+/// Each capture is either a retained loan or one read at the closure itself. The retained links are
 /// validated here; they are never recovered from spans.
 fn validate_closures(graph: &Graph) -> Result<(), InvalidGraph> {
     for (span, closure) in &graph.closures {
@@ -474,8 +474,22 @@ fn validate_closures(graph: &Graph) -> Result<(), InvalidGraph> {
             if !closure.captures.contains(capture) || !source_matches {
                 return Err(InvalidGraph("closure loan borrows no captured place"));
             }
-            if loan.span != *span || loan.kind != LoanKind::Shared || loan.writable {
-                return Err(InvalidGraph("closure loan differs from its shared captured borrow"));
+            let valid_access = match loan.kind {
+                LoanKind::Shared => !loan.writable,
+                LoanKind::Exclusive => {
+                    loan.writable
+                        && loan.parent.is_some_and(|parent| {
+                            graph.local_loans.get(capture) == Some(&parent)
+                                && graph.loans.get(parent.0).is_some_and(|parent| {
+                                    parent.kind == LoanKind::Exclusive
+                                        && parent.writable
+                                        && parent.source == loan.source
+                                })
+                        })
+                }
+            };
+            if loan.span != *span || !valid_access {
+                return Err(InvalidGraph("closure loan differs from its captured borrow"));
             }
             covered.insert(capture.clone());
         }

@@ -85,7 +85,7 @@ impl TypeChecker {
     }
 
     /// Recognize one checked stored field of a direct caller-visible parameter in its original statement owner.
-    pub(in crate::typechecker) fn is_current_mut_parameter_field(&self, value: &Spanned<Expr>) -> bool {
+    pub(in crate::typechecker) fn current_mut_parameter_field(&self, value: &Spanned<Expr>) -> Option<String> {
         use super::super::flow::{Projection, Root};
 
         let mut field = value;
@@ -93,34 +93,29 @@ impl TypeChecker {
             field = inner;
         }
         let Expr::Field(base, _) = &field.node else {
-            return false;
+            return None;
         };
         let Expr::Ident(name) = &base.node else {
-            return false;
+            return None;
         };
-        let Some(frame) = self.mutation.current.as_ref() else {
-            return false;
-        };
-        let Some(parameter) = frame.params.get(name) else {
-            return false;
-        };
+        let frame = self.mutation.current.as_ref()?;
+        let parameter = frame.params.get(name)?;
         if frame.inferred_fields.is_none()
             || frame.closure_depth != 0
             || field.span.expansion.is_some()
             || self.type_info.computed_property_access(field.span).is_some()
         {
-            return false;
+            return None;
         }
-        let Some(place) = super::super::checked_graph_place(field, &self.type_info) else {
-            return false;
-        };
+        let place = super::super::checked_graph_place(field, &self.type_info)?;
         let (Root::Binding(root), [Projection::Field(member)]) = (&place.root, place.projection.as_slice()) else {
-            return false;
+            return None;
         };
-        root.kind == SemanticSourceTargetKind::Parameter
+        (root.kind == SemanticSourceTargetKind::Parameter
             && root.declaration_span == *parameter
             && self.type_info.resolved_write_identity(*parameter, name) == Some(root)
-            && member.origin == frame.identity.origin
+            && member.origin == frame.identity.origin)
+            .then(|| name.clone())
     }
 
     /// Bind provisional fields to the actual statement writer before it can emit warnings or child outputs.
@@ -133,6 +128,7 @@ impl TypeChecker {
                 output_start: self.body_checks.len(),
                 locals: Vec::new(),
                 closure_bindings: Vec::new(),
+                capture_writes: Vec::new(),
                 last_suspension: None,
             });
         }
@@ -141,17 +137,19 @@ impl TypeChecker {
     /// Remember the new checked destination without publishing a mode or changing the existing warning writer.
     pub(in crate::typechecker) fn stage_inferred_parameter_field(
         &mut self,
-        name: &str,
-        declaration: Span,
+        assignment: &crate::ast::AssignmentStmt,
         statement: Span,
-        initializer: Span,
         warning_slot: usize,
+        parameter: String,
     ) {
-        let Some(destination) = self.type_info.resolved_write_identity(declaration, name) else {
+        let Some(destination) = self
+            .type_info
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+        else {
             return;
         };
         if destination.kind == SemanticSourceTargetKind::Local
-            && destination.declaration_span == declaration
+            && destination.declaration_span == assignment.name_span
             && let Some(fields) = self
                 .mutation
                 .current
@@ -161,10 +159,42 @@ impl TypeChecker {
             fields.locals.push(InferredParameterField {
                 destination: destination.clone(),
                 statement,
-                initializer,
+                initializer: assignment.value.span,
                 warning_slot,
+                parameter,
+                writable: assignment.binding == crate::ast::BindingKind::Mutable,
             });
         }
+    }
+
+    /// Defer a captured-copy diagnostic for an actual write while a checked writable field is still provisional.
+    /// Settlement must admit this exact direct closure and field or restore the original diagnostic.
+    pub(in crate::typechecker) fn note_inferred_field_capture_write(
+        &mut self,
+        binding: &CanonicalSymbolId,
+        span: Span,
+    ) -> bool {
+        let Some(fields) = self
+            .mutation
+            .current
+            .as_mut()
+            .filter(|frame| frame.closure_depth == 1)
+            .and_then(|frame| frame.inferred_fields.as_mut())
+        else {
+            return false;
+        };
+        if !fields
+            .locals
+            .iter()
+            .any(|field| field.writable && &field.destination == binding)
+        {
+            return false;
+        }
+        let write = (binding.clone(), span);
+        if !fields.capture_writes.contains(&write) {
+            fields.capture_writes.push(write);
+        }
+        true
     }
 
     /// Remember the span of a fresh local's direct closure, the assignment form selected by the flow builder.
@@ -218,16 +248,27 @@ impl TypeChecker {
     /// Offer checked direct field bindings captured by a closure or declared before a suspension to the flow solver.
     /// The solver's graph decides whether a loan is live at a competing operation.
     pub(in crate::typechecker) fn settle_inferred_parameter_fields(&mut self) {
-        use super::super::LocalMode;
-        use incan_lang::lang::types::ownership::OwnershipMode;
-
         let Some(frame) = self.mutation.current.as_mut() else {
             return;
         };
         let Some(fields) = frame.inferred_fields.take() else {
             return;
         };
-        let owner = &frame.identity;
+        let owner = frame.identity.clone();
+        self.publish_inferred_parameter_fields(&owner, &fields);
+        for (binding, span) in &fields.capture_writes {
+            if !self.settle_inferred_field_capture_write(&owner, &fields, binding, *span) {
+                self.errors
+                    .push(errors::change_through_closure_capture(&binding.declaration_name, *span));
+            }
+        }
+    }
+
+    /// Publish selected aliases only after the statement writer has retained their checked local bindings.
+    fn publish_inferred_parameter_fields(&mut self, owner: &CanonicalSymbolId, fields: &InferredParameterFields) {
+        use super::super::LocalMode;
+        use incan_lang::lang::types::ownership::OwnershipMode;
+
         // Older native/conditional activations retain their modes, reservations and original warning order.
         if (fields.closure_bindings.is_empty() && fields.last_suspension.is_none())
             || self.native_borrow_bodies.contains(owner)
@@ -241,7 +282,6 @@ impl TypeChecker {
             return;
         }
 
-        let owner = owner.clone();
         let captures = fields
             .closure_bindings
             .iter()
@@ -253,7 +293,7 @@ impl TypeChecker {
         let mut first_allowed_slot = fields.warning_start;
         let mut seen = BTreeSet::new();
         let mut checked = Vec::with_capacity(fields.locals.len());
-        for field in fields.locals {
+        for field in &fields.locals {
             let declared_before_suspension = fields
                 .last_suspension
                 .is_some_and(|suspension| field.initializer.end <= suspension.start);
@@ -281,12 +321,16 @@ impl TypeChecker {
             first_allowed_slot = field.warning_slot + 1;
             let mode = LocalMode {
                 owner: owner.clone(),
-                mode: OwnershipMode::Borrowed,
+                mode: if field.writable {
+                    OwnershipMode::BorrowedMut
+                } else {
+                    OwnershipMode::Borrowed
+                },
                 value_type: value_type.clone(),
-                writable: false,
+                writable: field.writable,
                 annotation: field.destination.declaration_span,
             };
-            checked.push((field.warning_slot, field.destination, mode));
+            checked.push((field.warning_slot, field.destination.clone(), mode));
         }
 
         // These are uncommitted slots in the current writer's suffix. Reverse removal preserves earlier indices.
@@ -294,6 +338,49 @@ impl TypeChecker {
             self.warnings.remove(warning_slot);
             self.type_info.protocols.explicit_local_modes.insert(destination, mode);
         }
+    }
+
+    /// Confirm a deferred write against the admitted local and the direct closure whose checked captures include it.
+    fn settle_inferred_field_capture_write(
+        &mut self,
+        owner: &CanonicalSymbolId,
+        fields: &InferredParameterFields,
+        binding: &CanonicalSymbolId,
+        span: Span,
+    ) -> bool {
+        let writable = self
+            .type_info
+            .protocols
+            .explicit_local_modes
+            .get(binding)
+            .is_some_and(|mode| &mode.owner == owner && mode.writable);
+        if !writable {
+            return false;
+        }
+        let Some(field) = fields.locals.iter().find(|field| &field.destination == binding) else {
+            return false;
+        };
+        for closure in &fields.closure_bindings {
+            if closure.start <= span.start
+                && span.end <= closure.end
+                && closure.expansion == span.expansion
+                && let Some(capture) = self.capturing_callables.captures.get_mut(closure).and_then(|captures| {
+                    captures
+                        .iter_mut()
+                        .find(|capture| capture.identity.as_ref() == Some(binding))
+                })
+            {
+                capture.writes = true;
+                self.mutation
+                    .source
+                    .changed
+                    .entry(owner.clone())
+                    .or_default()
+                    .insert(field.parameter.clone());
+                return true;
+            }
+        }
+        false
     }
 
     /// Return the declaration identity of the function or method whose body is being checked, if any.

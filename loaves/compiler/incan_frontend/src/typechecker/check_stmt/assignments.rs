@@ -118,17 +118,21 @@ impl TypeChecker {
 
         // A local borrow takes a reference to the place rather than copying it, so it is not a place copy.
         let local_borrow = matches!(annotated_ty, Some(ResolvedType::Ref(_) | ResolvedType::RefMut(_)));
-        let inferred_shared_field = explicit_mode.is_none()
+        let inferred_field = (explicit_mode.is_none()
             && !local_borrow
             && new_local
-            && matches!(assign.binding, BindingKind::Inferred | BindingKind::Let)
+            && matches!(
+                assign.binding,
+                BindingKind::Inferred | BindingKind::Let | BindingKind::Mutable
+            )
             && assign.name_span.expansion.is_none()
             && annotated_ty.as_ref().is_none_or(|annotation| annotation == &value_ty)
             && !matches!(
                 &value_ty,
                 ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::Ref(_) | ResolvedType::RefMut(_)
-            )
-            && self.is_current_mut_parameter_field(&assign.value);
+            ))
+        .then(|| self.current_mut_parameter_field(&assign.value))
+        .flatten();
         let warning_slot = self.warnings.len();
         if explicit_mode.is_none() && !local_borrow {
             self.warn_place_binding_migration(assign);
@@ -152,8 +156,8 @@ impl TypeChecker {
         self.declare_assignment_binding(assign, ty.clone(), is_mutable, introduces_binding, span);
         self.retain_qualified_assignment_storage(assign, span);
         self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
-        if inferred_shared_field {
-            self.stage_inferred_parameter_field(&assign.name, assign.name_span, span, assign.value.span, warning_slot);
+        if let Some(parameter) = inferred_field {
+            self.stage_inferred_parameter_field(assign, span, warning_slot, parameter);
         }
         if local_borrow_of_value {
             self.record_native_local_borrow(assign, ty, is_mutable);

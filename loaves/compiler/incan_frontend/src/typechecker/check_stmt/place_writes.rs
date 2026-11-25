@@ -43,7 +43,7 @@ impl TypeChecker {
     /// A closure reads each outer local it names as the value the local holds when the closure is constructed, so a
     /// change the closure makes through one would change the closure's own copy, which the local never sees. A
     /// caller-visible `mut` parameter, and a view into one, are refused as held by the closure instead (see
-    /// `note_param_change`).
+    /// `note_param_change`). A checked writable field alias may be reborrowed by a directly bound closure.
     pub(in crate::typechecker) fn refuse_change_through_closure_capture(
         &mut self,
         symbol_id: SymbolId,
@@ -51,6 +51,11 @@ impl TypeChecker {
         span: Span,
     ) -> bool {
         if !self.local_is_captured_by_closure(symbol_id) || self.reaches_caller_visible_param(name) {
+            return false;
+        }
+        if let Some(binding) = self.symbols.identity_of(symbol_id).cloned()
+            && self.note_inferred_field_capture_write(&binding, span)
+        {
             return false;
         }
         let error = errors::change_through_closure_capture(name, span);
@@ -78,9 +83,9 @@ impl TypeChecker {
     /// A binding is immutable unless declared `mut`, and that covers what it holds: a local declared by `let` or a
     /// first plain assignment, or a parameter not marked `mut`, gives no write access to its fields and elements. A
     /// local bound directly to a module static is an alias of the static's storage and writes through to it, and a
-    /// loop or pattern binding follows the place it binds, so neither is refused here. A change through a local a
-    /// closure captures is refused (see [`Self::refuse_change_through_closure_capture`]). `object` is the place whose
-    /// field or element is written.
+    /// loop or pattern binding follows the place it binds, so neither is refused here. A closure cannot change a
+    /// captured copy (see [`Self::refuse_change_through_closure_capture`]). `object` is the place whose field or
+    /// element is written.
     pub(in crate::typechecker) fn refuse_write_through_read_only_binding(
         &mut self,
         object: &Spanned<Expr>,

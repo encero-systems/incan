@@ -244,6 +244,7 @@ struct InferredParameterFields {
     output_start: usize,
     locals: Vec<InferredParameterField>,
     closure_bindings: Vec<Span>,
+    capture_writes: Vec<(CanonicalSymbolId, Span)>,
     last_suspension: Option<Span>,
 }
 
@@ -253,6 +254,8 @@ struct InferredParameterField {
     statement: Span,
     initializer: Span,
     warning_slot: usize,
+    parameter: String,
+    writable: bool,
 }
 
 /// Checker state for caller-visible `mut` parameters across one module's check.
