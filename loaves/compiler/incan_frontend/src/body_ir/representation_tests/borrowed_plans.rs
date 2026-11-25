@@ -299,6 +299,11 @@ def count_items(mut cart: Cart) -> int:
             "{name}"
         );
     }
+    let plans = planned(source)?;
+    for name in ["add_twice", "count_items"] {
+        let plan = function(&plans, name)?;
+        assert!(!plan.contains("nsupported"), "{name}: {plan}");
+    }
     Ok(())
 }
 
