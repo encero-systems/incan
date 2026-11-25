@@ -57,7 +57,7 @@ def main_product(store: Path, source: str) -> Result[tuple[str, list[int]], str]
     mut count = 0
     for page in pages:
         module = decode_plan_module(page.value).map_err((error) => f"invalid position-control module: {error:?}")?
-        assert module.module == "main"
+        assert module.module == "main", f"selected Plan module {module.module}, expected main"
         for function in module.functions:
             if function.function != "main":
                 continue
@@ -136,8 +136,13 @@ def checked_template(graph: Snapshot) -> Result[SelectedFact, str]:
         frame = read_body_frame(record.key, CHECKER_PROFILE, record.value)?
         owner = typed_owner_metadata(reader, frame)?
         if owner.name == "pick":
-            assert owner.identity == record.key.identity and record.key.facet == "checked"
-            assert owner.source == "main.incn" or owner.source.endswith("/main.incn")
+            assert owner.identity == record.key.identity and record.key.facet == "checked", (
+                f"generic Body IR owner {owner.identity} does not match checked record " +
+                f"{record.key.identity} with facet {record.key.facet}"
+            )
+            assert owner.source == "main.incn" or owner.source.endswith("/main.incn"), (
+                f"generic Body IR owner source is {owner.source}, expected main.incn"
+            )
             templates.append(SelectedFact(key=record.key, digest=record.value_digest))
     if len(templates) != 1:
         return Err(f"expected one selected typed generic Body IR root, found {len(templates)}")
@@ -270,10 +275,15 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     before = selected_fanout(graph, before_root)?
     main_before, old_positions = main_product(store, seed)?
     counts_before = lowered_products(trace)?
-    assert counts_before.get("lowered ordinary main::main", 0) == 1
+    assert counts_before.get("lowered ordinary main::main", 0) == 1, (
+        f"seed lowered main {counts_before.get("lowered ordinary main::main", 0)} times, expected 1"
+    )
 
     length_edit = seed.replace("return items[0]", "offset = 0\n    return items[offset]")
-    assert length_edit != seed and len(length_edit.split("\n")) == len(seed.split("\n")) + 1
+    assert length_edit != seed and len(length_edit.split("\n")) == len(seed.split("\n")) + 1, (
+        f"generic body edit must change the source and add one line, source has {len(seed.split("\n"))}, " +
+        f"edited source has {len(length_edit.split("\n"))}"
+    )
     write(source, length_edit)?
     warm = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
     stop_example_engine(binary, store)?
@@ -282,18 +292,34 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     after_root = checked_template(current)?
     after = selected_fanout(current, after_root)?
     main_after, new_positions = main_product(store, length_edit)?
-    assert after_root.key.identity == before_root.key.identity
-    assert after_root.key != before_root.key and after_root.digest != before_root.digest
+    assert after_root.key.identity == before_root.key.identity, (
+        f"edited generic Body IR identity is {after_root.key.identity}, expected {before_root.key.identity}"
+    )
+    assert after_root.key != before_root.key and after_root.digest != before_root.digest, (
+        f"generic Body IR key or digest stayed unchanged, " +
+        f"edited digest {after_root.digest}, previous digest {before_root.digest}"
+    )
     names = sorted([function for function in before.plans.keys()])
-    assert sorted([function for function in after.plans.keys()]) == names
+    assert sorted([function for function in after.plans.keys()]) == names, (
+        f"edited generic Plan instances are {sorted([function for function in after.plans.keys()])}, expected {names}"
+    )
     mut expected: list[str] = []
     for function in names:
-        assert after.demands[function] != before.demands[function]
-        assert after.plans[function] != before.plans[function]
+        assert after.demands[function] != before.demands[function], (
+            f"the generic body edit kept the lowering demand key for {function}"
+        )
+        assert after.plans[function] != before.plans[function], (
+            f"the generic body edit kept the Plan key for {function}"
+        )
         label = "lowered instance " + function
-        assert counts_before.get(label, 0) == 1, f"seed did not produce {label} once"
+        assert counts_before.get(label, 0) == 1, (
+            f"seed produced {label} {counts_before.get(label, 0)} times, expected 1"
+        )
         expected.append(label)
-    assert new_positions == [line + 1 for line in old_positions], "the selected main positions did not move"
+    assert new_positions == [line + 1 for line in old_positions], (
+        f"selected main lines are {new_positions}, " +
+        f"expected {[line + 1 for line in old_positions]} after displacement"
+    )
 
     plan = root.joinpath("native.plan")
     executable = root.joinpath("target/incan/release/bin/main")
@@ -305,17 +331,26 @@ pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str
     rebuilt = lowering_example_run(binary, source, fresh, "1\na\n42")
     stop_example_engine(binary, fresh)?
     _ = rebuilt?
-    assert plan.read_bytes().map_err((error) => error.message())? == warm_plan
-    assert executable.read_bytes().map_err((error) => error.message())? == warm_executable
+    assert plan.read_bytes().map_err((error) => error.message())? == warm_plan, (
+        "warm and fresh native Plan bytes differ after the generic body edit"
+    )
+    assert executable.read_bytes().map_err((error) => error.message())? == warm_executable, (
+        "warm and fresh native executable bytes differ after the generic body edit"
+    )
 
     mut work: list[str] = []
     for label in counts_after.keys():
         for _ in range(counts_after[label] - counts_before.get(label, 0)):
             work.append(label)
-    assert main_after == main_before, "the moved main selected another scalar Plan key"
+    assert main_after == main_before, f"the moved main selected scalar Plan key {main_after}, expected {main_before}"
     if len(before.additional) > 0 or len(after.additional) > 0:
         return Err(f"unexpected authenticated readers on seed {before.additional} or after edit {after.additional}")
     assert sorted(work) == sorted(expected), f"generic body changed Plan products {work}, expected {expected}"
-    assert proof_count(report, "body_ir_evaluations")? == 1
-    assert proof_count(report, "plan_function_evaluations")? == len(expected)
+    assert proof_count(report, "body_ir_evaluations")? == 1, (
+        f"generic body edit evaluated Body IR {proof_count(report, "body_ir_evaluations")?} times, expected 1"
+    )
+    assert proof_count(report, "plan_function_evaluations")? == len(expected), (
+        f"generic body edit evaluated {proof_count(report, "plan_function_evaluations")?} Plan functions, " +
+        f"expected {len(expected)}"
+    )
     return Ok(None)
