@@ -28,11 +28,10 @@ from bakery import (
     find,
     find_executable_payload,
     view_directory,
-    lookup,
     reached,
     seal,
     prepare_seal,
-    prior_size,
+    prior_bake,
     staging,
     unit_identity,
     unit_name,
@@ -340,7 +339,10 @@ pub def obtain_executable(
             None =>
                 # Keep the executable wire format while the compiler rebuilds all reusable data from source.
                 selected_pages = Some([page for page in pages if page.key == EXECUTABLE_GRAPH_INPUT])
-    staged = staging(store, identity, prior_size(store, unit_name(unit)))?
+    estimate, reason = match prior_bake(store, unit_name(unit)):
+        Ok(Some(size)) => (size, "inputs changed")
+        _ => (0, "no stored build")
+    staged = staging(store, identity, estimate)?
     warning_file = staged.joinpath(".checked-warnings")
     mut staged_warnings: Option[Path] = None
     if warnings != "":
@@ -350,7 +352,7 @@ pub def obtain_executable(
         toolchain,
         staged.joinpath(output.name()),
         key,
-        bake_reason(store, unit),
+        reason,
         shared,
         selected_pages,
         records_directory,
@@ -464,16 +466,6 @@ def current_executable(store: Path, identity: str, output: Path, payload: Option
                 trace(f"bakery {identity[:12]}: a shared carrier its executable loads is gone; linking it again")
                 return Ok(None)
             return Ok(Some(fact))
-
-
-def bake_reason(store: Path, unit: UnitDescription) -> str:
-    """Why a unit is baked: nothing was baked under its name yet, or what was is for other inputs."""
-    match lookup(store, unit_name(unit)):
-        Ok(found) =>
-            if found is not None:
-                return "inputs changed"
-        Err(_) => pass
-    return "no stored build"
 
 
 def compile_staged(
