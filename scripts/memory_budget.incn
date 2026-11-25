@@ -184,7 +184,7 @@ pub def measure(options: Options) -> Result[str, str]:
     return Ok(report)
 
 
-def observe_oven(arguments: list[str]) -> Result[str, str]:
+pub def observe_oven(arguments: list[str]) -> Result[str, str]:
     """Build the candidate Oven once while sampling that existing release step for later informational reuse."""
     if len(arguments) != 5:
         return Err("internal Oven observation needs OVEN PROJECT DIRECTORY LOG PREFIX")

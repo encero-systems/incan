@@ -1,6 +1,7 @@
 """Verify memory-budget option, process-table, tree-walk, budget and report contracts without compiling projects."""
 
 from pub::incan_platform.probes import ProcessResource, parse_process_table
+from std.tempfile import TemporaryDirectory
 from check_support import repository_root
 from memory_budget import (
     MIB,
@@ -9,6 +10,7 @@ from memory_budget import (
     commands,
     measurements_report,
     measurements_tsv,
+    observe_oven,
     parse_options,
     process_tree,
 )
@@ -25,7 +27,7 @@ def test_options_keep_runs_and_budget_explicit() -> Result[None, str]:
 
 
 def test_an_existing_oven_observation_replaces_only_the_duplicate_oven_build() -> Result[None, str]:
-    """A release reuses its sampled candidate Oven while still measuring the other three informational commands."""
+    """A release retains its successful sample even if the shipped child emitted no native miss."""
     options = parse_options(["oven", "evidence", "--reuse-oven", "observed/memory-oven-1"])?
     assert options.reused_oven == "observed/memory-oven-1"
     assert [planned.name for planned in commands(options.reused_oven != "")] == [
@@ -33,6 +35,13 @@ def test_an_existing_oven_observation_replaces_only_the_duplicate_oven_build() -
         "contracts",
         "hello",
     ]
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    sample = observe_oven([
+        "/usr/bin/true", root.0, root.0, root.joinpath("oven.log").0, root.joinpath("memory-oven-1").0,
+    ])?
+    assert "exit_status\t0\n" in sample
+    assert "shipped_oven_native\tmissing compilation" in sample
     return Ok(None)
 
 
