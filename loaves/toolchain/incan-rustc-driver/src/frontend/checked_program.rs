@@ -653,6 +653,8 @@ fn checked_attempt(
         &reads_by_module,
         settled_inputs.as_ref(),
     )?;
+    let member_owners =
+        graph_body_output.selected_generic_members(&modules, &bodies[loaf_modules..], &analysis, &cacheable_bodies)?;
     graph_body_output.publish(graph_body_records)?;
     let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
@@ -693,6 +695,7 @@ fn checked_attempt(
     let program = complete_dependency_context(
         CheckedProgram {
             cacheable_bodies,
+            member_owners,
             retained_namespaces,
             authored_callable_start: None,
             dependencies: RuntimeDependencyContext {
@@ -1223,6 +1226,7 @@ mod tests {
                 layout_modules: Vec::new(),
             },
             cacheable_bodies: Vec::new(),
+            member_owners: BTreeMap::new(),
             sources: Vec::new(),
             files: Vec::new(),
             captured_source_paths: Default::default(),

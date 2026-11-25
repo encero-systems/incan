@@ -1,0 +1,221 @@
+"""Prove ordinary closed receiver products read the checked generic method body."""
+
+from std.fs import Path
+from pub::incan_platform.store import Snapshot
+from pub::internal_models import StoreRecordSource
+from pub::internal_models.checker_records import CHECKER_PROFILE, decode_owned_namespace_view
+from pub::internal_models.executable_body_wire import NamespaceAtom, read_executable_namespace_scopes
+from pub::internal_models.records import ReadScope, ReadWitness, RecordRead, RecordRequest, encode_record_key
+from pub::incan_mir_plan import decode_plan_function_record, product_identities
+from compiler_body_keys import IDENTITY_PROFILE, body_key, namespace_key
+from compiler_executable_metadata import typed_namespace_reader
+from compiler_graph_records import OutputSlots, reusable_evaluation, reusable_family_records
+from compiler_namespace_products import member_key
+from compiler_plan_values import LOWERING_PROFILE
+from compiler_prepared_records import prepared_product_request
+from files import write
+from lowering_record_fixtures import lowering_example_run, stop_example_engine
+from store_path_conversion import snapshot as store_snapshot
+
+const ORIGIN: str = "main"
+const TEMPLATE: str = "member/method:shelf::pick#in(model:shelf::Shelf)[0]"
+const RECEIVER: str = "model:shelf::Shelf#sha256:"
+
+
+pub def verify_generic_receiver_dependencies(binary: str, root: Path) -> Result[None, str]:
+    """Prove both closed receivers read their generic method's body.
+
+    1. Run the original source and require two distinct keyed products.
+    2. Edit only the method body and require both products to read the new checked witness.
+    3. Edit the caller alone, then verify the replayed products against a fresh build.
+    """
+    root.mkdir(true, true).map_err((error) => error.message())?
+    main = root.joinpath("main.incn")
+    template = root.joinpath("shelf.incn")
+    store = root.joinpath("store")
+    report = root.joinpath("native.plan")
+    # 1. Record the original receivers and their shared checked input.
+    write(main, main_source())?
+    write(template, shelf_source("0"))?
+    names, receivers, before, body_before = run_receiver_products(binary, main, store, report, "11\n1\nshelf\n2")?
+    # 2. Change the body while preserving both closed receiver identities.
+    write(template, shelf_source("1"))?
+    current = run_receiver_products(binary, main, store, report, "11\n2\nshelf\n3")?
+    after_names, after_receivers, after, body_after = current
+    assert after_names == names and after_receivers == receivers, "the body edit changed checked closed identity"
+    assert before != after and body_before != body_after, "the two instances kept the old checked template-body witness"
+    # 3. Retain the provider while the caller changes, then compare both exact supplier chains with a fresh run.
+    return verify_retained_receiver_replay(binary, root, current)
+
+
+def verify_retained_receiver_replay(
+    binary: str, root: Path, expected: tuple[list[str], list[str], str, bytes],
+) -> Result[None, str]:
+    """An unrelated caller change keeps both checked dependencies and reproduces cold artifacts at the same path."""
+    main = root.joinpath("main.incn")
+    report = root.joinpath("native.plan")
+    target = root.joinpath("target")
+    executable = target.joinpath("incan/release/bin/main")
+    write(main, main_source().replace("println(low)", "println(low + 10)"))?
+    output = "11\n12\nshelf\n3"
+    warm = run_receiver_products(binary, main, root.joinpath("store"), report, output)?
+    assert warm == expected, "the caller edit changed its closed receiver dependencies"
+    warm_plan = report.read_bytes().map_err((error) => error.message())?
+    warm_binary = executable.read_bytes().map_err((error) => error.message())?
+    target.remove_tree().map_err((error) => error.message())?
+    fresh = run_receiver_products(binary, main, root.joinpath("fresh-store"), report, output)?
+    assert fresh == warm, "retained and fresh closed receiver dependencies differ"
+    assert warm_plan == report.read_bytes().map_err((error) => error.message())?, "closed receiver plans differ"
+    fresh_binary = executable.read_bytes().map_err((error) => error.message())?
+    assert warm_binary == fresh_binary, "closed receiver binaries differ"
+    return Ok(None)
+
+
+def run_receiver_products(
+    binary: str, main: Path, store: Path, report: Path, output: str,
+) -> Result[tuple[list[str], list[str], str, bytes], str]:
+    """Read the successful ordinary request's closed products after reaping its worker."""
+    run = lowering_example_run(binary, main, store, output)
+    stop_example_engine(binary, store)?
+    _ = run?
+    return instance_dependencies(store, report)
+
+
+def main_source() -> str:
+    """The two receiver specializations both use int as the method's actual type argument."""
+    return (
+        "from shelf import Shelf\n\n\n"
+        + "def main() -> None:\n"
+        + "    left: Shelf[int] = Shelf(item=11, offset=0)\n"
+        + "    right: Shelf[str] = Shelf(item=\"shelf\", offset=1)\n"
+        + "    low: int = left.pick([1, 2, 3])\n"
+        + "    high: int = right.pick([1, 2, 3])\n"
+        + "    println(left.item)\n"
+        + "    println(low)\n"
+        + "    println(right.item)\n"
+        + "    println(high)\n"
+    )
+
+
+def shelf_source(index: str) -> str:
+    """Keep one ordinary public method template and force its body to consume the actual receiver layout."""
+    return (
+        "pub model Shelf[U]:\n"
+        + "    pub item: U\n"
+        + "    pub offset: int\n\n"
+        + "    pub def pick[T with Clone](self, items: list[T]) -> T:\n"
+        + f"        return items[self.offset + {index}]\n"
+    )
+
+
+def instance_dependencies(store: Path, report: Path) -> Result[tuple[list[str], list[str], str, bytes], str]:
+    """Join both native method names to exact selected scalar Plan and lowering-demand body dependencies."""
+    names = called_members(report)?
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    template, current_digest, body = checked_template(graph)?
+    scope = OutputSlots(origin=ORIGIN, identity_profile=IDENTITY_PROFILE)
+    records = reusable_family_records(graph, "plan-function", LOWERING_PROFILE, Some(scope))?
+    mut selected: list[str] = []
+    mut receivers: list[str] = []
+    for record in records:
+        for name in names:
+            if record.key.facet != "body:" + name:
+                continue
+            selected.append(name)
+            demand_key = body_key("lowering-demand", ORIGIN, record.key.identity, name, record.key.context)
+            demand = match reusable_evaluation(graph, demand_key, LOWERING_PROFILE)?:
+                Some(value) => value
+                None => return Err(f"the native member {name} has no selected lowering demand")
+            if exact_digest(record.receipt.witnesses, prepared_product_request(demand_key))? != demand.value_digest:
+                return Err(f"the native member {name} read another lowering-demand revision")
+            if exact_digest(demand.receipt.witnesses, template)? != current_digest:
+                return Err(f"the native member {name} read another checked template-body revision")
+            product = decode_plan_function_record(record.value)?
+            models = product_identities(product.function)?
+            receiver = [layout.identity for layout in models if layout.identity.startswith(RECEIVER)]
+            if len(receiver) != 1:
+                return Err(f"the native member {name} lacks one closed Shelf receiver")
+            receivers.extend(receiver)
+    if sorted(selected) != names:
+        return Err(f"expected two selected keyed generic receiver products, found {len(selected)}")
+    if len(set(receivers)) != 2:
+        return Err("the closed products collapsed two Shelf receivers with the same method type argument")
+    return Ok((names, sorted(receivers), current_digest, body))
+
+
+def called_members(report: Path) -> Result[list[str], str]:
+    """Read the exact native declarations emitted for the sole method in the fixture's imported file."""
+    text = report.read_text("utf-8", "strict").map_err((error) => error.message())?
+    if not text.startswith("incan-native-plan-report\t2\n"):
+        return Err("the receiver build has no complete ordinary Plan report")
+    mut names: list[str] = []
+    for line in text.split("\n"):
+        if not line.startswith("plan-function\t"):
+            continue
+        fields = line.split("\t")
+        if len(fields) < 3:
+            return Err("invalid ordinary Plan function census row")
+        source = fields[len(fields) - 2]
+        if source == "shelf.incn" or source.endswith("/shelf.incn"):
+            names.append(fields[len(fields) - 1])
+    if len(names) != 2 or len(set(names)) != 2:
+        return Err(f"expected two distinct native declarations closed from shelf.incn, found {names}")
+    return Ok(sorted(names))
+
+
+def checked_template(graph: Snapshot) -> Result[tuple[RecordRequest, str, bytes], str]:
+    """Join the durable checked namespace to its current canonical member-body projection."""
+    namespace = match reusable_evaluation(graph, namespace_key(ORIGIN, "shelf.incn"), CHECKER_PROFILE)?:
+        Some(value) => value
+        None => return Err("the checked shelf namespace is not selected")
+    checked = decode_owned_namespace_view(namespace.value)
+        .map_err((error) => f"invalid durable shelf namespace: {error:?}")?
+    if checked.module != "shelf.incn" or not checked.call_reads_known or len(checked.lowering_inputs) == 0:
+        return Err("the durable shelf namespace has no current checked lowering inputs")
+    reader = typed_namespace_reader()?
+    fields = read_executable_namespace_scopes(reader, checked.body_ir)?
+    owner = match fields[0]:
+        NamespaceAtom.Text(value) => value
+        _ => return Err("the typed shelf namespace requires its owning source")
+    if owner != checked.module:
+        return Err("the typed shelf namespace disagrees with its published source")
+    match fields[1]:
+        NamespaceAtom.Items(_) => pass
+        _ => return Err("the typed shelf namespace requires a scope directory")
+
+    key = member_key(ORIGIN, TEMPLATE)
+    selected = match reusable_evaluation(graph, key, CHECKER_PROFILE)?:
+        Some(value) => value
+        None => return Err("the exact checked Shelf.pick body projection has no current evaluation")
+    if selected.receipt.preparation.rank_certificate != namespace.receipt.preparation.rank_certificate:
+        return Err("the checked Shelf.pick body projection belongs to another namespace rank")
+    basis_key = body_key("namespace-inputs", ORIGIN, checked.module, "checked", "semantic/1")
+    basis = match reusable_evaluation(graph, basis_key, CHECKER_PROFILE)?:
+        Some(value) => value
+        None => return Err("the checked shelf namespace has no selected input basis")
+    if exact_digest(selected.receipt.witnesses, prepared_product_request(basis_key))? != basis.value_digest:
+        return Err("the checked Shelf.pick body projection read another namespace basis")
+
+    request = prepared_product_request(key)
+    scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+    source = StoreRecordSource.open(graph, scope, [encode_record_key(request.key)?])
+    match source.read(scope, request):
+        RecordRead.Found(found) =>
+            if found.evidence.request != request or found.evidence.scope != scope:
+                return Err("the checked Shelf.pick body fact belongs to another request")
+            if found.evidence.semantic_digest != selected.value_digest or found.value != selected.value:
+                return Err("the checked Shelf.pick body fact differs from its current member projection")
+            return Ok((request, found.evidence.semantic_digest, found.value))
+        _ => return Err("the exact checked method body fact is not a live Store dependency")
+
+
+def exact_digest(receipt: list[ReadWitness], request: RecordRequest) -> Result[str, str]:
+    """Require one complete, positive request for the precise supplier, with its authenticated digest."""
+    mut observed: list[str] = []
+    for witness in receipt:
+        if let ReadWitness.Found(prior, _) = witness:
+            if prior.request == request:
+                observed.append(prior.semantic_digest)
+    if len(observed) != 1:
+        return Err("closed generic instance lost its exact selected dependency")
+    return Ok(observed[0])

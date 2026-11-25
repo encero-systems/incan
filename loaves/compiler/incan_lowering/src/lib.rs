@@ -203,6 +203,8 @@ pub struct SourceInputs {
     /// Producer-owned checked inputs and consumed signatures; absence preserves ordinary lowering.
     pub scalar_products: Option<String>,
     pub scalar_bodies: Vec<(CompilerNodeId, String)>,
+    /// Checked stable member names for the bodies that can carry a closed generic request.
+    pub member_owners: Arc<BTreeMap<CanonicalSymbolId, String>>,
     /// Request-local producer evidence; absence keeps ordinary lowering and emits no report files.
     pub record_report: Option<String>,
     /// Native bindings selected by this Loaf's executable publication, shared across lowering attempts.
@@ -238,6 +240,7 @@ impl SourceInputs {
             overflow_checks: self.overflow_checks,
             scalar_products: self.scalar_products.clone(),
             scalar_bodies: &self.scalar_bodies,
+            member_owners: &self.member_owners,
             record_report: self.record_report.clone(),
             linked_static_exports: &self.linked_static_exports,
             recorded_layouts: &self.recorded_layouts,

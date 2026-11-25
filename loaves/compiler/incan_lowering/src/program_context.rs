@@ -1,13 +1,13 @@
 //! Immutable program mappings shared by ordinary, instantiated, and lifted function frames.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use incan_mir_plan_native::CalleeKind;
-use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{
     BodyIrModule, DecoratedBinding, EnumDeclaration, NominalDeclaration, StaticDeclaration, ValueEnumDeclaration,
 };
+use incan_semantics_core::{CanonicalSymbolId, IncanType};
 
 use crate::body_index::{BodyIndex, empty_body_index};
 use crate::native_type_identity::{ConstructorIndex, extend_constructor_index};
@@ -24,6 +24,8 @@ pub struct DisplayFunction {
 #[derive(Clone)]
 pub struct ProgramContext {
     pub body_indices: BodyIndex,
+    /// The request's existing authenticated checker names for closed member frame admission.
+    pub member_owners: Arc<BTreeMap<CanonicalSymbolId, String>>,
     /// This immutable copy keeps the specialized module's order, so the checked index selects the same facts.
     pub display_functions: Arc<Vec<DisplayFunction>>,
     pub statics: Arc<Vec<StaticDeclaration>>,
@@ -50,6 +52,7 @@ pub struct ProgramContext {
 pub fn synthetic_program_context(module: &BodyIrModule, constructors: Arc<ConstructorIndex>) -> ProgramContext {
     ProgramContext {
         body_indices: empty_body_index(),
+        member_owners: Arc::default(),
         display_functions: Arc::new(Vec::new()),
         statics: Arc::new(module.static_declarations.clone()),
         comparison_functions: Arc::new(Vec::new()),

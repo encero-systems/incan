@@ -22,6 +22,8 @@ use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId};
 use sha2::{Digest, Sha256};
 
+mod generic_members;
+
 /// Recognize the same published executable format the request's input marker must select.
 pub(super) fn typed_executable_output(path: &Path) -> bool {
     let marker = format!(

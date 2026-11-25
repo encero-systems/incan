@@ -1,11 +1,12 @@
 //! Admit an unchanged editable namespace by the small header Oven offers beside its frame (DD-0015 §9): checking reads
 //! the header, and opens the namespace frame only for an interface a checked module installs.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use incan_frontend::checker_records::{GraphNamespaceAdmission, GraphNamespaceInterface, RecordAdapterFault};
 use incan_frontend::typechecker::ModuleDependencyInterface;
+use incan_semantics_core::CanonicalSymbolId;
 use internal_models::NamespaceReference;
 use internal_models_native::MappedView;
 use internal_models_native::records::RecordKey;
@@ -205,5 +206,9 @@ impl GraphNamespaceInterface for FrameInterface {
 
     fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.admitted.get_or_init(|| self.install()).clone()
+    }
+
+    fn lowering_member_owners(&self) -> Result<BTreeMap<CanonicalSymbolId, String>, String> {
+        self.open()?.lowering_member_owners()
     }
 }

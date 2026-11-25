@@ -62,8 +62,8 @@ pub use records::lowering_events::{
     write_module_placement,
 };
 pub use records::plan_function::{
-    LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,
-    encode_plan_function_record, plan_function_digest, verify_entry_record,
+    CHECKED_MEMBER_INSTANCE, LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record,
+    encode_lowering_demand, encode_plan_function_record, plan_function_digest, verify_entry_record,
 };
 pub use records::plan_module::{
     ADMITTED_MODULE_NOTE, CompactAdmissionPin, MAX_PLAN_MODULE_SELECTION_BYTES, PARTIAL_MODULE_NOTE,
