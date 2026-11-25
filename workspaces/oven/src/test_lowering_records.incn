@@ -15,6 +15,7 @@ from pub::internal_models.records import ReadWitness, encode_record_key
 from files import write
 from json_fields import required_items, required_text
 from engine_protocol_fixtures import json_text_is
+from generic_member_record_fixture import verify_generic_receiver_dependencies
 from lowering_record_fixtures import (
     attempt_trace,
     command_proof,
@@ -724,10 +725,7 @@ pub def test_declaration_edit_keeps_an_imported_enum_read() -> Result[None, str]
 
 
 pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
-    """
-    A generic body edit in a warm store reproduces the cold plan, executable and output for both instances, and a
-    deleted imported module is refused warm exactly as cold.
-    """
+    """Compare warm and cold generic builds and prove exact body reads for two closed receivers."""
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
@@ -749,7 +747,8 @@ pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     assert plan == cold_plan, "warm and cold generic plans differ"
     assert executable == cold_executable, "warm and cold generic executables differ"
     verify_deleted_module_matches_cold(binary, root.joinpath("deleted-module"))?
-    return verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))
+    verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))?
+    return verify_generic_receiver_dependencies(binary, root.joinpath("closed-member"))
 
 
 def verify_deleted_module_matches_cold(binary: str, root: Path) -> Result[None, str]:

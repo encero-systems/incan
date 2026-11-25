@@ -42,7 +42,7 @@ pub struct CompilationAnalysis {
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
     pub(crate) namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
     pub(crate) namespace_package_roots: BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-    namespace_lowering_inputs: Vec<Arc<[(incan_semantics_core::CompilerNodeId, String)]>>,
+    lowering_namespaces: Vec<Arc<incan_frontend::checker_records::GraphNamespaceHeader>>,
 }
 
 impl CompilationAnalysis {
@@ -71,7 +71,20 @@ impl CompilationAnalysis {
 
     /// Return lowering witnesses carried by complete namespaces admitted in this analysis pass.
     pub fn namespace_lowering_inputs(&self) -> impl Iterator<Item = &(incan_semantics_core::CompilerNodeId, String)> {
-        self.namespace_lowering_inputs.iter().flat_map(|inputs| inputs.iter())
+        self.lowering_namespaces
+            .iter()
+            .flat_map(|header| header.lowering_inputs.iter())
+    }
+
+    /// Return the already admitted checked declaration interface for one restored source.
+    pub fn lowering_namespace_interface(
+        &self,
+        source: &str,
+    ) -> Option<&dyn incan_frontend::checker_records::GraphNamespaceInterface> {
+        self.lowering_namespaces
+            .iter()
+            .find(|header| header.source == source)
+            .map(|header| header.interface.as_ref())
     }
 }
 
@@ -377,14 +390,14 @@ impl CompilationSession {
             visit,
             crate::typecheck::TypecheckOutput::Full,
         )?;
-        let mut namespace_lowering_inputs = checked.namespace_lowering_inputs;
+        let mut lowering_namespaces = checked.lowering_namespaces;
         let mut namespace_package_roots = checked.namespace_package_roots;
         let mut namespace_bodies = checked.namespace_bodies;
         self.read_admitted_namespace_bodies(
             modules,
             &checked.header_admitted,
             &mut namespace_bodies,
-            &mut namespace_lowering_inputs,
+            &mut lowering_namespaces,
             &mut namespace_package_roots,
         )?;
         let mut type_info_by_path = BTreeMap::new();
@@ -409,7 +422,7 @@ impl CompilationSession {
             type_info_by_module_path,
             semantic_snapshots_by_path,
             namespace_body_by_path,
-            namespace_lowering_inputs,
+            lowering_namespaces,
             namespace_package_roots,
         })
     }
@@ -421,7 +434,7 @@ impl CompilationSession {
         modules: &[ParsedModule],
         header_admitted: &[bool],
         bodies: &mut [Option<incan_semantics_core::body_ir::BodyIrModule>],
-        lowering_inputs: &mut Vec<Arc<[(incan_semantics_core::CompilerNodeId, String)]>>,
+        lowering_namespaces: &mut Vec<Arc<incan_frontend::checker_records::GraphNamespaceHeader>>,
         package_roots: &mut BTreeSet<incan_semantics_core::CanonicalSymbolId>,
     ) -> Result<(), CliDiagnosticFailure> {
         if !header_admitted.contains(&true) {
@@ -464,7 +477,7 @@ impl CompilationSession {
                         "graph namespace `{source}` was admitted by its header but has no frame"
                     ))
                 })?;
-            lowering_inputs.push(Arc::clone(&record.header.lowering_inputs));
+            lowering_namespaces.push(Arc::clone(&record.header));
             package_roots.extend(record.header.package_roots.iter().cloned());
             *body = Some(record.body_ir);
         }

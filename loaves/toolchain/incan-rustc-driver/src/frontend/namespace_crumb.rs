@@ -1,6 +1,6 @@
 //! Bind frontend declaration values to the Incan Crumb codec at the existing compiler graph boundary.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use incan_frontend::checker_records::GraphNamespaceInterface;
@@ -8,6 +8,7 @@ use incan_frontend::typechecker::{
     CheckedNamespaceInterface, ModuleDependencyInterface, NamespaceCell as Cell, NamespaceCrumb,
 };
 pub(super) use incan_frontend::typechecker::{to_atom, to_cell};
+use incan_semantics_core::CanonicalSymbolId;
 use internal_models_native::MappedView;
 use sha2::{Digest, Sha256};
 
@@ -61,6 +62,9 @@ impl GraphNamespaceInterface for RetainedInterface {
                 self.checked.installable()
             })
             .clone()
+    }
+    fn lowering_member_owners(&self) -> Result<BTreeMap<CanonicalSymbolId, String>, String> {
+        Ok(self.checked.lowering_member_owners())
     }
 }
 
@@ -169,12 +173,9 @@ impl EncodedInterface {
     }
 }
 
-impl GraphNamespaceInterface for EncodedInterface {
-    fn belongs_to(&self, name: &str, path: &[String]) -> bool {
-        self.name == name && self.path == path
-    }
-
-    fn installable(&self) -> Result<Arc<incan_frontend::typechecker::ModuleDependencyInterface>, String> {
+impl EncodedInterface {
+    /// Authenticate and share the same checked declaration revision for either consumer.
+    fn checked_interface(&self) -> Result<Arc<RetainedInterface>, String> {
         let byte_count = self.bytes.0.as_bytes().len();
         let checked = restore_digest(byte_count, self.verified_digest()?, || {
             if byte_count > 64 * 1024 * 1024 {
@@ -186,7 +187,21 @@ impl GraphNamespaceInterface for EncodedInterface {
         if !checked.belongs_to(&self.name, &self.path) {
             return Err("checked namespace identity disagrees with the admitted root".into());
         }
-        checked.installable()
+        Ok(checked)
+    }
+}
+
+impl GraphNamespaceInterface for EncodedInterface {
+    fn belongs_to(&self, name: &str, path: &[String]) -> bool {
+        self.name == name && self.path == path
+    }
+
+    fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
+        self.checked_interface()?.installable()
+    }
+
+    fn lowering_member_owners(&self) -> Result<BTreeMap<CanonicalSymbolId, String>, String> {
+        self.checked_interface()?.lowering_member_owners()
     }
 }
 

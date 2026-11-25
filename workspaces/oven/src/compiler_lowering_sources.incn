@@ -1,0 +1,112 @@
+"""Select the checked source witness and order for a published lowering event."""
+
+from pub::incan_mir_plan import LoweringEvent
+from pub::incan_platform.store import Snapshot
+from pub::internal_models import CompiledBodyFallback
+from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
+from pub::internal_models.records import RecordKey, RecordRequest
+from compiler_body_fallbacks import (
+    fallback_reasons,
+    member_namespace,
+    namespace_witnessed_event,
+    retained_namespace_event,
+)
+from compiler_body_keys import body_key
+from compiler_body_projection import root
+from compiler_graph_records import EditCutoff
+from compiler_lowering_order import LoweringOrder, LoweringOrders
+from compiler_namespace_products import member_plan_inputs, retained_member_product
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
+from unit import UnitDescription
+
+
+pub model LoweringBody:
+    """An actual fresh or graph-selected owner witness; retained owners are never claimed as fresh checker output."""
+
+    pub identity: str
+    pub symbol: str
+    pub module: str
+    pub final: bytes
+    pub order: LoweringOrder
+    pub retained: bool = false
+    pub signature_reads: list[RecordKey] = []
+
+
+pub model LoweringEventSource:
+    """The exact owner, producer order, and reads used to publish one scalar event."""
+
+    pub identity: str
+    pub module: str = ""
+    pub order: LoweringOrder = LoweringOrder()
+    pub body_reads: list[RecordRequest] = []
+    pub signature_reads: list[RecordRequest] = []
+
+
+pub def lowering_event_source(
+    mut source: PreparedBodyRecordSource,
+    mut orders: LoweringOrders,
+    selected: Option[Snapshot],
+    cutoff: EditCutoff,
+    unit: UnitDescription,
+    origin: str,
+    event: Borrowed[LoweringEvent],
+    bodies: Dict[str, LoweringBody],
+    rechecked: list[str],
+    fallbacks: list[CompiledBodyFallback],
+    namespace_files: list[str],
+    member_inputs: Borrowed[Dict[str, tuple[str, str]]],
+) -> Result[Option[LoweringEventSource], str]:
+    """
+    Select a scalar's current Body IR or namespace witness, or skip an event with no staged namespace.
+
+    A restored namespace must prove its member against the selected graph. Runtime instances are keyed by their
+    checked runtime body and need no authored reads.
+    """
+    identity = event.identity
+    has_body = identity in bodies
+    if not has_body and retained_namespace_event(unit, rechecked, identity)?:
+        match retained_member_product(source, orders, selected, cutoff, unit, origin, event)?:
+            Some((module, reads, order)) =>
+                return Ok(Some(LoweringEventSource(identity=identity, module=module, order=order, body_reads=reads)))
+            None => return Ok(None)
+    if identity.startswith(RUNTIME_INSTANCE_IDENTITY):
+        return Ok(Some(LoweringEventSource(identity=identity)))
+    if not has_body and namespace_witnessed_event(unit, fallbacks, identity)?:
+        module = match member_namespace(unit, namespace_files, identity)?:
+            None => return Ok(None)
+            Some(value) => value
+
+        reads = member_plan_inputs(origin, module, identity, member_inputs)?
+        order = orders.fresh(module)
+        return Ok(Some(LoweringEventSource(identity=identity, module=module, order=order, body_reads=reads)))
+
+    # A byte-matched retained body may have a fresh native plan after a linked Rust unit changes.
+    body = body_value(bodies, fallbacks, identity)?
+    signatures = [prepared_product_request(key) for key in body.signature_reads]
+    checked = body_key("body-ir", origin, body.identity, "checked", root(body.final)?)
+    return Ok(
+        Some(
+            LoweringEventSource(
+                identity=body.identity,
+                module=body.module,
+                order=body.order,
+                body_reads=[prepared_product_request(checked)] + signatures,
+                signature_reads=signatures,
+            ),
+        ),
+    )
+
+
+pub def body_value(
+    values: Dict[str, LoweringBody],
+    fallbacks: list[CompiledBodyFallback],
+    identity: str,
+) -> Result[LoweringBody, str]:
+    """Authenticate one lowering event against graph-eligible Body IR, retaining an exact checker fallback reason."""
+    if identity in values:
+        return Ok(values[identity])
+    available = sorted([symbol for symbol in values.keys()])
+    reasons = "; ".join(fallback_reasons(fallbacks))
+    return Err(
+        f"lowering output owner {identity} is absent from graph-eligible Body IR: {available}; checker-record fallbacks: {reasons}",
+    )

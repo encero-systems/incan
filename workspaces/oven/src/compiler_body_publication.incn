@@ -20,11 +20,9 @@ from pub::internal_models import (
     namespace_header_of,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
-from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from pub::internal_models.records import (
     ReadScope,
     RecordKey,
-    RecordRequest,
     ReadWitness,
     encode_record_key,
 )
@@ -51,8 +49,11 @@ pub from compiler_captured_sources import (
 )
 from compiler_prepared_records import PreparedBodyRecordSource
 pub from compiler_prepared_records import prepared_product_request
-from compiler_namespace_products import ExecutableCallInputs, member_plan_inputs, prepare_namespace_products, stage_call_contracts
-from compiler_lowering_order import LoweringOrder, LoweringOrders
+from compiler_namespace_products import (
+    ExecutableCallInputs, prepare_namespace_products, stage_call_contracts,
+)
+from compiler_lowering_order import LoweringOrders
+from compiler_lowering_sources import LoweringBody, body_value, lowering_event_source
 from compiler_plan_modules import (
     PlanModuleAdmissions,
     StagedPlan,
@@ -61,13 +62,7 @@ from compiler_plan_modules import (
     staged_plan,
 )
 from compiler_plan_values import AdmittedPlanModule, RetainedPlanInputs, carried_lowering_demand
-from compiler_body_fallbacks import (
-    fallback_lowering_event,
-    fallback_reasons,
-    member_namespace,
-    namespace_witnessed_event,
-    retained_namespace_event,
-)
+from compiler_body_fallbacks import fallback_lowering_event, retained_namespace_event
 from compiler_body_projection import (
     dependency_projection_refusal,
     dependency_read_key,
@@ -105,18 +100,6 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from unit import UnitDescription, dependency_source_roots
 from unit_compiler import CompletedPlanEvents, take_completed_plan_events
-
-
-model LoweringBody:
-    """An actual fresh or graph-selected owner witness; retained owners are never claimed as fresh checker output."""
-
-    identity: str
-    symbol: str
-    module: str
-    final: bytes
-    order: LoweringOrder
-    retained: bool = false
-    signature_reads: list[RecordKey] = []
 
 
 pub model PublishedCompiledBodies:
@@ -1044,38 +1027,28 @@ def prepare_lowering_records(
         if event.role == "entry":
             continue
         event_identity = event.identity
-        # A toolchain runtime instance reads no authored record: lowering keys it by the runtime body's checked meaning.
-        runtime = event_identity.startswith(RUNTIME_INSTANCE_IDENTITY)
-        if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
-            continue
-        mut member = false
-        if not runtime and event_identity not in bodies and namespace_witnessed_event(unit, fallbacks, event_identity)?:
-            member = true
+        witness = match lowering_event_source(
+            source,
+            orders,
+            selected,
+            cutoff,
+            unit,
+            origin,
+            event,
+            bodies,
+            rechecked,
+            fallbacks,
+            namespace_files,
+            member_inputs,
+        )?:
+            Some(value) => value
+            None => continue
+
         key = event.key
         function = event.function
         product = event.product
-        mut identity = event_identity
-        mut signature_reads: list[RecordRequest] = []
-        mut body_reads: list[RecordRequest] = []
-        mut module_file = ""
-        mut position = LoweringOrder()
-        if member:
-            match member_namespace(unit, namespace_files, event_identity)?:
-                None => continue
-                Some(module) =>
-                    body_reads = member_plan_inputs(origin, module, event_identity, member_inputs)?
-                    module_file = module
-                    position = orders.fresh(module)
-        elif not runtime:
-            body = body_value(bodies, fallbacks, event_identity)?
-            # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
-            # when a linked Rust unit changed without changing the checked source body or its callable signature.
-            identity = body.identity
-            module_file = body.module
-            position = body.order
-            signature_reads = [prepared_product_request(key) for key in body.signature_reads]
-            body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
-            body_reads = [prepared_product_request(body_ir_key)] + signature_reads
+        identity = witness.identity
+        position = witness.order
         if position.rank > interface_namespace:
             interface_namespace = position.rank
         demand_key = body_key("lowering-demand", origin, identity, function, key)
@@ -1095,7 +1068,7 @@ def prepare_lowering_records(
             demand_value = demands.encode(record.inputs, record.function)?
             finish_producer(attempt, "produced")
             work.evaluations += 1
-        demand_receipt = source.receipt(scope, demand_key, body_reads, position.evidence)?
+        demand_receipt = source.receipt(scope, demand_key, witness.body_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "lowering-demand-" + identity,
@@ -1105,7 +1078,12 @@ def prepare_lowering_records(
             expected_value_digest=expected_digest,
         )?
         source.add(encode_record_key(demand_key)?, demand_value)
-        plan_receipt = source.receipt(scope, plan_key, [prepared_product_request(demand_key)] + signature_reads, position.evidence)?
+        plan_receipt = source.receipt(
+            scope,
+            plan_key,
+            [prepared_product_request(demand_key)] + witness.signature_reads,
+            position.evidence,
+        )?
         _ = prepare_evaluation(
             prepared,
             "plan-function-" + identity,
@@ -1115,7 +1093,7 @@ def prepare_lowering_records(
         )?
         source.add(encode_record_key(plan_key)?, product)
         plan_keys.append(plan_key)
-        staged.append(staged_plan(module_file, event, identity, event_identity, function, key, plan_key, position)?)
+        staged.append(staged_plan(witness.module, event, identity, event_identity, function, key, plan_key, position)?)
     for event in events:
         if event.role != "entry":
             continue
@@ -1267,18 +1245,3 @@ def prepare_native_interface(
         receipt,
     )?
     return Ok(None)
-
-
-def body_value(
-    values: Dict[str, LoweringBody],
-    fallbacks: list[CompiledBodyFallback],
-    identity: str,
-) -> Result[LoweringBody, str]:
-    """Authenticate one lowering event against graph-eligible Body IR, retaining an exact checker fallback reason."""
-    if identity in values:
-        return Ok(values[identity])
-    available = sorted([symbol for symbol in values.keys()])
-    reasons = "; ".join(fallback_reasons(fallbacks))
-    return Err(
-        f"lowering output owner {identity} is absent from graph-eligible Body IR: {available}; checker-record fallbacks: {reasons}",
-    )

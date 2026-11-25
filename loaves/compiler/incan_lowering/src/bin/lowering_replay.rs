@@ -211,6 +211,7 @@ fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result
         overflow_checks: step.overflow_checks,
         scalar_products,
         scalar_bodies: step.scalar_bodies.clone(),
+        member_owners: Default::default(),
         linked_static_exports: Default::default(),
         record_report: step
             .record_report

@@ -35,6 +35,9 @@ pub trait GraphNamespaceInterface: std::fmt::Debug + Send + Sync {
 
     /// Materialize and validate all declarations before another checker observes their lookup tables.
     fn installable(&self) -> Result<Arc<crate::typechecker::ModuleDependencyInterface>, String>;
+
+    /// Project the checked member authorities only when retained generic requests need them.
+    fn lowering_member_owners(&self) -> Result<BTreeMap<incan_semantics_core::CanonicalSymbolId, String>, String>;
 }
 
 impl GraphNamespaceInterface for crate::typechecker::CheckedNamespaceInterface {
@@ -44,6 +47,10 @@ impl GraphNamespaceInterface for crate::typechecker::CheckedNamespaceInterface {
 
     fn installable(&self) -> Result<Arc<crate::typechecker::ModuleDependencyInterface>, String> {
         self.installable()
+    }
+
+    fn lowering_member_owners(&self) -> Result<BTreeMap<incan_semantics_core::CanonicalSymbolId, String>, String> {
+        Ok(self.lowering_member_owners())
     }
 }
 

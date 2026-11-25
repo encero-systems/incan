@@ -44,6 +44,9 @@ static PLAN_FUNCTION: Shape = Shape {
 };
 static PLAN_FUNCTION_SCHEMA: Schema = Schema::new(&[&PLAN_FUNCTION]);
 
+/// Checked member owner carried by a closed instance's authentic scalar product inputs.
+pub const CHECKED_MEMBER_INSTANCE: &str = "incan.checked-member-instance/1:";
+
 /// The exact lowering inputs, native function payload, instance requests and payload digest.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanFunctionRecord {
