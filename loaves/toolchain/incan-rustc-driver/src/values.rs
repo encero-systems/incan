@@ -383,11 +383,7 @@ pub fn rvalue<'tcx>(
             ),
             mir::WithRetag::Yes,
         ),
-        RvalueKind::ClosureObject(value) => mir::Rvalue::Ref(
-            tcx.lifetimes.re_erased,
-            mir::BorrowKind::Shared,
-            place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
-        ),
+        RvalueKind::ClosureObject(value) => closure_receiver(tcx, value, destination_type)?,
         RvalueKind::ReifyFunction(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerCoercion(
                 rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
@@ -469,6 +465,25 @@ pub fn rvalue<'tcx>(
             native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// Borrow the boxed callable's referent for the shared or exclusive receiver required by its call.
+fn closure_receiver<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    value: &crate::plan::Place,
+    destination_type: &PlanType,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    Ok(mir::Rvalue::Ref(
+        tcx.lifetimes.re_erased,
+        if matches!(destination_type, PlanType::ExclusiveClosureRef(_)) {
+            mir::BorrowKind::Mut {
+                kind: mir::MutBorrowKind::Default,
+            }
+        } else {
+            mir::BorrowKind::Shared
+        },
+        place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
+    ))
 }
 
 /// Convert a reference to a concrete value into a reference to the Rust trait object its destination holds. rustc's

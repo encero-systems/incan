@@ -338,8 +338,8 @@ pub fn closure_value_type(ty: &PlanType) -> bool {
 /// Admit captures according to the retained reusable or consuming environment contract.
 ///
 /// Reusable environments copy scalars and clone owned text, collection, model, and enum snapshots for every call.
-/// A reusable environment can also hold one shared reference, copied into every call, while checking keeps its source
-/// borrowed. Checking forbids changes to captured values and aliases of their storage.
+/// A reusable environment can also hold checked loans. Each invocation copies a shared reference or reborrows an
+/// exclusive reference for the duration of the call.
 /// A proven consuming environment instead transfers its canonical zip into the lifted body once.
 pub fn closure_capture_type(ty: &PlanType, consumes_environment: bool) -> bool {
     match ty {
@@ -347,7 +347,7 @@ pub fn closure_capture_type(ty: &PlanType, consumes_environment: bool) -> bool {
         _ => {
             owned_capture(ty)
                 || (closure_value_type(ty) && *ty != PlanType::Unit)
-                || (!consumes_environment && reference_capture(ty))
+                || (!consumes_environment && (reference_capture(ty) || exclusive_capture(ty)))
         }
     }
 }
@@ -368,7 +368,13 @@ pub fn reference_capture(ty: &PlanType) -> bool {
     )
 }
 
+/// A checked reference carrier an exclusive closure can retain and reborrow.
+pub fn exclusive_capture(ty: &PlanType) -> bool {
+    crate::explicit_arguments::reference_contract(ty).is_ok_and(|(_, exclusive)| exclusive)
+}
+
 /// Select owned text, collection, callable, model, enum and zip snapshots for construction, validation and invocation.
+
 ///
 /// Reusable calls clone these snapshots.
 pub fn owned_capture(ty: &PlanType) -> bool {
@@ -415,7 +421,9 @@ pub fn closure_constructor(
     if native_send || native_sync {
         object_type = PlanType::NativeClosure(signature.clone(), native_send, native_sync);
     }
-    if borrowing {
+    if captures.iter().any(exclusive_capture) {
+        object_type = PlanType::ExclusiveClosure(signature.clone());
+    } else if borrowing {
         object_type = PlanType::BorrowingClosure(signature.clone());
     }
     if consumes_environment {
@@ -440,7 +448,7 @@ pub fn closure_constructor(
         });
         // Owned captures move into the environment; Copy scalars are copied.
         let place = plan_place(index as i64 + 1, span);
-        let kind = if consumes_environment || owned_capture(capture) {
+        let kind = if consumes_environment || owned_capture(capture) || exclusive_capture(capture) {
             OperandKind::Move(place)
         } else {
             OperandKind::Copy(place)
@@ -472,7 +480,9 @@ pub fn callable_signature(ty: &PlanType) -> Result<Vec<PlanType>, String> {
         | PlanType::ClosureOnce(signature)
         | PlanType::ClosureRef(signature)
         | PlanType::BorrowingClosure(signature)
-        | PlanType::BorrowingClosureRef(signature) => Ok(signature.clone()),
+        | PlanType::BorrowingClosureRef(signature)
+        | PlanType::ExclusiveClosure(signature)
+        | PlanType::ExclusiveClosureRef(signature) => Ok(signature.clone()),
         _ => Err("unsupported Body IR local callable representation".into()),
     }
 }

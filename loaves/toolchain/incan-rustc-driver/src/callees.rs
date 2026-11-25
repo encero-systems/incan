@@ -46,6 +46,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
             "local callable has no declaration callee".into(),
         )),
         CalleeKind::CallClosure(_) | CalleeKind::CallBorrowingClosure(_) => fn_call(tcx),
+        CalleeKind::CallExclusiveClosure(_) => fn_mut_call(tcx),
         CalleeKind::CloneClosure(signature) => crate::cloneable_closures::clone_method(tcx, signature),
         CalleeKind::CallClosureOnce(_) => fn_once_call(tcx),
         CalleeKind::ClosureBody(..) | CalleeKind::ClosureBodyOnce(..) => Err(PlanError::UnknownCallee(
@@ -118,6 +119,19 @@ pub fn fn_call(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
         .copied()
         .find(|def| tcx.item_name(*def).as_str() == "call")
         .ok_or_else(|| PlanError::UnknownCallee("Fn::call".into()))
+}
+
+/// Resolve the mutable invocation method of the retained exclusive closure object.
+fn fn_mut_call(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
+    let trait_id = tcx
+        .lang_items()
+        .fn_mut_trait()
+        .ok_or_else(|| PlanError::UnknownCallee("FnMut".into()))?;
+    tcx.associated_item_def_ids(trait_id)
+        .iter()
+        .copied()
+        .find(|def| tcx.item_name(*def).as_str() == "call_mut")
+        .ok_or_else(|| PlanError::UnknownCallee("FnMut::call_mut".into()))
 }
 
 /// Resolve FnOnce::call_once through its language item for a moved owned callable receiver.

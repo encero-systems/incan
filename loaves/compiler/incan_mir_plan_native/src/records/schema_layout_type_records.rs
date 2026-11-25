@@ -1,6 +1,6 @@
 //! Referenced descriptions of the native-plan profile's `layout_type_records` shapes.
 
-use crate::wire::{Shape, ShapeBody, field, variant};
+use crate::wire::{Shape, ShapeBody, ShapeVariant, field, variant};
 
 pub(crate) static SHAPE_LAYOUT_TYPE_RECORDS_STORED_INSTANCE_REQUEST: Shape = Shape {
     selector: b"x\x18\xc1\xb2k\x0b\x00",
@@ -853,3 +853,18 @@ pub(crate) static SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_TUPLE_ELEMENT: Shape =
         ),
     ]),
 };
+
+pub(crate) const EXCLUSIVE_CLOSURE: &[u8] = b"\x4b\x87\x66\xd5\xf3\xa5";
+pub(crate) const EXCLUSIVE_CLOSURE_REF: &[u8] = b"\x6f\x12\x65\xe7\x6b\xcf";
+pub(crate) const EXCLUSIVE_TYPE_VARIANTS: &[ShapeVariant] = &[
+    variant(
+        EXCLUSIVE_CLOSURE,
+        "ExclusiveClosure",
+        &[field(b"_\xec\xebf\xff\xc8", "0", "list<enum@bf18bf9e46ed>")],
+    ),
+    variant(
+        EXCLUSIVE_CLOSURE_REF,
+        "ExclusiveClosureRef",
+        &[field(b"_\xec\xebf\xff\xc8", "0", "list<enum@bf18bf9e46ed>")],
+    ),
+];

@@ -225,6 +225,10 @@ pub enum PlanType {
     /// An owned callable object holding shared references to its borrowed captures; it is neither cloned nor returned.
     BorrowingClosure(Vec<PlanType>),
     BorrowingClosureRef(Vec<PlanType>),
+    /// A reusable closure whose owned environment holds an exclusive capture loan.
+    ExclusiveClosure(Vec<PlanType>),
+    /// The temporary exclusive receiver for one call of an exclusive closure.
+    ExclusiveClosureRef(Vec<PlanType>),
     CallableArguments(Vec<PlanType>),
     /// Exactly one output carrier; the owned pinned future executes only when polled.
     Future(Vec<PlanType>),

@@ -1,5 +1,4 @@
 # behavior: a closure that writes through a writable alias changes the field the alias borrows, on every call through its last; an async body's writable alias stays the same borrow across an await, so the changes before and after the suspension both reach the field (RFC 129, #1846).
-# pending: a closure still captures its own copy of a local, so the check refuses the write with "Cannot change 'items' inside a closure"; the async body's alias is still a copy.
 # expect-stdout:
 #   ["apple", "plum", "fig"]
 #   3
@@ -7,12 +6,17 @@
 
 """A writable alias captured by a closure and held across a suspension."""
 
+from std.async.task import yield_now
+
 
 class Cart:
+    """Own the list that each writable alias updates."""
+
     pub items: list[str]
 
 
 def add_twice(mut cart: Cart) -> None:
+    """Call the same writable closure twice and then read its owner."""
     mut items = cart.items
     add: (str) -> None = (item) => items.append(item)
     add("plum")
@@ -20,19 +24,17 @@ def add_twice(mut cart: Cart) -> None:
     println(cart.items)
 
 
-async def pause() -> None:
-    pass
-
-
 async def tally(mut cart: Cart) -> int:
+    """Write through the same alias on each side of a scheduler yield."""
     mut items = cart.items
     items.append("plum")
-    await pause()
+    await yield_now()
     items.append("fig")
     return len(cart.items)
 
 
 async def main() -> None:
+    """Observe both owners after their final borrow ends."""
     mut first = Cart(items=["apple"])
     add_twice(first)
     mut second = Cart(items=["apple"])

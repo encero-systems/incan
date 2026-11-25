@@ -117,7 +117,7 @@ pub fn call_callable_place(
         PlanType::Closure(_) | PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_) => {
             return call_closure(builder, callable, &signature, operands, output, span);
         }
-        PlanType::BorrowingClosure(_) => {
+        PlanType::BorrowingClosure(_) | PlanType::ExclusiveClosure(_) => {
             let local = callable.local;
             call_closure(builder, callable, &signature, operands, output, span)?;
             if held.last_use && local > builder.parameter_count {
@@ -162,16 +162,14 @@ pub fn call_closure(
     span: &SourceSpan,
 ) -> Result<(), String> {
     let packed = packed_arguments(builder, signature, operands, span)?;
-    let borrowing = matches!(
-        place_type(&builder.locals, &callable),
-        PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_)
-    );
-    let receiver = callable_object(builder, callable, signature, span)?;
-    let callee = if borrowing {
-        CalleeKind::CallBorrowingClosure(signature.to_vec())
-    } else {
-        CalleeKind::CallClosure(signature.to_vec())
+    let callee = match place_type(&builder.locals, &callable) {
+        PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_) => {
+            CalleeKind::CallBorrowingClosure(signature.to_vec())
+        }
+        PlanType::ExclusiveClosure(_) => CalleeKind::CallExclusiveClosure(signature.to_vec()),
+        _ => CalleeKind::CallClosure(signature.to_vec()),
     };
+    let receiver = callable_object(builder, callable, signature, span)?;
     lower_callable_result(
         builder,
         callee,
@@ -208,11 +206,13 @@ pub fn callable_object(
         PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_) => return Ok(read_place(callable, false, span)),
         PlanType::Closure(_) => PlanType::ClosureRef(signature.to_vec()),
         PlanType::BorrowingClosure(_) => PlanType::BorrowingClosureRef(signature.to_vec()),
+        PlanType::ExclusiveClosure(_) => PlanType::ExclusiveClosureRef(signature.to_vec()),
         _ => return Err("unsupported Body IR callable without an object representation".into()),
     };
+    let exclusive = matches!(&view_type, PlanType::ExclusiveClosureRef(_));
     let view = temporary(builder, view_type, span);
     builder.emit(plan_assign(view.clone(), RvalueKind::ClosureObject(callable), span));
-    Ok(read_place(view, false, span))
+    Ok(read_place(view, exclusive, span))
 }
 
 /// Register an authenticated named read before a decorator or ordinary argument can observe its name.

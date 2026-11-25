@@ -1,6 +1,6 @@
 //! Referenced descriptions of the native-plan profile's `function_records` shapes.
 
-use crate::wire::{Shape, ShapeBody, field, variant};
+use crate::wire::{Shape, ShapeBody, ShapeVariant, field, variant};
 
 pub(crate) static SHAPE_FUNCTION_RECORDS_STORED_BLOCK: Shape = Shape {
     selector: b"\x13\xd4\x002\xb2\xad\x00",
@@ -274,3 +274,10 @@ pub(crate) static SHAPE_FUNCTION_RECORDS_STORED_UNWIND: Shape = Shape {
         variant(b"\xf9\x13\xf0\x92\x10\xe8", "Terminate", &[]),
     ]),
 };
+
+pub(crate) const CALL_EXCLUSIVE_CLOSURE: &[u8] = b"\xe4\x35\xa8\xda\x10\x51";
+pub(crate) const EXCLUSIVE_TARGET_VARIANTS: &[ShapeVariant] = &[variant(
+    CALL_EXCLUSIVE_CLOSURE,
+    "CallExclusiveClosure",
+    &[field(b"_\xec\xebf\xff\xc8", "0", "list<enum@234b6c9b62c7>")],
+)];

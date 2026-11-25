@@ -1,6 +1,6 @@
 //! Source-named types crossing the checked Incan caller boundary without conversion.
 
-pub use incan_lowering::owned_capture;
+pub use incan_lowering::{exclusive_capture, owned_capture};
 pub use incan_mir_plan_native::{
     AttributeArgument, AttributeValue, BinaryOp, Callee, CalleeKind, Carrier, Constant, EnumDeclaration,
     ExternalFunction, FallibleIteratorMethods, FieldLifecycle, FieldMetadata, ForeignFunction, FrozenValue, Function,

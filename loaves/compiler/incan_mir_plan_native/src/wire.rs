@@ -68,10 +68,19 @@ pub(crate) const fn variant(
     ShapeVariant { identity, name, fields }
 }
 
+/// An extended exact description, required when a row uses one of its additional alternatives.
+pub(crate) struct ShapeRevision {
+    pub shape: &'static Shape,
+    pub alternatives: &'static [ShapeVariant],
+}
+
 /// The complete description closure a root row is written and admitted with, D-encoded once per process.
+
 pub(crate) struct Schema {
     shapes: &'static [&'static Shape],
     encoded: OnceLock<Vec<Vec<u8>>>,
+    revisions: &'static [ShapeRevision],
+    revised: OnceLock<Vec<Vec<u8>>>,
 }
 
 impl Schema {
@@ -80,6 +89,56 @@ impl Schema {
         Self {
             shapes,
             encoded: OnceLock::new(),
+            revisions: &[],
+            revised: OnceLock::new(),
+        }
+    }
+
+    /// Retain alternative authenticated digests without adding a slot to the required description closure.
+    pub(crate) const fn with_revisions(mut self, revisions: &'static [ShapeRevision]) -> Self {
+        self.revisions = revisions;
+        self
+    }
+
+    /// Resolve each encoded K/D in one admission. Alternate supplied descriptions do not change the row's slot count.
+    fn supply(&self, request: &mut RowRequest) {
+        for description in self.descriptions().iter().chain(self.revised_descriptions()) {
+            request.supply(description.clone());
+        }
+    }
+
+    /// D-encode each alternate declaration once, in the same order as its revision entry.
+    fn revised_descriptions(&self) -> &[Vec<u8>] {
+        self.revised.get_or_init(|| {
+            self.revisions
+                .iter()
+                .map(|revision| encode_shape_variants(revision.shape, revision.alternatives))
+                .collect()
+        })
+    }
+
+    /// Return the schema revision demanded by the concrete wire alternative, if any.
+    fn revision_mask(&self, alternative: &[u8]) -> usize {
+        self.revisions
+            .iter()
+            .position(|revision| {
+                revision
+                    .alternatives
+                    .iter()
+                    .any(|variant| variant.identity == alternative)
+            })
+            .map_or(0, |index| 1 << index)
+    }
+
+    /// Keep the legacy descriptions unless an actual value selected the corresponding revised form.
+    fn write_descriptions(&self, request: &mut RowWriteRequest, revisions: usize) {
+        for (shape, description) in self.shapes.iter().zip(self.descriptions()) {
+            let selected =
+                self.revisions.iter().enumerate().find(|(index, revision)| {
+                    revisions & (1 << index) != 0 && revision.shape.selector == shape.selector
+                });
+            let encoded = selected.map_or(description, |(index, _)| &self.revised_descriptions()[index]);
+            request.description(encoded.clone(), false);
         }
     }
 
@@ -106,6 +165,11 @@ enum Meta<'a> {
 
 /// D-encode one description the way `std.primitives.crumb.metadata_values.encode` does.
 fn encode_shape(shape: &Shape) -> Vec<u8> {
+    encode_shape_variants(shape, &[])
+}
+
+/// Encode the exact description with its supplied additional alternatives, in declaration order.
+fn encode_shape_variants(shape: &Shape, additional: &[ShapeVariant]) -> Vec<u8> {
     let metadata = match &shape.body {
         ShapeBody::Record(fields) => Meta::Map(vec![
             ("kind", Meta::Text("Record")),
@@ -119,7 +183,10 @@ fn encode_shape(shape: &Shape) -> Vec<u8> {
             ("nominal", Meta::Binary(shape.selector)),
             ("path", Meta::Text(shape.path)),
             ("properties", Meta::Map(Vec::new())),
-            ("variants", Meta::List(variants.iter().map(variant_metadata).collect())),
+            (
+                "variants",
+                Meta::List(variants.iter().chain(additional).map(variant_metadata).collect()),
+            ),
         ]),
     };
     let mut output = Vec::new();
@@ -534,11 +601,10 @@ fn settle(budget: &mut Budget, used: (i64, i64), category: &str, offset: i64) ->
 pub(crate) fn write_row(schema: &Schema, key: &[u8], value: Wire) -> Result<Vec<u8>, String> {
     let mut budget = Budget::graph();
     let mut request = RowWriteRequest::new(false);
-    for description in schema.descriptions() {
-        request.description(description.clone(), false);
-    }
     request.record(key.to_vec());
-    append(&mut request, value);
+    let mut revisions = 0;
+    append(&mut request, value, schema, &mut revisions);
+    schema.write_descriptions(&mut request, revisions);
     request.allow(budget.bytes, budget.elements, budget.depth);
     let result = request.write();
     budget
@@ -568,12 +634,14 @@ fn node(request: &mut RowWriteRequest, code: i64, count: usize) {
 }
 
 /// Append one complete logical value in pre-order, consuming it so payloads move into the request.
-fn append(request: &mut RowWriteRequest, value: Wire) {
+fn append(request: &mut RowWriteRequest, value: Wire, schema: &Schema, revisions: &mut usize) {
     match value {
         Wire::NoneValue => node(request, 0, 0),
         Wire::Some(items) => {
             node(request, 1, items.len());
-            items.into_iter().for_each(|item| append(request, item));
+            items
+                .into_iter()
+                .for_each(|item| append(request, item, schema, revisions));
         }
         Wire::Boolean(flag) => request.node(2, 0, flag, 0, 0, 0, 0, Vec::new(), Vec::new(), String::new()),
         Wire::Signed(number) => request.node(3, 0, false, number, 0, 0, 0, Vec::new(), Vec::new(), String::new()),
@@ -583,27 +651,32 @@ fn append(request: &mut RowWriteRequest, value: Wire) {
         Wire::Binary(data) => request.node(8, 0, false, 0, 0, 0, 0, data, Vec::new(), String::new()),
         Wire::List(items) => {
             node(request, 10, items.len());
-            items.into_iter().for_each(|item| append(request, item));
+            items
+                .into_iter()
+                .for_each(|item| append(request, item, schema, revisions));
         }
         Wire::Tuple(items) => {
             node(request, 11, items.len());
-            items.into_iter().for_each(|item| append(request, item));
+            items
+                .into_iter()
+                .for_each(|item| append(request, item, schema, revisions));
         }
         Wire::Record(fields) => {
             node(request, 14, fields.len());
-            append_fields(request, fields);
+            append_fields(request, fields, schema, revisions);
         }
         Wire::Enum(identity, fields) => {
+            *revisions |= schema.revision_mask(&identity);
             let count = i64::try_from(fields.len()).unwrap_or(i64::MAX);
             request.node(15, count, false, 0, 0, 0, 0, identity, Vec::new(), String::new());
-            append_fields(request, fields);
+            append_fields(request, fields, schema, revisions);
         }
         Wire::Other => request.node(-1, 0, false, 0, 0, 0, 0, Vec::new(), Vec::new(), String::new()),
     }
 }
 
 /// Append each field node and its value.
-fn append_fields(request: &mut RowWriteRequest, fields: Vec<WireField>) {
+fn append_fields(request: &mut RowWriteRequest, fields: Vec<WireField>, schema: &Schema, revisions: &mut usize) {
     for field in fields {
         request.node(
             18,
@@ -617,7 +690,7 @@ fn append_fields(request: &mut RowWriteRequest, fields: Vec<WireField>) {
             Vec::new(),
             "required".to_owned(),
         );
-        append(request, field.value);
+        append(request, field.value, schema, revisions);
     }
 }
 
@@ -642,9 +715,7 @@ pub(crate) fn admit_row(encoded: &[u8], schema: &Schema, maximum: i64) -> Result
     }
     let mut budget = Budget::graph();
     let mut request = RowRequest::new(encoded.to_vec(), false, true);
-    for description in schema.descriptions() {
-        request.supply(description.clone());
-    }
+    schema.supply(&mut request);
     request.allow(budget.bytes, budget.elements, budget.depth);
     let admission = request.admit();
     let used = (admission.bytes_charged, admission.elements_charged);

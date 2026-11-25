@@ -4,6 +4,7 @@
 //! are read from their identity-ordered slots. A shape here and its description in `wire_schema.rs` change
 //! together.
 
+use super::schema_function_records::CALL_EXCLUSIVE_CLOSURE;
 use crate::records::prelude::*;
 
 /// The stored form of `StoredBlock` in the native-plan profile.
@@ -367,6 +368,7 @@ pub(crate) enum StoredTarget {
     CallClosure(Vec<StoredType>),
     CallClosureOnce(Vec<StoredType>),
     CallBorrowingClosure(Vec<StoredType>),
+    CallExclusiveClosure(Vec<StoredType>),
     SharedCallableBody(Vec<StoredType>),
     CloneClosure(Vec<StoredType>),
     Value(StoredOperand),
@@ -404,6 +406,9 @@ pub(crate) fn wire_stored_target(value: &StoredTarget) -> Result<Wire, String> {
         }
         StoredTarget::CallBorrowingClosure(field0) => {
             alternative(b"\xa3C\xf89\x18\xe2", vec![list(field0, wire_stored_type)?])
+        }
+        StoredTarget::CallExclusiveClosure(field0) => {
+            alternative(CALL_EXCLUSIVE_CLOSURE, vec![list(field0, wire_stored_type)?])
         }
         StoredTarget::SharedCallableBody(field0) => {
             alternative(b"\xd76^\xdcH\xed", vec![list(field0, wire_stored_type)?])
@@ -465,6 +470,9 @@ fn read_stored_target_alternative(
         }
         b"\xa3C\xf89\x18\xe2" if fields.len() == 1 => {
             StoredTarget::CallBorrowingClosure(read_list(&fields[0].value, |item0| read_stored_type(item0, positions))?)
+        }
+        CALL_EXCLUSIVE_CLOSURE if fields.len() == 1 => {
+            StoredTarget::CallExclusiveClosure(read_list(&fields[0].value, |item| read_stored_type(item, positions))?)
         }
         b"\xd76^\xdcH\xed" if fields.len() == 1 => {
             StoredTarget::SharedCallableBody(read_list(&fields[0].value, |item0| read_stored_type(item0, positions))?)
