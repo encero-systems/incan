@@ -16,6 +16,7 @@ from files import write
 from json_fields import required_items, required_text
 from engine_protocol_fixtures import json_text_is
 from generic_member_record_fixture import verify_generic_receiver_dependencies
+from generic_position_controls import generic_source, verify_generic_length_fanout, verify_generic_main_position_controls
 from lowering_record_fixtures import (
     attempt_trace,
     command_proof,
@@ -725,7 +726,7 @@ pub def test_declaration_edit_keeps_an_imported_enum_read() -> Result[None, str]
 
 
 pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
-    """Compare warm and cold generic builds and prove exact body reads for two closed receivers."""
+    """Compare warm and cold generic builds, exact closed-receiver reads, and Plan reuse when main moves."""
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
@@ -748,7 +749,8 @@ pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     assert executable == cold_executable, "warm and cold generic executables differ"
     verify_deleted_module_matches_cold(binary, root.joinpath("deleted-module"))?
     verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))?
-    return verify_generic_receiver_dependencies(binary, root.joinpath("closed-member"))
+    verify_generic_receiver_dependencies(binary, root.joinpath("closed-member"))?
+    return verify_generic_length_fanout(binary, generic_source("0"))
 
 
 def verify_deleted_module_matches_cold(binary: str, root: Path) -> Result[None, str]:
@@ -809,7 +811,7 @@ def refused_run(binary: str, source: Path, store: Path) -> Result[str, str]:
 
 
 pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
-    """Editing the function beside a generic re-checks and re-plans only that function, and warm matches cold."""
+    """Prove a neighboring edit re-plans only its own body, then compare pure and semantic main edits."""
     edited, cold = unrelated_edit_reports("generic", generic_source("0"), "1\na\n42", "1\na\n43")?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
@@ -818,7 +820,8 @@ pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
     # `main`, both `pick` instances and the runtime Loaf's list and copy instances they request: every other function.
     planned = proof_count(cold, "plan_function_evaluations")?
     assert proof_count(edited, "plan_function_reuses")? == planned - 1, diagnostic
-    return Ok(None)
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    return verify_generic_main_position_controls(binary, generic_source("0"))
 
 
 pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]:
@@ -915,14 +918,6 @@ def list_source() -> str:
     lists = "    mut items = [1, 2, 3]\n    items.append(4)\n    names = [\"a\", \"b\"]\n"
     entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n" + utf8_demand()
     return unrelated + entry + "    println(unrelated(41))\n"
-
-
-def generic_source(index: str) -> str:
-    """A generic used at two instances beside an unrelated function, selecting the element at `index`."""
-    generic = "def pick[T](items: list[T]) -> T:\n    return items[" + index + "]\n\n\n"
-    unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
-    entry = "def main() -> None:\n    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\", \"c\"]))\n    println(unrelated(41))\n"
-    return generic + unrelated + entry
 
 
 pub def test_concurrent_identical_requests_bake_once() -> Result[None, str]:

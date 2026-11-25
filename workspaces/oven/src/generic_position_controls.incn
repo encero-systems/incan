@@ -1,0 +1,305 @@
+"""Verify placement and selected Plan evaluation beside two live generic instances."""
+
+from std.fs import Path
+from std.json import parse
+from pub::incan_platform.store import Snapshot
+from pub::incan_mir_plan import PLAN_MODULE_FAMILY, decode_lowering_event, decode_plan_module
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
+from compiler_body_keys import EXECUTABLE_BODY_PROFILE, IDENTITY_PROFILE, body_key
+from compiler_executable_metadata import typed_owner_metadata, typed_owner_reader
+from compiler_graph_records import OutputSlots, readers_of, reusable_evaluation, reusable_family_records
+from compiler_owner_records import read_body_frame
+from compiler_plan_values import LOWERING_PROFILE
+from compiler_prepared_records import prepared_product_request
+from files import write
+from json_fields import required_text
+from lowering_record_fixtures import attempt_trace, lowering_example_run, proof_count, stop_example_engine
+from scratch import scratch_directory
+from store_path_conversion import snapshot as store_snapshot
+
+
+pub def generic_source(index: str) -> str:
+    """A generic used at two instances beside an unrelated function, selecting the element at `index`."""
+    generic = "def pick[T](items: list[T]) -> T:\n    return items[" + index + "]\n\n\n"
+    unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
+    entry = "def main() -> None:\n    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\", \"c\"]))\n    println(unrelated(41))\n"
+    return generic + unrelated + entry
+
+
+def main_product(store: Path) -> Result[tuple[str, list[int]], str]:
+    """Read the selected stable scalar and the current placed main event's source lines independently."""
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    scope = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE)
+    keys = reusable_family_records(graph, "plan-function", LOWERING_PROFILE, Some(scope))?
+    placed = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE, included=Some(["main.incn"]))
+    pages = reusable_family_records(graph, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(placed))?
+    scalar = [encode_record_key(record.key)? for record in keys if record.key.facet == "body:main"]
+    if len(scalar) != 1 or len(pages) != 1:
+        return Err("the position control did not select one scalar main and one current module page")
+    mut lines: list[int] = []
+    mut count = 0
+    for page in pages:
+        module = decode_plan_module(page.value).map_err((error) => f"invalid position-control module: {error:?}")?
+        assert module.module == "main"
+        for function in module.functions:
+            if function.function != "main":
+                continue
+            event = decode_lowering_event(function.event)?
+            lines = [position.line for position in event.positions]
+            count += 1
+    if count != 1 or len(lines) == 0:
+        return Err("the current module lacks main's unique nonempty placed event")
+    return Ok((scalar[0], lines))
+
+
+def ordinary_main_rebuilds(trace: Path) -> Result[int, str]:
+    """Count actual ordinary main product lowering without counting entry bindings or generic instances."""
+    counts = lowered_products(trace)?
+    return Ok(counts.get("lowered ordinary main::main", 0) + counts.get("unkept ordinary main::main", 0))
+
+
+pub def verify_generic_main_position_controls(binary: str, seed: str) -> Result[None, str]:
+    """Use one ordinary Records app and an observable 0/1 main-product control in its live generic workload."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("main.incn")
+    store = root.joinpath("retained")
+    trace = attempt_trace(root, "compiler-trace")?
+    write(source, seed)?
+    initial = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
+    stop_example_engine(binary, store)?
+    _ = initial?
+    original, original_lines = main_product(store)?
+    seed_rebuilds = ordinary_main_rebuilds(trace)?
+    assert seed_rebuilds == 1, "the trace control did not capture one actual cold ordinary main product"
+
+    moved = seed.replace("def main() -> None:", "# move only main\ndef main() -> None:")
+    assert moved != seed and moved.count("# move only main") == 1
+    write(source, moved)?
+    repositioned = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
+    stop_example_engine(binary, store)?
+    pure = repositioned?
+    moved_key, moved_lines = main_product(store)?
+    assert moved_key == original and moved_lines == [line + 1 for line in original_lines]
+    assert proof_count(pure, "body_ir_evaluations")? == 0
+    assert proof_count(pure, "plan_function_evaluations")? == 0
+    assert proof_count(pure, "native_bakes")? == 1, "the pure position control did not reach real native placement"
+    moved_rebuilds = ordinary_main_rebuilds(trace)?
+    assert moved_rebuilds - seed_rebuilds == 0, "pure main relocation evaluated its ordinary Plan"
+
+    semantic = moved.replace("println(unrelated(41))", "println(unrelated(40))")
+    assert semantic != moved and len(semantic) == len(moved)
+    write(source, semantic)?
+    edited = lowering_example_run(binary, source, store, "1\na\n41", trace=Some(trace))
+    stop_example_engine(binary, store)?
+    changed = edited?
+    edited_key, edited_lines = main_product(store)?
+    assert edited_key != moved_key and edited_lines == moved_lines
+    assert proof_count(changed, "body_ir_evaluations")? == 1
+    assert proof_count(changed, "lowering_demand_evaluations")? == 1
+    edited_rebuilds = ordinary_main_rebuilds(trace)?
+    assert edited_rebuilds - moved_rebuilds == 1, "a checked semantic main edit must evaluate one ordinary Plan"
+    return Ok(None)
+
+
+model SelectedFact:
+    """The complete key and digest of one current typed producer output."""
+
+    key: RecordKey
+    digest: str
+
+
+def checked_template(graph: Snapshot) -> Result[SelectedFact, str]:
+    """Resolve the selected generic template through the current typed Body IR owner frame."""
+    scope = OutputSlots(origin="main", identity_profile=EXECUTABLE_BODY_PROFILE)
+    records = reusable_family_records(graph, "body-ir", CHECKER_PROFILE, Some(scope))?
+    reader = typed_owner_reader()?
+    mut templates: list[SelectedFact] = []
+    for record in records:
+        frame = read_body_frame(record.key, CHECKER_PROFILE, record.value)?
+        owner = typed_owner_metadata(reader, frame)?
+        if owner.name == "pick":
+            assert owner.identity == record.key.identity and record.key.facet == "checked"
+            assert owner.source == "main.incn" or owner.source.endswith("/main.incn")
+            templates.append(SelectedFact(key=record.key, digest=record.value_digest))
+    if len(templates) != 1:
+        return Err(f"expected one selected typed generic Body IR root, found {len(templates)}")
+    return Ok(templates[0])
+
+
+def confirmed_read(witnesses: Borrowed[list[ReadWitness]], supplier: Borrowed[SelectedFact]) -> Result[bool, str]:
+    """Use the current receipt to distinguish real reads from superseded reverse slot edges."""
+    request = prepared_product_request(supplier.key)
+    mut found = false
+    for witness in witnesses:
+        if let ReadWitness.Found(prior, _) = witness:
+            if prior.request != request:
+                continue
+            if found or prior.semantic_digest != supplier.digest:
+                return Err("current reader has an ambiguous or stale typed supplier witness")
+            found = true
+    return Ok(found)
+
+
+def confirmed_readers(graph: Snapshot, supplier: Borrowed[SelectedFact]) -> Result[list[SelectedFact], str]:
+    """Return only the Plan and demand readers with a positive current receipt for this exact supplier."""
+    mut readers: list[SelectedFact] = []
+    for key in readers_of(graph, [supplier.key], LOWERING_PROFILE)?:
+        if key.family != "lowering-demand" and key.family != "plan-function":
+            continue
+        reader = match reusable_evaluation(graph, key, LOWERING_PROFILE)?:
+            Some(value) => value
+            None => return Err(f"reader index has no current result for {encode_record_key(key)?}")
+        if confirmed_read(reader.receipt.witnesses, supplier)?:
+            readers.append(SelectedFact(key=key, digest=reader.value_digest))
+    return Ok(readers)
+
+
+model SelectedFanout:
+    """Exact instance pairs and separately authenticated additional Plan and demand readers."""
+
+    demands: Dict[str, str] = {}
+    plans: Dict[str, str] = {}
+    additional: list[str] = []
+
+
+def selected_fanout(graph: Snapshot, template: Borrowed[SelectedFact]) -> Result[SelectedFanout, str]:
+    """Prove two direct template-demand/Plan pairs before visiting any further reader."""
+    mut result = SelectedFanout()
+    mut frontier: list[SelectedFact] = []
+    mut paired: set[str] = set()
+    # Match the producer's exact keys before any transitive reader can count as an instance.
+    for demand in confirmed_readers(graph, template)?:
+        function = demand.key.facet
+        canonical = body_key(
+            "lowering-demand", template.key.origin, template.key.identity, function, demand.key.context,
+        )
+        if demand.key != canonical:
+            result.additional.append(encode_record_key(demand.key)?)
+            frontier.append(demand)
+            continue
+        plan = body_key("plan-function", canonical.origin, canonical.identity, "body:" + function, canonical.context)
+        mut matched = false
+        for reader in confirmed_readers(graph, demand)?:
+            encoded = encode_record_key(reader.key)?
+            if reader.key == plan:
+                if matched or function in result.demands:
+                    return Err(f"more than one direct template pair for {function}")
+                result.demands[function] = encode_record_key(canonical)?
+                result.plans[function] = encoded
+                paired.add(result.demands[function])
+                paired.add(encoded)
+                matched = true
+            else:
+                result.additional.append(encoded)
+            frontier.append(reader)
+        if not matched:
+            return Err(f"direct template demand for {function} has no exact selected Plan reader")
+    if len(result.demands) != 2:
+        return Err(f"expected two direct template-demand/Plan pairs, found {len(result.demands)}")
+
+    # The rest of the walk detects extra readers without changing the direct pair count.
+    mut visited = paired.clone()
+    mut additional = set(result.additional)
+    for reader in frontier:
+        visited.add(encode_record_key(reader.key)?)
+    while len(frontier) > 0:
+        mut next_level: list[SelectedFact] = []
+        for supplier in frontier:
+            for reader in confirmed_readers(graph, supplier)?:
+                output = encode_record_key(reader.key)?
+                if output in visited:
+                    continue
+                visited.add(output)
+                additional.add(output)
+                next_level.append(reader)
+        frontier = next_level
+    result.additional = sorted([encoded for encoded in additional if encoded not in paired])
+    return Ok(result)
+
+
+def lowered_products(trace: Path) -> Result[Dict[str, int], str]:
+    """Count actual compiler work only after the expected product rows are present."""
+    mut counts: Dict[str, int] = {}
+    for path in trace.iterdir().map_err((error) => error.message())?:
+        if not path.name().startswith("engine-compiler-") or not path.name().endswith(".jsonl"):
+            continue
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if '"operation":"lowering_product"' not in line:
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if required_text(row, "kind")? != "line" or required_text(row, "operation")? != "lowering_product":
+                continue
+            label = required_text(row, "key")?
+            if label.startswith("lowered ") or label.startswith("unkept "):
+                counts[label] = counts.get(label, 0) + 1
+    return Ok(counts)
+
+
+pub def verify_generic_length_fanout(binary: str, seed: str) -> Result[None, str]:
+    """Change the generic Body IR and move unchanged readers without changing behavior."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("main.incn")
+    store = root.joinpath("warm-store")
+    trace = attempt_trace(root, "compiler-trace")?
+    write(source, seed)?
+    cold = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
+    stop_example_engine(binary, store)?
+    _ = cold?
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    before_root = checked_template(graph)?
+    before = selected_fanout(graph, before_root)?
+    main_before, old_positions = main_product(store)?
+    counts_before = lowered_products(trace)?
+    assert counts_before.get("lowered ordinary main::main", 0) == 1
+
+    length_edit = seed.replace("return items[0]", "picked = items[0]\n    return picked")
+    assert length_edit != seed and length_edit.count("\n") == seed.count("\n") + 1
+    write(source, length_edit)?
+    warm = lowering_example_run(binary, source, store, "1\na\n42", trace=Some(trace))
+    stop_example_engine(binary, store)?
+    report = warm?
+    current = store_snapshot(store).map_err((error) => error.message())?
+    after_root = checked_template(current)?
+    after = selected_fanout(current, after_root)?
+    main_after, new_positions = main_product(store)?
+    assert after_root.key.identity == before_root.key.identity
+    assert after_root.key != before_root.key and after_root.digest != before_root.digest
+    names = sorted([function for function in before.plans.keys()])
+    assert sorted([function for function in after.plans.keys()]) == names
+    mut expected: list[str] = []
+    for function in names:
+        assert after.demands[function] != before.demands[function]
+        assert after.plans[function] != before.plans[function]
+        label = "lowered instance " + function
+        assert counts_before.get(label, 0) == 1, f"seed did not produce {label} once"
+        expected.append(label)
+    assert new_positions == [line + 1 for line in old_positions], "the selected main positions did not move"
+
+    plan = root.joinpath("native.plan")
+    executable = root.joinpath("target/incan/release/bin/main")
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    warm_executable = executable.read_bytes().map_err((error) => error.message())?
+    counts_after = lowered_products(trace)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = root.joinpath("fresh-store")
+    rebuilt = lowering_example_run(binary, source, fresh, "1\na\n42")
+    stop_example_engine(binary, fresh)?
+    _ = rebuilt?
+    assert plan.read_bytes().map_err((error) => error.message())? == warm_plan
+    assert executable.read_bytes().map_err((error) => error.message())? == warm_executable
+
+    mut work: list[str] = []
+    for label in counts_after.keys():
+        for _ in range(counts_after[label] - counts_before.get(label, 0)):
+            work.append(label)
+    assert main_after == main_before, "the moved main selected another scalar Plan key"
+    if len(before.additional) > 0 or len(after.additional) > 0:
+        return Err(f"unexpected authenticated readers on seed {before.additional} or after edit {after.additional}")
+    assert sorted(work) == sorted(expected), f"generic body changed Plan products {work}, expected {expected}"
+    assert proof_count(report, "body_ir_evaluations")? == 1
+    assert proof_count(report, "plan_function_evaluations")? == len(expected)
+    return Ok(None)
