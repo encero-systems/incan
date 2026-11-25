@@ -114,7 +114,9 @@ pub def verify_report_only_owner_reads(
     retained: list[SelectedBodyRecord] = []
     fresh: set[str] = set()
     begin_graph_demands(true)
-    result = selection.select_rescued(Some(graph), body.origin, demanded, covered, [module], admissions, retained, fresh, true)
+    result = selection.select_rescued(
+        Some(graph), body.origin, demanded, covered, [module], admissions, retained, fresh, true,
+    )
     demands = finish_graph_demands()
     assert len([item for item in demands if item.role == "evaluation-value" and item.key == body_key_text]) == 1
     checker_values = [item for item in demands if item.role == "evaluation-value" and item.key in checker_keys]
