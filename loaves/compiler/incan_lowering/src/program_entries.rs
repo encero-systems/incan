@@ -19,15 +19,16 @@ use crate::checked_values::{indexed_location, line_starts, location};
 use crate::classes::{body_module_identity, function_name, is_program_entry};
 use crate::decorator_caches::DecoratorFrame;
 use crate::frame_instances::{
-    append_synthesized, external_index, function_names, merge_externals, merge_indexed, named_functions,
+    ExternalIndex, FunctionNames, append_synthesized, external_index, function_names, merge_externals, merge_indexed,
+    named_functions,
 };
-use crate::function_frames::lower_function;
+use crate::function_frames::{LoweredFrame, lower_function};
 use crate::generators::append_generator_constructor;
 use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
 use crate::plan_modules::{AdmittedProduct, ModulePage, PlanAdmissions, admitted_page, report_admitted};
-use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, producer_generation};
+use crate::plan_product_inputs::{ProductInputs, linked_crates, ordinary_product_inputs, producer_generation};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
 use crate::resident_products::{FinalizedMember, FinalizedSlots, RestoreInputs};
@@ -160,78 +161,25 @@ pub fn lower_ordinary_bodies(
             retained,
             finalized: FinalizedSlots::new(),
         };
-        let mut ordinary = 0;
-        for &position in positions {
-            let body = &context.bodies[position];
-            if !ordinary_body(context, body, emitted_frames, kind) {
-                continue;
-            }
-            ordinary += 1;
-            let restored_before = admission.restored.len();
-            let (function, runtime, pending, synthesized) = lower_ordinary_frame(
-                context,
-                program,
-                body,
-                unions,
-                &frame,
-                intrinsics,
-                &mut keyed,
-                &mut admission,
-            )
-            .map_err(|reason| format!("{reason} in {} at {}", body.name, files[index]))?;
-            // Only a body that took the keyed route was lowered or looked up; a restored body is not traced.
-            if trace && admission.restored.len() == restored_before {
-                emit(
-                    "lowering",
-                    "INCAN_TRACE_LOWERING",
-                    &format!("lowering: body {owner} {} {}", body.name, body.span.start),
-                );
-            }
-            merge_instance_requests(&mut inventories.instances, &pending);
-            if !named_functions(&mut names, &inventories.functions, &function.name).is_empty() {
-                return Err(format!("unsupported Body IR overloaded function {}", body.name));
-            }
-            let function_position = inventories.functions.len();
-            inventories.functions.push(function);
-            if kind == "library" && body.is_async {
-                let function = &inventories.functions[function_position];
-                inventories.functions.push(
-                    boxed_future_constructor(
-                        function_name(context, body),
-                        incan_mir_plan_native::CalleeKind::Planned(function.name.clone()),
-                        function
-                            .parameters
-                            .iter()
-                            .map(|parameter| parameter.ty.clone())
-                            .collect(),
-                        function.return_type.clone(),
-                        function.span.clone(),
-                    )?
-                    .into(),
-                );
-            }
-            emitted_frames.record(body, position);
-            append_synthesized(&mut inventories.functions, &mut names, synthesized)?;
-            append_async_entry(
-                context,
-                body,
-                function_position,
-                index == entry,
-                tests,
-                intrinsics,
-                inventories,
-            )?;
-            append_generator_constructor(
-                &program.constructors,
-                &mut inventories.functions,
-                context,
-                body,
-                &sources[index],
-                &files[index],
-                intrinsics,
-            )?;
-            merge_indexed(&mut inventories.externals, &mut signatures, runtime)?;
-        }
+        let ordinary = lower_ordinary_module_frames(
+            context,
+            program,
+            positions,
+            &frame,
+            owner,
+            kind,
+            index == entry,
+            tests,
+            intrinsics,
+            inventories,
+            emitted_frames,
+            unions,
+            trace,
+            &mut keyed,
+            &mut admission,
+            &mut names,
+            &mut signatures,
+        )?;
         report_admitted(
             admitted_records,
             record_report,
@@ -248,6 +196,94 @@ pub fn lower_ordinary_bodies(
         }
     }
     Ok(())
+}
+
+/// Lower and settle each ordinary frame in the module in checked order.
+#[allow(clippy::too_many_arguments)]
+fn lower_ordinary_module_frames(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    positions: &[usize],
+    frame: &FrameSource<'_>,
+    owner: &str,
+    kind: &str,
+    is_entry_module: bool,
+    tests: &[String],
+    intrinsics: &mut Vec<EnumDeclaration>,
+    inventories: &mut Inventories,
+    emitted_frames: &mut EmittedFrames,
+    unions: &[IncanType],
+    trace: bool,
+    keyed: &mut KeyedProducts<'_>,
+    admission: &mut ModuleAdmission<'_>,
+    names: &mut FunctionNames,
+    signatures: &mut ExternalIndex,
+) -> Result<usize, String> {
+    let mut ordinary = 0;
+    for &position in positions {
+        let body = &context.bodies[position];
+        if !ordinary_body(context, body, emitted_frames, kind) {
+            continue;
+        }
+        ordinary += 1;
+        let restored_before = admission.restored.len();
+        let (function, runtime, pending, synthesized) =
+            lower_ordinary_frame(context, program, body, unions, frame, intrinsics, keyed, admission)
+                .map_err(|reason| format!("{reason} in {} at {}", body.name, frame.file))?;
+        // Only a body that took the keyed route was lowered or looked up; a restored body is not traced.
+        if trace && admission.restored.len() == restored_before {
+            emit(
+                "lowering",
+                "INCAN_TRACE_LOWERING",
+                &format!("lowering: body {owner} {} {}", body.name, body.span.start),
+            );
+        }
+        merge_instance_requests(&mut inventories.instances, &pending);
+        if !named_functions(names, &inventories.functions, &function.name).is_empty() {
+            return Err(format!("unsupported Body IR overloaded function {}", body.name));
+        }
+        let function_position = inventories.functions.len();
+        inventories.functions.push(function);
+        if kind == "library" && body.is_async {
+            let function = &inventories.functions[function_position];
+            inventories.functions.push(
+                boxed_future_constructor(
+                    function_name(context, body),
+                    incan_mir_plan_native::CalleeKind::Planned(function.name.clone()),
+                    function
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.ty.clone())
+                        .collect(),
+                    function.return_type.clone(),
+                    function.span.clone(),
+                )?
+                .into(),
+            );
+        }
+        emitted_frames.record(body, position);
+        append_synthesized(&mut inventories.functions, names, synthesized)?;
+        append_async_entry(
+            context,
+            body,
+            function_position,
+            is_entry_module,
+            tests,
+            intrinsics,
+            inventories,
+        )?;
+        append_generator_constructor(
+            &program.constructors,
+            &mut inventories.functions,
+            context,
+            body,
+            frame.source,
+            frame.file,
+            intrinsics,
+        )?;
+        merge_indexed(&mut inventories.externals, signatures, runtime)?;
+    }
+    Ok(ordinary)
 }
 
 /// The keyed-product state one unit's ordinary frames share: the product directory, the checker's witnesses by body,
@@ -479,11 +515,25 @@ fn lower_ordinary_frame(
         DecoratorFrame::Normal,
     )?;
     finish_producer(attempt, "produced");
-    let (function, runtime, pending, synthesized) = &lowered;
+    record_lowered_ordinary(body, &lowered, intrinsics, keyed, &owner, inputs.as_ref())?;
+    let (function, runtime, pending, synthesized) = lowered;
+    Ok((function.into(), runtime, pending, synthesized))
+}
+
+/// Retain the keyed product of a fresh ordinary frame and report its disposition.
+fn record_lowered_ordinary(
+    body: &Body,
+    lowered: &LoweredFrame,
+    intrinsics: &[EnumDeclaration],
+    keyed: &mut KeyedProducts<'_>,
+    owner: &RecordOwner,
+    inputs: Option<&ProductInputs>,
+) -> Result<(), String> {
+    let (function, runtime, pending, synthesized) = lowered;
     let mut kept = false;
     match encode_requests(pending) {
         Ok(requests) => {
-            if let (Some(directory), Some((witness, positions))) = (keyed.directory, &inputs) {
+            if let (Some(directory), Some((witness, positions))) = (keyed.directory, inputs) {
                 sync_carriers(&mut keyed.nominals, intrinsics);
                 // The ordinary compiler already has its complete lowered function. Record the optional product's
                 // refusal without changing that ordinary verdict.
@@ -523,8 +573,7 @@ fn lower_ordinary_frame(
     if inputs.is_some() {
         frame_product(if kept { "lowered" } else { "unkept" }, "ordinary", &frame_label(body));
     }
-    let (function, runtime, pending, synthesized) = lowered;
-    Ok((function.into(), runtime, pending, synthesized))
+    Ok(())
 }
 
 /// The owner a records request reports an ordinary frame's event under: its stable declaration identity and declaring
