@@ -56,6 +56,7 @@ from unit_compiler import (
     CheckedBodyCounts,
     checked_body_counts,
     PreparedUnitCompletion,
+    check_executable_records,
     compile_prepared_unit_completion,
     crate_name,
     described_by,
@@ -157,6 +158,8 @@ pub model Made:
     # nothing.
     pub evaluations: int = 0
     pub native_bakes: int = 0
+    # Fresh checked graph products from a request that reused its executable.
+    pub checked_output: Option[Path] = None
     # The compact Plan selection of this successful compiler dispatch, if it used one.
     pub plan_module_selection_digest: Option[str] = None
     # The executable's fact. A deferred bake also carries its unpublished record transaction and the producer claim,
@@ -276,6 +279,8 @@ pub def obtain_executable(
     records_directory: Option[Path] = None,
     report_directory: Option[Path] = None,
     retry: Option[NativeUnit] = None,
+    checker_page_count: int = 0,
+    recheck_provider_callers: bool = false,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -284,7 +289,8 @@ pub def obtain_executable(
     Development linkage has its own identity, and every shared library is validated before its fact is used.
     Execution starts the requested view, so the host's executable-path lookup and the program name agree.
 
-    1. View a sealed fact with all its shared carriers. Replay the source's warnings or check a raw-source miss.
+    1. Reuse a sealed fact with all its shared carriers. If a changed provider shape reached checked callers,
+       publish their fresh records even when the native fact is unchanged. Otherwise replay warnings or check a raw-source miss.
     2. Otherwise claim the identity: one bake of it at a time, in any project or process.
     3. A fact another command sealed while this one waited is viewed.
     4. Compile into a private staging directory of the fact.
@@ -316,16 +322,29 @@ pub def obtain_executable(
     # 1. An admitted retry keeps its payload only for this exact executable identity.
     payload = retry_payload(retry, identity, output.name())?
     if let Some(fact) = current_executable(store, identity, output, payload)?:
-        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication)?
+        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication,
+            graph_body_records, records_directory, checker_page_count, recheck_provider_callers)?
         trace(f"{label}: reused")
         return Ok(made)
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
     if let Some(fact) = current_executable(store, identity, output, payload)?:
-        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication)?
+        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared, defer_publication,
+            graph_body_records, records_directory, checker_page_count, recheck_provider_callers)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
+    return bake_executable(store, identity, output, unit, toolchain, key, warnings, shared, defer_publication,
+        ranked, graph_body_records, records_directory, report_directory, held)
+
+
+def bake_executable(
+    store: Path, identity: str, output: Path, unit: UnitDescription, toolchain: Toolchain, key: Key,
+    warnings: str, shared: bool, defer_publication: bool, ranked: Option[RankedBuildInputs],
+    graph_body_records: Option[list[SelectedBodyPage]], records_directory: Option[Path],
+    report_directory: Option[Path], held: LockGuard,
+) -> Result[Made, str]:
+    """Compile a missing executable and preserve its producer claim through publication."""
     # 4. A failed bake publishes nothing; its staging directory goes with it.
     mut selected_pages = graph_body_records
     if let Some(inputs) = ranked:
@@ -424,14 +443,28 @@ def reuse_executable(
     warnings: str,
     shared: bool,
     defer_publication: bool,
+    graph_body_records: Option[list[SelectedBodyPage]],
+    records_directory: Option[Path],
+    checker_page_count: int,
+    recheck_provider_callers: bool,
 ) -> Result[Made, str]:
-    """Select the executable and the warning result for the requesting project's exact authored sources."""
+    """Settle this request's checking and diagnostics before exposing its selected executable."""
     mut prepared: Option[PreparedWarnings] = None
-    if warnings != "":
+    mut checked_output: Option[Path] = None
+    if recheck_provider_callers and warnings != "":
+        match (graph_body_records, records_directory):
+            (Some(records), Some(directory)) =>
+                checked, warning_report = check_executable_records(unit, toolchain, store, key, records,
+                    directory, checker_page_count, defer_publication)?
+                checked_output = Some(checked)
+                prepared = warning_report
+            _ => return Err("invalidated owners require the selected checker inputs and product directory")
+    elif warnings != "":
         prepared = executable_warnings(unit, toolchain, store, key, warnings, defer_publication)?
     mut result = viewed(store, fact, output, unit.kind, shared)?
     result.warnings = warnings
     result.prepared_warnings = prepared
+    result.checked_output = checked_output
     return Ok(result)
 
 

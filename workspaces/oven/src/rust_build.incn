@@ -7,6 +7,7 @@ from rust::std::process import Command
 from std.fs import Path
 from std.hash import sha256
 from std.encoding.hex import hexlify
+from bakery_records import FactFile
 from codegen import rust_arguments, unit_metadata
 from driver_command import driver_command
 from intake import ManifestReader
@@ -40,6 +41,9 @@ pub model BuiltUnit:
     # other alias links the provider's Incan facade. Both empty for a provider without a Rust facet.
     pub native_crate: str = ""
     pub native_artifact: str = ""
+    # The shape member from the same immutable binding as this Incan facade's artifact.
+    pub provider_call_shapes: Option[FactFile] = None
+    pub provider_project: str = ""
 
 
 pub def facet_slot(facet: LocalFacet, profile: str) -> str:

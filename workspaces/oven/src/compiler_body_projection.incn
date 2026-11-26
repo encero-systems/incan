@@ -11,6 +11,7 @@ from compiler_body_keys import body_key, project_declaration_slot
 from compiler_body_values import SelectedBodyRecord
 from compiler_graph_records import EditCutoff
 from compiler_publication_local_receipts import PublicationLocalReceipts
+from selected_provider_call_shapes import PROVIDER_CALL_SHAPE_FAMILY, ProviderCallShapeSelection, dependency_call_shape_key
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
@@ -251,40 +252,44 @@ pub def dependency_span_key(
         None => return Ok(None)
 
 
-pub model ModuleSpans:
+pub model NamespaceDependencyReads:
     """
-    The editable dependency spans each module's checked owners read, and the selected bytes of those only a retained
-    owner reads, which this publication stages for no fresh owner.
+    The dependency spans and provider shapes read by each namespace's checked owners, and the prior span bytes
+    needed by retained owners. Provider shapes already belong to this request's selected inputs.
     """
 
     pub modules: Dict[str, list[RecordKey]] = {}
     pub retained: Dict[str, bytes] = {}
 
 
-pub def module_spans(
+pub def namespace_dependency_reads(
     projections: Borrowed[Dict[str, SourceProjection]],
     values: list[CompiledBodyValue],
     retained: list[SelectedBodyRecord],
+    restored_owners: Borrowed[set[str]],
     selected: Option[Snapshot],
     editable_packages: list[str],
     origin: str,
     cutoff: EditCutoff,
     mut local_receipts: BorrowedMut[PublicationLocalReceipts],
+    provider_shapes: Borrowed[ProviderCallShapeSelection],
     typed: bool = false,
-) -> Result[ModuleSpans, str]:
+) -> Result[NamespaceDependencyReads, str]:
     """
-    The spans of the editable dependency declarations each module's owners read, fresh or retained. A namespace row
-    carries its module's whole Body IR, which names those declarations by their spans, so it reads them too.
+    Gather the imports a namespace's Body IR uses. A rechecked module can include restored owners: their selected
+    Local receipts still supply shape reads. A refused candidate leaves only the reads its fresh sidecar confirms.
+    Preserve the existing positioned-span projection for the selected bodies.
     """
     mut modules: Dict[str, list[RecordKey]] = {}
     mut prior_values: Dict[str, bytes] = {}
-    if len(editable_packages) == 0:
-        return Ok(ModuleSpans())
+    if len(editable_packages) == 0 and len(provider_shapes.values) == 0 and len(provider_shapes.uncaptured) == 0:
+        return Ok(NamespaceDependencyReads())
     for value in values:
         for dependency in value.dependency_reads:
-            match dependency_span_key(projections, dependency, editable_packages)?:
-                Some(key) => add_span(modules, value.module, key)
-                None => pass
+            if let Some(key) = dependency_span_key(projections, dependency, editable_packages)?:
+                add_namespace_read(modules, value.module, key)
+            if let Some(key) = dependency_call_shape_key(provider_shapes, origin, dependency)?:
+                add_namespace_read(modules, value.module, key)
     if let Some(prior) = selected:
         reader = selected_owner_metadata_reader(typed and len(retained) > 0)?
         for record in retained:
@@ -302,16 +307,23 @@ pub def module_spans(
             let module: Borrowed[str] = metadata.source
             for witness in local.as_ref().witnesses:
                 if let ReadWitness.Found(found, _) = witness:
-                    if found.request.key.family == "owner-span":
-                        slot = encode_record_key(found.request.key)?
+                    key = found.request.key
+                    if key.family == "owner-span":
+                        slot = encode_record_key(key)?
                         match get(prior, slot).map_err((error) => error.message())?:
                             Some(stored) => prior_values[slot] = stored
                             None => return Err("a retained owner's dependency span is absent")
-                        add_span(modules, module, found.request.key)
-    return Ok(ModuleSpans(modules=modules, retained=prior_values))
+                        add_namespace_read(modules, module, key)
+                    elif key.family == PROVIDER_CALL_SHAPE_FAMILY and record.identity in restored_owners:
+                        slot = encode_record_key(key)?
+                        if slot not in provider_shapes.values:
+                            return Err("a retained owner's provider shape is outside the selected request: " + slot)
+                        add_namespace_read(modules, module, key)
+    return Ok(NamespaceDependencyReads(modules=modules, retained=prior_values))
 
 
-def add_span(mut modules: Dict[str, list[RecordKey]], module: str, key: RecordKey) -> None:
+def add_namespace_read(mut modules: Dict[str, list[RecordKey]], module: str, key: RecordKey) -> None:
+    """Retain each exact dependency key once for its consuming namespace."""
     if module not in modules:
         modules[module] = []
     if key not in modules[module]:

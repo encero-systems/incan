@@ -847,13 +847,34 @@ pub fn checked_graph_record_outputs(
     checker: &crate::typechecker::TypeChecker,
     module_path: &[String],
 ) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
+    checked_graph_callable_outputs(program, checker, module_path, false)
+}
+
+/// Account for every concrete library method, including methods that cannot emit a checked record.
+pub fn checked_library_graph_record_outputs(
+    program: &crate::ast::Program,
+    checker: &crate::typechecker::TypeChecker,
+    module_path: &[String],
+) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
+    checked_graph_callable_outputs(program, checker, module_path, true)
+}
+
+/// Collect concrete callable owners, retaining unavailable methods when the caller needs a full library census.
+fn checked_graph_callable_outputs(
+    program: &crate::ast::Program,
+    checker: &crate::typechecker::TypeChecker,
+    module_path: &[String],
+    require_complete_census: bool,
+) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
     let mut owners = Vec::new();
     for declaration in &program.declarations {
         if let crate::ast::Declaration::Function(function) = &declaration.node {
             owners.push((function.name.as_str(), declaration.span, false));
         }
         for method in crate::typechecker::canonical_nodes::nominal_methods(&declaration.node) {
-            if method.node.body.is_some() && checker.available_declaration_record(method.span).is_some() {
+            if method.node.body.is_some()
+                && (require_complete_census || checker.available_declaration_record(method.span).is_some())
+            {
                 owners.push((method.node.name.as_str(), method.span, true));
             }
         }
@@ -861,6 +882,7 @@ pub fn checked_graph_record_outputs(
     checked_callable_record_outputs(program, checker, module_path, owners)
 }
 
+/// Project each selected owner into checked graph records or a reason its records are unavailable.
 fn checked_callable_record_outputs<'a>(
     program: &crate::ast::Program,
     checker: &crate::typechecker::TypeChecker,
@@ -969,13 +991,17 @@ fn checked_callable_record_outputs<'a>(
                     &dependency.target,
                     stable_contexts.get(&dependency.target),
                 ) else {
-                    if method {
+                    if method
+                        || (dependency.target.kind == incan_semantics_core::SemanticSourceTargetKind::Function
+                            && package.is_some())
+                    {
+                        let owner_kind = if method { "method" } else { "checked" };
                         checker.record_body_check_outcome(span, "fallback");
                         return Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                             name: name.to_owned(),
                             identity: Some(identity),
                             reason: format!(
-                                "method dependency has no stable declaration identity: {}",
+                                "{owner_kind} dependency has no stable declaration identity: {}",
                                 dependency.target.render_compact()
                             ),
                             artifact_refusals: Vec::new(),
@@ -1138,7 +1164,8 @@ impl crate::typechecker::TypeChecker {
         if let Some(owner) = owner {
             return stable_member_identity(dependency, owner, 0);
         }
-        StableDeclarationId::from_canonical(dependency, None, None)
+        let signature = self.imported_function_source_signature(dependency).ok()?;
+        StableDeclarationId::from_canonical(dependency, signature, None)
     }
 }
 

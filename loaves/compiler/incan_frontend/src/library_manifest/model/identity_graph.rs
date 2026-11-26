@@ -1,6 +1,7 @@
 //! The library identity graph, export identities, canonical identity exports, and the Rust ABI record.
 
 use super::*;
+use incan_semantics_core::stable_identity::DeclarationSignature;
 
 /// Serialized schema version for the public export identity graph.
 pub const LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION: u32 = 2;
@@ -135,6 +136,31 @@ impl LibraryIdentityGraph {
                 .as_ref()
                 .is_some_and(|identity| identity.represents(canonical))
         })
+    }
+
+    /// Return the declaring compiler's signature for this exact selected function, including overload provenance.
+    pub(crate) fn function_source_signature(
+        &self,
+        canonical: &CanonicalSymbolId,
+    ) -> Result<Option<&DeclarationSignature>, ()> {
+        let mut signatures = self
+            .exports
+            .iter()
+            .filter(|export| {
+                export
+                    .canonical
+                    .as_ref()
+                    .is_some_and(|identity| identity.represents(canonical))
+            })
+            .filter_map(|export| export.source_signature.as_ref());
+        let Some(selected) = signatures.next() else {
+            return Ok(None);
+        };
+        if signatures.all(|signature| signature == selected) {
+            Ok(Some(selected))
+        } else {
+            Err(())
+        }
     }
 
     /// The shortest public path of a nominal type, breaking ties by the path's spelling.
@@ -320,6 +346,42 @@ pub struct ExportIdentity {
     /// explicitly unproven rather than reconstructing identity from `source_path`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonical: Option<CanonicalIdentityExport>,
+    /// Source signature supplied by the checker for this canonical function, if the producer retained it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "read_source_signature"
+    )]
+    pub source_signature: Option<DeclarationSignature>,
+}
+
+/// Validate the checked source-signature profile at the wire boundary shared with checked namespace records.
+pub(crate) fn validate_source_signature(spelling: &str) -> Result<(), &'static str> {
+    use incan_semantics_core::stable_identity::source_signature::SOURCE_SIGNATURE_PROFILE;
+
+    let digest = spelling
+        .strip_prefix(SOURCE_SIGNATURE_PROFILE)
+        .and_then(|rest| rest.strip_prefix(":sha256:"))
+        .ok_or("unknown callable declaration signature profile")?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("invalid callable declaration signature digest");
+    }
+    Ok(())
+}
+
+/// Decode an optional signature and reject an unknown profile or malformed digest before accepting it.
+fn read_source_signature<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<Option<DeclarationSignature>, D::Error> {
+    let signature = Option::<DeclarationSignature>::deserialize(reader)?;
+    if let Some(signature) = &signature {
+        validate_source_signature(signature.as_str()).map_err(serde::de::Error::custom)?;
+    }
+    Ok(signature)
 }
 
 /// Stable `.incnlib` representation of one compiler-owned canonical symbol identity.
@@ -614,6 +676,7 @@ mod tests {
             kind: ExportIdentityKind::Function,
             projection: ExportIdentityProjection::Direct,
             canonical: Some(canonical.clone()),
+            source_signature: None,
         };
         let graph = LibraryIdentityGraph {
             schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,

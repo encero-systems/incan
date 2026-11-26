@@ -28,6 +28,8 @@ pub model AuthenticatedCompiledBodies:
     pub owner_evaluations: int
     pub owner_reuses: int
     pub body_ir_evaluations: int
+    # The invocation restored these owners from selected records, including owners offered via whole modules.
+    pub restored_owners: set[str]
 
 
 pub def authenticate_compiled_bodies(
@@ -95,5 +97,6 @@ pub def authenticate_compiled_bodies(
             owner_evaluations=owner_evaluations,
             owner_reuses=owner_reuses,
             body_ir_evaluations=body_ir_evaluations,
+            restored_owners=restored_identities,
         ),
     )

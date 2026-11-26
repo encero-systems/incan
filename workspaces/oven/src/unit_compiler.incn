@@ -129,6 +129,7 @@ pub def compile_prepared_unit_completion(
     records_directory: Option[Path] = None,
     checked_warnings: Option[Path] = None,
     report_directory: Option[Path] = None,
+    library_checked_output: Option[Path] = None,
 ) -> Result[PreparedUnitCompletion, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -139,6 +140,13 @@ pub def compile_prepared_unit_completion(
     3. Compile or replay a certified refusal under the complete source identity.
     """
     # 1. A rejected selection leaves every request input and output path intact.
+    if let Some(path) = library_checked_output:
+        if unit.kind != "library" or graph_body_records is not None:
+            return Err("library checked output requires an ordinary library compiler request")
+        if not toolchain.supports_library_checked_local or unit.library_publication == "":
+            return Err("library checked output requires the selected library publication profile")
+        if path.exists() or checker_record_report_path(path).exists():
+            return Err("library checked output requires a fresh request-owned path")
     mut plan_selection_digest: Option[str] = None
     let selected_records: Borrowed[Option[list[SelectedBodyPage]]] = graph_body_records
     match selected_records:
@@ -196,6 +204,8 @@ pub def compile_prepared_unit_completion(
                 remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
             report.mkdir(true, true).map_err((error) => f"plan record report: cannot {error.message()}")?
         native += ["--plan-record-report", report.0]
+    if let Some(checked_output) = library_checked_output:
+        native += ["--graph-body-output", checked_output.0]
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
@@ -282,6 +292,32 @@ pub def executable_warnings(
     return check_for_warnings(unit, toolchain, path, store, key, defer_publication)
 
 
+pub def check_executable_records(
+    unit: UnitDescription, toolchain: Toolchain, store: Path, key: Key,
+    records: Borrowed[list[SelectedBodyPage]], directory: Path, page_count: int, defer_publication: bool,
+) -> Result[tuple[Path, Option[PreparedWarnings]], str]:
+    """
+    Check invalidated owners even when their earlier executable can be reused.
+
+    1. Bind the selected checker pages and product path to one request.
+    2. Certify the checker completion and require its graph products.
+    """
+    # 1. The selected pages and the checked output share one request-owned lease.
+    if page_count <= 0 or page_count > len(records):
+        return Err("invalidated owners have no bounded checker page selection")
+    path = write_unit(unit, crate_name(unit), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
+    name = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb).name()
+    output = directory.parent().joinpath(name)
+    _ = write_selected_record_pages(directory, unit, records, None, limit=Some(page_count))?
+    product_arguments = ["--graph-body-records", directory.0, "--graph-body-output", output.0]
+    options = captured_source_arguments(toolchain) + anchor_arguments(toolchain.closure_anchors)? + product_arguments
+    # 2. A diagnostic receipt alone cannot authorize the graph settlement.
+    warnings = check_for_warnings(unit, toolchain, path, store, key, defer_publication, options)?
+    if not output.is_dir() or not checker_record_report_path(output).is_file():
+        return Err("the selected executable check did not publish its checked graph products")
+    return Ok((output, warnings))
+
+
 pub def write_selected_records(
     directory: Path,
     unit: UnitDescription,
@@ -297,6 +333,7 @@ pub def write_selected_records(
 
 def write_selected_record_pages(
     directory: Path, unit: UnitDescription, records: Borrowed[list[SelectedBodyPage]], observed_key: Option[str],
+    limit: Option[int] = None,
 ) -> Result[Option[int], str]:
     """Publish selected pages and return the exact size only for one observed reference and marker."""
     if directory.exists():
@@ -311,7 +348,8 @@ def write_selected_record_pages(
     mut observed_markers = 0
     mut observed_references = 0
     mut observed_size = 0
-    for page in records:
+    for index in range(limit.unwrap_or(len(records))):
+        let page: Borrowed[SelectedBodyPage] = records[index]
         clock = work_clock()
         # A page offered by its store frame is a line of the request's frame list; its bytes are not copied.
         if page.segment != "" and page.digest != "":
@@ -377,9 +415,9 @@ pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool, exe
     return Path(f"{description.0}.graph-body-output")
 
 
-pub def checker_record_counts(unit: UnitDescription, key: Key, typed: bool, executable_crumb: bool = false) -> Result[CheckerRecordCounts, str]:
-    """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
-    report = checker_record_report_path(graph_body_output_path(unit, key, typed, executable_crumb))
+pub def checker_record_counts(output: Path) -> Result[CheckerRecordCounts, str]:
+    """Read the checker census paired with this invocation's graph products."""
+    report = checker_record_report_path(output)
     if not report.is_file():
         return Ok(CheckerRecordCounts())
     counts = decode_checker_counts(report.read_bytes().map_err((error) => error.message())?)?

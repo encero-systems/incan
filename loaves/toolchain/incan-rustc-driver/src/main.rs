@@ -177,7 +177,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some("--source-interface") => frontend::source_interface(&args[1..]),
         Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--compiler-records") => compiler_records::export(&args[1..]),
-        Some("--check") => exit_with(check(&args[1..])?),
+        Some("--check") => exit_with(check(&args[1..], false)?),
         Some("--check-ranked-reader") => frontend::check_ranked_reader(&args[1..]),
         Some("--explain") => exit_with(command_diagnostics::explain(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),
@@ -196,7 +196,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Verify the sysroot's compiler identity and print its host target. An explicit installer query also returns the
-/// supported Plan admission profile. Both responses verify the relocated toolchain without compiling a unit.
+/// requested admission profiles. Each response verifies the relocated toolchain without compiling a unit.
 fn verify_sysroot(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let reply = identity_reply(arguments, |sysroot| {
         identity::verify(sysroot).map(|verified| verified.target)
@@ -210,18 +210,29 @@ fn identity_reply(
     arguments: &[String],
     verify: impl FnOnce(&Path) -> Result<String, identity::IdentityError>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    const PROTOCOL: &str = "incan.driver-capabilities/1";
-    const PROFILE: &str = "incan.plan-module-selection-sha256/1";
-    let (sysroot, capabilities) = match arguments {
-        [sysroot] => (sysroot, false),
-        [sysroot, option, protocol] if option == "--capabilities" && protocol == PROTOCOL => (sysroot, true),
+    const PLAN_ONLY: &str = "incan.driver-capabilities/1";
+    const WITH_LIBRARY_LOCAL: &str = "incan.driver-capabilities/2";
+    const PLAN_PROFILE: &str = "incan.plan-module-selection-sha256/1";
+    const LIBRARY_LOCAL_PROFILE: &str = "incan.library-local-compiled-body-rows/1";
+    let (sysroot, protocol) = match arguments {
+        [sysroot] => (sysroot, None),
+        [sysroot, option, protocol]
+            if option == "--capabilities" && matches!(protocol.as_str(), PLAN_ONLY | WITH_LIBRARY_LOCAL) =>
+        {
+            (sysroot, Some(protocol.as_str()))
+        }
         _ => return Err("usage: incan-rustc-driver --identity SYSROOT".into()),
     };
     let target = verify(Path::new(sysroot))?;
-    if capabilities {
-        Ok(format!("{PROTOCOL}\n{target}\n{PROFILE}\n"))
-    } else {
-        Ok(format!("{target}\n"))
+    match protocol {
+        Some(WITH_LIBRARY_LOCAL) => {
+            let checker = internal_models_native::checker_records::CHECKER_PROFILE;
+            Ok(format!(
+                "{WITH_LIBRARY_LOCAL}\n{target}\n{PLAN_PROFILE}\n{LIBRARY_LOCAL_PROFILE}\n{checker}\n"
+            ))
+        }
+        Some(_) => Ok(format!("{PLAN_ONLY}\n{target}\n{PLAN_PROFILE}\n")),
+        None => Ok(format!("{target}\n")),
     }
 }
 
@@ -245,8 +256,24 @@ mod identity_reply_tests {
                 .unwrap_or("rejected capability request"),
             "incan.driver-capabilities/1\naarch64-apple-darwin\nincan.plan-module-selection-sha256/1\n"
         );
+        let modern = [
+            arguments[0].clone(),
+            arguments[1].clone(),
+            "incan.driver-capabilities/2".into(),
+        ];
+        assert_eq!(
+            identity_reply(&modern, verify)
+                .as_deref()
+                .unwrap_or("rejected capability request"),
+            concat!(
+                "incan.driver-capabilities/2\naarch64-apple-darwin\n",
+                "incan.plan-module-selection-sha256/1\n",
+                "incan.library-local-compiled-body-rows/1\n",
+                "incan.checker-free-functions/21\n"
+            )
+        );
         let [sysroot, capability, _] = arguments;
-        let unknown = [sysroot, capability, "incan.driver-capabilities/2".into()];
+        let unknown = [sysroot, capability, "incan.driver-capabilities/3".into()];
         assert!(identity_reply(&unknown, |_| panic!("a malformed request reached verification")).is_err());
         let refused = identity_reply(
             &[
@@ -375,7 +402,10 @@ fn checked_bodies_report(
 ///
 /// A check reuses the `--graph-body-records` it is given exactly as a build does. With `--checked-bodies PATH` it
 /// writes there which top-level function bodies it restored from them and which it checked afresh.
-pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+///
+/// With `--graph-body-output PATH`, a program check publishes the graph bodies and checker report before
+/// certification. This request accepts captured source input and uses the ordinary text result.
+pub(crate) fn check(arguments: &[String], resident: bool) -> Result<i32, Box<dyn std::error::Error>> {
     native_timing::observe_frontend(false);
     let [path, sysroot, rest @ ..] = arguments else {
         return Err(USAGE.into());
@@ -399,8 +429,22 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
         [flag, options @ ..] if flag == "--retain-checked-modules" => (true, options),
         options => (false, options),
     };
-    let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
-    let dependencies = frontend::dependencies(&unit, options)?;
+    let (captured_sources, options) = incan_driver::sources::captured_source_options(options)?;
+    let mut unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
+    let dependencies = frontend::dependencies_with_check_products(&unit, options, true)?;
+    if dependencies.requests_graph_body_output() {
+        if format != DiagnosticOutputFormat::Text || bodies_report.is_some() || retain_editor_modules {
+            return Err("checked graph output is a separate program product from diagnostic and editor reports".into());
+        }
+        unit.captured_sources = captured_sources.map(Path::to_path_buf);
+        frontend::publish_checked_program(unit, dependencies, Path::new(sysroot), resident)?;
+        certify_check(certificate);
+        println!("✓ Type check passed!");
+        return Ok(0);
+    }
+    if captured_sources.is_some() {
+        return Err("captured sources require checked graph output".into());
+    }
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let decoded_before = frontend::decoded_pages::decodes();
     let checked = if retain_editor_modules {
@@ -434,11 +478,18 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     });
     let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
     let status = status_of(checked.and_then(|report| command_diagnostics::render_check_report(report, format)));
-    if reproducible && let Some(certificate) = certificate {
+    if reproducible {
+        certify_check(certificate);
+    }
+    Ok(status)
+}
+
+/// Write a reproducible check receipt if requested, leaving the result valid when the receipt cannot be written.
+fn certify_check(certificate: Option<&Path>) {
+    if let Some(certificate) = certificate {
         // A receipt that cannot be written only means the next unchanged check runs again.
         let _ = std::fs::write(certificate, CHECK_CERTIFICATE);
     }
-    Ok(status)
 }
 
 /// Split a leading `--certify PATH` from a command's native options. The path is where `--check` and `--unit` write

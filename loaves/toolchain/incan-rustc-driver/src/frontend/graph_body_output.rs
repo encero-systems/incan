@@ -138,6 +138,7 @@ pub(super) struct GraphBodyOutput {
     typed_executable: bool,
     report_contracts: bool,
     report_scopes: bool,
+    library_owner_census: bool,
     import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
@@ -158,7 +159,7 @@ impl GraphBodyOutput {
     }
 
     /// Prepare an inert collector unless Oven explicitly requested one output path.
-    pub(super) fn prepare(path: Option<PathBuf>, project_root: PathBuf) -> Result<Self, String> {
+    pub(super) fn prepare(path: Option<PathBuf>, project_root: PathBuf, library: bool) -> Result<Self, String> {
         let project_root = if path.is_some() {
             project_root.canonicalize().map_err(|error| {
                 format!(
@@ -181,12 +182,19 @@ impl GraphBodyOutput {
             .and_then(|path| path.file_name())
             .is_some_and(|name| name.as_encoded_bytes().ends_with(publication_marker.as_bytes()));
         let typed_executable = path.as_deref().is_some_and(typed_executable_output);
+        let library_owner_census = library
+            && path.as_ref().and_then(|path| path.file_name()).is_some_and(|name| {
+                name.as_encoded_bytes()
+                    .ends_with(internal_models_native::LIBRARY_OWNER_OUTPUT_SUFFIX.as_bytes())
+            });
         let import_closures = path
             .as_ref()
             .and_then(|path| path.file_name())
             .filter(|name| {
-                name.as_encoded_bytes()
-                    .ends_with(internal_models::ranked_output_suffix().as_bytes())
+                library_owner_census
+                    || name
+                        .as_encoded_bytes()
+                        .ends_with(internal_models::ranked_output_suffix().as_bytes())
             })
             .map(|_| BTreeMap::new());
         let method_reads = path
@@ -208,6 +216,7 @@ impl GraphBodyOutput {
             published_namespaces,
             owner_coordinates,
             typed_executable,
+            library_owner_census,
             report_scopes: path.as_ref().and_then(|p| p.file_name()).is_some_and(|name| {
                 name.as_encoded_bytes()
                     .ends_with(internal_models::scope_output_suffix().as_bytes())
@@ -251,6 +260,10 @@ impl GraphBodyOutput {
         indexes: &BTreeMap<PathBuf, usize>,
         dependencies: impl Fn(usize) -> Vec<String>,
     ) -> Result<(), String> {
+        // A selected module with no current checker visit cannot attest its owner census.
+        if self.library_owner_census {
+            return Ok(());
+        }
         let Some(closures) = &mut self.import_closures else {
             return Ok(());
         };
@@ -298,7 +311,12 @@ impl GraphBodyOutput {
         };
         let module_path = module_path.to_string_lossy().into_owned();
         if let Some(closures) = &mut self.import_closures {
-            closures.insert(module_path.clone(), dependencies.to_vec());
+            let related = if self.library_owner_census {
+                Vec::new()
+            } else {
+                dependencies.to_vec()
+            };
+            closures.insert(module_path.clone(), related);
         }
         if let Some(provider) = provider
             && let Some(mut interface) = incan_frontend::typechecker::CheckedNamespaceInterface::from_checked(
@@ -341,14 +359,41 @@ impl GraphBodyOutput {
                 lowering_inputs: Vec::new(),
             });
         }
+        self.capture_owner_outputs(module, checker, &module_path)?;
+        // A top-level partial lowers to a generated function with no checked owner record of its own, so its module's
+        // namespace record is its witness and it is checked again from source on each request.
+        for declaration in &module.ast.declarations {
+            if let incan_frontend::ast::Declaration::Partial(partial) = &declaration.node {
+                self.fallbacks.push(PendingBodyFallback {
+                    module: module_path.clone(),
+                    name: partial.name.clone(),
+                    identity: None,
+                    reason: PARTIAL_FALLBACK.into(),
+                    artifact_refusals: Vec::new(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Settle each callable's checked value or explicit refusal before publishing the module evidence.
+    fn capture_owner_outputs(
+        &mut self,
+        module: &ParsedModule,
+        checker: &TypeChecker,
+        module_path: &str,
+    ) -> Result<(), String> {
         let mut scopes = if self.report_scopes {
             incan_frontend::checker_records::closed_scalar_scopes(&module.ast, checker)
         } else {
             BTreeMap::new()
         };
-        for output in
-            incan_frontend::checker_records::checked_graph_record_outputs(&module.ast, checker, &module.path_segments)?
-        {
+        let owner_outputs = if self.library_owner_census {
+            incan_frontend::checker_records::checked_library_graph_record_outputs
+        } else {
+            incan_frontend::checker_records::checked_graph_record_outputs
+        };
+        for output in owner_outputs(&module.ast, checker, &module.path_segments)? {
             match output {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
                     let restored = checker.restored_body_record(fields.span);
@@ -357,7 +402,7 @@ impl GraphBodyOutput {
                         || self.method_reads.is_some()
                             && (restored || fields.method_lookups.as_ref().is_some_and(|rows| !rows.is_empty()));
                     let record = if witnessed {
-                        encoded_body_value(&module_path, &fields)
+                        encoded_body_value(module_path, &fields)
                     } else {
                         Err(BodyValueRefusal {
                             reason: "source method lookup has no complete candidate membership evidence".into(),
@@ -418,7 +463,7 @@ impl GraphBodyOutput {
                             });
                         }
                         Err(refusal) => self.fallbacks.push(PendingBodyFallback {
-                            module: module_path.clone(),
+                            module: module_path.to_owned(),
                             name: fields.name,
                             identity: fallback_identity(Some(fields.identity)),
                             reason: refusal.reason,
@@ -428,26 +473,13 @@ impl GraphBodyOutput {
                 }
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Fallback(fallback) => {
                     self.fallbacks.push(PendingBodyFallback {
-                        module: module_path.clone(),
+                        module: module_path.to_owned(),
                         name: fallback.name,
                         identity: fallback_identity(fallback.identity),
                         reason: fallback.reason,
                         artifact_refusals: fallback.artifact_refusals,
                     });
                 }
-            }
-        }
-        // A top-level partial lowers to a generated function with no checked owner record of its own, so its module's
-        // namespace record is its witness and it is checked again from source on each request.
-        for declaration in &module.ast.declarations {
-            if let incan_frontend::ast::Declaration::Partial(partial) = &declaration.node {
-                self.fallbacks.push(PendingBodyFallback {
-                    module: module_path.clone(),
-                    name: partial.name.clone(),
-                    identity: None,
-                    reason: PARTIAL_FALLBACK.into(),
-                    artifact_refusals: Vec::new(),
-                });
             }
         }
         Ok(())

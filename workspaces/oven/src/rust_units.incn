@@ -49,7 +49,9 @@ from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal
 from installed_sources import differing_crates, mismatch
 from source_security import validate_native_sources
 from compile_time_trust import combine as combine_trust, decide, decide_registry
-from bakery import bakery, forget_view, library_directory, rebind_refreshed_file
+from bakery import bakery, fact_member, forget_view, library_binding, library_directory, rebind_refreshed_file
+from bakery_records import FactFile
+from provider_call_shapes import PROVIDER_CALL_SHAPES
 from rust_registry import selected_registry
 from rust_manifest import RustFacet, package_environment, rust_facet
 from rust_build import (
@@ -1195,7 +1197,11 @@ def compile_incan_library(
         return Err(f"Incan library {declared.package} failed with exit code {code}")
     # 3. Rust's extern edge names the same public facade an Incan consumer receives, or the provider's own Rust facet
     #    when the edge names it by that facet's crate name.
-    stored = library_directory(bakery()?, directory)?
+    stored, selected = library_binding(bakery()?, directory)?
+    mut shapes: Option[FactFile] = None
+    if let Some(fact) = selected:
+        if fact.kind == "library":
+            shapes = fact_member(fact, PROVIDER_CALL_SHAPES)
     return Ok(
         BuiltUnit(
             crate_name=compiled_name,
@@ -1205,6 +1211,8 @@ def compile_incan_library(
             loaf=declared.package,
             native_crate=own_native.name,
             native_artifact=own_native.path,
+            provider_call_shapes=shapes,
+            provider_project=facet.project,
         ),
     )
 

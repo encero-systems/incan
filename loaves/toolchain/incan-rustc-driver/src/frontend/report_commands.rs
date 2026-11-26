@@ -1,5 +1,31 @@
-// The report commands: the unit's settled dependency closure with the Rust runtime operations its plan reaches, and
-// the checked source interface. Included by `frontend.rs`.
+// Report commands for checked graph products, settled dependency closures, and source interfaces.
+// Included by `frontend.rs`.
+
+/// Publish the ordinary program checker's products without planning or compiling the executable again.
+pub(crate) fn publish_checked_program(
+    unit: UnitDescription,
+    dependencies: Dependencies,
+    sysroot: &Path,
+    resident: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if unit.kind != UnitKind::Program || dependencies.library {
+        return Err("checked graph output requires a program unit".into());
+    }
+    let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
+    let rust = dependencies.rust_facts(&unit, sysroot);
+    let mut program = check_compilation_source(
+        unit,
+        rust,
+        resident,
+        RefusalReceipt(None),
+        dependencies.graph_body_records(),
+        dependencies.graph_body_output,
+        false,
+    )?;
+    checked_program::return_retained_namespaces(&mut program, &dependencies.graph_body_records);
+    dependencies.graph_body_records.settle_namespace_retention();
+    Ok(())
+}
 
 /// Print the unit's settled dependency closure. Checking and planning run exactly as for compilation, so the report
 /// names the closure a build of the same description links; nothing is generated or published.

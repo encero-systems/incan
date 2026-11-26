@@ -150,6 +150,13 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
     let type_origins = checker.checked_nominal_type_origins();
     for export in &mut exports {
         export.identity.type_origins.clone_from(&type_origins);
+        export.identity.source_signature = export
+            .identity
+            .canonical
+            .as_ref()
+            .filter(|canonical| canonical.kind == SemanticSourceTargetKind::Function)
+            .and_then(|canonical| checker.declaration_view().source_identity(canonical))
+            .and_then(|identity| identity.signature.clone());
         attach_ownership_contracts(export, checker);
     }
     exports.sort_by(|a, b| a.name.cmp(&b.name));
