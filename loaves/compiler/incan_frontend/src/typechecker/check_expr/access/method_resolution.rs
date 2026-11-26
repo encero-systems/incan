@@ -88,33 +88,7 @@ impl TypeChecker {
             ));
         }
         if let Some(trait_adoptions) = trait_adoptions {
-            let mut candidates = Vec::new();
-            for adoption in trait_adoptions {
-                if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
-                    if !receiver_surface.accepts_method(&entry.info) {
-                        continue;
-                    }
-                    let dispatch = self.resolved_trait_dispatch(
-                        &entry.origin_trait,
-                        entry.origin_type_args.clone(),
-                        entry.origin_module_path.as_deref(),
-                        entry.implementation_type_params.clone(),
-                        entry.info.receiver == Some(Receiver::Mutable),
-                    );
-                    // A supertrait's method reached through two adoptions, such as `Eq` adopted and implied by
-                    // `Ord`, is one method, not two overloads.
-                    if candidates
-                        .iter()
-                        .any(|candidate: &MethodCandidate| candidate.dispatch.as_ref() == Some(&dispatch))
-                    {
-                        continue;
-                    }
-                    candidates.push(MethodCandidate {
-                        info: entry.info,
-                        dispatch: Some(dispatch),
-                    });
-                }
-            }
+            let candidates = self.trait_adoption_candidates(trait_adoptions, method, receiver_surface, call_site_span);
             if !candidates.is_empty() {
                 return self.resolve_method_overload(
                     method,
@@ -129,6 +103,45 @@ impl TypeChecker {
             }
         }
         None
+    }
+
+    /// The method candidates the receiver's trait adoptions provide for `method`, each with its resolved trait
+    /// dispatch. A supertrait method reached through two adoptions is one candidate.
+    fn trait_adoption_candidates(
+        &mut self,
+        trait_adoptions: &[TypeBoundInfo],
+        method: &str,
+        receiver_surface: MemberBindingSurface,
+        call_site_span: Span,
+    ) -> Vec<MethodCandidate> {
+        let mut candidates = Vec::new();
+        for adoption in trait_adoptions {
+            if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
+                if !receiver_surface.accepts_method(&entry.info) {
+                    continue;
+                }
+                let dispatch = self.resolved_trait_dispatch(
+                    &entry.origin_trait,
+                    entry.origin_type_args.clone(),
+                    entry.origin_module_path.as_deref(),
+                    entry.implementation_type_params.clone(),
+                    entry.info.receiver == Some(Receiver::Mutable),
+                );
+                // A supertrait's method reached through two adoptions, such as `Eq` adopted and implied by
+                // `Ord`, is one method, not two overloads.
+                if candidates
+                    .iter()
+                    .any(|candidate: &MethodCandidate| candidate.dispatch.as_ref() == Some(&dispatch))
+                {
+                    continue;
+                }
+                candidates.push(MethodCandidate {
+                    info: entry.info,
+                    dispatch: Some(dispatch),
+                });
+            }
+        }
+        candidates
     }
 
     #[allow(clippy::too_many_arguments)]
