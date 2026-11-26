@@ -327,14 +327,6 @@ fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Resul
         Some("untyped"),
         Span::default(),
     );
-    let open_parameter = ["S".to_string()];
-    let candidates = ["AsRef<OsStr>::as_ref".to_string(), "AsRef<Path>::as_ref".to_string()];
-    let unselected = [
-        errors::NativeCalleeGap::OpenTypeParameters(&open_parameter),
-        errors::NativeCalleeGap::NoCandidate,
-        errors::NativeCalleeGap::Ambiguous(&candidates),
-    ]
-    .map(|gap| errors::rust_callee_not_selected("rust::native::Owner.method", gap, Span::default()));
 
     assert_eq!(
         code_for_error(&self_mutation, DiagnosticPhase::Typecheck),
@@ -357,20 +349,7 @@ fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Resul
         code_for_error(&open_generics, DiagnosticPhase::Typecheck),
         "INCAN-T0105"
     );
-    for refusal in &unselected {
-        assert_eq!(code_for_error(refusal, DiagnosticPhase::Typecheck), "INCAN-T0122");
-    }
-    assert_eq!(
-        unselected.each_ref().map(|refusal| refusal.message.as_str()),
-        [
-            "Cannot select the Rust callee of `rust::native::Owner.method`: its type parameter `S` is not fixed by \
-                 the call",
-            "Cannot select the Rust callee of `rust::native::Owner.method`: no admitted implementation of the \
-                 method applies to this receiver and these arguments",
-            "Cannot select the Rust callee of `rust::native::Owner.method`: `AsRef<OsStr>::as_ref` and \
-                 `AsRef<Path>::as_ref` apply equally",
-        ]
-    );
+    assert_unselected_rust_callee_refusals();
     for code in [
         "INCAN-T0102",
         "INCAN-T0103",
@@ -423,6 +402,33 @@ fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Resul
         bare_option.hints()
     );
     Ok(())
+}
+
+/// A Rust callee left unselected by an open type parameter, no applicable implementation or two equal candidates is
+/// refused with `INCAN-T0122` and a message naming the gap.
+fn assert_unselected_rust_callee_refusals() {
+    let open_parameter = ["S".to_string()];
+    let candidates = ["AsRef<OsStr>::as_ref".to_string(), "AsRef<Path>::as_ref".to_string()];
+    let unselected = [
+        errors::NativeCalleeGap::OpenTypeParameters(&open_parameter),
+        errors::NativeCalleeGap::NoCandidate,
+        errors::NativeCalleeGap::Ambiguous(&candidates),
+    ]
+    .map(|gap| errors::rust_callee_not_selected("rust::native::Owner.method", gap, Span::default()));
+    for refusal in &unselected {
+        assert_eq!(code_for_error(refusal, DiagnosticPhase::Typecheck), "INCAN-T0122");
+    }
+    assert_eq!(
+        unselected.each_ref().map(|refusal| refusal.message.as_str()),
+        [
+            "Cannot select the Rust callee of `rust::native::Owner.method`: its type parameter `S` is not fixed by \
+                 the call",
+            "Cannot select the Rust callee of `rust::native::Owner.method`: no admitted implementation of the \
+                 method applies to this receiver and these arguments",
+            "Cannot select the Rust callee of `rust::native::Owner.method`: `AsRef<OsStr>::as_ref` and \
+                 `AsRef<Path>::as_ref` apply equally",
+        ]
+    );
 }
 
 /// Reserved compiler names retain an explainable code and a usable source-name suggestion.
