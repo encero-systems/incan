@@ -595,7 +595,10 @@ fn lower_arm_guard(
     let condition = scalar_operand(builder, guard, span)?;
     for local in incoming {
         if !builder.owned.contains(local) {
-            if *local == scrutinee || !releases_only_memory(&builder.locals[*local as usize].ty) {
+            if *local == scrutinee
+                || (!releases_only_memory(&builder.locals[*local as usize].ty)
+                    && !builder.closure_releases_only_storage(*local))
+            {
                 return Err("unsupported Body IR match guard consuming an owner".into());
             }
             consumed.push(*local);

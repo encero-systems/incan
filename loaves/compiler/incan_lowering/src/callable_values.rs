@@ -120,7 +120,7 @@ pub fn call_callable_place(
         PlanType::BorrowingClosure(_) | PlanType::ExclusiveClosure(_) => {
             let local = callable.local;
             call_closure(builder, callable, &signature, operands, output, span)?;
-            if held.last_use && local > builder.parameter_count {
+            if held.last_use && local > builder.parameter_count && builder.closure_releases_only_storage(local) {
                 drop_owned(builder, local, span);
             }
             return Ok(());
@@ -313,7 +313,7 @@ pub fn callable_argument(
     let drop_after_call = read.last_use
         && read.place.projection.is_empty()
         && place.local > builder.parameter_count
-        && matches!(&source, PlanType::BorrowingClosure(_) | PlanType::ExclusiveClosure(_));
+        && builder.closure_releases_only_storage(place.local);
     let owner = match source {
         PlanType::FunctionItem(..) => {
             let pointer = temporary(builder, PlanType::FunctionPointer(signature.to_vec()), span);

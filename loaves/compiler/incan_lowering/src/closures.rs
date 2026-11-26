@@ -374,6 +374,11 @@ pub fn exclusive_capture(ty: &PlanType) -> bool {
         || crate::explicit_arguments::reference_contract(ty).is_ok_and(|(_, exclusive)| exclusive)
 }
 
+/// Identify capture fields that borrow storage retained outside a reusable closure's environment.
+pub fn borrowed_capture(ty: &PlanType) -> bool {
+    reference_capture(ty) || exclusive_capture(ty) || matches!(ty, PlanType::ClosureRef(_))
+}
+
 /// Select owned text, collection, callable, model, enum and zip snapshots for construction, validation and invocation.
 
 ///
@@ -424,7 +429,7 @@ pub fn closure_constructor(
     }
     if lending || captures.iter().any(exclusive_capture) {
         object_type = PlanType::ExclusiveClosure(signature.clone());
-    } else if captures.iter().any(reference_capture) {
+    } else if captures.iter().any(borrowed_capture) {
         object_type = PlanType::BorrowingClosure(signature.clone());
     }
     if consumes_environment {

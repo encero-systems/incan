@@ -262,17 +262,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.locals[outer_local.index()].ty.clone();
         let place = bir::Place::from_local(outer_local);
         let identity = self.locals[outer_local.index()].identity.as_deref().cloned();
-        let (mut fact, mut last_use) = self.ownership_fact_for_place(&place, &ty);
-        if identity.as_ref().is_some_and(|identity| {
+        let checked_loan = identity.as_ref().is_some_and(|identity| {
             self.input_body
                 .as_ref()
                 .ok()
                 .and_then(|proof| proof.as_ref())
                 .is_some_and(|proof| proof.closure_capture_access(hir_span(span), identity).is_some())
-        }) {
-            fact = bir::OwnershipFact::Borrow;
-            last_use = false;
-        }
+        });
+        let (fact, last_use) = if checked_loan {
+            // The checked capture borrows the binding even on its final read, so its lexical drop remains due.
+            let _ = self.consume_place_read(&place);
+            (bir::OwnershipFact::Borrow, false)
+        } else {
+            self.ownership_fact_for_place(&place, &ty)
+        };
         // RFC 164: a closure reading an exclusive borrow local holds a shared reborrow of what it borrows (`&*x`)
         // until its last call, as the explicit spelling's exclusive input did.
         if let IncanType::RefMut(referent) = &ty

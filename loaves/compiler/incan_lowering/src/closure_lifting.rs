@@ -11,11 +11,11 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtins::list_call;
-use crate::callable_values::owned_callable_value;
+use crate::callable_values::{callable_object, owned_callable_value};
 use crate::checked_values::{partial_flags, scalar_place, target_read};
 use crate::closures::{
-    callable_signature, closure_arguments, closure_capture_type, closure_constructor, exclusive_capture,
-    function_assignment, packed_input, reference_capture,
+    borrowed_capture, callable_signature, closure_arguments, closure_capture_type, closure_constructor,
+    exclusive_capture, function_assignment, packed_input, reference_capture,
 };
 use crate::collections::is_owned_collection;
 use crate::element_places::is_element_place;
@@ -251,7 +251,8 @@ pub fn lower_closure(
         {
             return Err("unsupported Body IR iterator closure capture without FnOnce contract".into());
         }
-        if !closure_capture_type(&ty, closure.consumes_environment) {
+        let callable_loan = !closure.consumes_environment && matches!(ty, PlanType::ClosureRef(_));
+        if !callable_loan && !closure_capture_type(&ty, closure.consumes_environment) {
             return Err(format!("unsupported Body IR closure capture {ty:?}"));
         }
         operands.push(operand);
@@ -308,9 +309,7 @@ fn construct_environment(
     closure_arguments(&signature)?;
     // An environment holding references lives no longer than their shortest borrow, which checking keeps
     // alive. Its object takes that common bound while each capture retains its independent source lifetime.
-    let borrowing = capture_types
-        .iter()
-        .any(|ty| reference_capture(ty) || exclusive_capture(ty));
+    let borrowing = capture_types.iter().any(borrowed_capture);
     if borrowing && flags.contains(&true) {
         return Err("unsupported Body IR closure holding borrowed captures with default parameters".into());
     }
@@ -349,10 +348,7 @@ fn construct_environment(
             .iter()
             .fold((true, true), |(all_scalar, all_storage), ty| {
                 let scalar = scalar_capture(ty);
-                (
-                    all_scalar && scalar,
-                    all_storage && (scalar || reference_capture(ty) || exclusive_capture(ty)),
-                )
+                (all_scalar && scalar, all_storage && (scalar || borrowed_capture(ty)))
             });
     record_scalar_closure(builder, local, scalar_environment);
     builder.record_closure_drop(local, releases_only_storage);
@@ -367,6 +363,13 @@ fn capture_operand(builder: &mut Builder, capture: &SourceOperand, span: &Source
     {
         let source = scalar_place(builder, &read.place, span)?;
         let ty = place_type(&builder.locals, &source);
+        if read.fact == OwnershipFact::Borrow
+            && let PlanType::Closure(signature) = &ty
+            && source.projection == Projection::Whole
+            && builder.owned.contains(&source.local)
+        {
+            return callable_object(builder, source, signature, span);
+        }
         if read.fact == OwnershipFact::MutBorrow {
             let expected = if reference_contract(&ty).is_ok() {
                 ty
@@ -413,7 +416,7 @@ fn lift_closure(
     for (index, captured_local) in closure.capture_locals.iter().enumerate().take(captures.len()) {
         let destination = captured_local.index() as i64 + 1 + count;
         // A borrowed capture retains the reference that the callback lends to this invocation.
-        let captured = if reference_capture(&arguments[index]) || exclusive_capture(&arguments[index]) {
+        let captured = if borrowed_capture(&arguments[index]) {
             arguments[index].clone()
         } else {
             lifted.locals[destination as usize].ty.clone()
