@@ -664,7 +664,6 @@ pub def forward_in_one_arm(mut cart: Cart, flag: bool) -> None:
     if flag:
         call_twice(add)
         println(cart.items)
-    println(cart.items)
 
 pub def owned(limit: int) -> bool:
     """Call an erased closure that captures an owned scalar."""
