@@ -440,6 +440,10 @@ def comparable_matrix_output(relative: str) -> bool:
 
 def semantic_edit_cases() -> list[MatrixCase]:
     """Define the fixed E2 matrix over hello, sibling declarations and one sibling library module."""
+    return hello_and_sibling_edit_cases() + documentation_and_library_edit_cases() + namespace_edit_cases()
+
+def hello_and_sibling_edit_cases() -> list[MatrixCase]:
+    """The body and signature edits of hello and the sibling declaration edits, in matrix order."""
     return [
         MatrixCase(
             edit=SemanticEdit.Body,
@@ -553,6 +557,11 @@ def semantic_edit_cases() -> list[MatrixCase]:
                 ],
             )},
         ),
+    ]
+
+def documentation_and_library_edit_cases() -> list[MatrixCase]:
+    """The documentation-only edits and the sibling library module edits, in matrix order."""
+    return [
         MatrixCase(
             edit=SemanticEdit.Documentation,
             fixture=MatrixFixture.Hello,
@@ -641,6 +650,73 @@ def semantic_edit_cases() -> list[MatrixCase]:
                 ],
             )},
         ),
+    ]
+
+def namespace_edit_cases() -> list[MatrixCase]:
+    """The public namespace edits, including every declaration family, re-exports and foreign nominals."""
+    return namespace_module_edit_cases() + [
+        MatrixCase(
+            edit=SemanticEdit.NamespaceModel,
+            fixture=MatrixFixture.Namespaces,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hello\""]), "independent.incn": fixture_source(
+                [
+                    "pub model Marker:",
+                    "    pub value: int",
+                    "",
+                    "",
+                    "pub def stable() -> int:",
+                    "    return 7",
+                ],
+            )},
+            edited={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hullo\""]), "independent.incn": fixture_source(
+                [
+                    "pub model Marker:",
+                    "    pub value: int",
+                    "",
+                    "",
+                    "pub def stable() -> int:",
+                    "    return 7",
+                ],
+            )},
+            expected_module_checks=1,
+            expected_body_ir_modules=1,
+            expected_lowered_modules=1,
+        ),
+        namespace_family_case(SemanticEdit.NamespaceConst, ["pub const LIMIT: int = 7"]),
+        namespace_family_case(SemanticEdit.NamespaceClass, ["pub class Marker:", "    pub value: int"]),
+        namespace_family_case(SemanticEdit.NamespaceEnum, ["pub enum Mode:", "    Fast", "    Slow"]),
+        namespace_family_case(SemanticEdit.NamespaceStatic, ["pub static LIMIT: int = 7"]),
+        namespace_family_case(SemanticEdit.NamespaceTrait, ["pub trait Marker:", "    def mark(self) -> int"]),
+        namespace_family_case(SemanticEdit.NamespaceNewtype, ["pub type EvidenceId = newtype str"]),
+        namespace_family_case(SemanticEdit.NamespaceTypeAlias, ["pub type Answer = int | str"]),
+        namespace_reexport_case(),
+        namespace_foreign_nominal_case(),
+    ]
+
+def namespace_module_edit_cases() -> list[MatrixCase]:
+    """The first public namespace edits of the namespace fixture's modules, in matrix order."""
+    return [
         MatrixCase(
             edit=SemanticEdit.NamespaceBody,
             fixture=MatrixFixture.Namespaces,
@@ -709,63 +785,6 @@ def semantic_edit_cases() -> list[MatrixCase]:
             expected_body_ir_modules=2,
             expected_lowered_modules=2,
         ),
-        MatrixCase(
-            edit=SemanticEdit.NamespaceModel,
-            fixture=MatrixFixture.Namespaces,
-            target="main.incn",
-            base={"main.incn": fixture_source(
-                [
-                    "from provider import value",
-                    "from independent import stable",
-                    "",
-                    "",
-                    "def main() -> None:",
-                    "    println(value())",
-                    "    println(stable())",
-                ],
-            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hello\""]), "independent.incn": fixture_source(
-                [
-                    "pub model Marker:",
-                    "    pub value: int",
-                    "",
-                    "",
-                    "pub def stable() -> int:",
-                    "    return 7",
-                ],
-            )},
-            edited={"main.incn": fixture_source(
-                [
-                    "from provider import value",
-                    "from independent import stable",
-                    "",
-                    "",
-                    "def main() -> None:",
-                    "    println(value())",
-                    "    println(stable())",
-                ],
-            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hullo\""]), "independent.incn": fixture_source(
-                [
-                    "pub model Marker:",
-                    "    pub value: int",
-                    "",
-                    "",
-                    "pub def stable() -> int:",
-                    "    return 7",
-                ],
-            )},
-            expected_module_checks=1,
-            expected_body_ir_modules=1,
-            expected_lowered_modules=1,
-        ),
-        namespace_family_case(SemanticEdit.NamespaceConst, ["pub const LIMIT: int = 7"]),
-        namespace_family_case(SemanticEdit.NamespaceClass, ["pub class Marker:", "    pub value: int"]),
-        namespace_family_case(SemanticEdit.NamespaceEnum, ["pub enum Mode:", "    Fast", "    Slow"]),
-        namespace_family_case(SemanticEdit.NamespaceStatic, ["pub static LIMIT: int = 7"]),
-        namespace_family_case(SemanticEdit.NamespaceTrait, ["pub trait Marker:", "    def mark(self) -> int"]),
-        namespace_family_case(SemanticEdit.NamespaceNewtype, ["pub type EvidenceId = newtype str"]),
-        namespace_family_case(SemanticEdit.NamespaceTypeAlias, ["pub type Answer = int | str"]),
-        namespace_reexport_case(),
-        namespace_foreign_nominal_case(),
     ]
 
 def namespace_family_case(edit: SemanticEdit, declarations: list[str], append_stable: bool = true) -> MatrixCase:
