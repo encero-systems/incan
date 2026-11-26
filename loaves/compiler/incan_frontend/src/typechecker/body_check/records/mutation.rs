@@ -51,10 +51,7 @@ pub(super) fn restore(
     row: &[String],
 ) -> Result<(), NodeBindingError> {
     let span = positions.span(&row[1])?;
-    let mut reader = Reader {
-        positions,
-        values: row[3..].iter(),
-    };
+    let mut reader = Reader::new(positions, &row[3..]);
     match row[2].as_str() {
         "changed" => {
             let owner = reader.identity()?;

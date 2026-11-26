@@ -11,6 +11,7 @@ struct Reader<'a> {
     pos: usize,
     strict: bool,
     max_node: usize,
+    tuple_slots: bool,
 }
 impl<'a> Reader<'a> {
     /// Read one borrowed token from the input.
@@ -99,8 +100,13 @@ impl<'a> Reader<'a> {
     fn place(&mut self) -> Checked<()> {
         self.root()?;
         for _ in 0..self.count()? {
-            self.tag(&["field", "element"])?;
-            self.handle()?;
+            match self.take()? {
+                "field" | "element" => self.handle()?,
+                "tuple-slot" if self.tuple_slots => {
+                    self.number()?;
+                }
+                _ => return Err(Malformed),
+            }
         }
         Ok(())
     }
@@ -300,17 +306,19 @@ pub(crate) fn input_field_end(field: &CanonicalField) -> Checked<usize> {
         pos: 0,
         strict: true,
         max_node: 0,
+        tuple_slots: false,
     };
-    let version = r.tag(&["1", "2", "5"])?;
+    let version = r.tag(&["1", "2", "5", "6"])?;
     let family = (field.family.as_str(), field.selector.as_str());
     let input_flow = family == ("input-flow", "graph");
     let input_copy = family == ("input-copy", "types");
-    if (input_copy && version != "2") || (input_flow && version != "5") {
+    if (input_copy && version != "2") || (input_flow && !matches!(version, "5" | "6")) {
         return Err(Malformed);
     }
     if !input_copy && !input_flow && version != "1" {
         return Err(Malformed);
     }
+    r.tuple_slots = version == "6";
     match family {
         ("input-copy", "types") => {
             r.handle()?;
@@ -358,6 +366,7 @@ pub(crate) fn method_call_end(values: &[String]) -> Checked<usize> {
         pos: 0,
         strict: true,
         max_node: 0,
+        tuple_slots: false,
     };
     r.handle()?;
     r.tag(&["trait"])?;

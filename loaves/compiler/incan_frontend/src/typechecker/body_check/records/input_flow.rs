@@ -40,7 +40,7 @@ fn root(positions: &Positions, value: &Root, fields: &mut Vec<String>) -> Result
     Ok(())
 }
 
-/// Encode every field or evaluated element projection in source order.
+/// Encode the v5 place projections in source order.
 fn place(positions: &Positions, value: &Place, fields: &mut Vec<String>) -> Result<(), NodeBindingError> {
     root(positions, &value.root, fields)?;
     fields.push(value.projection.len().to_string());
@@ -48,6 +48,8 @@ fn place(positions: &Positions, value: &Place, fields: &mut Vec<String>) -> Resu
         match item {
             Projection::Field(identity) => fields.extend(["field".into(), positions.identity(identity)?]),
             Projection::Element(span) => fields.extend(["element".into(), anchor(positions, *span)?]),
+            // A compatible reader must qualify before the checked tuple writer is enabled.
+            Projection::TupleSlot(_) => return Err(NodeBindingError::Unsupported("tuple-slot record emission")),
         }
     }
     Ok(())
@@ -316,9 +318,19 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
 pub(super) struct Reader<'a> {
     pub positions: &'a Positions,
     pub values: std::slice::Iter<'a, String>,
+    graph_schema: usize,
 }
 
-impl Reader<'_> {
+impl<'a> Reader<'a> {
+    /// Start a field reader before its graph grammar has been selected.
+    pub fn new(positions: &'a Positions, values: &'a [String]) -> Self {
+        Self {
+            positions,
+            values: values.iter(),
+            graph_schema: 0,
+        }
+    }
+
     /// Read an exact grammar token, rejecting truncation.
     pub fn token(&mut self) -> Result<&str, NodeBindingError> {
         next(&mut self.values)
@@ -385,15 +397,24 @@ impl Reader<'_> {
             _ => Err(NodeBindingError::MissingNode),
         }
     }
-    /// Reconstruct an exact place including dynamic element ancestry.
+    /// Reconstruct a place with named fields, dynamic element origins and v6 tuple ordinals.
     fn place(&mut self) -> Result<Place, NodeBindingError> {
         let root = self.root()?;
         let size = self.count()?;
         let mut projection = Vec::new();
+        let tuple_slots = self.graph_schema == 6;
         for _ in 0..size {
             projection.push(match self.token()? {
                 "field" => Projection::Field(self.identity()?),
                 "element" => Projection::Element(self.semantic_span()?),
+                "tuple-slot" if tuple_slots => {
+                    let ordinal = self.number()?;
+                    // This token shares the native grammar's five-digit canonical decimal domain.
+                    if ordinal >= 100_000 {
+                        return Err(NodeBindingError::MissingNode);
+                    }
+                    Projection::TupleSlot(ordinal)
+                }
                 _ => return Err(NodeBindingError::MissingNode),
             });
         }
@@ -419,6 +440,7 @@ impl Reader<'_> {
     ///
     /// The record holds the graph's sections in this order, each a count-prefixed run its own reader decodes.
     pub fn graph(&mut self, schema: usize) -> Result<Graph, NodeBindingError> {
+        self.graph_schema = schema;
         Ok(Graph {
             owner: self.identity()?,
             entry: self.number()?,
