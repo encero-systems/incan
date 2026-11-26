@@ -202,25 +202,7 @@ impl TypeChecker {
             )
         };
         if original.return_type.contains(" as ") {
-            let failed = Cell::new(false);
-            result = map_resolved_type_leaves(&result, &|leaf| {
-                let ResolvedType::RustPath(display) = leaf else {
-                    return None;
-                };
-                if !display.contains(" as ") {
-                    return None;
-                }
-                let display =
-                    Self::substitute_rust_owner_display(display, &displays, &render_resolved_type_as_rust_arg(owner));
-                let value = self.rust_projected_type(&display, 0);
-                if value.is_none() {
-                    failed.set(true);
-                }
-                value
-            });
-            if failed.get() {
-                return None;
-            }
+            result = self.close_associated_projections(&result, &displays, owner)?;
         }
         if self.errors.len() != errors_before {
             return Some(result);
@@ -260,6 +242,33 @@ impl TypeChecker {
             },
         );
         Some(result)
+    }
+
+    /// Close each associated projection leaf of a trait function's result, as `<T as Trait>::Output`, with the
+    /// inferred owner and binders. A projection that does not close leaves no result.
+    fn close_associated_projections(
+        &self,
+        result: &ResolvedType,
+        displays: &HashMap<&str, String>,
+        owner: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        let failed = Cell::new(false);
+        let closed = map_resolved_type_leaves(result, &|leaf| {
+            let ResolvedType::RustPath(display) = leaf else {
+                return None;
+            };
+            if !display.contains(" as ") {
+                return None;
+            }
+            let display =
+                Self::substitute_rust_owner_display(display, displays, &render_resolved_type_as_rust_arg(owner));
+            let value = self.rust_projected_type(&display, 0);
+            if value.is_none() {
+                failed.set(true);
+            }
+            value
+        });
+        (!failed.get()).then_some(closed)
     }
 
     /// Select a declared native trait method for a concrete receiver, dynamic receiver or bounded parameter.
