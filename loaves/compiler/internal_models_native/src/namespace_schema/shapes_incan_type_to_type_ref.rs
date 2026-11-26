@@ -1,150 +1,160 @@
 // Shape descriptions of the namespace closure, `incan_type` to `type_ref` in generated alphabetical order. Included by
 // `namespace_schema.rs`, translated mechanically from the reference module's generated descriptions.
 
+/// The `checked_namespace.IncanType` enum description, its variants in generated order.
 fn shape_incan_type() -> Description {
-    enum_schema(
-        b"\xb0\xe0\xf3\x6c\x4c\x22\x00",
-        "checked_namespace.IncanType",
-        vec![
-            variant_schema(b"\x63\x00\xef\x80\x0b\xb8", "Never", &[]),
-            variant_schema(
-                b"\x09\x56\x17\x3c\xa4\x15",
-                "Primitive",
-                &[ModelField::new(
-                    b"\xcc\x1d\x0d\xe5\xa7\x73",
-                    "arg0",
-                    "enum@64e3bf3b133a",
-                )],
-            ),
-            variant_schema(
-                b"\x86\x05\x60\x5a\xe0\x26",
-                "Named",
-                &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
-            ),
-            variant_schema(
-                b"\x02\x28\xc6\xd4\x8e\xcf",
-                "Generic",
-                &[
-                    ModelField::new(b"\xca\xe6\x62\x17\x2f\xd4", "base", "string"),
-                    ModelField::new(b"\x09\x07\x72\xcf\x40\x68", "args", "list<enum@b0e0f36c4c22>"),
-                ],
-            ),
-            variant_schema(
-                b"\x18\x51\x7d\x33\x2d\x1b",
-                "Decimal",
-                &[
-                    ModelField::new(b"\x68\xc2\xf9\xee\x31\x47", "precision", "u8"),
-                    ModelField::new(b"\xf4\x69\x80\x2a\x31\x44", "scale", "u8"),
-                ],
-            ),
-            variant_schema(
-                b"\xc8\x03\x71\x03\x02\xd5",
-                "Function",
-                &[
-                    ModelField::new(b"\xa2\x0b\x52\xfa\xe5\x7c", "params", "list<record@1a386ae738bb>"),
-                    ModelField::new(b"\x40\x7d\xdf\x95\xec\x74", "return_type", "enum@b0e0f36c4c22"),
-                ],
-            ),
-            variant_schema(
-                b"\xeb\x90\x0d\x77\x64\xd0",
-                "TypeToken",
-                &[ModelField::new(
-                    b"\xcc\x1d\x0d\xe5\xa7\x73",
-                    "arg0",
-                    "enum@b0e0f36c4c22",
-                )],
-            ),
-            variant_schema(
-                b"\xf1\x36\xee\x78\xc3\x3b",
-                "Tuple",
-                &[ModelField::new(
-                    b"\xcc\x1d\x0d\xe5\xa7\x73",
-                    "arg0",
-                    "list<enum@b0e0f36c4c22>",
-                )],
-            ),
-            variant_schema(
-                b"\xc7\xa4\xa1\x41\x4b\xe4",
-                "TypeVar",
-                &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
-            ),
-            variant_schema(b"\x80\x30\x24\x93\xf2\xd4", "SelfType", &[]),
-            variant_schema(
-                b"\x9b\x6e\x88\xe8\x94\x3a",
-                "Ref",
-                &[ModelField::new(
-                    b"\xcc\x1d\x0d\xe5\xa7\x73",
-                    "arg0",
-                    "enum@b0e0f36c4c22",
-                )],
-            ),
-            variant_schema(
-                b"\xff\xc4\x90\xa6\xa7\xb3",
-                "RefMut",
-                &[ModelField::new(
-                    b"\xcc\x1d\x0d\xe5\xa7\x73",
-                    "arg0",
-                    "enum@b0e0f36c4c22",
-                )],
-            ),
-            variant_schema(
-                b"\xe7\x75\x7f\x0d\xdf\x56",
-                "RustInteropPath",
-                &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
-            ),
-            variant_schema(
-                b"\x6f\xc7\x42\xf9\xdc\xbd",
-                "NativeBuiltin",
-                &[ModelField::new(
-                    b"\xcc\x1d\x0d\xe5\xa7\x73",
-                    "arg0",
-                    "enum@474e41b7ad42",
-                )],
-            ),
-            variant_schema(
-                b"\x54\x32\x46\x58\xe2\xeb",
-                "Unsupported",
-                &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
-            ),
-            variant_schema(b"\x27\x40\x0f\xf4\xb8\x09", "Infer", &[]),
-            variant_schema(b"\xb7\x64\xcd\xc0\xea\xb7", "Unknown", &[]),
-            variant_schema(
-                b"\x30\x3f\xb1\x29\xac\xe5",
-                "NativeArray",
-                &[
-                    ModelField::new(b"\x44\x59\x29\x26\x72\x09", "element", "enum@b0e0f36c4c22"),
-                    ModelField::new(b"\x0f\x82\xac\xa6\x6a\xf9", "length", "u64"),
-                ],
-            ),
-            variant_schema(
-                b"\x5c\x7a\x25\xe2\x9c\x52",
-                "NativeTraitObject",
-                &[
-                    ModelField::new(b"\xa0\xaf\x9f\x86\x5b\xf6", "path", "string"),
-                    ModelField::new(b"\x27\xce\x1d\x1b\xf4\x27", "send", "boolean"),
-                    ModelField::new(b"\x75\xc7\x5e\xfe\x32\x7a", "sync", "boolean"),
-                ],
-            ),
-            variant_schema(
-                b"\xa6\x9d\x40\x08\x35\xc9",
-                "NativePointer",
-                &[
-                    ModelField::new(b"\x1d\xa8\x05\xf3\xd0\x3b", "mutable", "boolean"),
-                    ModelField::new(b"\x8a\xb1\xb3\x81\x08\x88", "pointee", "enum@b0e0f36c4c22"),
-                ],
-            ),
-            variant_schema(b"\xed\x5c\x31\x43\x46\x46", "NativeCChar", &[]),
-            variant_schema(
-                b"\x28\xe3\xe4\x79\xe0\x87",
-                "Trait",
-                &[ModelField::new(
-                    b"\xcc\x1d\x0d\xe5\xa7\x73",
-                    "arg0",
-                    "record@28cdd429f7ec",
-                )],
-            ),
-        ],
-    )
+    let mut variants = incan_type_leading_variants();
+    variants.extend(incan_type_trailing_variants());
+    enum_schema(b"\xb0\xe0\xf3\x6c\x4c\x22\x00", "checked_namespace.IncanType", variants)
+}
+
+/// The first `IncanType` variant descriptions, in generated order.
+fn incan_type_leading_variants() -> Vec<internal_models_bindings::Metadata> {
+    vec![
+        variant_schema(b"\x63\x00\xef\x80\x0b\xb8", "Never", &[]),
+        variant_schema(
+            b"\x09\x56\x17\x3c\xa4\x15",
+            "Primitive",
+            &[ModelField::new(
+                b"\xcc\x1d\x0d\xe5\xa7\x73",
+                "arg0",
+                "enum@64e3bf3b133a",
+            )],
+        ),
+        variant_schema(
+            b"\x86\x05\x60\x5a\xe0\x26",
+            "Named",
+            &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
+        ),
+        variant_schema(
+            b"\x02\x28\xc6\xd4\x8e\xcf",
+            "Generic",
+            &[
+                ModelField::new(b"\xca\xe6\x62\x17\x2f\xd4", "base", "string"),
+                ModelField::new(b"\x09\x07\x72\xcf\x40\x68", "args", "list<enum@b0e0f36c4c22>"),
+            ],
+        ),
+        variant_schema(
+            b"\x18\x51\x7d\x33\x2d\x1b",
+            "Decimal",
+            &[
+                ModelField::new(b"\x68\xc2\xf9\xee\x31\x47", "precision", "u8"),
+                ModelField::new(b"\xf4\x69\x80\x2a\x31\x44", "scale", "u8"),
+            ],
+        ),
+        variant_schema(
+            b"\xc8\x03\x71\x03\x02\xd5",
+            "Function",
+            &[
+                ModelField::new(b"\xa2\x0b\x52\xfa\xe5\x7c", "params", "list<record@1a386ae738bb>"),
+                ModelField::new(b"\x40\x7d\xdf\x95\xec\x74", "return_type", "enum@b0e0f36c4c22"),
+            ],
+        ),
+        variant_schema(
+            b"\xeb\x90\x0d\x77\x64\xd0",
+            "TypeToken",
+            &[ModelField::new(
+                b"\xcc\x1d\x0d\xe5\xa7\x73",
+                "arg0",
+                "enum@b0e0f36c4c22",
+            )],
+        ),
+        variant_schema(
+            b"\xf1\x36\xee\x78\xc3\x3b",
+            "Tuple",
+            &[ModelField::new(
+                b"\xcc\x1d\x0d\xe5\xa7\x73",
+                "arg0",
+                "list<enum@b0e0f36c4c22>",
+            )],
+        ),
+        variant_schema(
+            b"\xc7\xa4\xa1\x41\x4b\xe4",
+            "TypeVar",
+            &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
+        ),
+        variant_schema(b"\x80\x30\x24\x93\xf2\xd4", "SelfType", &[]),
+    ]
+}
+
+/// The remaining `IncanType` variant descriptions, in generated order.
+fn incan_type_trailing_variants() -> Vec<internal_models_bindings::Metadata> {
+    vec![
+        variant_schema(
+            b"\x9b\x6e\x88\xe8\x94\x3a",
+            "Ref",
+            &[ModelField::new(
+                b"\xcc\x1d\x0d\xe5\xa7\x73",
+                "arg0",
+                "enum@b0e0f36c4c22",
+            )],
+        ),
+        variant_schema(
+            b"\xff\xc4\x90\xa6\xa7\xb3",
+            "RefMut",
+            &[ModelField::new(
+                b"\xcc\x1d\x0d\xe5\xa7\x73",
+                "arg0",
+                "enum@b0e0f36c4c22",
+            )],
+        ),
+        variant_schema(
+            b"\xe7\x75\x7f\x0d\xdf\x56",
+            "RustInteropPath",
+            &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
+        ),
+        variant_schema(
+            b"\x6f\xc7\x42\xf9\xdc\xbd",
+            "NativeBuiltin",
+            &[ModelField::new(
+                b"\xcc\x1d\x0d\xe5\xa7\x73",
+                "arg0",
+                "enum@474e41b7ad42",
+            )],
+        ),
+        variant_schema(
+            b"\x54\x32\x46\x58\xe2\xeb",
+            "Unsupported",
+            &[ModelField::new(b"\xcc\x1d\x0d\xe5\xa7\x73", "arg0", "string")],
+        ),
+        variant_schema(b"\x27\x40\x0f\xf4\xb8\x09", "Infer", &[]),
+        variant_schema(b"\xb7\x64\xcd\xc0\xea\xb7", "Unknown", &[]),
+        variant_schema(
+            b"\x30\x3f\xb1\x29\xac\xe5",
+            "NativeArray",
+            &[
+                ModelField::new(b"\x44\x59\x29\x26\x72\x09", "element", "enum@b0e0f36c4c22"),
+                ModelField::new(b"\x0f\x82\xac\xa6\x6a\xf9", "length", "u64"),
+            ],
+        ),
+        variant_schema(
+            b"\x5c\x7a\x25\xe2\x9c\x52",
+            "NativeTraitObject",
+            &[
+                ModelField::new(b"\xa0\xaf\x9f\x86\x5b\xf6", "path", "string"),
+                ModelField::new(b"\x27\xce\x1d\x1b\xf4\x27", "send", "boolean"),
+                ModelField::new(b"\x75\xc7\x5e\xfe\x32\x7a", "sync", "boolean"),
+            ],
+        ),
+        variant_schema(
+            b"\xa6\x9d\x40\x08\x35\xc9",
+            "NativePointer",
+            &[
+                ModelField::new(b"\x1d\xa8\x05\xf3\xd0\x3b", "mutable", "boolean"),
+                ModelField::new(b"\x8a\xb1\xb3\x81\x08\x88", "pointee", "enum@b0e0f36c4c22"),
+            ],
+        ),
+        variant_schema(b"\xed\x5c\x31\x43\x46\x46", "NativeCChar", &[]),
+        variant_schema(
+            b"\x28\xe3\xe4\x79\xe0\x87",
+            "Trait",
+            &[ModelField::new(
+                b"\xcc\x1d\x0d\xe5\xa7\x73",
+                "arg0",
+                "record@28cdd429f7ec",
+            )],
+        ),
+    ]
 }
 
 fn shape_lifecycle_metadata() -> Description {

@@ -120,31 +120,7 @@ pub fn specialize_nominals_with_instances(
     let inherited = specialize_classes(module)?;
     let mut instances: Vec<NominalInstance> = Vec::new();
     let mut selected: Vec<SelectedMember> = Vec::new();
-    for callable in &module.loaf_callables {
-        if !callable.type_parameters.is_empty() {
-            continue;
-        }
-        for parameter in &callable.parameters {
-            collect_nominal_type(constructors, module, parameter, &mut instances, &[])?;
-        }
-        collect_nominal_type(constructors, module, &callable.return_type, &mut instances, &[])?;
-        for argument in &callable.native_type_arguments {
-            collect_nominal_type(constructors, module, argument, &mut instances, &[])?;
-        }
-    }
-    for ty in declaration_storage(module) {
-        collect_nominal_type(constructors, module, ty, &mut instances, &[])?;
-    }
-    for declaration in enum_layouts {
-        for variant in &declaration.variants {
-            for field in &variant.fields {
-                collect_nominal_type(constructors, module, field, &mut instances, &[])?;
-            }
-        }
-    }
-    for declaration in &module.static_declarations {
-        collect_nominal_type(constructors, module, &declaration.ty, &mut instances, &[])?;
-    }
+    collect_declared_instances(constructors, module, enum_layouts, &mut instances)?;
     let instantiated = instantiated_nominal_frames(constructors, module)?;
     let mut borrowed_frames = 0;
     for body in authored_nominal_frames(module).chain(&instantiated) {
@@ -179,36 +155,7 @@ pub fn specialize_nominals_with_instances(
     // 2. Close field and method dependencies until their checked instance inventory is complete. An instance lays out
     // its fields once; after a new member is selected, the worklist revisits only owner frames not yet closed.
     let templates = owner_templates(constructors, module)?;
-    let mut pending: Vec<Vec<usize>> = Vec::new();
-    let mut cursor = 0;
-    while cursor < instances.len() {
-        if cursor == pending.len() {
-            let owned = lay_out_instance(constructors, module, &mut instances, cursor, &templates)?;
-            pending.push(owned);
-        }
-        if pending[cursor].is_empty() {
-            cursor += 1;
-            continue;
-        }
-        let instance = instances[cursor].clone();
-        let mut lineage = instance.ancestors.clone();
-        lineage.push(instance.declaration.canonical.render_compact());
-        let previous = selected.len();
-        let waiting = std::mem::take(&mut pending[cursor]);
-        pending[cursor] = collect_owner_body_types(
-            constructors,
-            module,
-            &instance,
-            &waiting,
-            &mut instances,
-            &lineage,
-            &mut selected,
-        )?;
-        cursor += 1;
-        if selected.len() != previous {
-            cursor = 0;
-        }
-    }
+    close_instance_dependencies(constructors, module, &mut instances, &templates, &mut selected)?;
     // 3. Retain concrete layouts, trait dispatch records and method frames together.
     let mut retained_names: BTreeMap<String, bool> = BTreeMap::new();
     for declaration in &declarations {
@@ -251,6 +198,93 @@ pub fn specialize_nominals_with_instances(
         replacements.push((index, frames));
     }
     let retained_bodies = module.bodies.len() - replacements.len();
+    replace_template_bodies(module, inherited, replacements);
+    if crate::trace_channel::tracing_products() {
+        let row = serde_json::json!({
+            "borrowed_source_frames": borrowed_frames - instantiated.len(),
+            "instantiated_frames": instantiated.len(),
+            "retained_source_bodies": retained_bodies,
+        });
+        crate::trace_channel::emit("nominal_frame_ownership", "", &row.to_string());
+    }
+    module.nominal_declarations = declarations;
+    module.trait_implementations = implementations;
+    Ok(instances)
+}
+
+/// Collect the instances the module's declared signatures, storage, enum payloads and statics name, before any frame
+/// or field dependency is followed.
+fn collect_declared_instances(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    enum_layouts: &[EnumDeclaration],
+    instances: &mut Vec<NominalInstance>,
+) -> Result<(), String> {
+    for callable in &module.loaf_callables {
+        if !callable.type_parameters.is_empty() {
+            continue;
+        }
+        for parameter in &callable.parameters {
+            collect_nominal_type(constructors, module, parameter, instances, &[])?;
+        }
+        collect_nominal_type(constructors, module, &callable.return_type, instances, &[])?;
+        for argument in &callable.native_type_arguments {
+            collect_nominal_type(constructors, module, argument, instances, &[])?;
+        }
+    }
+    for ty in declaration_storage(module) {
+        collect_nominal_type(constructors, module, ty, instances, &[])?;
+    }
+    for declaration in enum_layouts {
+        for variant in &declaration.variants {
+            for field in &variant.fields {
+                collect_nominal_type(constructors, module, field, instances, &[])?;
+            }
+        }
+    }
+    for declaration in &module.static_declarations {
+        collect_nominal_type(constructors, module, &declaration.ty, instances, &[])?;
+    }
+    Ok(())
+}
+
+/// Close field and method dependencies until the checked instance inventory is complete. An instance lays out its
+/// fields once; after a new member is selected, the worklist revisits only owner frames not yet closed.
+fn close_instance_dependencies(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    instances: &mut Vec<NominalInstance>,
+    templates: &[Option<usize>],
+    selected: &mut Vec<SelectedMember>,
+) -> Result<(), String> {
+    let mut pending: Vec<Vec<usize>> = Vec::new();
+    let mut cursor = 0;
+    while cursor < instances.len() {
+        if cursor == pending.len() {
+            let owned = lay_out_instance(constructors, module, instances, cursor, templates)?;
+            pending.push(owned);
+        }
+        if pending[cursor].is_empty() {
+            cursor += 1;
+            continue;
+        }
+        let instance = instances[cursor].clone();
+        let mut lineage = instance.ancestors.clone();
+        lineage.push(instance.declaration.canonical.render_compact());
+        let previous = selected.len();
+        let waiting = std::mem::take(&mut pending[cursor]);
+        pending[cursor] =
+            collect_owner_body_types(constructors, module, &instance, &waiting, instances, &lineage, selected)?;
+        cursor += 1;
+        if selected.len() != previous {
+            cursor = 0;
+        }
+    }
+    Ok(())
+}
+
+/// Replace each open template body with its closed instance frames, in place, after the inherited class frames.
+fn replace_template_bodies(module: &mut BodyIrModule, inherited: Vec<Body>, replacements: Vec<(usize, Vec<Body>)>) {
     if !inherited.is_empty() || !replacements.is_empty() {
         let mut bodies = inherited;
         let mut original = std::mem::take(&mut module.bodies).into_iter();
@@ -264,17 +298,6 @@ pub fn specialize_nominals_with_instances(
         bodies.extend(original);
         module.bodies = bodies;
     }
-    if crate::trace_channel::tracing_products() {
-        let row = serde_json::json!({
-            "borrowed_source_frames": borrowed_frames - instantiated.len(),
-            "instantiated_frames": instantiated.len(),
-            "retained_source_bodies": retained_bodies,
-        });
-        crate::trace_channel::emit("nominal_frame_ownership", "", &row.to_string());
-    }
-    module.nominal_declarations = declarations;
-    module.trait_implementations = implementations;
-    Ok(instances)
 }
 
 /// Each body's open receiver template as a declaration index, read once.
