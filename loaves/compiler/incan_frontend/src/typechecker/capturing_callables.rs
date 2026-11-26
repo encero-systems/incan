@@ -63,6 +63,8 @@ pub(super) struct Capture {
     pub(super) ty: ResolvedType,
     /// The captured declaration; `None` only for a local the symbol table gives no canonical identity.
     pub(super) identity: Option<CanonicalSymbolId>,
+    /// The checked closure body writes through this captured field alias.
+    pub(super) writes: bool,
 }
 
 /// One function or method whose parameters and return this module may spell as `impl Fn(...) -> R`.
@@ -290,6 +292,7 @@ impl TypeChecker {
                     name: name.clone(),
                     ty: info.ty.clone(),
                     identity: binding.canonical.cloned(),
+                    writes: false,
                 })
             })
             .collect();

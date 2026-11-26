@@ -367,7 +367,14 @@ impl Builder<'_> {
             span: expression.span,
             reason: "missing selected argument slot".into(),
         })?;
-        let mode = argument_mode(contract, call, slot);
+        let access = self
+            .checker
+            .type_info
+            .selected_input_access(call, contract, slot)
+            .map_err(|reason| Unavailable {
+                span: expression.span,
+                reason: reason.into(),
+            })?;
         // A closure local passed on is read where it is passed, through the borrow it holds.
         if let Some(closure) = self.closure_local(expression) {
             let (outgoing, argument) =
@@ -392,13 +399,13 @@ impl Builder<'_> {
             )?
         };
         // An exclusive reborrow of a `&mut` binding is reserved, as a shared loan, until the call.
-        let reserved = mode == Some(OwnershipMode::BorrowedMut) && self.reborrowed_exclusive_argument(expression)?;
+        let reserved = access == IncanInputAccess::Exclusive && self.reborrowed_exclusive_argument(expression)?;
         let start_node = self.graph.nodes.len();
         incoming = self.event(incoming, Event::Nothing, expression.span);
         let (outgoing, loan) = self.call_argument(
             expression,
             &call.parameters[slot],
-            if reserved { Some(OwnershipMode::Borrowed) } else { mode },
+            argument_mode(access, reserved),
             call.kind == InputCallKind::Ordinary,
             closed_enum_parameter_observer,
             selected_result_map_err,
@@ -444,7 +451,10 @@ impl Builder<'_> {
             span: expression.span,
             slot,
             written_position,
-            access: argument_access(mode, classified_move, span)?,
+            access: match (access, classified_move) {
+                (IncanInputAccess::Inferred, true) => IncanInputAccess::Owned,
+                (access, _) => access,
+            },
             loan,
             source: loan.map(|loan| self.graph.loans[loan.0].source.clone()).or(source),
             closed_enum_parameter_observer,
@@ -511,48 +521,15 @@ pub(super) struct CallSite<'a> {
 /// The invocation being built for a call, the loans it holds, and its reserved two-phase loans.
 pub(super) type CallTracking<'a> = (&'a mut Invocation, &'a mut Vec<LoanId>, &'a mut Vec<Reservation>);
 
-/// The ownership mode a selected parameter slot requests: its contract's mode, else a native reference slot's borrow.
-fn argument_mode(
-    contract: Option<&crate::ownership_metadata::CheckedOwnershipContract>,
-    call: &InputCall,
-    slot: usize,
-) -> Option<OwnershipMode> {
-    contract
-        .and_then(|contract| {
-            contract
-                .modes
-                .iter()
-                .find(|mode| mode.component.parameter == Some(slot))
-        })
-        .map(|mode| mode.mode)
-        // A native reference slot borrows its argument as the same explicit mode does (RFC 164).
-        .or_else(|| match &call.parameters[slot].ty {
-            ResolvedType::Ref(_) => Some(OwnershipMode::Borrowed),
-            ResolvedType::RefMut(_) => Some(OwnershipMode::BorrowedMut),
-            _ => None,
-        })
-}
-
-/// The input access an argument's mode grants its invocation. A move the checker classified is owned; a returned
-/// input reference is not an invocation mode.
-fn argument_access(
-    mode: Option<OwnershipMode>,
-    classified_move: bool,
-    span: Span,
-) -> Result<IncanInputAccess, Unavailable> {
-    Ok(match mode {
-        Some(OwnershipMode::Borrowed) => IncanInputAccess::Shared,
-        Some(OwnershipMode::BorrowedMut) => IncanInputAccess::Exclusive,
-        Some(OwnershipMode::Owned) => IncanInputAccess::Owned,
-        None if classified_move => IncanInputAccess::Owned,
-        None => IncanInputAccess::Inferred,
-        Some(OwnershipMode::Reference) => {
-            return Err(Unavailable {
-                span,
-                reason: "returned input reference is not an invocation mode".into(),
-            });
-        }
-    })
+/// Translate authenticated input access into local evaluation mode, reserving an exclusive reborrow as shared.
+fn argument_mode(access: IncanInputAccess, reserved: bool) -> Option<OwnershipMode> {
+    match access {
+        IncanInputAccess::Shared | IncanInputAccess::InferredShared => Some(OwnershipMode::Borrowed),
+        IncanInputAccess::Exclusive if reserved => Some(OwnershipMode::Borrowed),
+        IncanInputAccess::Exclusive => Some(OwnershipMode::BorrowedMut),
+        IncanInputAccess::Owned => Some(OwnershipMode::Owned),
+        IncanInputAccess::Inferred => None,
+    }
 }
 
 /// An invocation of `callee` with no evaluated receiver, arguments or nodes yet.

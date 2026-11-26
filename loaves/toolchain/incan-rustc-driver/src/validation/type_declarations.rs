@@ -366,6 +366,8 @@ pub(super) fn validate_retained_type_declaration(plan: &Plan, ty: &PlanType) -> 
     | PlanType::ClosureRef(signature)
     | PlanType::BorrowingClosure(signature)
     | PlanType::BorrowingClosureRef(signature)
+    | PlanType::ExclusiveClosure(signature)
+    | PlanType::ExclusiveClosureRef(signature)
     | PlanType::SharedCallable(signature) = ty
         && !callable_object_signature(&signature.iter().map(scalar).collect::<Vec<_>>())
     {
@@ -380,6 +382,8 @@ pub(super) fn validate_retained_type_declaration(plan: &Plan, ty: &PlanType) -> 
     | PlanType::ClosureRef(signature)
     | PlanType::BorrowingClosure(signature)
     | PlanType::BorrowingClosureRef(signature)
+    | PlanType::ExclusiveClosure(signature)
+    | PlanType::ExclusiveClosureRef(signature)
     | PlanType::SharedCallable(signature) = ty
     {
         for component in signature {

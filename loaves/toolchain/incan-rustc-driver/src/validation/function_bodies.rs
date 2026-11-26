@@ -504,6 +504,7 @@ pub(super) fn owns_values(ty: &Scalar) -> bool {
         | Scalar::Closure(_)
         | Scalar::NativeClosure(..)
         | Scalar::BorrowingClosure(_)
+        | Scalar::ExclusiveClosure(_)
         | Scalar::SharedCallable(_)
         | Scalar::ValidationError
         | Scalar::Boxed(_)

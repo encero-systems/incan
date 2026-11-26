@@ -344,14 +344,23 @@ pub fn clone_method(tcx: TyCtxt<'_>, signature: &[PlanType]) -> Result<DefId, Pl
         .ok_or_else(|| PlanError::UnknownCallee("private callable clone slot".into()))
 }
 
-/// Check concrete capture clonability before rustc typechecks the blanket conversion, keeping gaps named refusals.
+/// Check Clone for erased environments and for reusable callbacks that clone an owned capture on each call.
 pub fn verify_captures(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
     let clone = callees::clone_method(tcx)?;
     for function in &plan.functions {
         if closures::constructor(function).is_none() {
             continue;
         }
+        let erased = matches!(function.return_type, PlanType::Closure(_));
         for capture in &function.parameters {
+            if !(erased
+                || matches!(
+                    closures::capture_transfer(function, &capture.ty),
+                    closures::CaptureTransfer::Clone
+                ))
+            {
+                continue;
+            }
             let ty = types::native_type(tcx, &capture.ty)?;
             callees::verify_bounds(tcx, clone, tcx.mk_args(&[ty.into()])).map_err(|_| PlanError::Unsupported {
                 function: function.name.clone(),

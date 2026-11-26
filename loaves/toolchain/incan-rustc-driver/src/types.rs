@@ -142,23 +142,17 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ISize => tcx.types.isize,
         PlanType::USize => tcx.types.usize,
         PlanType::Bool => tcx.types.bool,
-        PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
-        PlanType::Closure(signature) => Ty::new_box(tcx, callable_object_type(tcx, signature)?),
-        PlanType::NativeClosure(signature, send, sync) => {
-            Ty::new_box(tcx, native_callable_object_type(tcx, signature, *send, *sync)?)
-        }
-        PlanType::SharedCallable(signature) => model_type(tcx, &crate::shared_callables::name(signature))?,
-        PlanType::ClosureOnce(signature) => Ty::new_box(tcx, consuming_callable_object_type(tcx, signature)?),
-        PlanType::ClosureRef(signature) => {
-            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
-        }
-        PlanType::BorrowingClosure(signature) => Ty::new_box(tcx, borrowing_callable_object_type(tcx, signature)?),
-        PlanType::BorrowingClosureRef(signature) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            borrowing_callable_object_type(tcx, signature)?,
-        ),
-        PlanType::FunctionItem(name, _) => function_item_type(tcx, name)?,
+        PlanType::FunctionPointer(_)
+        | PlanType::FunctionItem(..)
+        | PlanType::Closure(_)
+        | PlanType::ClosureRef(_)
+        | PlanType::ClosureOnce(_)
+        | PlanType::NativeClosure(..)
+        | PlanType::SharedCallable(_)
+        | PlanType::BorrowingClosure(_)
+        | PlanType::BorrowingClosureRef(_)
+        | PlanType::ExclusiveClosure(_)
+        | PlanType::ExclusiveClosureRef(_) => native_callable_type(tcx, ty)?,
         PlanType::Unit => tcx.types.unit,
         PlanType::Never => tcx.types.never,
         PlanType::UnitFunction => unit_function_type(tcx),
@@ -191,6 +185,40 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::StrArrayRef(count) => text_array_reference_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
         PlanType::StringSlice => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, Ty::new_slice(tcx, string_type(tcx)?)),
         PlanType::StrSlice => native_reference(tcx, Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?), false),
+    })
+}
+
+/// Form exactly the callable representation and receiver mode that Plan retains.
+fn native_callable_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
+    Ok(match ty {
+        PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
+        PlanType::Closure(signature) => Ty::new_box(tcx, callable_object_type(tcx, signature)?),
+        PlanType::NativeClosure(signature, send, sync) => {
+            Ty::new_box(tcx, native_callable_object_type(tcx, signature, *send, *sync)?)
+        }
+        PlanType::SharedCallable(signature) => model_type(tcx, &crate::shared_callables::name(signature))?,
+        PlanType::ClosureOnce(signature) => Ty::new_box(tcx, consuming_callable_object_type(tcx, signature)?),
+        PlanType::ClosureRef(signature) => {
+            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
+        }
+        PlanType::BorrowingClosure(signature) => {
+            Ty::new_box(tcx, borrowing_callable_object_type(tcx, signature, false)?)
+        }
+        PlanType::BorrowingClosureRef(signature) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            borrowing_callable_object_type(tcx, signature, false)?,
+        ),
+        PlanType::FunctionItem(name, _) => function_item_type(tcx, name)?,
+        PlanType::ExclusiveClosure(signature) => {
+            Ty::new_box(tcx, borrowing_callable_object_type(tcx, signature, true)?)
+        }
+        PlanType::ExclusiveClosureRef(signature) => Ty::new_mut_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            borrowing_callable_object_type(tcx, signature, true)?,
+        ),
+        _ => return Err(PlanError::UnknownCallee("native callable representation".into())),
     })
 }
 
@@ -514,13 +542,18 @@ fn callable_object_type_for_kind<'tcx>(
         consumes_environment,
         false,
         false,
+        false,
         tcx.lifetimes.re_static,
     )
 }
 
-/// Build the shared Fn object of an environment holding a borrowed reference; borrowck infers the region it lives for.
-pub fn borrowing_callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
-    bounded_callable_object_type(tcx, signature, false, false, false, tcx.lifetimes.re_erased)
+/// Build the shared or exclusive callable object whose environment retains a borrowed reference.
+pub fn borrowing_callable_object_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    signature: &[PlanType],
+    exclusive: bool,
+) -> Result<Ty<'tcx>, PlanError> {
+    bounded_callable_object_type(tcx, signature, false, exclusive, false, false, tcx.lifetimes.re_erased)
 }
 
 /// Retain the exact auto traits admitted by checking on a native owned callback object.
@@ -530,7 +563,7 @@ fn native_callable_object_type<'tcx>(
     send: bool,
     sync: bool,
 ) -> Result<Ty<'tcx>, PlanError> {
-    bounded_callable_object_type(tcx, signature, false, send, sync, tcx.lifetimes.re_static)
+    bounded_callable_object_type(tcx, signature, false, false, send, sync, tcx.lifetimes.re_static)
 }
 
 /// Construct one Fn-family object with structural inputs, output, and checked native auto traits, outliving `region`.
@@ -538,6 +571,7 @@ fn bounded_callable_object_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     signature: &[PlanType],
     consumes_environment: bool,
+    exclusive: bool,
     send: bool,
     sync: bool,
     region: rustc_middle::ty::Region<'tcx>,
@@ -549,6 +583,8 @@ fn bounded_callable_object_type<'tcx>(
     let missing = |item: &str| PlanError::UnknownCallee(item.into());
     let fn_trait = if consumes_environment {
         tcx.lang_items().fn_once_trait().ok_or_else(|| missing("FnOnce"))?
+    } else if exclusive {
+        tcx.lang_items().fn_mut_trait().ok_or_else(|| missing("FnMut"))?
     } else {
         tcx.lang_items().fn_trait().ok_or_else(|| missing("Fn"))?
     };

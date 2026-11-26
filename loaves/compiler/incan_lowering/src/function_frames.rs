@@ -292,6 +292,7 @@ fn body_builder(
         partial_callables: Vec::new(),
         scalar_closures: Vec::new(),
         unproven_closures: Vec::new(),
+        closure_drop: Vec::new(),
         unions: selected_unions,
         local_offset: 0,
         consuming_closure_frame: false,

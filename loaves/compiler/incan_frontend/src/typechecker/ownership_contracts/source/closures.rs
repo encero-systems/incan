@@ -1,11 +1,12 @@
 //! Closures bound to a local of an explicit body. A closure reads captured Copy values when it is built and borrows
 //! every other captured place until its last call. A captured alias or returned view is reborrowed through its own
-//! loan, and an exclusive input may be reborrowed shared when the closure only reads it. Passing a closure to a
+//! loan, using a writable reborrow only when the checked closure writes through it. Passing a closure to a
 //! parameter whose body only calls it lends all retained captures for that call; returning or storing it is refused.
 
 use super::super::flow::{ClosureCaptures, InputEvaluation, InvocationArgument};
 use super::{Access, Builder, Event, Loan, LoanId, LoanKind, Path, Unavailable};
-use crate::ast::{CallArg, Expr, Span, Spanned};
+use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
+use crate::symbols::ResolvedType;
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
 
 impl Builder<'_> {
@@ -70,11 +71,24 @@ impl Builder<'_> {
                 };
                 reads.push((identity.clone(), read));
             } else {
+                if capture.writes
+                    && !path.through.is_some_and(|parent| {
+                        self.graph.loans[parent.0].kind == LoanKind::Exclusive && self.graph.loans[parent.0].writable
+                    })
+                {
+                    return Err(refuse(
+                        "closure writes through a capture with no writable parent borrow",
+                    ));
+                }
                 let loan = LoanId(self.graph.loans.len());
                 self.graph.loans.push(Loan {
                     source: path.place.clone(),
-                    kind: LoanKind::Shared,
-                    writable: false,
+                    kind: if capture.writes {
+                        LoanKind::Exclusive
+                    } else {
+                        LoanKind::Shared
+                    },
+                    writable: capture.writes,
                     parent: path.through,
                     span: closure.span,
                 });
@@ -107,7 +121,7 @@ impl Builder<'_> {
         self.closures.contains_key(identity).then(|| identity.clone())
     }
 
-    /// Call a closure local: evaluate its Copy arguments, then use the borrow it holds.
+    /// Evaluate a closure local's Copy or fresh immutable arguments, then use the borrow it holds.
     pub(super) fn closure_call(
         &mut self,
         closure: &CanonicalSymbolId,
@@ -115,23 +129,41 @@ impl Builder<'_> {
         span: Span,
         mut incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        for argument in arguments {
+        let checker = self.checker;
+        let parameters = checker
+            .capturing_callables
+            .origins
+            .get(&closure.declaration_span)
+            .and_then(|origin| match checker.type_info.expr_type(*origin) {
+                Some(ResolvedType::Function(parameters, _)) => Some(parameters.as_slice()),
+                _ => None,
+            });
+        for (position, argument) in arguments.iter().enumerate() {
             let CallArg::Positional(value) = argument else {
                 return Err(Unavailable {
                     span,
                     reason: "a closure call needs positional arguments".into(),
                 });
             };
-            let copy = self
-                .checker
+            let copy = checker
                 .type_info
                 .expr_type(value.span)
                 .is_some_and(|ty| self.copy_value(ty));
             if !copy {
-                return Err(Unavailable {
-                    span: value.span,
-                    reason: "a closure call argument needs a Copy value".into(),
-                });
+                let fresh = if let Some(parameter) = parameters
+                    .and_then(|parameters| parameters.get(position))
+                    .filter(|parameter| parameter.kind == ParamKind::Normal)
+                {
+                    self.fresh_ordinary_argument(value, parameter, true)?
+                } else {
+                    false
+                };
+                if !fresh {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "a closure call argument needs a Copy value".into(),
+                    });
+                }
             }
             incoming = self.expression(value, incoming, false)?;
         }

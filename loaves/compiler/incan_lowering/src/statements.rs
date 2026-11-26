@@ -60,7 +60,10 @@ pub fn is_text_or_nominal(ty: &PlanType) -> bool {
 
 /// Identify an environment owner, which transfers and drops separately from copied callable references.
 pub fn is_owned_callable(ty: &PlanType) -> bool {
-    matches!(ty, PlanType::Closure(_) | PlanType::BorrowingClosure(_))
+    matches!(
+        ty,
+        PlanType::Closure(_) | PlanType::BorrowingClosure(_) | PlanType::ExclusiveClosure(_)
+    )
 }
 
 /// Release loop-local owners on a backedge, requiring enclosing storage to remain initialized for repetition.

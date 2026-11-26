@@ -3,13 +3,24 @@
 //! description's selector is the first six bytes of the sha256 of its profile path followed by a zero byte; a
 //! member's identity is the first six bytes of the sha256 of its name.
 
-use crate::wire::Schema;
+use crate::wire::{Schema, ShapeRevision};
 
 use super::schema_body_records::*;
 use super::schema_function_records::*;
 use super::schema_layout_records::*;
 use super::schema_layout_type_records::*;
 use super::schema_nominal_identities::*;
+
+const EXCLUSIVE_TARGET_REVISION: ShapeRevision = ShapeRevision {
+    shape: &SHAPE_FUNCTION_RECORDS_STORED_TARGET,
+    alternatives: EXCLUSIVE_TARGET_VARIANTS,
+};
+const EXCLUSIVE_TYPE_REVISION: ShapeRevision = ShapeRevision {
+    shape: &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_PLAN_TYPE,
+    alternatives: EXCLUSIVE_TYPE_VARIANTS,
+};
+const FUNCTION_REVISIONS: &[ShapeRevision] = &[EXCLUSIVE_TARGET_REVISION, EXCLUSIVE_TYPE_REVISION];
+const TYPE_REVISIONS: &[ShapeRevision] = &[EXCLUSIVE_TYPE_REVISION];
 
 /// The descriptions a `StoredProduct` row carries, in profile-key order.
 pub(crate) static STORED_PRODUCT_SCHEMA: Schema = Schema::new(&[
@@ -41,7 +52,8 @@ pub(crate) static STORED_PRODUCT_SCHEMA: Schema = Schema::new(&[
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_TUPLE_ELEMENT,
     &SHAPE_NOMINAL_IDENTITIES_NOMINAL_KIND,
     &SHAPE_NOMINAL_IDENTITIES_PRODUCT_NOMINAL,
-]);
+])
+.with_revisions(FUNCTION_REVISIONS);
 
 /// The descriptions a `StoredFunction` row carries, in profile-key order.
 pub(crate) static STORED_FUNCTION_SCHEMA: Schema = Schema::new(&[
@@ -69,7 +81,8 @@ pub(crate) static STORED_FUNCTION_SCHEMA: Schema = Schema::new(&[
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_PLAN_TYPE,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_SIZED_NUMERIC,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_TUPLE_ELEMENT,
-]);
+])
+.with_revisions(FUNCTION_REVISIONS);
 
 /// The descriptions a `StoredExternal` row carries, in profile-key order.
 pub(crate) static STORED_EXTERNAL_SCHEMA: Schema = Schema::new(&[
@@ -80,7 +93,8 @@ pub(crate) static STORED_EXTERNAL_SCHEMA: Schema = Schema::new(&[
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_PLAN_TYPE,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_SIZED_NUMERIC,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_TUPLE_ELEMENT,
-]);
+])
+.with_revisions(TYPE_REVISIONS);
 
 /// The descriptions a `StoredLayoutModelDeclaration` row carries, in profile-key order.
 pub(crate) static STORED_LAYOUT_MODEL_DECLARATION_SCHEMA: Schema = Schema::new(&[
@@ -97,7 +111,8 @@ pub(crate) static STORED_LAYOUT_MODEL_DECLARATION_SCHEMA: Schema = Schema::new(&
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_PLAN_TYPE,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_SIZED_NUMERIC,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_TUPLE_ELEMENT,
-]);
+])
+.with_revisions(TYPE_REVISIONS);
 
 /// The descriptions a `StoredLayoutEnumDeclaration` row carries, in profile-key order.
 pub(crate) static STORED_LAYOUT_ENUM_DECLARATION_SCHEMA: Schema = Schema::new(&[
@@ -116,7 +131,8 @@ pub(crate) static STORED_LAYOUT_ENUM_DECLARATION_SCHEMA: Schema = Schema::new(&[
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_PLAN_TYPE,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_SIZED_NUMERIC,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_TUPLE_ELEMENT,
-]);
+])
+.with_revisions(TYPE_REVISIONS);
 
 /// The descriptions a `StoredLayoutZipCarrier` row carries, in profile-key order.
 pub(crate) static STORED_LAYOUT_ZIP_CARRIER_SCHEMA: Schema = Schema::new(&[
@@ -125,7 +141,8 @@ pub(crate) static STORED_LAYOUT_ZIP_CARRIER_SCHEMA: Schema = Schema::new(&[
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_PLAN_TYPE,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_SIZED_NUMERIC,
     &SHAPE_LAYOUT_TYPE_RECORDS_STORED_LAYOUT_TUPLE_ELEMENT,
-]);
+])
+.with_revisions(TYPE_REVISIONS);
 
 /// The descriptions a `StoredLayoutCheckedType` row carries, in profile-key order.
 pub(crate) static STORED_LAYOUT_CHECKED_TYPE_SCHEMA: Schema = Schema::new(&[

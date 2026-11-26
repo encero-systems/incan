@@ -80,6 +80,7 @@ pub fn synthetic_builder(program: ProgramContext, frame: SyntheticFrame) -> Buil
         partial_callables: Vec::new(),
         scalar_closures: Vec::new(),
         unproven_closures: Vec::new(),
+        closure_drop: Vec::new(),
         unions: frame.unions,
         local_offset: 0,
         consuming_closure_frame: false,

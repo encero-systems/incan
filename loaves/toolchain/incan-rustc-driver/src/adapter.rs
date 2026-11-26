@@ -615,7 +615,489 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 #[cfg(test)]
 mod tests {
     use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    const CALLABLE_LENDING_SOURCE: &str = r#"def twice(callback: (int) -> bool) -> bool:
+    if callback(3):
+        return callback(5)
+    return false
+
+pub def forward(callback: (int) -> bool) -> bool:
+    return twice(callback)
+
+pub def read(value: Borrowed[int]) -> bool:
+    show: (int) -> bool = (item) => value < item
+    if show(1):
+        return true
+    return twice(show)
+
+class Cart:
+    """Own the list the closure updates."""
+
+    pub items: list[str]
+
+pub def add_twice(mut cart: Cart) -> None:
+    """Call the same writable closure twice."""
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    add("plum")
+    add("fig")
+    println(cart.items)
+
+def call_twice(callback: (str) -> None) -> None:
+    """Invoke the callback twice without retaining it."""
+    callback("plum")
+    callback("fig")
+
+pub def forward_twice(mut cart: Cart) -> None:
+    """Observe the list after the forwarded writable callable's final use."""
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    call_twice(add)
+    call_twice(add)
+    println(cart.items)
+
+pub def forward_in_one_arm(mut cart: Cart, flag: bool) -> None:
+    """Read the owner after forwarding on one continuing arm."""
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    if flag:
+        call_twice(add)
+        println(cart.items)
+
+def make_transform() -> (str) -> str:
+    """Return a callable whose environment the caller owns."""
+    suffix = 1
+    return (item) => f"{item}-{suffix}"
+
+def after_mixed_capture() -> None:
+    """Mark the interval after the loan ends but before owner cleanup."""
+    println("after mixed capture")
+
+def after_mixed_scope() -> None:
+    """Mark the first statement after both local bindings have left scope."""
+    println("after mixed scope")
+
+pub def mixed_direct(mut cart: Cart, flag: bool) -> None:
+    if flag:
+        transform = make_transform()
+        mut items = cart.items
+        add: (str) -> None = (item) => items.append(transform(item))
+        add("plum")
+        println(cart.items)
+        after_mixed_capture()
+    after_mixed_scope()
+
+pub def mixed_forwarded(mut cart: Cart, flag: bool) -> None:
+    transform = make_transform()
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(transform(item))
+    if flag:
+        call_twice(add)
+        println(cart.items)
+    after_mixed_capture()
+
+pub def mixed_repeated(mut cart: Cart, count: int) -> None:
+    transform = make_transform()
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(transform(item))
+    for _iteration in range(count):
+        call_twice(add)
+    add("final")
+    println(cart.items)
+    after_mixed_capture()
+
+def admit_update(callback: (str) -> None) -> bool:
+    callback("guard")
+    return true
+
+pub def mixed_guard(mut cart: Cart, flag: bool) -> None:
+    transform = make_transform()
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(transform(item))
+    match flag:
+        true if admit_update(add) => println(cart.items)
+        _ => println(cart.items)
+    after_mixed_capture()
+
+pub def owned(limit: int) -> bool:
+    """Call an erased closure that captures an owned scalar."""
+    permits: (int) -> bool = (item) => limit < item
+    return permits(5)
+"#;
+
+    /// Compile direct writable, lent shared, and cloneable erased callable environments.
+    #[test]
+    fn callable_lending_preserves_native_capture_access() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::body_ir::{BodyIrContext, ContextModules, ProviderOperationCatalog, build_body_ir_module};
+        use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+        use incan_lowering::{PlanAdmissions, SourceInputs, UnitPlanning, unit_plan};
+
+        let source = CALLABLE_LENDING_SOURCE;
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("lib.incn");
+        std::fs::write(&file, source)?;
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let providers = ProviderOperationCatalog::new();
+        let module = build_body_ir_module(
+            &program,
+            &[],
+            checker.type_info(),
+            &BodyIrContext {
+                modules: ContextModules::default(),
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+                include_inline_tests: false,
+            },
+        );
+        let inputs = SourceInputs {
+            sources: vec![source.to_owned()],
+            files: vec![file.to_string_lossy().into_owned()],
+            ..Default::default()
+        };
+        let UnitPlanning::Complete(Some(plan)) = unit_plan(
+            &[module],
+            &inputs,
+            0,
+            "library",
+            &mut Vec::new(),
+            &mut PlanAdmissions::default(),
+        )?
+        else {
+            return Err("missing native callable plan".into());
+        };
+        assert_callable_environments(&plan)?;
+        for name in ["mixed_direct", "mixed_forwarded", "mixed_repeated", "mixed_guard"] {
+            assert_mixed_callable_owner(&plan, name)?;
+        }
+        assert!(
+            plan.externals
+                .iter()
+                .any(|external| external.path == "incan_native_runtime::append_list"),
+            "missing the native list append"
+        );
+        let unit = describe_callable_fixture(&file)?;
+        let dependencies = crate::frontend::dependencies(&unit, &[])?;
+        let output = directory.path().join("libcallable_lending.rlib");
+        super::compile(
+            plan,
+            "callable_lending",
+            &output,
+            &crate::identity::verify_loaded_test_sysroot()?,
+            &dependencies.externs,
+            &dependencies.directories,
+            &[],
+            &unit.toolchain_access,
+            None,
+            UnitKind::Library,
+            false,
+            Vec::new(),
+            None,
+            Vec::new(),
+            None,
+        )?;
+        assert!(output.is_file());
+        Ok(())
+    }
+
+    /// Identify the caller's owned payload and its copied view in the writable environment constructor.
+    fn assert_mixed_callable_owner(plan: &crate::plan::Plan, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::plan::{CalleeKind, OperandKind, PlanType, Projection, RvalueKind, StatementKind, TerminatorKind};
+
+        let frame = plan
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .ok_or(name)?;
+        let prefix = format!("__incan_closure_{name}_");
+        let constructor = plan
+            .functions
+            .iter()
+            .find(|function| function.name.starts_with(&prefix) && function.name.ends_with("_new"))
+            .ok_or("missing mixed environment constructor")?;
+        assert!(
+            matches!(constructor.return_type, PlanType::ExclusiveClosure(_)),
+            "{name}"
+        );
+        assert!(
+            constructor
+                .parameters
+                .iter()
+                .any(|capture| crate::plan::exclusive_capture(&capture.ty)),
+            "{name}"
+        );
+        let slot = constructor
+            .parameters
+            .iter()
+            .position(|capture| matches!(capture.ty, PlanType::ClosureRef(_)))
+            .ok_or("mixed environment must borrow the callable owner")?;
+        let (view, environment, continued, cleanup) = frame
+            .blocks
+            .iter()
+            .find_map(|block| {
+                let TerminatorKind::Call(callee, arguments, environment, continued, unwind) = &block.terminator.kind
+                else {
+                    return None;
+                };
+                let (CalleeKind::Planned(callee), crate::plan::Unwind::Cleanup(cleanup)) = (&callee.kind, unwind)
+                else {
+                    return None;
+                };
+                if callee != &constructor.name {
+                    return None;
+                }
+                match &arguments.get(slot)?.kind {
+                    OperandKind::Copy(view) => {
+                        Some((view.local, environment.local, *continued as usize, *cleanup as usize))
+                    }
+                    _ => None,
+                }
+            })
+            .ok_or("missing mixed environment call with borrowed capture and cleanup")?;
+        let owner = frame
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find_map(|statement| match &statement.kind {
+                StatementKind::Assign(result, value) if result.local == view => match &value.kind {
+                    RvalueKind::ClosureObject(owner) if owner.projection == Projection::Whole => Some(owner.local),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or("missing whole callable owner for mixed environment")?;
+        assert!(
+            matches!(frame.locals[owner as usize].ty, PlanType::Closure(_)),
+            "{name}"
+        );
+        assert_mixed_callable_drops(frame, environment, owner, continued, cleanup)
+    }
+
+    /// Follow both constructor outcomes and all continuing paths. The owner outlives the loan on normal and call
+    /// unwind edges, including the carried state across a loop backedge.
+    fn assert_mixed_callable_drops(
+        frame: &crate::plan::Function,
+        environment: i64,
+        owner: i64,
+        continued: usize,
+        cleanup: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::plan::{CalleeKind, OperandKind, Projection, RvalueKind, StatementKind, TerminatorKind, Unwind};
+
+        let mut pending = vec![
+            (continued, Some(environment), true, false),
+            (cleanup, None, true, false),
+        ];
+        let mut visited = std::collections::HashSet::new();
+        let mut saw_return = false;
+        let mut saw_unwind = false;
+        while let Some((index, mut environment_live, mut owner_live, mut marked)) = pending.pop() {
+            if !visited.insert((index, environment_live, owner_live, marked)) {
+                continue;
+            }
+            let block = frame.blocks.get(index).ok_or("missing mixed closure block")?;
+            // The checked expression first initializes a temporary, then moves its environment to its binding.
+            for statement in &block.statements {
+                if let StatementKind::Assign(destination, value) = &statement.kind
+                    && let RvalueKind::Use(operand) = &value.kind
+                    && let OperandKind::Move(source) = &operand.kind
+                    && Some(source.local) == environment_live
+                {
+                    assert_eq!(source.projection, Projection::Whole);
+                    assert_eq!(destination.projection, Projection::Whole);
+                    environment_live = Some(destination.local);
+                }
+            }
+            match &block.terminator.kind {
+                TerminatorKind::Goto(target) => pending.push((*target as usize, environment_live, owner_live, marked)),
+                TerminatorKind::SwitchBool(_, no, yes) => {
+                    pending.push((*no as usize, environment_live, owner_live, marked));
+                    pending.push((*yes as usize, environment_live, owner_live, marked));
+                }
+                TerminatorKind::AssertOverflow(_, _, _, _, target, unwind) => {
+                    pending.push((*target as usize, environment_live, owner_live, marked));
+                    if let Unwind::Cleanup(target) = unwind {
+                        pending.push((*target as usize, environment_live, owner_live, marked));
+                    }
+                }
+                TerminatorKind::Call(callee, _, _, target, unwind) => {
+                    if matches!(&callee.kind, CalleeKind::CallExclusiveClosure(_))
+                        || matches!(&callee.kind, CalleeKind::Planned(name) if name == "call_twice" || name == "admit_update")
+                    {
+                        assert!(
+                            environment_live.is_some() && owner_live,
+                            "{} lost a live environment between calls",
+                            frame.name
+                        );
+                    }
+                    if matches!(&callee.kind, CalleeKind::Planned(name) if name == "after_mixed_capture") {
+                        assert!(
+                            environment_live.is_none() && owner_live,
+                            "{} bypassed mixed capture separation",
+                            frame.name
+                        );
+                        marked = true;
+                    }
+                    if matches!(&callee.kind, CalleeKind::Planned(name) if name == "after_mixed_scope") {
+                        assert!(
+                            marked && !owner_live,
+                            "{} keeps the callable beyond its scope",
+                            frame.name
+                        );
+                    }
+                    pending.push((*target as usize, environment_live, owner_live, marked));
+                    if let Unwind::Cleanup(target) = unwind {
+                        pending.push((*target as usize, environment_live, owner_live, marked));
+                    }
+                }
+                TerminatorKind::Drop(place, target, _) => {
+                    if Some(place.local) == environment_live {
+                        assert!(owner_live, "{} destroys the loan out of order", frame.name);
+                        environment_live = None;
+                    }
+                    if place.local == owner {
+                        assert!(
+                            owner_live && environment_live.is_none() && (block.cleanup || marked),
+                            "{} destroys the callable owner outside its cleanup edge",
+                            frame.name
+                        );
+                        owner_live = false;
+                    }
+                    pending.push((*target as usize, environment_live, owner_live, marked));
+                }
+                TerminatorKind::Return => {
+                    assert!(
+                        marked && environment_live.is_none() && !owner_live,
+                        "{} misses normal cleanup",
+                        frame.name
+                    );
+                    saw_return = true;
+                }
+                TerminatorKind::UnwindResume => {
+                    assert!(
+                        environment_live.is_none() && !owner_live,
+                        "{} misses unwind cleanup",
+                        frame.name
+                    );
+                    saw_unwind = true;
+                }
+                TerminatorKind::Unreachable => {}
+                _ => return Err(format!("unexpected mixed closure edge in {}", frame.name).into()),
+            }
+        }
+        assert!(saw_return && saw_unwind, "{} needs normal and unwind exits", frame.name);
+        Ok(())
+    }
+
+    /// Use the ordinary unit description to admit derives and runtime libraries for the fixture.
+    fn describe_callable_fixture(
+        source: &Path,
+    ) -> Result<incan_driver::unit::UnitDescription, Box<dyn std::error::Error>> {
+        let selected_path = |variable| {
+            std::env::var_os(variable)
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+        };
+        let oven = if let Some(engine) = selected_path("OVEN_ENGINE_BINARY") {
+            engine.with_file_name("oven")
+        } else {
+            let home = selected_path("INCAN_HOME")
+                .or_else(|| {
+                    ["HOME", "USERPROFILE"]
+                        .into_iter()
+                        .find_map(selected_path)
+                        .map(|home| home.join(".incan"))
+                })
+                .ok_or("no Incan home for the callable fixture")?;
+            home.join("bin").join("oven")
+        };
+        let output = std::process::Command::new(&oven)
+            .arg("describe-unit")
+            .arg(source)
+            .args(["--unattended", "--profile", "release"])
+            .output()
+            .map_err(|error| format!("cannot run {} for the callable fixture: {error}", oven.display()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "could not describe callable fixture: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(incan_driver::unit::UnitDescription::parse(&output.stdout, source)?)
+    }
+
+    /// Check the actual native carriers and captures before compiling the fixture.
+    fn assert_callable_environments(plan: &crate::plan::Plan) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::plan::PlanType;
+
+        let helper = plan
+            .functions
+            .iter()
+            .find(|function| function.name == "twice")
+            .ok_or("missing call-only helper")?;
+        assert!(
+            matches!(helper.parameters.as_slice(), [parameter] if matches!(parameter.ty, PlanType::ExclusiveClosure(_)))
+        );
+        for owner in ["read", "forward"] {
+            let constructor_prefix = format!("__incan_borrowed_callable_{owner}_");
+            let envelope = plan
+                .functions
+                .iter()
+                .find(|function| function.name.starts_with(&constructor_prefix) && function.name.ends_with("_new"))
+                .ok_or_else(|| {
+                    let names: Vec<_> = plan
+                        .functions
+                        .iter()
+                        .filter_map(|function| {
+                            function
+                                .name
+                                .starts_with("__incan_borrowed_callable_")
+                                .then_some(&function.name)
+                        })
+                        .collect();
+                    format!("missing {owner} lending envelope among {names:?}")
+                })?;
+            assert!(
+                matches!(envelope.return_type, PlanType::ExclusiveClosure(_)),
+                "{} has lending carrier {:?}",
+                envelope.name,
+                envelope.return_type
+            );
+            let [capture] = envelope.parameters.as_slice() else {
+                return Err(format!("{} has {} captures", envelope.name, envelope.parameters.len()).into());
+            };
+            assert!(
+                matches!(capture.ty, PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_)),
+                "{} capture is {:?}",
+                envelope.name,
+                capture.ty
+            );
+        }
+        let write = plan
+            .functions
+            .iter()
+            .find(|function| function.name.starts_with("__incan_closure_add_twice_") && function.name.ends_with("_new"))
+            .ok_or("missing direct writable constructor")?;
+        assert!(matches!(write.return_type, PlanType::ExclusiveClosure(_)));
+        assert!(
+            matches!(write.parameters.as_slice(), [capture] if crate::plan::exclusive_capture(&capture.ty)),
+            "direct writable constructor must retain an exclusive capture"
+        );
+        assert!(plan.functions.iter().any(|function| {
+            function.name.starts_with("__incan_closure_owned_")
+                && function.name.ends_with("_new")
+                && matches!(function.return_type, PlanType::Closure(_))
+                && matches!(function.parameters.as_slice(), [capture] if capture.ty == PlanType::Int)
+        }));
+        Ok(())
+    }
 
     /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
     /// output filenames, an input of every codegen unit, are the same between edits; one compilation holds it at a

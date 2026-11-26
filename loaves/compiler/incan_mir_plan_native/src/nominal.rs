@@ -280,6 +280,8 @@ fn remap_composite_type(ty: &PlanType, remap: &mut NominalRemap) -> Result<PlanT
         PlanType::ClosureRef(types) => PlanType::ClosureRef(remap_types(types, remap)?),
         PlanType::BorrowingClosure(types) => PlanType::BorrowingClosure(remap_types(types, remap)?),
         PlanType::BorrowingClosureRef(types) => PlanType::BorrowingClosureRef(remap_types(types, remap)?),
+        PlanType::ExclusiveClosure(types) => PlanType::ExclusiveClosure(remap_types(types, remap)?),
+        PlanType::ExclusiveClosureRef(types) => PlanType::ExclusiveClosureRef(remap_types(types, remap)?),
         PlanType::CallableArguments(types) => PlanType::CallableArguments(remap_types(types, remap)?),
         PlanType::Future(types) => PlanType::Future(remap_types(types, remap)?),
         PlanType::NativeSlice(types) => PlanType::NativeSlice(remap_types(types, remap)?),

@@ -141,6 +141,31 @@ fn writes_through_an_exclusive_borrow_replace_its_referent() -> Result<(), Box<d
             );
         }
     }
+    let source = r#"
+class Cart:
+    pub items: list[str]
+
+async def pause() -> None:
+    pass
+
+async def tally(mut cart: Cart) -> int:
+    mut items = cart.items
+    items.append("plum")
+    await pause()
+    items.append("fig")
+    return len(cart.items)
+
+async def observe(mut cart: Cart) -> int:
+    return await tally(cart)
+"#;
+    let plans = planned(source)?;
+    let tally = function(&plans, "__incan_async_body_tally")?;
+    assert!(tally.contains("ModelMutRef(") && tally.contains("Await("), "{tally}");
+    let (_, future) = plans
+        .iter()
+        .find(|(name, _)| name.starts_with("__incan_future_ctor_") && name.contains("observe"))
+        .ok_or("missing ordinary caller's tally future constructor")?;
+    assert!(future.contains("ModelMutRef("), "{future}");
     Ok(())
 }
 
@@ -214,6 +239,95 @@ fn explicit_route_shapes_plan_through_borrow_parameters() -> Result<(), Box<dyn 
             assert!(!plan.contains("nsupported"), "{name}: {plan}");
         }
     }
+
+    let source = r#"
+class Cart:
+    pub items: list[str]
+
+def add_twice(mut cart: Cart) -> None:
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    add("plum")
+    add("fig")
+    println(cart.items)
+
+def call_twice(callback: (str) -> None) -> None:
+    callback("plum")
+    callback("fig")
+
+def forward_twice(mut cart: Cart) -> None:
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    call_twice(add)
+    println(cart.items)
+
+def show_twice(cart: Cart) -> None:
+    items = cart.items
+    show: (str) -> None = (item) => println(f"{item}: {len(items)}")
+    call_twice(show)
+
+def count_items(mut cart: Cart) -> int:
+    items = cart.items
+    count: () -> int = () => len(items)
+    return count()
+"#;
+    let (_, _, module) = checked_seed(source)?;
+    for (name, expected) in [
+        ("count_items", bir::OwnershipFact::Borrow),
+        ("add_twice", bir::OwnershipFact::MutBorrow),
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing body")?;
+        let (capture, local) = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue:
+                        bir::Rvalue::Closure {
+                            captured_operands,
+                            body,
+                            ..
+                        },
+                    ..
+                } => match (captured_operands.as_slice(), body.capture_locals.as_slice()) {
+                    ([bir::Operand::Place(capture)], [local]) => Some((capture, local)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or("missing checked field capture")?;
+        assert_eq!(capture.fact, expected, "{name}");
+        assert!(!capture.last_use, "{name}");
+        assert_eq!(capture.place.local_id(), Some(body.params[0].local), "{name}");
+        assert!(matches!(
+            capture.place.projection.last(),
+            Some(bir::PlaceElem::Field { name, canonical: Some(_), .. }) if name == "items"
+        ));
+        assert_eq!(
+            matches!(body.locals[local.index()].ty, IncanType::RefMut(_)),
+            expected == bir::OwnershipFact::MutBorrow,
+            "{name}"
+        );
+    }
+    let plans = planned(source)?;
+    let writable = function(&plans, "add_twice")?;
+    assert!(!writable.contains("nsupported"), "{writable}");
+    assert_eq!(writable.matches("CallExclusiveClosure").count(), 2, "{writable}");
+    let forwarded = function(&plans, "forward_twice")?;
+    assert!(!forwarded.contains("nsupported"), "{forwarded}");
+    let helper = function(&plans, "call_twice")?;
+    assert!(!helper.contains("nsupported"), "{helper}");
+    assert_eq!(helper.matches("CallExclusiveClosure").count(), 2, "{helper}");
+    let forwarded_shared = function(&plans, "show_twice")?;
+    assert!(!forwarded_shared.contains("nsupported"), "{forwarded_shared}");
+    let shared = function(&plans, "count_items")?;
+    assert!(!shared.contains("nsupported"), "{shared}");
+    assert_eq!(shared.matches("CallBorrowingClosure").count(), 1, "{shared}");
     Ok(())
 }
 

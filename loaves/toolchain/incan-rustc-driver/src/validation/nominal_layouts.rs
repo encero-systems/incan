@@ -213,6 +213,8 @@ pub(super) fn validate_models(plan: &Plan, borrowed_aliases: &BorrowedAliasInven
                     | PlanType::ClosureRef(_)
                     | PlanType::BorrowingClosure(_)
                     | PlanType::BorrowingClosureRef(_)
+                    | PlanType::ExclusiveClosure(_)
+                    | PlanType::ExclusiveClosureRef(_)
             ) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
@@ -624,6 +626,8 @@ pub(super) fn library_argument_models(
         | PlanType::ClosureOnce(signature)
         | PlanType::BorrowingClosure(signature)
         | PlanType::BorrowingClosureRef(signature)
+        | PlanType::ExclusiveClosure(signature)
+        | PlanType::ExclusiveClosureRef(signature)
         | PlanType::SharedCallable(signature)
         | PlanType::Future(signature)
         | PlanType::FrozenCollection(_, signature)
@@ -800,6 +804,8 @@ fn borrowed_alias_dependencies(plan: &Plan, ty: &PlanType, dependencies: &mut BT
         | PlanType::ClosureRef(elements)
         | PlanType::BorrowingClosure(elements)
         | PlanType::BorrowingClosureRef(elements)
+        | PlanType::ExclusiveClosure(elements)
+        | PlanType::ExclusiveClosureRef(elements)
         | PlanType::SharedCallable(elements)
         | PlanType::FrozenCollection(_, elements)
         | PlanType::FrozenCollectionRef(_, elements)
@@ -864,5 +870,7 @@ pub(super) fn library_argument_is_borrowed(ty: &PlanType) -> bool {
             | PlanType::ClosureRef(..)
             | PlanType::BorrowingClosure(..)
             | PlanType::BorrowingClosureRef(..)
+            | PlanType::ExclusiveClosure(..)
+            | PlanType::ExclusiveClosureRef(..)
     )
 }

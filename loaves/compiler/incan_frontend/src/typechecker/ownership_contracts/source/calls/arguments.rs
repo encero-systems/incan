@@ -216,7 +216,7 @@ impl Builder<'_> {
     }
 
     /// Whether one immutable ordinary slot receives exact fresh scalar storage rather than observing a stored place.
-    fn fresh_ordinary_argument(
+    pub(super) fn fresh_ordinary_argument(
         &mut self,
         expression: &Spanned<Expr>,
         parameter: &CallableParam,

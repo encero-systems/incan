@@ -281,6 +281,7 @@ fn fold_callee(callee: &Callee, remap: &mut NominalRemap) -> Result<Callee, Stri
         CalleeKind::CallClosure(types) => CalleeKind::CallClosure(remap_types(types, remap)?),
         CalleeKind::CallClosureOnce(types) => CalleeKind::CallClosureOnce(remap_types(types, remap)?),
         CalleeKind::CallBorrowingClosure(types) => CalleeKind::CallBorrowingClosure(remap_types(types, remap)?),
+        CalleeKind::CallExclusiveClosure(types) => CalleeKind::CallExclusiveClosure(remap_types(types, remap)?),
         CalleeKind::CloneClosure(types) => CalleeKind::CloneClosure(remap_types(types, remap)?),
         CalleeKind::FormatValue(ty, debug) => CalleeKind::FormatValue(remap_type(ty, remap)?, *debug),
         CalleeKind::InstallPanicHook(types) => CalleeKind::InstallPanicHook(remap_types(types, remap)?),
