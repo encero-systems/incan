@@ -92,8 +92,12 @@ def verify_borrow_transitions(binary: str, root: Path, store: Path) -> Result[No
     handle, unit = selected_fanout_program(store, window)?
     if handle != earlier_handle or unit != earlier_unit or proof_count(report, "native_bakes")? != 0:
         return Err("10.3 borrow return: the app did not reuse its earlier native descriptor with zero new bakes")
-    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?)?
-    _ = require_returned_app_checks(app, owned_window, compiler_activations(trace, owned)?)?
+    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?).map_err(
+        (reason) => "ordinary borrow return: " + reason,
+    )?
+    _ = require_returned_app_checks(app, owned_window, compiler_activations(trace, owned)?).map_err(
+        (reason) => "ordinary owned edit: " + reason,
+    )?
     if control_namespace(store)? != control:
         return Err("10.3 independent control no longer has its original checked namespace")
     write(native, owned_body)?
@@ -117,7 +121,9 @@ def verify_diagnostic_return(
         or proof_count(report, "native_bakes")? != 0
     ):
         return Err("10.3 diagnostic return did not reuse the sealed owned payload")
-    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?)?
+    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?).map_err(
+        (reason) => "diagnostic return: " + reason,
+    )?
     if diagnostic.warnings == "" or diagnostic.warnings == owned.warnings:
         return Err("10.3 diagnostic return did not bind the new source warning identity")
     if find(store, diagnostic.warnings)? is not None:
