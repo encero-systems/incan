@@ -348,8 +348,11 @@ def write_selected_record_pages(
     mut observed_markers = 0
     mut observed_references = 0
     mut observed_size = 0
-    for index in range(limit.unwrap_or(len(records))):
-        let page: Borrowed[SelectedBodyPage] = records[index]
+    mut remaining_pages = limit.unwrap_or(len(records))
+    for page in records:
+        if remaining_pages <= 0:
+            break
+        remaining_pages -= 1
         clock = work_clock()
         # A page offered by its store frame is a line of the request's frame list; its bytes are not copied.
         if page.segment != "" and page.digest != "":
