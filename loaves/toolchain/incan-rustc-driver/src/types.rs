@@ -82,28 +82,12 @@ pub(crate) fn native_trait_object<'tcx>(
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
-        PlanType::CChar => {
-            let alias = crate::callees::native_type_item(tcx, "core::ffi::c_char")?;
-            tcx.type_of(alias).instantiate_identity().skip_normalization()
-        }
+        PlanType::CChar => c_char_type(tcx)?,
         PlanType::RawPointer(mutable, elements) => raw_pointer_type(tcx, *mutable, elements)?,
-        PlanType::Boxed(elements) => match elements.as_slice() {
-            [referent] => Ty::new_box(tcx, native_type(tcx, referent)?),
-            _ => {
-                return Err(PlanError::Unsupported {
-                    function: "boxed field".into(),
-                    reason: "a box holds exactly one referent".into(),
-                });
-            }
-        },
+        PlanType::Boxed(elements) => boxed_type(tcx, elements)?,
         PlanType::NativeTraitObject(path, send, sync) => marked_trait_object_type(tcx, path, *send, *sync)?,
         PlanType::TypeToken(elements) => type_token_type(tcx, elements)?,
-        PlanType::Trait(_) => {
-            return Err(PlanError::Unsupported {
-                function: "source trait".into(),
-                reason: "a source trait identity has storage only inside TypeToken".into(),
-            });
-        }
+        PlanType::Trait(_) => return Err(source_trait_storage()),
         PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements, false)?,
         PlanType::ScalarMutRef(elements) => scalar_reference_type(tcx, elements, true)?,
         PlanType::Future(arguments) => future_alias_type(tcx, arguments)?,
@@ -208,6 +192,31 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::StringSlice => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, Ty::new_slice(tcx, string_type(tcx)?)),
         PlanType::StrSlice => native_reference(tcx, Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?), false),
     })
+}
+
+/// The target's `core::ffi::c_char` alias, resolved to the native integer type it names.
+fn c_char_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let alias = crate::callees::native_type_item(tcx, "core::ffi::c_char")?;
+    Ok(tcx.type_of(alias).instantiate_identity().skip_normalization())
+}
+
+/// A box of exactly one referent.
+fn boxed_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    match elements {
+        [referent] => Ok(Ty::new_box(tcx, native_type(tcx, referent)?)),
+        _ => Err(PlanError::Unsupported {
+            function: "boxed field".into(),
+            reason: "a box holds exactly one referent".into(),
+        }),
+    }
+}
+
+/// The refusal of a source trait identity outside a `TypeToken`, where it has no storage of its own.
+fn source_trait_storage() -> PlanError {
+    PlanError::Unsupported {
+        function: "source trait".into(),
+        reason: "a source trait identity has storage only inside TypeToken".into(),
+    }
 }
 
 /// Form the executor's exact safe Rust-ABI callback type with no inputs or bound lifetimes and a unit result.
