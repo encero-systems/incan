@@ -36,6 +36,7 @@ impl TypeChecker {
         self.await_operand_span = prev_await_operand_span;
 
         if let Some(output_ty) = self.await_output_type(inner, &inner_ty) {
+            self.note_inferred_field_suspension(span);
             self.retain_open_await_value(inner.span, span);
             self.retain_body_ir_await_output(inner, &output_ty, span);
             return output_ty;

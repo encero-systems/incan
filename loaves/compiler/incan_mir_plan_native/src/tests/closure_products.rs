@@ -81,6 +81,17 @@ fn product_carries_lifted_closure_frames() -> Result<(), String> {
         decoded == frames,
         "the lifted closure frame did not survive its product"
     );
+    let mut exclusive = caller.clone();
+    let callable = vec![PlanType::Int, PlanType::Int];
+    exclusive.locals[1].ty = PlanType::ExclusiveClosure(callable.clone());
+    exclusive.locals[2].ty = PlanType::ExclusiveClosureRef(callable.clone());
+    let TerminatorKind::Call(callee, _, _, _, _) = &mut exclusive.blocks[0].terminator.kind else {
+        return Err("missing closure receiver call".to_owned());
+    };
+    callee.kind = CalleeKind::CallExclusiveClosure(callable);
+    let encoded = encode_product(&exclusive, &[], &[], &frames)?;
+    assert_ne!(encoded, product);
+    assert_eq!(decode_product(&encoded, &references)?.0, exclusive);
     Ok(())
 }
 

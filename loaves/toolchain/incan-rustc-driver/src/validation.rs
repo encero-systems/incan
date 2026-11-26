@@ -163,6 +163,8 @@ enum Scalar {
     ClosureRef(Vec<Scalar>),
     BorrowingClosure(Vec<Scalar>),
     BorrowingClosureRef(Vec<Scalar>),
+    ExclusiveClosure(Vec<Scalar>),
+    ExclusiveClosureRef(Vec<Scalar>),
     Future(Vec<Scalar>),
 }
 
@@ -346,6 +348,8 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::ClosureRef(signature) => Scalar::ClosureRef(signature.iter().map(scalar).collect()),
         PlanType::BorrowingClosure(signature) => Scalar::BorrowingClosure(signature.iter().map(scalar).collect()),
         PlanType::BorrowingClosureRef(signature) => Scalar::BorrowingClosureRef(signature.iter().map(scalar).collect()),
+        PlanType::ExclusiveClosure(signature) => Scalar::ExclusiveClosure(signature.iter().map(scalar).collect()),
+        PlanType::ExclusiveClosureRef(signature) => Scalar::ExclusiveClosureRef(signature.iter().map(scalar).collect()),
         PlanType::FunctionItem(name, signature) => {
             Scalar::FunctionItem(name.clone(), signature.iter().map(scalar).collect())
         }

@@ -14,12 +14,12 @@ use crate::builtins::list_call;
 use crate::callable_values::owned_callable_value;
 use crate::checked_values::{partial_flags, scalar_place, target_read};
 use crate::closures::{
-    callable_signature, closure_arguments, closure_capture_type, closure_constructor, function_assignment,
-    packed_input, reference_capture,
+    callable_signature, closure_arguments, closure_capture_type, closure_constructor, exclusive_capture,
+    function_assignment, packed_input, reference_capture,
 };
 use crate::collections::is_owned_collection;
 use crate::element_places::is_element_place;
-use crate::explicit_arguments::explicit_place_argument;
+use crate::explicit_arguments::{explicit_place_argument, reference_contract};
 use crate::frame::{
     Builder, drop_owned, place_type, read_place, temporary, terminate_call, track_rvalue_moves, value_type,
 };
@@ -59,7 +59,7 @@ pub fn assign_callable(
     let declared = place_type(&builder.locals, &target);
     if let PlanType::Closure(signature) = &declared {
         // A closure holding borrowed captures keeps its borrowing object in the binding.
-        if source == PlanType::BorrowingClosure(signature.clone()) {
+        if matches!(&source, PlanType::BorrowingClosure(held) | PlanType::ExclusiveClosure(held) if held == signature) {
             return move_closure(builder, target, value, signature.clone(), false, span, true);
         }
         let owned = owned_callable_value(builder, value, signature, span)?;
@@ -105,6 +105,12 @@ pub fn move_closure(
     if consumes_environment && !matches!(value.kind, OperandKind::Move(_)) {
         return Err("unsupported Body IR consuming closure assignment without a move".into());
     }
+    let object_type = match value_type(builder, &value)? {
+        ty @ PlanType::ExclusiveClosure(_) => ty,
+        _ if borrowing => PlanType::BorrowingClosure(signature.clone()),
+        _ if consumes_environment => PlanType::ClosureOnce(signature.clone()),
+        _ => PlanType::Closure(signature.clone()),
+    };
     let scalar_environment = match &value.kind {
         OperandKind::Move(source) => {
             source.projection == Projection::Whole
@@ -116,14 +122,7 @@ pub fn move_closure(
     record_scalar_closure(builder, target.local, scalar_environment);
     track_rvalue_moves(builder, &RvalueKind::Use(value.clone()));
     drop_owned(builder, target.local, span);
-    hold_closure(
-        builder,
-        target.local,
-        &signature,
-        flags,
-        consumes_environment,
-        borrowing,
-    )?;
+    hold_closure(builder, target.local, &signature, flags, object_type)?;
     let local = target.local;
     builder.emit(plan_assign(target, RvalueKind::Use(value), span));
     builder.owned.push(local);
@@ -158,9 +157,9 @@ fn hold_closure(
     local: i64,
     signature: &[PlanType],
     flags: Vec<bool>,
-    consumes_environment: bool,
-    borrowing: bool,
+    object_type: PlanType,
 ) -> Result<(), String> {
+    let consumes_environment = matches!(&object_type, PlanType::ClosureOnce(_));
     if local <= builder.parameter_count || builder.materialized_closures.contains(&local) {
         match &builder.locals[local as usize].ty {
             PlanType::Closure(held) => {
@@ -176,17 +175,12 @@ fn hold_closure(
             PlanType::ClosureOnce(held) if !consumes_environment || held != signature => {
                 return Err("unsupported Body IR binding changing callable consumption or signature".into());
             }
+            held @ PlanType::ExclusiveClosure(_) if *held != object_type => {
+                return Err("unsupported Body IR binding changing exclusive callable storage".into());
+            }
             _ => {}
         }
     }
-    let signature = signature.to_vec();
-    let object_type = if borrowing {
-        PlanType::BorrowingClosure(signature)
-    } else if consumes_environment {
-        PlanType::ClosureOnce(signature)
-    } else {
-        PlanType::Closure(signature)
-    };
     builder.locals[local as usize].ty = object_type;
     if !builder.materialized_closures.contains(&local) {
         builder.materialized_closures.push(local);
@@ -311,9 +305,11 @@ fn construct_environment(
         return Err("unsupported Body IR capturing closure stored as a function pointer".into());
     }
     closure_arguments(&signature)?;
-    // An environment holding shared references lives no longer than their shortest borrow, which checking keeps
+    // An environment holding references lives no longer than their shortest borrow, which checking keeps
     // alive. Its object takes that common bound while each capture retains its independent source lifetime.
-    let borrowing = capture_types.iter().any(reference_capture);
+    let borrowing = capture_types
+        .iter()
+        .any(|ty| reference_capture(ty) || exclusive_capture(ty));
     if borrowing && flags.contains(&true) {
         return Err("unsupported Body IR closure holding borrowed captures with default parameters".into());
     }
@@ -339,21 +335,12 @@ fn construct_environment(
         span,
         native_send,
         native_sync,
-        borrowing,
+        false,
     );
+    let object_type = constructor.return_type.clone();
     synthesize(builder, constructor);
     drop_owned(builder, target.local, span);
-    hold_closure(
-        builder,
-        target.local,
-        &signature,
-        flags,
-        closure.consumes_environment,
-        borrowing,
-    )?;
-    if native_send || native_sync {
-        builder.locals[target.local as usize].ty = PlanType::NativeClosure(signature, native_send, native_sync);
-    }
+    hold_closure(builder, target.local, &signature, flags, object_type)?;
     let local = target.local;
     terminate_call(builder, CalleeKind::Planned(constructor_name), operands, target, span);
     let scalar_environment = capture_types.iter().all(scalar_capture);
@@ -362,16 +349,23 @@ fn construct_environment(
     Ok(())
 }
 
-/// A capture the closure borrows is a fresh shared loan of its exact place, unless that place already holds a shared
-/// reference, which is copied; any other capture is read as a value.
+/// Lend the exact checked capture place to its environment, reborrowing when the place already holds a loan.
 fn capture_operand(builder: &mut Builder, capture: &SourceOperand, span: &SourceSpan) -> Result<Operand, String> {
     if let SourceOperand::Place(read) = capture
-        && read.fact == OwnershipFact::Borrow
+        && matches!(read.fact, OwnershipFact::Borrow | OwnershipFact::MutBorrow)
     {
         let source = scalar_place(builder, &read.place, span)?;
-        let referent = place_type(&builder.locals, &source);
-        if !reference_capture(&referent) {
-            let expected = shared_receiver_type(referent)?;
+        let ty = place_type(&builder.locals, &source);
+        if read.fact == OwnershipFact::MutBorrow {
+            let expected = if reference_contract(&ty).is_ok() {
+                ty
+            } else {
+                crate::layout_types::mutable_receiver_type(ty)?
+            };
+            return explicit_place_argument(builder, source, read.fact, &expected, IncanInputAccess::Exclusive, span);
+        }
+        if !reference_capture(&ty) {
+            let expected = shared_receiver_type(ty)?;
             return explicit_place_argument(builder, source, read.fact, &expected, IncanInputAccess::Shared, span);
         }
     }
@@ -407,8 +401,8 @@ fn lift_closure(
     lifted.consuming_closure_frame = closure.consumes_environment;
     for (index, captured_local) in closure.capture_locals.iter().enumerate().take(captures.len()) {
         let destination = captured_local.index() as i64 + 1 + count;
-        // A shared reference capture is stored as that reference; the body reads its borrowed value through it.
-        let captured = if reference_capture(&arguments[index]) {
+        // A borrowed capture retains the reference that the callback lends to this invocation.
+        let captured = if reference_capture(&arguments[index]) || exclusive_capture(&arguments[index]) {
             arguments[index].clone()
         } else {
             lifted.locals[destination as usize].ty.clone()
@@ -994,7 +988,11 @@ pub fn bind_closure_input(
         || is_nominal_type(ty)
         || is_owned_collection(ty)
         || matches!(ty, PlanType::ZipIterator(..));
-    let value = read_place(plan_place(argument, span), owned || is_exclusive_borrow(ty), span);
+    let value = read_place(
+        plan_place(argument, span),
+        owned || is_exclusive_borrow(ty) || exclusive_capture(ty),
+        span,
+    );
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind::Use(value), span));
     if owned {
         lifted.owned.push(destination);

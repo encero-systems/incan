@@ -57,14 +57,7 @@ pub(super) fn rvalue(
             enum_aggregate_result(plan, function, *owner, *variant, elements, expected)
         }
         RvalueKind::FunctionItem(callee) => function_item_result(plan, function, callee),
-        RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
-            Scalar::Closure(signature) => Ok(Scalar::ClosureRef(signature)),
-            Scalar::BorrowingClosure(signature) => Ok(Scalar::BorrowingClosureRef(signature)),
-            _ => Err(invalid(
-                function,
-                "callable-object borrow requires an owned closure payload",
-            )),
-        },
+        RvalueKind::ClosureObject(value) => closure_receiver(plan, function, value),
         RvalueKind::ReifyFunction(value) => {
             let Scalar::FunctionItem(_, signature) = operand(plan, function, value)? else {
                 return Err(invalid(function, "function-pointer coercion requires a function item"));
@@ -123,6 +116,19 @@ pub(super) fn rvalue(
                 "slice coercion requires a shared formatting-array reference",
             )),
         },
+    }
+}
+
+/// Select the receiver type for a reference to the callable object owned by the box.
+fn closure_receiver(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, PlanError> {
+    match place(plan, function, value)? {
+        Scalar::Closure(signature) => Ok(Scalar::ClosureRef(signature)),
+        Scalar::BorrowingClosure(signature) => Ok(Scalar::BorrowingClosureRef(signature)),
+        Scalar::ExclusiveClosure(signature) => Ok(Scalar::ExclusiveClosureRef(signature)),
+        _ => Err(invalid(
+            function,
+            "callable-object borrow requires an owned closure payload",
+        )),
     }
 }
 
@@ -590,6 +596,7 @@ pub(super) fn validate_closure_constructor(function: &Function) -> Result<(), Pl
                 | PlanType::ClosureOnce(_)
                 | PlanType::NativeClosure(..)
                 | PlanType::BorrowingClosure(_)
+                | PlanType::ExclusiveClosure(_)
         )
         || usize::try_from(count).ok() != Some(function.parameters.len())
     {
@@ -602,7 +609,16 @@ pub(super) fn validate_closure_constructor(function: &Function) -> Result<(), Pl
     let TerminatorKind::Call(callee, ..) = &first.terminator.kind else {
         return Err(refused());
     };
-    if consumes_environment != matches!(callee.kind, CalleeKind::ClosureBodyOnce(..))
+    let has_exclusive_capture = function
+        .parameters
+        .iter()
+        .any(|parameter| crate::plan::exclusive_capture(&parameter.ty));
+    let exclusive = matches!(function.return_type, PlanType::ExclusiveClosure(_));
+    // A shared lending adapter implements Fn and can fill the call-only FnMut carrier.
+    let lends_shared_callable = matches!(function.parameters.as_slice(), [parameter]
+        if matches!(parameter.ty, PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_)));
+    if (exclusive != has_exclusive_capture && !(exclusive && lends_shared_callable))
+        || consumes_environment != matches!(callee.kind, CalleeKind::ClosureBodyOnce(..))
         || (consumes_environment && function.parameters.is_empty())
     {
         return Err(refused());
@@ -615,10 +631,9 @@ pub(super) fn validate_closure_constructor(function: &Function) -> Result<(), Pl
             OperandKind::Move(place) => (true, place),
             _ => return false,
         };
-        let owned = function
-            .parameters
-            .get(index)
-            .is_some_and(|parameter| crate::plan::owned_capture(parameter.ty.clone()));
+        let owned = function.parameters.get(index).is_some_and(|parameter| {
+            crate::plan::owned_capture(parameter.ty.clone()) || crate::plan::exclusive_capture(&parameter.ty)
+        });
         moved == (owned || consumes_environment)
             && matches!(place.projection, Projection::Whole)
             && usize::try_from(place.local).ok() == Some(index + 1)

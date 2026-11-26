@@ -318,6 +318,11 @@ pub fn owned_capture(ty: PlanType) -> bool {
     closures::owned_capture(&ty)
 }
 
+/// Whether a closure capture retains a writable reference that each invocation must reborrow.
+pub fn exclusive_capture(ty: &PlanType) -> bool {
+    closures::exclusive_capture(ty)
+}
+
 /// Publish a records request's whole-program plan functions under their keyed products, its entry binding and its
 /// native interface, for Bakery admission. The admissions are those lowering settled in the same request.
 pub fn publish_plan_records(

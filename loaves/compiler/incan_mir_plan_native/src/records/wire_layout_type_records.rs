@@ -4,6 +4,7 @@
 //! are read from their identity-ordered slots. A shape here and its description in `wire_schema.rs` change
 //! together.
 
+use super::schema_layout_type_records::{EXCLUSIVE_CLOSURE, EXCLUSIVE_CLOSURE_REF};
 use crate::records::prelude::*;
 
 /// The stored form of `StoredInstanceRequest` in the native-plan profile.
@@ -700,6 +701,8 @@ fn wire_plan_type_2(value: &PlanType) -> Result<Wire, String> {
         PlanType::SharedCallable(field0) => alternative(b"V\xfe9\xc0\xf7\xb9", vec![list(field0, wire_plan_type)?]),
         PlanType::ClosureOnce(field0) => alternative(b"\xd3\x9eqf\x1f.", vec![list(field0, wire_plan_type)?]),
         PlanType::ClosureRef(field0) => alternative(b"\x7f&q\xb2)\xed", vec![list(field0, wire_plan_type)?]),
+        PlanType::ExclusiveClosure(types) => alternative(EXCLUSIVE_CLOSURE, vec![list(types, wire_plan_type)?]),
+        PlanType::ExclusiveClosureRef(types) => alternative(EXCLUSIVE_CLOSURE_REF, vec![list(types, wire_plan_type)?]),
         PlanType::BorrowingClosure(field0) => alternative(b"`\xa1v\x08\xb0\xf4", vec![list(field0, wire_plan_type)?]),
         PlanType::BorrowingClosureRef(field0) => {
             alternative(b"\xec\xdb\xa9E\xf7\xde", vec![list(field0, wire_plan_type)?])
@@ -977,6 +980,12 @@ fn read_plan_type_alternative_2(
         ),
         b"\x1e\x82j\xeb<\xa2" if fields.len() == 1 => {
             PlanType::Boxed(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
+        }
+        EXCLUSIVE_CLOSURE if fields.len() == 1 => {
+            PlanType::ExclusiveClosure(read_list(&fields[0].value, |item| read_plan_type(item, positions))?)
+        }
+        EXCLUSIVE_CLOSURE_REF if fields.len() == 1 => {
+            PlanType::ExclusiveClosureRef(read_list(&fields[0].value, |item| read_plan_type(item, positions))?)
         }
         _ => return Err("unknown or incomplete StoredLayoutPlanType alternative".to_owned()),
     })

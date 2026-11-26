@@ -117,7 +117,7 @@ pub fn call_callable_place(
         PlanType::Closure(_) | PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_) => {
             return call_closure(builder, callable, &signature, operands, output, span);
         }
-        PlanType::BorrowingClosure(_) => {
+        PlanType::BorrowingClosure(_) | PlanType::ExclusiveClosure(_) => {
             let local = callable.local;
             call_closure(builder, callable, &signature, operands, output, span)?;
             if held.last_use && local > builder.parameter_count {
@@ -162,16 +162,14 @@ pub fn call_closure(
     span: &SourceSpan,
 ) -> Result<(), String> {
     let packed = packed_arguments(builder, signature, operands, span)?;
-    let borrowing = matches!(
-        place_type(&builder.locals, &callable),
-        PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_)
-    );
-    let receiver = callable_object(builder, callable, signature, span)?;
-    let callee = if borrowing {
-        CalleeKind::CallBorrowingClosure(signature.to_vec())
-    } else {
-        CalleeKind::CallClosure(signature.to_vec())
+    let callee = match place_type(&builder.locals, &callable) {
+        PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_) => {
+            CalleeKind::CallBorrowingClosure(signature.to_vec())
+        }
+        PlanType::ExclusiveClosure(_) => CalleeKind::CallExclusiveClosure(signature.to_vec()),
+        _ => CalleeKind::CallClosure(signature.to_vec()),
     };
+    let receiver = callable_object(builder, callable, signature, span)?;
     lower_callable_result(
         builder,
         callee,
@@ -197,7 +195,7 @@ fn packed_arguments(
     Ok(packed)
 }
 
-/// Borrow an owned closure, or copy a received view, as the shared callable object a call takes.
+/// Borrow an owned closure with its access, or copy a received shared callable view.
 pub fn callable_object(
     builder: &mut Builder,
     callable: Place,
@@ -208,11 +206,13 @@ pub fn callable_object(
         PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_) => return Ok(read_place(callable, false, span)),
         PlanType::Closure(_) => PlanType::ClosureRef(signature.to_vec()),
         PlanType::BorrowingClosure(_) => PlanType::BorrowingClosureRef(signature.to_vec()),
+        PlanType::ExclusiveClosure(_) => PlanType::ExclusiveClosureRef(signature.to_vec()),
         _ => return Err("unsupported Body IR callable without an object representation".into()),
     };
+    let exclusive = matches!(&view_type, PlanType::ExclusiveClosureRef(_));
     let view = temporary(builder, view_type, span);
     builder.emit(plan_assign(view.clone(), RvalueKind::ClosureObject(callable), span));
-    Ok(read_place(view, false, span))
+    Ok(read_place(view, exclusive, span))
 }
 
 /// Register an authenticated named read before a decorator or ordinary argument can observe its name.
@@ -374,17 +374,8 @@ fn borrowed_callable_argument(
     signature: &[PlanType],
     span: &SourceSpan,
 ) -> Result<Operand, String> {
-    let borrowing_source = match place_type(&builder.locals, &callable) {
-        PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_) => true,
-        PlanType::Closure(_) | PlanType::ClosureRef(_) => false,
-        _ => return Err("unsupported Body IR borrowing callable argument".into()),
-    };
     let source = callable_object(builder, callable, signature, span)?;
-    let capture = if borrowing_source {
-        PlanType::BorrowingClosureRef(signature.to_vec())
-    } else {
-        PlanType::ClosureRef(signature.to_vec())
-    };
+    let capture = value_type(builder, &source)?;
     let name = format!(
         "__incan_borrowed_callable_{}_{}",
         builder.name,
@@ -392,24 +383,22 @@ fn borrowed_callable_argument(
     );
     synthesize(
         builder,
-        borrowed_callable_forwarder(&name, signature, borrowing_source, span)?,
+        borrowed_callable_forwarder(&name, signature, capture.clone(), span)?,
     );
     let constructor = format!("{name}_new");
-    synthesize(
-        builder,
-        closure_constructor(
-            &constructor,
-            &name,
-            &[capture],
-            signature,
-            false,
-            span,
-            false,
-            false,
-            true,
-        ),
+    let environment = closure_constructor(
+        &constructor,
+        &name,
+        &[capture],
+        signature,
+        false,
+        span,
+        false,
+        false,
+        true,
     );
-    let boxed = temporary(builder, PlanType::BorrowingClosure(signature.to_vec()), span);
+    let boxed = temporary(builder, environment.return_type.clone(), span);
+    synthesize(builder, environment);
     terminate_call(
         builder,
         CalleeKind::Planned(constructor),

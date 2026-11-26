@@ -697,20 +697,14 @@ impl Builder<'_> {
                 span: expression.span,
                 reason: "missing selected argument slot".into(),
             })?;
-            let mode = contract
-                .and_then(|contract| {
-                    contract
-                        .modes
-                        .iter()
-                        .find(|mode| mode.component.parameter == Some(slot))
-                })
-                .map(|mode| mode.mode)
-                // A native reference slot borrows its argument as the same explicit mode does (RFC 164).
-                .or_else(|| match &call.parameters[slot].ty {
-                    ResolvedType::Ref(_) => Some(OwnershipMode::Borrowed),
-                    ResolvedType::RefMut(_) => Some(OwnershipMode::BorrowedMut),
-                    _ => None,
-                });
+            let access = self
+                .checker
+                .type_info
+                .selected_input_access(call, contract, slot)
+                .map_err(|reason| Unavailable {
+                    span: expression.span,
+                    reason: reason.into(),
+                })?;
             // A closure local passed on is read where it is passed, through the borrow it holds.
             if let Some(closure) = self.closure_local(expression) {
                 let (outgoing, argument) =
@@ -736,14 +730,20 @@ impl Builder<'_> {
                 )?
             };
             // An exclusive reborrow of a `&mut` binding is reserved, as a shared loan, until the call.
-            let reserved =
-                mode == Some(OwnershipMode::BorrowedMut) && self.reborrowed_exclusive_argument(expression)?;
+            let reserved = access == IncanInputAccess::Exclusive && self.reborrowed_exclusive_argument(expression)?;
+            let mode = match access {
+                IncanInputAccess::Shared | IncanInputAccess::InferredShared => Some(OwnershipMode::Borrowed),
+                IncanInputAccess::Exclusive if reserved => Some(OwnershipMode::Borrowed),
+                IncanInputAccess::Exclusive => Some(OwnershipMode::BorrowedMut),
+                IncanInputAccess::Owned => Some(OwnershipMode::Owned),
+                IncanInputAccess::Inferred => None,
+            };
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
             let (outgoing, loan) = self.call_argument(
                 expression,
                 &call.parameters[slot],
-                if reserved { Some(OwnershipMode::Borrowed) } else { mode },
+                mode,
                 call.kind == super::super::InputCallKind::Ordinary,
                 closed_enum_parameter_observer,
                 selected_result_map_err,
@@ -791,18 +791,10 @@ impl Builder<'_> {
                 span: expression.span,
                 slot,
                 written_position,
-                access: match mode {
-                    Some(OwnershipMode::Borrowed) => IncanInputAccess::Shared,
-                    Some(OwnershipMode::BorrowedMut) => IncanInputAccess::Exclusive,
-                    Some(OwnershipMode::Owned) => IncanInputAccess::Owned,
-                    None if classified_move => IncanInputAccess::Owned,
-                    None => IncanInputAccess::Inferred,
-                    Some(OwnershipMode::Reference) => {
-                        return Err(Unavailable {
-                            span,
-                            reason: "returned input reference is not an invocation mode".into(),
-                        });
-                    }
+                access: if access == IncanInputAccess::Inferred && classified_move {
+                    IncanInputAccess::Owned
+                } else {
+                    access
                 },
                 loan,
                 source: loan.map(|loan| self.graph.loans[loan.0].source.clone()).or(source),

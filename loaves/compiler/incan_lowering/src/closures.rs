@@ -235,7 +235,7 @@ pub fn parameter_representation(body: &Body, local: usize, ty: PlanType) -> Resu
             .any(|held| held.index() == local)
         {
             closure_arguments(signature)?;
-            return Ok(PlanType::BorrowingClosure(signature.clone()));
+            return Ok(PlanType::ExclusiveClosure(signature.clone()));
         }
     }
     Ok(ty)
@@ -338,8 +338,8 @@ pub fn closure_value_type(ty: &PlanType) -> bool {
 /// Admit captures according to the retained reusable or consuming environment contract.
 ///
 /// Reusable environments copy scalars and clone owned text, collection, model, and enum snapshots for every call.
-/// A reusable environment can also hold one shared reference, copied into every call, while checking keeps its source
-/// borrowed. Checking forbids changes to captured values and aliases of their storage.
+/// A reusable environment can also hold checked loans. Each invocation copies a shared reference or reborrows an
+/// exclusive reference for the duration of the call.
 /// A proven consuming environment instead transfers its canonical zip into the lifted body once.
 pub fn closure_capture_type(ty: &PlanType, consumes_environment: bool) -> bool {
     match ty {
@@ -347,7 +347,7 @@ pub fn closure_capture_type(ty: &PlanType, consumes_environment: bool) -> bool {
         _ => {
             owned_capture(ty)
                 || (closure_value_type(ty) && *ty != PlanType::Unit)
-                || (!consumes_environment && reference_capture(ty))
+                || (!consumes_environment && (reference_capture(ty) || exclusive_capture(ty)))
         }
     }
 }
@@ -368,7 +368,14 @@ pub fn reference_capture(ty: &PlanType) -> bool {
     )
 }
 
+/// A checked reference carrier an exclusive closure can retain and reborrow.
+pub fn exclusive_capture(ty: &PlanType) -> bool {
+    matches!(ty, PlanType::ExclusiveClosureRef(_))
+        || crate::explicit_arguments::reference_contract(ty).is_ok_and(|(_, exclusive)| exclusive)
+}
+
 /// Select owned text, collection, callable, model, enum and zip snapshots for construction, validation and invocation.
+
 ///
 /// Reusable calls clone these snapshots.
 pub fn owned_capture(ty: &PlanType) -> bool {
@@ -393,9 +400,9 @@ pub fn callable_copy_type(ty: &PlanType) -> bool {
 
 /// Declare the constructor whose native body boxes one environment holding the captures in order.
 ///
-/// Its plan body is the validated reusable or consuming call contract returning the corresponding boxed object; an
-/// environment holding a shared reference returns the borrowing object, which lives no longer than that borrow. The
-/// driver supplies the native closure, whose body forwards the captures and then its own inputs to `lifted`.
+/// Its plan body returns the boxed callable required by the captures. A call-only lending envelope uses the exclusive
+/// callable carrier with either shared or exclusive captures. The driver forwards each capture with its own access,
+/// then passes the call inputs to `lifted`.
 #[allow(clippy::too_many_arguments)] // The Incan constructor's names, captures, signature and four object choices.
 pub fn closure_constructor(
     name: &str,
@@ -406,7 +413,7 @@ pub fn closure_constructor(
     span: &SourceSpan,
     native_send: bool,
     native_sync: bool,
-    borrowing: bool,
+    lending: bool,
 ) -> Function {
     let signature = signature.to_vec();
     let count = captures.len() as i64;
@@ -415,7 +422,9 @@ pub fn closure_constructor(
     if native_send || native_sync {
         object_type = PlanType::NativeClosure(signature.clone(), native_send, native_sync);
     }
-    if borrowing {
+    if lending || captures.iter().any(exclusive_capture) {
+        object_type = PlanType::ExclusiveClosure(signature.clone());
+    } else if captures.iter().any(reference_capture) {
         object_type = PlanType::BorrowingClosure(signature.clone());
     }
     if consumes_environment {
@@ -440,7 +449,7 @@ pub fn closure_constructor(
         });
         // Owned captures move into the environment; Copy scalars are copied.
         let place = plan_place(index as i64 + 1, span);
-        let kind = if consumes_environment || owned_capture(capture) {
+        let kind = if consumes_environment || owned_capture(capture) || exclusive_capture(capture) {
             OperandKind::Move(place)
         } else {
             OperandKind::Copy(place)
@@ -472,7 +481,9 @@ pub fn callable_signature(ty: &PlanType) -> Result<Vec<PlanType>, String> {
         | PlanType::ClosureOnce(signature)
         | PlanType::ClosureRef(signature)
         | PlanType::BorrowingClosure(signature)
-        | PlanType::BorrowingClosureRef(signature) => Ok(signature.clone()),
+        | PlanType::BorrowingClosureRef(signature)
+        | PlanType::ExclusiveClosure(signature)
+        | PlanType::ExclusiveClosureRef(signature) => Ok(signature.clone()),
         _ => Err("unsupported Body IR local callable representation".into()),
     }
 }
@@ -595,23 +606,23 @@ pub fn pointer_forwarder(name: &str, signature: &[PlanType], span: &SourceSpan) 
     )
 }
 
-/// Forward a shared callable through a call-owned borrowing envelope with the same signature.
+/// Forward the call-owned envelope's lent source using the source's shared or exclusive invocation.
 pub fn borrowed_callable_forwarder(
     name: &str,
     signature: &[PlanType],
-    borrowing_source: bool,
+    source: PlanType,
     span: &SourceSpan,
 ) -> Result<Function, String> {
-    let (source, callee) = if borrowing_source {
-        (
-            PlanType::BorrowingClosureRef(signature.to_vec()),
-            CalleeKind::CallBorrowingClosure(signature.to_vec()),
-        )
+    let callee = match &source {
+        PlanType::ClosureRef(signature) => CalleeKind::CallClosure(signature.clone()),
+        PlanType::BorrowingClosureRef(signature) => CalleeKind::CallBorrowingClosure(signature.clone()),
+        PlanType::ExclusiveClosureRef(signature) => CalleeKind::CallExclusiveClosure(signature.clone()),
+        _ => return Err("unsupported Body IR borrowing callable argument".into()),
+    };
+    let receiver = if exclusive_capture(&source) {
+        OperandKind::Move(plan_place(1, span))
     } else {
-        (
-            PlanType::ClosureRef(signature.to_vec()),
-            CalleeKind::CallClosure(signature.to_vec()),
-        )
+        OperandKind::Copy(plan_place(1, span))
     };
     let result = signature[signature.len() - 1].clone();
     let mut locals = vec![
@@ -650,7 +661,7 @@ pub fn borrowed_callable_forwarder(
     });
     let pack = assign(plan_place(packed, span), RvalueKind::Tuple(operands), span);
     let receiver = Operand {
-        kind: OperandKind::Copy(plan_place(1, span)),
+        kind: receiver,
         span: span.clone(),
     };
     let arguments = vec![
