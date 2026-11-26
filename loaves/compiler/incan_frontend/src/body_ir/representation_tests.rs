@@ -110,24 +110,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         args: vec![shape, callable],
     };
 
-    let mut legacy = seed.clone();
-    legacy_union_layouts::retain(&mut legacy);
-    let mut independent = Vec::new();
-    for body in &seed.bodies {
-        union_layouts::append_types(&mut independent, union_layouts::body_types(body));
-    }
-    for owner in &seed.nominal_declarations {
-        union_layouts::append_types(&mut independent, union_layouts::storage_types(owner.field_types.iter()));
-    }
-    let independent = independent
-        .into_iter()
-        .filter_map(union_layouts::layout)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        postcard::to_stdvec(&legacy.native_union_declarations)?,
-        postcard::to_stdvec(&independent)?
-    );
-    assert_eq!(independent.len(), 2);
+    assert_union_layouts_match(&seed)?;
 
     assert!(union_layouts::storage_types(std::iter::empty()).is_empty());
     assert_settled_function_seeds()?;
@@ -160,5 +143,29 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         .err()
         .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
+    Ok(())
+}
+
+/// Union layouts collected independently from each body and nominal storage type equal the module pass's ordered
+/// native union declarations.
+fn assert_union_layouts_match(seed: &bir::BodyIrModule) -> Result<(), Box<dyn std::error::Error>> {
+    let mut legacy = seed.clone();
+    legacy_union_layouts::retain(&mut legacy);
+    let mut independent = Vec::new();
+    for body in &seed.bodies {
+        union_layouts::append_types(&mut independent, union_layouts::body_types(body));
+    }
+    for owner in &seed.nominal_declarations {
+        union_layouts::append_types(&mut independent, union_layouts::storage_types(owner.field_types.iter()));
+    }
+    let independent = independent
+        .into_iter()
+        .filter_map(union_layouts::layout)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        postcard::to_stdvec(&legacy.native_union_declarations)?,
+        postcard::to_stdvec(&independent)?
+    );
+    assert_eq!(independent.len(), 2);
     Ok(())
 }
