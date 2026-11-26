@@ -649,6 +649,20 @@ pub def add_twice(mut cart: Cart) -> None:
     add: (str) -> None = (item) => items.append(item)
     add("plum")
     add("fig")
+    println(cart.items)
+
+def call_twice(callback: (str) -> None) -> None:
+    """Invoke the callback twice without retaining it."""
+    callback("plum")
+    callback("fig")
+
+pub def forward_twice(mut cart: Cart) -> None:
+    """Observe the list after the forwarded writable callable's final use."""
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    call_twice(add)
+    call_twice(add)
+    println(cart.items)
 
 pub def owned(limit: int) -> bool:
     """Call an erased closure that captures an owned scalar."""
