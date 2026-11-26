@@ -399,48 +399,15 @@ impl TypeChecker {
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::Field(info)) => Some(info.ty),
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::Property(info)) => Some(info.return_type),
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::Variant(info)) => {
-                let qualified = crate::typechecker::collect::dotted_path_segments(&base.node)
-                    .and_then(|segments| self.qualified_nominal_carrier(&segments))
-                    .map(ResolvedType::Named);
-                let retained = self
-                    .body_ir_checked_value_type(base.span)
-                    .filter(|result| matches!(result, ResolvedType::Named(_) | ResolvedType::Generic(_, _)))
-                    .cloned();
-                let result = qualified.or(retained).unwrap_or(ResolvedType::Named(info.enum_name));
-                if info.fields.is_empty() {
-                    Some(result)
-                } else {
-                    Some(ResolvedType::Function(
-                        info.fields.into_iter().map(CallableParam::positional).collect(),
-                        Box::new(result),
-                    ))
-                }
+                Some(self.imported_variant_type(base, info))
             }
-            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(type_info)) => {
-                let canonical_name = if let Some(library) = resolved.public_library.as_deref() {
-                    let root_len = self.loaf_binding_root(library).len();
-                    let mut source_type_path = resolved
-                        .source_module_path
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .skip(root_len)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    source_type_path.push(resolved.source_name.clone());
-                    canonical_public_library_type_name(library, &source_type_path.join("::"))
-                } else {
-                    resolved.source_name.clone()
-                };
-                self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
-                if let (Some(source), Some(source_kind)) = (
-                    resolved.source_module_path,
-                    Self::source_target_kind_for_type_info(&type_info),
-                ) {
-                    self.record_source_target(span, source, resolved.source_name, source_kind);
-                }
-                Some(ResolvedType::Named(canonical_name))
-            }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(type_info)) => Some(self.imported_type_name(
+                resolved.public_library.as_deref(),
+                resolved.source_module_path,
+                resolved.source_name,
+                &type_info,
+                span,
+            )),
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::Function(info)) => {
                 if self.decorator_callable_span == Some(span) {
                     self.decorator_callable_type_params = info.type_params.clone();
@@ -480,27 +447,7 @@ impl TypeChecker {
                 Some(ResolvedType::Function(info.params, Box::new(info.return_type)))
             }
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::RustItem(info)) => {
-                // A re-exported Rust function read through its module is the function value a read of the imported
-                // name is; any other Rust item stays outside value position here.
-                let metadata = info
-                    .metadata
-                    .clone()
-                    .or_else(|| self.rust_item_metadata_for_path(&info.path));
-                if let Some(metadata) = metadata
-                    && let RustItemKind::Function(signature) = &metadata.kind
-                {
-                    let declared =
-                        self.resolved_function_type_from_rust_sig_for_owner_path(signature, false, &info.path);
-                    return Some(
-                        self.retain_rust_function_value(&info.path, signature, span)
-                            .unwrap_or(declared),
-                    );
-                }
-                self.errors.push(CompileError::type_error(
-                    format!("Qualified member '{callable}' is not a value"),
-                    span,
-                ));
-                Some(ResolvedType::Unknown)
+                Some(self.imported_rust_item_value(&info, &callable, span))
             }
             ResolvedNamespaceMemberKind::Symbol(_) => {
                 self.errors.push(CompileError::type_error(
@@ -510,6 +457,82 @@ impl TypeChecker {
                 Some(ResolvedType::Unknown)
             }
         }
+    }
+
+    /// The type of an enum variant read through a module: its qualified or checked carrier, or its declaring enum, as
+    /// a constructor function when the variant has fields.
+    fn imported_variant_type(&mut self, base: &Spanned<Expr>, info: VariantInfo) -> ResolvedType {
+        let qualified = crate::typechecker::collect::dotted_path_segments(&base.node)
+            .and_then(|segments| self.qualified_nominal_carrier(&segments))
+            .map(ResolvedType::Named);
+        let retained = self
+            .body_ir_checked_value_type(base.span)
+            .filter(|result| matches!(result, ResolvedType::Named(_) | ResolvedType::Generic(_, _)))
+            .cloned();
+        let result = qualified.or(retained).unwrap_or(ResolvedType::Named(info.enum_name));
+        if info.fields.is_empty() {
+            result
+        } else {
+            ResolvedType::Function(
+                info.fields.into_iter().map(CallableParam::positional).collect(),
+                Box::new(result),
+            )
+        }
+    }
+
+    /// The canonical name of a type read through a module, recording it as a type name and its source target. A type
+    /// from a public library is named by its path below the library's binding root.
+    fn imported_type_name(
+        &mut self,
+        public_library: Option<&str>,
+        source_module_path: Option<Vec<String>>,
+        source_name: String,
+        type_info: &TypeInfo,
+        span: Span,
+    ) -> ResolvedType {
+        let canonical_name = if let Some(library) = public_library {
+            let root_len = self.loaf_binding_root(library).len();
+            let mut source_type_path = source_module_path
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .skip(root_len)
+                .cloned()
+                .collect::<Vec<_>>();
+            source_type_path.push(source_name.clone());
+            canonical_public_library_type_name(library, &source_type_path.join("::"))
+        } else {
+            source_name.clone()
+        };
+        self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
+        if let (Some(source), Some(source_kind)) =
+            (source_module_path, Self::source_target_kind_for_type_info(type_info))
+        {
+            self.record_source_target(span, source, source_name, source_kind);
+        }
+        ResolvedType::Named(canonical_name)
+    }
+
+    /// A re-exported Rust function read through its module is the function value a read of the imported name is; any
+    /// other Rust item stays outside value position.
+    fn imported_rust_item_value(&mut self, info: &RustItemInfo, callable: &str, span: Span) -> ResolvedType {
+        let metadata = info
+            .metadata
+            .clone()
+            .or_else(|| self.rust_item_metadata_for_path(&info.path));
+        if let Some(metadata) = metadata
+            && let RustItemKind::Function(signature) = &metadata.kind
+        {
+            let declared = self.resolved_function_type_from_rust_sig_for_owner_path(signature, false, &info.path);
+            return self
+                .retain_rust_function_value(&info.path, signature, span)
+                .unwrap_or(declared);
+        }
+        self.errors.push(CompileError::type_error(
+            format!("Qualified member '{callable}' is not a value"),
+            span,
+        ));
+        ResolvedType::Unknown
     }
 
     /// Prove a native namespace from checked import/type roles along a name or field path, excluding runtime receiver
@@ -566,24 +589,7 @@ impl TypeChecker {
                             ResolvedType::RustPath(format!("{path}::{field}"))
                         }
                         incan_lang::interop::RustModuleChildKind::Function => {
-                            let selected = format!("{path}::{field}");
-                            let Some(metadata) = self.rust_item_metadata_for_path(&selected) else {
-                                return ResolvedType::Unknown;
-                            };
-                            let RustItemKind::Function(signature) = &metadata.kind else {
-                                return ResolvedType::Unknown;
-                            };
-                            let ty = self.resolved_function_type_from_rust_sig_for_owner_path(
-                                signature,
-                                false,
-                                &metadata.canonical_path,
-                            );
-                            if namespace {
-                                return self
-                                    .retain_rust_function_value(&metadata.canonical_path, signature, span)
-                                    .unwrap_or(ty);
-                            }
-                            ty
+                            self.rust_module_function_type(path, field, span, namespace)
                         }
                         incan_lang::interop::RustModuleChildKind::Constant => {
                             let selected = format!("{path}::{field}");
@@ -653,6 +659,25 @@ impl TypeChecker {
             // Function, Trait, Constant: metadata coverage is incomplete, stay permissive.
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// The type of a function a Rust module exports, read as `path.field`. Read through a checked namespace it is an
+    /// executable function value; its metadata must name a function.
+    fn rust_module_function_type(&mut self, path: &str, field: &str, span: Span, namespace: bool) -> ResolvedType {
+        let selected = format!("{path}::{field}");
+        let Some(metadata) = self.rust_item_metadata_for_path(&selected) else {
+            return ResolvedType::Unknown;
+        };
+        let RustItemKind::Function(signature) = &metadata.kind else {
+            return ResolvedType::Unknown;
+        };
+        let ty = self.resolved_function_type_from_rust_sig_for_owner_path(signature, false, &metadata.canonical_path);
+        if namespace {
+            return self
+                .retain_rust_function_value(&metadata.canonical_path, signature, span)
+                .unwrap_or(ty);
+        }
+        ty
     }
 
     /// Retain a safe associated function's concrete native signature as a value without evaluating its owner type.
