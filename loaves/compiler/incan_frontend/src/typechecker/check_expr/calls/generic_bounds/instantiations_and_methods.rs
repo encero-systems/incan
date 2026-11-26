@@ -248,28 +248,10 @@ impl TypeChecker {
         );
 
         // ---- Call-site `Self`, value-arg compatibility ----
-        let (mut params, mut return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
-        match self.ownership_call_value_result(method_info.identity.as_ref(), &return_type, call_site_span) {
-            Ok(Some(value)) => return_type = value,
-            Ok(None) => {}
-            Err(error) => {
-                self.errors.push(error);
-                return ResolvedType::Unknown;
-            }
-        }
-        match self.ownership_call_value_parameters(
-            method_info.identity.as_ref(),
-            &params,
-            Some(receiver_ty),
-            call_site_span,
-        ) {
-            Ok(Some(values)) => params = values,
-            Ok(None) => {}
-            Err(error) => {
-                self.errors.push(error);
-                return ResolvedType::Unknown;
-            }
-        }
+        let Some((params, return_type)) = self.ownership_value_method_types(&method_info, receiver_ty, call_site_span)
+        else {
+            return ResolvedType::Unknown;
+        };
         if let Some(expected) = expected_return_ty {
             self.infer_type_param_bindings(&return_type, expected, &mut type_bindings);
         }
@@ -362,6 +344,39 @@ impl TypeChecker {
             arguments,
             return_type,
         })
+    }
+
+    /// The method's parameter and result types after call-site `Self` substitution, with any ownership contract's
+    /// value types in place of its declared modes. A refused contract is reported and leaves no types.
+    fn ownership_value_method_types(
+        &mut self,
+        method_info: &MethodInfo,
+        receiver_ty: &ResolvedType,
+        call_site_span: Span,
+    ) -> Option<(Vec<CallableParam>, ResolvedType)> {
+        let (mut params, mut return_type) = self.method_types_substituting_call_site_self(method_info, receiver_ty);
+        match self.ownership_call_value_result(method_info.identity.as_ref(), &return_type, call_site_span) {
+            Ok(Some(value)) => return_type = value,
+            Ok(None) => {}
+            Err(error) => {
+                self.errors.push(error);
+                return None;
+            }
+        }
+        match self.ownership_call_value_parameters(
+            method_info.identity.as_ref(),
+            &params,
+            Some(receiver_ty),
+            call_site_span,
+        ) {
+            Ok(Some(values)) => params = values,
+            Ok(None) => {}
+            Err(error) => {
+                self.errors.push(error);
+                return None;
+            }
+        }
+        Some((params, return_type))
     }
 
     /// Seed receiver binders before explicit method arguments, preserving partial-map inference markers and the

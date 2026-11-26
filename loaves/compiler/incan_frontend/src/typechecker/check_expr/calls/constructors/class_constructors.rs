@@ -177,15 +177,8 @@ impl TypeChecker {
             bound_fields.push(Some(canonical_name.clone()));
 
             if self.private_field_is_inaccessible(type_name, field_info) {
-                let error = if is_class {
-                    errors::private_class_constructor_field(
-                        field_info.owner.as_deref().map_or(display_name, |owner| owner),
-                        &field_name.node,
-                        field_name.span,
-                    )
-                } else {
-                    self.private_field_error(type_name, field_info, &field_name.node, field_name.span)
-                };
+                let error =
+                    self.private_constructor_field_error(type_name, display_name, field_info, field_name, is_class);
                 self.errors.push(error);
                 continue;
             }
@@ -211,19 +204,7 @@ impl TypeChecker {
         }
 
         // Enforce required fields (those without defaults) are present.
-        let mut every_required_field_supplied = true;
-        for (field_name, info) in fields {
-            if !info.has_default && !provided.contains_key(field_name) {
-                every_required_field_supplied = false;
-                self.errors.push(errors::missing_required_constructor_field(
-                    display_name,
-                    field_name,
-                    call_span,
-                ));
-            }
-        }
-
-        if every_required_field_supplied {
+        if self.require_constructor_fields(display_name, fields, &provided, call_span) {
             self.record_constructor_field_binding_for_lowering(field_order, &bound_fields, &provided, call_span);
         }
 
@@ -236,6 +217,50 @@ impl TypeChecker {
             errors_before_fields,
             call_span,
         )
+    }
+
+    /// The refusal of a written field the constructor's caller cannot see: a class names the field's declaring owner,
+    /// and a model reports its private field.
+    fn private_constructor_field_error(
+        &self,
+        type_name: &str,
+        display_name: &str,
+        field_info: &FieldInfo,
+        field_name: &Spanned<String>,
+        is_class: bool,
+    ) -> crate::diagnostics::CompileError {
+        if is_class {
+            errors::private_class_constructor_field(
+                field_info.owner.as_deref().map_or(display_name, |owner| owner),
+                &field_name.node,
+                field_name.span,
+            )
+        } else {
+            self.private_field_error(type_name, field_info, &field_name.node, field_name.span)
+        }
+    }
+
+    /// Report each required field, one without a default, the constructor call does not supply. Returns whether every
+    /// required field was supplied.
+    fn require_constructor_fields(
+        &mut self,
+        display_name: &str,
+        fields: &std::collections::HashMap<String, FieldInfo>,
+        provided: &std::collections::HashMap<String, Span>,
+        call_span: Span,
+    ) -> bool {
+        let mut every_required_field_supplied = true;
+        for (field_name, info) in fields {
+            if !info.has_default && !provided.contains_key(field_name) {
+                every_required_field_supplied = false;
+                self.errors.push(errors::missing_required_constructor_field(
+                    display_name,
+                    field_name,
+                    call_span,
+                ));
+            }
+        }
+        every_required_field_supplied
     }
 
     /// Finish checked field inference and retain concrete executable owner facts before caller context is applied.
