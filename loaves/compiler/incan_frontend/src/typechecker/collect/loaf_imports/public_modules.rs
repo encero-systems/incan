@@ -141,68 +141,12 @@ impl TypeChecker {
                 .iter()
                 .all(|declaration| matches!(declaration, ApiDeclaration::Alias(_)))
         {
-            let mut declared = Vec::with_capacity(overload_identities.len());
-            for identity in overload_identities.iter().flatten() {
-                let SymbolOrigin::Package { module_path, .. } = &identity.origin else {
-                    break;
-                };
-                let Some(provider) = self.loaves.declaring_loaf(identity).map(|entry| entry.key.clone()) else {
-                    break;
-                };
-                let Some(provider_manifest) = self.loaf_manifest_or_refuse(&provider, Span::default()) else {
-                    break;
-                };
-                let provider_api = provider_manifest.contract_metadata.api.as_ref();
-                let declaration = provider_api.and_then(|api| {
-                    api.modules
-                        .iter()
-                        .filter(|module| &module.module_path == module_path)
-                        .flat_map(|module| module.declarations.iter())
-                        .find(|declaration| {
-                            matches!(declaration, ApiDeclaration::Function(function)
-                                if function.name == identity.declaration_name
-                                    && function.anchor.span.start as u64 == identity.declaration_span.start as u64
-                                    && function.anchor.span.end as u64 == identity.declaration_span.end as u64)
-                        })
-                });
-                let Some(mut overload) = declaration
-                    .and_then(|declaration| self.symbol_kind_from_api_declaration(provider_api, declaration))
-                else {
-                    break;
-                };
-                let provider_remapping = self.public_library_canonical_type_remapping(&provider);
-                self.remap_symbol_kind_through_declaring_module(
-                    &provider,
-                    &provider_manifest,
-                    Some(identity),
-                    &mut overload,
-                );
-                self.remap_symbol_kind_with_import_aliases(&mut overload, &provider_remapping);
-                declared.push(overload);
-            }
-            if declared.len() == overload_identities.len() {
+            if let Some(declared) = self.external_alias_overloads(&overload_identities) {
                 kinds = declared;
             }
         }
-        let mut kind = match kinds.as_mut_slice() {
-            [kind] => kind.clone(),
-            kinds if !kinds.is_empty() && kinds.iter().all(|kind| matches!(kind, SymbolKind::Function(_))) => {
-                SymbolKind::FunctionOverloads(
-                    kinds
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, kind)| match kind {
-                            SymbolKind::Function(info) => Some(FunctionOverloadInfo {
-                                info: info.clone(),
-                                span: Span::default(),
-                                identity: overload_identities.get(index).cloned().flatten(),
-                            }),
-                            _ => None,
-                        })
-                        .collect(),
-                )
-            }
-            _ => return Err(source_modules),
+        let Some(mut kind) = Self::combined_symbol_kind(&kinds, &overload_identities) else {
+            return Err(source_modules);
         };
         let canonical = overload_identities
             .first()
@@ -241,6 +185,82 @@ impl TypeChecker {
             type_alias,
             partial_projection,
         }))
+    }
+
+    /// One declaration's symbol kind, or the overload set of several function declarations paired with their
+    /// identities in order. Any other combination has no single public member kind.
+    fn combined_symbol_kind(
+        kinds: &[SymbolKind],
+        overload_identities: &[Option<CanonicalSymbolId>],
+    ) -> Option<SymbolKind> {
+        Some(match kinds {
+            [kind] => kind.clone(),
+            kinds if !kinds.is_empty() && kinds.iter().all(|kind| matches!(kind, SymbolKind::Function(_))) => {
+                SymbolKind::FunctionOverloads(
+                    kinds
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, kind)| match kind {
+                            SymbolKind::Function(info) => Some(FunctionOverloadInfo {
+                                info: info.clone(),
+                                span: Span::default(),
+                                identity: overload_identities.get(index).cloned().flatten(),
+                            }),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            }
+            _ => return None,
+        })
+    }
+
+    /// Read each overload behind an external alias over an overload set from its declaring Loaf's own declaration, as
+    /// a re-export at a Loaf's root reads them. Returns them only when every identity resolves to a declaration.
+    fn external_alias_overloads(
+        &mut self,
+        overload_identities: &[Option<CanonicalSymbolId>],
+    ) -> Option<Vec<SymbolKind>> {
+        let mut declared = Vec::with_capacity(overload_identities.len());
+        for identity in overload_identities.iter().flatten() {
+            let SymbolOrigin::Package { module_path, .. } = &identity.origin else {
+                break;
+            };
+            let Some(provider) = self.loaves.declaring_loaf(identity).map(|entry| entry.key.clone()) else {
+                break;
+            };
+            let Some(provider_manifest) = self.loaf_manifest_or_refuse(&provider, Span::default()) else {
+                break;
+            };
+            let provider_api = provider_manifest.contract_metadata.api.as_ref();
+            let declaration = provider_api.and_then(|api| {
+                api.modules
+                    .iter()
+                    .filter(|module| &module.module_path == module_path)
+                    .flat_map(|module| module.declarations.iter())
+                    .find(|declaration| {
+                        matches!(declaration, ApiDeclaration::Function(function)
+                            if function.name == identity.declaration_name
+                                && function.anchor.span.start as u64 == identity.declaration_span.start as u64
+                                && function.anchor.span.end as u64 == identity.declaration_span.end as u64)
+                    })
+            });
+            let Some(mut overload) =
+                declaration.and_then(|declaration| self.symbol_kind_from_api_declaration(provider_api, declaration))
+            else {
+                break;
+            };
+            let provider_remapping = self.public_library_canonical_type_remapping(&provider);
+            self.remap_symbol_kind_through_declaring_module(
+                &provider,
+                &provider_manifest,
+                Some(identity),
+                &mut overload,
+            );
+            self.remap_symbol_kind_with_import_aliases(&mut overload, &provider_remapping);
+            declared.push(overload);
+        }
+        (declared.len() == overload_identities.len()).then_some(declared)
     }
 
     /// Reconstruct each declaration shape published under one public facade member.

@@ -21,12 +21,7 @@ impl BodyBuilder<'_, '_> {
         if name != "sum" || !arguments.is_empty() || !type_arguments.is_empty() {
             return None;
         }
-        let IncanType::Generic { base, args } = self.resolve_ty(receiver.span) else {
-            return None;
-        };
-        if base != traits::as_str(TraitId::Iterator) || args.len() != 1 {
-            return None;
-        }
+        let (base, args) = self.single_item_iterator(receiver)?;
         let IncanType::Named(owner) = &args[0] else {
             return None;
         };
@@ -83,19 +78,7 @@ impl BodyBuilder<'_, '_> {
             facts.checked_constructor.as_deref(),
             facts.checked_constructor_identity.as_ref(),
         );
-        let source_iterator = self
-            .type_info
-            .declarations
-            .named_type_identities
-            .get(&base)
-            .is_some_and(|identity| {
-                matches!(
-                    identity.kind,
-                    super::SemanticSourceTargetKind::Class
-                        | super::SemanticSourceTargetKind::Model
-                        | super::SemanticSourceTargetKind::Newtype
-                )
-            });
+        let source_iterator = self.names_source_nominal(&base);
         if source_iterator
             || !hook_matches
             || accepted.map(|item| self.checked_type(item)) != Some(target.clone())
@@ -142,6 +125,30 @@ impl BodyBuilder<'_, '_> {
             span: source_span,
         });
         Some(result)
+    }
+
+    /// The base and item arguments of a receiver checked as the builtin `Iterator` over exactly one item type.
+    fn single_item_iterator(&self, receiver: &ast::Spanned<ast::Expr>) -> Option<(String, Vec<IncanType>)> {
+        let IncanType::Generic { base, args } = self.resolve_ty(receiver.span) else {
+            return None;
+        };
+        (base == traits::as_str(TraitId::Iterator) && args.len() == 1).then_some((base, args))
+    }
+
+    /// Whether `name` is bound to a source class, model or newtype declaration rather than the builtin iterator.
+    fn names_source_nominal(&self, name: &str) -> bool {
+        self.type_info
+            .declarations
+            .named_type_identities
+            .get(name)
+            .is_some_and(|identity| {
+                matches!(
+                    identity.kind,
+                    super::SemanticSourceTargetKind::Class
+                        | super::SemanticSourceTargetKind::Model
+                        | super::SemanticSourceTargetKind::Newtype
+                )
+            })
     }
 
     /// Select the checked source binding for construction metadata without interpreting a projected carrier key.

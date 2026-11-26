@@ -51,18 +51,12 @@ pub(super) fn build_module_seed_observed(
     // Immutable values bind to retained layout skeletons before deferred defaults are attached.
     let constant_declarations = collect::collect_constants(program, type_info, &nominal_declarations);
     let published_constants = collect_published_constants(context, &constant_declarations);
-    let mut local_nominal_declarations = nominal_declarations
-        .iter()
-        .map(|declaration| (declaration.name.clone(), declaration.clone()))
-        .collect::<LocalNominalDeclarations>();
-    let mut local_fieldless_enum_declarations = fieldless_enum_declarations
-        .iter()
-        .map(|declaration| (declaration.name.clone(), declaration.clone()))
-        .collect::<LocalFieldlessEnumDeclarations>();
-    let mut local_value_enum_declarations = value_enum_declarations
-        .iter()
-        .map(|declaration| (declaration.name.clone(), declaration.clone()))
-        .collect::<LocalValueEnumDeclarations>();
+    let mut local_nominal_declarations: LocalNominalDeclarations =
+        keyed_by_name(&nominal_declarations, |declaration| &declaration.name);
+    let mut local_fieldless_enum_declarations: LocalFieldlessEnumDeclarations =
+        keyed_by_name(&fieldless_enum_declarations, |declaration| &declaration.name);
+    let mut local_value_enum_declarations: LocalValueEnumDeclarations =
+        keyed_by_name(&value_enum_declarations, |declaration| &declaration.name);
     extend_published_nominal_declarations(
         context,
         &mut local_nominal_declarations,
@@ -105,11 +99,7 @@ pub(super) fn build_module_seed_observed(
     let mut static_declarations = collect_source_storage(program, &lowering_facts, &constant_declarations);
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
-    for body in &bodies {
-        if !type_info.reused_callable_bodies.contains_key(&body.span) {
-            work::built_body(&body.direct_call_id);
-        }
-    }
+    record_built_bodies(type_info, &bodies);
     retain_source_body_contracts(program, type_info, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
@@ -143,6 +133,23 @@ pub(super) fn build_module_seed_observed(
         fieldless_enum_declarations,
         value_enum_declarations,
         bodies,
+    }
+}
+
+/// Key each declaration by its name, as the module's local declaration tables look them up.
+fn keyed_by_name<T: Clone, C: FromIterator<(String, T)>>(declarations: &[T], name: impl Fn(&T) -> &String) -> C {
+    declarations
+        .iter()
+        .map(|declaration| (name(declaration).clone(), declaration.clone()))
+        .collect()
+}
+
+/// Count each body this module built itself, leaving out the bodies a validated callable reuse supplied.
+fn record_built_bodies(type_info: &TypeCheckInfo, bodies: &[bir::Body]) {
+    for body in bodies {
+        if !type_info.reused_callable_bodies.contains_key(&body.span) {
+            work::built_body(&body.direct_call_id);
+        }
     }
 }
 

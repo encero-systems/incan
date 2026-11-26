@@ -101,44 +101,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.retain_owned_carrier_payload_move(&scrutinee_place, &mut pattern);
             }
 
-            // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
-            // ----
-            let mut guard_stmts = Vec::new();
-            self.conditional_scopes.push(arm_scope);
-            // A guard is a further condition inside the arm; only unguarded arms have an explicit join.
-            let joined = arm.node.guard.is_none();
-            if joined {
-                self.input_if_scopes.push(arm_scope);
-            }
-            let guard = arm
-                .node
-                .guard
-                .as_ref()
-                .map(|g| self.lower_expr_to_operand(g, arm_scope, &mut guard_stmts));
-
-            let (body_stmts, result) = match &arm.node.body {
-                ast::MatchBody::Expr(e) => {
-                    let mut stmts = Vec::new();
-                    let result = self.lower_boundary_value(e, None, arm_scope, &mut stmts);
-                    (stmts, result)
-                }
-                ast::MatchBody::Block(block_stmts) => {
-                    let mut stmts = Vec::new();
-                    self.lower_block_into(block_stmts, arm_scope, &mut stmts);
-                    self.insert_scope_drops(&mut stmts, arm_scope);
-                    (stmts, bir::Operand::Constant(bir::Constant::Unit))
-                }
-            };
-            if joined {
-                self.input_if_scopes.pop();
-            }
-            self.conditional_scopes.pop();
-            match &arm.node.body {
-                ast::MatchBody::Expr(_) => reaching_moves.push(self.input_move_state(&subjects)),
-                ast::MatchBody::Block(block_stmts) => {
-                    self.retain_reaching_input_moves(block_stmts, &subjects, &mut reaching_moves)
-                }
-            }
+            let lowered_arm = self.lower_match_arm_body(arm, arm_scope, pattern, &subjects, &mut reaching_moves);
 
             // ---- Restore the enclosing scope's bindings before moving on to the next (mutually exclusive) arm ----
             self.restore_local_bindings(saved_bindings);
@@ -147,13 +110,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             range_layouts_after_arms.push(self.materialized_range_locals.clone());
 
-            lowered_arms.push(bir::MatchArm {
-                pattern,
-                guard_stmts,
-                guard,
-                body_stmts,
-                result,
-            });
+            lowered_arms.push(lowered_arm);
         }
         // Code after a match must be valid for whichever arm matched. Preserve a layout fact only when every
         // arm leaves it true; no-arm matches conservatively retain no constructed-layout fact.
@@ -171,6 +128,63 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Lower one match arm's guard and body in the arm's own scope, after its pattern bound its locals, and record the
+    /// explicit transfer subjects' moves that reach the end of the arm.
+    fn lower_match_arm_body(
+        &mut self,
+        arm: &ast::Spanned<ast::MatchArm>,
+        arm_scope: bir::ScopeId,
+        pattern: bir::Pattern,
+        subjects: &HashSet<bir::LocalId>,
+        reaching_moves: &mut Vec<HashSet<bir::LocalId>>,
+    ) -> bir::MatchArm {
+        // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
+        // ----
+        let mut guard_stmts = Vec::new();
+        self.conditional_scopes.push(arm_scope);
+        // A guard is a further condition inside the arm; only unguarded arms have an explicit join.
+        let joined = arm.node.guard.is_none();
+        if joined {
+            self.input_if_scopes.push(arm_scope);
+        }
+        let guard = arm
+            .node
+            .guard
+            .as_ref()
+            .map(|g| self.lower_expr_to_operand(g, arm_scope, &mut guard_stmts));
+
+        let (body_stmts, result) = match &arm.node.body {
+            ast::MatchBody::Expr(e) => {
+                let mut stmts = Vec::new();
+                let result = self.lower_boundary_value(e, None, arm_scope, &mut stmts);
+                (stmts, result)
+            }
+            ast::MatchBody::Block(block_stmts) => {
+                let mut stmts = Vec::new();
+                self.lower_block_into(block_stmts, arm_scope, &mut stmts);
+                self.insert_scope_drops(&mut stmts, arm_scope);
+                (stmts, bir::Operand::Constant(bir::Constant::Unit))
+            }
+        };
+        if joined {
+            self.input_if_scopes.pop();
+        }
+        self.conditional_scopes.pop();
+        match &arm.node.body {
+            ast::MatchBody::Expr(_) => reaching_moves.push(self.input_move_state(subjects)),
+            ast::MatchBody::Block(block_stmts) => {
+                self.retain_reaching_input_moves(block_stmts, subjects, reaching_moves)
+            }
+        }
+        bir::MatchArm {
+            pattern,
+            guard_stmts,
+            guard,
+            body_stmts,
+            result,
+        }
     }
 
     /// End the temporaries that evaluating a scrutinee made, except the scrutinee's own value, before its arms run.
