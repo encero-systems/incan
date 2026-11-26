@@ -8,6 +8,7 @@ from compiler_body_keys import EXECUTABLE_BODY_PROFILE
 from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord, select_body_inventory_of
 from compiler_graph_records import EditCutoff, OutputSlots, reusable_family_records
 from compiler_owner_records import read_body_frame
+from compiler_lowering_settlement import AdmittedOutcome, selected_admissions
 from compiler_executable_metadata import predecessor_owner_metadata, selected_owner_metadata_reader, typed_owner_metadata
 from compiler_plan_modules import PlanModuleAdmissions
 from compiler_plan_values import AdmittedPlanModule
@@ -26,6 +27,7 @@ pub model BodyRootSelection:
 
     pub enabled: bool = false
     pub restored: set[str] = set()
+    pub admissions: list[AdmittedOutcome] = []
     refused: bool = false
     roots: Dict[str, SelectedBodyRoot] = {}
     demanded_whole: Dict[str, CoveredRoot] = {}
@@ -94,22 +96,53 @@ pub model BodyRootSelection:
                 return Ok([])
         demand_ids = set(demanded)
         # 2. Let real lowering demands supply their own proofs when their values are restored.
-        if self.enabled:
-            mut proof_owners: Dict[str, CoveredRoot] = {}
-            match whole_body_owners(graph, origin, covered, admitted, admissions, retained, fresh):
-                Ok(owners) =>
-                    # Defer an individually demanded Body to the same checked witness that serves lowering.
-                    for owner in owners.keys():
-                        if owner in demand_ids:
-                            self.demanded_whole[owner] = owners[owner]
-                        else:
-                            proof_owners[owner] = owners[owner]
-                Err(_) => self.refused = true
-            self.add_whole_roots(graph, origin, proof_owners, typed, cutoff)?
+        if self.enabled and not self.refused:
+            self.select_whole_roots(
+                graph, origin, covered, admitted, admissions, retained, fresh, demand_ids, typed, cutoff,
+            )?
         # 3. Keep the full checked inventory on the route that uses it.
         if len(demand_ids) == 0:
             return Ok([])
         return select_body_inventory_of(graph, CHECKER_PROFILE, origin, sorted([owner for owner in demand_ids]))
+
+    def select_whole_roots(
+        mut self, graph: Snapshot, origin: str, covered: Borrowed[CoveredBodyOwners],
+        admitted: Borrowed[list[AdmittedPlanModule]], admissions: Borrowed[PlanModuleAdmissions],
+        retained: Borrowed[list[SelectedBodyRecord]], fresh: Borrowed[set[str]], demanded: Borrowed[set[str]],
+        typed: bool, cutoff: EditCutoff,
+    ) -> Result[None, str]:
+        """Read report-only Bodies only if every admitted product could have a checked root."""
+        owners = match whole_body_owners(graph, origin, covered, admitted, admissions, retained, fresh):
+            Ok(value) => value
+            Err(_) =>
+                self.refused = true
+                return Ok(None)
+        self.admissions = match selected_admissions(Some(graph), origin, admitted, admissions):
+            Ok(value) => value
+            Err(_) =>
+                self.refused = true
+                return Ok(None)
+
+        # A method or fallback can travel in an admitted Plan page without its own checked Body. Such a product
+        # must already have another checked witness for this request before the whole proof can be published.
+        mut possible = set([owner for owner in self.roots.keys()])
+        for record in retained:
+            if len(record.body_ir) != 0:
+                possible.add(record.identity)
+        for owner in demanded:
+            possible.add(owner)
+        for row in self.admissions:
+            if row.owner not in possible and row.owner not in owners:
+                self.refused = true
+                return Ok(None)
+
+        mut proof_owners: Dict[str, CoveredRoot] = {}
+        for owner in owners.keys():
+            if owner in demanded:
+                self.demanded_whole[owner] = owners[owner]
+            else:
+                proof_owners[owner] = owners[owner]
+        return self.add_whole_roots(graph, origin, proof_owners, typed, cutoff)
 
     def add_whole_roots(
         mut self, graph: Snapshot, origin: str, owners: Borrowed[Dict[str, CoveredRoot]],
