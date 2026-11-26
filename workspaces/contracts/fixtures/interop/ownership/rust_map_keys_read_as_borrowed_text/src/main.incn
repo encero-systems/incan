@@ -1,0 +1,30 @@
+# behavior: a Rust map's keys read as Borrowed[str]: membership, comparison and a str parameter read through the borrow, and storing one clones it (RFC 164)
+# expect-stdout:
+#   2 1 28 beta
+
+from rust::key_index import Index
+
+
+def measure(text: str) -> int:
+    return len(text)
+
+
+def keep(text: str) -> list[str]:
+    return [text]
+
+
+def main() -> None:
+    index = Index.sample()
+    published = set(["alpha"])
+    mut missing = 0
+    mut named = 0
+    mut total = 0
+    mut kept: list[str] = []
+    for key in index.groups.keys():
+        if key not in published:
+            missing += 1
+        if key == "beta":
+            named += 1
+            kept = keep(key)
+        total += measure(key) + len(key)
+    println(f"{missing} {named} {total} {kept[0]}")

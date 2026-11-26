@@ -1,0 +1,44 @@
+# behavior: method kinds and properties use their matching receivers; uncalled methods retain their dependency factory result layouts
+# expect-stdout:
+#   42
+#   42
+#   42
+#   100
+
+from std.datetime import DateTime
+
+class Counter:
+    pub value: int
+
+    pub def next(self) -> int:
+        return self.value + 1
+
+    def timestamp(self) -> str:
+        """Require a dependency result layout even when no source call reaches this method."""
+        return DateTime.utc_now().isoformat()
+
+
+class Factory:
+    @classmethod
+    pub def answer(cls) -> int:
+        return 42
+
+    @staticmethod
+    pub def twice(value: int) -> int:
+        return value * 2
+
+
+model Account:
+    cents: int
+
+    property dollars -> int:
+        return self.cents
+
+
+def main() -> None:
+    counter: Counter = Counter(value=41)
+    println(counter.next())
+    println(Factory.answer())
+    println(Factory.twice(21))
+    account: Account = Account(cents=100)
+    println(account.dollars)

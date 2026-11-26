@@ -1,0 +1,18 @@
+# behavior: `oven workspace inspect` reports the workspace, its manifest, the selected members by their absolute roots, the canonical lock and each member's own `oven.lock`, which the root's lock replaces, as 0.5.1's `incan workspace inspect` did (#3141).
+# cli-commands:
+#   oven workspace inspect --member alpha
+#   oven workspace inspect -p ./alpha
+# expect-stdout:
+#   Workspace: <project>
+#   Manifest: <project>/loaf.toml
+#   Selected scope (explicit_members)
+#     - alpha (<project>/alpha)
+#   Canonical lock: <project>/oven.lock
+#   Stale member-local locks:
+#     - <project>/beta/oven.lock
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program."""
+    pass

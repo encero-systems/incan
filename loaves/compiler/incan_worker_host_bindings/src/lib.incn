@@ -1,0 +1,112 @@
+"""Expose the platform socket, store and trace items the Rust compiler worker host uses, by stable Rust names."""
+
+from rust::std::rc import Rc
+
+pub from pub::incan_platform.ipc import Connection, Listener, SocketFile, dial, listen, reachable, socket_file, withdraw
+pub from pub::incan_platform.trace import Clock, Emitter, begin as trace_begin
+from pub::incan_platform.trace import Operation, flush as flush_trace
+pub from pub::incan_platform.store import (
+    Lookup,
+    Snapshot,
+    Transaction,
+    begin,
+    commit,
+    fork,
+    get,
+    lease_token,
+    lookup,
+    owned,
+    put,
+    read_frame_cached,
+    read_manifest,
+    read_store_identity,
+    snapshot as store_snapshot,
+    store_identity,
+)
+from pub::incan_platform.store import lease
+pub from pub::incan_platform.store.disk import root as disk_root
+pub from pub::incan_platform.store.files import StoreError
+pub from pub::incan_platform.store.index import (
+    Entry,
+    IndexError,
+    Location,
+    find,
+    limited_entries_with_prefix,
+    page_checked_bytes,
+    view_digest,
+)
+pub from std.primitives.views import MappedFile, MappedView
+
+
+pub def peer_uid(connection: Connection) -> Result[u32, str]:
+    """The user the OS reports for a connection's peer."""
+    return Ok(connection.peer()?.uid)
+
+
+pub def close_connection(connection: Connection) -> Result[None, str]:
+    """Close both directions of a connection; closing a closed one does nothing."""
+    return connection.close()
+
+
+pub def connection_descriptor(connection: Connection) -> int:
+    """The OS descriptor of an open connection, or -1 once it is closed."""
+    return connection.descriptor()
+
+
+pub def send_frame(mut connection: Connection, payload: bytes) -> Result[None, str]:
+    """Write one length-framed payload."""
+    return connection.send(payload)
+
+
+pub def receive_frame(mut connection: Connection) -> Result[bytes, str]:
+    """Read one length-framed payload within the frame bound."""
+    return connection.receive()
+
+
+pub def write_raw(mut connection: Connection, part: bytes) -> Result[None, str]:
+    """Write exactly these bytes, as a broken client does."""
+    return connection.write_part(part, "raw bytes")
+
+
+pub def bound_reads(mut connection: Connection, seconds: u64) -> None:
+    """Bound each read by `seconds`."""
+    connection.wait_at_most(seconds)
+
+
+pub def bound_writes(mut connection: Connection, seconds: u64) -> None:
+    """Bound each write by `seconds`."""
+    connection.write_at_most(seconds)
+
+
+pub def poll_listener(mut listener: Listener) -> Result[Option[Connection], str]:
+    """The next waiting client of a non-blocking listener, without waiting for one."""
+    return listener.poll()
+
+
+pub def socket_owner(socket: SocketFile) -> u32:
+    """The user that owns a bound socket file."""
+    return socket.uid
+
+
+pub def open_emitter(destination: str, producer: str, run: str, request: str) -> Option[Emitter]:
+    """Open one trace channel, or nothing when it cannot be opened."""
+    match Emitter.open(destination, producer, run, request):
+        Ok(emitter) => return Some(emitter)
+        Err(_) => return None
+
+
+pub def emit_activation(emitter: Emitter, clock: Clock) -> None:
+    """Record one activation's driver-request span and flush it, ignoring an unwritable channel."""
+    _ = emitter.emit(clock, Operation.DriverRequest, "activation")
+    _ = flush_trace()
+
+
+pub def store_error_text(error: StoreError) -> str:
+    """The store failure's bounded detail."""
+    return error.message()
+
+
+pub def pin_lease(mut view: Snapshot) -> Result[None, StoreError]:
+    """Hold the view's placement lease for the descriptor's lifetime."""
+    view.pin = Some(Rc.new(lease(view)?))
+    return Ok(None)

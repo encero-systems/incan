@@ -1,0 +1,60 @@
+"""ECDSA verification over P-256 and P-384 against signatures OpenSSL 3.6.5 made over one message."""
+
+from std.encoding.hex import unhexlify
+from ecdsa import Curve, verify
+
+const P256_KEY: str = "04d6beb17beca0595b674f983ac5706e34fac5fd3524802cf94ed184392f9998e5b9b839666bcf981d39d592a5ebe0215340c610e57f7406f645f8abe93d0a5301"
+const P256_DIGEST: str = "faf099613b6c382dd9a9bce14e2f5a704156dc2f37d9192fc7b2d924dc93bcac"
+const P256_R: str = "6c26ed7458c15a7eefaa367b6816fd43b008984a449bee639a73cb595f28f67d"
+const P256_S: str = "6818f7923b50311066389cde97638d44f2c75edc294bed3b7503cb3410f77648"
+const P384_KEY: str = "04548b23a583aa77c4e570dc0a02ae0f50d3ed5983b04f442205fa27395584609f3261c53c46e649f059875f716757bf3114a655c4bb6f8de360ea036bc181af97749046683e4c30b3170d4184a0733b25e67203c65f6e2cb94bf8d51bda50aeca"
+const P384_DIGEST: str = "418fe6bd4c9073d990967d19654f456180e89e1d066bb57535c5e72a0eda5d61bc9e983823039ee31994ae0794d18701"
+const P384_R: str = "c8f41563282f1b76e643b5bc9ddf94382f81d361885d04f95bf8b0aeb388cb6a50399a9d2500c7b4364b3e36f788651b"
+const P384_S: str = "8fb9eb6c848a9cff2264c3413aab543281e97606a4a239b7690b75a829d6191aeeab9ae72b639abf5aec9f4d7b2ec406"
+
+
+def octets(text: str) -> Result[bytes, str]:
+    """Decode one hexadecimal vector."""
+    return unhexlify(text).map_err((error) => error.message())
+
+
+def flipped(text: str) -> Result[bytes, str]:
+    """Decode a vector with its last hexadecimal digit changed."""
+    stem = text[0:len(text) - 1]
+    if text.endswith("0"):
+        return octets(stem + "1")
+    return octets(stem + "0")
+
+
+pub def test_verifies_openssl_signatures_on_both_curves() -> Result[None, str]:
+    """A P-256 signature over SHA-256 and a P-384 signature over SHA-384 both verify under their keys."""
+    assert verify(Curve.P256, octets(P256_KEY)?, octets(P256_DIGEST)?, octets(P256_R)?, octets(P256_S)?)
+    assert verify(Curve.P384, octets(P384_KEY)?, octets(P384_DIGEST)?, octets(P384_R)?, octets(P384_S)?)
+    return Ok(None)
+
+
+pub def test_refuses_a_changed_digest_signature_or_key() -> Result[None, str]:
+    """
+    One changed bit anywhere refuses the signature.
+
+    1. A changed digest, `r` or `s` fails on each curve.
+    2. A key that is not a point on the curve fails, and so does a signature under the other curve's rules.
+    3. A zero `r` or `s`, and a value at the group order, are out of range.
+    """
+    # 1. Each signed or signing value.
+    assert not verify(Curve.P256, octets(P256_KEY)?, flipped(P256_DIGEST)?, octets(P256_R)?, octets(P256_S)?)
+    assert not verify(Curve.P256, octets(P256_KEY)?, octets(P256_DIGEST)?, flipped(P256_R)?, octets(P256_S)?)
+    assert not verify(Curve.P256, octets(P256_KEY)?, octets(P256_DIGEST)?, octets(P256_R)?, flipped(P256_S)?)
+    assert not verify(Curve.P384, octets(P384_KEY)?, flipped(P384_DIGEST)?, octets(P384_R)?, octets(P384_S)?)
+    assert not verify(Curve.P384, octets(P384_KEY)?, octets(P384_DIGEST)?, flipped(P384_R)?, octets(P384_S)?)
+    assert not verify(Curve.P384, octets(P384_KEY)?, octets(P384_DIGEST)?, octets(P384_R)?, flipped(P384_S)?)
+    # 2. A point off the curve, and the wrong curve.
+    assert not verify(Curve.P256, flipped(P256_KEY)?, octets(P256_DIGEST)?, octets(P256_R)?, octets(P256_S)?)
+    assert not verify(Curve.P384, octets(P256_KEY)?, octets(P256_DIGEST)?, octets(P256_R)?, octets(P256_S)?)
+    # 3. Values outside one to the order less one.
+    zero = octets("00")?
+    order = octets("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551")?
+    assert not verify(Curve.P256, octets(P256_KEY)?, octets(P256_DIGEST)?, zero, octets(P256_S)?)
+    assert not verify(Curve.P256, octets(P256_KEY)?, octets(P256_DIGEST)?, octets(P256_R)?, zero)
+    assert not verify(Curve.P256, octets(P256_KEY)?, octets(P256_DIGEST)?, order, octets(P256_S)?)
+    return Ok(None)

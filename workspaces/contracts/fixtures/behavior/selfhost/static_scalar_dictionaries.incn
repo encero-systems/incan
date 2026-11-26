@@ -1,0 +1,35 @@
+# behavior: integer-keyed static dictionaries retain independent scalar and text values across calls and replacements
+# expect-stdout:
+#   7
+#   2.5
+#   true
+#   first
+#   second
+#   first
+#   9
+#   0
+
+static integers: dict[int, int] = {1: 7}
+static floats: dict[int, float] = {1: 2.5}
+static flags: dict[int, bool] = {1: true}
+static words: dict[int, str] = {1: "first"}
+
+
+def replace() -> None:
+    """Change each cell through indexed and whole-dictionary writes."""
+    words[1] = "second"
+    integers = {2: 9}
+
+
+def main() -> None:
+    """Observe persistent storage and a separately owned text snapshot."""
+    println(integers.get(1, 0))
+    println(floats.get(1, 0.0))
+    println(flags.get(1, false))
+    saved = words.get(1, "missing")
+    println(saved)
+    replace()
+    println(words.get(1, "missing"))
+    println(saved)
+    println(integers.get(2, 0))
+    println(integers.get(1, 0))

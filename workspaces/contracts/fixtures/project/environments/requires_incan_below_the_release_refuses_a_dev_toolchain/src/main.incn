@@ -1,0 +1,11 @@
+# behavior: a prerelease toolchain is held to its release version, so a dev build of 0.6 does not satisfy `>=0.5.0,<0.6.0`, which excludes 0.6 itself, and refuses to run the project (#3140).
+# cli-commands:
+#   run src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   does not satisfy requires-incan >=0.5.0,<0.6.0
+# expect-exit: 1
+
+def main() -> None:
+    """A program the refused command never compiles."""
+    println("never printed")

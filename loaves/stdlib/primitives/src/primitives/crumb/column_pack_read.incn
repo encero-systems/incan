@@ -1,0 +1,74 @@
+"""Checked directly addressed packed magnitudes, without a host-sized numeric narrowing."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_bits import packed_length
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, primitive, shared
+from crate.primitives.crumb.encoding_errors import BinaryFailure, failure as binary_failure
+from crate.primitives.crumb.wide_integer import WideInteger
+from crate.primitives.views import MappedView
+
+
+pub def validate_pack(
+    view: MappedView,
+    width: int,
+    count: int,
+    origin: int,
+    mut budget: Budget,
+) -> Result[None, ColumnError]:
+    """Check exact packed length and unused final bits before any direct access is allowed."""
+    budget.charge_elements(width).map_err((e) => primitive(e, origin))?
+    length = packed_length(width, count).map_err((e) => primitive(e, origin))?
+    if length != view.len():
+        return Err(shared(binary_failure(BinaryFailure.Truncated, origin + view.len())))
+    budget.charge_elements(count).map_err((e) => primitive(e, origin))?
+    if length > 0 and (width * count) % 8 != 0:
+        last = octet(view, length - 1, origin, budget)?
+        if last >> ((width * count) % 8) != 0:
+            return Err(failure(ColumnFailure.NonzeroPadding, origin + length - 1))
+    return Ok(None)
+
+
+pub def packed_value(
+    view: MappedView,
+    width: int,
+    count: int,
+    position: int,
+    origin: int,
+    mut budget: Budget,
+) -> Result[WideInteger, ColumnError]:
+    """Read only this value's bit range; preceding packed values need not be decoded."""
+    length = packed_length(width, count).map_err((e) => primitive(e, origin))?
+    if length != view.len() or position < 0 or position >= count:
+        return Err(shared(binary_failure(BinaryFailure.InvalidOffsets, origin)))
+    budget.charge_elements(width).map_err((e) => primitive(e, origin))?
+    if width == 0:
+        return Ok(WideInteger.zero())
+    mut magnitude: list[u8] = [0u8 for _ in range((width + 7) // 8)]
+    start = width * position
+    for bit in range(width):
+        source = start + bit
+        value = (octet(view, source // 8, origin, budget)? >> (source % 8)) & 1
+        target = bit // 8
+        magnitude[target] = (int(magnitude[target]) | (value << (bit % 8))).saturating_resize[u8]()
+    return Ok(WideInteger.from_magnitude(magnitude))
+
+
+pub def positive_difference(view: MappedView, origin: int, mut budget: Budget) -> Result[WideInteger, ColumnError]:
+    """Read a shortest positive little-endian magnitude, including differences wider than u64."""
+    if view.len() == 0:
+        return Err(failure(ColumnFailure.NonminimalDelta, origin))
+    if octet(view, view.len() - 1, origin, budget)? == 0:
+        return Err(failure(ColumnFailure.NonminimalDelta, origin))
+    mut magnitude: list[u8] = []
+    budget.charge_elements(view.len()).map_err((e) => primitive(e, origin))?
+    for index in range(view.len()):
+        magnitude.append(octet(view, index, origin, budget)?.saturating_resize[u8]())
+    return Ok(WideInteger.from_magnitude(magnitude))
+
+
+pub def octet(view: MappedView, index: int, origin: int, mut budget: Budget) -> Result[int, ColumnError]:
+    """Every native byte access remains checked and charged, including retained selections."""
+    budget.charge_bytes(1).map_err((e) => primitive(e, origin))?
+    match view.read_u8(index):
+        Some(byte) => return Ok(int(byte))
+        None => return Err(shared(binary_failure(BinaryFailure.Truncated, origin)))

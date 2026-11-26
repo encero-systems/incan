@@ -1,0 +1,104 @@
+# behavior: a const FrozenList, FrozenSet and FrozenDict answer len, contains, membership, indexing, for loops, set() and comprehensions as list, set and dict do; borrowed frozen-list parameters share those read paths for text, models and nested frozen lists while mutation remains unavailable (#2704)
+# expect-stdout:
+#   6
+#   true
+#   true
+#   false
+#   true
+#   true
+#   false
+#   alpha BETA
+#   2
+#   4
+#   9
+#   alpha
+#   beta
+#   3
+#   5
+#   2
+#   A B
+#   3
+#   true
+#   beta
+#   2
+#   nested
+
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const NUMS: FrozenList[int] = [3, 1, 2]
+const TAGS: FrozenSet[str] = {"a"}
+const IDS: FrozenSet[int] = {3}
+const TABLE: FrozenDict[str, int] = {"a": 1, "b": 2}
+const BLOBS: FrozenList[bytes] = [b"ab", b"cde"]
+const BY_NAME: FrozenDict[str, bytes] = {"x": b"xyz"}
+
+
+model Label:
+    value: int
+
+
+const LABELS: FrozenList[Label] = [Label(value=1), Label(value=2)]
+const GROUPS: FrozenList[FrozenList[str]] = [["outer"], ["nested", "value"]]
+
+
+def frozen_contains(values: FrozenList[str], wanted: str) -> bool:
+    """Return whether a borrowed frozen list contains the requested text."""
+    for value in values:
+        if value == wanted:
+            return true
+    return false
+
+
+def frozen_item(values: FrozenList[str], index: int) -> str:
+    """Read one text value from borrowed frozen storage."""
+    return values[index]
+
+
+def frozen_model_item(values: FrozenList[Label], index: int) -> int:
+    """Read one model value from borrowed frozen storage."""
+    return values[index].value
+
+
+def nested_frozen_item(values: FrozenList[FrozenList[str]]) -> str:
+    """Read through both borrowed frozen-list layers."""
+    return values[1][0]
+
+
+def main() -> None:
+    probe = "a"
+    println(NAMES.len() + NUMS.len() + TABLE.len() - IDS.len())
+    println(TAGS.contains(probe))
+    println("beta" in NAMES)
+    println(probe not in TAGS)
+    println(3 in IDS)
+    println(probe in TABLE)
+    println(4 in NUMS)
+    first: str = NAMES[0]
+    println(first + " " + NAMES[-1].upper())
+    println(len(BLOBS[0]))
+    one: bytes = BY_NAME["x"]
+    println(len(one) + 1)
+    mut total = 0
+    for n in NUMS:
+        total += n
+    for i in IDS:
+        total += i
+    println(total)
+    for name in NAMES:
+        println(name)
+    mut value_total = 0
+    for key in TABLE:
+        value_total += TABLE[key]
+    println(value_total)
+    mut sizes = 0
+    for blob in BLOBS:
+        sizes += len(blob)
+    println(sizes)
+    unique: set[str] = set(NAMES)
+    println(len(unique))
+    println(" ".join(sorted([key.upper() for key in TABLE])))
+    doubled = (n * 2 for n in NUMS)
+    println(len(list(doubled)))
+    println(frozen_contains(NAMES, "beta"))
+    println(frozen_item(NAMES, 1))
+    println(frozen_model_item(LABELS, 1))
+    println(nested_frozen_item(GROUPS))

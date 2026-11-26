@@ -1,0 +1,80 @@
+const LABEL: str = "flat"
+const NOTE: str = "note"
+const BASE: int = 2
+const SCALE: int = BASE * 60
+
+
+def _unit() -> str:
+    return "cm"
+
+
+enum _Finish:
+    Matte
+    Gloss
+
+
+pub def build(size: int, label: str = LABEL, unit: str = _unit()) -> str:
+    return f"{label} of size {size}{unit}"
+
+
+pub default_build = partial build(size=3)
+
+
+pub def finish(kind: _Finish = _Finish.Gloss) -> str:
+    match kind:
+        _Finish.Matte => return "matte"
+        _Finish.Gloss => return "gloss"
+
+
+pub model Card:
+    size: int = 4
+    pub label: str = "card"
+
+    pub def describe(self) -> str:
+        return f"{self.label} of size {self.size}"
+
+
+pub class Tray:
+    pub slots: int = 3
+
+
+pub def show(card: Card = Card(label=NOTE)) -> str:
+    return card.describe()
+
+
+pub def count(tray: Tray = Tray()) -> int:
+    return tray.slots
+
+
+pub def stacked(layers: int, tray: Tray = Tray()) -> int:
+    return layers * tray.slots
+
+
+pub stacked_twice = partial stacked(layers=2)
+
+
+pub def tagged(tag: str, card: Card) -> str:
+    return f"{tag} {card.describe()}"
+
+
+pub tag_ace = partial tagged(card=Card(label="ace"))
+
+
+pub trait Key:
+    """Decode one owned key from its byte representation."""
+    @staticmethod
+    def decode(data: bytes) -> Result[Self, str]:
+        """Return the decoded key or its malformed-input detail."""
+        ...
+
+
+pub model Record with Key:
+    """Retain an implementation that depends on a private computed constant."""
+    pub value: int
+
+    @staticmethod
+    def decode(data: bytes) -> Result[Self, str]:
+        """Use the module's initialized constant through a fallible static method."""
+        if len(data) != 1:
+            return Err("wrong length")
+        return Ok(Record(value=SCALE))

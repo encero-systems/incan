@@ -1,0 +1,20 @@
+"""Tests that take fixtures, so the runner checks this file with generated case entries past its last line."""
+
+from rust::std::path import PathBuf
+from std.testing import assert_eq, fixture
+
+
+@fixture
+def answer() -> int:
+    """A fixture the runner sets up for the test that names it."""
+    return 42
+
+
+def test_fixture_value(answer: int) -> None:
+    """The generated entry passes the fixture's value."""
+    assert_eq(answer, 42)
+
+
+def test_builtin_fixture(tmp_path: PathBuf) -> None:
+    """The generated entry passes a built-in fixture."""
+    assert_eq(tmp_path.is_dir(), true)

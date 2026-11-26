@@ -43,18 +43,18 @@ Attribute keys may use OpenTelemetry semantic-convention names such as `service.
 | Type | Description |
 | --- | --- |
 | `Timestamp` | RFC 3339-style timestamp string newtype used by records that already have a time value. |
-| `Resource` | Entity that produced telemetry, currently represented as structured attributes. |
+| `Resource` | Attributes identifying the entity that produced telemetry. |
 | `InstrumentationScope` | Logical scope name, optional version, and optional schema URL for the code that emitted telemetry. |
 | `TraceId` | W3C/OpenTelemetry trace-id string newtype. |
 | `SpanId` | W3C/OpenTelemetry span-id string newtype. |
 | `TraceFlags` | W3C trace-flags string newtype. |
 | `SpanContext` | Serializable grouping of trace id, span id, and optional flags. |
 
-These types are inert data holders in 0.3. They preserve identifiers and attributes when another stdlib module, such as `std.logging`, already has structured observability data to carry.
+These values preserve identifiers and attributes carried by modules such as `std.logging`.
 
 ## Boundaries
 
-`std.telemetry` is not a provider API in 0.3. It does not sample spans, manage active context, export metrics, configure OpenTelemetry SDKs, or read process resource attributes. Those behaviors belong to a future telemetry provider surface; this module only provides the shared typed payload shape.
+`std.telemetry` exposes typed payloads. Span sampling, active context, metric export, OpenTelemetry SDK configuration, and process resource discovery are outside this API.
 
 ## See also
 

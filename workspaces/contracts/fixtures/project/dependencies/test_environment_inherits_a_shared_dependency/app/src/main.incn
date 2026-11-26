@@ -1,0 +1,3 @@
+def main() -> None:
+    """The member whose test environment inherits."""
+    pass

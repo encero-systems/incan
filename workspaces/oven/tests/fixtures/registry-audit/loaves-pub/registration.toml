@@ -1,0 +1,5 @@
+[registries.fixture]
+kind = "loaf"
+id = "sha256:d8bf0d2a919381bc2b2cffc2cac9df0b0c611c794f798f80e582bef9c116a88e"
+root-keys = ["ed25519:MCowBQYDK2VwAyEAGSv+y1QUn4lq6tAu9XWXYYXXywUud8DEzULS4D2R1e8="]
+trust = "require-signature"

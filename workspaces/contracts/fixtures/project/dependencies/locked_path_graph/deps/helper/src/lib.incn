@@ -1,0 +1,3 @@
+pub def helper_value() -> int:
+    """Return the value that proves the locked path dependency linked."""
+    return 1

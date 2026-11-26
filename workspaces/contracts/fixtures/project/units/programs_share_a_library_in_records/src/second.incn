@@ -1,0 +1,8 @@
+"""Another program in the project."""
+
+from values import Value, answer
+
+
+def main() -> None:
+    """Read a provider property whose implementation uses a private field."""
+    println(Value(base=answer()).doubled)

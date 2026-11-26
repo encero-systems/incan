@@ -1,0 +1,14 @@
+# behavior: a Loaf that re-exports, under a new name, a function its own dependency re-exports under another name publishes it, and a program reaches the one declaration through either Loaf's name, at the root and in a submodule
+# expect-stdout:
+#   42
+#   42
+#   43
+
+from pub::relay import relay_calculate
+from pub::relay.facade import b_calculate, plain_calculate
+
+
+def main() -> None:
+    println(relay_calculate(21))
+    println(b_calculate(21))
+    println(plain_calculate(42))

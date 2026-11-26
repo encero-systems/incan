@@ -1,0 +1,108 @@
+# behavior: generic values and callable aliases stay usable, including callbacks with text and enum captures stored by a generic method in a returned owner
+# expect-stdout:
+#   ab:ab
+#   z:z:z
+#   cd:cd
+#   4:4
+#   abab
+#   1:6
+
+from std.traits.callable import Callable1
+
+
+enum Offset:
+    """Keep an owned enum payload in a reusable callback's environment."""
+    Text(str)
+
+
+def amount(offset: Offset) -> int:
+    """Read the payload without consuming its callback's next invocation."""
+    match offset:
+        Offset.Text(text) => return len(text)
+
+
+@derive(Clone)
+model Adapter[F with (Clone, Callable1[int, int])]:
+    """Keep a callback's captured environment alive through owner aliases."""
+
+    callback: F
+
+    def apply(self, value: int) -> int:
+        """Invoke a stored callback after its factory frame has returned."""
+        callback = self.callback
+        return callback(value)
+
+
+class Factory:
+    """Construct generic owners through a method with a callable type parameter."""
+
+    pub def keep[F with (Clone, Callable1[int, int])](self, callback: F) -> Adapter[F]:
+        """Transfer the callback and its environment into the returned owner."""
+        return Adapter(callback=callback)
+
+pub def preserve_generic_alias[T](value: T) -> tuple[T, T]:
+    alias = value
+    return (value, alias)
+
+
+pub def replace_first_then_preserve[T](mut items: list[T], value: T) -> T:
+    items[0] = value
+    return value
+
+
+pub def preserve_generic_alias_without_unrelated_bound[T, U](value: T) -> tuple[T, T]:
+    alias = value
+    return (value, alias)
+
+
+pub def preserve_callable_alias[T, U](mapper: (T) -> U) -> tuple[(T) -> U, (T) -> U]:
+    alias = mapper
+    return (mapper, alias)
+
+
+pub def preserve_text_alias[T](text: str) -> str:
+    alias = text
+    return alias + text
+
+
+pub def preserve_callable_list_alias[T, U](mapper: (T) -> U) -> list[(T) -> U]:
+    mappers = [mapper]
+    alias = mappers
+    marker = len(mappers)
+    return alias
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def main() -> None:
+    pair = preserve_generic_alias("ab")
+    println(f"{pair[0]}:{pair[1]}")
+    mut items = ["x", "y"]
+    replaced = replace_first_then_preserve(items, "z")
+    println(f"{replaced}:{items[0]}:{replaced}")
+    other = preserve_generic_alias_without_unrelated_bound[str, int]("cd")
+    println(f"{other[0]}:{other[1]}")
+    callables = preserve_callable_alias(double)
+    first_callable = callables[0]
+    second_callable = callables[1]
+    println(f"{first_callable(2)}:{second_callable(2)}")
+    println(preserve_text_alias[int]("ab"))
+    mappers = preserve_callable_list_alias(double)
+    first_mapper = mappers[0]
+    println(f"{len(mappers)}:{first_mapper(3)}")
+    increment = 3
+    prefix = "own"
+    adapter = Factory().keep((value) => value + increment + len(prefix))
+    assert adapter.apply(4) == 10
+    retained = adapter
+    assert retained.apply(5) == 11
+    assert adapter.apply(6) == 12
+    assert prefix == "own"
+    pointer = Factory().keep(double)
+    assert pointer.apply(4) == 8
+    offset = Offset.Text("own")
+    enumerated = Factory().keep((value) => value + amount(offset))
+    assert enumerated.apply(4) == 7
+    assert enumerated.apply(5) == 8

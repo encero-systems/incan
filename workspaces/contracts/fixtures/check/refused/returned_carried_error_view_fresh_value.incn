@@ -1,0 +1,12 @@
+# behavior: a view carried in an error must be the source place, not a value created in the body (#2500).
+# expect-diagnostic: INCAN-T0124
+
+class Account:
+    pub name: str
+    pub balance: int
+
+    def withdraw(mut self, amount: int) -> Result[int, Borrowed[str]] from self.name:
+        if amount > self.balance:
+            return Err("unknown")
+        self.balance -= amount
+        return Ok(self.balance)

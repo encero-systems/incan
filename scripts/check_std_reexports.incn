@@ -1,0 +1,174 @@
+"""
+Refuse a standard package's public re-export of its own function spelled from `std.`.
+
+The build toolchain's seed driver gives an alias whose target is spelled `std.` no callable projection when the target
+is a function of the package being built, so the release's source closure refuses that package. Types, traits and
+other packages' functions are unaffected. A package re-exports its own function from `crate.`, as it imports its own
+modules elsewhere.
+
+A module's functions are the ones it defines and the ones it re-exports from its own package, so a function reached
+through another module's re-export counts too. Run `incan run scripts/check_std_reexports.incn [-- --root ROOT]`; it
+exits 1 and names each such re-export.
+"""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from check_support import read, repository_root, source_lines, write_stderr
+
+
+pub model Reexport:
+    """One `pub from std.MODULE import` or `pub from crate.MODULE import` statement and each name it binds."""
+
+    pub line: int
+    # `std` or `crate`.
+    pub root: str
+    pub module: str
+    pub names: list[str]
+    # The name each import binds: its `as` alias, or the imported name.
+    pub aliases: list[str]
+
+
+def main() -> None:
+    """Report each refused re-export, exiting 1 when there is one and 2 when the tree cannot be read."""
+    match options().and_then((root) => check(root)):
+        Ok(findings) =>
+            for finding in findings:
+                println(finding)
+            if len(findings) > 0:
+                exit(1)
+            exit(0)
+        Err(message) =>
+            write_stderr(f"std re-export check: {message}\n")
+            exit(2)
+
+
+def options() -> Result[Path, str]:
+    """`--root ROOT`, or the repository this script belongs to."""
+    arguments = [argument for argument in args()]
+    if len(arguments) == 3 and arguments[1] == "--root":
+        return Ok(Path(arguments[2]))
+    if len(arguments) != 1:
+        return Err("usage: check_std_reexports.incn [--root ROOT]")
+    return repository_root()
+
+
+pub def check(root: Path) -> Result[list[str], str]:
+    """Every refused re-export under `loaves/stdlib`, as `PATH:LINE: message`, in package and module order."""
+    mut findings: list[str] = []
+    for package in sorted_children(root.joinpath("loaves/stdlib"))?:
+        source = package.joinpath("src")
+        if package.joinpath("loaf.toml").is_file() and source.is_dir():
+            findings = findings + package_findings(root, source)?
+    return Ok(findings)
+
+
+def package_findings(root: Path, source: Path) -> Result[list[str], str]:
+    """The refused re-exports of one package, after following its own re-exports to a fixed point."""
+    files = sources(source, "")?
+    modules = sorted([module for module in files.keys()])
+    mut functions: Dict[str, list[str]] = {}
+    mut statements: Dict[str, list[Reexport]] = {}
+    for module in modules:
+        text = read(files[module])?
+        functions[module] = defined_functions(text)?
+        statements[module] = reexports(text)?
+    mut changed = true
+    while changed:
+        changed = false
+        for module in modules:
+            mut known = functions[module]
+            for statement in statements[module]:
+                if statement.module not in functions:
+                    continue
+                for index in range(len(statement.names)):
+                    alias = statement.aliases[index]
+                    if statement.names[index] in functions[statement.module] and alias not in known:
+                        known.append(alias)
+                        changed = true
+            functions[module] = known
+    mut findings: list[str] = []
+    for module in modules:
+        relative = files[module].0[len(root.0) + 1:]
+        for statement in statements[module]:
+            if statement.root != "std" or statement.module not in functions:
+                continue
+            for name in statement.names:
+                if name in functions[statement.module]:
+                    findings.append(
+                        f"{relative}:{statement.line}: `pub from std.{statement.module} import {name}` re-exports this package's own function; spell it `pub from crate.{statement.module} import {name}`",
+                    )
+    return Ok(findings)
+
+
+def sorted_children(directory: Path) -> Result[list[Path], str]:
+    """The entries of `directory`, in name order."""
+    mut by_name: Dict[str, Path] = {}
+    for entry in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        by_name[entry.name()] = entry
+    return Ok([by_name[name] for name in sorted([name for name in by_name.keys()])])
+
+
+def sources(directory: Path, prefix: str) -> Result[Dict[str, Path], str]:
+    """Each `.incn` module under a package's `src`, by its dotted module path; `lib.incn` is the package itself."""
+    mut found: Dict[str, Path] = {}
+    for entry in sorted_children(directory)?:
+        name = entry.name()
+        if entry.is_dir():
+            nested = sources(entry, f"{prefix}{name}.")?
+            for module in nested.keys():
+                found[module] = nested[module]
+        elif name.endswith(".incn") and not (prefix == "" and name == "lib.incn"):
+            found[prefix + name[:len(name) - 5]] = entry
+    return Ok(found)
+
+
+pub def defined_functions(source: str) -> Result[list[str], str]:
+    """The names of a module's top-level functions, public or not."""
+    mut names: list[str] = []
+    for line in source_lines(source)?:
+        mut text = line
+        for prefix in ["pub ", "async "]:
+            if text.startswith(prefix):
+                text = text[len(prefix):]
+        if not text.startswith("def "):
+            continue
+        mut end = 4
+        while end < len(text) and text[end] not in "([: ":
+            end += 1
+        name = text[4:end]
+        if name != "":
+            names.append(name)
+    return Ok(names)
+
+
+pub def reexports(source: str) -> Result[list[Reexport], str]:
+    """Each top-level `pub from std.` or `pub from crate.` import, a parenthesized list included, with its line."""
+    lines = source_lines(source)?
+    mut found: list[Reexport] = []
+    mut index = 0
+    while index < len(lines):
+        start = index
+        mut statement = lines[index]
+        index += 1
+        mut root = ""
+        for candidate in ["std", "crate"]:
+            if statement.startswith(f"pub from {candidate}."):
+                root = candidate
+        if root == "" or " import " not in statement:
+            continue
+        if "(" in statement:
+            while ")" not in statement and index < len(lines):
+                statement += " " + lines[index].strip()
+                index += 1
+        parts = statement[len(f"pub from {root}."):].split(" import ")
+        mut names: list[str] = []
+        mut aliases: list[str] = []
+        for item in parts[1].replace("(", " ").replace(")", " ").split(","):
+            words = item.split(" as ")
+            name = words[0].strip()
+            if name != "":
+                names.append(name)
+                aliases.append(words[len(words) - 1].strip())
+        found.append(Reexport(line=start + 1, root=root, module=parts[0].strip(), names=names, aliases=aliases))
+    return Ok(found)

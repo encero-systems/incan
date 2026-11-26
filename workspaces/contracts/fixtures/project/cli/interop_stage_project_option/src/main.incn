@@ -1,0 +1,10 @@
+# behavior: `oven interop stage` accepts 0.5.1's `--project PATH` for the project path, and `--format text` (#3132)
+# cli-commands:
+#   oven interop stage --project . --target aarch64-linux-android --adapter android --output staged/android --format text
+# expect-stdout:
+#   staged aarch64-linux-android for the android adapter in staged/android
+#     jniLibs/arm64-v8a/libbridge_runtime.so sha256:cc13027a0ffd0d5a6d5a0d193fe970ae3c253391d97231bfb05dac3dfdd5818a
+#     incan-interop-adapter.json
+
+def main() -> None:
+    println("not run")

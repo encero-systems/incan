@@ -1,0 +1,44 @@
+# behavior: module-qualified generic enum constructors retain expected and explicit arguments without entering Rust method dispatch (#2518)
+# expect-stdout:
+#   module-enum-ok
+
+from pub::shapes import Packet as ImportedPacket, number
+import pub::shapes as shapes
+from rust::std::collections import HashMap
+from rust::std::string import String as NativeString
+
+
+def empty_texts() -> Result[ImportedPacket[str], str]:
+    """Propagate a nested expected type into the empty generic variant payload."""
+    return Ok(shapes.Packet.Many([]))
+
+
+def read(value: ImportedPacket[int]) -> int:
+    """Match the direct-import spelling against a module-qualified constructor result."""
+    match value:
+        ImportedPacket.Value(number) => return number
+        ImportedPacket.Many(values) => return len(values)
+        ImportedPacket.Empty => return 0
+
+
+def main() -> None:
+    """Check both source constructor spellings and retain ordinary native generic calls."""
+    expected: ImportedPacket[int] = shapes.Packet.Value(3)
+    explicit: ImportedPacket[int] = shapes.Packet[int].Value(4)
+    direct: ImportedPacket[int] = ImportedPacket.Value(5)
+    assert read(expected) == 3
+    assert read(explicit) == 4
+    assert read(direct) == 5
+    assert read(number()) == 8
+    match empty_texts():
+        Ok(value) =>
+            match value:
+                ImportedPacket.Many(values) =>
+                    assert len(values) == 0
+                _ =>
+                    assert false
+        Err(_) =>
+            assert false
+    native: HashMap[NativeString, int] = HashMap.new()
+    assert native.len() == 0
+    println("module-enum-ok")

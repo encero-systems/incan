@@ -1,0 +1,17 @@
+pub model Token:
+    value: int
+
+
+pub model Vault:
+    secret: str
+    pub label: str
+
+
+pub model Sealed:
+    token: Token
+    pub label: str
+
+
+pub class ClassVault:
+    secret: str
+    pub label: str

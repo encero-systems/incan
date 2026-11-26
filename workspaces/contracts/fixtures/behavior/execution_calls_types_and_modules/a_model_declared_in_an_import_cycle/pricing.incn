@@ -1,0 +1,9 @@
+"""Construct and read the model `catalog` declares; lowered first, this member sees the model through the cycle."""
+
+from catalog import Item
+
+
+pub def price(name: str) -> int:
+    """The cents of an item named `name`, built here."""
+    item = Item(name=name, cents=len(name) * 100)
+    return item.cents

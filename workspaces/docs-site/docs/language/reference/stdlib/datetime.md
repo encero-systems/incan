@@ -4,7 +4,7 @@
 
 For a guided walkthrough, see [Dates and times](../../tutorials/dates_and_times.md). For recipes, see [Dates and times](../../how-to/dates_and_times.md). For the mental model behind the runtime/civil split, see [Date and time model](../../explanation/datetime_model.md).
 
-The runtime timing layer provides elapsed-time values, monotonic clock readings, and host system-clock timestamps. The civil calendar layer is source-defined Incan, including normalization, comparison, arithmetic, fixed-offset ISO parsing/formatting, and Python-shaped `strftime` / `strptime` helpers with nanosecond `%f` precision.
+The runtime timing layer provides elapsed-time values, monotonic clock readings, and host system-clock timestamps. The civil calendar layer is source-defined Incan, including normalization, comparison, arithmetic, fixed-offset ISO parsing/formatting, and `strftime` / `strptime` helpers with nanosecond `%f` precision.
 
 ## Importing
 
@@ -24,7 +24,7 @@ The implementation is split into `std.datetime.runtime`, `std.datetime.civil`, a
 
 `Date`, `Time`, and `DateTime` represent calendar dates, wall-clock times, and naive datetimes. `Date.utc_today()` and `DateTime.utc_now()` read the host clock through `SystemTime` and convert the Unix timestamp to UTC civil fields in Incan.
 
-`Date`, `Time`, and `DateTime` support `isoformat()`, `fromisoformat(...)`, `strftime(...)`, and `strptime(...)`. The format surface is Incan-defined and Python-shaped; `%f` formats and parses nanoseconds as 9 fractional digits rather than Python's microsecond ceiling.
+`Date`, `Time`, and `DateTime` support `isoformat()`, `fromisoformat(...)`, `strftime(...)`, and `strptime(...)`. `%f` formats and parses nanoseconds as 9 fractional digits.
 
 `Date` also supports `weekday()`, `iso_week()`, `day_of_year()`, `quarter()`, and ISO calendar construction with `fromisocalendar(...)`.
 
@@ -99,7 +99,7 @@ Numeric formatting directives accept padding modifiers: `%-d` disables padding, 
 
 `FixedOffset` stores a concrete UTC offset in whole minutes. `DateTimeOffset` pairs a naive `DateTime` with that offset and supports ISO text, `%z`, and `%:z`.
 
-Named timezone lookup is not part of `std.datetime`. A named zone such as `Europe/Amsterdam` is not one permanent offset; it resolves to an offset for a specific instant or local civil time because daylight-saving and historical rules change. Timezone-aware `today` / `now` helpers and named-zone rule data belong in separately versioned packages such as `pub.timezones`.
+Named timezone lookup is not part of `std.datetime`. Timezone-aware `today` / `now` helpers and named-zone rule data belong in separately versioned packages such as `pub.timezones`.
 
 ## Intervals
 
@@ -112,4 +112,3 @@ When a `DateTimeInterval` is applied to a civil value, the year/month portion is
 - [Dates and times tutorial](../../tutorials/dates_and_times.md)
 - [Dates and times how-to](../../how-to/dates_and_times.md)
 - [Date and time model](../../explanation/datetime_model.md)
-- [RFC 058: std.datetime](../../../RFCs/closed/implemented/058_std_datetime.md)

@@ -1,0 +1,10 @@
+# behavior: expanded package features activate an optional Rust dependency just as compact feature lists do
+# expect-stdout:
+#   3.5
+
+from rust::foreign_math import fabs
+
+
+def main() -> None:
+    """Call the registry dependency selected by expanded package features."""
+    println(fabs(-3.5))

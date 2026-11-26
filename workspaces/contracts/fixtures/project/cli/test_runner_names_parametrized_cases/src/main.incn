@@ -1,0 +1,11 @@
+# behavior: `incan test --list` and `-k` see each `@parametrize` case under its own name, `test_add[1-2-3]`, in case order, as 0.5.1 does (#3149).
+# cli-commands:
+#   test --list -k add
+#   test . --list -k add
+#   oven test --list -k add
+# expect-stdout:
+#   tests/test_cases.incn::test_add[1-2-3]
+#   tests/test_cases.incn::test_add[2-3-5]
+
+def main() -> None:
+    println("main")

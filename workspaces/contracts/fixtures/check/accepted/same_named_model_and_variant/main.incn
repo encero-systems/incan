@@ -1,0 +1,14 @@
+# behavior: a module declaring a model and an enum variant of one spelling exports the model under it; annotations and calls take the model, and the variant stays reachable through its enum (#2594)
+# expect-accepted:
+
+from calls import CalleeKind, FieldMetadata, first_name
+
+
+def names(fields: list[FieldMetadata]) -> list[str]:
+    return [field.name for field in fields]
+
+
+def main() -> None:
+    fields = [FieldMetadata(name="id")]
+    kind = CalleeKind.FieldMetadata(1, 2)
+    println(f"{names(fields)} {first_name(fields)}")

@@ -19,7 +19,7 @@ Use this route if you can read small programs but types, explicit failures, or n
 | `Result` | A value that records either success or a typed failure. |
 | Test | Executable evidence that a small piece of behavior still works. |
 
-You do not need to memorize the generated Rust or ownership rules. Read the Incan source, make failures explicit, and let the compiler explain the boundary when it needs more information.
+You do not need to memorize ownership rules. Read the Incan source, make failures explicit, and let the compiler explain the boundary when it needs more information.
 
 ## You are ready to choose your own route when
 

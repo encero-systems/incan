@@ -1,0 +1,19 @@
+# behavior: Incomplete Rust layouts refuse construction, including aliases, and private field reads (#2424)
+# expect-diagnostic: INCAN-T0001
+
+"""Refuse construction without complete constructible Rust layouts."""
+
+from rust::shapes import Mixed, MixedAlias, Opaque, Open
+
+
+def main() -> None:
+    """Try each incomplete constructor without an associated factory."""
+    first = Mixed(code="text")
+    second = Opaque()
+    third = Open(code="text")
+    alias = MixedAlias()
+
+
+def read_hidden(value: Mixed) -> None:
+    """Private native layout slots do not grant a source field read."""
+    println(value.hidden)

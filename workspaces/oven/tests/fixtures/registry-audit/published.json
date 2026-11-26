@@ -1,0 +1,39 @@
+{
+  "schema": "loaves.pub/audit/1",
+  "registry": "8822a599af5b58bc7b2e535cfe9ef02ba5389c510ffb4c736f550c20857454cd",
+  "checkpoint": {
+    "head": "dce7266210c062e407a99f6293d42b141fcf10018e29a51dbfc116982bec6a4a",
+    "length": 2,
+    "timestamp": 1795392000,
+    "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+    "signature": {
+      "raw": "2313864abc58f58e06dc73439f04b346bb1baa87b16ccde04fb17acd282f7f3816d2a788301fcbf61c4713df0865449f1c6694bc3a3fa30dc807c3b8e7ccd505",
+      "r": "",
+      "s": ""
+    }
+  },
+  "events": [
+    {
+      "sequence": 1,
+      "kind": "delegate",
+      "key_kind": "ed25519",
+      "key": "6ab4606181888122999031722f79f8a715e4658f3b00c3dc5ef73b25b5e650b1",
+      "signature": {
+        "raw": "7d183a0291a29d3f31ff83483ffbb8a7175df523e47d993111471c1a8874aab14f168eb651acc6dcedb9b32dc9b30ebe98e1797ef91b24a474f7cd76c9a04c07",
+        "r": "",
+        "s": ""
+      }
+    },
+    {
+      "sequence": 2,
+      "kind": "statement",
+      "key": "055b28feb37e074ff7d73b7025284e7f85fc8166a2a9ba8a10492743bda02d52",
+      "payload": "aW5jYW4tcmVnaXN0cnktYWR2aXNvcnktdjEKaWQ9SU5DQU4tMjAyNi0wMDEwCnBhY2thZ2U9ZXhhbXBsZS9sb2FmCnZlcnNpb249MS4yLjMKYWN0aW9uPXB1Ymxpc2gKcmVhc29uPWZpeHR1cmUgdnVsbmVyYWJpbGl0eQo=",
+      "signature": {
+        "raw": "79e8f5ade7b3c9ef7c265b88738d9d055092b7a2f55ca813632e8b56d1d0f1d69b54247f869d8908ec49d2825f9b914a33bcac4b6bd8b848af02f01c28b68d08",
+        "r": "",
+        "s": ""
+      }
+    }
+  ]
+}

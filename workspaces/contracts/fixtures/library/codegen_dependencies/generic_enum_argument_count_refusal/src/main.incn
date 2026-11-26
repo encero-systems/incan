@@ -1,0 +1,12 @@
+# behavior: a source enum constructor refuses incompatible arguments or declaration identity (#2518)
+# expect-exit: 1
+# expect-stderr-contains:
+#   expects 2 explicit type argument(s), got 1
+
+from pub::shapes import Pair
+import pub::shapes as shapes
+
+
+def main() -> None:
+    """Reject the invalid construction before any executable value is produced."""
+    value: Pair[int, str] = shapes.Pair[int].Value(1, "two")

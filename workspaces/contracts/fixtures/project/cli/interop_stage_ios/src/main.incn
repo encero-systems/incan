@@ -1,0 +1,10 @@
+# behavior: `oven interop stage --adapter ios` copies an iOS device or simulator target's bundled runtime libraries into 0.5's fixed `Frameworks/<runtime-name>` layout beside its manifest, without starting Xcode or signing (#3134)
+# cli-commands:
+#   oven interop stage --target aarch64-apple-ios-sim --adapter ios --output staged/ios
+# expect-stdout:
+#   staged aarch64-apple-ios-sim for the ios adapter in staged/ios
+#     Frameworks/libbridge_runtime.dylib sha256:95a326340ccebab7ef65f89a55225318b9bb52d09c34b2739e16bfdbd4b287f2
+#     incan-interop-adapter.json
+
+def main() -> None:
+    println("not run")

@@ -1,0 +1,9 @@
+# behavior: `incan test --slow` includes `@slow` tests, which a run otherwise leaves out, and `-m slow` selects them, as 0.5.1 does (#3138).
+# cli-commands:
+#   test --slow -m slow
+#   test --slow -k slow
+# expect-stdout:
+#   test_marked.incn::test_slow_path PASSED
+
+def main() -> None:
+    println("main")

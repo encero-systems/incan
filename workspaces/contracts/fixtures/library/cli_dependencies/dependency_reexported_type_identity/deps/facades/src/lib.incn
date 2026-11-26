@@ -1,0 +1,88 @@
+"""Public facade over identifiers, search profiles, greetings, calculations and composition."""
+
+pub from ids import EntryId, entry_id, entry_id_text
+pub from labels import Candidate
+pub from search import (
+    MAX_TOP_K,
+    ExactResult,
+    Index,
+    Nomination,
+    Outcome,
+    SearchError,
+    SearchErrorKind,
+    SearchProfile,
+    best_outcome,
+    build_index,
+    exact_query,
+)
+pub from middle import Greeting, Tone, LOUDNESS
+pub from relabel import wave
+pub from calculations import calculate as facade_calculate
+pub from compose import compose
+pub from std.math import sqrt as square_root
+pub from std.io import IoError as BinaryError
+pub from standard import relayed_root, RelayedError
+pub from std.environ import EnvironError, get_as as read_value, EnvironErrorKind as EnvironmentKind
+pub from std.primitives.environ import read as observe_environment
+pub from linked_nodes import LinkedNode, LinkedState
+
+
+pub def format_scalar(value: int) -> int:
+    """Keep integer overload results distinct from string results."""
+    return value + 1
+
+
+pub def format_scalar(value: str) -> str:
+    """Keep string overload results distinct from integer results."""
+    return value + "!"
+
+
+pub model WrappedValue:
+    pub value: int
+
+
+pub def measure(value: WrappedValue) -> int:
+    return value.value
+
+
+pub def measure(value: str) -> int:
+    return len(value)
+
+
+pub def echo[T](value: T) -> T:
+    return value
+
+
+pub def echo(value: str, count: int) -> str:
+    return value
+
+
+pub model IntegerTarget:
+    pub value: int
+
+
+pub model FloatTarget:
+    pub value: float
+
+
+pub model TraitTarget:
+    pub value: str
+
+
+pub trait TargetKind:
+    def target_name(self) -> str: ...
+
+
+pub def typed_target(value: int, target: Type[int]) -> IntegerTarget:
+    return IntegerTarget(value=value)
+
+
+pub def typed_target(value: int, target: Type[float]) -> FloatTarget:
+    return FloatTarget(value=float(value))
+
+
+pub def typed_target(value: int, target: Type[TargetKind]) -> TraitTarget:
+    return TraitTarget(value=f"trait {value}")
+
+
+pub safe_typed_target = alias typed_target

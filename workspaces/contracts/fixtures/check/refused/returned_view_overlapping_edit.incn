@@ -1,0 +1,86 @@
+# behavior: editing storage through its owner while a direct view, reusable batch column, memory graph reader, collection-stored view, exclusive view, owned result dependency or read cursor is still used is refused (#2500, #2519, #2524).
+# expect-diagnostic: INCAN-T0126
+
+from std.primitives.io import advance_cursor, read_cursor
+
+class Address:
+    pub city: str
+
+    pub def set_city(mut self, city: str) -> Reference[Self] from self:
+        self.city = city
+        return self
+
+
+class Customer:
+    pub name: str
+    pub address: Address
+
+    pub def edit_address(mut self) -> Reference[Address] from self.address:
+        return self.address
+
+    pub def view_name(self) -> Borrowed[str] from self.name:
+        return self.name
+
+
+class ColumnBuffer:
+    pub values: list[int]
+
+
+class ReusableBatch:
+    pub buffer: ColumnBuffer
+
+    pub def column(self) -> Borrowed[ColumnBuffer] from self.buffer:
+        return self.buffer
+
+    pub def refill(mut self) -> None:
+        self.buffer = ColumnBuffer(values=[3, 4])
+
+
+class GraphState:
+    pub nodes: list[int]
+
+
+class MemoryGraph:
+    pub state: GraphState
+
+    pub def read_view(self) -> Borrowed[GraphState] from self.state:
+        return self.state
+
+
+def retained_name_size(customer: Borrowed[Customer]) -> Owned[int] from customer.name:
+    return len(customer.name)
+
+
+def refill_bytes(mut data: BorrowedMut[bytes]) -> None:
+    data = b"refilled"
+
+
+def refill_while_cursor_is_live(mut data: BorrowedMut[bytes]) -> None:
+    mut cursor = read_cursor(data)
+    refill_bytes(data)
+    advance_cursor(cursor)
+
+
+def refill_while_column_is_live(mut batch: BorrowedMut[ReusableBatch]) -> None:
+    column = batch.column()
+    batch.refill()
+    println(column.values[0])
+
+
+def edit_graph_while_reader_is_live(mut graph: BorrowedMut[MemoryGraph]) -> None:
+    reader = graph.read_view()
+    graph.state = GraphState(nodes=[3, 4])
+    println(reader.nodes[0])
+
+
+def main() -> None:
+    mut customer = Customer(name="Sam", address=Address(city="Utrecht"))
+    names = [customer.view_name()]
+    customer.name = "Alex"
+    println(len(names))
+    size = retained_name_size(customer)
+    customer.name = "Alex"
+    println(size)
+    mut address = customer.edit_address()
+    customer.address.city = "Amsterdam"
+    address.set_city("Rotterdam")

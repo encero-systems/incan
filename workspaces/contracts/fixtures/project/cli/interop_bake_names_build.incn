@@ -1,0 +1,12 @@
+# behavior: 0.5.1's interop bake is an ordinary build in 0.6; `incan oven interop bake` and `oven interop bake` refuse by naming `oven build`, which compiles each `[c]` Clove and links the static archives `[interop.c]` declares (#3132)
+# cli-commands:
+#   incan oven interop bake --project . --target aarch64-apple-darwin --base-receipt receipt.json --c-compiler /usr/bin/clang --archiver /usr/bin/ar
+#   oven interop bake --project . --target aarch64-apple-darwin --base-receipt receipt.json
+# expect-stdout:
+# expect-stderr-contains:
+#   interop bake` is `oven build` now: an ordinary build compiles each [c] Clove and links the static archives [interop.c] declares
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

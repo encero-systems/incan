@@ -1,0 +1,53 @@
+# behavior: a match on a call that carries a view gives its `Ok` or `Some` arm a view of the caller's own value, while the error or `None` arm holds no view, so it can repair the caller's value and recover (#2500).
+# expect-stdout:
+#   2
+#   closed
+#   -1
+#   true
+#   3
+#   3
+#   -1
+
+"""Match carried views from `Result` and `Option`, read through the view, and repair the source in the other arm."""
+
+
+class Counter:
+    pub value: int
+    pub open: bool
+
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
+        if not self.open:
+            return Err("closed")
+        self.value += 1
+        return Ok(self)
+
+    pub def peek(self, wanted: int) -> Option[Borrowed[Self]] from self:
+        if self.value == wanted:
+            return Some(self)
+        return None
+
+
+def bump_or_reopen(mut counter: BorrowedMut[Counter]) -> int:
+    match counter.bump():
+        Ok(view) => return view.value
+        Err(error) =>
+            println(error)
+            counter.open = true
+            return -1
+
+
+def find(counter: Borrowed[Counter], wanted: int) -> int:
+    match counter.peek(wanted):
+        Some(seen) => return seen.value
+        None => return -1
+
+
+def main() -> None:
+    mut counter = Counter(value=1, open=true)
+    println(bump_or_reopen(counter))
+    counter.open = false
+    println(bump_or_reopen(counter))
+    println(counter.open)
+    println(bump_or_reopen(counter))
+    println(find(counter, 3))
+    println(find(counter, 4))

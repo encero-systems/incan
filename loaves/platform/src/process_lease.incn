@@ -1,0 +1,64 @@
+"""
+Process leases: a lease file that is held while any process holding its descriptor runs.
+
+The holder locks the file shared and keeps its descriptor open across `exec` and in every process it starts, so the
+lease lasts until the holder, the program it became and every program they started have all exited. No process records
+the lease's end: an operating-system lock ends with the last descriptor, however its holders exit.
+"""
+
+from rust::std::fs import File, OpenOptions, remove_file, rename
+from rust::std::io import ErrorKind
+from rust::std::os::fd import AsFd
+from rust::std::path import Path as RustPath
+from rust::std::process import id
+from rust::std::rc import Rc
+from rust::rustix::fs import FlockOperation, flock
+from rust::rustix::io import FdFlags, fcntl_setfd
+
+
+pub class ProcessLease:
+    """One held lease file. Dropping it ends this process's hold, not the hold of a process it started or became."""
+
+    # The open, locked descriptor; it is shared by clones of the lease and closed with the last of them.
+    pub file: Rc[File]
+    pub path: str
+
+
+pub def hold(directory: str, name: str) -> Result[ProcessLease, str]:
+    """
+    Publish the lease `directory/name`, already held.
+
+    1. Create and lock a private name, so no reader sees the lease before it is held.
+    2. Keep the descriptor open across `exec` and in started processes.
+    3. Rename it into place.
+    """
+    # 1. A reader skips names that start with a dot, so a lease is never seen unheld.
+    staged = f"{directory}/.{name}.{id()}"
+    file = open_lease(staged)?
+    flock(file.as_fd(), FlockOperation.LockShared).map_err((error) => f"{staged}: {error}")?
+    # 2. The program this process becomes, and every program it starts, hold the same lock.
+    fcntl_setfd(file.as_fd(), FdFlags.empty()).map_err((error) => f"{staged}: {error}")?
+    # 3. The lock belongs to the open file, so it holds under the published name.
+    target = f"{directory}/{name}"
+    rename(RustPath.new(staged), RustPath.new(target)).map_err((error) => f"{target}: {error}")?
+    return Ok(ProcessLease(file=Rc.new(file), path=target))
+
+
+pub def held(path: str) -> Result[bool, str]:
+    """Whether a process holds the lease at `path`. A lease no process holds is removed, and is not held."""
+    file = open_lease(path)?
+    match flock(file.as_fd(), FlockOperation.NonBlockingLockExclusive):
+        Ok(_) =>
+            remove_file(RustPath.new(path)).map_err((error) => f"{path}: {error}")?
+            return Ok(false)
+        Err(error) =>
+            if error.kind() == ErrorKind.WouldBlock:
+                return Ok(true)
+            return Err(f"{path}: {error}")
+
+
+def open_lease(path: str) -> Result[File, str]:
+    """Open, or create, the lease file itself; its own lock is the lease."""
+    mut options = OpenOptions.new()
+    options.read(true).write(true).create(true).truncate(false)
+    return options.open(RustPath.new(path)).map_err((error) => f"{path}: {error}")

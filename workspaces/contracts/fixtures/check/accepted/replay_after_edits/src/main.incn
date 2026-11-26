@@ -1,0 +1,14 @@
+# behavior: unchanged checks replay byte for byte; new edits of the entry or a dependency check once then replay, even in a populated bakery (#2256, #2481)
+# expect-accepted:
+# check-edits:
+#   src/main.incn
+#   deps/values/src/lib.incn
+
+"""Check a program against a function its path dependency publishes."""
+
+from pub::values import value
+
+
+def main() -> None:
+    """Print the dependency's value."""
+    println(value())

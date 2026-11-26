@@ -1,0 +1,209 @@
+"""Context packing expectations extend the existing cross-language graph cases."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.tempfile import TemporaryDirectory
+from files import make_directory, read_bytes, write, write_bytes
+from graph_mcp_contract import check_mcp, check_mcp_definition_boundary
+from run import invoke
+
+
+pub def check_context(incan: str, project: Path) -> Result[None, str]:
+    """
+    Require bounded, deterministic task context over proved graph relationships.
+
+    1. Compare repeated compact context and its call neighborhood.
+    2. Check natural-language, unmatched and invalid-budget requests.
+    3. Compare the structured formats and verify authorship from an external provider.
+    """
+    # 1. The complete compact response fits the budget and repeats byte for byte.
+    arguments = ["inspect", "codegraph", ".", "--task", "helper", "--budget", "4096", "--format", "compact"]
+    first = invoke(incan, arguments, project)?
+    repeated = invoke(incan, arguments, project)?
+    if first.code != Some(0) or first.stdout != repeated.stdout or len(first.stdout.encode("utf-8")) > 4096:
+        return Err(f"context packing is refused, nondeterministic or over budget: {first.stderr}")
+    if (
+        "incan.context/1 snapshot:" not in first.stdout
+        or "helper" not in first.stdout
+        or " -calls-> " not in first.stdout
+        or " authored_text=quoted_evidence" not in first.stdout.split("\n")[0]
+        or " author=workspace] " not in first.stdout
+    ):
+        return Err("context omitted the declaration, source snapshot, proved call neighborhood or an author")
+    context_arguments = ["inspect", "context", "--task", "helper", "--budget", "4096", "--format", "compact"]
+    context = invoke(incan, context_arguments, project)?
+    if context.code != Some(0):
+        return Err(f"inspect context refused the RFC 106 task command: {context.stderr}")
+    if context.stdout != first.stdout:
+        return Err("inspect context changed the selected graph context")
+
+    # 2. Task matching and budget refusals preserve their public behavior.
+    natural = invoke(
+        incan,
+        ["inspect", "codegraph", ".", "--task", "adjust helper call", "--budget", "4096", "--format", "compact"],
+        project,
+    )?
+    if natural.code != Some(0) or "helper" not in natural.stdout:
+        return Err("natural-language task terms failed to seed graph context")
+    empty = invoke(
+        incan,
+        ["inspect", "codegraph", ".", "--task", "zzzz_no_such_declaration", "--budget", "512", "--format", "compact"],
+        project,
+    )?
+    if empty.code != Some(0) or len(empty.stdout.strip().split("\n")) != 1:
+        return Err("an unmatched task manufactured graph context")
+    refused = invoke(
+        incan,
+        ["inspect", "codegraph", ".", "--task", "helper", "--budget", "8", "--format", "compact"],
+        project,
+    )?
+    if refused.code == Some(0):
+        return Err("a context budget too small for the header was accepted")
+    # 3. Keep the existing workspace proof. An in-tree dependency is authored by that workspace.
+    check_context_formats(incan, project)?
+    fixture = project.joinpath("deps/checked")
+    if not fixture.joinpath("loaf.toml").is_file():
+        return Ok(None)
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path().resolve().map_err((error) => error.message())?
+    consumer = root.joinpath("consumer")
+    provider = root.joinpath("provider")
+    make_directory(consumer.joinpath("src"))?
+    make_directory(provider.joinpath("src"))?
+    degraded = consumer.joinpath("degraded")
+    make_directory(degraded.joinpath("src"))?
+    for file in ["loaf.toml", "src/lib.incn", "src/payload.incn"]:
+        write_bytes(provider.joinpath(file), read_bytes(fixture.joinpath(file))?)?
+    manifest = """
+[project]
+name = "graph_author_consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+checked = { path = "../provider" }
+"""
+    write(consumer.joinpath("loaf.toml"), manifest + "\n[tool.incan.codegraph]\nsources = [\"degraded\"]\n")?
+    write(
+        consumer.joinpath("src/main.incn"),
+        "\n".join(
+            [
+                "from pub::checked import checked_helper as external_helper",
+                "",
+                "",
+                "pub def checked_helper() -> int:",
+                "    \"\"\"Call the selected external provider.\"\"\"",
+                "    return external_helper()",
+                "",
+                "",
+                "def main() -> None:",
+                "    \"\"\"Display the checked helper value.\"\"\"",
+                "    println(checked_helper())",
+                "",
+            ],
+        ),
+    )?
+    write(degraded.joinpath("loaf.toml"), "[project]\nname = \"graph_author_degraded\"\nversion = \"0.1.0\"\n")?
+    write(
+        degraded.joinpath("src/lib.incn"),
+        "\n".join(
+            [
+                "\"\"\"An unchecked source with a recoverable definition.\"\"\"",
+                "",
+                "",
+                "pub def checked_helper() -> int:",
+                "    \"\"\"Leave an unresolved use inside the authored span.\"\"\"",
+                "    return missing_graph_author",
+                "",
+            ],
+        ),
+    )?
+    anchor = provider.joinpath("src/lib.incn")
+    bakery = root.joinpath("bakery")
+    check_context_formats(incan, consumer, f"{anchor.0}:6", [f"INCAN_BAKERY={bakery.0}"])?
+    check_mcp(incan, consumer, f"{anchor.0}:6", bakery.0)?
+    # Keep every selected unit checked so the repository-boundary control can publish a page.
+    write(consumer.joinpath("loaf.toml"), manifest)?
+    return check_mcp_definition_boundary(incan, consumer, root, anchor)
+
+
+def check_context_formats(
+    incan: str,
+    project: Path,
+    external_anchor: str = "",
+    environment: list[str] = [],
+) -> Result[None, str]:
+    """Compare structured context and, for the sibling provider, require its exact authored definition."""
+    mut task = "helper"
+    if external_anchor != "":
+        task = "checked_helper"
+    arguments = ["inspect", "codegraph", ".", "--task", task, "--budget", "32000", "--format"]
+    json = invoke(incan, arguments + ["json"], project, environment)?
+    jsonl = invoke(incan, arguments + ["jsonl"], project, environment)?
+    if json.code != Some(0) or jsonl.code != Some(0):
+        return Err(f"context format refused: {json.stderr}{jsonl.stderr}")
+    value = parse(json.stdout).map_err((error) => error.message())?
+    mut lines: list[JsonValue] = []
+    for line in jsonl.stdout.split("\n"):
+        if line != "":
+            lines.append(parse(line).map_err((error) => error.message())?)
+    expected = value.to_json().map_err((error) => error.message())?
+    actual = JsonValue.array(lines).to_json().map_err((error) => error.message())?
+    if expected != actual:
+        return Err("JSON and JSONL context records disagree")
+    mut exports = false
+    mut workspace = false
+    mut external_declarations = 0
+    for record in lines:
+        # Every node and edge names who wrote its text; the header says how that text is to be read.
+        if text_of(record, "record") == "context":
+            if text_of(record, "authored_text") != "quoted_evidence":
+                return Err("the context header does not state that authored text is quoted evidence")
+            continue
+        author = record.get("author").unwrap_or(JsonValue.null())
+        if author.is_null():
+            return Err("a context record carries no author")
+        kind = text_of(author, "kind")
+        if kind not in ["toolchain", "workspace", "dependency"]:
+            return Err("a context record names no author")
+        if kind == "dependency" and text_of(author, "identity") == "":
+            return Err("a dependency-authored context record does not name the dependency")
+        workspace = workspace or kind == "workspace"
+        if (
+            external_anchor != ""
+            and text_of(record, "kind") == "declaration"
+            and text_of(record, "label") == "graph_checked::main::checked_helper"
+        ):
+            if (
+                kind != "dependency"
+                or text_of(author, "identity") != "graph_checked@0.1.0"
+                or text_of(record, "anchor") != external_anchor
+                or not text_of(record, "stable_key").startswith("symbol:")
+            ):
+                return Err("the external checked helper lost its authored definition or exact source span")
+            external_declarations += 1
+        match record.get("kind"):
+            Some(kind) =>
+                if kind.as_str() == Some("exports"):
+                    exports = true
+            None => pass
+    if not workspace:
+        return Err("no context record is authored by the workspace that declares the task's helper")
+    if external_anchor != "" and external_declarations != 1:
+        return Err(f"expected one external checked helper, found {external_declarations}")
+    if not exports and project.joinpath("src").joinpath("provider.incn").is_file():
+        return Err("context omitted recorded export edges between selected modules and declarations")
+    return Ok(None)
+
+
+def text_of(value: JsonValue, key: str) -> str:
+    """An optional string member, empty when absent."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(found) => return found
+                None => pass
+        None => pass
+    return ""

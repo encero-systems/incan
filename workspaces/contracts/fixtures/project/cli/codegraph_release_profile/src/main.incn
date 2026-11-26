@@ -1,0 +1,11 @@
+# behavior: `incan inspect codegraph --profile release` inspects a package that reaches release-only native support, as an installed toolchain ships it (#2606).
+# cli-commands:
+#   inspect codegraph src/main.incn --profile release --query defs main
+# expect-stdout-contains:
+#   declaration main src/main.incn:9
+from native_text import helper
+
+
+def main() -> None:
+    """Use a standard declaration whose package reaches installed native support."""
+    println(helper())

@@ -1,0 +1,14 @@
+# behavior: replacing the owner of a field while a later use still needs a writable alias of that field is refused; the alias neither follows the new owner nor keeps a copy of the old list (RFC 129, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the check accepts the program.
+# expect-diagnostic: INCAN-T0126
+
+class Cart:
+    pub items: list[str]
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    mut items = cart.items
+    cart = Cart(items=["pear"])
+    items.append("orange")
+    println(cart.items)

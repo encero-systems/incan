@@ -1,0 +1,22 @@
+# behavior: an imported const that is not structural stays refused in a registry descriptor (#2605)
+# expect-diagnostic: INCAN-T0001
+
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+from catalog import LIMIT
+
+
+@derive(Descriptor)
+model LimitDescriptor:
+    pub limit: int
+
+
+pub static limits: Registry[str, LimitDescriptor] = Registry.define(subjects=[SubjectKind.CompilationUnit])
+pub static limit: RegistryEntry[str, LimitDescriptor] = limits.entry(
+    key="limit",
+    subject=RegistrySubject.current_unit(),
+    descriptor=LimitDescriptor(limit=LIMIT),
+)
+
+
+def main() -> None:
+    println("ok")

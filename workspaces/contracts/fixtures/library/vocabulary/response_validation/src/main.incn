@@ -1,0 +1,22 @@
+# behavior: schema, source-map and output-position refusals leave the rest of a module checked
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary provider `words`
+#   vocabulary response schema version is unsupported; supported version 3
+#   response source span lies outside its vocabulary node
+#   wrong output position
+#   Assignment to 'remaining' has type mismatch: expected 'Int', found 'Str'
+
+from pub::words import marker
+
+
+def main() -> None:
+    """Reject every bad response and also report the independent authored type error."""
+    one = bad_schema:
+        FROM 1
+    two = bad_span:
+        FROM 2
+    three = bad_position:
+        FROM 3
+    remaining: int = "still checked"
+    println(marker())

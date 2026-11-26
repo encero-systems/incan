@@ -1,0 +1,13 @@
+[project]
+name = "feature_request_of_an_unselected_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["fast"]
+fast = ["engine/fast"]
+
+[dependencies]
+engine = { path = "deps/engine", optional = true }

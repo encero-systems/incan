@@ -1,0 +1,28 @@
+# behavior: a model construction that supplies arguments on both sides of an omitted field whose default is an enum variant, as `event-model-spike`'s `FieldContract(number=..., kind=..., required=..., allowed_values=...)` does, runs and keeps every value, as 0.5.1 runs it (#3144)
+# expect-stdout:
+#   1 Plain 1
+#   2 Rich 0
+
+enum Kind:
+    Plain
+    Rich
+
+
+model Field:
+    pub number: int
+    pub kind: Kind = Kind.Plain
+    pub allowed: list[str] = []
+
+
+def label(kind: Kind) -> str:
+    match kind:
+        Kind.Plain => return "Plain"
+        Kind.Rich => return "Rich"
+
+
+def main() -> None:
+    allowed = ["x"]
+    field = Field(number=1, allowed=allowed)
+    println(f"{field.number} {label(field.kind)} {len(field.allowed)}")
+    rich = Field(number=2, kind=Kind.Rich)
+    println(f"{rich.number} {label(rich.kind)} {len(rich.allowed)}")

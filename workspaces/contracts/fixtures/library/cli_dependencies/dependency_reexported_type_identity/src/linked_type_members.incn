@@ -1,0 +1,19 @@
+"""Use members of nominal types a dependency Loaf republishes from another Loaf."""
+
+from pub::facades import LinkedNode, LinkedState
+from pub::facades import LinkedNode as NodeAlias, LinkedState as StateAlias
+
+
+def state_name(state: LinkedState) -> str:
+    """Name the dependency enum variant reached through a re-export link."""
+    match state:
+        case LinkedState.Active:
+            return "active"
+
+
+pub def run_linked_type_members() -> None:
+    """Read fields, call methods and select variants through plain and aliased links."""
+    direct = LinkedNode(value=7)
+    println(f"{direct.value} {direct.doubled()} {state_name(LinkedState.Active)}")
+    aliased = NodeAlias(value=8)
+    println(f"{aliased.value} {aliased.doubled()} {state_name(StateAlias.Active)}")

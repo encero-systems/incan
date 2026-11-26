@@ -1,0 +1,38 @@
+# behavior: An exact process child retains native Send evidence through Mutex and Arc when an owned callback moves the carrier onto a Rust thread
+# expect-stdout:
+#   reaped
+
+"""Move one exact process child into a native waiter without cloning or replacing its handle."""
+
+from rust::std::marker import Send
+from rust::std::process import Child, Command
+from rust::std::sync import Arc, Mutex
+from rust::std::thread import spawn
+
+
+type RustChild = rusttype Child with Send
+type WorkerChild = rusttype Arc[Mutex[RustChild]] with Send
+
+
+def reap(shared: WorkerChild) -> str:
+    """Wait behind the same Arc and Mutex carrier captured by the native callback."""
+    mut child = match shared.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+    match child.wait():
+        Ok(_) => return "reaped"
+        Err(_) => return "wait failed"
+
+
+def main() -> None:
+    """Spawn and reap one child after moving its only carrier onto a Rust thread."""
+    child = match Command.new("true").spawn():
+        Ok(value) => value
+        Err(_) =>
+            println("spawn failed")
+            return
+    shared: WorkerChild = Arc.new(Mutex.new(child))
+    waiter = spawn(() => reap(shared))
+    match waiter.join():
+        Ok(result) => println(result)
+        Err(_) => println("join failed")

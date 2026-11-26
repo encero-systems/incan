@@ -1,0 +1,13 @@
+# behavior: a closure that holds a reference to a borrowed local keeps that local's owner borrowed while the closure can still be called; changing the owner before its last call is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Counter:
+    pub value: int
+    pub name: str
+
+
+def overlap(mut counter: BorrowedMut[Counter]) -> int:
+    name: Borrowed[str] = counter.name
+    read: () -> int = () => len(name)
+    counter.name = "changed"
+    return read()

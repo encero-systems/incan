@@ -1,0 +1,13 @@
+# behavior: `incan tools metadata model PATH MODEL` prints a contract-backed model as formatted Incan source from the project's checked model metadata, as 0.5.1 did (#3142).
+# cli-commands:
+#   tools metadata model . Order
+# expect-stdout:
+#   pub model Order:
+#       pub id: int
+#       pub note [alias="memo", description="Free text"]: Option[str]
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose declared model bundle the case emits."""
+    pass

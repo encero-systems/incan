@@ -1,7 +1,7 @@
 //! Procedural macros for the transitional Incan web runtime.
 //!
-//! This crate is toolchain-locked to `incan_std_web` and compiler-generated Rust. It is not a standalone routing
-//! framework API; macro output may change whenever the compiler/runtime contract changes.
+//! This crate is toolchain-locked to `incan_std_web` and the compiler's native declarations. It is not a standalone
+//! routing framework API; macro output may change whenever the compiler/runtime contract changes.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};

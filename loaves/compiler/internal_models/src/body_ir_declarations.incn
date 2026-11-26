@@ -1,0 +1,28 @@
+"""Incan-owned Body IR, nominal, trait-adoption and callable declaration contracts. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    BODY_IR_ADAPTER_PROFILE,
+    BODY_IR_ADAPTER_SOURCE,
+    BODY_IR_ADAPTER_GENERATION,
+    BODY_IR_ADAPTER_REMOVAL_GATE,
+    NamedTypeIdentity,
+    TraitTypeArgument,
+    TraitDefaultInstantiation,
+    TraitFieldWitness,
+    CompilerTraitAdoption,
+    CompilerValidatedConstructor,
+    CompilerBody,
+    CompilerNominalDeclaration,
+    CompilerLoafCallable,
+    CompilerBodyCoverage,
+    CompilerDeclarationSet,
+    CompilerBodyIrModule,
+    valid_compiler_body,
+    valid_optional_body,
+    valid_nominal_declaration,
+    valid_loaf_callable,
+    covered_body_count,
+    valid_invocation_view,
+    valid_published_expanded_body,
+    invalidate_owned_callable_fields,
+)

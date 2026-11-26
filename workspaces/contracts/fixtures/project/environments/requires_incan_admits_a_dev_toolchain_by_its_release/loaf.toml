@@ -1,0 +1,7 @@
+[project]
+name = "requires_incan_admits_a_dev_toolchain_by_its_release"
+version = "0.1.0"
+requires-incan = ">=0.5.1-rc2"
+
+[project.scripts]
+main = "src/main.incn"

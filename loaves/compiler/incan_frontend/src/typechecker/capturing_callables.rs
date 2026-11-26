@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use crate::ast::*;
-use crate::ast_walk::{any_expr_in_body, any_expr_in_expr, any_expr_in_program};
+use crate::ast_walk::{any_expr_in_body, any_expr_in_declaration, any_expr_in_expr};
 use crate::body_ir::free_vars::free_vars_in_closure_body;
 use crate::diagnostics::errors;
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, SymbolKind, TypeInfo};
@@ -47,9 +47,22 @@ pub(super) struct CapturingCallables {
     /// Functions and methods of this module whose one returned value is a capturing closure.
     closure_returning: HashSet<CanonicalSymbolId>,
     /// Closure expressions that capture a local of an enclosing callable, by span.
-    capturing_closures: HashSet<(usize, usize)>,
+    capturing_closures: HashSet<crate::ast::Span>,
     /// Declaration spans of the locals bound to a capturing callable.
-    capturing_bindings: HashSet<(usize, usize)>,
+    capturing_bindings: HashSet<crate::ast::Span>,
+    /// Captured names, checked value types and declarations, frozen before a closure shadows its enclosing scope.
+    pub(super) captures: HashMap<crate::ast::Span, Vec<Capture>>,
+    /// Originating closure spans for locally retained callable values.
+    pub(super) origins: HashMap<crate::ast::Span, crate::ast::Span>,
+}
+
+/// One local of an enclosing callable that a closure reads, resolved in the scope the closure is built in.
+#[derive(Debug, Clone)]
+pub(super) struct Capture {
+    pub(super) name: String,
+    pub(super) ty: ResolvedType,
+    /// The captured declaration; `None` only for a local the symbol table gives no canonical identity.
+    pub(super) identity: Option<CanonicalSymbolId>,
 }
 
 /// One function or method whose parameters and return this module may spell as `impl Fn(...) -> R`.
@@ -64,7 +77,7 @@ struct CallableCandidate<'a> {
 
 /// Names this module reads as values rather than calling them: identifiers read other than as a callee, and member
 /// names read other than as a method call's method.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct ValueReads {
     names: HashSet<String>,
     members: HashSet<String>,
@@ -78,7 +91,12 @@ impl TypeChecker {
         if self.checks_standard_library_source() {
             return;
         }
-        let reads = value_reads(program);
+        self.plan_closure_holding_callables_from_uses(program, value_reads(program));
+    }
+
+    /// Apply the existing eligibility rules to final source-use membership. Keeping scans outside this operation
+    /// lets a record producer replace one contribution without rescanning the other bodies.
+    fn plan_closure_holding_callables_from_uses(&mut self, program: &Program, reads: ValueReads) {
         let extended_classes = program
             .declarations
             .iter()
@@ -231,10 +249,7 @@ impl TypeChecker {
                 continue;
             }
             admitted.insert(index);
-            self.type_info
-                .calls
-                .closure_holding_params
-                .insert((param.span.start, param.span.end));
+            self.type_info.calls.closure_holding_params.insert(param.span);
         }
         if !admitted.is_empty() {
             self.capturing_callables
@@ -251,7 +266,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .closure_returning_callables
-                .insert((candidate.return_type.span.start, candidate.return_type.span.end));
+                .insert(candidate.return_type.span);
         }
     }
 
@@ -264,45 +279,56 @@ impl TypeChecker {
     ///
     /// Called before the closure's parameters are defined, so each name resolves in the scope the closure is built in.
     pub(super) fn note_closure_captures(&mut self, params: &[Spanned<Param>], body: &Spanned<Expr>, span: Span) {
+        let captures = free_vars_in_closure_body(params, body)
+            .iter()
+            .filter_map(|name| {
+                let binding = self.check_environment().lookup(name)?;
+                let SymbolKind::Variable(info) = &binding.symbol.kind else {
+                    return None;
+                };
+                Some(Capture {
+                    name: name.clone(),
+                    ty: info.ty.clone(),
+                    identity: binding.canonical.cloned(),
+                })
+            })
+            .collect();
+        self.capturing_callables.captures.insert(span, captures);
         let reads_self = any_expr_in_expr(&body.node, |expr| matches!(expr, Expr::SelfExpr));
         let captures_local = free_vars_in_closure_body(params, body).iter().any(|name| {
             self.lookup_symbol(name)
                 .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Variable(_)))
         });
         if reads_self || captures_local {
-            self.capturing_callables
-                .capturing_closures
-                .insert((span.start, span.end));
+            self.capturing_callables.capturing_closures.insert(span);
         }
+    }
+
+    /// Whether the function or method `callee` of this module only calls the callable its parameter at `slot`
+    /// receives, so a closure passed there is not kept beyond the call.
+    pub(super) fn closure_parameter_only_called(&self, callee: &CanonicalSymbolId, slot: usize) -> bool {
+        self.capturing_callables
+            .admitting_params
+            .get(callee)
+            .is_some_and(|slots| slots.contains(&slot))
+    }
+
+    /// The locals the closure at `span` captures, each resolved in the scope the closure is built in.
+    pub(super) fn closure_captures(&self, span: crate::ast::Span) -> Option<&[Capture]> {
+        self.capturing_callables.captures.get(&span).map(Vec::as_slice)
     }
 
     /// Return whether the module being checked is a module of the standard library, whose function-typed slots,
     /// closures and trait defaults are spelled by the standard library's own lowering rules and are left as they are.
-    ///
-    /// A module is one when a harness says so ([`TypeChecker::set_standard_library_source`]), when its path is under
-    /// `std`, when its path is under the generated `__incan_std` namespace, and when the checker's provider plan
-    /// carries an SDK bootstrap grant or retained ordinary source authority for this module's own root. The ordinary
-    /// grant is selected and verified at source/session handoffs; this hot check only reads its pinned root policy.
-    /// A consumer with no SDK inventory, such as one on a fresh home, checks each
-    /// standard-library module it imports from source under `__incan_std` (`__incan_std.derives.collection`); an SDK
-    /// component compiled from its own source checks its modules under their physical paths (`derives.collection`).
+    /// A module is one when the program is a standard package ([`TypeChecker::set_own_standard_package`]) or when its
+    /// path is under `std`.
     pub(super) fn checks_standard_library_source(&self) -> bool {
-        self.standard_library_source
-            || self.provider_plan.bootstrap_sdk_namespace_roots().next().is_some()
-            || self.provider_plan.standard_source_publication().is_some_and(|source| {
-                self.current_module_path
-                    .as_ref()
-                    .and_then(|path| path.first())
-                    .is_some_and(|root| source.namespace_roots().contains(&root.as_str()))
-            })
+        self.own_standard_package.is_some()
             || self
                 .current_module_path
                 .as_ref()
                 .and_then(|path| path.first())
-                .is_some_and(|root| {
-                    root == incan_lang::lang::stdlib::STDLIB_ROOT
-                        || root == incan_lang::lang::stdlib::INCAN_STD_NAMESPACE
-                })
+                .is_some_and(|root| root == incan_lang::lang::stdlib::STDLIB_ROOT)
     }
 
     /// Describe `expr`, already checked, when it is a capturing callable: a closure that captures, a local partial, a
@@ -314,22 +340,14 @@ impl TypeChecker {
         }
         match &expr.node {
             Expr::Paren(inner) => self.capturing_callable_description(inner),
-            Expr::Closure(..)
-                if self
-                    .capturing_callables
-                    .capturing_closures
-                    .contains(&(expr.span.start, expr.span.end)) =>
-            {
+            Expr::Closure(..) if self.capturing_callables.capturing_closures.contains(&expr.span) => {
                 Some("A closure that captures local values".to_string())
             }
             Expr::Partial(_) => Some("A local partial, which holds its presets,".to_string()),
             Expr::Ident(name) => {
                 let symbol = self.lookup_symbol(name)?;
                 (matches!(symbol.kind, SymbolKind::Variable(_))
-                    && self
-                        .capturing_callables
-                        .capturing_bindings
-                        .contains(&(symbol.span.start, symbol.span.end)))
+                    && self.capturing_callables.capturing_bindings.contains(&symbol.span))
                 .then(|| format!("'{name}', which holds a closure that captures local values,"))
             }
             Expr::Call(..) | Expr::MethodCall(..) => {
@@ -544,14 +562,6 @@ impl TypeChecker {
                 continue;
             }
             if admitted.is_some_and(|admitted| admitted.contains(&index)) {
-                if self.capturing_callable_description(value).is_some()
-                    && matches!(strip_parens(value).node, Expr::Ident(_))
-                {
-                    self.type_info
-                        .calls
-                        .borrowed_callable_arguments
-                        .insert((value.span.start, value.span.end));
-                }
                 continue;
             }
             let slot = match &param.name {
@@ -570,14 +580,6 @@ impl TypeChecker {
             .is_some_and(|identity| self.capturing_callables.closure_returning.contains(identity));
         if !returns_closure {
             self.refuse_capturing_callable(value, "returned as a function type");
-            return;
-        }
-        let value = strip_parens(value);
-        if matches!(value.node, Expr::Closure(..)) {
-            self.type_info
-                .calls
-                .returned_closures
-                .insert((value.span.start, value.span.end));
         }
     }
 
@@ -587,13 +589,11 @@ impl TypeChecker {
         if self.capturing_callable_description(value).is_none() {
             return;
         }
-        self.capturing_callables
-            .capturing_bindings
-            .insert((binding_span.start, binding_span.end));
-        self.type_info
-            .calls
-            .capturing_callable_bindings
-            .insert((statement_span.start, statement_span.end));
+        if let Some(origin) = self.native_closure_origin(value) {
+            self.capturing_callables.origins.insert(binding_span, origin);
+        }
+        self.capturing_callables.capturing_bindings.insert(binding_span);
+        self.type_info.calls.capturing_callable_bindings.insert(statement_span);
     }
 
     /// Refuse an assignment to the existing local `name`, a field or an element of `value` when it is a capturing
@@ -601,10 +601,7 @@ impl TypeChecker {
     pub(super) fn refuse_capturing_reassignment(&mut self, name: Option<&str>, value: &Spanned<Expr>, span: Span) {
         if let Some(name) = name
             && let Some(symbol) = self.lookup_symbol(name)
-            && self
-                .capturing_callables
-                .capturing_bindings
-                .contains(&(symbol.span.start, symbol.span.end))
+            && self.capturing_callables.capturing_bindings.contains(&symbol.span)
         {
             let error = errors::capturing_callable_in_function_slot(
                 &format!("'{name}', which holds a closure that captures local values,"),
@@ -628,10 +625,22 @@ impl TypeChecker {
 /// decorator, which is applied to the function it decorates as a value, and a member that is not the method of a method
 /// call.
 fn value_reads(program: &Program) -> ValueReads {
+    let mut result = ValueReads::default();
+    for declaration in &program.declarations {
+        let contribution = declaration_value_reads(declaration);
+        result.names.extend(contribution.names);
+        result.members.extend(contribution.members);
+    }
+    result
+}
+
+/// Scan one source declaration's name/member-as-value uses, including defaults and decorator applications. Set union
+/// exactly matches the original program scan because every counted callee is also one of the counted identifiers.
+fn declaration_value_reads(declaration: &Spanned<Declaration>) -> ValueReads {
     let mut callees = HashMap::<String, usize>::new();
     let mut idents = HashMap::<String, usize>::new();
     let mut members = HashSet::new();
-    any_expr_in_program(program, |expr| {
+    any_expr_in_declaration(declaration, |expr| {
         match expr {
             Expr::Call(callee, _, _) => {
                 if let Expr::Ident(name) = &callee.node {
@@ -651,24 +660,22 @@ fn value_reads(program: &Program) -> ValueReads {
         .filter(|(name, count)| callees.get(name).copied().unwrap_or(0) < *count)
         .map(|(name, _)| name)
         .collect::<HashSet<_>>();
-    for decl in &program.declarations {
-        let (decorators, methods): (&[Spanned<Decorator>], &[Spanned<MethodDecl>]) = match &decl.node {
-            Declaration::Function(function) => (&function.decorators, &[]),
-            Declaration::Model(model) => (&model.decorators, &model.methods),
-            Declaration::Class(class) => (&class.decorators, &class.methods),
-            Declaration::Newtype(newtype) => (&newtype.decorators, &newtype.methods),
-            Declaration::Enum(enum_decl) => (&enum_decl.decorators, &enum_decl.methods),
-            Declaration::Trait(trait_decl) => (&trait_decl.decorators, &trait_decl.methods),
-            _ => continue,
-        };
-        let method_decorators = methods.iter().flat_map(|method| method.node.decorators.iter());
-        names.extend(
-            decorators
-                .iter()
-                .chain(method_decorators)
-                .map(|decorator| decorator.node.name.clone()),
-        );
-    }
+    let (decorators, methods): (&[Spanned<Decorator>], &[Spanned<MethodDecl>]) = match &declaration.node {
+        Declaration::Function(function) => (&function.decorators, &[]),
+        Declaration::Model(model) => (&model.decorators, &model.methods),
+        Declaration::Class(class) => (&class.decorators, &class.methods),
+        Declaration::Newtype(newtype) => (&newtype.decorators, &newtype.methods),
+        Declaration::Enum(enum_decl) => (&enum_decl.decorators, &enum_decl.methods),
+        Declaration::Trait(trait_decl) => (&trait_decl.decorators, &trait_decl.methods),
+        _ => (&[], &[]),
+    };
+    let method_decorators = methods.iter().flat_map(|method| method.node.decorators.iter());
+    names.extend(
+        decorators
+            .iter()
+            .chain(method_decorators)
+            .map(|decorator| decorator.node.name.clone()),
+    );
     ValueReads { names, members }
 }
 
@@ -832,3 +839,80 @@ fn call_callee_span(call: &Spanned<Expr>) -> Span {
         _ => call.span,
     }
 }
+
+#[cfg(test)]
+mod contribution_tests {
+    use super::{ValueReads, declaration_value_reads, value_reads};
+    use crate::ast::{Declaration, Expr};
+    use crate::ast_walk::any_expr_in_program;
+    use std::collections::{HashMap, HashSet};
+
+    /// Compare per-source contributions against the original whole-program expression scan. Removing a value use in
+    /// one declaration must not remove another contributor's membership, and a direct call alone is not a value use.
+    #[test]
+    fn source_contributions_preserve_value_use_membership() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def apply(callback: (int) -> int, value: int) -> int:\n    return callback(value)\ndef direct(value: int) -> int:\n    return value\ndef caller() -> int:\n    return apply(direct, 1)\ndef another() -> (int) -> int:\n    return direct\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut callees = HashMap::<String, usize>::new();
+        let mut identifiers = HashMap::<String, usize>::new();
+        let mut members = HashSet::new();
+        any_expr_in_program(&program, |expr| {
+            match expr {
+                Expr::Call(callee, _, _) => {
+                    if let Expr::Ident(name) = &callee.node {
+                        *callees.entry(name.clone()).or_default() += 1;
+                    }
+                }
+                Expr::Ident(name) => *identifiers.entry(name.clone()).or_default() += 1,
+                Expr::Field(_, member) => {
+                    members.insert(member.clone());
+                }
+                _ => {}
+            }
+            false
+        });
+        let names = identifiers
+            .into_iter()
+            .filter(|(name, count)| callees.get(name).copied().unwrap_or(0) < *count)
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(value_reads(&program), ValueReads { names, members });
+        let contributions = program
+            .declarations
+            .iter()
+            .filter_map(|declaration| {
+                let Declaration::Function(function) = &declaration.node else {
+                    return None;
+                };
+                Some((function.name.as_str(), declaration_value_reads(declaration)))
+            })
+            .collect::<HashMap<_, _>>();
+        assert!(
+            contributions
+                .get("caller")
+                .ok_or("missing caller")?
+                .names
+                .contains("direct")
+        );
+        assert!(
+            contributions
+                .get("another")
+                .ok_or("missing another")?
+                .names
+                .contains("direct")
+        );
+        assert!(
+            !contributions
+                .get("caller")
+                .ok_or("missing caller")?
+                .names
+                .contains("apply")
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "capturing_callables_legacy_uses.rs"]
+mod legacy_uses;

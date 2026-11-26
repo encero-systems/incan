@@ -1,0 +1,11 @@
+"""Unwrap the sealed model with `?`, discarding it once and binding it once, beside a direct import of `facts`."""
+
+from sealing import sealed_result
+from facts import total
+
+
+pub def publish(name: str) -> Result[int, str]:
+    """The sealed name's length plus the cycle's total."""
+    sealed_result(name)?
+    fact = sealed_result(name)?
+    return Ok(len(fact.name) + total())

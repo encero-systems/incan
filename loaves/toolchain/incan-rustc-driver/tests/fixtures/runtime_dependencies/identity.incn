@@ -1,0 +1,4 @@
+"""A scalar-only body does not reach ordinary standard-library declarations."""
+
+pub def identity(value: int) -> int:
+    return value

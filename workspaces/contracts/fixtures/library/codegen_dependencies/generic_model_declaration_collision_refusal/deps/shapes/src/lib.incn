@@ -1,0 +1,18 @@
+pub model Holder[T]:
+    """Keep generic fields in declaration order across public module selection."""
+
+    pub label: str
+    pub value: T
+
+
+pub model Defaulted[T]:
+    """Retain ordinary defaults when explicit generic arguments select the owner."""
+
+    pub value: T
+    pub label: str = "default"
+
+
+pub model Plain:
+    """Control existing nongeneric module construction."""
+
+    pub value: int

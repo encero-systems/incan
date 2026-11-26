@@ -1,0 +1,67 @@
+"""Encode already parsed document fields as tagged values inside typed installation pages."""
+
+from std.io import _BytesIO
+from std.json import JsonKind, JsonValue
+from page_codec import Reader, put_number, put_text
+
+const MAX_DEPTH: int = 32
+
+
+pub def read_value(mut reader: Reader, depth: int = 0) -> Result[JsonValue, str]:
+    """Read bounded nested values without invoking a text parser or accepting unknown tags or duplicate keys."""
+    if depth > MAX_DEPTH:
+        return Err("installation value nesting exceeds its schema bound")
+    tag = reader.number()?
+    if tag == 0:
+        return Ok(JsonValue.null())
+    if tag == 1:
+        return Ok(JsonValue.string(reader.text()?))
+    if tag == 2:
+        mut values: list[JsonValue] = []
+        for _index in range(reader.count()?):
+            values.append(read_value(reader, depth + 1)?)
+        return Ok(JsonValue.array(values))
+    if tag == 3:
+        mut fields: Dict[str, JsonValue] = {}
+        for _index in range(reader.count(16)?):
+            key = reader.text()?
+            if key in fields:
+                return Err("installation value has duplicate keys")
+            fields[key] = read_value(reader, depth + 1)?
+        return Ok(JsonValue.object(fields))
+    if tag == 4:
+        return Ok(JsonValue.bool(reader.flag()?))
+    return Err("unsupported installation value tag")
+
+
+pub def write_value(buffer: _BytesIO, value: JsonValue, depth: int = 0) -> Result[None, str]:
+    """Encode the installed record schema's null, string, boolean, array and object values deterministically."""
+    if depth > MAX_DEPTH:
+        return Err("installation value nesting exceeds its schema bound")
+    kind = value.kind()
+    if kind == JsonKind.Null:
+        return put_number(buffer, 0)
+    if kind == JsonKind.String:
+        put_number(buffer, 1)?
+        return put_text(buffer, value.expect_str().map_err((error) => error.message())?)
+    if kind == JsonKind.Array:
+        put_number(buffer, 2)?
+        values = value.expect_array().map_err((error) => error.message())?
+        put_number(buffer, len(values))?
+        for item in values:
+            write_value(buffer, item, depth + 1)?
+        return Ok(None)
+    if kind == JsonKind.Object:
+        put_number(buffer, 3)?
+        values = value.expect_object().map_err((error) => error.message())?
+        put_number(buffer, len(values))?
+        for key in sorted([key for key in values.keys()]):
+            put_text(buffer, key)?
+            write_value(buffer, values[key], depth + 1)?
+        return Ok(None)
+    if kind == JsonKind.Bool:
+        put_number(buffer, 4)?
+        if value.expect_bool().map_err((error) => error.message())?:
+            return put_number(buffer, 1)
+        return put_number(buffer, 0)
+    return Err("installed linking and publication records cannot contain numeric values")

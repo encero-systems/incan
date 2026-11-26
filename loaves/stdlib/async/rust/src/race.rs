@@ -4,8 +4,6 @@ use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::task::Poll;
 
-use super::time::clamp_seconds;
-
 /// Runtime-erased race arm for the public `std.async.race` helper surface.
 ///
 /// Each arm owns one `'static` awaitable plus its winner callback. The awaited payload type is intentionally erased
@@ -88,35 +86,11 @@ where
     .await
 }
 
-/// Run a task with a timeout, returning `None` when the timeout wins.
-pub async fn race_timeout<T, TaskFuture>(seconds: f64, task: TaskFuture) -> Option<T>
-where
-    TaskFuture: Future<Output = T>,
-{
-    tokio::time::timeout(clamp_seconds(seconds), task).await.ok()
-}
-
 #[cfg(test)]
 mod tests {
     use std::future::ready;
 
-    use super::{arm, race, race_timeout, scoped_arm, scoped_race};
-
-    #[tokio::test]
-    async fn race_timeout_returns_some_when_task_completes() {
-        let result = race_timeout(0.1, async { 99 }).await;
-        assert_eq!(result, Some(99));
-    }
-
-    #[tokio::test]
-    async fn race_timeout_returns_none_when_deadline_expires() {
-        let result = race_timeout(0.001, async {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            1
-        })
-        .await;
-        assert_eq!(result, None);
-    }
+    use super::{arm, race, scoped_arm, scoped_race};
 
     #[tokio::test]
     async fn race_returns_first_completed_arm() {

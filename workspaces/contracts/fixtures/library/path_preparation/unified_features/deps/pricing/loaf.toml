@@ -1,0 +1,6 @@
+[project]
+name = "pricing"
+version = "0.1.0"
+
+[dependencies]
+stock = { path = "../catalog", default-features = false }

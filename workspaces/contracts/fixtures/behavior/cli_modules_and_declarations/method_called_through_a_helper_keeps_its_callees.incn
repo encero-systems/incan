@@ -1,0 +1,20 @@
+# behavior: a method called only from a helper function that main reaches after constructing its model still runs the method it calls in turn
+# expect-stdout:
+#   42
+
+model Counter:
+    value: int
+
+    def doubled(self) -> int:
+        return self.base() * 2
+
+    def base(self) -> int:
+        return self.value
+
+
+pub def double_it(counter: Counter) -> int:
+    return counter.doubled()
+
+
+def main() -> None:
+    println(double_it(Counter(value=21)))

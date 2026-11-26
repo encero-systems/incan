@@ -1,28 +1,26 @@
 # Incan build times
 
-Generated: 2026-08-21T09:46:57Z
+These are installed-seed controls with the same source-build limits as the [execution table](results.md). `/usr/bin/time -p` provides 10 ms resolution here; the development-loop table retains finer-grained samples.
 
-Host: Darwin arm64
+Measured: 2026-10-24T14:58:01Z
 
-Rust: rustc 1.95.0 (59807616e 2026-04-14)
+Commit: `e8f19f3cecdea4cfa83d07e390a80f77065a0841`
 
-Best of 3 timed repeats per phase, except cold, which is measured once per toolchain because a
-repeated cold build is no longer cold.
+Toolchain: `0.6.0-dev.8`; driver SHA-256: `8c6c71701034a646c43c58042a022bbc07d8c6be2603e8e72c1c142d1b484e52`.
 
-Incremental edits are verified by running the binary afterwards. `stale` means the toolchain reported a
-successful build but the change never reached the binary, so no timing for it would be meaningful --
-and its warm column is measuring a no-op rather than a rebuild.
+Rust: `rustc 1.98.0 (88d9e12ae 2026-08-18)`; Python: `Python 3.14.4`; host: `Darwin arm64`.
 
-| Toolchain | Cold (new user) | Warm (no changes) | Incremental (one edit) |
-|---|---:|---:|---:|
-| 0.4.0 | 3.68s | 50ms | stale |
-| 0.5.0-rc7 | 922ms | 435ms | 514ms |
+Raw evidence directory: `run.hKQmMP` under `BENCH_SCRATCH` (default `workspaces/benchmarks/target`).
 
-## 0.6.0-dev.4
+Cold means one release build in a fresh project with installed dependencies already available. Warm is an unchanged second build. Both include CLI startup; neither measures installing a toolchain or flushing OS caches.
 
-Generated: 2026-09-14T07:51:40Z, same host, rustc 1.98.0 (88d9e12ae 2026-08-18), `scripts/bench_build_times.sh --warm-max-ms 400`, best of two runs. The machine was under ordinary desktop load; the same script on the same line at 02:18 the same morning, on an idle machine, measured 416 / 277 / 360 ms, and at the start of the line (`d4e560caa`, before #1111) 721 / 529 / 608 ms.
-
-| Toolchain | Cold (new user) | Warm (no changes) | Incremental (one edit) |
-|---|---:|---:|---:|
-| 0.6.0-dev.4 | 462ms | 351ms | 431ms |
-
+| Benchmark | Cold ms | Warm ms | Status |
+| --- | ---: | ---: | --- |
+| fib | 1370 | 50 | verified |
+| collatz | 1350 | 50 | verified |
+| gcd | 1560 | 50 | verified |
+| mandelbrot | 1430 | 50 | verified |
+| nbody | refused | unmeasured | build refused |
+| primes | 1360 | 50 | verified |
+| quicksort | 1390 | 50 | verified |
+| mergesort | refused | unmeasured | build refused |

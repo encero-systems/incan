@@ -1,0 +1,24 @@
+"""Fixtures every test file in this directory receives."""
+
+from std.testing import fixture
+
+
+@fixture(autouse=true)
+def announce() -> None:
+    println("shared setup")
+    println("shared autouse ran")
+
+
+@fixture
+def shared_name() -> str:
+    return "from conftest"
+
+
+@fixture
+def overridden() -> str:
+    return "from conftest"
+
+
+@fixture
+def greeting(shared_name: str) -> str:
+    return f"hello {shared_name}"

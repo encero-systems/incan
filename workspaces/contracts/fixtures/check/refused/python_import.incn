@@ -1,0 +1,8 @@
+# behavior: a Python import is refused
+# expect-diagnostic: INCAN-I0001
+
+import python "requests" as pyreq
+
+
+def main() -> None:
+    pass

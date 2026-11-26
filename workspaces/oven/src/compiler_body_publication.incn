@@ -1,0 +1,1292 @@
+"""Publish successful compiler body outputs into the ranked record graph."""
+
+from pub::incan_platform.trace import enter_producer, finish_producer
+from std.fs import Path
+from pub::incan_mir_plan import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
+from pub::incan_mir_plan import LoweringDemands, decode_plan_function_record
+from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_delete, stage_put
+from pub::internal_models import (
+    CompiledBodyDependencyRead,
+    CompiledBodyFallback,
+    CompiledNamespaceValue,
+    CompiledBodyValue,
+    ProducerRank,
+    ProducerStage,
+    CompiledBodyOutputs,
+    NamespaceOrder,
+    checking_basis_key,
+    GraphNamespaceValue,
+    encode_graph_namespace_value,
+    namespace_header_of,
+)
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import (
+    ReadScope,
+    RecordKey,
+    ReadWitness,
+    encode_record_key,
+)
+from pub::internal_models.source_value_records import source_value
+from pub::internal_models.namespace_order import encode_checking_basis
+from compiler_owner_retirement import retire_missing_functions
+from compiler_owner_records import encode_body_frame, encode_eligibility, read_body_frame
+from store_selection_records import encode_binding
+from compiler_graph_records import EditCutoff, prepare_evaluation, reusable_evaluation
+from compiler_publication_local_receipts import PublicationLocalReceipts
+from compiler_body_authentication import AuthenticatedCompiledBodies, authenticate_compiled_bodies
+from compiler_executable_metadata import predecessor_owner_metadata, selected_owner_metadata_reader, typed_owner_metadata
+from compiler_executable_scopes import ExecutableScopeInputs, stage_executable_scopes
+from pub::internal_models.executable_scope import executable_scope_key
+from compiler_namespace_layouts import stage_namespace_layout
+from pub::internal_models.overload_members import MethodReads
+from compiler_method_lookups import method_inputs
+pub from compiler_captured_sources import (
+    PreparedSourceInputs,
+    PublishedSourceInputs,
+    prepare_captured_source_inputs,
+    publish_captured_source_inputs,
+    source_origin,
+)
+from compiler_prepared_records import PreparedBodyRecordSource
+pub from compiler_prepared_records import prepared_product_request
+from compiler_namespace_products import (
+    ExecutableCallInputs, prepare_namespace_products, stage_call_contracts,
+)
+from compiler_lowering_order import LoweringOrders
+from compiler_lowering_sources import LoweringBody, body_value, lowering_event_source
+from compiler_plan_modules import (
+    PlanModuleAdmissions,
+    StagedPlan,
+    plan_module_admissions,
+    stage_plan_modules,
+    staged_plan,
+)
+from compiler_plan_values import AdmittedPlanModule, RetainedPlanInputs, carried_lowering_demand
+from compiler_body_fallbacks import fallback_lowering_event, retained_namespace_event
+from compiler_body_projection import (
+    dependency_projection_refusal,
+    dependency_read_key,
+    dependency_signature_key,
+    dependency_span_key,
+    module_spans,
+    root,
+    source_projection,
+)
+from compiler_body_keys import body_key, eligibility_key, namespace_header_key, namespace_key, project_declaration_slot
+from compiler_plan_values import LOWERING_PROFILE
+from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord
+from compiler_selected_body_roots import BodyRootSelection
+from compiler_lowering_settlement import settle_reported_lowering
+from engine_lowering_evidence import LoweredFunction, PlanRefusalReport, SelectedBodyRoot
+from compiler_source_projection import (
+    SourceProjection,
+    SourceProjectionRecord,
+    compiled_owner_source,
+    compiler_generation_record,
+    declaration_index_key,
+    import_declaration_indexes,
+    owner_census_key,
+    owner_source_key,
+    signature_record,
+    scope_key,
+    scope_member,
+    signature_scope_key,
+)
+from compiler_projection_cache import (
+    cached_editable_dependency_signature_record,
+    cached_editable_dependency_span_record,
+    cached_project_signature_record,
+    project_dependency_module,
+    projection_cache,
+)
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
+from unit import UnitDescription, dependency_source_roots
+from unit_compiler import CompletedPlanEvents, take_completed_plan_events
+
+
+pub model PublishedCompiledBodies:
+    """The graph generation and eligible/fallback body counts published from one successful whole check."""
+
+    pub snapshot: Snapshot
+    pub bodies: int
+    pub fallbacks: int
+    pub checking_evaluations: int
+    pub body_ir_evaluations: int
+
+
+pub model LoweringDemandWork:
+    """Actual demand computations and confirmed reuse during graph publication."""
+
+    pub evaluations: int = 0
+    pub reuses: int = 0
+
+
+pub model PreparedCompiledBodies:
+    """Body records staged beside a native request's other outputs without publishing another generation."""
+
+    pub transaction: Transaction
+    pub bodies: int
+    pub fallbacks: int
+    pub checking_evaluations: int
+    pub body_ir_evaluations: int
+    # Bodies the compiler restored from selected records instead of checking them.
+    pub body_reuses: int = 0
+    pub lowering_demands: LoweringDemandWork = LoweringDemandWork()
+    pub selected_body_roots: Option[list[SelectedBodyRoot]] = None
+    pub lowered_functions: list[LoweredFunction] = []
+
+
+model StagedCompiledBodySources:
+    """Prepared source authority and indexes shared by body and lowering evaluation staging."""
+
+    transaction: Transaction
+    source: PreparedBodyRecordSource
+    scope: ReadScope
+    projections: Dict[str, SourceProjection]
+    editable_packages: list[str]
+    rechecked: list[str]
+
+
+pub def publish_compiled_bodies(
+    selected: Snapshot,
+    unit: UnitDescription,
+    output: Path,
+    compiler: str = "",
+) -> Result[PublishedCompiledBodies, str]:
+    """Publish one successful compiler sidecar in a standalone atomic transaction."""
+    prepared = prepare_compiled_bodies(begin(selected), unit, output, compiler=compiler)?
+    published = commit(prepared.transaction).map_err((error) => error.message())?
+    return Ok(
+        PublishedCompiledBodies(
+            snapshot=published,
+            bodies=prepared.bodies,
+            fallbacks=prepared.fallbacks,
+            checking_evaluations=prepared.checking_evaluations,
+            body_ir_evaluations=prepared.body_ir_evaluations,
+        ),
+    )
+
+
+pub def prepare_compiled_bodies(
+    transaction: Transaction,
+    unit: UnitDescription,
+    output: Path,
+    plan_output: Option[Path] = None,
+    selected: Option[Snapshot] = None,
+    retained: list[SelectedBodyRecord] = [],
+    restored: list[str] = [],
+    plan_modules: list[AdmittedPlanModule] = [],
+    restored_body_ir: list[str] = [],
+    covered: CoveredBodyOwners = CoveredBodyOwners(),
+    changed_sources: list[RecordKey] = [],
+    captured_positions: Dict[str, bytes] = {},
+    admission_report: Option[Path] = None,
+    retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+    cutoff: EditCutoff = EditCutoff(),
+    compiler: str = "",
+    mut captured_sources: Dict[str, SourceProjection] = {},
+    plan_admissions: Option[PlanModuleAdmissions] = None,
+    completed_plan_events: Option[CompletedPlanEvents] = None,
+    report_roots: bool = false,
+) -> Result[PreparedCompiledBodies, str]:
+    """
+    Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
+
+    `retained` are the records the engine selected for the compiler; `restored` names the owners the compiler reports
+    it restored. Only an owner in both was reused: a selected record the compiler refused was checked afresh, and an
+    owner the compiler names whose record the engine did not select was checked afresh too.
+
+    1. Authenticate the bounded sidecar through the shared checker codec.
+    2. Stage each source projection and declaration value before any body receipt reads them.
+    3. Stage local, final and Body IR evaluations in the caller's request transaction.
+    """
+    # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
+    authenticated = authenticate_compiled_bodies(unit, output, retained, restored, restored_body_ir, covered)?
+    origin = authenticated.origin
+    owner_evaluations = authenticated.owner_evaluations
+    owner_reuses = authenticated.owner_reuses
+
+    # 2. The prepared source authenticates only values carried by this exact request transaction.
+    staging = begin_work()
+    staging_sources = begin_work()
+    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods, compiler, captured_sources)?
+    for positioned in captured_positions.keys():
+        staged.source.add(positioned, captured_positions[positioned])
+
+    record_work(Operation.EngineGraphStaging, "compiled-source-staging", staging_sources)
+    order = authenticated.order
+    executable, local_receipts = stage_compiled_scope_and_namespaces(
+        staged, authenticated, origin, selected, changed_sources, retained, cutoff, plan_output is not None,
+    )?
+    staging_bodies = begin_work()
+    mut body_roots = BodyRootSelection(enabled=report_roots)
+    if report_roots:
+        body_roots.restored = set(restored_body_ir)
+    published = stage_compiled_body_values(
+        staged.transaction,
+        staged.source,
+        staged.scope,
+        staged.projections,
+        authenticated.outputs.values,
+        authenticated.methods,
+        selected,
+        unit,
+        origin,
+        staged.editable_packages,
+        set([namespace.module for namespace in authenticated.outputs.namespaces]),
+        order,
+        executable,
+        authenticated.scopes, body_roots,
+    )?
+    record_work(Operation.EngineGraphStaging, "compiled-body-staging", staging_bodies)
+    staging_lowering = begin_work()
+    lowering_demands, selected_roots, lowered_functions = prepare_optional_lowering_records(
+        staged.transaction,
+        staged.source,
+        staged.projections,
+        authenticated.outputs,
+        LoweringOrders.new(origin, order),
+        retained,
+        selected,
+        unit,
+        origin,
+        staged.rechecked,
+        plan_output,
+        local_receipts,
+        plan_modules,
+        covered,
+        admission_report,
+        retained_plans,
+        cutoff,
+        authenticated.scopes,
+        plan_admissions,
+        completed_plan_events, body_roots,
+    )?
+    record_work(Operation.EngineGraphStaging, "compiled-lowering-staging", staging_lowering)
+    record_work(Operation.EngineGraphStaging, output.0, staging)
+    return Ok(
+        PreparedCompiledBodies(
+            transaction=staged.transaction,
+            bodies=published,
+            fallbacks=len(authenticated.outputs.fallbacks),
+            checking_evaluations=owner_evaluations,
+            body_ir_evaluations=authenticated.body_ir_evaluations,
+            body_reuses=owner_reuses,
+            lowering_demands=lowering_demands, selected_body_roots=selected_roots,
+            lowered_functions=lowered_functions,
+        ),
+    )
+
+
+def stage_compiled_scope_and_namespaces(
+    mut staged: BorrowedMut[StagedCompiledBodySources], authenticated: Borrowed[AuthenticatedCompiledBodies],
+    origin: str, selected: Option[Snapshot], changed_sources: list[RecordKey], retained: list[SelectedBodyRecord],
+    cutoff: EditCutoff, has_plan: bool,
+) -> Result[tuple[ExecutableCallInputs, PublicationLocalReceipts], str]:
+    """Stage scope, namespace order and namespaces in the same transaction as their dependent bodies."""
+    staging_scope = begin_work()
+    stage_executable_scopes(staged.transaction, staged.source, authenticated.scopes)
+
+    # A cold whole check stages the same graph values later edited activations replace independently.
+    let order: Borrowed[Dict[str, NamespaceOrder]] = authenticated.order
+    mut staged_certificates: set[str] = set()
+    for module in order.keys():
+        position = order[module]
+        if position.evidence not in staged_certificates:
+            stage_put(staged.transaction, "incan.compiler.namespace-order\t" + position.evidence, position.certificate)
+            staged_certificates.add(position.evidence)
+    if let Some(prior) = selected:
+        retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
+    executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
+    mut local_receipts = PublicationLocalReceipts.open(selected, has_plan)
+    spans = module_spans(
+        staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff,
+        local_receipts, authenticated.scopes.typed,
+    )?
+    for slot in spans.retained.keys():
+        staged.source.add(slot, spans.retained[slot])
+    record_work(Operation.EngineGraphStaging, "compiled-scope-order", staging_scope)
+    staging_namespaces = begin_work()
+    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts, authenticated.scopes)?
+    record_work(Operation.EngineGraphStaging, "compiled-namespace-staging", staging_namespaces)
+    return Ok((executable, local_receipts))
+
+
+def stage_compiled_body_values(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    mut projections: Dict[str, SourceProjection],
+    values: list[CompiledBodyValue],
+    methods: Borrowed[MethodReads],
+    selected: Option[Snapshot],
+    unit: UnitDescription,
+    origin: str,
+    editable_packages: list[str],
+    checked_namespaces: set[str],
+    order: Borrowed[Dict[str, NamespaceOrder]],
+    executable: Borrowed[ExecutableCallInputs],
+    scopes: Borrowed[ExecutableScopeInputs], mut body_roots: BorrowedMut[BodyRootSelection],
+) -> Result[int, str]:
+    """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
+    mut published = 0
+    mut declarations: Dict[str, RecordKey] = {}
+    for value in values:
+        declarations[value.identity] = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
+    for value in values:
+        mut position = NamespaceOrder()
+        if order.contains_key(value.module):
+            position = order[value.module]
+        projection = projections[value.module]
+        owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
+        declaration_key = declarations[value.identity]
+        local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
+        mut local_reads = [
+            prepared_product_request(owner.key),
+            prepared_product_request(projection.header.key),
+        ]
+        if len(value.scope_names) == 0:
+            local_reads.append(prepared_product_request(projection.census.key))
+        else:
+            for name in value.scope_names:
+                selection = scope_member(projection.census, projection.bindings, name)
+                slot = encode_record_key(selection.key)?
+                if not source.holds(slot):
+                    stage_source_record(prepared, source, selection)?
+                local_reads.append(prepared_product_request(selection.key))
+        local_reads.append(prepared_product_request(declaration_key))
+        for feature in projection.feature_inputs:
+            local_reads.append(prepared_product_request(feature.key))
+        method_reads = method_inputs(prepared, source, selected, methods, local_key, value.local, projections, unit)?
+        local_reads.extend(method_reads)
+        mut independent = value.module in checked_namespaces and len(position.members) == 1 and len(method_reads) == 0
+        mut environment: set[str] = set()
+        for dependency in value.dependency_reads:
+            if dependency.package is not None or dependency.identity not in declarations:
+                independent = false
+            elif dependency.identity != value.identity and dependency.identity not in environment:
+                local_reads.append(prepared_product_request(declarations[dependency.identity]))
+                environment.add(dependency.identity)
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) => local_reads.append(prepared_product_request(key))
+                None => pass
+            match dependency_span_key(projections, dependency, editable_packages)?:
+                Some(key) => local_reads.append(prepared_product_request(key))
+                None => pass
+            match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) =>
+                    local_reads.append(prepared_product_request(key))
+                    local_reads.append(prepared_product_request(signature_scope_key(key)))
+                None => pass
+        local_receipt = source.receipt(scope, local_key, local_reads, position.evidence)?
+        local = prepare_evaluation(
+            prepared,
+            "compiled-local-" + value.identity,
+            ProducerRank(namespace=position.rank, stage=ProducerStage.CheckBody, dependency=0),
+            value.local,
+            local_receipt,
+        )?
+        if independent:
+            stage_put(prepared, checking_basis_key(local_key)?, encode_checking_basis(local_key, local.receipt_root)?)
+        else:
+            stage_delete(prepared, checking_basis_key(local_key)?)
+        source.add(encode_record_key(local_key)?, value.local)
+        final_key = body_key("final", origin, value.identity, "checked", root(value.final)?)
+        final_reads = local_reads + [prepared_product_request(local_key)]
+        final_receipt = source.receipt(scope, final_key, final_reads, position.evidence)?
+        settled = prepare_evaluation(
+            prepared,
+            "compiled-final-" + value.identity,
+            ProducerRank(namespace=position.rank, stage=ProducerStage.CheckBody, dependency=1),
+            value.final,
+            final_receipt,
+        )?
+        if independent:
+            stage_put(prepared, checking_basis_key(final_key)?, encode_checking_basis(final_key, settled.receipt_root)?)
+        else:
+            stage_delete(prepared, checking_basis_key(final_key)?)
+        source.add(encode_record_key(final_key)?, value.final)
+        body_ir_key = body_key("body-ir", origin, value.identity, "checked", final_key.context)
+        body_frame = encode_body_frame(body_ir_key, scope.profile, value.body_ir)?
+        mut frame_reads = [prepared_product_request(final_key), prepared_product_request(projection.placements[owner.key.facet].key)]
+        if value.identity in executable.owners:
+            frame_reads.extend([prepared_product_request(key) for key in executable.owners[value.identity]])
+        if value.identity in scopes.owners:
+            if let Some(digest) = scopes.owners[value.identity].scope:
+                frame_reads.append(prepared_product_request(executable_scope_key(origin, value.module, digest)?))
+        body_ir_receipt = source.receipt(scope, body_ir_key, frame_reads, position.evidence)?
+        _ = prepare_evaluation(
+            prepared,
+            "compiled-body-ir-" + value.identity,
+            ProducerRank(namespace=position.rank, stage=ProducerStage.BodyIr, dependency=0),
+            body_frame,
+            body_ir_receipt,
+        )?
+        source.add(encode_record_key(body_ir_key)?, body_frame)
+        body_roots.published(body_ir_key, value.name)
+        published += 1
+    return Ok(published)
+
+
+def stage_compiled_namespaces(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    projections: Borrowed[Dict[str, SourceProjection]],
+    namespaces: list[CompiledNamespaceValue],
+    origin: str,
+    order: Borrowed[Dict[str, NamespaceOrder]],
+    executable: Borrowed[ExecutableCallInputs],
+    spans: Borrowed[Dict[str, list[RecordKey]]],
+    layouts: Borrowed[Dict[str, bytes]],
+    scopes: Borrowed[ExecutableScopeInputs],
+) -> Result[None, str]:
+    """
+    Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
+
+    A namespace row carries its module's whole Body IR, so it reads every owner's source: a body edit that leaves the
+    census and the declaration index unchanged must still retire the row, or the module is restored with the old body.
+    For the same reason it reads the span of every editable dependency declaration its owners read.
+    """
+    for namespace in namespaces:
+        projection = projections[namespace.module]
+        key = namespace_key(origin, namespace.module)
+        mut reads = [
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+            prepared_product_request(projection.census.key),
+        ]
+        for feature in projection.feature_inputs:
+            reads.append(prepared_product_request(feature.key))
+        for owner in projection.owners:
+            reads.append(prepared_product_request(owner.key))
+        for dependency in namespace.dependencies:
+            reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
+            reads.append(prepared_product_request(owner_census_key(origin, dependency)))
+        mut position = NamespaceOrder()
+        if order.contains_key(namespace.module):
+            position = order[namespace.module]
+        rank = ProducerRank(namespace=position.rank, stage=ProducerStage.Signature, dependency=0)
+        prepare_namespace_products(prepared, source, scope, namespace, origin, reads, rank, position.evidence)?
+        # Restoring the complete record also restores positioned spans and editor documentation.
+        reads.append(prepared_product_request(projection.positioned.key))
+        if spans.contains_key(namespace.module):
+            reads.extend([prepared_product_request(span) for span in spans[namespace.module]])
+        if namespace.module in executable.modules:
+            reads.extend([prepared_product_request(target) for target in executable.modules[namespace.module]])
+        if namespace.module in scopes.namespaces:
+            reads.extend([prepared_product_request(binding) for binding in scopes.namespaces[namespace.module]])
+        receipt = source.receipt(scope, key, reads, position.evidence)?
+        value = namespace_record(namespace)?
+        _ = prepare_evaluation(
+            prepared,
+            "compiled-namespace-" + namespace.module,
+            rank,
+            value,
+            receipt,
+        )?
+        # The header beside the frame carries the namespace's admission facts, read under the same witnesses, so an
+        # unchanged namespace is admitted without opening its interface or Body IR.
+        if let Some(header) = namespace_header_of(value)?:
+            header_key = namespace_header_key(origin, namespace.module)
+            header_receipt = source.receipt(scope, header_key, reads, position.evidence)?
+            _ = prepare_evaluation(prepared, "compiled-namespace-header-" + namespace.module, rank, header, header_receipt)?
+        stage_namespace_layout(prepared, source, scope, layouts, origin, namespace.module, reads, rank, position.evidence)?
+        # A member body's plan reads this row: it carries the member's Body IR, which has no owner record of its own.
+        source.add(encode_record_key(key)?, value)
+    return Ok(None)
+
+
+def namespace_record(namespace: CompiledNamespaceValue) -> Result[bytes, str]:
+    """Use the durable record the compiler produced or seal a predecessor's unframed fields."""
+    if len(namespace.published_record) > 0:
+        return Ok(namespace.published_record)
+    return encode_graph_namespace_value(
+        GraphNamespaceValue(
+            module=namespace.module, interface=namespace.interface, identity_proof=namespace.identity_proof,
+            body_ir=namespace.body_ir, lowering_inputs=namespace.lowering_inputs, package_roots=namespace.package_roots,
+            call_reads=namespace.call_reads,
+        ),
+    ).map_err((error) => f"compiled namespace output refused: {error:?}")
+
+
+def prepare_optional_lowering_records(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    mut projections: Dict[str, SourceProjection],
+    outputs: CompiledBodyOutputs,
+    mut orders: LoweringOrders,
+    retained: list[SelectedBodyRecord],
+    selected: Option[Snapshot],
+    unit: UnitDescription,
+    origin: str,
+    rechecked: list[str],
+    plan_output: Option[Path],
+    local_receipts: Borrowed[PublicationLocalReceipts],
+    plan_modules: list[AdmittedPlanModule] = [],
+    covered: CoveredBodyOwners = CoveredBodyOwners(),
+    admission_report: Option[Path] = None,
+    retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+    cutoff: EditCutoff = EditCutoff(),
+    scopes: Borrowed[ExecutableScopeInputs],
+    plan_admissions: Option[PlanModuleAdmissions],
+    completed_plan_events: Option[CompletedPlanEvents], mut body_roots: BorrowedMut[BodyRootSelection],
+) -> Result[tuple[LoweringDemandWork, Option[list[SelectedBodyRoot]], list[LoweredFunction]], str]:
+    """Stage lowering records only when this compiler activation requested a plan report."""
+    if let Some(report) = plan_output:
+        no_refusals: Option[PlanRefusalReport] = None
+        events, refusals = match completed_plan_events:
+            Some(current) => take_completed_plan_events(current, report)?
+            None => (lowering_events(report)?, no_refusals)
+        mut fresh = set([value.identity for value in outputs.values])
+        notes = admission_report.unwrap_or(report)
+        admissions = match plan_admissions:
+            Some(value) => value
+            None => plan_module_admissions(notes, selected, plan_modules, None)?
+
+        complete = set(admissions.restored_modules(whole_only=true))
+        for fallback in outputs.fallbacks:
+            if let Some(owner) = fallback.identity:
+                fresh.add(owner)
+        demanded = covered.lowering_demands(events, fresh, complete)
+        rescued = body_roots.select_rescued(
+            selected, origin, demanded, covered, plan_modules, admissions, retained, fresh, scopes.typed, cutoff=cutoff,
+        )?
+        if len(rescued) != len(demanded):
+            return Err("partially restored plan did not retain its demanded checked owner")
+        witnesses = lowering_witnesses(
+            projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, scopes,
+            local_receipts, cutoff, body_roots,
+        )?
+        selected_roots = body_roots.selected()
+        functions: list[LoweredFunction] = match (selected_roots, refusals):
+            (Some(roots), Some(observed)) => settle_reported_lowering(
+                roots, witnesses, events, observed, selected, origin, plan_modules, admissions,
+            )
+            _ => []
+        work = prepare_lowering_records(
+            projections,
+            prepared,
+            source,
+            orders,
+            witnesses,
+            events,
+            outputs.fallbacks,
+            rechecked,
+            origin,
+            report,
+            unit,
+            selected,
+            outputs.namespaces,
+            plan_modules,
+            [module for module in covered.module_owners.keys()],
+            retained_plans,
+            cutoff,
+            admissions, refusals,
+        )?
+        return Ok((work, selected_roots, functions))
+    return Ok((LoweringDemandWork(), body_roots.selected(), []))
+
+
+def stage_compiled_body_sources(
+    transaction: Transaction,
+    unit: UnitDescription,
+    origin: str,
+    outputs: CompiledBodyOutputs,
+    methods: Borrowed[MethodReads],
+    compiler: str,
+    mut captured_sources: Dict[str, SourceProjection],
+) -> Result[StagedCompiledBodySources, str]:
+    """
+    Stage source, dependency, declaration and eligibility records that authenticate compiler output rows, and the
+    unit's compiler generation, which every receipt of this publication reads.
+    """
+    scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    mut prepared = transaction
+    generation = compiler_generation_record(origin, compiler)
+    stage_source_record(prepared, source, generation)?
+    source.bind_compiler(generation.key)
+    mut lookup_modules: set[str] = set()
+    for groups in methods.groups.values():
+        for group in groups:
+            lookup_modules.add(project_dependency_module(unit, group.module)?)
+    projections = projection_cache(unit, origin, outputs, lookup_modules, captured_sources)?
+    rechecked = stage_compiled_projection_sources(prepared, source, projections, outputs, origin, unit)?
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    stage_compiled_dependency_sources(prepared, source, projections, outputs.values, editable_packages, origin, unit)?
+    for value in outputs.values:
+        declaration_key = encode_record_key(
+            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
+        )?
+        stage_put(prepared, declaration_key, value.declaration)
+        source.add(declaration_key, value.declaration)
+        eligibility = eligibility_key(origin, value.identity, value.name)
+        stage_put(prepared, encode_record_key(eligibility)?, encode_eligibility(eligibility, None)?)
+    for fallback in outputs.fallbacks:
+        if let Some(identity) = fallback.identity:
+            eligibility = eligibility_key(origin, identity, fallback.name)
+            stage_put(prepared, encode_record_key(eligibility)?, encode_eligibility(eligibility, Some(fallback.reason))?)
+    return Ok(
+        StagedCompiledBodySources(
+            transaction=prepared,
+            source=source,
+            scope=scope,
+            projections=projections,
+            editable_packages=editable_packages,
+            rechecked=rechecked,
+        ),
+    )
+
+
+def stage_compiled_projection_sources(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    projections: Borrowed[Dict[str, SourceProjection]],
+    outputs: CompiledBodyOutputs,
+    origin: str,
+    unit: UnitDescription,
+) -> Result[list[str], str]:
+    """Stage each participating module projection and every declaration index a rechecked namespace imports."""
+    mut modules: set[str] = set()
+    for namespace in outputs.namespaces:
+        if namespace.module not in modules:
+            stage_source_projection(prepared, source, projections[namespace.module], false)?
+            modules.add(namespace.module)
+        for dependency in namespace.dependencies:
+            projection = projections[dependency]
+            stage_source_record(prepared, source, projection.declarations)?
+            stage_source_record(prepared, source, projection.census)?
+    for value in outputs.values:
+        if value.module not in modules:
+            stage_source_projection(prepared, source, projections[value.module], true)?
+            modules.add(value.module)
+    for fallback in outputs.fallbacks:
+        if fallback.module not in modules:
+            stage_source_projection(prepared, source, projections[fallback.module], true)?
+            modules.add(fallback.module)
+    staged = [module for module in modules]
+    for index in import_declaration_indexes(origin, unit.project_root, outputs.namespaces, staged)?:
+        key = encode_record_key(index.key)?
+        value = index.encoded()?
+        stage_put(prepared, key, value)
+        source.add(key, value)
+    return Ok(staged)
+
+
+def stage_source_projection(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    projection: SourceProjection,
+    signatures: bool,
+) -> Result[None, str]:
+    """Stage one module header, declaration index and owner records through the prepared request authority."""
+    stage_put(prepared, encode_record_key(projection.documentation_key())?, projection.encoded_documentation()?)
+    for record in [projection.header, projection.declarations, projection.census, projection.positioned] + projection.feature_inputs:
+        key = encode_record_key(record.key)?
+        value = record.encoded()?
+        stage_put(prepared, key, value)
+        source.add(key, value)
+    for facet in projection.placements.keys():
+        stage_source_record(prepared, source, projection.placements[facet])?
+    for owner in projection.owners:
+        mut records = [owner]
+        if signatures:
+            records.append(signature_record(owner))
+        for record in records:
+            key = encode_record_key(record.key)?
+            value = record.encoded()?
+            stage_put(prepared, key, value)
+            source.add(key, value)
+    return Ok(None)
+
+
+def stage_compiled_dependency_sources(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    projections: Borrowed[Dict[str, SourceProjection]],
+    values: list[CompiledBodyValue],
+    editable_packages: list[str],
+    origin: str,
+    unit: UnitDescription,
+) -> Result[None, str]:
+    """
+    Stage the exact editable-package or same-project declaration records each compiled owner reports reading.
+
+    Overloads of one spelling are distinct checked declarations behind one project slot, so the slot binds every
+    declaration this publication's readers claim through it, and a signature edit to any of them changes the binding.
+    """
+    mut slots = project_slot_claims(values, origin)?
+    for value in values:
+        for dependency in value.dependency_reads:
+            match dependency.package:
+                Some(package) =>
+                    if package in editable_packages:
+                        owner = cached_editable_dependency_signature_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        ).map_err(
+                            (error) => dependency_projection_refusal(
+                                error,
+                                value.module,
+                                value.name,
+                                value.identity,
+                                dependency,
+                            ),
+                        )?
+                        stage_source_record(prepared, source, owner)?
+                        # Its readers also read its span: checked bodies name it by its span.
+                        span = cached_editable_dependency_span_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        )?
+                        stage_source_record(prepared, source, span)?
+                None => stage_project_dependency_source(prepared, source, slots, projections, value, dependency, origin, unit)?
+    return Ok(None)
+
+
+def project_slot_claims(values: list[CompiledBodyValue], origin: str) -> Result[Dict[str, list[str]], str]:
+    """Every same-project declaration slot the compiled owners read through, with the checked identities claiming it."""
+    mut claims: Dict[str, list[str]] = {}
+    for value in values:
+        for dependency in value.dependency_reads:
+            if dependency.package is None:
+                slot_key = encode_record_key(project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity))?
+                if slot_key not in claims:
+                    claims[slot_key] = []
+                if dependency.identity not in claims[slot_key]:
+                    claims[slot_key].append(dependency.identity)
+    return Ok(claims)
+
+
+def stage_project_dependency_source(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    mut slots: Dict[str, list[str]],
+    projections: Borrowed[Dict[str, SourceProjection]],
+    value: CompiledBodyValue,
+    dependency: CompiledBodyDependencyRead,
+    origin: str,
+    unit: UnitDescription,
+) -> Result[None, str]:
+    """Stage one same-project declaration slot, module index and exact checked signature."""
+    slot = project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)
+    slot_key = encode_record_key(slot)?
+    if slot_key not in slots:
+        return Err(f"a checked declaration read has no project slot claim: {slot_key}")
+    if len(slots[slot_key]) == 0:
+        # The slot, its supplier's projection, name and signature were staged with its first read.
+        return Ok(None)
+    slot_value = encode_binding(slot_key, "\n".join(sorted(slots[slot_key])))?
+    slots[slot_key] = []
+    stage_put(prepared, slot_key, slot_value)
+    source.add(slot_key, slot_value)
+    projection = projections[project_dependency_module(unit, dependency.module)?]
+    for record in [projection.declarations, projection.census]:
+        if not source.holds(encode_record_key(record.key)?):
+            stage_source_record(prepared, source, record)?
+    signature = cached_project_signature_record(
+        projections,
+        unit,
+        dependency.module,
+        dependency.name,
+        dependency.identity,
+    ).map_err((error) => dependency_projection_refusal(error, value.module, value.name, value.identity, dependency))?
+    binding = signature_scope_key(signature.key)
+    if not source.holds(encode_record_key(binding)?):
+        stage_source_record(prepared, source, scope_member(projection.census, projection.bindings, binding.facet))?
+    return stage_source_record(prepared, source, signature)
+
+
+def stage_source_record(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    record: SourceProjectionRecord,
+) -> Result[None, str]:
+    """Stage one source projection record and make the same bytes readable by prepared receipts."""
+    key = encode_record_key(record.key)?
+    value = record.encoded()?
+    stage_put(prepared, key, value)
+    source.add(key, value)
+    return Ok(None)
+
+
+def lowering_witnesses(
+    mut projections: Dict[str, SourceProjection],
+    fresh: list[CompiledBodyValue],
+    retained: list[SelectedBodyRecord],
+    mut source: PreparedBodyRecordSource,
+    selected: Option[Snapshot],
+    unit: UnitDescription,
+    origin: str,
+    mut orders: LoweringOrders,
+    scopes: Borrowed[ExecutableScopeInputs],
+    local_receipts: Borrowed[PublicationLocalReceipts],
+    cutoff: EditCutoff, mut body_roots: BorrowedMut[BodyRootSelection],
+) -> Result[list[LoweringBody], str]:
+    """
+    Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts. A
+    retained owner the edit's `cutoff` leaves valid by the snapshot is not validated again.
+    """
+    mut witnesses: list[LoweringBody] = []
+    mut witnessed: set[str] = set()
+    add_fresh_lowering_witnesses(witnesses, witnessed, projections, fresh, unit, origin, orders, scopes)?
+    reader = selected_owner_metadata_reader(scopes.typed and len(retained) > 0)?
+    for record in retained:
+        if record.identity in witnessed:
+            continue
+        if len(record.body_ir) == 0:
+            continue
+        decoded = match reader:
+            Some(prepared) => typed_owner_metadata(prepared, record.body_ir)?
+            None => predecessor_owner_metadata(record.body_ir)?
+        if decoded.identity != record.identity:
+            return Err("retained Body IR disagrees with its graph owner")
+
+        key = body_key("body-ir", origin, record.identity, "checked", root(record.final)?)
+        prior = match selected:
+            None => return Err("retained Body IR has no selected graph")
+            Some(value) => value
+
+        body = match reusable_evaluation(prior, key, CHECKER_PROFILE, cutoff)?:
+            Some(result) => result
+            None => return Err("retained Body IR has no selected evaluation")
+        if read_body_frame(key, CHECKER_PROFILE, body.value)? != record.body_ir:
+            return Err("retained Body IR differs from the selected graph")
+        # A carried module's source records are the selected graph's: its owner and inputs are current by the capture.
+        carried = decoded.source in cutoff.carried
+        if not carried and not retained_sources_current(projections, prior, unit, origin, decoded.source, decoded.name, record.identity)?:
+            continue
+        position = orders.retained(prior, decoded.source, body)?
+        source.add(encode_record_key(key)?, body.value)
+        local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
+        local = match local_receipts.for_lowering(prior, local_key, cutoff)?:
+            None => return Err("retained lowering owner has no witnessed checker inputs")
+            Some(value) => value
+
+        mut signatures: list[RecordKey] = []
+        for witness in local.as_ref().witnesses:
+            match witness:
+                ReadWitness.Found(found, _) =>
+                    input = found.request.key
+                    if input.family in [
+                        "declaration",
+                        "declaration-slot",
+                        "declaration-signature",
+                        "module-feature-selection",
+                        "declaration-index",
+                        "owner-census",
+                        "scope-name",
+                        # Only an editable dependency's declaration is a checked owner's span read.
+                        "owner-span",
+                    ]:
+                        encoded = encode_record_key(input)?
+                        value = match get(prior, encoded).map_err((error) => error.message())?:
+                            None => return Err("retained lowering signature input is absent")
+                            Some(value) => value
+
+                        source.add(encoded, value)
+                        signatures.append(input)
+                _ => return Err("retained lowering owner has an unsupported checker witness")
+        if not carried:
+            for feature in projections[decoded.source].feature_inputs:
+                if feature.key not in signatures:
+                    return Err("retained lowering owner has no witnessed feature selection")
+        witnesses.append(
+            LoweringBody(
+                identity=record.identity,
+                symbol=decoded.symbol,
+                module=decoded.source,
+                order=position,
+                final=record.final,
+                retained=true,
+                signature_reads=signatures,
+            ),
+        )
+        witnessed.add(record.identity)
+        body_roots.retained(key, decoded.name, decoded.source, decoded.symbol)
+    return Ok(witnesses)
+
+
+def add_fresh_lowering_witnesses(
+    mut witnesses: BorrowedMut[list[LoweringBody]], mut witnessed: BorrowedMut[set[str]],
+    projections: Borrowed[Dict[str, SourceProjection]], fresh: list[CompiledBodyValue], unit: UnitDescription,
+    origin: str, orders: Borrowed[LoweringOrders], scopes: Borrowed[ExecutableScopeInputs],
+) -> Result[None, str]:
+    """Read the current checker outputs and collect the exact inputs each fresh lowering owner consumed."""
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in fresh:
+        projection = projections[value.module]
+        mut signatures = [body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)]
+        if len(value.scope_names) == 0:
+            signatures.append(projection.census.key)
+        else:
+            for name in value.scope_names:
+                signatures.append(scope_key(projection.census, name))
+        for feature in projections[value.module].feature_inputs:
+            signatures.append(feature.key)
+        for dependency in value.dependency_reads:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_span_key(projections, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) =>
+                    signatures.append(key)
+                    signatures.append(signature_scope_key(key))
+                None => pass
+        header = match value.identity in scopes.owners:
+            true => scopes.owners[value.identity]
+            false => predecessor_owner_metadata(value.body_ir)?
+        if header.identity != value.identity:
+            return Err("graph-eligible Body IR disagrees with its stable owner")
+        witnesses.append(
+            LoweringBody(
+                identity=value.identity,
+                symbol=header.symbol,
+                module=value.module,
+                order=orders.fresh(value.module),
+                final=value.final,
+                signature_reads=signatures,
+            ),
+        )
+        witnessed.add(value.identity)
+    return Ok(None)
+
+
+def retained_sources_current(
+    mut projections: Dict[str, SourceProjection],
+    prior: Snapshot,
+    unit: UnitDescription,
+    origin: str,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[bool, str]:
+    """
+    Whether a retained owner's current header, owner and feature records equal the selected graph's; false for an owner
+    removed or renamed since, which remains valid history but is no witness for the current compile.
+    """
+    if module not in projections:
+        projections[module] = source_projection(unit, origin, module)?
+    projection = projections[module]
+    owner = match compiled_owner_source(projection, module, name, identity):
+        Ok(value) => value
+        Err(reason) =>
+            # Every other malformed selection state remains a hard refusal.
+            if reason.startswith("compiled body output has no matching owner source:"):
+                return Ok(false)
+            return Err(reason)
+
+    for binding in [projection.header, owner] + projection.feature_inputs:
+        previous = match get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())?:
+            Some(value) => value
+            None => return Err("retained Body IR is missing a current source input")
+
+        if source_value(binding.key, previous)? != binding.text.encode("utf-8"):
+            return Err("retained Body IR has changed current source inputs")
+    return Ok(true)
+
+
+def lowering_events(report: Path) -> Result[list[LoweringEvent], str]:
+    """Read the compiler's actual native lowering outcomes once, including partial module admissions."""
+    if not report.is_dir():
+        return Err("successful records compile did not publish lowering outputs")
+    mut events: list[LoweringEvent] = []
+    for path in sorted([path.0 for path in report.iterdir().map_err((error) => error.message())?]):
+        entry = Path(path)
+        if not entry.is_file() or not path.endswith(".event"):
+            continue
+        reading = begin_work()
+        bytes = entry.read_bytes().map_err((error) => error.message())?
+        record_work(Operation.FileRead, entry.0, reading, len(bytes))
+        event = decode_lowering_event(bytes)?
+        events.append(event)
+    return Ok(events)
+
+
+def prepare_lowering_records(
+    mut projections: Dict[str, SourceProjection],
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    mut orders: LoweringOrders,
+    values: list[LoweringBody],
+    events: list[LoweringEvent],
+    fallbacks: list[CompiledBodyFallback],
+    rechecked: list[str],
+    origin: str,
+    report: Path,
+    unit: UnitDescription,
+    selected: Option[Snapshot],
+    namespaces: list[CompiledNamespaceValue] = [],
+    admitted: list[AdmittedPlanModule] = [],
+    covered_modules: list[str] = [],
+    retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+    cutoff: EditCutoff = EditCutoff(),
+    admissions: Borrowed[PlanModuleAdmissions], refusals: Option[PlanRefusalReport] = None,
+) -> Result[LoweringDemandWork, str]:
+    """
+    Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
+
+    A module-level body reads its own Body IR. A member reads its compiler-proven body meaning and checked interface.
+    Earlier compilers, members without a stable identity and full-source fallback owners retain the full namespace
+    witness. A member or fallback owner whose module staged no namespace record has no authoritative plan input.
+    """
+    scope = ReadScope(snapshot=prepared.id, profile=LOWERING_PROFILE)
+    source.bind_profile(LOWERING_PROFILE)
+    mut bodies: Dict[str, LoweringBody] = {}
+    for value in values:
+        if value.symbol == "":
+            continue
+        if value.symbol in bodies:
+            return Err("multiple graph-eligible Body IR owners have the same canonical identity")
+        bodies[value.symbol] = value
+    namespace_files = [namespace.module for namespace in namespaces]
+    mut member_inputs: Dict[str, tuple[str, str]] = {}
+    for namespace in namespaces:
+        for witness in namespace.member_witnesses:
+            if len(witness) != 3 or witness[0] in member_inputs:
+                return Err("ambiguous compiled namespace member in the lowering request")
+            member_inputs[witness[0]] = (namespace.module, witness[1])
+    mut plan_keys: list[RecordKey] = []
+    mut staged: list[StagedPlan] = []
+    mut interface_namespace = 0
+    mut demands = LoweringDemands.new()
+    mut work = LoweringDemandWork()
+    # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
+    for event in events:
+        if event.role == "entry":
+            continue
+        event_identity = event.identity
+        witness = match lowering_event_source(
+            source,
+            orders,
+            selected,
+            cutoff,
+            unit,
+            origin,
+            event,
+            bodies,
+            rechecked,
+            fallbacks,
+            namespace_files,
+            member_inputs,
+        )?:
+            Some(value) => value
+            None => continue
+
+        key = event.key
+        function = event.function
+        product = event.product
+        identity = witness.identity
+        position = witness.order
+        if position.rank > interface_namespace:
+            interface_namespace = position.rank
+        demand_key = body_key("lowering-demand", origin, identity, function, key)
+        plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
+        mut demand_value: bytes = b""
+        mut expected_digest = ""
+        if event.reused:
+            retained_value, witness_digest = carried_lowering_demand(
+                selected, retained_plans, plan_key, demand_key, product,
+            )?
+            demand_value = retained_value
+            expected_digest = witness_digest
+            work.reuses += 1
+        else:
+            attempt = enter_producer("oven", "lowering-demand", identity, key)
+            record = decode_plan_function_record(product)?
+            demand_value = demands.encode(record.inputs, record.function)?
+            finish_producer(attempt, "produced")
+            work.evaluations += 1
+        demand_receipt = source.receipt(scope, demand_key, witness.body_reads, position.evidence)?
+        _ = prepare_evaluation(
+            prepared,
+            "lowering-demand-" + identity,
+            ProducerRank(namespace=position.rank, stage=ProducerStage.LoweringDemand, dependency=0),
+            demand_value,
+            demand_receipt,
+            expected_value_digest=expected_digest,
+        )?
+        source.add(encode_record_key(demand_key)?, demand_value)
+        plan_receipt = source.receipt(
+            scope,
+            plan_key,
+            [prepared_product_request(demand_key)] + witness.signature_reads,
+            position.evidence,
+        )?
+        _ = prepare_evaluation(
+            prepared,
+            "plan-function-" + identity,
+            ProducerRank(namespace=position.rank, stage=ProducerStage.PlanFunction, dependency=0),
+            product,
+            plan_receipt,
+        )?
+        source.add(encode_record_key(plan_key)?, product)
+        plan_keys.append(plan_key)
+        staged.append(staged_plan(witness.module, event, identity, event_identity, function, key, plan_key, position)?)
+    for event in events:
+        if event.role != "entry":
+            continue
+        event_identity = event.identity
+        if fallback_lowering_event(unit, fallbacks, event_identity)?:
+            continue
+        if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
+            continue
+        body = body_value(bodies, fallbacks, event_identity)?
+        key = body_key("plan-function", origin, body.identity, "entry", event.key)
+        product = event.product
+        check_reused_output(selected, event, key, product)?
+        # The current entry producer admits one synchronous unit function named `main`.
+        supplier = body_key("plan-function", origin, body.identity, "body:main", event.demand)
+        request = prepared_product_request(supplier)
+        # The entry consumes the selected scalar plan's key. A placement-only change can move Body IR while this exact
+        # normalized product and the entry binding remain valid.
+        mut position = body.order
+        mut witnessed: Dict[str, str] = {}
+        written = encode_record_key(supplier)?
+        if not source.holds(written):
+            graph = match selected:
+                Some(value) => value
+                None => return Err("a carried entry function has no selected graph")
+            for module in admitted:
+                if module.key.identity != body.module or module.plan.module != event.module:
+                    continue
+                if module.admitted_snapshot != graph.digest or prepared.root.value != graph.root.value or prepared.root.placement != graph.root.placement or prepared.base != graph.generation or prepared.view != graph.view:
+                    return Err("the carried entry function belongs to a different snapshot")
+                # The module's receipt proves this exact supplier when its selection derived a proof for it.
+                if written in module.proofs:
+                    witnessed[written] = module.proofs[written]
+                if written in witnessed:
+                    position = orders.selected_order(graph, body.module, origin, module.namespace, module.certificate)?
+                break
+            if written not in witnessed:
+                prior = match reusable_evaluation(graph, supplier, LOWERING_PROFILE)?:
+                    Some(value) => value
+                    None => return Err("a carried entry function has no selected evaluation")
+                witnessed[written] = prior.value_digest
+                position = orders.retained(graph, body.module, prior)?
+        if position.rank > interface_namespace:
+            interface_namespace = position.rank
+        receipt = source.receipt(scope, key, [request], position.evidence, witnessed)?
+        _ = prepare_evaluation(
+            prepared,
+            "plan-entry-" + body.identity,
+            ProducerRank(namespace=position.rank, stage=ProducerStage.PlanFunction, dependency=1),
+            product,
+            receipt,
+        )?
+        source.add(encode_record_key(key)?, product)
+        plan_keys.append(key)
+    # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
+    carried, carried_namespace, carried_digests = stage_plan_modules(
+        prepared,
+        source,
+        orders,
+        scope,
+        selected,
+        origin,
+        rechecked,
+        staged,
+        admissions,
+        admitted,
+        cutoff,
+    )?
+    if not report.joinpath(INTERFACE_REPORT).is_file():
+        require_plan_refusal(report, refusals)?
+        return Ok(work)
+    prepare_native_interface(
+        projections, prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
+        max([interface_namespace, carried_namespace]), orders, carried_digests,
+    )?
+    return Ok(work)
+
+
+def require_plan_refusal(report: Path, decoded: Option[PlanRefusalReport]) -> Result[None, str]:
+    """Accept an incomplete native interface only with an explicit per-function refusal."""
+    match decoded:
+        Some(observed) =>
+            if observed.present:
+                return Ok(None)
+        None =>
+            for entry in report.iterdir().map_err((error) => error.message())?:
+                if entry.is_file() and entry.name().endswith(".refusal"):
+                    _ = decode_lowering_refusal(entry.read_bytes().map_err((error) => error.message())?)?
+                    return Ok(None)
+    return Err("successful records compile omitted its native interface without a lowering refusal")
+
+
+def check_reused_output(
+    selected: Option[Snapshot],
+    event: LoweringEvent,
+    key: RecordKey,
+    value: bytes,
+) -> Result[None, str]:
+    """A compiler reuse event must reproduce the exact value previously selected from the graph."""
+    if event.reused:
+        prior = match selected:
+            Some(value) => value
+            None => return Err("a reused lowering record has no selected graph snapshot")
+
+        if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(value):
+            return Err("a reused lowering record differs from its selected graph authority")
+    return Ok(None)
+
+
+def prepare_native_interface(
+    mut projections: Dict[str, SourceProjection],
+    mut transaction: Transaction,
+    mut source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    unit: UnitDescription,
+    origin: str,
+    bodies: list[LoweringBody],
+    report: Path,
+    plans: list[RecordKey],
+    covered_modules: list[str],
+    namespace: int,
+    orders: Borrowed[LoweringOrders],
+    carried_digests: Dict[str, str],
+) -> Result[None, str]:
+    """Witness the complete loss-checked native plan against its exact function members and current source positions."""
+    path = report.joinpath(INTERFACE_REPORT)
+    encoded = path.read_bytes().map_err((error) => error.message())?
+    _ = decode_native_interface(encoded)?
+    key = body_key("native-interface", origin, origin, unit.profile, unit.checked_context.unwrap_or(""))
+    mut reads = [prepared_product_request(plan) for plan in plans]
+    mut modules = set(covered_modules + [body.module for body in bodies])
+    for module in sorted([file for file in modules]):
+        if module not in projections:
+            projections[module] = source_projection(unit, origin, module)?
+        projection = projections[module]
+        for binding in [projection.header, projection.census] + projection.feature_inputs:
+            source.add(encode_record_key(binding.key)?, binding.encoded()?)
+            reads.append(prepared_product_request(binding.key))
+        for owner in projection.owners:
+            placement = projection.placements[owner.key.facet]
+            for binding in [owner, placement]:
+                source.add(encode_record_key(binding.key)?, binding.encoded()?)
+                reads.append(prepared_product_request(binding.key))
+    # Carried plan-module pages may supply an untouched module with no fresh scalar body.
+    for plan in plans:
+        if plan.family == "plan-module":
+            modules.add(plan.identity)
+    certificate = orders.covering_certificate(modules, namespace)?
+    receipt = source.receipt(scope, key, reads, certificate, carried_digests)?
+    _ = prepare_evaluation(
+        transaction,
+        "native-interface-" + origin,
+        ProducerRank(namespace=namespace, stage=ProducerStage.NativeInterface, dependency=0),
+        encoded,
+        receipt,
+    )?
+    return Ok(None)

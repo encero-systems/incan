@@ -1,0 +1,23 @@
+# behavior: replacing a list in a range loop reports the retained adapter's next-iteration use exactly once (#2426)
+# cli-commands:
+#   check src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   INCAN-T0001
+#   cannot replace `xs` while `doubled` is still reading it
+#   `doubled` reads `xs` from here
+#   `xs` is replaced here
+#   `doubled` is used again here
+#   finish using `doubled` before replacing `xs`, or write `xs.clone().iter()` to iterate over a copy
+# expect-exit: 1
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def main() -> None:
+    mut xs = [1, 2, 3]
+    doubled = xs.iter().map(double)
+    for round in range(2):
+        xs = [round]
+        println(doubled.collect())

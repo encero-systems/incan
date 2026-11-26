@@ -1,0 +1,984 @@
+"""Compiler output publication: successful compiles publish reusable body pairs, executable reads require the current
+callee contract, and a rechecked namespace reads the imports whose bodies were retained."""
+
+from checker_record_fixtures import empty_checker_record
+from compiler_graph_record_fixtures import required
+from store_selection_records import read_binding
+from pub::incan_platform.store import (
+    Snapshot,
+    begin,
+    commit,
+    delete,
+    finish_frame_reads,
+    get,
+    measure_frame_reads,
+    put,
+    read_counts,
+)
+from pub::incan_platform.store.disk import root as disk_root
+from pub::incan_platform.store import snapshot as store_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from pub::incan_platform.trace import Operation
+from pub::internal_models.records import ReadScope, ReadWitness, RecordKey, encode_record_key
+from pub::internal_models.source_value_records import SOURCE_PROFILE, read_documentation, source_value
+from pub::internal_models import (
+    CompiledBodyFallback,
+    SettledCallRead,
+    SettledCallContract,
+    CompiledBodyDependencyRead,
+    CompiledBodyOutputs,
+    CompiledNamespaceValue,
+    CompiledBodyValue,
+    ProducerRank,
+    ProducerStage,
+    decode_graph_body_values,
+    decode_namespace_header,
+    encode_compiled_body_rows,
+)
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
+from compiler_namespace_products import (
+    contract_key,
+    stage_call_contracts,
+    interface_key,
+    member_key,
+    member_plan_inputs,
+    prepare_namespace_products,
+)
+from compiler_graph_records import reusable_evaluation
+from compiler_prepared_records import PreparedBodyRecordSource
+from compiler_body_keys import namespace_header_key, namespace_key, project_declaration_slot
+from compiler_owner_records import read_eligibility
+from compiler_body_values import (
+    invalid_namespace_modules,
+    encode_body_inventory,
+    invalid_body_owners,
+    select_body_inventory,
+)
+from compiler_captured_sources import publish_captured_source_inputs
+from compiler_body_projection import projection_refusals
+from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies, publish_compiled_bodies
+from engine_capture import (
+    CaptureOutcome, CaptureRequest, CapturedInput, InputRole, InputSelection, admitted_home, capture,
+)
+from observation import file_digest, file_metadata
+from jec import begin as begin_work, record as record_work
+from project_library import library_key
+from trace_adapter import flush as flush_trace
+from pub::incan_mir_plan import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
+from std.fs import Path
+from compiler_body_fallbacks import fallback_reasons, namespace_witnessed_event
+from compiler_source_projection import (
+    captured_source_key,
+    compiler_generation_record,
+    project_source,
+    publish_source_projection,
+    signature_record,
+)
+from publication import publish_binary
+from scratch import scratch_directory
+from unit import UnitDescription, UnitLoaf
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    HirSourceSpan as RustHirSourceSpan,
+    SemanticSourceTargetKind as RustDeclarationKind,
+    encode_incan_symbol_identity,
+)
+
+
+def check_positioned_namespace_products() -> Result[None, str]:
+    """Check the physical graph values across a shift in the native symbol and a real change to one member."""
+    stable = "method:fixture::Counter::get"
+    interface = b"01234567890123456789012345678901"
+    mut row = CompiledNamespaceValue(module="src/fixture.incn", interface=b"position one", body_ir=b"full body one",
+        dependencies=[], semantic_interface=interface, member_witnesses=[["event at position one", stable, "checked body"]])
+    members = {"event at position one": (row.module, stable)}
+    requests = member_plan_inputs("fixture", row.module, "event at position one", members)?
+    assert [request.key.family for request in requests] == ["namespace-member", "namespace-interface"]
+    assert requests[0].key.identity == stable
+    assert member_plan_inputs("fixture", "different", "event at position one", members).is_err()
+    legacy = member_plan_inputs("fixture", row.module, "unproven owner", members)?
+    assert len(legacy) == 1 and legacy[0].key.family == "namespace"
+    first = staged_namespace_values(row, stable)?
+    row.interface = b"position two"
+    row.body_ir = b"full body two"
+    row.member_witnesses = [["event at position two", stable, "checked body"]]
+    shifted = staged_namespace_values(row, stable)?
+    assert shifted == first, "positioned restoration data or a native event address changed semantic products"
+    row.member_witnesses = [["event at position two", stable, "edited body"]]
+    edited = staged_namespace_values(row, stable)?
+    assert edited[0] == first[0] and edited[1] != first[1]
+    row.semantic_interface = b"11234567890123456789012345678901"
+    changed_interface = staged_namespace_values(row, stable)?
+    assert changed_interface[0] != edited[0] and changed_interface[1] == edited[1]
+    return Ok(None)
+
+
+def staged_namespace_values(row: CompiledNamespaceValue, stable: str) -> Result[list[bytes], str]:
+    """Select just the semantic interface and member products from an independently committed graph."""
+    mut namespace = row
+    namespace.member_witnesses.append(["sibling native event", "method:fixture::Counter::reset", "separate sibling meaning"])
+    fresh = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut transaction = begin(fresh)
+    scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    prepare_namespace_products(transaction, source, scope, namespace, "fixture", [], rank, "fixture namespace")?
+    committed = commit(transaction).map_err((error) => error.message())?
+    mut products: list[bytes] = []
+    measure_frame_reads(true)
+    for key in [interface_key("fixture", row.module), member_key("fixture", stable)]:
+        match reusable_evaluation(committed, key, CHECKER_PROFILE)?:
+            None => return Err("a staged semantic namespace product is missing")
+            Some(value) =>
+                assert len(value.receipt.witnesses) == 1, "a member projection repeated the namespace source census"
+                match value.receipt.witnesses[0]:
+                    ReadWitness.Found(prior, _) => assert prior.request.key.family == "namespace-inputs"
+                    _ => return Err("a member projection lost its checked semantic authority")
+                products.append(value.value)
+    opened = [frame.key for frame in finish_frame_reads() if frame.key.startswith("namespace-member\t")]
+    assert opened == [encode_record_key(member_key("fixture", stable))?], "reading one member opened a sibling's physical frame"
+    return Ok(products)
+
+
+pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[None, str]:
+    """A successful sidecar witnesses editable-package sources and project declaration signatures for the next edit."""
+    check_positioned_namespace_products()?
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("project")
+    source = root.joinpath("src").joinpath("main.incn")
+    source.parent().mkdir(true, true).map_err((error) => error.message())?
+    source_text = "from pub::provider import value\n\ndef main() -> int:\n    return value()\n\ndef other() -> None:\n    pass\n"
+    source.write_text(source_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    root
+        .joinpath("src")
+        .joinpath("helper.incn")
+        .write_text("pub def value() -> int:\n    return 1\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    provider_root = scratch.path().joinpath("provider").joinpath("src")
+    provider_root.mkdir(true, true).map_err((error) => error.message())?
+    provider_source = ("pub def value() -> int:\n    return 1\n\n" + "pub enum CodecFault:\n    Invalid\n\n" + "pub model ProgramOutcome:\n    transaction: Option[int] = None\n\n" + "pub model NativeSelection:\n    transaction: Option[int] = None\n")
+    provider_root
+        .joinpath("lib.incn")
+        .write_text(provider_source, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    mut unit = UnitDescription(
+        source=source.0,
+        project_root=root.0,
+        source_root=source.parent().0,
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[
+            UnitLoaf(
+                key="provider",
+                name="provider",
+                dir=scratch.path().joinpath("provider-artifact").0,
+                standard=false,
+                source_root=Some(provider_root.0),
+            ),
+        ],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    identity = "app|module:main|main|function|module|0|() -> unit"
+    fallback_identity = "app|module:main|other|function|module|0|() -> unit"
+    declaration = empty_checker_record(identity, CheckedFamily.Declaration)?
+    local = empty_checker_record(identity, CheckedFamily.Local)?
+    final = empty_checker_record(identity, CheckedFamily.Final)?
+    helper_symbol = "function:helper::value"
+    helper_signature = helper_symbol + "|incan.source-signature/2:sha256:2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_test_body_pair(output, identity, fallback_identity, declaration, local, final, helper_symbol, helper_signature)?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    provider = publish_source_projection(empty, project_source("provider", "lib", provider_source)?)?
+    before = provider.snapshot
+    published = publish_compiled_bodies(before, unit, output)?
+    assert published.bodies == 1 and published.fallbacks == 1
+    assert published.checking_evaluations == 2 and published.body_ir_evaluations == 2
+    assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
+    assert not output.is_file()
+    check_dependency_refusals(scratch.path(), unit, published.snapshot, identity, declaration, local, final)?
+    check_fallback_lowering(scratch.path(), unit, published.snapshot, fallback_identity)?
+    check_retained_body_pair(published.snapshot, identity, source_text, provider_source, helper_symbol, helper_signature)?
+    verify_linked_capture(unit, scratch.path())?
+    return verify_durable_source_values(scratch.path().joinpath("durable-source"))
+
+
+def publish_test_body_pair(
+    output: Path,
+    identity: str,
+    fallback_identity: str,
+    declaration: bytes,
+    local: bytes,
+    final: bytes,
+    helper_symbol: str,
+    helper_signature: str,
+) -> Result[None, str]:
+    """Publish a body pair with the declaration and dependency identities the next edit will select."""
+    return publish_compiled_output(
+        output,
+        CompiledBodyOutputs(
+            values=[
+                CompiledBodyValue(
+                    module="src/main.incn",
+                    name="main",
+                    identity=identity,
+                    declaration=declaration,
+                    local=local,
+                    final=final,
+                    body_ir=b"owner-frame",
+                    dependency_reads=[
+                        CompiledBodyDependencyRead(
+                            package=None,
+                            module="helper",
+                            name="value",
+                            identity=helper_symbol,
+                            reference_subject="expr:main#7..9",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=None,
+                            module="helper",
+                            name="value",
+                            identity=helper_signature,
+                            reference_subject="expr:main#10..17",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=None,
+                            module="lib",
+                            name="other",
+                            identity="function:lib::other|incan.source-signature/2:sha256:fixture",
+                            reference_subject="expr:main#20..27",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=Some("provider"),
+                            module="lib",
+                            name="CodecFault",
+                            identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
+                            reference_subject="type:main#expr.30..40/type.0",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=Some("provider"),
+                            module="lib",
+                            name="value",
+                            identity="provider|module:lib|value|function|module|0|() -> int",
+                            reference_subject="expr:main#50..57",
+                        ),
+                    ],
+                ),
+            ],
+            fallbacks=[
+                CompiledBodyFallback(
+                    module="src/main.incn",
+                    name="other",
+                    identity=fallback_identity,
+                    reason="local record output refused: Unsupported(\"fixture\")",
+                ),
+            ],
+        ),
+    )
+
+
+def check_dependency_refusals(
+    scratch: Path,
+    unit: UnitDescription,
+    graph: Snapshot,
+    identity: str,
+    declaration: bytes,
+    local: bytes,
+    final: bytes,
+) -> Result[None, str]:
+    """Keep ambiguous and absent dependency evidence tied to its body owner and reference."""
+    diagnostic_output = scratch.joinpath("ambiguous-dependency-output")
+    publish_compiled_output(
+        diagnostic_output,
+        CompiledBodyOutputs(
+            values=[
+                CompiledBodyValue(
+                    module="src/main.incn",
+                    name="main",
+                    identity=identity,
+                    declaration=declaration,
+                    local=local,
+                    final=final,
+                    body_ir=b"owner-frame",
+                    dependency_reads=[
+                        CompiledBodyDependencyRead(
+                            package=Some("provider"),
+                            module="lib",
+                            name="transaction",
+                            identity="member/field:engine_programs::transaction",
+                            reference_subject="expr:engine_programs#120..131",
+                        ),
+                    ],
+                ),
+            ],
+            fallbacks=[],
+        ),
+    )?
+    match publish_compiled_bodies(graph, unit, diagnostic_output):
+        Ok(_) =>
+            assert false, "an ambiguous dependency source unexpectedly published"
+        Err(message) =>
+            assert message.contains("body_owner=src/main.incn:main; body_identity=" + identity), message
+            assert message.contains("reference_subject=expr:engine_programs#120..131"), message
+    listed = projection_refusals(
+        unit,
+        "app",
+        [
+            CompiledBodyValue(
+                module="src/main.incn",
+                name="main",
+                identity=identity,
+                declaration=declaration,
+                local=local,
+                final=final,
+                body_ir=b"owner-frame",
+                dependency_reads=[
+                    CompiledBodyDependencyRead(
+                        package=Some("provider"),
+                        module="lib",
+                        name="transaction",
+                        identity="member/field:engine_programs::transaction",
+                        reference_subject="expr:engine_programs#120..131",
+                    ),
+                    CompiledBodyDependencyRead(
+                        package=Some("provider"),
+                        module="lib",
+                        name="absent",
+                        identity="function:provider::absent|incan.source-signature/2:sha256:fixture",
+                        reference_subject="expr:engine_programs#140..146",
+                    ),
+                ],
+            ),
+        ],
+    )
+    assert len(listed) == 2, str(listed)
+    assert listed[0].contains("reference_subject=expr:engine_programs#120..131"), listed[0]
+    assert listed[1].contains("reference_subject=expr:engine_programs#140..146"), listed[1]
+    return Ok(None)
+
+
+def check_fallback_lowering(
+    scratch: Path, unit: UnitDescription, graph: Snapshot, fallback_identity: str,
+) -> Result[None, str]:
+    """Check the published fallback and the authority required for its lowering products."""
+    fallback_key = RecordKey(
+        family="eligibility",
+        identity_profile="incan.stable-declaration/1",
+        origin="app",
+        identity=fallback_identity,
+        facet="other",
+        context="checker-record",
+    )
+    assert read_eligibility(fallback_key, required(graph, encode_record_key(fallback_key)?)?)? == Some("local record output refused: Unsupported(\"fixture\")")
+    assert fallback_reasons(
+        [CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal")],
+    ) == ["src/main.incn::other: exact producer refusal"]
+
+    fallback_output = scratch.joinpath("fallback-body-output")
+    publish_compiled_output(
+        fallback_output,
+        CompiledBodyOutputs(
+            values=[],
+            fallbacks=[
+                CompiledBodyFallback(
+                    module="src/main.incn",
+                    name="other",
+                    identity=fallback_identity,
+                    reason="local record output refused: Unsupported(\"fixture\")",
+                ),
+            ],
+        ),
+    )?
+    report = scratch.joinpath("fallback-plan-report")
+    report.mkdir(true, true).map_err((error) => error.message())?
+    report
+        .joinpath("other.event")
+        .write_bytes(encode_lowering_event(LoweringEvent(identity=fallback_identity, key="plan", function="other", product=b"native", reused=false))?)
+        .map_err((error) => error.message())?
+    match prepare_compiled_bodies(begin(graph), unit, fallback_output, Some(report)):
+        Ok(_) =>
+            assert false, "a checker-record fallback authenticated a lowering record"
+        Err(message) =>
+            assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
+    canonical_fallback_output = scratch.joinpath("canonical-fallback-body-output")
+    publish_compiled_output(
+        canonical_fallback_output,
+        CompiledBodyOutputs(
+            values=[],
+            fallbacks=[
+                CompiledBodyFallback(
+                    module="src/main.incn",
+                    name="other",
+                    identity=fallback_identity,
+                    reason="local record output refused: Unsupported(\"fixture\")",
+                ),
+            ],
+        ),
+    )?
+    canonical_report = scratch.joinpath("canonical-fallback-plan-report")
+    canonical_report.mkdir(true, true).map_err((error) => error.message())?
+    fallback_symbol = encode_incan_symbol_identity(
+        RustCanonicalSymbolId.module_declaration(
+            ["main"],
+            "other",
+            RustDeclarationKind.Function,
+            RustHirSourceSpan.new(0, 10),
+        ),
+    )
+    canonical_report
+        .joinpath("other.event")
+        .write_bytes(encode_lowering_event(LoweringEvent(identity=fallback_symbol, key="plan", function="other", product=b"native", reused=false))?)
+        .map_err((error) => error.message())?
+    canonical_report
+        .joinpath("other.refusal")
+        .write_bytes(encode_lowering_refusal(LoweringRefusal(identity=fallback_symbol, function="other", refusal="full-source fallback"))?)
+        .map_err((error) => error.message())?
+    skipped = prepare_compiled_bodies(begin(graph), unit, canonical_fallback_output, Some(canonical_report))?
+    assert skipped.bodies == 0 and skipped.fallbacks == 1
+    # A fallback owner's plan is witnessed by its module's namespace record, as a member's is: the record carries the
+    # owner's Body IR. This request staged no namespace record, so the event above published no plan.
+    fallbacks = [
+        CompiledBodyFallback(module="src/main.incn", name="other", identity=fallback_identity, reason="exact producer refusal"),
+    ]
+    assert namespace_witnessed_event(unit, fallbacks, fallback_symbol)?, "a fallback owner's plan has no namespace witness"
+    checked_symbol = encode_incan_symbol_identity(
+        RustCanonicalSymbolId.module_declaration(["main"], "main", RustDeclarationKind.Function, RustHirSourceSpan.new(0, 10)),
+    )
+    assert not namespace_witnessed_event(unit, fallbacks, checked_symbol)?, "a checked owner's plan read its namespace"
+    return Ok(None)
+
+
+def check_retained_body_pair(
+    graph: Snapshot,
+    identity: str,
+    source_text: str,
+    provider_source: str,
+    helper_symbol: str,
+    helper_signature: str,
+) -> Result[None, str]:
+    """Check the selected bodies and how their exact declaration and source witnesses invalidate."""
+    selected = select_body_inventory(graph, CHECKER_PROFILE)?
+    assert len(selected) == 1 and selected[0].identity == identity
+    pages = encode_body_inventory(selected)?
+    assert len(pages) == 1 and len(pages[0].key) == 64
+    decoded = decode_graph_body_values(pages[0].value.clone()).map_err((error) => f"{error:?}")?
+    assert len(decoded) == 1 and decoded[0].identity == identity
+    assert invalid_body_owners(graph, [], CHECKER_PROFILE)? == []
+
+    provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
+    provider_body_edit = publish_source_projection(graph, provider_body)?
+    assert invalid_body_owners(
+        provider_body_edit.snapshot,
+        [signature_record(provider_body.owners[0]).key],
+        CHECKER_PROFILE,
+    )? == []
+
+    provider_signature = project_source("provider", "lib", provider_source.replace("value() -> int", "value() -> str"))?
+    provider_signature_edit = publish_source_projection(graph, provider_signature)?
+    assert invalid_body_owners(
+        provider_signature_edit.snapshot,
+        [signature_record(provider_signature.owners[0]).key],
+        CHECKER_PROFILE,
+    )? == [identity]
+
+    module_signature = project_source(
+        "app",
+        "src/main.incn",
+        source_text.replace("def other() -> None:\n    pass", "def other() -> int:\n    return 1"),
+    )?
+    assert module_signature.census.text == project_source("app", "src/main.incn", source_text)?.census.text
+    module_signature_edit = publish_source_projection(graph, module_signature)?
+    assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == []
+
+    project_slot = project_declaration_slot("app", "helper", "value", helper_signature)
+    for supplier in [helper_symbol, helper_signature]:
+        address = encode_record_key(project_declaration_slot("app", "helper", "value", supplier))?
+        stored = get(graph, address).map_err((error) => error.message())?
+        match stored:
+            Some(value) => assert read_binding(address, value)? == supplier
+            None => return Err("published declaration slot is absent")
+    helper_body = project_source("app", "src/helper.incn", "pub def value() -> int:\n    return 2\n")?
+    helper_body_edit = publish_source_projection(graph, helper_body)?
+    assert invalid_body_owners(helper_body_edit.snapshot, [helper_body.owners[0].key], CHECKER_PROFILE)? == []
+    changed_signature = commit(
+        put(
+            begin(graph),
+            encode_record_key(project_slot)?,
+            b"app|module:helper|value|function|module|0|() -> str",
+        ),
+    ).map_err((error) => error.message())?
+    assert invalid_body_owners(changed_signature, [project_slot], CHECKER_PROFILE)? == [identity]
+    removed = commit(delete(begin(graph), encode_record_key(project_slot)?)).map_err(
+        (error) => error.message(),
+    )?
+    assert invalid_body_owners(removed, [project_slot], CHECKER_PROFILE)? == [identity]
+
+    edited = project_source("app", "src/main.incn", source_text.replace("pass", "println(\"edited\")"))?
+    changed = edited.owners[0].key
+    projected = publish_source_projection(graph, edited)?
+    assert invalid_body_owners(projected.snapshot, [changed], CHECKER_PROFILE)? == [identity]
+    return Ok(None)
+
+
+pub def test_executable_reads_require_the_current_callee_contract() -> Result[None, str]:
+    graph = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut tx = begin(graph)
+    mut source = PreparedBodyRecordSource.open(ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE))
+    before = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    after = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    owner = SettledCallContract(target="caller", digest=before, reader="call#1", owner="checked/caller")
+    target = SettledCallContract(target="provider", digest=after, reader="", owner="")
+    mut module = CompiledNamespaceValue(module="file.incn", interface=b"i", body_ir=b"b", dependencies=[],
+        call_contracts=Some([owner, target]), call_reads=[SettledCallRead(reader="call#1", target="provider", digest=after)])
+    links = stage_call_contracts(tx, source, "main", [module])?
+    supplier = contract_key("main", "provider")
+    assert links.owners["checked/caller"] == [supplier]
+    assert links.modules["file.incn"] == [supplier]
+    committed = commit(tx).map_err((error) => error.message())?
+    assert get(committed, encode_record_key(supplier)?).map_err((error) => error.message())?.is_some()
+    mut mismatch = begin(committed)
+    module.call_reads = [SettledCallRead(reader="call#1", target="provider", digest=before)]
+    assert stage_call_contracts(mismatch, source, "main", [module]).is_err()
+    module.call_contracts = Some([owner])
+    assert stage_call_contracts(mismatch, source, "main", [module]).is_err()
+    return Ok(None)
+
+
+pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() -> Result[None, str]:
+    """An edit that rechecks only the importing module still authenticates each import's declaration index."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("program")
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("main.incn")
+    source
+        .write_text(
+            "from helper import value\n\ndef main() -> None:\n    println(\"edited\")\n",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    root
+        .joinpath("helper.incn")
+        .write_text("pub def value() -> int:\n    return 1\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=source.0,
+        project_root=root.0,
+        source_root=root.0,
+        package="main",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    # `helper.incn` was not rechecked: the sidecar carries no namespace, value or fallback of its own.
+    namespace = CompiledNamespaceValue(
+        module="main.incn",
+        interface=b"interface",
+        semantic_interface=b"01234567890123456789012345678901",
+        body_ir=b"namespace-frame",
+        dependencies=["helper.incn"],
+    )
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_compiled_output(output, CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[]))?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_compiled_bodies(empty, unit, output)?
+    assert published.bodies == 0 and published.fallbacks == 0
+    full = namespace_key("main", "main.incn")
+    semantic = interface_key("main", "main.incn")
+    assert reusable_evaluation(published.snapshot, full, CHECKER_PROFILE)?.is_some()
+    assert reusable_evaluation(published.snapshot, semantic, CHECKER_PROFILE)?.is_some()
+    modified = "from helper import value\n\ndef main() -> None:\n    \"\"\"Editor documentation.\"\"\"\n    println(\"edited\")\n"
+    docs = project_source("main", "main.incn", modified)?
+    assert invalid_namespace_modules(published.snapshot, [docs.positioned.key], CHECKER_PROFILE)? == ["main.incn"]
+    edited = publish_source_projection(published.snapshot, docs)?
+    assert reusable_evaluation(edited.snapshot, full, CHECKER_PROFILE)?.is_none()
+    assert reusable_evaluation(edited.snapshot, semantic, CHECKER_PROFILE)?.is_some()
+    return Ok(None)
+
+
+pub def test_overloads_of_one_spelling_share_one_declaration_slot() -> Result[None, str]:
+    """
+    Two overloads of one spelling are two checked declarations behind one project slot: the slot binds both, so a
+    signature edit to either invalidates its readers, and the publication refuses neither.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("program")
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("main.incn")
+    source
+        .write_text("from helper import cast\n\ndef main() -> None:\n    println(cast(1) + cast(\"2\"))\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    root
+        .joinpath("helper.incn")
+        .write_text("pub def cast(value: int) -> str:\n    return str(value)\n\npub def cast(value: str) -> str:\n    return value\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=source.0,
+        project_root=root.0,
+        source_root=root.0,
+        package="main",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    identity = "main|module:main|main|function|module|0|() -> unit"
+    signed = "function:helper::cast|incan.source-signature/2:sha256:"
+    # Reads are published in ascending order.
+    first = signed + "1afbf05e3e945151320b9294edf7fc24ac471db805ece1c9c010f3c3669ca4c5"
+    second = signed + "2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
+    value = CompiledBodyValue(
+        module="main.incn",
+        name="main",
+        identity=identity,
+        declaration=empty_checker_record(identity, CheckedFamily.Declaration)?,
+        local=empty_checker_record(identity, CheckedFamily.Local)?,
+        final=empty_checker_record(identity, CheckedFamily.Final)?,
+        body_ir=b"owner-frame",
+        dependency_reads=[
+            CompiledBodyDependencyRead(package=None, module="helper", name="cast", identity=first, reference_subject="expr:main#60..67"),
+            CompiledBodyDependencyRead(package=None, module="helper", name="cast", identity=second, reference_subject="expr:main#70..79"),
+        ],
+    )
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_compiled_output(output, CompiledBodyOutputs(values=[value], fallbacks=[]))?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_compiled_bodies(empty, unit, output)?
+    assert published.bodies == 1
+    slot = encode_record_key(project_declaration_slot("main", "helper", "cast", first))?
+    assert slot == encode_record_key(project_declaration_slot("main", "helper", "cast", second))?
+    bound = read_binding(slot, required(published.snapshot, slot)?)?
+    assert first in bound and second in bound, bound
+    return Ok(None)
+
+
+def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None, str]:
+    """
+    Physical source paths must retain project and dependency identities through symlinked described roots, and a
+    module captured with the bytes its selected projection was made from is carried, never projected again.
+    """
+    project = root.joinpath("linked-project")
+    project.symlink_to(Path(unit.project_root)).map_err((error) => error.message())?
+    provider = root.joinpath("linked-provider")
+    provider.symlink_to(root.joinpath("provider/src")).map_err((error) => error.message())?
+    unit.project_root = project.0
+    unit.loaves[0].source_root = Some(provider.0)
+    shadow = root.joinpath("linked-provider-shadow")
+    shadow.symlink_to(root.joinpath("provider/src")).map_err((error) => error.message())?
+    unit.loaves.append(
+        UnitLoaf(key="shadow", name="shadow", dir=unit.loaves[0].dir, standard=false, source_root=Some(shadow.0)),
+    )
+    paths = [project.joinpath("src/main.incn"), provider.joinpath("lib.incn")]
+    inputs = captured(paths)?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    clock = begin_work()
+    prepared = prepare_captured_source_inputs(empty, begin(empty), unit, inputs)?
+    if clock is not None:
+        record_work(Operation.EngineSelect, "captured-source-root-cohort\t" + unit.project_root, clock)
+        if flush_trace():
+            return Err("cannot flush the captured-source root cohort")
+    declarations = [key for key in prepared.keys if key.family == "declaration-index"]
+    assert len(declarations) == 2, "symlinked roots dropped captured declaration witnesses"
+    assert declarations[0].origin == "app" and declarations[0].identity == "src/main.incn"
+    assert declarations[1].origin == "provider" and declarations[1].identity == "lib"
+    first = commit(prepared.transaction).map_err((error) => error.message())?
+    path = paths[0]
+    original = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    # The capture vouches for the bytes: a module captured as before is not read, even if its file no longer decodes.
+    publish_binary(path, b"\xff\xfe not utf-8")?
+    before = read_counts()
+    measure_frame_reads(true)
+    reused = prepare_captured_source_inputs(first, begin(first), unit, inputs)
+    frames = finish_frame_reads()
+    decoded = read_counts().decoded - before.decoded
+    carried = reused?
+    assert len(carried.keys) == 0, "an unchanged capture reported changed source records"
+    assert len(carried.positioned) == 2, "an unchanged capture dropped a positioned record"
+    for slot in carried.positioned.keys():
+        assert Some(carried.positioned[slot]) == get(first, slot).map_err((error) => error.message())?
+    capture_keys = [
+        encode_record_key(captured_source_key("app", "src/main.incn"))?,
+        encode_record_key(captured_source_key("provider", "lib"))?,
+    ]
+    checked = [frame for frame in frames if frame.key in capture_keys]
+    assert len(checked) == 2 and sum([frame.reads for frame in checked]) == 2, "each capture marker must authenticate once"
+    generation_key = encode_record_key(compiler_generation_record("app", "").key)?
+    owned_keys = [generation_key] + [slot for slot in carried.positioned.keys()]
+    owned_frames = [frame for frame in frames if frame.key in owned_keys]
+    assert len(owned_frames) == 3, "the warm capture must read its generation and both positioned records"
+    expected = sum([frame.value_bytes * frame.reads for frame in owned_frames])
+    assert decoded == expected, f"warm capture copied {decoded - expected} marker bytes out of the store"
+    extra = "\n\ndef additional(value: int) -> int:\n    return value\n"
+    path.write_text(original + extra, "utf-8", "strict", None).map_err((error) => error.message())?
+    added = publish_captured_source_inputs(first, unit, captured(paths)?)?
+    added_memberships = [key for key in added.keys if key.family == "owner-census"]
+    assert len(added_memberships) == 1 and added_memberships[0].origin == "app"
+    signature = extra.replace("value: int", "number: int").replace("return value", "return number")
+    path.write_text(original + signature, "utf-8", "strict", None).map_err((error) => error.message())?
+    renamed = publish_captured_source_inputs(added.snapshot, unit, captured(paths)?)?
+    assert len([key for key in renamed.keys if key.family == "declaration-signature"]) == 1
+    assert len([key for key in renamed.keys if key.family == "owner-census"]) == 0
+    path.write_text(original, "utf-8", "strict", None).map_err((error) => error.message())?
+    removed = publish_captured_source_inputs(renamed.snapshot, unit, captured(paths)?)?
+    assert [key for key in removed.keys if key.family == "owner-census"] == added_memberships
+    return verify_project_member_capture(unit, project)
+
+
+def verify_project_member_capture(mut unit: UnitDescription, project: Path) -> Result[None, str]:
+    """Only an eligible ProjectMember binds to the linked project library."""
+    library = library_key(unit.package)
+    source = project.joinpath("src")
+    unit.project_library = Some(library)
+    unit.loaves.append(
+        UnitLoaf(
+            key=library,
+            name=library,
+            dir=project.joinpath("library-artifact").0,
+            standard=false,
+            source_root=Some(source.0),
+        ),
+    )
+    helper = source.joinpath("helper.incn")
+    entry = source.joinpath("main.incn")
+    mut members = captured([helper, entry])?
+    members[0].role = InputRole.ProjectMember
+    members[1].role = InputRole.ProjectMember
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    selected = prepare_captured_source_inputs(empty, begin(empty), unit, members)?
+    declarations = [key for key in selected.keys if key.family == "declaration-index"]
+    assert len(declarations) == 2
+    assert declarations[0].origin == library and declarations[0].identity == "helper"
+    assert declarations[1].origin == "app" and declarations[1].identity == "src/main.incn"
+
+    resolved = captured([helper])?
+    fallback = prepare_captured_source_inputs(empty, begin(empty), unit, resolved)?
+    fallback_declarations = [key for key in fallback.keys if key.family == "declaration-index"]
+    assert len(fallback_declarations) == 1
+    assert fallback_declarations[0].origin == "app" and fallback_declarations[0].identity == "src/helper.incn"
+    return Ok(None)
+
+
+def verify_durable_source_values(root: Path) -> Result[None, str]:
+    """Change raw source and comments while preserving the persisted checked code and documentation."""
+    path = root.joinpath("src").joinpath("main.incn")
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    mut unit = UnitDescription(
+        source=path.0,
+        project_root=root.0,
+        source_root=path.parent().0,
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    source = (
+        "# Standalone note\n"
+        + "def main() -> None:\n"
+        + "    \"\"\"Explain # in documentation.\"\"\"\n"
+        + "    println(\"left#right\")  # first note\n"
+    )
+    changed = source.replace("# first note", "# later note")
+    assert source != changed and len(source.encode("utf-8")) == len(changed.encode("utf-8"))
+    store = disk_root(root.joinpath("source-value-store").0)
+    empty = store_snapshot(store).map_err((error) => error.message())?
+    publish_binary(path, source.encode("utf-8"))?
+    first = publish_captured_source_inputs(empty, unit, captured([path])?)?
+    before = store_snapshot(store).map_err((error) => error.message())?
+    assert before.digest == first.snapshot.digest
+    publish_binary(path, changed.encode("utf-8"))?
+    second = publish_captured_source_inputs(before, unit, captured([path])?)?
+    after = store_snapshot(store).map_err((error) => error.message())?
+    assert after.digest == second.snapshot.digest and after.generation > before.generation
+
+    module = "src/main.incn"
+    original = project_source(unit.package, module, source)?
+    edited = project_source(unit.package, module, changed)?
+    assert original.documentation_key() == edited.documentation_key()
+    assert len(original.owners) == 1 and len(edited.owners) == 1
+    code_key = original.owners[0].key
+    docs_key = original.documentation_key()
+    assert code_key == edited.owners[0].key
+    assert code_key not in second.keys and docs_key not in second.keys
+    code_slot = encode_record_key(code_key)?
+    docs_slot = encode_record_key(docs_key)?
+    original_code = required(before, code_slot)?
+    original_docs = required(before, docs_slot)?
+    assert required(after, code_slot)? == original_code
+    assert required(after, docs_slot)? == original_docs
+    assert source_value(code_key, original_code)? == b"def main() -> None:\n    println(\"left#right\")"
+    assert read_documentation(original_docs)? == [("main", "    \"\"\"Explain # in documentation.\"\"\"")]
+    witness_keys = verify_raw_and_comment_values(before, after, unit.package, module, source, changed)?
+    return verify_crlf_source_record(unit, root, path, changed, witness_keys, (code_slot, docs_slot), after)
+
+
+def verify_raw_and_comment_values(
+    before: Snapshot, after: Snapshot, origin: str, module: str, source: str, changed: str,
+) -> Result[tuple[RecordKey, RecordKey], str]:
+    """Read both values across the selected disk generations and return their exact keys."""
+    raw_key = RecordKey(
+        family="source-raw", identity_profile=SOURCE_PROFILE, origin=origin,
+        identity=module, facet="module", context="",
+    )
+    comments_key = RecordKey(
+        family="source-comments", identity_profile=SOURCE_PROFILE, origin=origin,
+        identity=module, facet="module", context="",
+    )
+    raw_slot = encode_record_key(raw_key)?
+    comments_slot = encode_record_key(comments_key)?
+    raw_before = get(before, raw_slot).map_err((error) => error.message())?
+    raw_after = get(after, raw_slot).map_err((error) => error.message())?
+    comments_before = get(before, comments_slot).map_err((error) => error.message())?
+    comments_after = get(after, comments_slot).map_err((error) => error.message())?
+    selected = [raw_before, raw_after, comments_before, comments_after]
+    retained = len([value for value in selected if value.is_some()])
+    assert retained == 4, f"expected 4 durable raw/comment values across two generations, found {retained}"
+    for value in selected:
+        assert value.unwrap_or(b"")[:4] == b"CRMB", "raw source and comments require typed stored values"
+    assert source_value(raw_key, raw_before.unwrap_or(b""))? == source.encode("utf-8")
+    assert source_value(raw_key, raw_after.unwrap_or(b""))? == changed.encode("utf-8")
+    assert source_value(comments_key, comments_before.unwrap_or(b""))? == b"# Standalone note\n# first note"
+    assert source_value(comments_key, comments_after.unwrap_or(b""))? == b"# Standalone note\n# later note"
+    return Ok((raw_key, comments_key))
+
+
+def verify_crlf_source_record(
+    mut unit: UnitDescription, root: Path, path: Path, lf_source: str,
+    witnesses: tuple[RecordKey, RecordKey], semantic_slots: tuple[str, str], lf_snapshot: Snapshot,
+) -> Result[None, str]:
+    """Retain exact CRLF and comment text through the two existing acquisition routes."""
+    physical = path.resolve().map_err((error) => error.message())?
+    note = "# later note 🧭  "
+    source = lf_source.replace("# later note", note).replace("\n", "\r\n")
+    expected = source.encode("utf-8")
+    comments = ("# Standalone note\n" + note).encode("utf-8")
+    assert "\r\n" in source, "the fixture must contain physical CRLF terminators"
+    publish_binary(physical, expected)?
+    request = CaptureRequest(roots=[physical.0], selection=InputSelection(command="run"))
+    captured_source = capture(request, None, admitted_home()?, 0)?
+    assert captured_source.outcome == CaptureOutcome.Changed
+    epoch = match captured_source.epoch:
+        Some(value) => value
+        None => return Err("the CRLF capture did not produce an epoch")
+    input = match epoch.input(physical.0):
+        Some(value) => value
+        None => return Err("the CRLF capture omitted the source root")
+    readings = match captured_source.readings:
+        Some(value) => value
+        None => return Err("the CRLF capture omitted its input readings")
+    rows = readings.as_ref()
+    assert physical.0 in rows, "the root path must select its own capture reading"
+    reading = rows[physical.0]
+    assert input.role == InputRole.Root
+    assert reading.raw_digest == input.digest and input.digest == file_digest(physical)?
+    assert reading.text.encode("utf-8") == expected, "the capture must retain original CRLF"
+    unit.source_readings = Some(readings)
+    assert unit.source_text(physical)? == source, "the unit must use its selected capture reading"
+    captured_store = verify_crlf_values(unit, root.joinpath("captured-crlf"), input, witnesses, expected, comments)?
+
+    # A fresh store keeps the standalone control from carrying the first arm's matching capture marker.
+    unit.source_readings = None
+    standalone = verify_crlf_values(unit, root.joinpath("standalone-crlf"), input, witnesses, expected, comments)?
+    for slot in [semantic_slots[0], semantic_slots[1]]:
+        unchanged = required(lf_snapshot, slot)?
+        assert required(captured_store, slot)? == unchanged, "captured CRLF changed the semantic or documentation record"
+        assert required(standalone, slot)? == unchanged, "standalone CRLF changed the semantic or documentation record"
+    return Ok(None)
+
+
+def verify_crlf_values(
+    unit: UnitDescription, store_path: Path, input: CapturedInput, witnesses: tuple[RecordKey, RecordKey],
+    raw: bytes, comments: bytes,
+) -> Result[Snapshot, str]:
+    """Reopen the disk snapshot and decode its typed witnesses under their independent keys."""
+    store = disk_root(store_path.0)
+    empty = store_snapshot(store).map_err((error) => error.message())?
+    published = publish_captured_source_inputs(empty, unit, [input])?
+    reopened = store_snapshot(store).map_err((error) => error.message())?
+    assert reopened.digest == published.snapshot.digest and reopened.generation > empty.generation
+    for key, expected in [(witnesses[0], raw), (witnesses[1], comments)]:
+        encoded = required(reopened, encode_record_key(key)?)?
+        assert encoded[:4] == b"CRMB", f"{store_path.name()}: {key.family} requires a typed value"
+        assert source_value(key, encoded)? == expected, f"{store_path.name()}: {key.family} lost authored bytes"
+    return Ok(reopened)
+
+
+def captured(paths: list[Path]) -> Result[list[CapturedInput], str]:
+    """Capture each source file with its metadata and the digest of its current bytes, as an epoch does."""
+    mut inputs: list[CapturedInput] = []
+    for path in paths:
+        metadata = match file_metadata(path)?:
+            Some(value) => value
+            None => return Err("linked source fixture is missing")
+
+        inputs.append(
+            CapturedInput(
+                path=path.0,
+                role=InputRole.Resolved,
+                metadata=metadata,
+                digest=file_digest(path)?,
+                settled=false,
+            ),
+        )
+    return Ok(inputs)
+
+
+def publish_compiled_output(output: Path, outputs: CompiledBodyOutputs) -> Result[None, str]:
+    """Write one independently bounded Crumb row per sidecar page, as the native compiler does."""
+    output.mkdir(true, true).map_err((error) => error.message())?
+    rows = encode_compiled_body_rows(outputs).map_err((error) => f"{error:?}")?
+    for index in range(len(rows)):
+        publish_binary(output.joinpath(str(index) + ".crumb"), rows[index])?
+    return Ok(None)
+
+
+pub def test_a_published_namespace_has_a_header_beside_its_frame() -> Result[None, str]:
+    """A namespace published with the compiler's identity proof has a small header record beside its frame, with the
+    same reads: it is reusable exactly while the namespace is, and carries the module but not its payloads."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("program")
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("main.incn")
+    source.write_text("def main() -> None:\n    println(\"edited\")\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=source.0, project_root=root.0, source_root=root.0, package="main", version="0.1.0", profile="debug",
+        declared_features=[], active_features=[], loaves=[], rust_crates=[], contract_models=[], c_headers=[],
+    )
+    namespace = CompiledNamespaceValue(
+        module="main.incn",
+        interface=b"interface",
+        semantic_interface=b"01234567890123456789012345678901",
+        body_ir=b"namespace-frame",
+        dependencies=[],
+        identity_proof=b"compiler identity proof",
+    )
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_compiled_output(output, CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[]))?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_compiled_bodies(empty, unit, output)?
+    header = match reusable_evaluation(published.snapshot, namespace_header_key("main", "main.incn"), CHECKER_PROFILE)?:
+        Some(found) => decode_namespace_header(found.value).map_err((error) => error)?
+        None => return Err("a published namespace has no reusable header")
+    assert header.module == "main.incn" and header.identity_proof == b"compiler identity proof"
+    edited = publish_source_projection(published.snapshot, project_source("main", "main.incn", "def main() -> None:\n    \"\"\"Docs.\"\"\"\n    println(\"edited\")\n")?)?
+    assert reusable_evaluation(edited.snapshot, namespace_key("main", "main.incn"), CHECKER_PROFILE)?.is_none()
+    assert reusable_evaluation(edited.snapshot, namespace_header_key("main", "main.incn"), CHECKER_PROFILE)?.is_none()
+    return Ok(None)

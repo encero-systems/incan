@@ -1,0 +1,7 @@
+[project]
+name = "registry_feature_refused"
+version = "0.1.0"
+[project.scripts]
+main = "src/main.incn"
+[dependencies]
+libm = { loaf = "crates-io/libm", version = "0.2", features = ["not_a_feature"] }

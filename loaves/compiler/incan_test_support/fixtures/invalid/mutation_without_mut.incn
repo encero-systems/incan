@@ -1,3 +1,0 @@
-def foo() -> Unit:
-    x = 1
-    x = 2

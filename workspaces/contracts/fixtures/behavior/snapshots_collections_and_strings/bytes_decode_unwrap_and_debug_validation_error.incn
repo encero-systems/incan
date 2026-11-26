@@ -1,0 +1,12 @@
+# behavior: bytes.decode unwraps valid UTF-8 and Debug-formats its ValidationError for malformed input (#2499)
+# expect-stdout:
+#   1
+#   ValidationError { message: "'utf-8' codec can't decode bytes: invalid utf-8 sequence of 1 bytes from index 0", code: Some("invalid-utf8") }
+
+
+def main() -> None:
+    """Unwrap valid decoded text and print the retained structure of a malformed-input error."""
+    println(len(b"\0".decode().unwrap()))
+    match b"\xff".decode():
+        Ok(text) => println(text)
+        Err(error) => println(f"{error:?}")

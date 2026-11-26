@@ -1,0 +1,21 @@
+# behavior: a `-k` selection across test files that share a plain session-scoped `conftest.incn` fixture still sets it up once, before the first selected test, as 0.5.1 does (#3149).
+# cli-commands:
+#   test tests --nocapture -k one
+# expect-stdout:
+#
+#   running 1 test
+#   session setup
+#   delta one
+#   test_delta.incn::test_delta_one PASSED
+#   alpha one
+#   test_alpha.incn::test_alpha_one PASSED
+#   beta one
+#   test incan_case_batch ... ok
+#
+#   test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <duration>
+#
+#   test_beta.incn::test_beta_one PASSED
+# expect-exit: 0
+
+def main() -> None:
+    println("main")

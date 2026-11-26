@@ -100,11 +100,11 @@ If the compiler refuses the chain with `INCAN-T0116`, the message names the rule
 
 ## Task: migrate a method decorator to the method's receiver spelling
 
-Method decorators written for 0.5 spelled the receiver `&Box` or `&mut Box`. The compiler refuses that spelling with `INCAN-T0110` and names the spelling to write.
+Method decorators written for 0.5 spelled the receiver `&Box` or `&mut Box`, a borrow of the owner, which Incan now writes `Borrowed[Box]` or `BorrowedMut[Box]` (the `&` spelling is refused with `INCAN-T0137`). A decorator shape does not borrow the receiver: the compiler refuses a borrowed receiver with `INCAN-T0110` and names the spelling to write.
 
-1. In each shape of a `self` method's decorator, replace `&Box` with `Box`.
-2. In each shape of a `mut self` method's decorator, replace `&mut Box` with `mut Box`.
-3. In each function a decorator returns in the method's place, replace `box: &Box` with `box: Box`, and `box: &mut Box` with `mut box: Box`.
+1. In each shape of a `self` method's decorator, replace `Borrowed[Box]` (or `&Box`) with `Box`.
+2. In each shape of a `mut self` method's decorator, replace `BorrowedMut[Box]` (or `&mut Box`) with `mut Box`.
+3. In each function a decorator returns in the method's place, replace `box: Borrowed[Box]` with `box: Box`, and `box: BorrowedMut[Box]` with `mut box: Box`.
 4. Check the program. If `INCAN-T0116` refuses a `self` method's chain, follow [decorate a method](#task-decorate-a-method).
 
 Before:
@@ -122,13 +122,13 @@ class Box:
         self.value += by
         return self.value
 
-def parse(box: &Box, value: int) -> int:
+def parse(box: Borrowed[Box], value: int) -> int:
     return value + 1
 
-def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+def as_int(func: (Borrowed[Box], int) -> str) -> (Borrowed[Box], int) -> int:
     return parse
 
-def keep(func: (&mut Box, int) -> int) -> (&mut Box, int) -> int:
+def keep(func: (BorrowedMut[Box], int) -> int) -> (BorrowedMut[Box], int) -> int:
     return func
 ```
 

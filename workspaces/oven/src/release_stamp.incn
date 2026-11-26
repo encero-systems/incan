@@ -1,0 +1,8 @@
+"""
+The release signer this build of `incan` carries (DD-0016).
+
+The release script replaces this module in its own source checkout before it builds the shipped `incan`, with the
+release's `release-signer.json` in base64. The committed module is empty, so a local build carries no signer.
+"""
+
+pub const RELEASE_SIGNER: str = ""

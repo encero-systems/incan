@@ -1,8 +1,9 @@
-//! Pinned native driver and scalar-plan conformance executable.
+//! The pinned native driver: compiles Incan units and Rust units through the pinned rustc.
 #![feature(rustc_private)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 extern crate rustc_abi;
 extern crate rustc_ast;
+extern crate rustc_codegen_ssa;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_feature;
@@ -10,7 +11,9 @@ extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_infer;
 extern crate rustc_interface;
+extern crate rustc_metadata;
 extern crate rustc_middle;
+extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_trait_selection;
@@ -22,117 +25,427 @@ mod bodies;
 mod callable_bridges;
 mod callees;
 mod captured_generators;
+mod checked_body_counts;
 mod checked_json;
 mod cloneable_closures;
 mod closures;
+mod codegraph;
+mod command_diagnostics;
+mod command_format;
 mod comparison_bridges;
+#[cfg(unix)]
+mod compiler_record_service;
+mod compiler_records;
 mod coroutines;
 mod declarations;
+mod dependency_report;
+mod derived_display;
 mod error;
 mod fallible_bridges;
 mod field_metadata;
+mod foreign;
+mod formatting;
 mod frontend;
 mod frozen_values;
 mod futures;
+mod generic_enums;
+mod generic_layouts;
+mod generic_loans;
 mod identity;
-mod marker_traits;
+mod library_exports;
+mod model_debug;
+mod model_emit;
+mod native_attributes;
+mod native_crates;
+mod native_loans;
+mod native_plan_report;
+mod native_search;
+mod native_shared;
+mod native_timing;
+mod native_trait_bridges;
+mod panic_hooks;
 mod plan;
+mod program_entries;
+mod retained_result_loans;
+mod rust_codegraph;
+mod rust_facts;
+mod rust_graph_bodies;
+mod rust_graph_records;
+mod rust_imports;
+mod rustc_process;
 mod shared_callables;
+mod signature_lifetimes;
 mod spans;
 mod statics;
 mod terminators;
+mod test_batch;
+mod test_cases;
+mod test_conftest;
+mod test_entries;
+mod test_groups;
+mod test_unit;
 mod types;
 mod union_debug;
-mod unit;
 mod validation;
 mod value_enum_serde;
 mod values;
+#[cfg(unix)]
+mod worker;
+mod zip_carriers;
 
-use incan_mir_lowering::caller::incan::{consuming_closure_example, scalar_example};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
-/// Obtain the existing ordinary platform policy; source-native compilation refuses an unpinned target.
-fn native_link(identity: &identity::DriverIdentity) -> Result<(Command, String), Box<dyn std::error::Error>> {
-    let rustc = identity.sysroot.join("bin/rustc");
-    let mut command = Command::new(&rustc);
-    let identity = oven_rustc::rustc::configure_pinned_native_link(&mut command, &rustc, &identity.target)?
-        .ok_or("native driver target has no pinned link policy")?;
-    Ok((command, identity))
+use command_diagnostics::DiagnosticOutputFormat;
+use incan_driver::unit::UnitDescription;
+
+/// The receipt `--check --certify PATH` writes when unchanged inputs reproduce the check's exact report.
+const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
+
+const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | --rustc-handoff PATH | \
+                     --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH | --checked-body-counts PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --read-codegraph-origins GRAPH... | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
+                     OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
+
+/// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
+/// reads the unit's handoff, `--rustc-handoff`) or check one (`--check`), each from the
+/// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
+/// settled dependency closure (`--dependencies`), or write the ABI cache of Rust crates (`--rust-abi`), format source
+/// with the unit's vocabulary (`--fmt`), discover authored files (`--source-files`), explain a stable diagnostic
+/// (`--explain`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--read-codegraph-origins`,
+/// `--rust-codegraph` and `--rust-compile-codegraph`).
+///
+/// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
+/// A command that fails prints its error as [`report`] does and exits with that status.
+fn main() -> std::process::ExitCode {
+    match command() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => std::process::ExitCode::from(report(error.as_ref())),
+    }
 }
 
-/// Relaunch a cache miss under the declared link environment before rustc can create compiler threads.
-///
-/// Environment changes are confined to the child process rather than mutating global state around embedded rustc.
-/// On unchanged output reuse this function is never entered. Reapplying the same policy in the child terminates the
-/// relaunch because its explicit environment already matches; no inherited flag can bypass policy verification.
-fn relaunch_with_native_environment(native_link: &Command) -> Result<(), Box<dyn std::error::Error>> {
-    if native_link
-        .get_envs()
-        .all(|(key, value)| std::env::var_os(key).as_deref() == value)
+/// Dispatch the command the first argument names.
+fn command() -> Result<(), Box<dyn std::error::Error>> {
+    incan_frontend::library_manifest::capabilities::install_codec(
+        |value| {
+            internal_models::encode_compiler_contributors(&internal_models::CompilerContributors {
+                profile: value.profile,
+                scope: value.scope,
+                vocabulary: value.vocabulary,
+                operations: value.operations,
+            })
+        },
+        |bytes| {
+            let facts = internal_models::decode_compiler_contributors(&bytes.to_vec())?;
+            Ok(incan_frontend::library_manifest::capabilities::Contributors {
+                profile: facts.profile,
+                scope: facts.scope,
+                vocabulary: facts.vocabulary,
+                operations: facts.operations,
+            })
+        },
+    );
+    incan_frontend::loaf_index::install_directory_reader(|path, top, seal, prefix, maximum| {
+        let answer = incan_worker_host_native::read_directory(
+            path,
+            top,
+            seal,
+            prefix,
+            i64::try_from(maximum).map_err(|e| e.to_string())?,
+        )?;
+        Ok((
+            answer
+                .members
+                .into_iter()
+                .map(|member| (member.key, member.revision))
+                .collect(),
+            usize::try_from(answer.checked_bytes).map_err(|e| e.to_string())?,
+        ))
+    });
+    incan_driver::invocation_trace::initialize()?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .iter()
+        .any(|argument| argument.starts_with(adapter::stable_link::STORE_ARGUMENT))
     {
-        return Ok(());
+        return exit_with(adapter::stable_link::run(&args)?);
     }
-    let mut child = Command::new(std::env::current_exe()?);
-    child.args(std::env::args_os().skip(1));
-    for (key, value) in native_link.get_envs() {
-        if let Some(value) = value {
-            child.env(key, value);
-        } else {
-            child.env_remove(key);
+    match args.first().map(String::as_str) {
+        #[cfg(unix)]
+        Some("--resident") => worker::serve(&args[1..]),
+        Some("--unit") => frontend::compile(&args[1..]),
+        Some("--rustc-handoff") => rustc_process::serve(&args[1..]),
+        Some("--source-interface") => frontend::source_interface(&args[1..]),
+        Some("--dependencies") => frontend::dependency_report(&args[1..]),
+        Some("--compiler-records") => compiler_records::export(&args[1..]),
+        Some("--check") => exit_with(check(&args[1..])?),
+        Some("--check-ranked-reader") => frontend::check_ranked_reader(&args[1..]),
+        Some("--explain") => exit_with(command_diagnostics::explain(&args[1..])?),
+        Some("--fmt") => exit_with(format(&args[1..])?),
+        Some("--source-files") => exit_with(source_files(&args[1..])?),
+        Some("--codegraph") => codegraph::incan(&args[1..]),
+        Some("--read-codegraph") => codegraph::read(&args[1..]),
+        Some("--read-codegraph-origins") => codegraph::read_origins(&args[1..]),
+        Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
+        Some("--rust-compile-codegraph") => rust_codegraph::compile(&args[1..]),
+        Some("--rust-abi") => rust_abi(&args[1..]),
+        Some("--rust-imports") => rust_imports::export(&args[1..]),
+        Some("--emit-model") => model_emit::emit(&args[1..]),
+        Some("--identity") => verify_sysroot(&args[1..]),
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// Verify the sysroot's compiler identity and print its host target. An explicit installer query also returns the
+/// supported Plan admission profile. Both responses verify the relocated toolchain without compiling a unit.
+fn verify_sysroot(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let reply = identity_reply(arguments, |sysroot| {
+        identity::verify(sysroot).map(|verified| verified.target)
+    })?;
+    print!("{reply}");
+    Ok(())
+}
+
+/// Select the existing identity response only after the supplied sysroot has passed verification.
+fn identity_reply(
+    arguments: &[String],
+    verify: impl FnOnce(&Path) -> Result<String, identity::IdentityError>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    const PROTOCOL: &str = "incan.driver-capabilities/1";
+    const PROFILE: &str = "incan.plan-module-selection-sha256/1";
+    let (sysroot, capabilities) = match arguments {
+        [sysroot] => (sysroot, false),
+        [sysroot, option, protocol] if option == "--capabilities" && protocol == PROTOCOL => (sysroot, true),
+        _ => return Err("usage: incan-rustc-driver --identity SYSROOT".into()),
+    };
+    let target = verify(Path::new(sysroot))?;
+    if capabilities {
+        Ok(format!("{PROTOCOL}\n{target}\n{PROFILE}\n"))
+    } else {
+        Ok(format!("{target}\n"))
+    }
+}
+
+#[cfg(test)]
+mod identity_reply_tests {
+    use super::{identity, identity_reply};
+    use std::path::Path;
+
+    /// The exact capability protocol belongs only to an explicitly requested, verified sysroot.
+    #[test]
+    fn verified_identity_emits_the_requested_plan_selection_profile() -> Result<(), Box<dyn std::error::Error>> {
+        let arguments = ["/verified/sysroot", "--capabilities", "incan.driver-capabilities/1"].map(str::to_owned);
+        let verify = |path: &Path| {
+            assert_eq!(path, Path::new("/verified/sysroot"));
+            Ok("aarch64-apple-darwin".into())
+        };
+        assert_eq!(identity_reply(&arguments[..1], verify)?, "aarch64-apple-darwin\n");
+        assert_eq!(
+            identity_reply(&arguments, verify)
+                .as_deref()
+                .unwrap_or("rejected capability request"),
+            "incan.driver-capabilities/1\naarch64-apple-darwin\nincan.plan-module-selection-sha256/1\n"
+        );
+        let [sysroot, capability, _] = arguments;
+        let unknown = [sysroot, capability, "incan.driver-capabilities/2".into()];
+        assert!(identity_reply(&unknown, |_| panic!("a malformed request reached verification")).is_err());
+        let refused = identity_reply(
+            &[
+                unknown[0].clone(),
+                unknown[1].clone(),
+                "incan.driver-capabilities/1".into(),
+            ],
+            |_| Err(identity::IdentityError::Mismatch("foreign sysroot".into())),
+        );
+        assert!(refused.is_err());
+        Ok(())
+    }
+}
+
+/// End the process with a command's nonzero status; status zero returns, so `main` completes normally.
+fn exit_with(code: i32) -> Result<(), Box<dyn std::error::Error>> {
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+/// Print a failed command's message to stderr and return its status; a command that succeeded has status zero.
+fn status_of<T>(result: incan_driver::error::CliResult<T>) -> i32 {
+    match result {
+        Ok(_) => 0,
+        Err(error) => {
+            print_failure(&error.message);
+            error.exit_code.0
         }
     }
-    std::process::exit(child.status()?.code().unwrap_or(1));
 }
 
-/// Take the hand-filled fixture plan from Incan and compile it through the native boundary.
-///
-/// Arguments are source, crate name, output, sysroot, runtime rlib, optional scalar or consuming-closure mode, and
-/// admitted dependency directories. The shared opt-in invocation sink is initialized before dispatch; disabled tracing
-/// uses the ordinary logging filter.
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    oven_cli::invocation_trace::initialize()?;
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|arg| arg == "--source") {
-        return frontend::compile(&args[1..]);
+/// Print an error a command returned and give the status it exits with. A refusal reads exactly as `--check` prints
+/// it, never as a quoted, escaped debug string; the short-lived command and the resident worker share this.
+pub(crate) fn report(error: &dyn std::error::Error) -> u8 {
+    print_failure(&error.to_string());
+    1
+}
+
+/// Print a failure's message to stderr as it reads, with a final newline; an empty message prints nothing.
+fn print_failure(message: &str) {
+    if !message.is_empty() {
+        eprintln!("{message}");
     }
-    if args.first().is_some_and(|arg| arg == "--rust-unit") {
-        let separator = args
-            .iter()
-            .position(|arg| arg == "--")
-            .ok_or("Rust unit invocation requires -- before rustc arguments")?;
-        let sysroot = args.get(1).ok_or("Rust unit invocation requires a sysroot")?;
-        unit::compile(&args[separator + 1..], Path::new(sysroot), &args[2..separator])?;
-        return Ok(());
-    }
-    if args.len() < 5 {
-        return Err("usage: incan-rustc-driver SOURCE CRATE OUTPUT SYSROOT RUNTIME_RLIB [normal|overflow|dangling|consuming-closure] [DEPENDENCY_DIR ...]".into());
-    }
-    let mode = args.get(5).map(String::as_str).unwrap_or("normal");
-    if !matches!(mode, "normal" | "overflow" | "dangling" | "consuming-closure") {
-        return Err("unknown fixture mode".into());
-    }
-    let identity = identity::verify(Path::new(&args[3]))?;
-    let (native_link, _) = native_link(&identity)?;
-    relaunch_with_native_environment(&native_link)?;
-    let plan = if mode == "consuming-closure" {
-        consuming_closure_example(args[0].clone(), "native_output::print_int".into())
-    } else {
-        scalar_example(
-            args[0].clone(),
-            "native_output::print_int".into(),
-            mode == "overflow",
-            mode == "dangling",
-        )
+}
+
+/// Print the authored Incan sources under one path as a JSON list, the files a formatting run selects, and return
+/// status zero. A short-lived process and the resident worker share this exact path.
+pub(crate) fn source_files(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    let [path] = arguments else {
+        return Err(USAGE.into());
     };
-    adapter::compile(
-        plan,
-        &args[1],
-        Path::new(&args[2]),
-        Path::new(&args[3]),
-        &[("native_output".into(), PathBuf::from(&args[4]))],
-        &args.iter().skip(6).map(PathBuf::from).collect::<Vec<_>>(),
-        &native_link,
-    )?;
+    let path = std::path::absolute(path)?;
+    let files = command_format::source_files(&path).map_err(|error| error.message)?;
+    println!("{}", serde_json::to_string(&files)?);
+    Ok(0)
+}
+
+/// Format a source through the compiler's command function using the unit vocabulary supplied by Oven, and return
+/// the command's status. A short-lived process and the resident worker share this exact path.
+pub(crate) fn format(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    let [unit_path, source, options @ ..] = arguments else {
+        return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into());
+    };
+    let check = match options {
+        [] => false,
+        [flag] if flag == "--check" => true,
+        _ => return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into()),
+    };
+    let unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
+    let formatted = command_format::format_files(source, &unit, check);
+    Ok(status_of(formatted))
+}
+
+/// Write the ABI cache of the named Rust crates: every public item, described from rustc's crate metadata.
+fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [sysroot, output, rest @ ..] = arguments else {
+        return Err(USAGE.into());
+    };
+    let mut crates = std::collections::BTreeSet::new();
+    let mut externs = Vec::new();
+    let mut search = Vec::new();
+    let mut remaining = rest.iter();
+    while let Some(argument) = remaining.next() {
+        match argument.as_str() {
+            "--extern" => {
+                let value = remaining.next().ok_or(USAGE)?;
+                let (name, path) = value.split_once('=').ok_or("--extern takes CRATE=RLIB")?;
+                externs.push((name.to_owned(), std::path::PathBuf::from(path)));
+            }
+            "--search" => search.push(std::path::PathBuf::from(remaining.next().ok_or(USAGE)?)),
+            name => {
+                crates.insert(name.to_owned());
+            }
+        }
+    }
+    let facts = rust_facts::extract(rust_facts::RustFactsRequest {
+        sysroot: Path::new(sysroot),
+        externs: &externs,
+        search: &search,
+        scope: rust_facts::RustFactsScope::Crates(crates),
+    })?;
+    std::fs::write(output, incan_frontend::rust_abi_cache::encode_rust_abi_cache(&facts)?)?;
     Ok(())
+}
+
+/// The check's `incan.checked-bodies/1` report, with `decoded`: how many of the pages it restored from it decoded
+/// itself rather than found decoded by an earlier check in this process.
+fn checked_bodies_report(
+    bodies: &incan_driver::check::CheckedBodies,
+    decoded: usize,
+) -> Result<String, incan_driver::error::CliError> {
+    let failure = |error: serde_json::Error| incan_driver::error::CliError::failure(error.to_string());
+    let mut report: serde_json::Value = serde_json::from_str(&bodies.to_json()?).map_err(failure)?;
+    report["decoded"] = serde_json::json!(decoded);
+    serde_json::to_string(&report).map_err(failure)
+}
+
+/// Check one unit and return the check's status; the report goes to stdout, a refusal's message to stderr. The
+/// unit's crates and their ABI caches supply its Rust facts, as for `--unit`. A short-lived process and the resident
+/// worker share this exact path.
+///
+/// With `--certify PATH`, a report that unchanged inputs reproduce exactly (a pass, or a refusal by source
+/// diagnostics) also writes the check receipt there, which lets Oven replay it; any other outcome writes none.
+///
+/// A check reuses the `--graph-body-records` it is given exactly as a build does. With `--checked-bodies PATH` it
+/// writes there which top-level function bodies it restored from them and which it checked afresh.
+pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    native_timing::observe_frontend(false);
+    let [path, sysroot, rest @ ..] = arguments else {
+        return Err(USAGE.into());
+    };
+    let (format, rest) = match rest {
+        [flag, format, rest @ ..] if flag == "--format" => match format.as_str() {
+            "text" => (DiagnosticOutputFormat::Text, rest),
+            "json" => (DiagnosticOutputFormat::Json, rest),
+            _ => return Err(USAGE.into()),
+        },
+        rest => (DiagnosticOutputFormat::Text, rest),
+    };
+    let (certificate, options) = certified_options(rest);
+    let (bodies_report, options) = match options {
+        [flag, report, options @ ..] if flag == "--checked-bodies" || flag == "--checked-body-counts" => {
+            (Some((Path::new(report), flag == "--checked-body-counts")), options)
+        }
+        options => (None, options),
+    };
+    let (retain_editor_modules, options) = match options {
+        [flag, options @ ..] if flag == "--retain-checked-modules" => (true, options),
+        options => (false, options),
+    };
+    let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
+    let dependencies = frontend::dependencies(&unit, options)?;
+    let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
+    let decoded_before = frontend::decoded_pages::decodes();
+    let checked = if retain_editor_modules {
+        thread_local! {
+            static EDITOR_CHECKS: std::cell::RefCell<incan_driver::check::RetainedModuleChecks> = Default::default();
+        }
+        EDITOR_CHECKS.with_borrow_mut(|cache| {
+            incan_driver::check::check_unit_with_retained_modules(
+                &unit,
+                &rust,
+                dependencies.graph_body_records(),
+                Some(cache),
+            )
+        })
+    } else {
+        incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records())
+    };
+    let decoded = frontend::decoded_pages::decodes() - decoded_before;
+    let checked = checked.and_then(|(output, bodies)| {
+        if let Some((report, counts_only)) = bodies_report {
+            let bytes = if counts_only {
+                checked_body_counts::encode(&bodies, decoded)?
+            } else {
+                checked_bodies_report(&bodies, decoded)?.into_bytes()
+            };
+            std::fs::write(report, bytes).map_err(|error| {
+                incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))
+            })?;
+        }
+        Ok(output)
+    });
+    let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
+    let status = status_of(checked.and_then(|report| command_diagnostics::render_check_report(report, format)));
+    if reproducible && let Some(certificate) = certificate {
+        // A receipt that cannot be written only means the next unchanged check runs again.
+        let _ = std::fs::write(certificate, CHECK_CERTIFICATE);
+    }
+    Ok(status)
+}
+
+/// Split a leading `--certify PATH` from a command's native options. The path is where `--check` and `--unit` write
+/// their receipt when unchanged inputs reproduce the outcome exactly; the remaining options are returned as they are.
+pub(crate) fn certified_options(options: &[String]) -> (Option<&Path>, &[String]) {
+    match options {
+        [flag, certificate, options @ ..] if flag == "--certify" => (Some(Path::new(certificate)), options),
+        options => (None, options),
+    }
 }

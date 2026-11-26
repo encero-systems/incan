@@ -1,0 +1,377 @@
+//! Standard Loaf traits, registry types, binding roots and standard Loaf imports.
+
+use super::*;
+use crate::api_metadata::resolve_api_alias_target;
+
+impl TypeChecker {
+    /// Materialize one otherwise-unbound value exported by the source-defined standard prelude.
+    ///
+    /// The prelude declaration, not a compiler spelling table, decides which values are ambient. Existing bindings
+    /// always win, so parameters, imports and local declarations retain ordinary lexical shadowing.
+    pub(in crate::typechecker) fn materialize_implicit_prelude_value(&mut self, name: &str, span: Span) -> bool {
+        if name.contains('.') || self.symbols.lookup(name).is_some() {
+            return false;
+        }
+        let module = vec!["std".to_string(), "prelude".to_string()];
+        let Some((library, path)) = self.loaf_module(&module) else {
+            return false;
+        };
+        let Some(resolved) = self
+            .resolve_pub_library_module_symbol_member(&library, &path, name)
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        if !matches!(
+            resolved.kind,
+            SymbolKind::Variable(_)
+                | SymbolKind::Static(_)
+                | SymbolKind::Function(_)
+                | SymbolKind::FunctionOverloads(_)
+                | SymbolKind::Variant(_)
+        ) {
+            return false;
+        }
+        self.collect_loaf_from_imports(
+            &LoafImport {
+                key: library,
+                module: path,
+            },
+            &[ImportItem {
+                name: name.to_string(),
+                alias: None,
+            }],
+            span,
+        );
+        self.symbols.lookup(name).is_some()
+    }
+
+    /// The trait a Loaf publishes as `<module_path>.<name>`, read from its manifest.
+    pub(in crate::typechecker) fn loaf_trait(&mut self, module_path: &[String], name: &str) -> Option<TraitInfo> {
+        let (library, rest) = self.loaf_module(module_path)?;
+        match self.lookup_pub_library_module_symbol_member(&library, &rest, name)?.0 {
+            SymbolKind::Trait(info) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Read the checked trait declaration without installing its package's nominal scope into the consumer.
+    fn loaf_trait_declaration(&self, module_path: &[String], name: &str) -> Option<&crate::api_metadata::ApiTrait> {
+        let (library, _) = self.loaf_module(module_path)?;
+        let manifest = self.loaves.manifest(&library)?;
+        let canonical = self.loaf_member_identity(module_path, name)?;
+        let source_path = manifest
+            .contract_metadata
+            .identity_graph
+            .declaration_source_path(&canonical)?;
+        let ApiDeclaration::Trait(declaration) = Self::api_declaration_for_target_path(manifest, source_path)? else {
+            return None;
+        };
+        Some(declaration)
+    }
+
+    /// The Rust derive paths a Loaf trait declares (`@rust.derive(...)`), in declaration order.
+    pub(in crate::typechecker) fn loaf_trait_rust_derive_paths(
+        &self,
+        module_path: &[String],
+        name: &str,
+    ) -> Option<Vec<String>> {
+        let declaration = self.loaf_trait_declaration(module_path, name)?;
+        let mut paths = Vec::new();
+        for decorator in &declaration.decorators {
+            if core_decorators::from_str(&decorator.path.join(".")) != Some(DecoratorId::RustDerive) {
+                continue;
+            }
+            for argument in &decorator.args {
+                if let DecoratorArgMetadata::Positional {
+                    value:
+                        DecoratorValue::Literal {
+                            value: SafeMetadataValue::String(path),
+                        },
+                } = argument
+                    && !paths.contains(path)
+                {
+                    paths.push(path.clone());
+                }
+            }
+        }
+        Some(paths)
+    }
+
+    /// The RFC 024 `__derives__` trait list a Loaf module publishes in its checked API metadata.
+    pub(in crate::typechecker) fn loaf_module_derivable_traits(&self, module_path: &[String]) -> Option<Vec<String>> {
+        let (library, rest) = self.loaf_module(module_path)?;
+        let api = self.loaves.manifest(&library)?.contract_metadata.api.as_ref()?;
+        api.modules
+            .iter()
+            .find(|module| module.module_path == rest)
+            .map(|module| module.derivable_traits.clone())
+    }
+
+    /// Whether the `@derive(...)` argument `derive` names a Loaf module that lists derivable traits.
+    pub(in crate::typechecker) fn is_loaf_derive_module(&self, derive: &str) -> bool {
+        self.module_path_for_imported_name(derive)
+            .and_then(|module| self.loaf_module_derivable_traits(&module))
+            .is_some_and(|traits| !traits.is_empty())
+    }
+
+    /// The module and name, as this program spells them, of the trait one entry of a module's `__derives__` names.
+    ///
+    /// A Loaf module lists its derivable traits by its own spellings, which resolve in its checked declarations: an
+    /// import or alias of the module, public or private, is followed to its target through the Loaf's modules until it
+    /// reaches a declaration of the Loaf, or leaves the Loaf and is spelled by its absolute path. Another module's
+    /// entry, and a trait the module declares itself, is returned as written.
+    pub(in crate::typechecker) fn derivable_trait_target(
+        &self,
+        module_path: &[String],
+        name: &str,
+    ) -> (Vec<String>, String) {
+        let written = (module_path.to_vec(), name.to_owned());
+        let Some((library, mut module)) = self.loaf_module(module_path) else {
+            return written;
+        };
+        let Some(api) = self
+            .loaves
+            .manifest(&library)
+            .and_then(|manifest| manifest.contract_metadata.api.as_ref())
+        else {
+            return written;
+        };
+        let consumer_root = &module_path[..module_path.len() - module.len()];
+        let mut name = name.to_owned();
+        let mut visited = HashSet::new();
+        while visited.insert((module.clone(), name.clone())) {
+            let Some(ApiDeclaration::Alias(alias)) = api
+                .modules
+                .iter()
+                .find(|declared| declared.module_path == module)
+                .and_then(|declared| {
+                    declared
+                        .declarations
+                        .iter()
+                        .filter(|declaration| declaration.name() == name)
+                        .min_by_key(|declaration| matches!(declaration, ApiDeclaration::Alias(_)))
+                })
+            else {
+                break;
+            };
+            let target = resolve_api_alias_target(&module, &alias.target_path);
+            let binding_root = self
+                .loaves
+                .entry(&library)
+                .filter(|entry| entry.owns(&target))
+                .map(|entry| entry.binding_root());
+            let own = binding_root
+                .as_ref()
+                .and_then(|root| target.strip_prefix(root.as_slice()));
+            let Some((target_name, target_module)) = own.unwrap_or(&target).split_last() else {
+                break;
+            };
+            if own.is_none() && !api.modules.iter().any(|declared| declared.module_path == target_module) {
+                // The alias leaves the Loaf, so its target is spelled by its absolute path.
+                return (target_module.to_vec(), target_name.clone());
+            }
+            module = target_module.to_vec();
+            name = target_name.clone();
+        }
+        (consumer_root.iter().cloned().chain(module).collect(), name)
+    }
+
+    /// Record the standard `Registry` declarations when this module defines, imports or enters a registry, so lowering
+    /// selects the registry's reserved methods from the checked declaration.
+    pub(in crate::typechecker) fn record_standard_registry_types(&mut self) {
+        let registry = &self.type_info.registry;
+        if registry.definitions.is_empty()
+            && registry.imported_definitions.is_empty()
+            && registry.explicit_entries.is_empty()
+        {
+            return;
+        }
+        let module = vec![stdlib::STDLIB_ROOT.to_string(), stdlib::STDLIB_REGISTRY.to_string()];
+        let standard = if self.owns_standard_module(&module) {
+            self.own_standard_registry_types(&module)
+        } else {
+            self.loaf_standard_registry_types(&module)
+        };
+        if let Some(standard) = standard {
+            self.type_info.registry.standard = Some(standard);
+        }
+    }
+
+    /// Whether the active binding denotes this exact Loaf declaration or its registry-owned builtin placeholder.
+    /// A placeholder is compatible with its declaring module, but still needs that module's checked contract.
+    pub(super) fn rebinds_same_declaration(&self, local_name: &str, module: &[String], item: &str) -> bool {
+        let Some(symbol) = self.symbols.lookup_local(local_name) else {
+            return false;
+        };
+        match self.symbols.identity_of(symbol) {
+            Some(existing) if !matches!(existing.origin, SymbolOrigin::Builtin) => {
+                self.loaf_member_identity(module, item).as_ref() == Some(existing)
+            }
+            // A compiler-owned placeholder may be imported through a facade only when both exports name the
+            // registered declaring module's exact trait. A matching short name grants no declaration authority.
+            Some(existing) if existing.origin == SymbolOrigin::Builtin => {
+                if local_name != item
+                    || !matches!(
+                        self.symbols.get(symbol).map(|found| &found.kind),
+                        Some(SymbolKind::Trait(_))
+                    )
+                {
+                    return false;
+                }
+                let Some(declaring) =
+                    incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
+                else {
+                    return false;
+                };
+                let declaring = declaring.split('.').map(str::to_owned).collect::<Vec<_>>();
+                let Some(imported) = self.loaf_member_identity(module, item) else {
+                    return false;
+                };
+                self.loaf_member_identity(&declaring, item).as_ref() == Some(&imported)
+            }
+            _ => false,
+        }
+    }
+
+    /// Keep real imports idempotent while replacing a compatible builtin placeholder with checked Loaf metadata.
+    /// A bare spelling is never sufficient: only the builtin registry's declaring module can supply its contract.
+    pub(super) fn loaf_import_needs_binding(
+        &mut self,
+        local_name: &str,
+        module: &[String],
+        item: &str,
+        span: Span,
+    ) -> bool {
+        let Some(existing_kind) = self.existing_local_symbol_kind(local_name) else {
+            return true;
+        };
+        if self.rebinds_same_declaration(local_name, module, item) {
+            return self
+                .symbols
+                .lookup_local(local_name)
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+                .is_some_and(|identity| matches!(identity.origin, SymbolOrigin::Builtin));
+        }
+        self.errors.push(errors::pub_library_import_name_collision(
+            local_name,
+            existing_kind,
+            span,
+        ));
+        false
+    }
+
+    /// The standard `Registry` declarations of the package that declares `std.registry`: its own checked modules.
+    pub(super) fn own_standard_registry_types(
+        &self,
+        module: &[String],
+    ) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let path = ImportPath {
+            parent_levels: 0,
+            is_absolute: false,
+            segments: module.to_vec(),
+        };
+        let Some(SymbolKind::Type(TypeInfo::Class(registry_class))) =
+            self.dependency_member_symbol_for_path(&path, "Registry")
+        else {
+            return None;
+        };
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.dependency_member_identity(&path, "Registry")?,
+            registry_class,
+            entry: self.dependency_member_identity(&path, "RegistryEntry")?,
+        })
+    }
+
+    /// The standard `Registry` declarations, read from the standard Loaf that owns `std.registry`.
+    pub(super) fn loaf_standard_registry_types(
+        &mut self,
+        module: &[String],
+    ) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let (library, rest) = self.loaf_module(module)?;
+        let Some((SymbolKind::Type(TypeInfo::Class(registry_class)), _)) =
+            self.lookup_pub_library_module_symbol_member(&library, &rest, "Registry")
+        else {
+            return None;
+        };
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.loaf_member_identity(module, "Registry")?,
+            registry_class,
+            entry: self.loaf_member_identity(module, "RegistryEntry")?,
+        })
+    }
+
+    /// The standard declaration of the builtin trait `name` (`Eq`, `Ord`, …), read once from the standard package
+    /// owning its module.
+    pub(in crate::typechecker) fn standard_trait(&mut self, name: &str) -> Option<TraitInfo> {
+        if let Some(info) = self.standard_traits.get(name) {
+            return Some(info.clone());
+        }
+        let segments = Self::standard_trait_module(name)?;
+        let info = self.loaf_trait(&segments, name)?;
+        self.standard_traits.insert(name.to_string(), info.clone());
+        Some(info)
+    }
+
+    fn standard_trait_module(name: &str) -> Option<Vec<String>> {
+        // The derive-method table names a derivable trait's module; every other builtin trait (`TryFrom`, `Error`)
+        // names its declaring module itself.
+        stdlib::trait_method_module_segments(name).or_else(|| {
+            incan_lang::lang::traits::from_str(name)
+                .and_then(incan_lang::lang::traits::source_module)
+                .map(|module| module.split('.').map(str::to_string).collect())
+        })
+    }
+
+    /// An unsuccessful adopted-method probe must not publish unrelated package types into the caller's Body IR.
+    /// Check the source declaration before materializing the full trait. Older manifests without that declaration
+    /// continue to resolve through the ordinary trait lookup.
+    pub(in crate::typechecker) fn standard_trait_method(&mut self, name: &str, method: &str) -> Option<MethodInfo> {
+        if let Some(info) = self.standard_traits.get(name) {
+            return info.methods.get(method).cloned();
+        }
+        let module = Self::standard_trait_module(name)?;
+        if self
+            .loaf_trait_declaration(&module, name)
+            .is_some_and(|declaration| !declaration.methods.iter().any(|item| item.name == method))
+        {
+            return None;
+        }
+        self.standard_trait(name)?.methods.get(method).cloned()
+    }
+
+    /// The path `library`'s public modules use (see [`crate::loaf_index::LoafEntry::binding_root`]), from the index's
+    /// admission alone.
+    pub(in crate::typechecker) fn loaf_binding_root(&self, library: &str) -> Vec<String> {
+        self.loaves
+            .admitted(library)
+            .map(|admitted| admitted.binding_root)
+            .unwrap_or_else(|| vec!["pub".to_string(), library.to_string()])
+    }
+
+    /// Identify an admitted module by its provider package while its lexical binding keeps the dependency alias.
+    /// Standard namespaces retain their `std` module origins; a consumer's package alias never becomes a declaring
+    /// package in executable requirements. The index's admission names both, so no manifest is read.
+    pub(super) fn loaf_module_identity(&self, library: &str, module: &[String]) -> Option<CanonicalSymbolId> {
+        let admitted = self.loaves.admitted(library)?;
+        let mut root = admitted.binding_root;
+        if let [namespace, owner] = root.as_mut_slice()
+            && namespace == "pub"
+        {
+            owner.clone_from(&admitted.name);
+        }
+        root.extend_from_slice(module);
+        SymbolTable::module_path_identity(&root)
+    }
+
+    /// The Loaf import a `std.*` module path reaches: the standard package owning its namespace root, and the module
+    /// path inside that package's manifest.
+    pub(in crate::typechecker) fn standard_loaf_import(&self, segments: &[String]) -> Option<LoafImport> {
+        let owner = self.loaves.admitted_owner_of(segments)?;
+        Some(LoafImport {
+            key: owner.key,
+            module: segments[1..].to_vec(),
+        })
+    }
+}

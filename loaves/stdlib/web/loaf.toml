@@ -12,10 +12,6 @@ edition = "2024"
 [rust.source]
 root = "rust"
 
-[sdk]
-profile = "minimal"
-components = ["stdlib-data", "stdlib-async"]
-
 [dependencies]
 axum = { loaf = "crates-io/axum", version = "0.8", features = [], default-features = true }
 inventory = { loaf = "crates-io/inventory", version = "0.3", features = [], default-features = true }

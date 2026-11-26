@@ -1,0 +1,439 @@
+"""Record a baked unit's identity, publication provenance and payload digest separately."""
+
+from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from files import json_text, read_json
+from json_fields import required_text
+from std.json import JsonValue
+from observation import Observation, file_digest, observe
+from publication import publish, publish_binary
+from pub::internal_models.unit_admission import encode_unit_admission, decode_unit_admission
+from home_paths import home
+from payload_types import PayloadAdmission
+from frozen_inputs import payload as frozen_payload
+from frozen_inputs import admit_registry_stores, cached_registry_store, read as frozen_document, registry_selection
+
+pub const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
+
+
+def registry_store_admitted(entries: str) -> Result[bool, str]:
+    """Derive the selected closure's stores once from its frozen document, without reopening an installed input."""
+    path, identity, compiler = registry_selection()
+    if path == "":
+        return Ok(false)
+    key = f"{path}\n{identity}\n{compiler}"
+    if let Some(admitted) = cached_registry_store(key, entries):
+        return Ok(admitted)
+    document = match frozen_document(Path(path))?:
+        None => return Err("unit identity refused: selected toolchain registry closure is absent from its installation page")
+        Some(found) => found
+    externs = document.require("externs").map_err((error) => error.message())?
+    mut stores: list[str] = []
+    for name in externs.keys():
+        native = externs.require(name).map_err((error) => error.message())?
+        artifact = located(Path(path).parent(), required_text(native, "path")?)
+        store = Path(artifact).parent().parent().parent().0
+        if store not in stores:
+            stores.append(store)
+    admit_registry_stores(key, stores)
+    return Ok(entries in stores)
+
+
+def located(directory: Path, path: str) -> str:
+    """Locate one closure artifact lexically, so deriving registry authority performs no filesystem observation."""
+    if path.startswith("/"):
+        return path
+    mut parts = directory.0.split("/")
+    for part in path.split("/"):
+        if part == "..":
+            if len(parts) > 1:
+                parts = parts[:len(parts) - 1]
+        elif part != "." and part != "":
+            parts.append(part)
+    return "/".join(parts)
+
+
+pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
+    """
+    Capture an admitted payload's proof before publishing its containing installation by rename.
+
+    An entry of the selected closure's registry is frozen with its installation, whose admission validated it: its
+    proof is read from that admission and the artifact is not observed. Any other payload must still be the file
+    generation its record names.
+    """
+    if let Some(proof) = frozen_payload(path)?:
+        return Ok(proof)
+    location = available_record(path)?
+    record = match read_evidence(location, path):
+        Ok(value) => value
+        Err(reason) =>
+            if not location.is_file():
+                return Err(missing_producer(path))
+            return Err(reason)
+    if admitted_registry_identity(path)? == Some(record.identity):
+        return Ok(record)
+    if observe(path)?.stamp != record.observation:
+        return Err(f"{path.0}: published payload changed; admission is required")
+    return Ok(record)
+
+
+pub def relocate_payload(path: Path, admission: PayloadAdmission) -> Result[None, str]:
+    """Bind a verified generation at its published location without rehashing; changed bytes require fresh admission."""
+    if observe(path)?.stamp != admission.observation:
+        return Err(f"{path.0}: payload changed while publishing installation")
+    return write_imported(path, admission)
+
+
+pub def record_payload(path: Path, identity: str, provenance: list[str] = [], refusal: str = "") -> Result[None, str]:
+    """
+    Publish the identity a completed artifact was baked under, independently of its bytes and location.
+
+    1. Observe and digest the completed payload at publication.
+    2. Refuse a concurrent replacement rather than certify mixed generations.
+    3. Record its identity, payload and provenance beside the artifact for copying with it.
+    """
+    # 1. Reading bytes belongs to publication, never to naming a linked unit.
+    before = observe(path)?.stamp
+    if record_path(path).is_file():
+        match read_json(record_path(path)):
+            Err(_) => pass
+            Ok(previous) =>
+                if (
+                    required_text(previous, "schema")? == PUBLICATION_SCHEMA
+                    and required_text(previous, "observation")? == before
+                ):
+                    payload = required_text(previous, "payload")?
+                    return record_verified_payload(path, identity, payload, before, provenance, refusal)
+    payload = file_digest(path)?
+    # 2. A changed file cannot receive a record for the bytes read before the change.
+    if observe(path)?.stamp != before:
+        return Err(f"{path.0}: artifact changed during publication")
+    # 3. The location and observation are recorded evidence, never identity inputs.
+    return publish_record(record_path(path), path, identity, payload, before, provenance, refusal)
+
+
+pub def record_verified_payload(
+    path: Path,
+    identity: str,
+    payload: str,
+    observation: str,
+    provenance: list[str] = [],
+    refusal: str = "",
+) -> Result[None, str]:
+    """
+    Publish a digest already verified under the caller's producer lock, without reading the payload again.
+
+    The caller must supply the exact file observation held across verification; a replacement refuses publication.
+    """
+    if observe(path)?.stamp != observation:
+        return Err(f"{path.0}: verified payload changed before publication")
+    mut origins = provenance
+    if record_path(path).is_file():
+        previous = read_json(record_path(path))?
+        if required_text(previous, "unit")? == identity and required_text(previous, "payload")? == payload:
+            origins = source_provenance(previous)?
+    return publish_record(record_path(path), path, identity, payload, observation, origins, refusal)
+
+
+pub def source_origins(path: Path) -> Result[list[str], str]:
+    """Read a payload's original source provenance for relocating its retained dependency evidence."""
+    if not record_path(path).is_file():
+        return Ok([])
+    return source_provenance(read_json(record_path(path))?)
+
+
+pub def published_identity(path: Path) -> Result[str, str]:
+    """
+    Name an unchanged published artifact without reading or hashing its payload.
+
+    Missing producer records and changed generations refuse; relocation must be admitted before naming the unit. An
+    artifact of an installed registry entry is admitted under that entry's identity the first time it is named.
+    """
+    if let Some(proof) = frozen_payload(path)?:
+        return accepted_identity(proof)
+    record = available_record(path)?
+    if not record.is_file():
+        if let Some(entry) = admitted_registry_identity(path)?:
+            return Ok(entry)
+        return Err(missing_producer(path))
+    proof = read_evidence(record, path)?
+    if observe(path)?.stamp != proof.observation:
+        return Err(f"{path.0}: published payload changed; admission is required")
+    return accepted_identity(proof)
+
+
+def accepted_identity(proof: PayloadAdmission) -> Result[str, str]:
+    if proof.refusal != "":
+        return Err(proof.refusal)
+    return Ok(proof.identity)
+
+
+pub def admitted_identity(path: Path) -> Result[Option[str], str]:
+    """Return an installed payload's admitted producer identity without reopening its bytes or record."""
+    if let Some(admission) = frozen_payload(path)?:
+        return Ok(Some(accepted_identity(admission)?))
+    return admitted_registry_identity(path)
+
+
+pub def admitted_registry_identity(path: Path) -> Result[Option[str], str]:
+    """
+    The identity of the registry entry an artifact belongs to: `<store>/entries/sha256-<digest>/artifacts/<file>`
+    names entry `sha256:<digest>`. Registry stores are content-named, so the entry directory is the producer identity.
+    """
+    artifacts = path.parent()
+    entry = artifacts.parent()
+    name = entry.name()
+    if artifacts.name() != "artifacts" or entry.parent().name() != "entries" or not name.startswith("sha256-"):
+        return Ok(None)
+    if not registry_store_admitted(entry.parent().0)?:
+        return Ok(None)
+    digest = name[len("sha256-"):]
+    if len(digest) != 64:
+        return Ok(None)
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return Ok(None)
+    return Ok(Some(f"sha256:{digest}"))
+
+
+pub def import_payload(path: Path, identity: str, expected_payload: str = "") -> Result[None, str]:
+    """
+    Admit an artifact whose producer identity arrived in a trusted registry closure or publication record.
+
+    1. Reuse an already admitted unchanged generation without reading its bytes.
+    2. Verify external changes against the retained payload digest.
+    3. Record first admission in this home's cache, leaving the imported store untouched.
+    """
+    # 1. Import is a trust boundary, distinct from naming an artifact during unit identification.
+    local = record_path(path)
+    before = observe(path)?.stamp
+    mut existing = available_record(path)?
+    mut proof = PayloadAdmission(identity=identity, payload=expected_payload, observation="", provenance=[])
+    if existing.is_file():
+        proof = read_evidence(existing, path)?
+        changed_producer = proof.identity != identity or (expected_payload != "" and proof.payload != expected_payload)
+        # A later archive can stage a new producer at the same path. Only its transported record and a fresh
+        # verification of its bytes may replace an admission for the former physical generation.
+        if changed_producer and existing.0 != local.0 and local.is_file() and expected_payload != "":
+            if proof.observation != "" and proof.observation != before:
+                existing = local
+                proof = read_evidence(local, path)?
+                proof.observation = ""
+        if proof.identity != identity:
+            return Err(f"{path.0}: imported producer identity disagrees")
+        if expected_payload != "" and proof.payload != expected_payload:
+            return Err(f"{path.0}: imported payload digest disagrees")
+    if identity == "" and proof.refusal == "":
+        return Err("unit identity refused: imported producer has no portable identity")
+    # A transported record describes these bytes even when its former location or generation is stale.
+    if existing.0 != local.0 and local.is_file():
+        transported = read_evidence(local, path)?
+        if transported.identity != proof.identity or transported.payload != proof.payload:
+            return Err(f"{path.0}: transported producer or payload disagrees with its admission")
+        proof.provenance = transported.provenance
+        proof.refusal = transported.refusal
+        proof.facts = transported.facts
+    if existing.is_file() and proof.observation == before:
+        if existing.0 == local.0:
+            return Ok(None)
+        cache_record = imported_record(path)?
+        if existing.0 == cache_record.0 and not local.is_file():
+            return Ok(None)
+        return write_imported(path, proof)
+    digest = file_digest(path)?
+    if (proof.payload != "" and digest != proof.payload) or observe(path)?.stamp != before:
+        return Err(f"{path.0}: imported payload digest disagrees")
+    proof.payload = digest
+    proof.observation = before
+    if proof.facts == "":
+        if let Some(facts) = manifest_facts(path, digest)?:
+            proof.facts = facts
+    return write_imported(path, proof)
+
+
+pub def publication(path: Path) -> Result[tuple[str, str], str]:
+    """Export an admitted producer identity and payload digest without rehashing its bytes."""
+    proof = verified_payload(path)?
+    return Ok((accepted_identity(proof)?, proof.payload))
+
+
+pub def import_publication(path: Path) -> Result[None, str]:
+    """Verify a transported producer record before an installed toolchain can name its relocated artifact."""
+    document = read_json(record_path(path))?
+    return import_payload(path, required_text(document, "unit")?, required_text(document, "payload")?)
+
+
+pub def admit_payload(path: Path) -> Result[None, str]:
+    """
+    Admit a copied or touched payload by verifying its bytes against its producer's recorded payload digest.
+
+    1. Read the existing producer identity and expected payload digest.
+    2. Verify the new file generation, preserving the producer's identity.
+    3. Publish the new observation and provenance after verification.
+    """
+    # 1. An unrecorded payload cannot manufacture its producer's identity from its own bytes.
+    document = read_json(record_path(path))?
+    if required_text(document, "schema")? != PUBLICATION_SCHEMA:
+        return Err(f"{path.0}: unsupported unit publication record")
+    identity = required_text(document, "unit")?
+    expected = required_text(document, "payload")?
+    # 2. Filesystem metadata guards a verified generation but never decides its identity.
+    before = observe(path)?.stamp
+    if file_digest(path)? != expected or observe(path)?.stamp != before:
+        return Err(f"{path.0}: published payload digest disagrees")
+    # 3. Keep the verified payload digest rather than read the artifact a second time.
+    return publish_record(record_path(path), path, identity, expected, before, source_provenance(document)?, recorded_refusal(document)?, recorded_facts(document)?)
+
+
+pub def record_path(path: Path) -> Path:
+    """The portable producer record that accompanies one artifact."""
+    return Path(f"{path.0}.oven-unit")
+
+
+def missing_producer(path: Path) -> str:
+    """Return the refusal that lets an ordinary unit build without caching when its publication is missing."""
+    return f"unit identity refused: {path.0}: linked unit has no recorded producer identity"
+
+
+def imported_record(path: Path) -> Result[Path, str]:
+    """Locate per-home admission evidence by provenance; this cache address is never a unit identity input."""
+    located = hexlify(sha256.digest(path.0.encode("utf-8")))
+    return Ok(home()?.joinpath("cache/unit-admissions").joinpath(f"{located}.crumb"))
+
+
+def available_record(path: Path) -> Result[Path, str]:
+    """Prefer a producer's current publication, otherwise use the home's admitted imported generation."""
+    local = record_path(path)
+    if local.is_file():
+        document = read_json(local)?
+        if let Some(stamp) = document.get("observation"):
+            if stamp.expect_str().map_err((error) => error.message())? == observe(path)?.stamp:
+                return Ok(local)
+    imported = imported_record(path)?
+    if imported.is_file():
+        return Ok(imported)
+    legacy = imported.parent().joinpath(imported.stem() + ".json")
+    if legacy.is_file():
+        return Ok(legacy)
+    return Ok(local)
+
+
+def write_imported(path: Path, proof: PayloadAdmission) -> Result[None, str]:
+    destination = imported_record(path)?
+    destination.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    return publish_binary(destination, encode_unit_admission(path.0, proof)?)
+
+
+def read_evidence(location: Path, path: Path) -> Result[PayloadAdmission, str]:
+    if location.name().endswith(".crumb"):
+        raw = location.read_bytes().map_err((error) => error.message())?
+        return decode_unit_admission(raw, path.0)
+    document = read_json(location)?
+    if required_text(document, "schema")? != PUBLICATION_SCHEMA:
+        return Err(f"{location.0}: unsupported unit publication record")
+    mut stamp = ""
+    if let Some(value) = document.get("observation"):
+        stamp = value.expect_str().map_err((error) => error.message())?
+    return Ok(PayloadAdmission(
+        identity=required_text(document, "unit")?, payload=required_text(document, "payload")?,
+        observation=stamp, provenance=source_provenance(document)?, facts=recorded_facts(document)?,
+        refusal=recorded_refusal(document)?,
+    ))
+
+
+def publish_record(
+    destination: Path,
+    path: Path,
+    identity: str,
+    payload: str,
+    observation: str,
+    provenance: list[str] = [],
+    refusal: str = "",
+    retained_facts: str = "",
+) -> Result[None, str]:
+    """
+    Publish the same three-way identity record for a local producer or an admitted imported payload.
+
+    A library manifest's record also carries the semantic facts its compiler published for exactly these bytes.
+    """
+    mut document = JsonValue.object(
+        {"schema": JsonValue.string(PUBLICATION_SCHEMA), "unit": JsonValue.string(identity), "payload": JsonValue.string(
+            payload,
+        ), "provenance": JsonValue.string(path.0), "observation": JsonValue.string(observation), "source_provenance": JsonValue.array(
+            [JsonValue.string(origin) for origin in provenance],
+        ), "refusal": JsonValue.string(refusal)},
+    )
+    mut facts = retained_facts
+    if facts == "":
+        if let Some(published) = manifest_facts(path, payload)?:
+            facts = published
+    if facts != "":
+        mut fields = document.expect_object().map_err((error) => error.message())?
+        fields["facts"] = JsonValue.string(facts)
+        document = JsonValue.object(fields)
+    return publish(destination, json_text(document)?)
+
+
+def manifest_facts(path: Path, payload: str) -> Result[Option[str], str]:
+    """The semantic facts published beside a library manifest, only when they name these exact manifest bytes."""
+    if not path.name().endswith(".incnlib"):
+        return Ok(None)
+    published = facts_path(path)
+    if not published.is_file():
+        return Ok(None)
+    document = read_json(published)?
+    if required_text(document, "schema")? != LOAF_FACTS_SCHEMA or required_text(document, "manifest_digest")? != payload:
+        return Ok(None)
+    return Ok(Some(required_text(document, "semantic_facts")?))
+
+
+pub def published_facts(path: Path) -> Result[Option[str], str]:
+    """
+    The semantic facts a library manifest's current publication carries, when it carries them: its producer's record,
+    or the home's admitted import of a transported one, so an installed Loaf keys its consumers as where it was built.
+    """
+    if let Some(admission) = frozen_payload(path)?:
+        if admission.facts == "":
+            return Ok(None)
+        return Ok(Some(admission.facts))
+    record = available_record(path)?
+    if not record.is_file():
+        return Ok(None)
+    proof = read_evidence(record, path)?
+    if proof.observation != observe(path)?.stamp or proof.facts == "":
+        return Ok(None)
+    return Ok(Some(proof.facts))
+
+
+pub def recorded_refusal(document: JsonValue) -> Result[str, str]:
+    match document.get("refusal"):
+        None => return Ok("")
+        Some(value) => return value.expect_str().map_err((error) => error.message())
+
+
+pub def recorded_facts(document: JsonValue) -> Result[str, str]:
+    """The semantic facts a publication record carries, or empty when it carries none."""
+    match document.get("facts"):
+        None => return Ok("")
+        Some(value) => return value.expect_str().map_err((error) => error.message())
+
+
+pub def source_provenance(document: JsonValue) -> Result[list[str], str]:
+    """Keep transported source origins without admitting them into unit identity."""
+    mut origins: list[str] = []
+    match document.get("source_provenance"):
+        None => return Ok(origins)
+        Some(value) =>
+            for origin in value.expect_array().map_err((error) => error.message())?:
+                origins.append(origin.expect_str().map_err((error) => error.message())?)
+    return Ok(origins)
+
+
+# The schema of the semantic facts a library's compiler publishes beside its manifest (RFC 179).
+pub const LOAF_FACTS_SCHEMA: str = "incan.loaf-facts/1"
+
+
+pub def facts_path(manifest: Path) -> Path:
+    """The semantic facts the compiler publishes beside one `.incnlib` manifest: `<stem>.incnfacts`."""
+    return manifest.parent().joinpath(f"{manifest.stem()}.incnfacts")

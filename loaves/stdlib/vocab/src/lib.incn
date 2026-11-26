@@ -1,0 +1,3 @@
+"""Publish the Incan vocabulary registration API."""
+
+import vocab

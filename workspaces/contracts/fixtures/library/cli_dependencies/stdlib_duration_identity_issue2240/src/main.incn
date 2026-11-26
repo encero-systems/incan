@@ -1,0 +1,18 @@
+# behavior: Duration returned by a library has the consumer's standard type identity (#2240)
+# expect-stdout:
+#   42
+#   250000000
+
+from std.async.time import Duration
+from pub::intervals import interval
+
+
+def inspect(value: Duration) -> None:
+    """Read the library's value through the consumer's standard type."""
+    println(value.secs)
+    println(value.nanos)
+
+
+def main() -> None:
+    """Pass the standard value directly across the library boundary."""
+    inspect(interval())

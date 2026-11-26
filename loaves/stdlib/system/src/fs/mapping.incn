@@ -1,0 +1,10 @@
+"""Application-facing string adapter for primitive read-only mappings."""
+
+pub from std.primitives.fs.mapping import MappedFile, MappedView
+from std.primitives.fs.mapping import map_read as primitive_map_read
+from std.primitives.fs.path import PrimitivePath
+
+
+pub def map_read(path: str) -> Result[MappedFile, str]:
+    """Map `path` read-only while preserving the primitive mapping and retained-view identity."""
+    return primitive_map_read(PrimitivePath(value=path))

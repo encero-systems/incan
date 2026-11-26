@@ -1,0 +1,499 @@
+//! Bind frontend declaration values to the Incan Crumb codec at the existing compiler graph boundary.
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+
+use incan_frontend::checker_records::GraphNamespaceInterface;
+use incan_frontend::typechecker::{
+    CheckedNamespaceInterface, ModuleDependencyInterface, NamespaceCell as Cell, NamespaceCrumb,
+};
+pub(super) use incan_frontend::typechecker::{to_atom, to_cell};
+use incan_semantics_core::CanonicalSymbolId;
+use internal_models_native::MappedView;
+use sha2::{Digest, Sha256};
+
+pub(super) struct CheckedNamespaceCrumb;
+
+/// The schema is compiler-owned and immutable for this binary. Each record read still has a fresh codec budget.
+static NAMESPACE_READER: LazyLock<Result<internal_models::PreparedNamespaceReader, String>> =
+    LazyLock::new(internal_models::prepare_namespace_reader);
+
+fn namespace_reader() -> Result<&'static internal_models::PreparedNamespaceReader, String> {
+    NAMESPACE_READER.as_ref().map_err(Clone::clone)
+}
+
+pub(super) fn publish(
+    interface: &incan_frontend::typechecker::CheckedNamespaceInterface,
+) -> Result<internal_models::NamespacePublication, String> {
+    internal_models::publish_namespace_interface(&to_atom(interface.wire_value()?))
+}
+
+/// One resident declaration's immutable checked product and its installed dependency lookup tables.
+#[derive(Debug)]
+struct RetainedInterface {
+    checked: CheckedNamespaceInterface,
+    installed: OnceLock<Result<Arc<ModuleDependencyInterface>, String>>,
+}
+
+impl RetainedInterface {
+    /// Keep the wire-level declaration and prepare the lookup tables only when a consumer needs them.
+    fn new(checked: CheckedNamespaceInterface) -> Self {
+        Self {
+            checked,
+            installed: OnceLock::new(),
+        }
+    }
+}
+
+impl GraphNamespaceInterface for RetainedInterface {
+    /// Recognize the logical module before letting a checker observe its declarations.
+    fn belongs_to(&self, name: &str, path: &[String]) -> bool {
+        self.checked.belongs_to(name, path)
+    }
+
+    /// Share the same completed immutable tables for each consumer of the exact same checked namespace.
+    fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
+        self.installed
+            .get_or_init(|| {
+                let _trace =
+                    tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_retained_interface",
+                module = self.checked.module_name())
+                    .entered();
+                self.checked.installable()
+            })
+            .clone()
+    }
+    fn lowering_member_owners(&self) -> Result<BTreeMap<CanonicalSymbolId, String>, String> {
+        Ok(self.checked.lowering_member_owners())
+    }
+}
+
+/// Resident builds can consume the same physical namespace the compiler just published. Its full Crumb
+/// digest includes documentation and positions as well as the semantic projection.
+#[derive(Default)]
+struct PublishedInterfaces {
+    entries: HashMap<[u8; 32], Arc<RetainedInterface>>,
+    wire_bytes: usize,
+}
+
+const MAX_WIRE_BYTES: usize = 96 * 1024 * 1024;
+const MAX_INTERFACES: usize = 512;
+static PUBLISHED: LazyLock<Mutex<PublishedInterfaces>> = LazyLock::new(Mutex::default);
+
+fn insert(digest: [u8; 32], size: usize, interface: Arc<RetainedInterface>) {
+    if size > MAX_WIRE_BYTES {
+        return;
+    }
+    let Ok(mut cache) = PUBLISHED.lock() else {
+        return;
+    };
+    if cache.entries.contains_key(&digest) {
+        return;
+    }
+    if cache.entries.len() >= MAX_INTERFACES || cache.wire_bytes + size > MAX_WIRE_BYTES {
+        cache.entries.clear();
+        cache.wire_bytes = 0;
+    }
+    cache.entries.insert(digest, interface);
+    cache.wire_bytes += size;
+}
+
+/// The successful publication consumed this validated interface and produced these exact bytes.
+pub(super) fn remember_published(
+    source: &str,
+    bytes: &[u8],
+    interface: CheckedNamespaceInterface,
+    request_proof: bool,
+) -> Result<(Vec<u8>, Arc<dyn GraphNamespaceInterface>), String> {
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    let proof = if request_proof {
+        internal_models::encode_namespace_proof(
+            &source.to_owned(),
+            CheckedNamespaceInterface::SCHEMA,
+            interface.module_name(),
+            interface.module_path(),
+            &digest.to_vec(),
+        )?
+    } else {
+        Vec::new()
+    };
+    let owned = Arc::new(RetainedInterface::new(interface));
+    insert(digest, bytes.len(), Arc::clone(&owned));
+    Ok((proof, owned))
+}
+
+/// The owned decoded interface of a namespace already admitted in this process.
+pub(super) fn resident_interface(digest: &[u8; 32]) -> Option<Arc<dyn GraphNamespaceInterface>> {
+    published(digest).map(|interface| interface as Arc<dyn GraphNamespaceInterface>)
+}
+
+fn published(digest: &[u8; 32]) -> Option<Arc<RetainedInterface>> {
+    PUBLISHED.lock().ok()?.entries.get(digest).cloned()
+}
+
+/// An admitted interface's bytes inside their authenticated namespace frame, with the identity the compiler's proof
+/// records. The bytes are hashed, and the proof bound to them, only when a checker installs the interface or the worker
+/// keeps it: an edit installs the few interfaces its checked modules import, not every unchanged namespace's.
+#[derive(Debug)]
+pub(super) struct EncodedInterface {
+    name: String,
+    path: Vec<String>,
+    bytes: MappedView,
+    source: String,
+    proof: Vec<u8>,
+    digest: OnceLock<[u8; 32]>,
+}
+
+impl EncodedInterface {
+    /// The bytes' digest, computed once.
+    fn digest(&self) -> [u8; 32] {
+        *self.digest.get_or_init(|| {
+            #[cfg(test)]
+            count_interface_digest();
+            Sha256::digest(self.bytes.0.as_bytes()).into()
+        })
+    }
+
+    /// The bytes' digest once the compiler's proof is bound to them: the proof's source, schema and identity are the
+    /// ones admission read, and the object it names is these bytes.
+    pub(super) fn verified_digest(&self) -> Result<[u8; 32], String> {
+        let digest = self.digest();
+        if !self.proof.is_empty() {
+            let root = internal_models::read_namespace_proof(
+                &self.proof,
+                &self.source,
+                CheckedNamespaceInterface::SCHEMA,
+                &digest.to_vec(),
+            )?;
+            if root.name != self.name || root.path != self.path {
+                return Err("checked namespace identity disagrees with the admitted root".into());
+            }
+        }
+        Ok(digest)
+    }
+}
+
+impl EncodedInterface {
+    /// Authenticate and share the same checked declaration revision for either consumer.
+    fn checked_interface(&self) -> Result<Arc<RetainedInterface>, String> {
+        let byte_count = self.bytes.0.as_bytes().len();
+        let checked = restore_digest(byte_count, self.verified_digest()?, || {
+            if byte_count > 64 * 1024 * 1024 {
+                return Err("checked namespace exceeds its byte limit".into());
+            }
+            let root = internal_models::decode_prepared_namespace_view(namespace_reader()?, &self.bytes)?;
+            CheckedNamespaceInterface::from_wire_value(to_cell(root)?)
+        })?;
+        if !checked.belongs_to(&self.name, &self.path) {
+            return Err("checked namespace identity disagrees with the admitted root".into());
+        }
+        Ok(checked)
+    }
+}
+
+impl GraphNamespaceInterface for EncodedInterface {
+    fn belongs_to(&self, name: &str, path: &[String]) -> bool {
+        self.name == name && self.path == path
+    }
+
+    fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
+        self.checked_interface()?.installable()
+    }
+
+    fn lowering_member_owners(&self) -> Result<BTreeMap<CanonicalSymbolId, String>, String> {
+        self.checked_interface()?.lowering_member_owners()
+    }
+}
+
+/// The digest of an admitted interface's bytes: known when admission had to hash them, otherwise taken from the
+/// interface when the worker keeps it.
+#[derive(Debug)]
+pub(super) enum InterfaceDigest {
+    Known([u8; 32]),
+    Deferred(Arc<EncodedInterface>),
+}
+
+impl InterfaceDigest {
+    /// The digest, with the deferred interface's proof bound to its bytes first.
+    pub(super) fn resolve(&self) -> Result<[u8; 32], String> {
+        match self {
+            Self::Known(digest) => Ok(*digest),
+            Self::Deferred(interface) => interface.verified_digest(),
+        }
+    }
+}
+
+/// Graph selection supplies the compiler's physical identity proof, which names the module the interface belongs to;
+/// the frame holding both was authenticated when it was read. Older rows without a proof recover the identity from
+/// the full envelope. Installation independently verifies the declaration's own root.
+pub(super) fn admit(
+    source: &str,
+    proof: &[u8],
+    bytes: MappedView,
+) -> Result<(Arc<dyn GraphNamespaceInterface>, InterfaceDigest), String> {
+    if !proof.is_empty() {
+        let root = internal_models_native::namespace_proof_identity(proof)?;
+        let interface = Arc::new(EncodedInterface {
+            name: root.name,
+            path: root.path,
+            bytes,
+            source: source.to_owned(),
+            proof: proof.to_vec(),
+            digest: OnceLock::new(),
+        });
+        return Ok((
+            Arc::clone(&interface) as Arc<dyn GraphNamespaceInterface>,
+            InterfaceDigest::Deferred(interface),
+        ));
+    }
+    #[cfg(test)]
+    count_interface_digest();
+    let digest = Sha256::digest(bytes.0.as_bytes()).into();
+    if let Some(hit) = published(&digest) {
+        return Ok((hit, InterfaceDigest::Known(digest)));
+    }
+    let root = internal_models::identify_prepared_namespace_view(
+        namespace_reader()?,
+        &bytes,
+        CheckedNamespaceInterface::SCHEMA,
+    )?;
+    let interface = EncodedInterface {
+        name: root.name,
+        path: root.path,
+        bytes,
+        source: source.to_owned(),
+        proof: Vec::new(),
+        digest: OnceLock::from(digest),
+    };
+    Ok((Arc::new(interface), InterfaceDigest::Known(digest)))
+}
+
+#[cfg(test)]
+thread_local! {
+    static INTERFACE_DIGESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count one digest of an admitted interface's bytes on this thread.
+#[cfg(test)]
+fn count_interface_digest() {
+    INTERFACE_DIGESTS.with(|count| count.set(count.get() + 1));
+}
+
+/// The admitted interfaces this thread has hashed.
+#[cfg(test)]
+fn interface_digests() -> usize {
+    INTERFACE_DIGESTS.with(std::cell::Cell::get)
+}
+
+fn restore_digest(
+    size: usize,
+    digest: [u8; 32],
+    decode: impl FnOnce() -> Result<CheckedNamespaceInterface, String>,
+) -> Result<Arc<RetainedInterface>, String> {
+    if let Some(hit) = published(&digest) {
+        return Ok(hit);
+    }
+    let interface = Arc::new(RetainedInterface::new(decode()?));
+    insert(digest, size, Arc::clone(&interface));
+    Ok(interface)
+}
+
+impl NamespaceCrumb for CheckedNamespaceCrumb {
+    fn write(&self, root: Cell) -> Result<Vec<u8>, String> {
+        internal_models::encode_namespace_interface(&to_atom(root))
+    }
+
+    fn read(&self, encoded: &[u8]) -> Result<Cell, String> {
+        if encoded.len() > 64 * 1024 * 1024 {
+            return Err("checked namespace exceeds its byte limit".into());
+        }
+        to_cell(internal_models::decode_prepared_namespace(
+            namespace_reader()?,
+            &encoded.to_vec(),
+        )?)
+    }
+}
+
+#[cfg(test)]
+fn restore(bytes: &[u8]) -> Result<Arc<RetainedInterface>, String> {
+    restore_digest(bytes.len(), Sha256::digest(bytes).into(), || {
+        CheckedNamespaceInterface::from_bytes(bytes, &CheckedNamespaceCrumb)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CheckedNamespaceCrumb, GraphNamespaceInterface};
+    use incan_frontend::typechecker::{CheckedNamespaceInterface, TypeChecker};
+
+    fn program(source: &str) -> Result<incan_frontend::ast::Program, String> {
+        let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
+    }
+
+    /// Carry interface bytes through a graph namespace record, as a selected page does, and return the anchored view
+    /// that admission reads in place.
+    fn view(bytes: &[u8]) -> Result<super::MappedView, String> {
+        let value = internal_models::GraphNamespaceValue {
+            module: "domain".into(),
+            interface: bytes.to_vec(),
+            identity_proof: Vec::new(),
+            body_ir: vec![0],
+            lowering_inputs: Vec::new(),
+            package_roots: Vec::new(),
+            call_reads: Vec::new(),
+            call_reads_known: true,
+        };
+        let encoded = internal_models::encode_graph_namespace_value(&value).map_err(|error| format!("{error:?}"))?;
+        internal_models::decode_owned_namespace_view(&encoded)
+            .map(|record| record.interface)
+            .map_err(|error| format!("{error:?}"))
+    }
+
+    #[test]
+    fn documentation_changes_the_hover_product_and_preserves_checked_meaning() -> Result<(), String> {
+        fn publication(
+            doc: &str,
+            ty: &str,
+            literal: &str,
+        ) -> Result<(internal_models::NamespacePublication, Vec<String>), String> {
+            let provider = program(&format!(
+                "pub model Page:\n    \"\"\"{doc}\"\"\"\n    pub value: {ty}\n\n    pub def read(self) -> {ty}:\n        return self.value\n\npub def sample() -> {ty}:\n    return {literal}\n"
+            ))?;
+            let path = vec!["domain".into()];
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(path.clone()));
+            checker
+                .check_program(&provider)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let value = CheckedNamespaceInterface::from_checked("domain", &path, &provider, &checker)?
+                .ok_or("missing checked namespace")?;
+            let owners = value.lowering_member_owners().into_values().collect();
+            let publication = super::publish(&value)?;
+            super::remember_published("domain.incn", &publication.interface, value, true)?;
+            Ok((publication, owners))
+        }
+        let (before, before_owners) = publication("Blue doc.", "int", "24")?;
+        let (moved, moved_owners) = publication("A longer documentation string for hover.", "int", "24")?;
+        let (changed, _) = publication("Blue doc.", "str", "\"24\"")?;
+        assert_ne!(before.interface, moved.interface);
+        assert_eq!(before.semantic_interface, moved.semantic_interface);
+        assert_ne!(before.semantic_interface, changed.semantic_interface);
+        assert_eq!(before.semantic_interface.len(), 32);
+        assert_eq!(before_owners.len(), 1);
+        assert_eq!(before_owners, moved_owners);
+        let original = super::restore(&before.interface)?;
+        let moved_value = super::restore(&moved.interface)?;
+        assert!(!std::sync::Arc::ptr_eq(&original, &moved_value));
+        assert_eq!(original.checked.to_bytes(&CheckedNamespaceCrumb)?, before.interface);
+        assert_eq!(moved_value.checked.to_bytes(&CheckedNamespaceCrumb)?, moved.interface);
+        assert!(std::sync::Arc::ptr_eq(&moved_value, &super::restore(&moved.interface)?));
+        let installed = moved_value.installable()?;
+        let second = super::restore(&moved.interface)?.installable()?;
+        assert!(std::sync::Arc::ptr_eq(&installed, &second));
+        assert!(super::restore(&moved.interface[..moved.interface.len() - 1]).is_err());
+        Ok(())
+    }
+
+    /// An unchanged namespace is admitted by its frame and its compiler's identity proof without hashing its
+    /// interface: the interface is hashed, and the proof checked against it, only when a checker installs it. An
+    /// interface whose proof names another source, or whose bytes differ from the ones the proof names, is still
+    /// refused there.
+    #[test]
+    fn an_interface_is_hashed_and_its_proof_checked_only_when_installed() -> Result<(), String> {
+        let provider = program(
+            "pub model Line:\n    pub width: int\n\npub def width(line: Line) -> int:\n    return line.width\n",
+        )?;
+        let path = vec!["shapes".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker
+            .check_program(&provider)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let interface = CheckedNamespaceInterface::from_checked("shapes", &path, &provider, &checker)?
+            .ok_or("missing provider interface")?;
+        let bytes = interface.to_bytes(&CheckedNamespaceCrumb)?;
+        let (proof, _) = super::remember_published("shapes.incn", &bytes, interface, true)?;
+
+        let before = super::interface_digests();
+        let (admitted, _) = super::admit("shapes.incn", &proof, view(&bytes)?)?;
+        assert!(admitted.belongs_to("shapes", &path));
+        assert_eq!(
+            super::interface_digests(),
+            before,
+            "admission hashed an interface no checker installed"
+        );
+        admitted.installable()?;
+        assert_eq!(super::interface_digests(), before + 1);
+
+        let (renamed, _) = super::admit("renamed.incn", &proof, view(&bytes)?)?;
+        assert!(
+            renamed.installable().is_err(),
+            "a proof for another source was installed"
+        );
+        let (truncated, _) = super::admit("shapes.incn", &proof, view(&bytes[..bytes.len() - 1])?)?;
+        assert!(
+            truncated.installable().is_err(),
+            "bytes the proof does not name were installed"
+        );
+        Ok(())
+    }
+
+    /// Downstream uses the restored namespace with an empty provider AST. Only the value the real compiler
+    /// published can supply the callable, its model, the field type and the initializer's ownership proof.
+    #[test]
+    fn checked_namespace_crumb_installs_for_an_ordinary_consumer() -> Result<(), String> {
+        let provider = program(
+            "pub model Order:\n    pub quantity: int\n    pub labels: list[str] = []\n\npub def quantity(order: Order) -> int:\n    return order.quantity\n",
+        )?;
+        let path = vec!["domain".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker
+            .check_program(&provider)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let original = CheckedNamespaceInterface::from_checked("domain", &path, &provider, &checker)?
+            .ok_or("missing provider interface")?;
+        let codec = CheckedNamespaceCrumb;
+        let bytes = original.to_bytes(&codec)?;
+        let (without_proof, _) = super::remember_published("domain.incn", &bytes, original.clone(), false)?;
+        assert!(without_proof.is_empty());
+        let (proof, _) = super::remember_published("domain.incn", &bytes, original, true)?;
+        let truncated = &bytes[..bytes.len() - 1];
+        let (selected, _) = super::admit("domain.incn", &proof, view(&bytes)?)?;
+        // A proof for another source, or bytes the proof does not name, are refused where the interface is installed.
+        assert!(
+            super::admit("renamed.incn", &proof, view(&bytes)?)?
+                .0
+                .installable()
+                .is_err()
+        );
+        assert!(
+            super::admit("domain.incn", &proof, view(truncated)?)?
+                .0
+                .installable()
+                .is_err()
+        );
+        assert!(super::admit("domain.incn", &proof[..proof.len() - 1], view(&bytes)?).is_err());
+        let (unproved, _) = super::admit("domain.incn", &[], view(&bytes)?)?;
+        assert!(unproved.belongs_to("domain", &path));
+        assert!(selected.belongs_to("domain", &path));
+        assert!(!selected.belongs_to("domain", &["other".into()]));
+        assert!(!selected.belongs_to("other", &path));
+        assert!(super::admit("domain.incn", &[], view(truncated)?).is_err());
+        let restored = CheckedNamespaceInterface::from_bytes(&bytes, &codec)?;
+        assert_eq!(restored.to_bytes(&codec)?, bytes);
+        assert!(CheckedNamespaceInterface::from_bytes(&bytes[..bytes.len() - 1], &codec).is_err());
+        assert!(CheckedNamespaceInterface::from_bytes(br#"{"schema":6,"module_name":"domain"}"#, &codec).is_err());
+        let mut consumer = TypeChecker::new();
+        consumer.set_current_module_path(Some(vec!["app".into()]));
+        consumer.register_dependency_module_path_segments("domain", path);
+        consumer.select_dependency_interfaces(vec![selected.installable()?]);
+        let source = program(
+            "from domain import Order, quantity\n\npub def total(seed: Borrowed[int]) -> int:\n    order = Order(quantity=seed)\n    return quantity(order)\n",
+        )?;
+        consumer
+            .check_with_imports(&source, &[("domain", &program("")?)])
+            .map_err(|errors| format!("{errors:?}"))
+    }
+}

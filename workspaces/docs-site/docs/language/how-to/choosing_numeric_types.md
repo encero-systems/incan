@@ -119,7 +119,7 @@ bad_scale: decimal[6, 2] = 123.456d
 bad_precision: decimal[6, 2] = 12345.67d
 ```
 
-Decimal arithmetic is not general language behavior yet. Use decimals today for typed boundaries, literal validation, formatting, generated Rust, and display.
+Decimal arithmetic is not general language behavior yet. Use decimals today for typed boundaries, literal validation, formatting, and display.
 
 ## Pick a resize policy before narrowing
 

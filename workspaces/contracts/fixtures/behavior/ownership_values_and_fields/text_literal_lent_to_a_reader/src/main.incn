@@ -1,0 +1,79 @@
+# behavior: a text literal passed to a callee that only reads its parameter gets storage for that call alone, dropped when the call returns, so a loop of such calls keeps the heap flat (#1605)
+# expect-stdout:
+#   function reader: heap flat
+#   method reader: heap flat
+#   two literals: heap flat
+
+"""Run each shape once to settle lazily created runtime state, then many times, comparing the live heap around them."""
+
+from rust::drop_probe import live_heap_bytes
+
+const ROUNDS: int = 1000
+
+
+model Label:
+    prefix: str
+
+    def longer(self, other: str) -> bool:
+        """Only read the text this method is passed."""
+        return len(other) > len(self.prefix)
+
+
+def size(text: str) -> int:
+    """Only read the text, so a caller lends it."""
+    return len(text)
+
+
+def joined(left: str, right: str) -> int:
+    """Only read both texts."""
+    return len(left) + len(right)
+
+
+def function_reader() -> int:
+    """Pass a literal to a function that only reads it."""
+    return size("a literal long enough to own heap storage")
+
+
+def method_reader(label: Label) -> int:
+    """Pass a literal to a method that only reads it."""
+    if label.longer("another literal long enough to own heap storage"):
+        return 1
+    return 0
+
+
+def two_literals() -> int:
+    """Pass two literals to one call."""
+    return joined("the first literal of this call", "the second literal of this call")
+
+
+def report(label: str, grown: int) -> None:
+    """
+    Print whether a shape's rounds left the heap where they found it, from `grown` bytes measured before printing.
+
+    A value left behind by every round grows the heap by at least ROUNDS allocations; less than a byte a round is the
+    allocator's own bookkeeping.
+    """
+    if grown < ROUNDS:
+        println(f"{label}: heap flat")
+    else:
+        println(f"{label}: heap grew by {grown} bytes over {ROUNDS} rounds")
+
+
+def main() -> None:
+    label = Label(prefix="a prefix")
+    mut total = function_reader() + method_reader(label) + two_literals()
+    mut before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += function_reader()
+    mut grown = live_heap_bytes() - before
+    report("function reader", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += method_reader(label)
+    grown = live_heap_bytes() - before
+    report("method reader", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += two_literals()
+    grown = live_heap_bytes() - before
+    report("two literals", grown)

@@ -1,0 +1,6 @@
+"""A facade whose Clove reads a header outside its own root."""
+
+
+pub def ready() -> bool:
+    """Whether the facade loaded."""
+    return true

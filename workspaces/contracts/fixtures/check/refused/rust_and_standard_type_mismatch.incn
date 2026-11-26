@@ -1,0 +1,13 @@
+# behavior: an incorrect annotated Rust result is refused alongside a standard module import
+# expect-diagnostic: INCAN-T0001
+
+"""Rust result checking remains active when the unit also imports a standard module."""
+
+from rust::std::convert import identity
+from std.testing import assert_eq
+
+
+def main() -> None:
+    """Require the ordinary type mismatch diagnostic for an inferred Rust result."""
+    value: str = identity(7)
+    assert_eq(7, 7)

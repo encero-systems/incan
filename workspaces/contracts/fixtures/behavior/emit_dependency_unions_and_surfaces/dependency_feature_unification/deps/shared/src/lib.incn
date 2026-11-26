@@ -1,0 +1,21 @@
+when feature("alpha"):
+    def first() -> int:
+        """Provide the feature requested only by the left consumer."""
+        return 20
+
+
+when feature("beta"):
+    def second() -> int:
+        """Provide the feature requested only by the right consumer."""
+        return 22
+
+
+when feature("poison"):
+    def default_must_stay_disabled() -> int:
+        """Make accidental selection of default features observable as a type error."""
+        return "default features must remain disabled"
+
+
+pub def combined() -> int:
+    """Require both incoming edges' feature requests in one library compilation."""
+    return first() + second()

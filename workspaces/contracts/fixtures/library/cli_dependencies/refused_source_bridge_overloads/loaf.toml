@@ -1,0 +1,9 @@
+[project]
+name = "refused_source_bridge_overloads"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+converters = { path = "deps/converters" }

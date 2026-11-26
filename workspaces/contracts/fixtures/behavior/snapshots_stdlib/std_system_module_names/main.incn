@@ -1,0 +1,35 @@
+# behavior: std.environ, std.fs.file, std.fs.metadata, std.fs.path, std.io and std.tempfile publish the names 0.5.1 published, and a module importing them from there uses them
+# expect-stdout:
+#   environ 8080 port must be positive PARITY_HOME is not set
+#   file 2
+#   metadata 3
+#   path 3 4 false true true 4
+#   io 2 short read
+#   tempfile true true 3
+
+from std.io import IoError
+from std.tempfile import TemporaryDirectory
+from environ_names import environ_line
+from file_names import file_line
+from metadata_names import metadata_line
+from path_names import path_line
+from io_names import io_line
+from tempfile_names import tempfile_line
+
+
+def exercise() -> Result[None, IoError]:
+    directory = TemporaryDirectory.try_new()?
+    root = directory.path()
+    println(environ_line())
+    println(file_line(root)?)
+    println(metadata_line(root)?)
+    println(path_line(root)?)
+    println(io_line()?)
+    println(tempfile_line()?)
+    return Ok(None)
+
+
+def main() -> None:
+    match exercise():
+        Ok(_) => pass
+        Err(error) => println(f"io error: {error.message()}")

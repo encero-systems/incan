@@ -1,0 +1,14 @@
+[project]
+name = "show_resolves_overlays"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[envs.ci]
+env-vars = { CI_MODE = "on" }
+scripts.show = ["sh", "-c", "echo CI_MODE=$CI_MODE STAGE=$STAGE"]
+
+[envs.release]
+extends = ["ci"]
+env-vars = { STAGE = "release" }

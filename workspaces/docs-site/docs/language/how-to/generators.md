@@ -47,6 +47,37 @@ Use the builtin `zip(left, right)` to pair two lists or iterators directly, and 
 
 A terminal call such as `count()` or `collect()` consumes the iterator, and an iterator cannot be cloned. When the values are needed more than once, `collect()` them into a list and read the list, or build a second iterator from the source, such as another `.iter()` call on the list or another call of the generator function.
 
+## Change a source after its reader is finished
+
+An iterator or generator expression reads its list when it is consumed, not when it is created. Finish that read before changing, replacing, or moving the source list.
+
+```incan
+def main() -> None:
+    mut xs = [1, 2, 3]
+    it = xs.iter()
+    xs.append(4)
+    println(it.collect())
+```
+
+Checking this program reports the reader's origin, the conflicting change, and the later use that keeps the reader live:
+
+```text
+error[INCAN-T0001]: cannot change `xs` while `it` is still reading it
+  --> example.incn:4:5
+  |
+3 |     it = xs.iter()
+  |          --------- `it` reads `xs` from here
+4 |     xs.append(4)
+  |     ^^^^^^^^^^^^ `xs` is changed here
+5 |     println(it.collect())
+  |             -- `it` is used again here
+= hint: finish using `it` before changing `xs`, or write `xs.clone().iter()` to iterate over a copy
+```
+
+Move the change after the terminal iterator operation when it should affect only later work. Use `xs.clone().iter()` when the lazy pipeline needs an independent snapshot instead. Apply the same rule to a generator expression: consume it before changing its source, or iterate over a cloned list. When returning or storing a generator, move an owned list into it or clone a borrowed source so the generator does not escape with a read of storage that stays elsewhere.
+
+Control flow does not extend a reader past its last reachable use. A change after `collect()`, `sum()`, or another terminal use is allowed before ordinary calls, `if` or `match` branches, range and collection loops, `while` loops, and comprehensions. Conversely, a reader used again inside a loop remains live across the loop's back edge: a source change in one iteration is reported against the use reached on that or the next iteration.
+
 ## Limit an unbounded producer
 
 Pair an unbounded generator with `take` before collecting.

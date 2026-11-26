@@ -1,0 +1,337 @@
+"""
+The part of DER and X.509 a release signature's verification reads (DD-0016).
+
+A certificate is read into the fields the verifier checks: the signed octets, the signature and its hash, the subject
+key and its curve, the names, the validity window, and the extensions that carry a Sigstore signer's identity. Every
+length is checked against the octets that remain, and anything outside the ECDSA profile Sigstore issues is refused.
+"""
+
+from std.encoding.hex import hexlify
+from ecdsa import Curve
+
+const SEQUENCE: int = 48
+const SET_OF: int = 49
+const INTEGER: int = 2
+const BIT_STRING: int = 3
+const OCTET_STRING: int = 4
+const OBJECT_IDENTIFIER: int = 6
+const UTF8_STRING: int = 12
+const UTC_TIME: int = 23
+const GENERALIZED_TIME: int = 24
+const BOOLEAN: int = 1
+const VERSION_TAG: int = 160
+const EXTENSIONS_TAG: int = 163
+const URI_NAME_TAG: int = 134
+const ECDSA_SHA256: str = "2a8648ce3d040302"
+const ECDSA_SHA384: str = "2a8648ce3d040303"
+const EC_PUBLIC_KEY: str = "2a8648ce3d0201"
+const CURVE_P256: str = "2a8648ce3d030107"
+const CURVE_P384: str = "2b81040022"
+const SUBJECT_ALTERNATIVE_NAME: str = "551d11"
+const EXTENDED_KEY_USAGE: str = "551d25"
+const BASIC_CONSTRAINTS: str = "551d13"
+const CODE_SIGNING: str = "2b06010505070303"
+# Fulcio's issuer extensions: the first holds the text itself, the second a DER UTF8String.
+const SIGSTORE_ISSUER: str = "2b0601040183bf300101"
+const SIGSTORE_ISSUER_V2: str = "2b0601040183bf300108"
+
+
+pub enum SignatureHash(str):
+    """The hash an ECDSA signature was made over."""
+
+    Sha256 = "sha256"
+    Sha384 = "sha384"
+
+
+pub model Element:
+    """One DER element: its tag, where it starts, and where its content starts and ends."""
+
+    pub tag: int
+    pub start: int
+    pub content: int
+    pub end: int
+
+
+pub model PublicKey:
+    """An ECDSA public key: its curve and its uncompressed point."""
+
+    pub curve: Curve
+    pub point: bytes
+
+
+pub model Signature:
+    """An ECDSA signature's two integers, without leading zero octets."""
+
+    pub r: bytes
+    pub s: bytes
+
+
+pub model Certificate:
+    """The fields of one certificate a release verification checks."""
+
+    pub signed: bytes
+    pub hash: SignatureHash
+    pub signature: Signature
+    pub issuer: bytes
+    pub subject: bytes
+    pub not_before: int
+    pub not_after: int
+    pub key: PublicKey
+    pub authority: bool
+    pub code_signing: bool
+    # Every URI among the subject alternative names, and the token issuer Fulcio recorded; empty when absent.
+    pub uris: list[str]
+    pub token_issuer: str
+
+
+pub def element(data: bytes, at: int, limit: int) -> Result[Element, str]:
+    """Read the element at `at`, refusing a long tag, an indefinite or overlong length, and content past `limit`."""
+    if at + 2 > limit:
+        return Err("truncated DER element")
+    tag = int(data[at])
+    if tag & 31 == 31:
+        return Err("unsupported DER tag")
+    first = int(data[at + 1])
+    mut content = at + 2
+    mut length = first
+    if first >= 128:
+        count = first - 128
+        if count == 0 or count > 3 or content + count > limit:
+            return Err("unsupported DER length")
+        length = 0
+        for index in range(count):
+            length = length * 256 + int(data[content + index])
+        content = content + count
+        if length < 128:
+            return Err("DER length is not minimal")
+    if content + length > limit:
+        return Err("DER element runs past its container")
+    return Ok(Element(tag=tag, start=at, content=content, end=content + length))
+
+
+pub def expect(data: bytes, at: int, limit: int, tag: int) -> Result[Element, str]:
+    """Read the element at `at` and require its tag."""
+    found = element(data, at, limit)?
+    if found.tag != tag:
+        return Err(f"expected DER tag {tag}, found {found.tag}")
+    return Ok(found)
+
+
+pub def children(data: bytes, parent: Element) -> Result[list[Element], str]:
+    """Read every element inside a constructed one."""
+    mut found: list[Element] = []
+    mut at = parent.content
+    while at < parent.end:
+        child = element(data, at, parent.end)?
+        at = child.end
+        found.append(child)
+    return Ok(found)
+
+
+pub def signature(data: bytes) -> Result[Signature, str]:
+    """Read a DER ECDSA signature: a sequence of two non-negative integers and nothing after it."""
+    outer = expect(data, 0, len(data), SEQUENCE)?
+    if outer.end != len(data):
+        return Err("octets follow the signature")
+    parts = children(data, outer)?
+    if len(parts) != 2:
+        return Err("a signature is two integers")
+    return Ok(Signature(r=unsigned(data, parts[0])?, s=unsigned(data, parts[1])?))
+
+
+def unsigned(data: bytes, part: Element) -> Result[bytes, str]:
+    """Read a non-negative integer's octets without its leading zeros."""
+    if part.tag != INTEGER or part.content == part.end:
+        return Err("expected a DER integer")
+    if int(data[part.content]) >= 128:
+        return Err("negative integer in a signature")
+    mut first = part.content
+    while first < part.end - 1 and int(data[first]) == 0:
+        first += 1
+    return Ok(data[first:part.end])
+
+
+pub def public_key(data: bytes, at: int, limit: int) -> Result[PublicKey, str]:
+    """Read a SubjectPublicKeyInfo holding an uncompressed P-256 or P-384 point."""
+    info = expect(data, at, limit, SEQUENCE)?
+    parts = children(data, info)?
+    if len(parts) != 2 or parts[0].tag != SEQUENCE or parts[1].tag != BIT_STRING:
+        return Err("malformed public key")
+    algorithm = children(data, parts[0])?
+    if len(algorithm) != 2 or identifier(data, algorithm[0]) != EC_PUBLIC_KEY:
+        return Err("the public key is not an elliptic-curve key")
+    named = identifier(data, algorithm[1])
+    if parts[1].end - parts[1].content < 2 or int(data[parts[1].content]) != 0:
+        return Err("malformed public key bits")
+    point = data[parts[1].content + 1:parts[1].end]
+    if named == CURVE_P256:
+        return Ok(PublicKey(curve=Curve.P256, point=point))
+    if named == CURVE_P384:
+        return Ok(PublicKey(curve=Curve.P384, point=point))
+    return Err("the public key's curve is neither P-256 nor P-384")
+
+
+pub def certificate(data: bytes) -> Result[Certificate, str]:
+    """
+    Read one DER certificate.
+
+    1. The outer sequence is the signed part, the signature algorithm and the signature, with nothing after it.
+    2. The signed part is a version 3 certificate: serial, algorithm, issuer, validity, subject, key, extensions.
+    3. The extensions give the authority flag, the code-signing use, the URI names and the token issuer.
+    """
+    # 1. The three outer parts.
+    outer = expect(data, 0, len(data), SEQUENCE)?
+    if outer.end != len(data):
+        return Err("octets follow the certificate")
+    parts = children(data, outer)?
+    if len(parts) != 3 or parts[0].tag != SEQUENCE or parts[1].tag != SEQUENCE or parts[2].tag != BIT_STRING:
+        return Err("malformed certificate")
+    hash = signature_hash(data, parts[1])?
+    if parts[2].end - parts[2].content < 2 or int(data[parts[2].content]) != 0:
+        return Err("malformed certificate signature")
+    signed_by = signature(data[parts[2].content + 1:parts[2].end])?
+    # 2. The signed fields, in their fixed order.
+    fields = children(data, parts[0])?
+    if len(fields) != 8 or fields[0].tag != VERSION_TAG or fields[7].tag != EXTENSIONS_TAG:
+        return Err("the certificate is not an X.509 version 3 certificate with extensions")
+    if signature_hash(data, fields[2])? != hash:
+        return Err("the certificate names two signature algorithms")
+    window = children(data, fields[4])?
+    if len(window) != 2:
+        return Err("malformed certificate validity")
+    mut found = Certificate(
+        signed=data[parts[0].start:parts[0].end],
+        hash=hash,
+        signature=signed_by,
+        issuer=data[fields[3].start:fields[3].end],
+        subject=data[fields[5].start:fields[5].end],
+        not_before=instant(data, window[0])?,
+        not_after=instant(data, window[1])?,
+        key=public_key(data, fields[6].start, fields[6].end)?,
+        authority=false,
+        code_signing=false,
+        uris=[],
+        token_issuer="",
+    )
+    # 3. The extensions this verifier reads; the others are left to the issuing authority's profile.
+    listed = expect(data, fields[7].content, fields[7].end, SEQUENCE)?
+    for extension in children(data, listed)?:
+        inner = children(data, extension)?
+        if len(inner) < 2 or inner[0].tag != OBJECT_IDENTIFIER or inner[len(inner) - 1].tag != OCTET_STRING:
+            return Err("malformed certificate extension")
+        value = inner[len(inner) - 1]
+        name = identifier(data, inner[0])
+        if name == BASIC_CONSTRAINTS:
+            found.authority = authority(data, value)?
+        elif name == EXTENDED_KEY_USAGE:
+            found.code_signing = uses(data, value, CODE_SIGNING)?
+        elif name == SUBJECT_ALTERNATIVE_NAME:
+            found.uris = uri_names(data, value)?
+        elif name == SIGSTORE_ISSUER_V2:
+            text = expect(data, value.content, value.end, UTF8_STRING)?
+            found.token_issuer = decoded(data[text.content:text.end])?
+        elif name == SIGSTORE_ISSUER and found.token_issuer == "":
+            found.token_issuer = decoded(data[value.content:value.end])?
+    return Ok(found)
+
+
+def identifier(data: bytes, part: Element) -> str:
+    """An object identifier's content octets in hexadecimal; empty for any other element."""
+    if part.tag != OBJECT_IDENTIFIER:
+        return ""
+    return hexlify(data[part.content:part.end])
+
+
+def signature_hash(data: bytes, algorithm: Element) -> Result[SignatureHash, str]:
+    """Read an ECDSA signature algorithm's hash."""
+    parts = children(data, algorithm)?
+    if len(parts) == 0:
+        return Err("malformed signature algorithm")
+    name = identifier(data, parts[0])
+    if name == ECDSA_SHA256:
+        return Ok(SignatureHash.Sha256)
+    if name == ECDSA_SHA384:
+        return Ok(SignatureHash.Sha384)
+    return Err("the certificate's signature is not ECDSA with SHA-256 or SHA-384")
+
+
+def decoded(octets: bytes) -> Result[str, str]:
+    """Decode UTF-8 text from a certificate."""
+    return octets.decode("utf-8", "strict").map_err((_) => "a certificate name is not UTF-8")
+
+
+def authority(data: bytes, value: Element) -> Result[bool, str]:
+    """Read basic constraints: whether the subject is a certificate authority."""
+    constraints = expect(data, value.content, value.end, SEQUENCE)?
+    for part in children(data, constraints)?:
+        if part.tag == BOOLEAN:
+            return Ok(part.end - part.content == 1 and int(data[part.content]) != 0)
+    return Ok(false)
+
+
+def uses(data: bytes, value: Element, wanted: str) -> Result[bool, str]:
+    """Return whether an extended key usage lists `wanted`."""
+    listed = expect(data, value.content, value.end, SEQUENCE)?
+    for part in children(data, listed)?:
+        if identifier(data, part) == wanted:
+            return Ok(true)
+    return Ok(false)
+
+
+def uri_names(data: bytes, value: Element) -> Result[list[str], str]:
+    """Read the URI entries of a subject alternative name."""
+    names = expect(data, value.content, value.end, SEQUENCE)?
+    mut found: list[str] = []
+    for part in children(data, names)?:
+        if part.tag == URI_NAME_TAG:
+            found.append(decoded(data[part.content:part.end])?)
+    return Ok(found)
+
+
+def instant(data: bytes, part: Element) -> Result[int, str]:
+    """Read a UTCTime or GeneralizedTime in UTC as seconds since 1970."""
+    mut digits: list[int] = []
+    for index in range(part.content, part.end - 1):
+        digit = int(data[index]) - 48
+        if digit < 0 or digit > 9:
+            return Err("malformed certificate time")
+        digits.append(digit)
+    if part.end == part.content or int(data[part.end - 1]) != 90:
+        return Err("a certificate time is not in UTC")
+    mut year = 0
+    mut rest = 0
+    if part.tag == UTC_TIME and len(digits) == 12:
+        year = digits[0] * 10 + digits[1]
+        if year < 50:
+            year += 2000
+        else:
+            year += 1900
+        rest = 2
+    elif part.tag == GENERALIZED_TIME and len(digits) == 14:
+        year = digits[0] * 1000 + digits[1] * 100 + digits[2] * 10 + digits[3]
+        rest = 4
+    else:
+        return Err("malformed certificate time")
+    month = digits[rest] * 10 + digits[rest + 1]
+    day = digits[rest + 2] * 10 + digits[rest + 3]
+    hour = digits[rest + 4] * 10 + digits[rest + 5]
+    minute = digits[rest + 6] * 10 + digits[rest + 7]
+    second = digits[rest + 8] * 10 + digits[rest + 9]
+    if month < 1 or month > 12 or day < 1 or day > 31 or hour > 23 or minute > 59 or second > 60:
+        return Err("malformed certificate time")
+    return Ok(days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second)
+
+
+def days_from_civil(year: int, month: int, day: int) -> int:
+    """Days from 1970-01-01 to a proleptic Gregorian date, for years from 1950 on."""
+    mut shifted_year = year
+    mut shifted_month = month + 9
+    if month > 2:
+        shifted_month = month - 3
+    else:
+        shifted_year = year - 1
+    era = shifted_year // 400
+    year_of_era = shifted_year - era * 400
+    day_of_year = (153 * shifted_month + 2) // 5 + day - 1
+    day_of_era = year_of_era * 365 + year_of_era // 4 - year_of_era // 100 + day_of_year
+    return era * 146097 + day_of_era - 719468

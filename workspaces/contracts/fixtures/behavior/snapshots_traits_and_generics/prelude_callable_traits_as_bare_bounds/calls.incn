@@ -1,0 +1,16 @@
+from std.traits.callable import Callable0, Callable1, Callable2
+
+
+pub model Seven with Callable0[int]:
+    def __call__(self) -> int:
+        return 7
+
+
+pub model Double with Callable1[int, int]:
+    def __call__(self, value: int) -> int:
+        return value * 2
+
+
+pub model Sum2 with Callable2[int, int, int]:
+    def __call__(self, a: int, b: int) -> int:
+        return a + b

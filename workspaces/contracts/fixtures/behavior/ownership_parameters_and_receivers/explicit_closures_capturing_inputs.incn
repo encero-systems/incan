@@ -1,0 +1,39 @@
+# behavior: an explicit body can bind a closure that captures a shared input of a Copy value and Copy locals, then call it, including in a loop; the closure reads the input by copy and holds its borrow for as long as it is called (#2500).
+# expect-stdout:
+#   31
+#   12
+#   18
+#   3
+
+"""Closures that capture a shared Copy input and Copy locals in explicit bodies."""
+
+
+def total(amount: Borrowed[int], extra: int) -> int:
+    base = 10
+    add: (int) -> int = (step) => amount + step + base
+    first = add(extra)
+    return first + add(1)
+
+
+def scaled(amount: Borrowed[int], factor: int) -> int:
+    offset = factor + 1
+    apply: (int) -> int = (step) => (amount + offset) * step
+    return apply(2)
+
+
+def looped(amount: Borrowed[int], times: int) -> int:
+    scale: (int) -> int = (step) => amount * step
+    mut sum = 0
+    mut step = 0
+    while step < times:
+        sum += scale(step)
+        step += 1
+    return sum
+
+
+def main() -> None:
+    amount = 3
+    println(total(amount, 4))
+    println(scaled(amount, 2))
+    println(looped(amount, 4))
+    println(amount)

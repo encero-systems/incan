@@ -1,0 +1,9 @@
+[project]
+name = "bakery_shared_dependency_compiles_once"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+shared = { path = "deps/shared" }

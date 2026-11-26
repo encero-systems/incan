@@ -36,7 +36,7 @@ review_after: "After Incan 0.5"
 
 Incan should not treat Cargo as the permanent center of its developer experience. Cargo remains an important part of Rust's history and ecosystem, but Incan needs a project system that understands more than Rust crates: Incan source, Rust source, typed scripts and actions, semantic facts, target constraints, published artifacts, policy, provenance, live editable models, and long-lived interactive sessions. This paper proposes a direction for that system: a Cargo-free Incan 1.0 SDK, built around one inspectable project graph and a native build planner that can drive Rust compilation without shelling out to Cargo. We suggest **Oven** as a working name for that toolchain. The name is optional; the architectural promise is the point.
 
-The central user-facing idea is simple: ordinary Rust projects should be able to enter an Incan-managed workflow without being rewritten, while Incan projects gain a toolchain designed for persistent, interactive work. Instead of downloading raw package source and discovering the build cost only when a command is run, `incan.pub` can publish ready-to-use, target-compatible artifacts. We suggest calling those artifacts **Loaves**: verified, provenance-carrying build products that arrive ready to use. Local compilation remains possible, but it should be the fallback—not the surprise first action in a notebook or data-rendering session.
+The central user-facing idea is simple: ordinary Rust projects should be able to enter an Incan-managed workflow without being rewritten, while Incan projects gain a toolchain designed for persistent, interactive work. Instead of downloading raw package source and discovering the build cost only when a command is run, `loaves.pub` can publish ready-to-use, target-compatible artifacts. We suggest calling those artifacts **Loaves**: verified, provenance-carrying build products that arrive ready to use. Local compilation remains possible, but it should be the fallback—not the surprise first action in a notebook or data-rendering session.
 
 This direction applies lessons from Cargo's crate and build-script model, and from the explicit action graphs and cache identities used by systems such as Bazel and Buck. It is a positioning paper, not an implementation RFC or a promise of measured performance. The proposal needs a staged delivery plan and hard compatibility boundaries. Its first demanding proof is IncQL with DataFusion: a workload where the difference between a cache and a genuinely persistent toolchain is immediately visible.
 
@@ -49,7 +49,7 @@ That is a stronger claim than "Incan can invoke Cargo." It says the project mode
 - What source, dependencies, toolchains, targets, actions, and policies make up this project?
 - Which build units and artifacts are valid for this exact environment?
 - What changed, what must be invalidated, and why?
-- Which result is safe to reuse in this session, on this machine, or from `incan.pub`?
+- Which result is safe to reuse in this session, on this machine, or from `loaves.pub`?
 - How should an IDE, a notebook, CI, a command-line user, and an agent all operate on the same project?
 
 Cargo was designed around the Rust crate and the command-line build. That is a sensible foundation for Rust, but it is not a complete model for Incan's intended workflow. Incan needs to connect language semantics, Rust interoperability, project automation, registry artifacts, and interactive execution without repeatedly crossing opaque process and cache boundaries.
@@ -70,7 +70,7 @@ The terms separate responsibilities cleanly:
 | --- | --- |
 | **Oven** | The unified Incan/Rust project resolver, build planner, executor, and session coordinator. |
 | **Loaf** | One verified, target-compatible, provenance-carrying artifact or artifact set ready for consumption. **Loaves** is the public plural. |
-| **`incan.pub`** | The publishing and distribution side: where compatible Loaves are baked, verified, indexed, and made available. |
+| **`loaves.pub`** | The publishing and distribution side: where compatible Loaves are baked, verified, indexed, and made available. |
 | **Local baking** | Building a Loaf locally when publication does not provide a compatible one, or when local source must be compiled. |
 
 The metaphor is useful only if it makes the operational model clearer. A Loaf is not a vague cache entry. It has an identity, inputs, target compatibility, provenance, integrity information, and a lifecycle the toolchain can explain.
@@ -131,12 +131,12 @@ Capabilities sit above this boundary. They turn a project intent—such as a not
 
 The most visible consequence of this model is what happens to expensive dependency graphs.
 
-For a library with a costly native or Rust dependency closure, the best experience is not a clever local cache that eventually becomes warm. The best experience is that `incan.pub` has already prepared and verified the compatible Loaf. A consumer should avoid an unplanned local compilation when a compatible Loaf exists, rather than discovering a multi-minute build only when they try to use the library.
+For a library with a costly native or Rust dependency closure, the best experience is not a clever local cache that eventually becomes warm. The best experience is that `loaves.pub` has already prepared and verified the compatible Loaf. A consumer should avoid an unplanned local compilation when a compatible Loaf exists, rather than discovering a multi-minute build only when they try to use the library.
 
 That changes the division of labor:
 
 - publishers bake, verify, and attest compatible Loaves;
-- `incan.pub` distributes them against explicit target and toolchain identities;
+- `loaves.pub` distributes them against explicit target and toolchain identities;
 - Oven selects and validates the right Loaf for the user's project and environment;
 - local baking occurs only when needed, and is visible as preparation work rather than incidental runtime latency.
 
@@ -210,7 +210,7 @@ Success would look like this:
 
 - a Rust developer can adopt Incan incrementally and keep using the libraries they need;
 - an Incan project has one project graph across Incan and Rust rather than split ownership;
-- `incan.pub` can provide verified compatible Loaves before a consumer needs them;
+- `loaves.pub` can provide verified compatible Loaves before a consumer needs them;
 - notebooks and rendering environments can remain alive through ordinary edits;
 - notebooks can support plots, data exploration, ML, live interfaces, and direct editing of typed Incan models without discarding the project and session state that makes those workflows interactive;
 - persistent model changes remain reviewed and governed rather than hidden in separate configuration files;
@@ -225,11 +225,11 @@ The likely tracks are:
 
 1. Native project identity, resolution, and lock semantics for mixed Incan/Rust workspaces.
 2. An Incan-owned build planner and `rustc` executor, including explicit contracts for build scripts, procedural macros, native linking, and target selection.
-3. Managed build units, receipts, and Loaf publication/selection through `incan.pub`.
+3. Managed build units, receipts, and Loaf publication/selection through `loaves.pub`.
 4. Persistent interactive sessions with precise invalidation, runtime-state separation, and a UI-neutral execution-service contract.
 5. A Cargo-free compatibility and release gate that proves the installed SDK contract against representative Rust-only, mixed, native, build-script/proc-macro, and interactive projects.
 
-Existing work should be classified against those tracks rather than discarded. Compiler middle-end progress, HIR and ABI work, workspace support, pinned toolchains, artifact graph work, `incan.pub`, typed actions, and managed cache safety all contribute. The needed change is to make the shared end-state explicit: they should converge on an Incan-owned toolchain rather than a more sophisticated way of calling Cargo.
+Existing work should be classified against those tracks rather than discarded. Compiler middle-end progress, HIR and ABI work, workspace support, pinned toolchains, artifact graph work, `loaves.pub`, typed actions, and managed cache safety all contribute. The needed change is to make the shared end-state explicit: they should converge on an Incan-owned toolchain rather than a more sophisticated way of calling Cargo.
 
 Broader operating-system or kernel ambitions can remain valuable proof points later. They should not be the organizing metaphor for the immediate roadmap. The first obligation is to dogfood the toolchain on Incan, Rust projects, and IncQL until it is plainly the better development environment.
 
@@ -241,7 +241,7 @@ Several boundaries keep the proposal credible.
 - It does not claim measured IncQL or DataFusion speedups before the relevant dependency graph and session matrix have been benchmarked.
 - It does not require every Cargo behavior to be reproduced exactly.
 - It does not imply that all builds can be precompiled for every target or that local compilation disappears.
-- It does not turn `incan.pub` into an opaque binary-only distribution channel; source, provenance, policy, and reproducibility remain first-class.
+- It does not turn `loaves.pub` into an opaque binary-only distribution channel; source, provenance, policy, and reproducibility remain first-class.
 - It does not make a registry the authority over a local project. Local projects retain control over dependency selection, mutation, and trust policy.
 
 Those constraints are features, not concessions. They define a toolchain that can be ambitious without hiding the difficult engineering work.

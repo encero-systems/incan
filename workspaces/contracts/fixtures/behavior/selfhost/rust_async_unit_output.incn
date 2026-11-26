@@ -1,0 +1,15 @@
+# behavior: a function with type parameters can retain a Rust async call as Awaitable[None]
+# expect-stdout:
+#   checked
+
+from rust::incan_std_async::task import yield_now
+
+
+def pending[T](value: T) -> Awaitable[None]:
+    """Retain the async result without requiring a concrete instantiation of this declaration."""
+    return yield_now()
+
+
+def main() -> None:
+    """Run after the pending function's output contract has checked."""
+    println("checked")

@@ -1,0 +1,15 @@
+# behavior: Requested native timing records command entry on both first and repeated runs without changing program streams.
+# environment:
+#   INCAN_NATIVE_TIMING=1
+# cli-commands:
+#   run src/main.incn
+#   run src/main.incn
+# expect-trace-contains:
+#   boundary=command_entered
+# expect-stdout:
+#   timed
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    println("timed")

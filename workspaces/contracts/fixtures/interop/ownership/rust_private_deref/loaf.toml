@@ -1,0 +1,9 @@
+[project]
+name = "rust_private_deref"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+wrappers = { loaf = "wrappers", path = "rust/wrappers" }

@@ -1,0 +1,69 @@
+# behavior: generic constructors retain empty literals, checked owner hooks and associated frames (#1507, #2256)
+# expect-stdout:
+#   0
+#   0
+#   0
+#   0
+#   1
+#   3
+#   4
+
+@derive(Clone)
+model Holder[Elem with Clone]:
+    items: list[Elem]
+    names: list[str]
+
+    @staticmethod
+    def __incan_new(items: list[Elem]) -> Self:
+        """Build a holder through the checked owner-specific constructor hook."""
+        return Holder(items=items, names=[])
+
+    @staticmethod
+    def from_result(items: list[Elem]) -> Result[Self, str]:
+        """Retain an internal nominal layout under the factory's owner before returning a Result carrier."""
+        wrapped = Bag[Elem](items=items)
+        return Ok(Holder(items=wrapped.items, names=[]))
+
+    @staticmethod
+    def relay(items: list[Elem]) -> Result[Self, str]:
+        """Preserve the declaring owner's element through a nested factory and propagation."""
+        value = Holder.from_result(items)?
+        return Ok(value)
+
+
+@derive(Clone)
+model Bag[U with Clone]:
+    items: list[U]
+
+
+@derive(Clone)
+model Source[T with Clone]:
+    value: T
+
+    def expand[Picked with Clone](self) -> Holder[Picked]:
+        return Holder[Picked](items=[], names=[])
+
+
+def build[U with Clone]() -> Bag[U]:
+    return Bag[U](items=[])
+
+
+def build_named[Picked with Clone]() -> Holder[Picked]:
+    return Holder[Picked](items=[], names=["n"])
+
+
+def main() -> None:
+    s = Source[int](value=1)
+    h: Holder[str] = s.expand[str]()
+    println(len(h.items))
+    println(len(h.names))
+    g: Bag[str] = build[str]()
+    println(len(g.items))
+    k: Holder[int] = build_named[int]()
+    println(len(k.items))
+    println(len(k.names))
+    via_hook: Holder[int] = Holder[int]([3])
+    println(via_hook.items[0])
+    match Holder.relay([4]):
+        Ok(value) => println(value.items[0])
+        Err(error) => println(error)

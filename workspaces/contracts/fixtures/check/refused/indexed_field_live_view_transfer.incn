@@ -1,0 +1,19 @@
+# behavior: transferring a list owner is forbidden while a view of an indexed element remains live (#2845).
+# expect-diagnostic: INCAN-T0126
+
+class Entry:
+    pub label: str
+
+    pub def view(self) -> Borrowed[str] from self.label:
+        return self.label
+
+
+def consume(entries: Owned[list[Entry]]) -> int:
+    return len(entries)
+
+
+def main() -> None:
+    entries = [Entry(label="before")]
+    label = entries[0].view()
+    println(consume(entries))
+    println(label)

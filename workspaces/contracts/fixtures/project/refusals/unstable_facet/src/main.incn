@@ -1,0 +1,10 @@
+# behavior: a Rust facet without an unstable declaration cannot enable compiler features
+# cli-commands:
+#   build facet
+# expect-exit: 1
+# expect-stderr-contains:
+#   feature
+
+def main() -> None:
+    """The command fixture describes a separate Rust facet."""
+    pass

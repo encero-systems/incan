@@ -1,0 +1,13 @@
+# behavior: Oven refuses 0.5.1's `[workspace.rust-dev-dependencies]` table and names what replaces it: the shared `[workspace.dependencies]` Loaf entry, inherited by each member's test environment (#3141).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["workspace", "rust-dev-dependencies"]: unsupported
+#   use [workspace.dependencies] insta = { loaf = "crates-io/insta", version = "1" }, and insta = { workspace = true } in each member's [envs.test.dependencies]
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

@@ -1,0 +1,42 @@
+# behavior: replacing graph storage while a cursor returned from a generic selection is used later is refused at the replacement (#2500, #2524)
+# expect-diagnostic: INCAN-T0126
+
+
+class GraphState:
+    pub nodes: list[int]
+
+
+class MemoryGraph:
+    pub state: GraphState
+
+    pub def read_view(self) -> Borrowed[GraphState] from self.state:
+        return self.state
+
+
+class Cursor[S]:
+    pub selection: S
+
+
+class Selection[R]:
+    pub reader: R
+    pub key: int
+
+    pub def cursor(self) -> Cursor[Borrowed[Selection[R]]] from self:
+        return Cursor[Borrowed[Selection[R]]](selection=self)
+
+
+def select(reader: Borrowed[GraphState]) -> Selection[Borrowed[GraphState]] from reader:
+    return Selection[Borrowed[GraphState]](reader=reader, key=0)
+
+
+def conflict(mut graph: BorrowedMut[MemoryGraph]) -> int:
+    reader = graph.read_view()
+    selection = select(reader)
+    cursor = selection.cursor()
+    graph.state = GraphState(nodes=[2])
+    return cursor.selection.reader.nodes[cursor.selection.key]
+
+
+def main() -> int:
+    mut graph = MemoryGraph(state=GraphState(nodes=[1]))
+    return conflict(graph)

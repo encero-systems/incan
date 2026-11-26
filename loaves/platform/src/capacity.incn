@@ -1,0 +1,15 @@
+"""Filesystem capacity probes for admitting writes against the space a filesystem can still allocate."""
+
+from rust::std::path import Path as RustPath
+from rust::rustix::fs import statvfs
+
+
+pub def available_bytes(path: str) -> Result[int, str]:
+    """
+    The bytes an unprivileged writer can still allocate on the filesystem that holds `path`.
+
+    The count is the available block count in the filesystem's fundamental block size (`f_frsize`). macOS reports a
+    larger preferred I/O size in `f_bsize`, so that field is never the unit. Errors keep the path and the OS error.
+    """
+    stats = statvfs(RustPath.new(path)).map_err((error) => f"{path}: {error}")?
+    return Ok(int(stats.f_bavail) * int(stats.f_frsize))

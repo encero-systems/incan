@@ -1,0 +1,7 @@
+# Cases whose expected outcome changed after the published dev.8 Oven, which the release script's integration
+# census (run with that Oven) is compared without. Remove a line once the seed Oven is a release that passes it.
+project/cli/overview
+graph/incan/relationships
+project/units/bakery_concurrent_builds_bake_once
+project/units/bakery_shared_dependency_compiles_once
+testing/std/test_file_mapping

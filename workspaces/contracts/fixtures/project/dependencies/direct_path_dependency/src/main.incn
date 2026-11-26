@@ -1,0 +1,15 @@
+# behavior: a path dependency is listed under its declared key and its vocabulary registration inherits no environment
+# cli-commands:
+#   oven inspect dependencies src/main.incn
+# environment:
+#   INCAN_REGISTRATION_SECRET=must-not-reach-registration
+# expect-stdout-contains:
+#   helper
+#   incan_native_runtime
+# expect-exit: 0
+
+from pub::helper import helper_value
+
+
+def main() -> None:
+    println(helper_value())

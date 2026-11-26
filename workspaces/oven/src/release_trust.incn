@@ -1,0 +1,159 @@
+"""
+The release signer and trust root an `incan` binary carries, and the admission of a release asset against them
+(DD-0016).
+
+The signer comes from the binary, never from the archive being installed: the release script stamps the release
+build of `incan` with `release-signer.json`, the workflow that signs releases and the Sigstore trust root. A stamped
+binary admits only assets whose signature bundle, `ASSET.sigstore.json` beside the asset, verifies against its stamp,
+in a fresh home as in any other. A binary with no stamp is a local build: it has nothing to verify against, and says
+so by returning no verification. The same file travels inside each archive, and a home records it only from an
+archive that verified.
+"""
+
+from std.encoding.base64 import b64decode
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+from release_signature import Signer, TrustRoot, Verified, trust_root, verify_bundle
+from release_stamp import RELEASE_SIGNER
+
+pub const CARRIED_TRUST: str = "release-signer.json"
+pub const BUNDLE_SUFFIX: str = ".sigstore.json"
+const STAMP_ORIGIN: str = "the release signer this incan was built with"
+
+
+pub model Carried:
+    """The facts a release is verified against."""
+
+    pub signer: Signer
+    pub root: TrustRoot
+
+
+pub def parse_trust(text: str, origin: str) -> Result[Carried, str]:
+    """Read a `release-signer.json` text: the signing workflow, its issuer, and a trusted root whose chains verify."""
+    document = JsonValue.parse(text).map_err((error) => f"malformed {origin}: {error.message()}")?
+    signer = document.require("signer").map_err((error) => f"malformed {origin}: {error.message()}")?
+    root = document.require("trusted_root").map_err((error) => f"malformed {origin}: {error.message()}")?
+    return Ok(
+        Carried(
+            signer=Signer(
+                workflow=text_member(signer, "workflow", origin)?,
+                issuer=text_member(signer, "issuer", origin)?,
+            ),
+            root=trust_root(root.to_json().map_err((error) => f"malformed {origin}: {error.message()}")?)?,
+        ),
+    )
+
+
+pub def read_trust(path: Path) -> Result[Carried, str]:
+    """Read a `release-signer.json` file."""
+    return parse_trust(path.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?, path.0)
+
+
+pub def stamp_of(encoded: str) -> Result[Option[Carried], str]:
+    """The signer a stamp states, or none for the empty stamp of a local build; a damaged stamp refuses."""
+    if encoded == "":
+        return Ok(None)
+    raw = b64decode(encoded).map_err((error) => f"malformed {STAMP_ORIGIN}: {error.message()}")?
+    text = raw.decode("utf-8", "strict").map_err((_) => f"malformed {STAMP_ORIGIN}: it is not UTF-8")?
+    return Ok(Some(parse_trust(text, STAMP_ORIGIN)?))
+
+
+pub def stamped() -> Result[Option[Carried], str]:
+    """The signer this binary was stamped with by the release that built it, or none for a local build."""
+    return stamp_of(RELEASE_SIGNER)
+
+
+pub def carried(home: Path) -> Result[Option[Carried], str]:
+    """The signer `home` recorded from the last verified archive installed into it; a damaged file refuses."""
+    path = home.joinpath(CARRIED_TRUST)
+    if not path.is_file():
+        return Ok(None)
+    return Ok(Some(read_trust(path)?))
+
+
+pub def anchor(stamp: Option[Carried], home: Path) -> Result[Option[Carried], str]:
+    """
+    The signer a binary verifies with: none for a local build, whatever its home holds; for a release build, the
+    signer its home recorded from the last verified archive, and its stamp in a home that recorded none.
+
+    The record exists only because an archive verified, so the signer changes only through a signed release that
+    states the new one (DD-0016).
+    """
+    match stamp:
+        None => return Ok(None)
+        Some(facts) =>
+            match carried(home)?:
+                Some(recorded) => return Ok(Some(recorded))
+                None => return Ok(Some(facts))
+
+
+pub def admit_release(asset: Path, stamp: Option[Carried]) -> Result[Option[Verified], str]:
+    """
+    Verify a release asset before anything is unpacked or installed from it.
+
+    1. A binary that carries no signer has nothing to verify against.
+    2. Otherwise the asset's signature bundle must be beside it; an unsigned asset is refused by name.
+    3. The bundle must verify for the asset's digest against the stamped signer and trust root.
+    """
+    # 1. Only a release build verifies.
+    match stamp:
+        None => return Ok(None)
+        Some(facts) =>
+            # 2. Nothing downgrades to an unsigned install.
+            bundle = Path(asset.0 + BUNDLE_SUFFIX)
+            if not bundle.is_file():
+                return Err(
+                    f"{asset.0} is not signed: there is no signature bundle {bundle.0}, and this incan installs " +
+                    f"only releases signed by {facts.signer.workflow} at a tag",
+                )
+            # 3. The one verifier.
+            text = bundle.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+            digest = file_digest(asset, "sha256").map_err((error) => f"cannot digest {asset.0}: {error.message()}")?
+            match verify_bundle(text, digest, facts.root, facts.signer):
+                Ok(verified) => return Ok(Some(verified))
+                Err(reason) => return Err(f"{asset.0} is refused: {reason}")
+
+
+pub def ship(installed: Path, stage: Path) -> Result[bool, str]:
+    """
+    Stage the signer an installed toolchain carries into an archive being packed, and report whether it carries one.
+
+    Trust anchors travel inside the signed archive, so the file is read whole first and a damaged one stops the pack.
+    """
+    return copied(installed.joinpath(CARRIED_TRUST), stage.joinpath(CARRIED_TRUST))
+
+
+pub def record(verified: Option[Verified], stage: Path, home: Path) -> Result[bool, str]:
+    """
+    Record in `home` the signer a verified archive ships, and report whether anything was recorded.
+
+    An archive that was not verified records nothing, whatever it ships: no archive is trusted for the signer it
+    claims. The shipped file is read whole first, so a home never records a signer file that does not read as one.
+    """
+    if verified.is_none():
+        return Ok(false)
+    return copied(stage.joinpath(CARRIED_TRUST), home.joinpath(CARRIED_TRUST))
+
+
+def copied(source: Path, target: Path) -> Result[bool, str]:
+    """Replace `target` with a signer file that reads as one; report false, and change nothing, when there is none."""
+    if not source.is_file():
+        return Ok(false)
+    _ = read_trust(source)?
+    text = source.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    pending = Path(target.0 + ".next")
+    pending.write_text(text, "utf-8", "strict", None).map_err((error) => f"cannot {error.message()}")?
+    if target.is_file():
+        target.unlink().map_err((error) => f"cannot {error.message()}")?
+    _ = pending.move(target).map_err((error) => f"cannot {error.message()}")?
+    return Ok(true)
+
+
+def text_member(value: JsonValue, key: str, origin: str) -> Result[str, str]:
+    """The required string member `key`."""
+    return value
+        .require(key)
+        .map_err((error) => f"malformed {origin}: {error.message()}")?
+        .expect_str()
+        .map_err((error) => f"malformed {origin}: {error.message()}")

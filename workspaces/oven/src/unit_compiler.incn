@@ -1,0 +1,604 @@
+"""Write and compile one prepared unit through the installed compiler, without resolving dependencies."""
+
+from rust::incan_loaf_names import native_crate_name
+from rust::std::process import Command, Stdio
+from rust::std::fs import remove_dir_all
+from rust::std::mem import take
+from pub::incan_mir_plan import (
+    INTERFACE_REPORT,
+    LoweringEvent,
+    PLAN_MODULE_SELECTION_PAGE,
+    decode_lowering_event,
+    decode_native_interface,
+    lowering_refusal_evidence,
+)
+pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
+from pub::internal_models.checked_body_counts import decode_checked_body_counts
+pub from pub::internal_models.checker_publication import CheckerRecordCounts
+from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
+from std.encoding.hex import hexlify
+from std.environ import get_or
+from std.fs import Path
+from pub::internal_models.overload_members import scope_output_suffix
+from pub::internal_models.executable_body_wire import (
+    EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT, executable_graph_output_marker,
+)
+from pub::internal_models.namespace_references import (
+    NamespaceReference,
+    decode_namespace_references,
+    namespace_key,
+    namespace_reference_filename,
+)
+from pub::internal_models.records import encode_record_key
+from std.json import JsonValue, parse
+from std.primitives.text import copy_frozen_bytes
+from driver_command import driver_command
+from codegen import compiled_arguments
+from c_interop import archive_arguments
+from darwin_executable import normalize_release_executable
+from bakery import bakery
+from compiler_refusals import PreparedWarnings, check_for_warnings, compile_or_replay, replay_checked_warnings
+from compiler_worker import compile_resident, served_resident
+from engine_lowering_evidence import EvaluatedLoweringRefusal, PlanRefusalReport
+from files import discard_file, json_text, open_stream, read
+from observation import trace, trace_boundary
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
+from trace_adapter import work, work_clock
+from publication import publish, publish_binary
+from rust_facts import refresh as refresh_rust_facts
+from shared_link import shared_arguments
+from toolchain import Toolchain
+from native_references import anchor_arguments
+from unit_transport import captured_source_arguments, descriptor_path, publish_unit_document
+from unit import UnitDescription, dependency_source_roots
+from unit_freshness import Key, artifact_identity, unit_key
+from compiler_body_values import SelectedBodyPage
+from compiler_plan_values import canonical_digest
+
+
+pub model PlanRecordCounts:
+    """Actual lowering producer work observed for one records-engine compiler activation."""
+
+    pub plan_evaluations: int = 0
+    pub plan_reuses: int = 0
+    pub native_interface_evaluations: int = 0
+
+
+pub model CompletedPlanEvents:
+    """The selected events of a successfully completed, request-owned report."""
+
+    root: str
+    events: list[LoweringEvent]
+    refusals: Option[PlanRefusalReport] = None
+
+    @staticmethod
+    pub def from_census(root: str, events: list[LoweringEvent], refusals: Option[PlanRefusalReport]) -> Self:
+        """Keep the counted records and their request-owned report together."""
+        return CompletedPlanEvents(root=root, events=events, refusals=refusals)
+
+    pub def take_for_report(mut self, report: Path) -> Result[tuple[list[LoweringEvent], Option[PlanRefusalReport]], str]:
+        """Move the counted records into publication for the same request-owned report."""
+        if self.root != report.0:
+            return Err("completed Plan events name another report")
+        return Ok((take(self.events), take(self.refusals)))
+
+
+# The schema of the sidecar a check writes with `--checked-bodies`.
+const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
+# The companion naming a staged page by the digest of its bytes, beside the page the compiler reads.
+pub const DIGEST_COMPANION: str = ".digest"
+# The file naming every page offered by its store frame instead of a copy, one line per page: its name, the segment,
+# the value's offset and length, and its digest, separated by tabs. A request stages it once.
+pub const FRAME_LIST: str = "frames.list"
+
+
+pub model PreparedUnitCompletion:
+    """The compiler exit and the exact selection digest of a successful prepared request."""
+
+    pub code: i32
+    pub plan_module_selection_digest: Option[str] = None
+
+
+pub def compile_prepared_unit(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    known_key: Option[Key] = None,
+    reason: str = "no stored build",
+    development: bool = false,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
+    records_directory: Option[Path] = None,
+    checked_warnings: Option[Path] = None,
+) -> Result[i32, str]:
+    """Compile one prepared unit and return its status to callers that only need the exit code."""
+    completed = compile_prepared_unit_completion(
+        unit, toolchain, output, known_key, reason, development, graph_body_records, records_directory, checked_warnings,
+    )?
+    return Ok(completed.code)
+
+
+pub def compile_prepared_unit_completion(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    known_key: Option[Key] = None,
+    reason: str = "no stored build",
+    development: bool = false,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
+    records_directory: Option[Path] = None,
+    checked_warnings: Option[Path] = None,
+    report_directory: Option[Path] = None,
+) -> Result[PreparedUnitCompletion, str]:
+    """
+    Compile one prepared unit without dependency selection or recursive preparation.
+
+    1. Validate the selected Plan authority, publish the description, and prepare the output directory.
+    2. Select profile flags, the native-closure anchors a capable driver takes and any requested shared development
+       linkage.
+    3. Compile or replay a certified refusal under the complete source identity.
+    """
+    # 1. A rejected selection leaves every request input and output path intact.
+    mut plan_selection_digest: Option[str] = None
+    let selected_records: Borrowed[Option[list[SelectedBodyPage]]] = graph_body_records
+    match selected_records:
+        Some(records) => plan_selection_digest = selected_plan_module_digest(records)?
+        None => pass
+    if plan_selection_digest is not None and not toolchain.supports_plan_module_selection_digest:
+        return Err("the installed driver cannot accept a plan module selection")
+    mut key = Key(digest="", parts=[])
+    match known_key:
+        Some(value) =>
+            key = value
+        None =>
+            key = unit_key(unit, toolchain)?
+    compiled = crate_name(unit)
+    trace_boundary("unit_write_begin")
+    path = write_unit(unit, compiled, None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
+    trace_boundary("unit_written")
+    output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
+    # 2. Native flags match the profile and the caller's explicit linkage request; published closures are anchored.
+    executable = unit.kind in ["program", "test"]
+    mut native = captured_source_arguments(toolchain) + compiled_arguments(
+        unit.profile,
+        key.codegen,
+        unit.project_root,
+        executable,
+        dependency_source_roots(unit),
+        toolchain.sysroot,
+    )? + anchor_arguments(toolchain.closure_anchors)? + shared_arguments(unit, development)? + archive_arguments(
+        unit.c_archives,
+    )
+    if toolchain.codegraph_on_request:
+        native.append("--no-codegraph")
+    if let Some(digest) = plan_selection_digest:
+        native += ["--plan-module-selection-digest", digest]
+    if let Some(records) = graph_body_records:
+        records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
+        mut observed_reference: Option[str] = None
+        if get_or("INCAN_NATIVE_TIMING", "") == "handoff" and get_or("INCAN_ENGINE_TRACE", "") != "":
+            observed_reference = Some(namespace_reference_filename())
+        published_size = write_selected_record_pages(records_path, unit, records, observed_reference)?
+        native += ["--graph-body-records", records_path.0]
+        if let Some(size) = published_size:
+            if let Err(reason) = trace_staged_namespace_references(path, records_path, records, size):
+                trace(f"namespace reference observation incomplete for {path.0}: {reason}")
+        native += ["--plan-record-products", records_path.0]
+        output_path = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
+        discard_graph_body_output(output_path)?
+        discard_file(checker_record_report_path(output_path))
+        native += ["--graph-body-output", output_path.0]
+        report = match report_directory:
+            Some(current) => current
+            None => plan_record_report_path(unit, key, toolchain.unit_descriptor_crumb)
+        if report_directory is None:
+            if report.exists():
+                remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
+            report.mkdir(true, true).map_err((error) => f"plan record report: cannot {error.message()}")?
+        native += ["--plan-record-report", report.0]
+    invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
+    # 3. Refusal replay preserves the owner's request-local console routing.
+    trace_boundary("compiler_request")
+    code = compile_or_replay(unit, toolchain, invocation, native, bakery()?, key, reason, checked_warnings)?
+    if code != 0:
+        return Ok(PreparedUnitCompletion(code=code))
+    if executable:
+        normalize_release_executable(output, unit.profile)?
+    return Ok(PreparedUnitCompletion(code=0, plan_module_selection_digest=plan_selection_digest))
+
+
+def trace_staged_namespace_references(
+    descriptor: Path, directory: Path, records: Borrowed[list[SelectedBodyPage]], size: int,
+) -> Result[None, str]:
+    """Observe the exact authored bytes from the successful marker and namespace reference publications."""
+    name = namespace_reference_filename()
+    mut observed_format: Option[str] = None
+    for record in records:
+        if record.key != EXECUTABLE_GRAPH_INPUT or (record.segment != "" and record.digest != ""):
+            continue
+        if record.value != copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT):
+            return Err("unsupported staged executable graph format")
+        observed_format = Some(record.value.decode("utf-8", "strict").map_err(
+            (_) => "staged executable graph format is not UTF-8",
+        )?)
+        break
+    format_name = match observed_format:
+        Some(value) => value
+        None => return Err("staged namespace reference publication has no exact input bytes")
+
+    mut observed_references: Option[list[NamespaceReference]] = None
+    for record in records:
+        if record.key != name or (record.segment != "" and record.digest != ""):
+            continue
+        if len(record.value) != size:
+            return Err("staged namespace reference publication has no exact input bytes")
+        observed_references = Some(decode_namespace_references(record.value)?)
+        break
+    references = match observed_references:
+        Some(value) => value
+        None => return Err("staged namespace reference publication has no exact input bytes")
+    page = directory.joinpath(name)
+    for reference in references:
+        if reference.key != namespace_key(reference.key.origin, reference.key.identity):
+            return Err("staged namespace references name another record family")
+    for reference in references:
+        detail = json_text(JsonValue.object({
+            "unit": JsonValue.string(descriptor.0),
+            "page": JsonValue.string(page.0),
+            "format": JsonValue.string(format_name),
+            "module": JsonValue.string(reference.key.identity),
+            "key": JsonValue.string(encode_record_key(reference.key)?),
+            "segment": JsonValue.string(reference.segment),
+            "offset": JsonValue.int(reference.offset),
+            "length": JsonValue.int(reference.length),
+            "frame_digest": JsonValue.string(hexlify(reference.frame_digest)),
+            "value_digest": JsonValue.string(reference.value_digest),
+        }))?
+        trace("staged-namespace-reference\t" + detail)
+    return Ok(None)
+
+
+pub def selected_plan_module_digest(records: Borrowed[list[SelectedBodyPage]]) -> Result[Option[str], str]:
+    """Return the current request's one compact Plan selection SHA, when present in the selected pages."""
+    mut selected: Option[str] = None
+    for page in records:
+        if page.key != PLAN_MODULE_SELECTION_PAGE:
+            continue
+        if selected is not None:
+            return Err("request names more than one plan module selection")
+        if not canonical_digest(page.digest):
+            return Err("a plan module selection requires a canonical SHA-256 digest")
+        selected = Some(page.digest)
+    return Ok(selected)
+
+
+pub def executable_warnings(
+    unit: UnitDescription, toolchain: Toolchain, store: Path, key: Key, identity: str, defer_publication: bool,
+) -> Result[Option[PreparedWarnings], str]:
+    """Replay a selected source check or admit a raw source edit which can reuse the native output."""
+    if replay_checked_warnings(store, identity, unit.project_root, toolchain.console)?:
+        return Ok(None)
+    path = write_unit(unit, crate_name(unit), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
+    return check_for_warnings(unit, toolchain, path, store, key, defer_publication)
+
+
+pub def write_selected_records(
+    directory: Path,
+    unit: UnitDescription,
+    records: list[SelectedBodyPage],
+) -> Result[None, str]:
+    """
+    Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
+    compiler context they were selected under. Builds and checks read their records from this one writer.
+    """
+    _ = write_selected_record_pages(directory, unit, records, None)?
+    return Ok(None)
+
+
+def write_selected_record_pages(
+    directory: Path, unit: UnitDescription, records: Borrowed[list[SelectedBodyPage]], observed_key: Option[str],
+) -> Result[Option[int], str]:
+    """Publish selected pages and return the exact size only for one observed reference and marker."""
+    if directory.exists():
+        remove_dir_all(directory.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
+    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
+    generation = match unit.checked_context:
+        Some(value) => value
+        None => return Err("records lowering requires the complete compiler context")
+
+    publish_binary(directory.joinpath("producer-profile"), unit.lowering_context.unwrap_or(generation).encode("utf-8"))?
+    mut listed: list[str] = []
+    mut observed_markers = 0
+    mut observed_references = 0
+    mut observed_size = 0
+    for page in records:
+        clock = work_clock()
+        # A page offered by its store frame is a line of the request's frame list; its bytes are not copied.
+        if page.segment != "" and page.digest != "":
+            listed.append(f"{page.key}\t{page.segment}\t{page.offset}\t{page.length}\t{page.digest}\n")
+            continue
+        size = len(page.value)
+        publish_binary(directory.joinpath(page.key), page.value)?
+        if page.digest != "":
+            publish_binary(directory.joinpath(page.key + DIGEST_COMPANION), page.digest.encode("utf-8"))?
+        work(Operation.EngineGraphStaging, "compiler-input\t" + page.key, clock, size)
+        if let Some(key) = observed_key:
+            if page.key == EXECUTABLE_GRAPH_INPUT:
+                observed_markers += 1
+            elif page.key == key:
+                observed_references += 1
+                observed_size = size
+    if len(listed) > 0:
+        clock = work_clock()
+        text = "".join(listed)
+        publish_binary(directory.joinpath(FRAME_LIST), text.encode("utf-8"))?
+        work(Operation.EngineGraphStaging, "compiler-input\t" + FRAME_LIST, clock, len(text))
+    if observed_markers == 1 and observed_references == 1:
+        return Ok(Some(observed_size))
+    return Ok(None)
+
+
+pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
+    """
+    Read a check's typed counts or its historical public JSON report. A certified report replay runs no compiler,
+    writes no sidecar, and contributes zero physical work.
+    """
+    if not report.is_file():
+        return Ok(CheckedBodyCounts())
+    if report.0.endswith(".crumb"):
+        counts = decode_checked_body_counts(report.read_bytes().map_err((error) => error.message())?)?
+        discard_file(report)
+        return Ok(counts)
+    value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => f"cannot decode checked bodies report {report.0}: {error.message()}",
+    )?
+    schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+    if schema != CHECKED_BODIES_SCHEMA:
+        return Err(f"unsupported checked bodies report {schema}")
+    checked = value.require("checked").and_then((field) => field.expect_int()).map_err((error) => error.message())?
+    reused = value.require("reused").and_then((field) => field.expect_int()).map_err((error) => error.message())?
+    # A compiler that reports no decode count decoded every page it restored.
+    mut decoded = reused
+    if let Some(field) = value.get("decoded"):
+        decoded = field.expect_int().map_err((error) => error.message())?
+    discard_file(report)
+    return Ok(CheckedBodyCounts(checked=checked, reused=reused, decoded=decoded))
+
+
+pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool, executable_crumb: bool = false) -> Path:
+    """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    description = descriptor_path(directory, described_by(key), typed)
+    if typed:
+        mut prefix = ""
+        if executable_crumb:
+            prefix = executable_graph_output_marker()
+        return Path(description.0 + prefix + ".published" + scope_output_suffix())
+    return Path(f"{description.0}.graph-body-output")
+
+
+pub def checker_record_counts(unit: UnitDescription, key: Key, typed: bool, executable_crumb: bool = false) -> Result[CheckerRecordCounts, str]:
+    """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
+    report = checker_record_report_path(graph_body_output_path(unit, key, typed, executable_crumb))
+    if not report.is_file():
+        return Ok(CheckerRecordCounts())
+    counts = decode_checker_counts(report.read_bytes().map_err((error) => error.message())?)?
+    if get_or("INCAN_ENGINE_TRACE", "") != "":
+        observed = json_text(JsonValue.object({
+            "report": JsonValue.string(report.0),
+            "all_declarations": JsonValue.int(counts.all_declarations),
+            "reusable_declarations": JsonValue.int(counts.reusable_declarations),
+            "restored": JsonValue.array([JsonValue.string(owner) for owner in counts.restored]),
+            "restored_body_ir": JsonValue.array([JsonValue.string(owner) for owner in counts.restored_body_ir]),
+        }))
+        if let Ok(detail) = observed:
+            trace("checker-record-counts\t" + detail)
+    discard_file(report)
+    return Ok(counts)
+
+
+pub def checker_record_report_path(output: Path) -> Path:
+    """Name the compiler-owned report paired with one graph-body output generation."""
+    return Path(output.0 + checker_report_suffix())
+
+
+def discard_graph_body_output(output: Path) -> Result[None, str]:
+    """Remove the prior compiler sidecar whether an old toolchain wrote one file or this toolchain wrote row files."""
+    if output.is_dir():
+        return remove_dir_all(output.0).map_err((error) => f"cannot replace graph body output {output.0}: {error}")
+    discard_file(output)
+    return Ok(None)
+
+
+pub def plan_record_counts(
+    report: Path, retain: bool, report_lowering: bool = false,
+) -> Result[tuple[PlanRecordCounts, Option[CompletedPlanEvents]], str]:
+    """Count loss-checked products and keep decoded events for the completed request when it will publish them."""
+    mut counts = PlanRecordCounts()
+    if not report.is_dir():
+        return Ok((counts, None))
+    entries = report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?
+    mut positions: Dict[str, int] = {}
+    mut slots: list[Option[LoweringEvent]] = []
+    read_refusals = retain and report_lowering
+    mut refusals = PlanRefusalReport()
+    if retain:
+        # Keep the census read order. Popping the slots gives publication its existing sorted path order.
+        names = sorted([entry.0 for entry in entries])
+        for index in range(len(names)):
+            positions[names[index]] = len(names) - 1 - index
+            slots.append(None)
+    for entry in entries:
+        if not entry.is_file():
+            continue
+        name = entry.name()
+        if read_refusals and name.endswith(".refusal"):
+            if entry.is_symlink():
+                return Err("lowering refusal is not an ordinary request report file")
+            reading = begin_work()
+            bytes = entry.read_bytes().map_err((error) => error.message())?
+            record_work(Operation.FileRead, entry.0, reading, len(bytes))
+            observed, key = lowering_refusal_evidence(bytes)?
+            refusals.present = true
+            if let Some(product) = key:
+                if name != product + ".refusal" or observed.identity == "" or observed.function == "":
+                    return Err("evaluated lowering refusal differs from its request filename or owner")
+                refusals.evaluated.append(
+                    EvaluatedLoweringRefusal(key=product, symbol=observed.identity, function=observed.function),
+                )
+            continue
+        if not name.endswith(".event"):
+            continue
+        reading = begin_work()
+        bytes = entry.read_bytes().map_err((error) => error.message())?
+        record_work(Operation.FileRead, entry.0, reading, len(bytes))
+        event = decode_lowering_event(bytes)?
+        if read_refusals and name != event.key + ".event":
+            return Err("lowering event differs from its request filename")
+        if event.reused:
+            counts.plan_reuses += 1
+        else:
+            counts.plan_evaluations += 1
+        if retain:
+            slots[positions[entry.0]] = Some(event)
+    interface = report.joinpath(INTERFACE_REPORT)
+    if interface.is_file():
+        _ = decode_native_interface(interface.read_bytes().map_err((error) => error.message())?)?
+        counts.native_interface_evaluations = 1
+    if not retain:
+        return Ok((counts, None))
+    mut events: list[LoweringEvent] = []
+    while len(slots) > 0:
+        if let Some(event) = slots.pop():
+            events.append(event)
+    retained_refusals = match read_refusals:
+        true => Some(refusals)
+        false => None
+    return Ok((counts, Some(CompletedPlanEvents.from_census(report.0, events, retained_refusals))))
+
+
+pub def take_completed_plan_events(
+    completed: CompletedPlanEvents, report: Path,
+) -> Result[tuple[list[LoweringEvent], Option[PlanRefusalReport]], str]:
+    """Move the validated event vector into publication for the same request-owned report."""
+    mut selected = completed
+    return selected.take_for_report(report)
+
+
+pub def plan_record_report_path(unit: UnitDescription, key: Key, typed: bool) -> Path:
+    """Name the request-local lowering output consumed by proof counters and atomic Bakery publication."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    description = descriptor_path(directory, described_by(key), typed)
+    return Path(f"{description.0}.graph-plan-report")
+
+
+pub def crate_name(unit: UnitDescription) -> str:
+    """Name the compiled crate from its package, or its source stem for a projectless unit."""
+    if unit.package != "":
+        return native_crate_name(unit.package)
+    return native_crate_name(Path(unit.source).stem())
+
+
+pub def write_unit(
+    unit: UnitDescription,
+    compiled: str,
+    owner: Option[Path] = None,
+    described: str = "",
+    rust_facts: bool = false,
+    typed: bool = false,
+) -> Result[Path, str]:
+    """
+    Publish a description, retaining its generation only while the exact description witness remains valid.
+
+    1. Select a description-specific path under the project or explicit owner.
+    2. For a compile or check (`rust_facts`), bake the Rust ABI extractions its last run staged and index them in
+       the `<name>.rust-facts` directory beside the description, where the compiler finds them.
+    3. Reuse only a complete unchanged generation of that description.
+    4. Otherwise publish the complete unit and its new witness atomically.
+    """
+    # 1. An explicit owner controls only where the description is stored.
+    mut root = Path(unit.project_root)
+    if let Some(selected) = owner:
+        root = selected
+    directory = root.joinpath("target").joinpath("incan").joinpath("units")
+    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
+    mut name = compiled
+    if described != "":
+        name = described
+    path = descriptor_path(directory, name, typed)
+    witness = Path(f"{path.0}.oven-description")
+    # 2. The compiler finds the directory by the description's location, so the description itself is unchanged and
+    #    a compiler that predates it reads the same description.
+    if rust_facts:
+        facts = directory.joinpath(f"{name}.rust-facts")
+        facts.mkdir(true, true).map_err((error) => f"{facts.0}: {error.message()}")?
+        refresh_rust_facts(bakery()?, facts, unit.project_root)?
+    # 3. This witness grants descriptor reuse, never source acceptance or artifact reuse.
+    if described != "" and description_current(path, witness, described):
+        return Ok(path)
+    # 4. Missing, changed and unwitnessed descriptions are published again.
+    publish_unit_document(path, unit, typed)?
+    if described != "":
+        publish(witness, description_witness(described, artifact_identity(path)?))?
+    return Ok(path)
+
+
+pub def described_by(key: Key) -> str:
+    """Read the exact descriptor's provenance witness; it must never substitute for portable unit identity."""
+    return key.descriptor
+
+
+def description_current(path: Path, witness: Path, described: str) -> bool:
+    """Treat failed witness reads or file observations as reasons to publish the descriptor again."""
+    match verified_description(path, witness, described):
+        Ok(current) => return current
+        Err(_) => return false
+
+
+def verified_description(path: Path, witness: Path, described: str) -> Result[bool, str]:
+    """Bracket the exact witness read with complete file observations before retaining the existing generation."""
+    stamp = artifact_identity(path)?
+    text = read(witness)?
+    if text != description_witness(described, stamp):
+        return Ok(false)
+    return Ok(artifact_identity(path)? == stamp)
+
+
+def description_witness(described: str, stamp: str) -> str:
+    """Bind a published descriptor's exact generation to its caller's complete description identity."""
+    return f"incan.oven.description/1\n{described}\n{stamp}\n"
+
+
+pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
+    """
+    Run the installed compiler without an inherited bootstrap override, preserving its stream destinations.
+
+    1. Use the resident worker for unit compilation, checking and formatting when it is available.
+    2. Otherwise bind the original driver, SDK configuration and request-local streams.
+    3. Preserve the process status without retrying a submitted worker request.
+    """
+    # 1. A submitted worker request is never replayed through another compiler process.
+    if served_resident(arguments):
+        match compile_resident(toolchain, arguments)?:
+            Some(code) => return Ok(code)
+            None => pass
+    # 2. The cold process retains SDK selection and the owner's explicit console sinks.
+    mut command = driver_command(toolchain)?
+    for argument in arguments:
+        command.arg(argument)
+    # Project owners retain the original bytes in their request-local stream files.
+    if toolchain.console != "":
+        command.stdout(Stdio.from(open_stream(f"{toolchain.console}.out")?))
+        command.stderr(Stdio.from(open_stream(f"{toolchain.console}.err")?))
+    # 3. Signal termination remains a failure, like any other compiler exit.
+    return status_of(command, toolchain.driver)
+
+
+def status_of(mut command: BorrowedMut[Command], program: str) -> Result[i32, str]:
+    """Run with the caller's streams, mapping a signal termination to exit code one."""
+    match command.status():
+        Err(error) => return Err(f"cannot run {program}: {error}")
+        Ok(status) =>
+            match status.code():
+                Some(code) => return Ok(code)
+                None => return Ok(1)

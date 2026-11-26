@@ -439,7 +439,7 @@ pub enum IncanExpr {
     ScopedSymbolCall(IncanScopedSymbolCall),
     /// Field access.
     Field { object: Box<IncanExpr>, field: String },
-    /// Import-activated `std.async` race block.
+    /// Language-owned async race block.
     RaceFor(IncanRaceForExpr),
     /// DSL-owned scoped surface expression accepted by the compiler.
     ScopedSurface(IncanScopedSurfaceExpr),

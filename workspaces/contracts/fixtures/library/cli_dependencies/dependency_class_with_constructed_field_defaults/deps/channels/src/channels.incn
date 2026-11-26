@@ -1,0 +1,30 @@
+"""A class with public fields only, two of whose defaults construct models."""
+
+pub const LIMIT: int = 3
+
+
+pub model Credits:
+    """A field type constructed with an argument."""
+
+    pub limit: int
+
+
+pub class Channel:
+    """One literal default and two constructed defaults, every field public."""
+
+    pub name: str = "channel"
+    pub pending: Credits = Credits(limit=LIMIT)
+    pub incoming: Credits = Credits(limit=LIMIT)
+
+
+pub def described(value: Channel) -> str:
+    """
+    Describe every field of one channel.
+
+    Args:
+        value: The channel to describe.
+
+    Returns:
+        The name and both credit limits.
+    """
+    return f"{value.name} {value.pending.limit} {value.incoming.limit}"

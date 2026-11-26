@@ -1,6 +1,6 @@
-//! Soft keyword activation and vocab block surfaces: `async` / `await` / `property` gated by `std.*` imports, library
-//! imports that activate keywords, vocab block statements, expression-list clauses and clause modifiers,
-//! expression-desugaring and braced blocks, nested declaration surfaces and in-block placement.
+//! Reserved and soft keyword surfaces: language-owned `async` / `await`, contextual `property`, library vocab
+//! blocks, expression-list clauses and clause modifiers, expression desugaring, braced blocks, nested declaration
+//! surfaces and in-block placement.
 
 use super::*;
 
@@ -8,33 +8,70 @@ use super::*;
 fn test_parse_import_path_with_async_segment() -> Result<(), Vec<CompileError>> {
     let source = r#"
 from std.async.time import sleep
+import std.async
+from std import async
 "#;
     let program = parse_str(source)?;
-    let decl = match &program.declarations[0].node {
-        Declaration::Import(import) => import,
-        _ => panic!("Expected import declaration"),
+    let Declaration::Import(decl) = &program.declarations[0].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected from-import".to_string(),
+            program.declarations[0].span,
+        )]);
     };
     let ImportKind::From { module, .. } = &decl.kind else {
-        panic!("Expected from-import");
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected from-import kind".to_string(),
+            program.declarations[0].span,
+        )]);
     };
     assert_eq!(module.segments, vec!["std", "async", "time"]);
+
+    let Declaration::Import(module_import) = &program.declarations[1].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected module import".to_string(),
+            program.declarations[1].span,
+        )]);
+    };
+    let ImportKind::Module(module) = &module_import.kind else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected module import kind".to_string(),
+            program.declarations[1].span,
+        )]);
+    };
+    assert_eq!(module.segments, vec!["std", "async"]);
+
+    let Declaration::Import(from_std) = &program.declarations[2].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected std from-import".to_string(),
+            program.declarations[2].span,
+        )]);
+    };
+    let ImportKind::From { module, items } = &from_std.kind else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected std from-import kind".to_string(),
+            program.declarations[2].span,
+        )]);
+    };
+    assert_eq!(module.segments, vec!["std"]);
+    assert_eq!(items[0].name, "async");
     Ok(())
 }
 
 #[test]
-fn test_parse_async_requires_std_async_import() {
+fn test_parse_async_without_std_async_import() -> Result<(), Vec<CompileError>> {
     let source = r#"
 async def foo() -> None:
   pass
 "#;
-    let Err(err) = parse_str(source) else {
-        panic!("Expected async function without std.async import to fail");
+    let program = parse_str(source)?;
+    let Declaration::Function(function) = &program.declarations[0].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected function declaration".to_string(),
+            program.declarations[0].span,
+        )]);
     };
-    assert!(
-        err[0].message.contains("only available after importing `std.async`"),
-        "Unexpected error: {}",
-        err[0].message
-    );
+    assert!(function.is_async());
+    Ok(())
 }
 
 #[test]
@@ -43,12 +80,14 @@ fn test_parse_async_with_std_async_import_ok() -> Result<(), Vec<CompileError>> 
 import std.async
 
 async def foo() -> None:
-  pass
+  await async.sleep(0.0)
 "#;
     let program = parse_str(source)?;
-    let func = match &program.declarations[1].node {
-        Declaration::Function(f) => f,
-        _ => panic!("Expected function declaration"),
+    let Declaration::Function(func) = &program.declarations[1].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected function declaration".to_string(),
+            program.declarations[1].span,
+        )]);
     };
     assert!(func.is_async());
     Ok(())
@@ -57,7 +96,6 @@ async def foo() -> None:
 #[test]
 fn test_parse_async_fixture_with_yield_ok() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-import std.async
 from std.testing import fixture
 
 @fixture(scope="function")
@@ -65,7 +103,7 @@ async def resource() -> int:
   yield 1
 "#;
     let program = parse_str(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let Declaration::Function(func) = &program.declarations[2].node else {
+    let Declaration::Function(func) = &program.declarations[1].node else {
         return Err(std::io::Error::other("expected function declaration").into());
     };
     assert!(func.is_async());
@@ -85,9 +123,11 @@ async def foo() -> None:
   await sleep(1.0)
 "#;
     let program = parse_str(source)?;
-    let func = match &program.declarations[1].node {
-        Declaration::Function(f) => f,
-        _ => panic!("Expected function declaration"),
+    let Declaration::Function(func) = &program.declarations[1].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected function declaration".to_string(),
+            program.declarations[1].span,
+        )]);
     };
     assert!(matches!(
         &func.body[0].node,
@@ -105,12 +145,22 @@ async def foo() -> None:
 }
 
 #[test]
-fn test_parse_async_identifier_without_import_ok() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def value(async: int) -> int:
-  return async
-"#;
-    parse_str(source)?;
+fn test_parse_async_and_await_identifiers_are_reserved() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "def value(async: int) -> int:\n  return 1\n",
+        "def value(await: int) -> int:\n  return 1\n",
+        "def async() -> int:\n  return 1\n",
+        "async = 1\n",
+        "await = 1\n",
+    ] {
+        let Err(errors) = parse_str(source) else {
+            return Err(format!("expected reserved-word refusal for {source:?}").into());
+        };
+        assert!(
+            errors.iter().any(|error| error.message.contains("reserved word")),
+            "expected reserved-word diagnostic, got: {errors:?}"
+        );
+    }
     Ok(())
 }
 
@@ -127,74 +177,38 @@ def value(property: int) -> int:
 }
 
 #[test]
-fn test_parse_async_method_requires_std_async_import() {
+fn test_parse_async_method_without_std_async_import() -> Result<(), Vec<CompileError>> {
     let source = r#"
 class Worker:
   async def run(self) -> None:
     pass
 "#;
-    let Err(err) = parse_str(source) else {
-        panic!("Expected async method without std.async import to fail");
+    let program = parse_str(source)?;
+    let Declaration::Class(class) = &program.declarations[0].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected class declaration".to_string(),
+            program.declarations[0].span,
+        )]);
     };
-    assert!(
-        err[0].message.contains("only available after importing `std.async`"),
-        "Unexpected error: {}",
-        err[0].message
-    );
+    assert!(class.methods[0].node.is_async());
+    Ok(())
 }
 
 #[test]
-fn test_parse_async_trait_method_requires_std_async_import() {
+fn test_parse_async_trait_method_without_std_async_import() -> Result<(), Vec<CompileError>> {
     let source = r#"
 trait Worker:
   async def run(self) -> None:
     ...
 "#;
-    let Err(err) = parse_str(source) else {
-        panic!("Expected async trait method without std.async import to fail");
+    let program = parse_str(source)?;
+    let Declaration::Trait(trait_decl) = &program.declarations[0].node else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected trait declaration".to_string(),
+            program.declarations[0].span,
+        )]);
     };
-    assert!(
-        err[0].message.contains("only available after importing `std.async`"),
-        "Unexpected error: {}",
-        err[0].message
-    );
-}
-
-#[test]
-fn test_library_import_activates_soft_keywords() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "import pub::mylib\n\nasync def my_func() -> None:\n    pass\n";
-    let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
-
-    // Without context, async should fail
-    let result_no_context = crate::parser::parse(&tokens);
-    assert!(
-        result_no_context.is_err(),
-        "Expected async function without soft keyword context to fail"
-    );
-
-    // With imported vocab registrations mapping mylib -> async modifier, it should succeed.
-    let mut map = std::collections::HashMap::new();
-    map.insert(
-        "mylib".to_string(),
-        vec![incan_vocab::KeywordRegistration {
-            activation: incan_vocab::KeywordActivation::OnImport {
-                namespace: "mylib.dsl".to_string(),
-            },
-            keywords: vec![incan_vocab::KeywordSpec {
-                name: "async".to_string(),
-                surface_kind: incan_vocab::KeywordSurfaceKind::FunctionDecl,
-                compound_tokens: Vec::new(),
-                placement: incan_vocab::KeywordPlacement::TopLevel,
-            }],
-            valid_decorators: Vec::new(),
-        }],
-    );
-
-    let result_with_context = crate::parser::parse_with_context(&tokens, None, Some(&map));
-    assert!(
-        result_with_context.is_ok(),
-        "Expected async function to parse with soft keyword context"
-    );
+    assert!(trait_decl.methods[0].node.is_async());
     Ok(())
 }
 

@@ -1,0 +1,11 @@
+# behavior: the two public functions a program imports from a nested module are callable while a third public function it never imports is simply unused
+# expect-stdout:
+#   v1
+#   100
+
+from shared.constants import api_version, max_page_size
+
+
+def main() -> None:
+    println(api_version())
+    println(max_page_size())

@@ -1,0 +1,21 @@
+pub enum Packet[T]:
+    """Keep source constructor arguments attached to one provider-owned enum."""
+
+    Value(T)
+    Many(list[T])
+    Empty
+
+
+pub model Holder[T]:
+    """Control ordinary module-qualified generic model dispatch."""
+
+    pub value: T
+
+    pub def get(self) -> T:
+        """Return the field through the source model method."""
+        return self.value
+
+
+pub def number() -> Packet[int]:
+    """Return a provider-constructed value for the consumer's matching control."""
+    return Packet.Value(8)

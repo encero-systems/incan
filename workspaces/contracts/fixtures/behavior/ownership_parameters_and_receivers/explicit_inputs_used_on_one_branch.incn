@@ -1,0 +1,31 @@
+# behavior: an explicit owned input transferred on one branch and an exclusive input written on one branch execute on both paths (#2500).
+# expect-stdout:
+#   kept: first
+#   taken: second
+#   2
+
+def consume(value: Owned[str]) -> None:
+    println(f"taken: {value}")
+
+
+def pick(value: Owned[str], take: bool) -> None:
+    if take:
+        consume(value)
+    else:
+        println(f"kept: {value}")
+
+
+def bump(mut count: BorrowedMut[int], step: bool) -> None:
+    if step:
+        count = count + 1
+
+
+def main() -> None:
+    first = "first"
+    second = "second"
+    pick(first, false)
+    pick(second, true)
+    mut count = 1
+    bump(count, true)
+    bump(count, false)
+    println(count)

@@ -1,0 +1,13 @@
+# behavior: Without `--member`, `oven version` at a workspace root with one default member bumps that member, as in 0.5.1 (#3141).
+# cli-commands:
+#   oven version patch --dry-run
+# expect-stdout-contains:
+#   dry-run: true
+#   old version: 0.2.0
+#   new version: 0.2.1
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program."""
+    pass

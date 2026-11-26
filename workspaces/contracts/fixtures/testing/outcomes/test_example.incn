@@ -1,0 +1,35 @@
+# behavior: a test file reports each test by outcome: passing tests pass, a skipped test is skipped with its reason, an expected failure is reported as xfail, and the run succeeds
+# expect-stdout-contains:
+#   test_example.incn::test_addition PASSED
+#   test_example.incn::test_subtraction PASSED
+#   test_example.incn::test_future_feature SKIPPED (not implemented yet)
+#   test_example.incn::test_known_bug XFAIL (known issue)
+
+"""
+Example test file demonstrating the pytest-like test runner.
+"""
+
+from std.testing import assert_eq, skip, xfail
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+def test_addition() -> None:
+    result = add(2, 3)
+    assert_eq(result, 5)
+
+
+def test_subtraction() -> None:
+    result = 10 - 3
+    assert_eq(result, 7)
+
+
+@skip("not implemented yet")
+def test_future_feature() -> None:
+    pass
+
+
+@xfail("known issue")
+def test_known_bug() -> None:
+    assert_eq(1, 2)

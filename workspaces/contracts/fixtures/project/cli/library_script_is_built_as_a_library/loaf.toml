@@ -1,0 +1,6 @@
+[project]
+name = "library_script_is_built_as_a_library"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"

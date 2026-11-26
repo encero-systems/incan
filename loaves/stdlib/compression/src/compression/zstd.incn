@@ -8,8 +8,9 @@ This module exposes zstd frames through one-shot byte helpers and keeps backend-
 from rust::std::io import Cursor, Read
 from rust::zstd::stream import decode_all, encode_all
 from rust::zstd::stream::read import Decoder as ZstdReadDecoder, Encoder as ZstdReadEncoder
-from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
-from std.fs import File
+pub from std.compression._core import Codec, CompressionError
+from std.compression._core import _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
+pub from std.fs import File
 from std.io import _BytesIO
 
 
@@ -137,7 +138,7 @@ def _compress_file_stream(
     """
     Compress bytes from a file stream into a binary sink.
     """
-    mut handle = source.handle.borrow_mut()
+    mut handle = source.handle.handle.borrow_mut()
     match ZstdReadEncoder.new(Read.by_ref(handle), compression):
         Ok(reader) =>
             mut adapter = reader
@@ -183,7 +184,7 @@ def _decompress_file_stream(
     """
     Decompress zstd bytes from a file stream into a binary sink.
     """
-    mut handle = source.handle.borrow_mut()
+    mut handle = source.handle.handle.borrow_mut()
     match ZstdReadDecoder.new(Read.by_ref(handle)):
         Ok(reader) =>
             mut adapter = reader

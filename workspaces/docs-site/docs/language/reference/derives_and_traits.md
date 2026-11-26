@@ -10,13 +10,15 @@ These derives belong to every declaration of the kind, without `@derive(...)`:
 | --- | --- |
 | `model` | `Debug`, `Clone` |
 | `class` | `Debug`, `Clone` |
-| `enum` | `Debug`, `Clone`; `PartialEq` when every payload type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those |
+| `enum` | `Debug`, `Clone`; `Eq` for fieldless and value enums, and when every payload is a non-floating-point number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those; `PartialEq` for the same shapes including floating point |
 | `newtype` | `Debug` when the underlying type implements it; `Clone` as listed below; `Copy` as listed under [Copy](derives/copying_default.md#copy) |
 
 - An automatic derive satisfies a generic bound on the same trait.
 - Writing an automatic derive in `@derive(...)` is accepted and adds nothing.
+- A class whose name starts with `_` and whose fields contain a directly imported Rust type omits automatic `Debug`. An explicit or implied `Debug` derive still applies and requires the fields to implement it. A private class with only source fields keeps automatic `Debug`.
 - A newtype carries `Clone` when its underlying type implements `Clone` or is `Copy`. The newtype's own type parameters count as implementing `Clone`, and the newtype is then `Clone` for the type arguments that are. A newtype over a `rust::` type or a `rusttype` carries `Clone` only through `@derive(Clone)` or `@rust.derive(Clone)`.
-- A `model` or `class` field, or an `enum` payload, whose type does not implement both `Clone` and `Debug` is refused at the declaration (`INCAN-T0113`). `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks, and deriving it on the newtype is refused (`INCAN-T0001`); a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
+- A `model` or `class` field, or an `enum` payload, whose type does not implement its declaration's automatic derives is refused at the declaration (`INCAN-T0113`). Those are `Clone` and `Debug`, except for the private class exception above, which requires `Clone` alone. `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks, and deriving it on the newtype is refused (`INCAN-T0001`); a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
+- For a directly imported Rust field type, an unmet derive bound can instead report a Rust trait-bound diagnostic, such as `E0277`.
 
 ```incan
 import std.async
@@ -55,6 +57,7 @@ model Wrapped:
 
 - `@derive(...)` names derives from the catalog. `json` needs `from std.serde import json`, and `Serialize` and `Deserialize` need their import from `std.serde.json`.
 - `@derive(...)` also names a trait imported by name that its module lists in `__derives__` (`from codec import Encode`, then `@derive(Encode)`), or a module that declares `__derives__` (`import codec`, then `@derive(codec)`, which names each trait in the module's `__derives__` list). A model or class adopts each such trait as a `with` clause adopts it: the trait's methods, default methods included, are called on the type (`item.tag()`), and the type satisfies a bound on the trait.
+- A module's `__derives__` entries may refer to imported traits, including renamed imports. The adopting type implements the original trait; the bundle does not create a new trait identity. Importing the bundle under another name or combining it with another bundle that names the same trait does not create a second adoption. A distinct user trait with the same name does not satisfy the original trait's bounds.
 - An `enum` or `newtype` adopts such a trait in the same way.
 - `@derive(...)` also names a derive imported from a Rust crate (`from rust::serde import Serialize`, then `@derive(Serialize)`); it applies to the type as the same name in `@rust.derive(...)` does.
 - A derive on a generic declaration holds for each instantiation whose type arguments implement it. A field, payload or underlying type that is one of the declaration's type parameters meets the derive's **Requires** entry.
@@ -89,7 +92,7 @@ Each of these is refused (`INCAN-T0001`):
 
 ## Decorators (`@staticmethod`, `@classmethod`, `@requires`) {#decorators-staticmethod-requires}
 
-`@derive(...)` is specified [above](#derive), and `@requires(...)` under [Traits](#requires-adopter-contract). `@rust.extern`, `@rust.allow(...)` and user-defined decorators are in [Decorators](language.md#decorators).
+`@derive(...)` is specified [above](#derive), and `@requires(...)` under [Traits](#requires-adopter-contract). User-defined decorators are in [Decorators](language.md#decorators); removed Rust facade forms and their migrations are in [Rust interop](../how-to/rust_interop.md#migrate-retired-rust-facades).
 
 ### `@staticmethod`
 
@@ -99,14 +102,15 @@ Each of these is refused (`INCAN-T0001`):
 - It is called on the type, `TypeName.method(...)`. A call through an instance is refused (`INCAN-T0001`).
 - A static method and a field may share a name: `TimeDelta.days(7)` calls the method and `delta.days` reads the field.
 - A generic static method may return `Self`; `Box[int].make(1)` fixes the owner's type arguments.
-- It combines with `@rust.extern` for Rust-backed static methods.
+- `Self` is a call head wherever it is a type: in a type's own methods, `Self.make(...)` calls that type's static method, and in a trait's default method it calls the adopter's member, as in `Self.__reconstruct__(source)`.
+- A Rust-backed static method has an ordinary Incan body that calls a directly imported Rust function.
 
 ```incan
 class Temperature:
     pub celsius: float
 
     @staticmethod
-    def from_fahrenheit(f: float) -> Temperature:
+    pub def from_fahrenheit(f: float) -> Temperature:
         return Temperature(celsius=(f - 32.0) / 1.8)
 
 def main() -> None:
@@ -127,7 +131,7 @@ class Box[T with Clone]:
     pub value: T
 
     @classmethod
-    def make(cls, value: T) -> Self:
+    pub def make(cls, value: T) -> Self:
         return cls(value=value)
 
 def main() -> None:
@@ -176,6 +180,7 @@ def wrap[T](value: T) -> int:                           # refused: Stream(item=v
 ### Operations on a type parameter
 
 - A function or method body applies these to values of its own type parameter `T` without a declared bound: `==`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-` and `*`; `{value:?}`; `.clone()`; reading a `T` out of a `list[T]` by index or slice, or out of a `dict[K, T]` by key; using a `T` as a `set` element or `dict` key; and passing a `T` to a generic function or method that does one of these.
+- A comprehension, `sorted()` call or spread that keeps its source collection and copies elements of a type parameter needs a `Clone` bound on that parameter; without one it is refused with a message naming the parameter.
 - A call's type argument provides each operation the body applies to its type parameter. A type argument that does not implement `Eq` and `Hash`, for a type parameter used as a set element or dict key, is refused (`INCAN-T0114`, see [Set elements and dict keys](derives/comparison.md#set-elements-and-dict-keys)).
 - Inside the function, method, model, class, enum or newtype that declares it, a type parameter `T` is one type the declaration does not choose. Where a `T` is expected, as a returned, bound, assigned, appended, yielded or passed value, alone or inside a `list[T]`, `dict[K, T]`, `Option[T]` or `Result[T, E]`, a value of a concrete type (`0`, `"s"`) or of another type parameter is refused (`INCAN-T0001`). A value of `T` and a `&T` are accepted. A call binds its callee's own type parameters from its arguments, so `ident(0)` for `def ident[U](x: U) -> U` is accepted in such a body.
 - In the same declaration, a value of `T` is not a value of a concrete type. Where an `int`, a `str`, a model, a collection of another element type, a function type or a union with no `T` member is expected, a value of `T` is refused (`INCAN-T0001`): `return x` for an `int` result of `def f[T](x: T)`. Where a trait is expected, a value of `T` is accepted when a bound of `T` names that trait or a subtrait of it, and refused otherwise (`INCAN-T0001`). A `CallableN` bound does not make it a value of a function type.
@@ -228,7 +233,9 @@ Rules:
 - Without brackets, every type parameter is inferred.
 - The arguments that bind one type parameter bind it to one type. Arguments of numeric types bind it to the type the others widen to (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)), in any order, and the narrower values are widened to it: `pick(small, wide)` for an `i8` value `small` and an `int` value `wide` binds `T` to `int`. Arguments of types that do not widen to one are refused (`INCAN-T0001`): `take(1, "s")` for `def take[T](x: T, y: T)`. The fields of a generic model's or class's constructor follow the same rule.
 - A type parameter that an `Ok(...)` or `Err(...)` argument leaves open, and no other argument fixes, is settled as for a constructor bound to a local: the enclosing function's `Result` side, or `None`. The type parameter's bounds hold of the settled type: `first(Err(3))` for `def first[T with Display](r: Result[T, int])` in a function that returns no `Result` is refused (`INCAN-T0103`).
-- A type parameter with a bound on a source or standard-library trait is fixed by an argument or by the expected type. When the only arguments for parameters that name it are literals that leave it open, or there are none, and the expected type does not name it, the call is refused (`INCAN-T0001`): `show(None)` for `def show[T with Display](o: Option[T])`, and `make()` for `def make[T with Display]() -> list[T]` outside an annotated binding. A bound on a Rust capability marker (`Send`) or a Rust trait does not require it.
+- Every type parameter is fixed by an argument, by the expected type, by the `Result` side above, or by a later use of the call's result. When every argument for a parameter that names a type parameter is `None` or a payload-free variant of a generic enum, and the expected type does not name the type parameter, the call is refused (`INCAN-T0001`), whatever its bounds. A type parameter with a bound on a source or standard-library trait is also refused when its arguments are built from literals that leave it open, or there are none, and the expected type does not name it.
+- A generic model's or class's constructor fields and a generic enum variant's payloads fix the type's parameters as arguments do, and a type argument written on the type fixes its parameter. A construction with no expected type that names the type, whose fields or payloads leave one of the type's parameters unfixed, is refused (`INCAN-T0001`).
+- Refused under these rules, each with no expected type: `show(None)` for `def show[T with Display](o: Option[T])`; `maybe(None)` for `def maybe[T](value: Option[T])`; `make()` for `def make[T with Display]() -> list[T]`; `label(Slot.Vacant)` for `def label[T](slot: Slot[T])`, where `Vacant` is a payload-free variant of `enum Slot[T]`; `RecordId(serial=1)` for `model RecordId[T]` whose only field is `serial: int`; and `RecordState.Deleted(Tombstone(serial=1))` for `enum RecordState[T]` whose `Deleted` payload is a `Tombstone`.
 - Brackets are accepted on direct calls of Incan functions and methods, and on a type-associated Rust call `Type.method[T](...)` whose receiver declares only type parameters. They are refused (`INCAN-T0001`) on builtin calls such as `len[int](...)`, on functions imported from Rust, on a callee reached through a variable (`read = session.read_csv; read[Order](...)`), and on a Rust receiver with const parameters.
 
 ```incan
@@ -241,6 +248,40 @@ def main() -> None:
     c = pair[int, _](1, "x")      # accepted: B inferred
     d = pair[int](1, "x")         # refused: pair has two type parameters (INCAN-T0001)
     e = len[int]([1])             # refused: brackets on a builtin call (INCAN-T0001)
+```
+
+### Bounds that name a prelude trait
+
+A trait the standard prelude exports, such as `Add`, bounds a type parameter without an import: `def total[T with Add[T, T]](a: T, b: T) -> T` checks as written. A local or imported declaration of the same name takes precedence over the prelude's trait.
+
+### Bounds that name a type
+
+- A `with` bound may name a type instead of a trait: a builtin type in either spelling (`int` or `Int`), or a model, class, enum, newtype or type alias, declared or imported. Only that type satisfies the bound; an alias of a type satisfies a bound on its target. Any other type argument is refused (`INCAN-T0001`).
+- Overloads that differ only in such a bound are selected by the explicit type argument, directly or through an alias of the function.
+- A name that is a trait keeps its trait meaning, so a type never stands in for a trait of the same name.
+
+```incan
+model Col:
+    name: str
+
+model IntCol:
+    src: str
+
+model FloatCol:
+    src: str
+
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src=expr.name)
+
+def cast[T with Float](expr: Col) -> FloatCol:
+    return FloatCol(src=expr.name)
+
+safe_cast = alias cast
+
+def main() -> None:
+    a = cast[Int](Col(name="a"))          # accepted: a is IntCol
+    b = safe_cast[float](Col(name="b"))   # accepted: b is FloatCol
+    c = cast[str](Col(name="c"))          # refused: no overload is bound to str (INCAN-T0001)
 ```
 
 ## Traits (authoring)
@@ -428,6 +469,39 @@ model Source with ReadsInt, ReadsStr:
         return value
 ```
 
+### Rust traits on a class
+
+A `class` adopts a trait imported with `from rust::...` the same way: `class Hooks with Callbacks`.
+
+- The class and the trait are concrete: neither has type parameters, and the trait declares only methods, no associated types or constants. Otherwise the adoption is refused (`INCAN-T0001`).
+- Each class method named like a trait method implements it. It is an instance method with a body and without type parameters; another method of that name is refused (`INCAN-T0001`). A method with a `for` target naming another trait implements only that trait.
+- A trait method the class does not declare keeps the trait's default.
+- Rust checks the implementation when the program is built. A missing required method (`E0046`) or a method whose receiver or signature differs from the trait's (`E0053`) refuses the build.
+- A class value passes to a Rust parameter that takes a reference to a trait object (`&dyn Trait`, `&mut (dyn Trait + Send)`) by a borrow of the value. A mutable borrow needs a `mut` binding; another binding is refused (`INCAN-T0001`). A Rust value passes the same way when its type implements the trait.
+- Every bound of the trait object holds: implementing the principal trait does not make a class `Send` or `Sync`. A build where the value cannot convert to the object, for example a class holding an `Rc`, is refused.
+
+A native struct field whose type a program cannot hold stays opaque: reading or writing it, or constructing the struct, is refused when the program is built. The struct's other fields stay usable.
+
+The host API used below declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`, `struct Config { pub flags: Vec<String> }` and `fn run(callbacks: &mut (dyn Callbacks + Send))`.
+
+```incan
+from rust::host import Callbacks, Config, run
+
+class Hooks with Callbacks:
+    calls: int = 0
+    flag: str
+
+    def config(mut self, mut config: BorrowedMut[Config]) -> None:
+        self.calls += 1
+        config.flags.append(self.flag)
+
+def main() -> None:
+    mut hooks = Hooks(flag="first")
+    run(hooks)        # accepted: lends hooks as &mut (dyn Callbacks + Send)
+    shared = Hooks(flag="second")
+    run(shared)       # refused: needs a mutable borrow (INCAN-T0001)
+```
+
 ### `@requires(...)` (adopter contract)
 
 `@requires(field_a: TypeA, field_b: TypeB)` on a trait names fields that every model or class adopter declares, with compatible types.
@@ -457,7 +531,7 @@ trait Counter:
 A `mut` parameter of a trait method, required or default, and of each method that implements it, follows the rules of [`mut` parameters](functions.md#mut-parameters):
 
 - A parameter of type `int`, `float` or `bool`, or an alias of one, is the method's own copy.
-- A parameter of any other type, except a Rust type, `*args` and `**kwargs`, shows the method's changes to the caller. The body does not rebind it or hold it in another name or value (`INCAN-T0001`). The argument of a call that changes it is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary; another argument is refused (`INCAN-T0117`).
+- A parameter of any other type, except a Rust type, `*args` and `**kwargs`, shows the method's changes to the caller. Assignment through the parameter replaces the caller's value. Holding the parameter in another name or value is refused (`INCAN-T0001`). The argument of a call that changes it is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary; another argument is refused (`INCAN-T0117`).
 - A method call through a type parameter's bound, on `self` in a default method, or on a trait-typed value changes such a parameter, whichever method runs.
 
 ```incan
@@ -491,6 +565,6 @@ def main() -> None:
 - [Derives and traits (explanation)](../explanation/derives_and_traits.md)
 - [How derives work](../explanation/how_derives_work.md)
 - [Classes: Class methods](../explanation/models_and_classes/classes.md#class-methods-classmethod)
-- [Trait dispatch is not overloading](../explanation/derives_and_traits.md#trait-dispatch-is-not-overloading)
+- [Trait dispatch and overloading](../explanation/derives_and_traits.md#trait-dispatch-and-overloading)
 - [Why call-site type arguments exist](../explanation/call_site_type_arguments.md)
 - [Error handling (explanation)](../explanation/error_handling.md)

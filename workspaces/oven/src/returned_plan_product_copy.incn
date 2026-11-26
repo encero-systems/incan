@@ -1,0 +1,207 @@
+"""Measure owned scalar product bytes in canonical returned Plan reconciliation."""
+
+from compiler_body_keys import body_key
+from compiler_graph_record_fixtures import required
+from compiler_graph_records import (
+    EditCutoff, evaluation_authority, evaluation_record_key, evaluation_revision, publish_evaluation,
+)
+from compiler_lowering_order import LoweringOrders
+from compiler_plan_modules import plan_module_admissions, plan_module_key, stage_plan_modules
+from compiler_plan_values import (
+    LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_modules,
+)
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
+from compiler_source_projection import positioned_source_key
+from pub::incan_mir_plan import (
+    ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, AdmittedFunction, AdmittedModule, EventPosition, EventReference,
+    LoweringEvent, PlanModuleFunction, PlanModuleValue, WholeModuleAdmission,
+    decode_lowering_event, decode_plan_module, encode_lowering_event, encode_module_note, encode_plan_module,
+    encode_whole_module_admission,
+)
+from std.encoding.hex import hexlify
+from pub::incan_platform.store import (
+    Snapshot, begin, commit, finish_frame_reads, locate_value, measure_frame_reads, put, read_counts, snapshot,
+)
+from pub::incan_platform.store.disk import root as disk_root
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.records import ReadReceipt, ReadScope, RecordKey, encode_record_key
+from scratch import scratch_directory
+
+
+def fixture_fold_receipt(graph: Snapshot, output: RecordKey, inputs: list[RecordKey]) -> Result[ReadReceipt, str]:
+    """Bind both current Plan function outputs and source position in the ordinary default order."""
+    scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    for input in inputs:
+        key = encode_record_key(input)?
+        source.add(key, required(graph, key)?)
+    return source.receipt(scope, output, [prepared_product_request(input) for input in inputs])
+
+
+pub def verify_returned_plan_product_copy() -> Result[None, str]:
+    """Authenticate the returned scalar once while staging the exact event product."""
+    scratch = scratch_directory()?
+    folder = scratch.path()
+    origin = "event-fold"
+    file = "src/right.incn"
+    owner = "function:right::read|signature"
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    references = [EventReference(kind="model", index=0, name="right_model")]
+    product = b"right scalar product"
+    event = encode_lowering_event(LoweringEvent(
+        identity="native-right-read", key=token, function="right_read", product=product, reused=true, admitted=true,
+        module="right", references=references, positions=[EventPosition(line=10, column=4)],
+    ))?
+    member = PlanModuleFunction(
+        identity=owner, symbol="native-right-read", function="right_read", key=token, event=event,
+    )
+    other_owner = "function:right::other|signature"
+    other_product = b"distinct omitted scalar product"
+    other_event = encode_lowering_event(LoweringEvent(
+        identity="native-right-other", key=token, function="right_other", product=other_product, reused=true,
+        module="right",
+    ))?
+    other = PlanModuleFunction(
+        identity=other_owner, symbol="native-right-other", function="right_other", key=token, event=other_event,
+    )
+    value = encode_plan_module(PlanModuleValue(module="right", functions=[other, member]))?
+    partial_value = encode_plan_module(PlanModuleValue(module="right", functions=[member]))?
+    output = plan_module_key(origin, file, value)
+    partial_output = plan_module_key(origin, file, partial_value)
+    value_key = encode_record_key(output)?
+    partial_key = encode_record_key(partial_output)?
+    scalar = body_key("plan-function", origin, owner, "body:right_read", token)
+    other_scalar = body_key("plan-function", origin, other_owner, "body:right_other", token)
+    rank = ProducerRank(namespace=0, stage=ProducerStage.PlanFunction, dependency=0)
+    empty = snapshot(disk_root(folder.joinpath("event-store").0)).map_err((error) => error.message())?
+    positioned = positioned_source_key(origin, file)
+    mut graph = commit(put(begin(empty), encode_record_key(positioned)?, b"current position"))
+        .map_err((error) => error.message())?
+    for key, payload in [(scalar, product), (other_scalar, other_product)]:
+        scalar_scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+        scalar_receipt = PreparedBodyRecordSource.open(scalar_scope).receipt(scalar_scope, key, [])?
+        graph = publish_evaluation(graph, key.identity, rank, payload, scalar_receipt)?.snapshot
+    inputs = [scalar, other_scalar, positioned]
+    first_receipt = fixture_fold_receipt(graph, output, inputs)?
+    first = publish_evaluation(graph, "plan-right", rank, value, first_receipt)?.snapshot
+    cutoff = EditCutoff(active=true)
+    prior = select_plan_modules(first, origin, [], [], cutoff=cutoff, compact_authority=true)?
+    kept = encode_plan_selection(origin, prior.kept)?
+    saved = commit(put(begin(first), plan_selection_key(origin), kept)).map_err((error) => error.message())?
+    reissued_receipt = fixture_fold_receipt(saved, output, inputs)?
+    reissued = publish_evaluation(saved, "plan-right-new-receipt", rank, value, reissued_receipt)?
+    republished = reissued.snapshot
+    first_evaluation = evaluation_revision(first, LOWERING_PROFILE, value_key)?
+    current_evaluation = evaluation_revision(republished, LOWERING_PROFILE, value_key)?
+    assert reissued.value_key == value_key and first_evaluation != ""
+    assert current_evaluation != "" and current_evaluation != first_evaluation
+    measure_frame_reads(true)
+    refreshing = select_plan_modules(republished, origin, [], [], cutoff=cutoff, compact_authority=true)
+    refreshed_reads = finish_frame_reads()
+    refreshed = refreshing?
+    selected_values = [read for read in refreshed_reads if read.key == value_key]
+    assert len(selected_values) == 1 and selected_values[0].reads == 1
+    # The next warm selection can withhold events only after the new evaluation is recorded in the store.
+    now_kept = encode_plan_selection(origin, refreshed.kept)?
+    current = commit(put(begin(republished), plan_selection_key(origin), now_kept)).map_err((error) => error.message())?
+    assert evaluation_revision(current, LOWERING_PROFILE, value_key)? == current_evaluation
+    scope = ReadScope(snapshot=current.digest, profile=LOWERING_PROFILE)
+    measure_frame_reads(true)
+    choosing = select_plan_modules(current, origin, [], [], cutoff=cutoff, compact_authority=true)
+    selected_reads = finish_frame_reads()
+    selection = choosing?
+    assert len([read.key for read in selected_reads if read.key == value_key]) == 0
+    assert len(selection.records) == 1 and selection.records[0].placement_current
+    assert not selection.records[0].events, "the fixture took the ordinary wholly owned Plan fallback"
+    assert [function.event for function in selection.records[0].plan.functions] == [b"", b""]
+    authority = match selection.authority:
+        Some(value) => value.digest
+        None => return Err("the canonical returned fixture has no exact selection")
+    scalar_key = encode_record_key(scalar)?
+    scalar_location = match locate_value(current, scalar_key).map_err((error) => error.message())?:
+        Some(location) => location
+        None => return Err("the partial scalar fixture has no current frame")
+    scalar_revision = hexlify(scalar_location.digest)
+    scalar_eval = evaluation_record_key(LOWERING_PROFILE, scalar_key)
+    scalar_receipt = match evaluation_authority(current, scalar, LOWERING_PROFILE)?:
+        Some((evaluation, _)) => "incan.engine.receipt\t" + evaluation.receipt_root
+        None => return Err("the partial scalar fixture has no current receipt")
+    pointer = "incan.engine.output/2\t" + LOWERING_PROFILE + "\t" + "\t".join(scalar_key.split("\t")[:5])
+    mut scalar_copy = 0
+    for whole in [true, false]:
+        report = folder.joinpath(f"returned-{whole}")
+        report.mkdir(true, true).map_err((error) => error.message())?
+        name = "7269676874"
+        if whole:
+            note = WholeModuleAdmission(
+                module="right", output=value_key, digest=output.context, count=2, selection=authority,
+            )
+            report.joinpath(name + ADMITTED_MODULE_NOTE).write_bytes(encode_whole_module_admission(note)?)
+                .map_err((error) => error.message())?
+        else:
+            offered = AdmittedFunction(function="right_read", identity="native-right-read", references=references)
+            note = AdmittedModule(module="right", complete=false, functions=[offered])
+            report.joinpath(name + PARTIAL_MODULE_NOTE).write_bytes(encode_module_note(note)?)
+                .map_err((error) => error.message())?
+        admissions = plan_module_admissions(report, Some(current), selection.records, Some(authority))?
+        if whole:
+            assert admissions.restored_modules(whole_only=true) == ["right"]
+        else:
+            assert admissions.restored_modules(whole_only=true) == []
+        mut prepared = begin(current)
+        mut source = PreparedBodyRecordSource.open(scope)
+        mut orders = LoweringOrders.new(origin, {})
+        measure_frame_reads(true)
+        before_copy = read_counts().decoded
+        returning = stage_plan_modules(
+            prepared, source, orders, scope, Some(current), origin, [], [], admissions,
+            selection.records.clone(), cutoff,
+        )
+        copied = read_counts().decoded - before_copy
+        returned_reads = finish_frame_reads()
+        carried, namespace, digests = returning?
+        assert namespace == 0
+        exact_return = [read for read in returned_reads if read.key == value_key]
+        if whole:
+            assert carried == [output] and len(exact_return) == 0 and digests[value_key] == output.context
+            assert copied == 0 and len([read.key for read in returned_reads if read.key == scalar_key]) == 0
+        else:
+            assert carried == [partial_output] and len(digests) == 0
+            assert source.matches(partial_key, partial_value), "returned event fold altered the canonical Plan bytes"
+            assert source.matches(scalar_key, product), "the exact retained scalar product was not staged"
+            omitted_key = encode_record_key(other_scalar)?
+            assert not source.holds(omitted_key), "the omitted Plan member was staged"
+            assert len([read for read in returned_reads if read.key == omitted_key]) == 0, "the omitted scalar was read"
+            assert len(exact_return) == 1
+            mut ancillary = 0
+            mut seen: set[str] = set()
+            for read in returned_reads:
+                assert read.key not in seen and read.reads == 1, "expected one physical read per exact key"
+                seen.add(read.key)
+                if read.key == scalar_key:
+                    assert read.revision == scalar_revision and read.value_bytes == len(product)
+                elif read.key == value_key:
+                    assert read.revision == selected_values[0].revision and read.value_bytes == len(value)
+                    ancillary += read.value_bytes
+                elif read.key in [pointer, scalar_eval]:
+                    ancillary += read.value_bytes
+                else:
+                    assert read.key == scalar_receipt, "unexpected returned frame"
+            assert seen == set([value_key, scalar_key, scalar_eval, pointer, scalar_receipt])
+            scalar_copy = copied - ancillary
+    # Decode the fixture independently so this follows event semantics, rather than a binary placeholder.
+    stored = decode_plan_module(required(current, value_key)?)?
+    assert [function.function for function in stored.functions] == ["right_other", "right_read"]
+    mut decoded_members = 0
+    for function in stored.functions:
+        if function.function != "right_read":
+            continue
+        decoded = decode_lowering_event(function.event)?
+        assert [position.line for position in decoded.positions] == [10]
+        assert [reference.name for reference in decoded.references] == ["right_model"]
+        assert decoded.product == product and decoded.identity == "native-right-read"
+        assert decoded.reused and decoded.admitted
+        decoded_members += 1
+    assert decoded_members == 1
+    assert scalar_copy == 0, f"returned Plan scalar copied {scalar_copy} Store payload bytes, expected 0"
+    return Ok(None)

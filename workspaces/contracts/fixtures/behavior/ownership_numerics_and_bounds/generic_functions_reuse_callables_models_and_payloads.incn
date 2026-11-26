@@ -1,0 +1,97 @@
+# behavior: generic callables, model reuse, Result payloads and static constructors retain checked types (#1530)
+# expect-stdout:
+#   2 3
+#   ab-ab 5
+#   fast fast
+#   codec codec
+#   9
+#   b
+#   0
+#   0 -1 1
+#   0
+
+"""Exercise generic calls, retained values and constructor owner arguments with concrete types."""
+
+from std.collections import OrderedSet
+from std.graph import Dag
+
+
+model Algorithm:
+    name: str
+
+
+model Codec:
+    label: str
+
+    def duplicate[T](self, marker: T) -> Codec:
+        return self
+
+
+model Decoded[T]:
+    value: T
+
+
+def call_both[T, U with Display](transform: (T) -> U, first: T, second: T) -> str:
+    return f"{transform(first)} {transform(second)}"
+
+
+def label_twice[T with Display](prefix: str, value: T) -> str:
+    joined = prefix + "-" + prefix
+    return f"{joined} {value}"
+
+
+def copy_algorithm[T, U](algorithm: Algorithm, first: T, second: U) -> str:
+    kept = algorithm
+    return f"{kept.name} {algorithm.name}"
+
+
+def unwrap[T](decoded: Decoded[T]) -> Result[T, str]:
+    return Ok(decoded.value)
+
+
+def find[T](items: list[T], index: int) -> Result[T, str]:
+    mut position = 0
+    for item in items:
+        if position == index:
+            return Ok(item)
+        position += 1
+    return Err("missing")
+
+
+def increment(value: int) -> int:
+    return value + 1
+
+
+def main() -> None:
+    """
+    Exercise concrete generic values, then close a constructor's owner binder exactly once.
+
+    1. Call generic functions with concrete callable, model and payload values.
+    2. Construct an empty generic model through its static constructor.
+    """
+    # 1. Retain the concrete arguments of generic calls and their result payloads.
+    println(call_both(increment, 1, 2))
+    println(label_twice("ab", 5))
+    println(copy_algorithm(Algorithm(name="fast"), 1, "x"))
+    codec = Codec(label="codec")
+    println(f"{codec.duplicate(1).label} {codec.label}")
+    match unwrap(Decoded(value=9)):
+        Ok(value) => println(value)
+        Err(message) => println(message)
+    match find(["a", "b"], 1):
+        Ok(value) => println(value)
+        Err(message) => println(message)
+    # 2. Keep the owner's argument separate from the constructor's method arguments.
+    batch = OrderedSet[str]()
+    println(len(batch))
+    println(f"{position(["kept"], "kept")} {position(["kept"], "missing")} {position([2, 3], 3)}")
+    graph = Dag[str]()
+    println(len(graph.active_node_ids()))
+
+
+def position[T with (Clone, Eq)](items: list[T], value: T) -> int:
+    """Compare indexed generic values without treating a collection element as a structural field."""
+    for index in range(len(items)):
+        if items[index] == value:
+            return index
+    return -1

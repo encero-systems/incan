@@ -1,0 +1,27 @@
+# behavior: race_timeout returns the task's value when the task finishes first, and None when the deadline wins
+# expect-stdout:
+#   finished 7
+#   timed out
+
+from std.async.race import race_timeout
+from std.async.time import sleep
+
+
+async def quick() -> int:
+    await sleep(0.01)
+    return 7
+
+
+async def slow() -> int:
+    await sleep(0.5)
+    return 9
+
+
+async def main() -> None:
+    match await race_timeout(0.5, quick()):
+        Some(value) => println(f"finished {value}")
+        None => println("deadline won")
+
+    match await race_timeout(0.02, slow()):
+        Some(value) => println(f"unexpected {value}")
+        None => println("timed out")

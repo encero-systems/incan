@@ -1,0 +1,16 @@
+# behavior: `assert o is None` on a present Option stops the program after the output before it
+# expect-stdout:
+#   before
+# expect-stderr-contains:
+#   assertion failed: expected None, got Some
+# expect-exit: 101
+
+"""`assert o is None` on a present Option stops the program after the output before it."""
+
+
+def main() -> None:
+    """Print, then assert absence on a present Option."""
+    present: Option[int] = Some(3)
+    println("before")
+    assert present is None
+    println("after")

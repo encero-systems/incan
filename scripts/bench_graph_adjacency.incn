@@ -1,0 +1,110 @@
+"""Measure RFC 166's local-adjacency and tombstone-compaction workloads."""
+
+from rust::std::time import Instant
+from std.graph import DiGraph, GraphError, NodeId
+
+const SIZES = [1000, 10000, 100000, 1000000]
+
+
+def main() -> None:
+    """
+    1. Measure fixed local queries beside successively larger unrelated components.
+    2. Delete most hub edges in sequential and shuffled order.
+    3. Print timings and deterministic store counters for comparison across revisions.
+    """
+    for size in SIZES:
+        measure_local_queries(size)
+    for size in SIZES:
+        measure_tombstones(size, false)
+        measure_tombstones(size, true)
+
+
+def measure_local_queries(unrelated: int) -> None:
+    """Measure fixed-output local operations beside `unrelated` nodes and twice as many unrelated edges."""
+    mut graph = DiGraph[int]()
+    hub = graph.add_node(0)
+    mut local: list[NodeId] = []
+    for value in range(8):
+        node = graph.add_node(value + 1)
+        local.append(node)
+        graph.add_edge(hub, node)
+        graph.add_edge(node, hub)
+    chain_a = graph.add_node(20)
+    chain_b = graph.add_node(21)
+    chain_c = graph.add_node(22)
+    graph.add_edge(chain_a, chain_b)
+    graph.add_edge(chain_b, chain_c)
+
+    mut unrelated_nodes: list[NodeId] = []
+    for value in range(unrelated):
+        unrelated_nodes.append(graph.add_node(value))
+    for index in range(unrelated):
+        next = unrelated_nodes[(index + 1) % unrelated]
+        previous = unrelated_nodes[(index + unrelated - 1) % unrelated]
+        graph.add_edge(unrelated_nodes[index], next)
+        graph.add_edge(unrelated_nodes[index], previous)
+
+    started = Instant.now()
+    present = graph.contains_node(hub)
+    edge = graph.contains_edge(hub, local[0])
+    successors = result_length(graph.successors(hub))
+    predecessors = result_length(graph.predecessors(hub))
+    reachable = result_length(graph.bfs_nodes(hub))
+    graph.remove_node(local[7])
+    elapsed = int(started.elapsed().as_millis())
+    println(
+        f"local {unrelated} ms {elapsed} output {present} {edge} {successors} {predecessors} {reachable} {graph.contains_node(
+            local[7],
+        )}",
+    )
+
+
+def measure_tombstones(degree: int, shuffled: bool) -> None:
+    """Delete 90 percent of one hub's edges and print the retained adjacency counters."""
+    mut graph = DiGraph[int]()
+    hub = graph.add_node(0)
+    mut targets: list[NodeId] = []
+    for value in range(degree):
+        node = graph.add_node(value + 1)
+        targets.append(node)
+        graph.add_edge(hub, node)
+    started = Instant.now()
+    for deletion in range(degree * 9 // 10):
+        mut index = deletion
+        if shuffled:
+            index = (deletion * 104729) % degree
+        graph.remove_edge(hub, targets[index])
+    elapsed = int(started.elapsed().as_millis())
+    physical = graph.adjacency_physical_count(hub)
+    live = graph.adjacency_live_count(hub)
+    tombstones = graph.adjacency_tombstone_count(hub)
+    print_counters(physical, live, tombstones, degree, shuffled, elapsed)
+
+
+def result_length(result: Result[list[NodeId], GraphError]) -> int:
+    """Return a successful node-list length, or `-1` for an unexpected benchmark error."""
+    match result:
+        Ok(nodes) => return len(nodes)
+        Err(_) => return -1
+
+
+def print_counters(
+    physical: Result[int, GraphError],
+    live: Result[int, GraphError],
+    tombstones: Result[int, GraphError],
+    degree: int,
+    shuffled: bool,
+    elapsed: int,
+) -> None:
+    """Print one tombstone workload row when all deterministic counters are available."""
+    match physical:
+        Ok(physical_count) =>
+            match live:
+                Ok(live_count) =>
+                    match tombstones:
+                        Ok(tombstone_count) => println(
+                            f"tombstones {degree} shuffled {shuffled} ms {elapsed} counts {physical_count} {live_count} {tombstone_count}",
+                        )
+                        Err(_) => println("tombstone counter error")
+                Err(_) => println("live counter error")
+        Err(_) => println("physical counter error")

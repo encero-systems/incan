@@ -1,0 +1,406 @@
+"""Settle one captured program request, select its result and protect the caller's execution roots."""
+
+from std.fs import Path
+from std.environ import get_or
+from std.primitives.locking import LockGuard
+from rust::std::rc import Rc
+from rust::std::mem import drop, take
+from std.encoding.hex import hexlify
+from engine_channel import Channel
+from compiler_graph_records import ReceiptProjectionCache
+from engine_messages import BindingOutcome, Captured, Complete, CompletionStatus, Message
+from engine_overlay import is_editor_view, preparation_stop_report
+from files import write
+from engine_replies import send
+from request_directory import serve_from, served
+from engine_programs import (
+    PreparedProgram, ProgramOutcome, check_program, obtain, prepare_program, prepare_selection, program_handle, view_sealed,
+)
+from graph_read_demands import begin_graph_demands, finish_graph_demands, note_graph_demand
+from engine_epochs import CapturedRequest, after_projection, initial_program_epoch
+from engine_capture import CaptureCounters, InputRole
+from engine_proofs import retain, prepare_report
+from pub::incan_platform.store import (
+    SnapshotAdmission, Transaction, begin as begin_selection, commit, commit_pinned, read_counts,
+    measure_frame_reads, finish_frame_reads,
+)
+from observation import trace
+from jec import begin, record
+from pub::incan_platform.trace import Operation
+from installation_page import begin_command, end_command
+from trace_adapter import collect_reasons, collected_reasons, count_frozen_work, finish_frozen_counting
+from toolchain import toolchain_directory
+from home import standard_library_dir
+
+
+pub model Pending:
+    """One transient captured request; its input observations are released when this activation settles."""
+
+    pub request: bytes
+    pub token: str
+    pub capture: CapturedRequest
+    pub view: str
+    pub proofs: bool
+    pub producer: str
+    pub command: str
+    pub format: str
+    pub handle: str = ""
+    # The directory the client's command ran in; its compilations are for that directory.
+    pub directory: str = ""
+    # The canonical unit options the client parsed; empty for an ordinary unit.
+    pub unit_options: str = ""
+    # The generation of the records this request reads and writes: its engine's compiler and Oven.
+    pub records: str = ""
+    # This request's exclusive source-record authority, as classified before capture.
+    pub origin: str = ""
+
+
+pub model ExecutionLease:
+    """A live substrate lease over the exact selected view, retained until release or client disconnect."""
+
+    pub token: str
+    pub snapshot: str
+    pub handle: str
+    pub held: Rc[LockGuard]
+
+
+pub model Ready:
+    """A completed caller's control reply, diagnostic stream handles and optional execution lease."""
+
+    pub message: Complete
+    pub console: str
+    pub incomplete_proof: str = ""
+    pub pin: Option[ExecutionLease] = None
+
+
+pub def finish_request(
+    store: Path, mut admission: SnapshotAdmission, pending: Pending, mut channel: BorrowedMut[Channel],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[Ready, str]:
+    """
+    Capture installed facts once for this activation and resume reconciliation before the next request. The unit
+    reasons the request records travel back with its completion, so they reach the caller's own trace channel.
+    """
+    begin_command()
+    serve_from(pending.directory)
+    collect_reasons()
+    mut action = pending
+    settled = settled_request(store, admission, action, channel, receipts)
+    notes = "\n".join(collected_reasons())
+    served()
+    end_command()
+    mut ready = settled?
+    ready.message.notes = notes
+    return Ok(ready)
+
+
+def settled_request(
+    store: Path, mut admission: SnapshotAdmission, mut pending: Pending, mut channel: BorrowedMut[Channel],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[Ready, str]:
+    """
+    Settle one request without executing user code in the engine.
+
+    1. Ask for the captured unit record, activating its epoch only on a miss.
+    2. Retain counters only when this caller explicitly requested a proof report.
+    3. Select successful results in the caller's virtual view and hold an execution lease before replying.
+    """
+    # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
+    run = hexlify(pending.request)
+    directory = store.joinpath("engine/console")
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    if pending.command == "check":
+        announce_capture(pending, channel)?
+        return settled_check(store, admission, pending, directory.joinpath(run).0)
+    producing = begin()
+    toolchain = toolchain_directory()?.0 + "/"
+    standard = standard_library_dir()?.0 + "/"
+    count_frozen_work([toolchain, standard])
+    reading = read_counts()
+    begin_graph_demands(pending.proofs)
+    measure_frame_reads(pending.proofs)
+    produced_result = produce_program(store, admission, pending, directory.joinpath(run).0, channel, receipts)
+    frame_reads = finish_frame_reads()
+    graph_demands = finish_graph_demands()
+    frozen = finish_frozen_counting()
+    read = read_counts()
+    mut produced = produced_result?
+    produced.index_pages = read.pages - reading.pages
+    produced.keys_listed = read.listed - reading.listed
+    produced.store_frames_read = read.records - reading.records
+    produced.store_frame_bytes = read.bytes - reading.bytes
+    produced.store_decoded_bytes = read.decoded - reading.decoded
+    produced.store_metadata_bytes_copied = read.copied - reading.copied
+    produced.store_index_bytes_checked = read.index_bytes_checked - reading.index_bytes_checked
+    produced.store_digest_only_payload_bytes = read.digest_only_payload_bytes - reading.digest_only_payload_bytes
+    produced.store_digest_only_reads = read.digest_only_reads - reading.digest_only_reads
+    produced.frame_reads = frame_reads
+    produced.graph_demands = graph_demands
+    mut counters = pending.capture.counters
+    counters.frozen.stats += frozen.stats
+    counters.frozen.reads += frozen.reads
+    counters.frozen.hashes += frozen.hashes
+    record(Operation.EngineUnit, pending.capture.revision, producing)
+    # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
+    mut observation = ""
+    if produced.library and produced.code == 0:
+        return settled_library(store, pending, run, counters, produced)
+    match produced.unit:
+        None =>
+            mut incomplete = ""
+            if pending.proofs:
+                match retain(store, run, counters, produced):
+                    Ok(handle) => observation = handle
+                    Err(reason) => incomplete = reason
+            return Ok(
+                Ready(
+                    message=Complete(
+                        snapshot="",
+                        admission_proof="",
+                        result_handles="",
+                        binding_outcome=BindingOutcome.NotSelected,
+                        status=CompletionStatus.Failed,
+                        observation_handle=observation,
+                    ),
+                    console=produced.console,
+                    incomplete_proof=incomplete,
+                ),
+            )
+        Some(unit) =>
+            # 3. A completed native descriptor is selected independently for each caller.
+            selecting = begin()
+            mut captured = after_projection(pending.capture)?
+            mut selection = prepare_selection(admission, pending.view, unit, pending.handle)?
+            mut group: list[Transaction] = []
+            if let Some(transaction) = take(captured.transaction):
+                group.append(transaction)
+            if let Some(transaction) = take(produced.transaction):
+                group.append(transaction)
+            if let Some(transaction) = take(produced.view_transaction):
+                group.append(transaction)
+            if let Some(transaction) = take(selection.transaction):
+                group.append(transaction)
+            mut warning_claim: Option[LockGuard] = None
+            if let Some(warnings) = take(produced.prepared_warnings):
+                warning_claim = Some(warnings.claim)
+                group.append(warnings.transaction)
+            if pending.proofs:
+                group.append(prepare_report(admission, run, counters, produced)?)
+                observation = run
+            if len(group) == 0:
+                group.append(begin_selection(selection.snapshot))
+            published = commit_pinned(group, pending.view).map_err((error) => error.message())?
+            drop(warning_claim)
+            selected = published.snapshot
+            # The commit flushed the baked unit's payloads; only now may the executable be viewed.
+            view_sealed(store, produced.sealed)?
+            if produced.native_bakes > 0:
+                trace(
+                    f"bakery {unit.identity[:12]}: baked program {Path(unit.binary).name()} (generation {selected.generation})",
+                )
+
+            record(Operation.EngineSelect, pending.view, selecting)
+            pinning = begin()
+            held = required_pin(published.pin)?
+            record(Operation.EngineLease, pending.view, pinning)
+            handle = pending.handle
+            pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=held)
+            return Ok(
+                Ready(
+                    message=Complete(
+                        snapshot=selected.digest,
+                        admission_proof=unit.identity,
+                        result_handles=handle,
+                        binding_outcome=BindingOutcome.Selected,
+                        status=CompletionStatus.Success,
+                        observation_handle=observation,
+                    ),
+                    console=produced.console,
+                    pin=Some(pin),
+                ),
+            )
+
+
+def produce_program(
+    store: Path, mut admission: SnapshotAdmission, mut pending: BorrowedMut[Pending], console: str,
+    mut channel: BorrowedMut[Channel], mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[ProgramOutcome, str]:
+    """Announce the selected epoch before using its exact handle, prepared unit and deferred receipt metadata."""
+    prepared = prepare_initial_program(pending, console)?
+    pending.handle = program_handle(pending.capture.identity, pending.producer, pending.view)?
+    announce_capture(pending, channel)?
+    if pending.proofs:
+        note_graph_demand("capture-mode", pending.capture.snapshot, pending.capture.revision)
+    return obtain(
+        store, admission, pending.capture.revision, pending.handle, console, receipts, Some(pending.capture.epoch),
+        pending.producer, Some(pending.capture.selected), pending.unit_options, pending.records, pending.origin,
+        pending.capture.readings, prepared, report_lowering=pending.proofs,
+    )
+
+
+def prepare_initial_program(mut pending: BorrowedMut[Pending], console: str) -> Result[Option[PreparedProgram], str]:
+    """Answer a new source-only named project's reach before acknowledging its capture."""
+    let captured: Borrowed[CapturedRequest] = pending.capture
+    if not captured.first or captured.reach is not None or len(captured.epoch.declarations) == 0:
+        return Ok(None)
+    if pending.unit_options != "" or is_editor_view(pending.view) or get_or("OVEN_BODY_REFUSALS", "default") == "list":
+        return Ok(None)
+    if captured.epoch.roots[0].endswith("/lib.incn"):
+        return Ok(None)
+    # The program graph covers its Incan sources. A path dependency or a Rust facet has
+    # its own source membership, which the ordinary capture must keep through publication.
+    for declaration in captured.epoch.declarations:
+        if len(declaration.dependencies) > 0 or declaration.rust_source_root != "":
+            return Ok(None)
+    for item in captured.epoch.inputs:
+        if item.role == InputRole.ProjectMember or (item.role == InputRole.Member and not item.path.endswith(".incn")):
+            return Ok(None)
+    mut prepared = prepare_program(
+        captured.epoch, pending.view, console, Some(captured.selected), pending.unit_options, pending.origin,
+        captured.readings,
+    )?
+    if prepared.toolchain.captured_source_inputs and prepared.unit.project_library is None and prepared.unit.package != "":
+        if let Some(graph) = take(prepared.reach):
+            initial_program_epoch(pending.capture, graph, prepared.unit.source_root)?
+    return Ok(Some(prepared))
+
+
+def announce_capture(pending: Borrowed[Pending], mut channel: BorrowedMut[Channel]) -> Result[None, str]:
+    """Send the single immutable capture identity used by this request's subsequent result selection."""
+    let capture: Borrowed[CapturedRequest] = pending.capture
+    selected = f"snapshot:{capture.snapshot.generation}:{capture.snapshot.digest}"
+    return send(channel, pending.request, Message.Captured(Captured(epoch=capture.identity, snapshot=selected))).map_err(
+        (reason) => reason.detail,
+    )
+
+
+def settled_library(
+    store: Path,
+    pending: Pending,
+    run: str,
+    counters: CaptureCounters,
+    produced: ProgramOutcome,
+) -> Result[Ready, str]:
+    """A built library selects no native descriptor: publish its capture and complete successfully without a lease."""
+    captured = after_projection(pending.capture)?
+    mut snapshot = captured.snapshot.digest
+    if let Some(transaction) = captured.transaction:
+        snapshot = commit(transaction).map_err((error) => error.message())?.digest
+    mut observation = ""
+    mut incomplete = ""
+    if pending.proofs:
+        match retain(store, run, counters, produced):
+            Ok(handle) => observation = handle
+            Err(reason) => incomplete = reason
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot=snapshot,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=CompletionStatus.Success,
+                observation_handle=observation,
+            ),
+            console=produced.console,
+            incomplete_proof=incomplete,
+        ),
+    )
+
+
+def settled_check(store: Path, mut admission: SnapshotAdmission, pending: Pending, console: str) -> Result[Ready, str]:
+    """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
+    checking = begin()
+    reading = read_counts()
+    begin_graph_demands(pending.proofs)
+    if pending.proofs:
+        note_graph_demand("capture-mode", pending.capture.snapshot, pending.capture.revision)
+    measure_frame_reads(pending.proofs)
+    result = check_program(
+        store,
+        admission,
+        pending.capture.revision,
+        console,
+        pending.format,
+        Some(pending.capture.epoch),
+        Some(pending.capture.selected),
+        pending.view,
+        pending.unit_options,
+        pending.records,
+        pending.origin,
+    )
+    frame_reads = finish_frame_reads()
+    graph_demands = finish_graph_demands()
+    read = read_counts()
+    outcome = result?
+    record(Operation.EngineUnit, pending.capture.revision, checking)
+    if let Some(stopped) = outcome.preparation_stop:
+        # A trust stop precedes compiler work and leaves the previous capture selected.
+        write(Path(f"{outcome.console}.out"), preparation_stop_report(stopped)?)?
+        return Ok(Ready(
+            message=Complete(
+                snapshot=pending.capture.snapshot.digest,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=CompletionStatus.Failed,
+                observation_handle="",
+            ),
+            console=outcome.console,
+        ))
+    captured = after_projection(pending.capture)?
+    mut snapshot = captured.snapshot.digest
+    if let Some(transaction) = captured.transaction:
+        snapshot = commit(transaction).map_err((error) => error.message())?.digest
+    mut status = CompletionStatus.Success
+    if outcome.code != 0:
+        status = CompletionStatus.Failed
+    # A requested report shows that a check produced no unit, no plans and no native bake, and which bodies it checked.
+    mut observation = ""
+    mut incomplete = ""
+    if pending.proofs:
+        checked = ProgramOutcome(
+            code=outcome.code,
+            index_pages=read.pages - reading.pages,
+            keys_listed=read.listed - reading.listed,
+            store_frames_read=read.records - reading.records,
+            store_frame_bytes=read.bytes - reading.bytes,
+            store_decoded_bytes=read.decoded - reading.decoded,
+            store_metadata_bytes_copied=read.copied - reading.copied,
+            store_index_bytes_checked=read.index_bytes_checked - reading.index_bytes_checked,
+            store_digest_only_payload_bytes=read.digest_only_payload_bytes - reading.digest_only_payload_bytes,
+            store_digest_only_reads=read.digest_only_reads - reading.digest_only_reads,
+            frame_reads=frame_reads,
+            graph_demands=graph_demands,
+            body_evaluations=outcome.body_evaluations,
+            body_reuses=outcome.body_reuses,
+            body_page_writes=outcome.body_page_writes,
+            body_page_decodes=outcome.body_page_decodes,
+        )
+        match retain(store, hexlify(pending.request), pending.capture.counters, checked):
+            Ok(handle) => observation = handle
+            Err(reason) =>
+                if outcome.code == 0:
+                    return Err(reason)
+                incomplete = reason
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot=snapshot,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=status,
+                observation_handle=observation,
+            ),
+            console=outcome.console,
+            incomplete_proof=incomplete,
+        ),
+    )
+
+
+def required_pin(pin: Option[Rc[LockGuard]]) -> Result[Rc[LockGuard], str]:
+    """A completed request must already hold its selected generation's execution pin."""
+    match pin:
+        Some(held) => return Ok(held)
+        None => return Err("publication completed without an execution pin")

@@ -1,0 +1,30 @@
+# behavior: a call through a `c.framework` binding links the Apple framework, as 0.5.1's `#[link(kind = "framework")]` did; the case runs only where Apple frameworks exist (#3132)
+# hosts: macos
+# cli-commands:
+#   oven run src/main.incn
+# expect-stdout:
+#   after 2023
+
+from std.interop import c
+
+
+binding Foundation:
+    header = "CoreFoundation/CoreFoundation.h"
+    link = c.framework("CoreFoundation")
+
+    symbol now() -> c.f64:
+        native = "CFAbsoluteTimeGetCurrent"
+
+
+def seconds() -> f64:
+    """Seconds since 2001 from CoreFoundation."""
+    unsafe:
+        return Foundation.now()
+
+
+def main() -> None:
+    """Print which side of 2023 the framework's clock is on."""
+    if seconds() > 700000000.0:
+        println("after 2023")
+    else:
+        println("before 2023")

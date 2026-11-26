@@ -1,0 +1,14 @@
+# behavior: `oven lock` writes the root and path graph, a plain build reads it without writing it, and locked mode consumes it without stream changes.
+# cli-commands:
+#   oven lock .
+#   oven build .
+#   oven build --locked .
+# expect-stderr:
+# expect-exit: 0
+
+from pub::helper import helper_value
+
+
+def main() -> None:
+    """Run the program whose path dependency is fixed by `oven.lock`."""
+    println(helper_value())

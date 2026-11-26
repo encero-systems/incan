@@ -1,0 +1,7 @@
+# behavior: a path dependency whose directory does not exist refuses the unit, naming the dependency
+# expect-exit: 1
+# expect-stderr-contains:
+#   ghost
+
+def main() -> None:
+    println("unreachable")

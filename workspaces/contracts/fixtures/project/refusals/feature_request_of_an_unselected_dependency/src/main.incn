@@ -1,0 +1,11 @@
+# behavior: a feature that requests features of an optional dependency no active feature selects refuses the unit, naming the dependency
+# expect-exit: 1
+# expect-stderr-contains:
+#   `engine`
+# cli-commands:
+#   oven describe-unit src/main.incn
+#   build src/main.incn
+#   build rust_consumer
+
+def main() -> None:
+    println("unreachable")

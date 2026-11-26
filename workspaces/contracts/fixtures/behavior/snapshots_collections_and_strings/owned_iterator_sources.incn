@@ -1,0 +1,120 @@
+# behavior: flat and nested list iterators and generator expressions keep the source readable after use (#602, #2426)
+# expect-stdout:
+#   2
+#   1
+#   1
+#   7
+#   4
+#   [2, 1] [2, 1] 3
+
+"""Retain ordered flat and nested values and readable sources across lazy consumers."""
+
+
+def double(x: int) -> int:
+    """Double an iterator item."""
+    return x * 2
+
+
+def collect_last_use(xs: list[int]) -> list[int]:
+    """Collect transformed items from a list parameter."""
+    return xs.iter().map(double).collect()
+
+
+def generator_last_use(xs: list[int]) -> Generator[int]:
+    """Return a lazy producer whose caller owns the source."""
+    return (x for x in xs if x > 0)
+
+
+def generator_one_shot() -> Generator[int]:
+    """Return a lazy producer that retains its temporary source."""
+    return (x for x in [1, 2, 3] if x > 0)
+
+
+def collect_reused(values: list[int]) -> int:
+    """Read a flat source after its iterator has been consumed."""
+    total = values.iter().sum()
+    first = values[0]
+    return total + first
+
+
+def generator_reused(values: list[int]) -> int:
+    """Read a flat source after its generator expression has been consumed."""
+    generated = (x for x in values if x > 0).collect()
+    first = values[0]
+    return len(generated) + first
+
+
+def adapters_end_before_mutation() -> int:
+    """End a carried dependency at its terminal call before changing the source."""
+    mut values = [1, 2, 3]
+    total = values.iter().map(double).take(2).sum()
+    values.append(total)
+    return values[3]
+
+
+def explicit_snapshot_is_independent() -> int:
+    """Keep an explicitly cloned source independent from later source changes."""
+    mut values = [1, 2, 3]
+    generated = values.clone().iter()
+    values.append(4)
+    return generated.sum() + values[3]
+
+
+def returned_local_source() -> Generator[int]:
+    """Transfer a local list into its escaping generator."""
+    values = [2, 4, 6]
+    return (value for value in values)
+
+
+def branch_last_use(selected: bool) -> int:
+    """End the dependency independently on a branch that consumes it and a branch that never does."""
+    mut values = [1, 2, 3]
+    generated = values.iter()
+    if selected:
+        total = generated.sum()
+        values.append(total)
+    else:
+        values.append(4)
+    return values[3]
+
+
+def nested_source_ends_before_mutation() -> int:
+    """Carry a nested-list dependency through a generator, then change the outer list after collection."""
+    mut rows = [[1, 2], [3]]
+    lengths = (len(row) for row in rows).collect()
+    rows.append([4, 5, 6])
+    return lengths[0] + len(rows[2])
+
+
+def main() -> None:
+    """1. Exercise flat sources. 2. Compare nested iterator forms and reread their original source."""
+    # 1. Exercise flat sources.
+    collected = collect_last_use([1, 2, 3])
+    generated = generator_last_use([1, 2, 3]).collect()
+    generated_direct = generator_one_shot().collect()
+    reused_iter = collect_reused([1, 2, 3])
+    reused_gen = generator_reused([1, 2, 3])
+    println(collected[0])
+    println(generated[0])
+    println(generated_direct[0])
+    println(reused_iter)
+    println(reused_gen)
+    assert adapters_end_before_mutation() == 6
+    assert explicit_snapshot_is_independent() == 10
+    assert returned_local_source().sum() == 12
+    assert branch_last_use(true) == 6
+    assert branch_last_use(false) == 4
+    assert nested_source_ends_before_mutation() == 5
+
+    # 2. Compare nested iterator forms and reread their original source.
+    show_nested_sources()
+
+
+def show_nested_sources() -> None:
+    """Collect row lengths through both lazy forms while retaining the original nested list."""
+    rows = [[1, 2], [3]]
+    mut iterated: list[int] = []
+    for row in rows.iter():
+        iterated.append(len(row))
+    generated = (len(row) for row in rows).collect()
+    println(f"{iterated:?} {generated:?} {rows[1][0]}")

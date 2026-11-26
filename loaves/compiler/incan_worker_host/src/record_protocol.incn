@@ -1,0 +1,20 @@
+"""The version-two record-activation messages and their closed request and reply sets. Implemented in Rust by `incan_worker_host_native`; this module keeps the reference import path."""
+
+pub from rust::incan_worker_host_native import (
+    RECORD_SCHEMA,
+    RecordMessageKind,
+    Prepare,
+    Prepared,
+    NeedPrerequisite,
+    Evaluate,
+    Produced,
+    SemanticRefusal,
+    CompilerFault,
+    RecordMessage,
+    RecordAdmission,
+    admit_record,
+    encode_record_message,
+    decode_record_message,
+    accept_record_reply,
+    record_frame,
+)

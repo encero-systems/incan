@@ -1,0 +1,13 @@
+# behavior: A `requires-incan` that is not a version requirement makes the manifest invalid, naming the field (RFC 073, #3140).
+# cli-commands:
+#   oven check src/main.incn
+#   check src/main.incn
+#   oven env list
+# expect-stdout:
+# expect-stderr-contains:
+#   requires-incan
+# expect-exit: 1
+
+def main() -> None:
+    """A program the refused commands never compile."""
+    pass

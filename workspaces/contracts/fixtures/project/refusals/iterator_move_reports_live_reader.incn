@@ -1,0 +1,22 @@
+# behavior: moving a list with a live iterator reports the reader origin, transfer and path-sensitive later use exactly once (#2426)
+# cli-commands:
+#   check src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   INCAN-T0001
+#   cannot move `xs` while `it` is still reading it
+#   `it` reads `xs` from here
+#   `xs` is moved here
+#   `it` is used again here
+#   finish using `it` before moving `xs`, or write `xs.clone().iter()` to iterate over a copy
+# expect-exit: 1
+
+def consume(xs: Owned[list[int]]) -> None:
+    println(xs)
+
+
+def main() -> None:
+    mut xs = [1, 2, 3]
+    it = xs.iter()
+    consume(xs)
+    println(it.collect())

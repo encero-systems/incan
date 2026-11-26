@@ -1,0 +1,60 @@
+"""Declare public methods, private helpers, a module-private trait and language hooks (#2570)."""
+
+
+trait Measured:
+    def measure(self) -> int
+
+
+pub trait Named:
+    def name(self) -> str
+
+
+pub model Box with Measured, Named:
+    pub size: int
+    twice = doubled
+
+    pub def doubled(self) -> int:
+        """Reach an unmarked helper and a module-private trait method from the model's own method."""
+        return self.grow(self.size) + self.measure()
+
+    def grow(self, amount: int) -> int:
+        return amount * 2
+
+    def measure(self) -> int:
+        return 0
+
+    def name(self) -> str:
+        return "box"
+
+    def __eq__(self, other: Box) -> bool:
+        return self.size == other.size
+
+
+pub class Base:
+    pub id: int
+
+    pub def label(self) -> str:
+        return f"base {self.id}"
+
+
+pub class Derived extends Base:
+    pub def label(self) -> str:
+        return f"derived {self.id}"
+
+
+pub def measured(value: Box) -> int:
+    """Call a method that takes the visibility of a module-private trait, in the trait's module."""
+    return value.measure() + value.size
+
+
+model Draft:
+    words: int
+
+    def size(self) -> int:
+        return self.words
+
+
+pub def draft_size(words: int) -> int:
+    """Call an unmarked method and read an unmarked field of a model without `pub`, from a function of its module."""
+    draft = Draft(words=words)
+    return draft.size() + draft.words

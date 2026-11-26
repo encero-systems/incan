@@ -1,0 +1,9 @@
+--- a/loaves/compiler/incan_lowering/src/lowering.rs
++++ b/loaves/compiler/incan_lowering/src/lowering.rs
+@@ -1164,5 +1164,5 @@
+ fn trace_lowering(enabled: bool, stage: &str) {
+-    if enabled {
++    if enabled && true {
+         emit("lowering", "INCAN_TRACE_LOWERING", &format!("lowering: {stage}"));
+     }
+ }

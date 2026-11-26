@@ -1,0 +1,6 @@
+[project]
+name = "tags"
+version = "0.1.0"
+
+[[rust.lib]]
+path = "src/lib.rs"

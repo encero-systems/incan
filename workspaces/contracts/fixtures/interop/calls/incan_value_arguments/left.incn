@@ -1,0 +1,14 @@
+"""The first owner of Item."""
+
+
+pub model Item:
+    """A one-field source value."""
+
+    pub value: int
+
+
+pub enum Signal:
+    """A source enum whose imported alias must keep the declaring owner."""
+
+    Ready
+    Done

@@ -1,0 +1,233 @@
+"""Staged compiler inputs: a page the store verified by its digest is named by that digest beside it."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.primitives.text import copy_frozen_bytes
+from pub::incan_mir_plan import PLAN_MODULE_SELECTION_PAGE
+from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT
+from scratch import scratch_directory
+from incan_units import obtain_executable
+from compiler_body_values import SelectedBodyPage
+from files import read, write
+from unit import UnitDescription
+from unit_compiler import (
+    DIGEST_COMPANION,
+    FRAME_LIST,
+    compile_prepared_unit,
+    selected_plan_module_digest,
+    write_selected_records,
+)
+from toolchain import Toolchain, load_toolchain
+from unit_freshness import Key, fingerprint
+
+const NAMED: str = "6e616d6564.incnmodule.positioned"
+const DIGEST: str = "abababababababababababababababababababababababababababababababab"
+
+
+def staged_unit() -> UnitDescription:
+    """A unit with the compiler context that records staging requires."""
+    mut unit = UnitDescription(
+        source="/checkout/project/src/main.incn",
+        project_root="/checkout/project",
+        source_root="/checkout/project/src",
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    unit.checked_context = Some("checked-context")
+    return unit
+
+
+pub def test_a_staged_page_with_a_known_digest_is_named_by_it() -> Result[None, str]:
+    """
+    A page selected with its verified digest is staged with a companion holding that digest, so a resident compiler
+    finds the content it already read without reading or hashing the page; a page without one has no companion.
+    """
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("records")
+    mut pages = [
+        SelectedBodyPage(key=NAMED, value=b"module page", digest=DIGEST),
+        SelectedBodyPage(key="namespace-page", value=b"namespace page"),
+    ]
+    assert selected_plan_module_digest(pages)? is None
+    selection = b"selected request payload"
+    digest = hexlify(sha256.digest(selection))
+    pages.append(SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=selection, digest=digest))
+    assert selected_plan_module_digest(pages)? == Some(digest)
+    write_selected_records(directory, staged_unit(), pages)?
+    named = directory.joinpath(NAMED + DIGEST_COMPANION).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert named == DIGEST
+    assert directory.joinpath(NAMED).read_bytes().map_err((error) => error.message())? == b"module page"
+    assert not directory.joinpath("namespace-page" + DIGEST_COMPANION).exists()
+    selection_digest = directory.joinpath(PLAN_MODULE_SELECTION_PAGE + DIGEST_COMPANION)
+    assert selection_digest.read_bytes().map_err((error) => error.message())? == digest.encode("utf-8")
+    assert directory.joinpath(PLAN_MODULE_SELECTION_PAGE).read_bytes().map_err((error) => error.message())? == selection
+    return Ok(None)
+
+
+pub def test_pages_offered_by_their_store_frames_are_staged_as_one_frame_list() -> Result[None, str]:
+    """
+    Pages selected with their digests and the immutable store frames that hold them are staged as one frame list, one
+    line per page naming its frame range and digest, and no file of their own: an edit writes that list and copies
+    only the pages it has no frame for. The compiler reads a page's bytes from the store only when it does not
+    already hold this content.
+    """
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("records")
+    other = "6f74686572.incnmodule.positioned"
+    pages = [
+        SelectedBodyPage(key=NAMED, value=b"", digest=DIGEST, segment="/store/segments/one.seg", offset=24, length=11),
+        SelectedBodyPage(key=other, value=b"", digest=DIGEST, segment="/store/segments/two.seg", offset=8, length=11),
+        SelectedBodyPage(key="namespace-page", value=b"namespace page", digest=DIGEST),
+    ]
+    write_selected_records(directory, staged_unit(), pages)?
+    listed = directory.joinpath(FRAME_LIST).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert listed == f"{NAMED}\t/store/segments/one.seg\t24\t11\t{DIGEST}\n{other}\t/store/segments/two.seg\t8\t11\t{DIGEST}\n", listed
+    mut names: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        names.append(entry.name())
+    expected = sorted([FRAME_LIST, "namespace-page", "namespace-page" + DIGEST_COMPANION, "producer-profile"])
+    assert sorted(names) == expected, f"staged {sorted(names)}"
+    return Ok(None)
+
+
+pub def test_compact_plan_selection_refuses_before_replacing_products() -> Result[None, str]:
+    """
+    Duplicate and malformed compact selections must fail before replacing a request's staged inputs.
+
+    1. Prepare one executable unit with the exact graph format marker its compiler expects.
+    2. Try duplicate and malformed selection pages against two existing request products directories.
+    """
+    # 1. The ordinary graph marker makes this a valid activation apart from the selection itself.
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("main.incn")
+    write(source, "def main() -> int:\n    return 0\n")?
+    mut unit = staged_unit()
+    unit.source = source.0
+    unit.project_root = root.0
+    unit.source_root = root.0
+    toolchain = load_toolchain()?
+    marker = SelectedBodyPage(key=EXECUTABLE_GRAPH_INPUT, value=copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT))
+    # 2. Each rejected activation must leave its exact previous products in place.
+    value = b"selected"
+    digest = hexlify(sha256.digest(value))
+    selected = SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=value, digest=digest)
+    malformed = SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=value, digest="bad digest")
+    assert_unstaged_plan_selection(unit, toolchain, root.joinpath("duplicate"), [marker, selected, selected])?
+    assert_unstaged_plan_selection(unit, toolchain, root.joinpath("malformed"), [marker, malformed])?
+    return Ok(None)
+
+
+def assert_unstaged_plan_selection(
+    unit: UnitDescription, toolchain: Toolchain, root: Path, pages: list[SelectedBodyPage],
+) -> Result[None, str]:
+    """An invalid request leaves an existing private products directory and its bytes intact."""
+    products = root.joinpath("products")
+    products.mkdir(true, true).map_err((error) => error.message())?
+    sentinel = products.joinpath("sentinel")
+    write(sentinel, "prior attempt\n")?
+    output = root.joinpath("program")
+    identity = fingerprint(["compact plan staging control", root.0])?
+    key = Key(digest=identity, codegen=identity, parts=[], refusal="isolated staging control")
+    result = compile_prepared_unit(
+        unit, toolchain, output, Some(key), graph_body_records=Some(pages), records_directory=Some(products),
+    )
+    mut staged: list[str] = []
+    for entry in products.iterdir().map_err((error) => error.message())?:
+        staged.append(entry.name())
+    assert staged == ["sentinel"], f"invalid compact selection replaced request products: {sorted(staged)}"
+    assert sentinel.read_bytes().map_err((error) => error.message())? == b"prior attempt\n"
+    assert not output.exists(), "invalid compact selection produced an executable"
+    match result:
+        Ok(code) => assert false, f"invalid compact selection returned compiler exit {code}"
+        Err(reason) => assert "plan module selection" in reason, reason
+    return Ok(None)
+
+
+pub def test_compile_prepared_unit_passes_exactly_one_selection_digest_to_a_capable_driver() -> Result[None, str]:
+    """
+    Count the exact selection option at the compiler's ordinary process boundary.
+
+    1. Prepare the ordinary executable unit and the selected in-memory authority.
+    2. Run both scalar controls and check that the selected request emits and returns one exact digest.
+    3. Refuse the same selected input in a separate dispatch and require its failure to carry no authority.
+    """
+    # 1. The compact page carries the same digest that the invocation must supply.
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("main.incn")
+    write(source, "def main() -> int:\n    return 0\n")?
+    mut unit = staged_unit()
+    unit.source = source.0
+    unit.project_root = root.0
+    unit.source_root = root.0
+    mut toolchain = load_toolchain()?
+    toolchain.supports_plan_module_selection_digest = false
+    marker = SelectedBodyPage(key=EXECUTABLE_GRAPH_INPUT, value=copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT))
+    value = b"selected request payload"
+    digest = hexlify(sha256.digest(value))
+    selected = SelectedBodyPage(key=PLAN_MODULE_SELECTION_PAGE, value=value, digest=digest)
+
+    # 2. The scalar arms differ only in whether their toolchain advertises the capability.
+    check_plan_selection_option(unit, toolchain, root.joinpath("legacy-scalar"), [marker], None)?
+    mut capable = toolchain
+    capable.supports_plan_module_selection_digest = true
+    check_plan_selection_option(unit, capable, root.joinpath("capable-scalar"), [marker], None)?
+    check_plan_selection_option(unit, capable, root.joinpath("capable-selected"), [marker, selected], Some(digest))?
+    return check_plan_selection_option(
+        unit, capable, root.joinpath("failed-selected"), [marker, selected], Some(digest), expected_exit=1,
+    )
+
+
+def check_plan_selection_option(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    root: Path,
+    pages: list[SelectedBodyPage],
+    expected: Option[str],
+    expected_exit: i32 = 0,
+) -> Result[None, str]:
+    """Observe the ordinary invocation and its completion without installing a driver fixture."""
+    root.mkdir(true, true).map_err((error) => error.message())?
+    mut receiving = toolchain
+    receiving.driver = "/bin/echo"
+    if expected_exit != 0:
+        receiving.driver = "/usr/bin/false"
+    receiving.worker_generation = fingerprint(["selected Plan argument observer", root.0])?[0:16]
+    receiving.console = root.joinpath("driver").0
+    identity = fingerprint(["selected Plan arguments", root.0])?
+    key = Key(digest=identity, codegen=identity, parts=[], refusal="isolated argument control")
+    products = root.joinpath("products")
+    made = obtain_executable(
+        unit, receiving, root.joinpath("program"), key, graph_body_records=Some(pages), records_directory=Some(products),
+    )?
+    assert made.code == expected_exit, f"the argument observer exited {made.code}, expected {expected_exit}"
+    assert made.evaluations == 1, "the observer must exercise a new dispatch"
+    if expected_exit != 0:
+        staged = read(products.joinpath(PLAN_MODULE_SELECTION_PAGE + DIGEST_COMPANION))?
+        assert expected == Some(staged), "the failed dispatch must stage the exact selected digest"
+        assert made.plan_module_selection_digest is None, "a failed dispatch carried compact Plan authority"
+        assert not made.launch.exists(), "a failed dispatch produced an executable"
+        return Ok(None)
+    assert made.plan_module_selection_digest == expected, "the successful dispatch must return its exact authority"
+    args = read(root.joinpath("driver.out"))?.strip().split(" ")
+    assert args[0] == "--unit", "the observer must receive an ordinary unit invocation"
+    mut options: list[str] = []
+    for index in range(len(args)):
+        if args[index] == "--plan-module-selection-digest":
+            assert index + 1 < len(args), "the selection option needs its SHA-256 value"
+            options.append(args[index + 1])
+    match expected:
+        Some(digest) =>
+            assert options == [digest], f"expected one exact selection digest, received {options}"
+        None =>
+            assert len(options) == 0, f"the scalar request carried selection authority {options}"
+    return Ok(None)

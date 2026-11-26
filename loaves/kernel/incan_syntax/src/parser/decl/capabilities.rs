@@ -49,10 +49,7 @@ impl<'a> Parser<'a> {
             let clause = self.identifier()?;
             match clause.as_str() {
                 "description" => {
-                    self.expect(
-                        &TokenKind::Operator(OperatorId::Eq),
-                        "Expected '=' after `description`",
-                    )?;
+                    self.expect(&TokenKind::Operator(OperatorId::Eq), "Expected '=' after `description`")?;
                     description = Some(self.expression()?);
                 }
                 "requires" => {

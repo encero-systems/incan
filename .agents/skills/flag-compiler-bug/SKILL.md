@@ -28,7 +28,7 @@ Treat these as likely compiler bugs unless evidence shows otherwise:
 - valid program rejected contrary to RFCs, language docs, or established behavior
 - invalid program accepted silently
 - wrong lowering or emission that changes semantics
-- wrong generated Rust or runtime behavior caused by compiler output
+- wrong native code or runtime behavior caused by compiler output
 - incorrect or misleading diagnostic from parser, typechecker, lowering, or tooling
 - formatter, CLI, LSP, or snapshot behavior drifting from shared frontend expectations
 

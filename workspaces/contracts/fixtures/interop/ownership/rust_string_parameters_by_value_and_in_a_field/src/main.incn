@@ -1,0 +1,70 @@
+# behavior: Rust String calls preserve owners; public fields and generic constructors work beside private storage (#2424)
+# expect-stdout:
+#   hello world
+#   HELLO WORLD
+#   hello world
+#   HELLO WORLD
+#   sketch_family
+#   literal
+#   NAME
+#   name
+#   LITERAL
+#   NAME
+#   <tag>
+#   tag
+#   mixed
+#   public lifetime
+#   mixed lifetime
+#   non-exhaustive
+#   constructed
+
+"""Exercise Rust text boundaries and independent field visibility."""
+
+from rust::string_fixtures::into_method_helper import Tokenizer
+from rust::string_fixtures::tiny_option import FunctionOption, describe, option_name, shout
+from rust::string_fixtures import Mixed, mixed, mixed_lifetime, non_exhaustive, public_lifetime
+
+pub const OPTION_NAME: str = "sketch_family"
+
+
+type Label = newtype str
+
+
+def show_into_bound_variables() -> None:
+    tokenizer = Tokenizer.new()
+    text = "hello world"
+    println(tokenizer.encode(text, false))
+    println(tokenizer.encode(text, true))
+    println(text)
+    last = "hello world"
+    println(tokenizer.encode(last, true))
+
+
+def show_string_parameters() -> None:
+    option = FunctionOption(name=OPTION_NAME, enabled=true)
+    println(option_name(option))
+    println(option_name(FunctionOption(name="literal", enabled=false)))
+    name = "name"
+    println(shout(name))
+    println(name)
+    println(shout("literal"))
+    println(shout(name.upper()))
+    label = Label("tag")
+    println(describe(label.0))
+    println(label.0)
+
+
+def main() -> None:
+    """Exercise text calls, construction and field reads."""
+    show_into_bound_variables()
+    show_string_parameters()
+    show_readable_fields()
+
+
+def show_readable_fields() -> None:
+    """Read public fields independently of construction authority (#2424)."""
+    println(mixed().code)
+    println(public_lifetime().code)
+    println(mixed_lifetime().code)
+    println(non_exhaustive().code)
+    println(Mixed.new("constructed").code)

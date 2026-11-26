@@ -1,0 +1,16 @@
+# behavior: hex encoding reaches the codecs package through the declaration the source names, and no other standard package
+# cli-commands:
+#   oven inspect dependencies src/main.incn
+# expect-stdout-contains:
+#   program `closure_of_hex_encoding` reaches 2 packages
+#   incan_native_runtime
+#   incan_stdlib_codecs
+#     function pub::incan_stdlib_codecs::encoding::hex::hexlify
+#       requested by checked source
+# expect-exit: 0
+
+from std.encoding.hex import hexlify
+
+
+def main() -> None:
+    println(hexlify(b"abc"))

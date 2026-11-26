@@ -124,7 +124,7 @@ def main() -> None:
 | Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`. |
 | `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`. |
 | Parameters without `mut` | The body does not change a parameter declared without `mut`: a field or element write through it, a call of a method that changes it, and a change through the variable of a `for` loop over it are refused with `INCAN-T0001` (see [Assignments](assignments.md#rules)). |
-| Rebinding           | The body does not assign a new value to a marked parameter: `items = []` and `label += "!"` are refused with `INCAN-T0001`. |
+| Whole-value assignment | Assigning a new value to a marked parameter replaces the value at the caller's argument. For example, `items = [0]` writes the new list to that argument. |
 | Holding             | The body does not hold a marked parameter in another name or value. Each form in the table below is refused with `INCAN-T0001`. Passing the parameter as an argument to any other call is accepted, `rows.append(items)` included. |
 | Changing calls      | A call changes a marked parameter in the cases that [Changing calls](#changing-calls) lists. |
 | Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted, except one of those whose type cannot be copied, such as a `Generator`, which is refused with `INCAN-T0117`. |
@@ -147,7 +147,7 @@ A marked parameter is held, and refused with `INCAN-T0001`, by each of these:
 
 A call changes a marked parameter when:
 
-- the body that runs assigns to the parameter's elements or fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self` (declared by the parameter's type, named through a method alias, or provided by a trait the type adopts), a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
+- the body that runs assigns to the parameter, its elements or its fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self` (declared by the parameter's type, named through a method alias, or provided by a trait the type adopts), a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
 - the parameter is a `Generator`, and the body that runs uses it: iterating it, calling one of its methods and passing it to a call each advance it;
 - the body that runs changes an element through the variable of a `for` loop over the parameter, over a field of it, or over the variable of an enclosing such loop, for a list whose elements are not `int`, `float` or `bool` (`for row in items: row.append(3)`);
 - the body that runs changes a value through a name that a `match`, `if let` or `while let` pattern binds from the parameter, from a field of it, or from such a loop variable or name (`match box: Some(xs) => xs.append(1)`);
@@ -160,7 +160,7 @@ def extend(mut items: list[int]) -> None:
     items.append(9)
 
 def reset(mut items: list[int]) -> None:
-    items = []                          # refused: rebinds a marked parameter (INCAN-T0001)
+    items = [0]                         # accepted
 
 def keep(mut items: list[int]) -> int:
     other = items                       # refused: holds a marked parameter in another name (INCAN-T0001)
@@ -170,6 +170,7 @@ def main() -> None:
     mut kept: list[int] = [1]
     fixed: list[int] = [1]
     extend(kept)                        # accepted
+    reset(kept)                         # accepted
     extend([1])                         # accepted
     extend(fixed)                       # refused: fixed is not declared mut (INCAN-T0117)
 ```
@@ -211,7 +212,7 @@ Arguments bind to normal parameters in this order:
 4. A required parameter that remains unbound is error `INCAN-T0001`.
 5. A named argument that names no parameter is error `INCAN-T0001`, unless the callee declares `**kwargs`.
 6. A positional argument beyond the positional parameters is error `INCAN-T0001`, unless the callee declares `*args`.
-7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
+7. A defaulted parameter that remains unbound takes its declared default. A default whose type is incompatible with its parameter's type is a type mismatch reported at the default. A default cannot read `self`, its fields or another parameter of the callable: those names are unknown in a default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
 8. In a package other than the callable's, a call may leave a defaulted parameter unbound only when the default is one of the following, and is not a preset of a method partial:
     - a literal, or a negated number literal;
     - a list or dict whose elements are such defaults;
@@ -219,7 +220,7 @@ Arguments bind to normal parameters in this order:
     - a call of a function the package declares, named directly, through a public symbol alias of it or through its module, whose arguments are such defaults;
     - a construction of a newtype the package declares, or of a model or class the package exports, whose arguments are such defaults.
 
-    Otherwise the parameter is required in that package, and a call there that leaves it unbound is error `INCAN-T0001`.
+    Otherwise the parameter is required in that package, and a call there that leaves it unbound is error `INCAN-T0001`. A call through a public alias of a callable may leave unbound the same defaulted parameters as a call that names the callable.
 
 ```incan
 def connect(host: str, port: int) -> str:
@@ -489,7 +490,7 @@ Methods support the same rest syntax. The receiver is not part of the rest captu
 
 ```incan
 class Collector:
-    def collect(self, *items: int, **labels: str) -> int:
+    pub def collect(self, *items: int, **labels: str) -> int:
         return len(items) + len(labels)
 
 def main() -> int:
@@ -498,6 +499,48 @@ def main() -> int:
     labels = {"kind": "demo"}
     return collector.collect(0, *xs, **labels)
 ```
+
+### Method visibility
+
+Methods and fields follow one member rule. An unmarked member of a class, or of a model, enum or newtype marked `pub`, is private to its type. An unmarked member of a model, enum or newtype without `pub` is visible wherever the type is, which is the module that declares it.
+
+- A `pub def` method is callable wherever its type is visible, including from other modules and from consumers of a compiled library.
+- A method private to its type is callable only from the methods and computed properties of the type that declares it, in the module that declares it. A subclass's methods do not see the private methods it inherits.
+- A method declared in a trait takes the trait's visibility. A method that implements a method of an adopted trait, by its name or through a `for Trait` target, takes the visibility of the trait that declares that method; this includes the traits a class's ancestors adopt. A method of a `pub` trait is callable wherever its type is visible. A method of a trait without `pub` is callable anywhere in the trait's module.
+- A language hook is callable wherever its type is visible: a method spelled `__name__`, such as `__eq__`, `__str__`, `__add__` or `__iter__`; the constructor hook `__incan_new`; `from_underlying` on a newtype; and `validate` on a type that derives `Validate`.
+- A method alias or method partial has the visibility of the method it targets.
+- Compiled library metadata records each method's visibility. A library whose metadata records none exposes every method.
+
+```incan
+pub class Ledger:
+    pub total: int
+
+    pub def report(self) -> str:
+        return f"checksum {self.checksum()}"
+
+    def checksum(self) -> int:
+        return self.total * 31
+
+
+def main() -> None:
+    ledger = Ledger(total=4)
+    println(ledger.report())
+    println(ledger.checksum())  # refused: checksum is private to Ledger
+```
+
+Refused (`INCAN-T0001`):
+
+- a call to a method private to its type from outside the methods of that type;
+- a call, from another module, to a method that takes the visibility of a trait without `pub`;
+- `pub` on a method that implements a trait method, and `pub` on a language hook.
+
+Refused (`INCAN-P0001`): `pub` on a method declared in a trait.
+
+Refused (`INCAN-T0135`): a direct construction of a class, outside the class's own methods, that names one of its private fields. A function of the same module, another module and a subclass are all outside.
+
+### Method overloads
+
+Ordinary methods of one type may share a name when their positional argument counts or parameter types let every call select exactly one of them. A method that overlaps an earlier one of the same name is refused with ``Type 'T' declares conflicting 'm' method overloads``, which also points at the earlier method.
 
 ## Function Values
 
@@ -521,6 +564,35 @@ Each of these is error `INCAN-T0001`:
 - Duplicate fixed bindings across direct and unpacked arguments.
 - Missing required normal parameters.
 
+An explicit type-argument list on a call of a function or method that declares no type parameters is error `INCAN-T0129`.
+
+## Unreachable Code
+
+Statements after a `return` in the same block never run and produce the warning `INCAN-T0101`, ``Unreachable code after `return` ``, which points at the `return`. The check is local to the block: it does not follow `if`, `match` or loop divergence, and the program still compiles.
+
+## Program Entry
+
+A program's `main`, and a selected additional program entry, takes no parameters and returns `None` or `Result[None, E]`, where `E` is `str` or an error model or enum of the standard library; it may be `async def`. Any other signature is refused when the program is compiled. When `main` returns `Err(error)`, the error is written to standard error after everything the program printed, and the program exits with status `1`; `None` and `Ok(None)` exit `0`.
+
 ## Rust Interop
 
 A function imported from a Rust crate has no rest parameters.
+
+A closure passed to a Rust parameter whose bounds require `Send` or `Sync`, such as the closure `spawn` from `rust::std::thread` takes, captures its values by move, and each captured value must have that property:
+
+- `int`, `float`, `bool`, `str`, `bytes` and the sized numeric types have both.
+- A `list`, `dict`, `set`, `Option`, `Result`, frozen collection or tuple has it when each of its type arguments or elements has it.
+- A model or class has it when every field has it, an enum when every variant payload has it, and a newtype when its underlying type has it.
+- A `rusttype` has it when its declaration adopts it, as in `with Send, Sync`.
+- A Rust `Arc[T]` has `Send` and `Sync` when `T` has both, and a Rust `Mutex[T]` has both when `T` has `Send`. Another Rust type has it when its Rust implementation does.
+- A borrowed capture never has it.
+
+A capture without the property is refused with ``Captured value 'NAME' of type 'TYPE' lacks retained `MARKER` evidence for this Rust callback``.
+
+Checking also refuses these Rust calls and types:
+
+- `INCAN-T0122`: a Rust method call whose arguments check but for which no single native callee can be selected; the diagnostic names the callee and why.
+- `INCAN-T0105`: a Rust associated call that leaves its owner's type arguments open when nothing later fixes them. A local bound to such a call, as in `mut table = HashMap.new()`, takes them from its first use that depends on them.
+- `INCAN-T0120`: a return or field type that names a Rust type borrowing data. A parameter type may name one.
+- A call of an unsafe Rust function: ``Unsafe Rust call `rust::PATH` is unsupported: unsafe interop is out of scope``.
+- An owned use of a Rust value whose type has no retained `Clone` implementation.

@@ -1,0 +1,133 @@
+"""A nested editable declaration keeps its typed result, anchors and identities across the graph boundary."""
+
+from namespace_proof import encode_namespace_proof, read_namespace_proof
+from executable_scope import decode_executable_scope, encode_executable_scope, executable_scope_key, prepare_executable_scope_reader, read_executable_scope_source
+from executable_snapshot import ExecutableSnapshot, select_executable_scope
+from records import encode_record_key
+from pub::incan_platform.store import begin, commit, put, read_counts, snapshot as store_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from std.encoding.hex import hexlify
+from std.primitives.views import MappedFile
+from std.hash import sha256
+from namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, prepare_namespace_reader, decode_prepared_namespace, identify_prepared_namespace, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
+
+
+def identity(name: str) -> u64:
+    digest = sha256.digest(name.encode())
+    mut result = 0u64
+    for i in range(6):
+        result = (result << 8) | digest[i].saturating_resize[u64]()
+    return result
+
+
+def field(name: str, value: NamespaceAtom) -> NamespaceField:
+    mut key = name.clone()
+    if name in ["docstring", "docstring_sections", "start", "end"]:
+        key = "checked_namespace.presentation." + name
+    return NamespaceField(identity=identity(key), value=value)
+
+
+def record(fields: list[NamespaceField]) -> NamespaceAtom:
+    return NamespaceAtom.Fields(fields)
+
+
+def alternative(name: str, fields: list[NamespaceField]) -> NamespaceAtom:
+    return NamespaceAtom.Alternative(identity(name), fields)
+
+
+def checked_identity(name: str, owner: NamespaceAtom, span: NamespaceAtom) -> NamespaceAtom:
+    """Build the same checked identity for declaration and executable scope fixtures."""
+    return record([
+        field("namespace", alternative("OrdinaryLexical", [])), field("origin", owner),
+        field("declaration_name", NamespaceAtom.Text(name)), field("kind", alternative("Function", [])),
+        field("scope_discriminant", NamespaceAtom.Missing), field("declaration_span", span),
+    ])
+
+
+def namespace(return_type: NamespaceAtom, doc: str = "The labels.", end: u64 = 31u64) -> NamespaceAtom:
+    path = NamespaceAtom.Items([NamespaceAtom.Text("provider")])
+    span = record([field("start", NamespaceAtom.Unsigned(0u64)), field("end", NamespaceAtom.Unsigned(end)), field("expansion", NamespaceAtom.Missing)])
+    function = record([
+        field("ownership", NamespaceAtom.Missing), field("name", NamespaceAtom.Text("labels")),
+        field("anchor", record([field("id", NamespaceAtom.Text("labels")), field("span", span)])),
+        field("docstring", NamespaceAtom.Present([NamespaceAtom.Text(doc)])), field("docstring_sections", NamespaceAtom.Missing),
+        field("decorators", NamespaceAtom.Items([])), field("type_params", NamespaceAtom.Items([])), field("params", NamespaceAtom.Items([])),
+        field("return_type", return_type), field("is_async", NamespaceAtom.Flag(false)),
+    ])
+    api = record([field("schema_version", NamespaceAtom.Unsigned(2u64)), field("derivable_traits", NamespaceAtom.Items([])), field("module_path", path), field("declarations", NamespaceAtom.Items([alternative("Function", [field("arg0", function)])]))])
+    owner = checked_identity("labels", alternative("Module", [field("arg0", path)]), span)
+    return record([
+        field("schema", NamespaceAtom.Unsigned(9u64)), field("module_name", NamespaceAtom.Text("provider")), field("module_path", path),
+        field("api", api), field("identities", NamespaceAtom.Mapping([NamespaceEntry(key=NamespaceAtom.Text("labels"), value=owner)])),
+        field("members", NamespaceAtom.Mapping([])), field("constructor_defaults", NamespaceAtom.Items([])), field("nominal_scope", NamespaceAtom.Mapping([])),
+        field("provider_carriers", NamespaceAtom.Missing),
+        field("compiled_libraries", NamespaceAtom.Items([])), field("compiled_providers", NamespaceAtom.Items([])),
+        field("compiled_types", NamespaceAtom.Mapping([])),
+    ])
+
+
+pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Result[None, str]:
+    text = alternative("Named", [field("name", NamespaceAtom.Text("str")), field("origin", NamespaceAtom.Missing)])
+    result_type = alternative("Applied", [field("name", NamespaceAtom.Text("List")), field("args", NamespaceAtom.Items([text])), field("origin", NamespaceAtom.Missing)])
+    encoded = encode_namespace_interface(namespace(result_type))?
+    first = publish_namespace_interface(namespace(result_type))?
+    moved = publish_namespace_interface(namespace(result_type, "The updated labels.", 47u64))?
+    changed = publish_namespace_interface(namespace(text))?
+    physical = sha256.digest(first.interface)
+    seal = encode_namespace_proof("src/provider.incn", 9u32, "provider", ["provider"], physical)?
+    selected_root = read_namespace_proof(seal, "src/provider.incn", 9u32, physical)?
+    assert selected_root.name == "provider" and selected_root.path == ["provider"]
+    assert read_namespace_proof(seal, "src/provider.incn", 9u32, sha256.digest(moved.interface)).is_err()
+    assert read_namespace_proof(seal, "src/peer.incn", 9u32, physical).is_err()
+    assert read_namespace_proof(seal, "src/provider.incn", 8u32, physical).is_err()
+    assert read_namespace_proof(seal[:len(seal) - 1], "src/provider.incn", 9u32, physical).is_err()
+    assert first.interface == encoded and first.interface != moved.interface
+    assert len(first.semantic_interface) == 32 and first.semantic_interface == moved.semantic_interface
+    assert changed.semantic_interface != first.semantic_interface
+    decoded = decode_namespace_interface(encoded)?
+    assert encode_namespace_interface(decoded)? == encoded
+    reader = prepare_namespace_reader()?
+    rebound = decode_prepared_namespace(reader, encoded)?
+    assert encode_namespace_interface(rebound)? == encoded
+    selected = identify_prepared_namespace(reader, encoded, 9u32)?
+    assert selected.name == "provider" and selected.path == ["provider"]
+    assert identify_prepared_namespace(reader, encoded, 8u32).is_err()
+    assert identify_prepared_namespace(reader, encoded[:len(encoded) - 1], 9u32).is_err()
+    assert decode_prepared_namespace(reader, b'{"schema":6}').is_err()
+    assert decode_namespace_interface(b'{"schema":6,"module_name":"provider"}').is_err()
+    assert decode_namespace_interface(encoded[:len(encoded) - 1]).is_err()
+    assert encode_namespace_interface(namespace(NamespaceAtom.Text("List[str]"))).is_err()
+    # An executable scope has its own schema and retains the full source span of each checked binding.
+    owner = alternative("Module", [field("arg0", NamespaceAtom.Items([NamespaceAtom.Text("provider")]))])
+    span = record([field("start", NamespaceAtom.Unsigned(7u64)), field("end", NamespaceAtom.Unsigned(31u64)), field("expansion", NamespaceAtom.Present([NamespaceAtom.Binary(physical)]))])
+    binding = NamespaceEntry(key=NamespaceAtom.Text("Provider"), value=checked_identity("labels", owner, span))
+    scope = encode_executable_scope("src/provider.incn", [binding])?
+    assert scope[:4] == b"CRMB"
+    restored_scope = decode_executable_scope(scope, "src/provider.incn")?
+    assert encode_executable_scope("src/provider.incn", restored_scope)? == scope
+    scope_reader = prepare_executable_scope_reader()?
+    mapped_scope = MappedFile.owned(scope)?
+    match mapped_scope.view(0, mapped_scope.len()):
+        Some(scope_view) => assert read_executable_scope_source(scope_reader, scope_view)? == "src/provider.incn"
+        None => return Err("typed scope did not yield a complete immutable view")
+    assert decode_executable_scope(scope, "src/peer.incn").is_err()
+    assert decode_executable_scope(encoded, "src/provider.incn").is_err()
+    assert decode_executable_scope(scope[:len(scope) - 1], "src/provider.incn").is_err()
+    # A resident worker must select the same exact frame from the current graph without reading it again.
+    digest = hexlify(sha256.digest(scope))
+    scope_key = encode_record_key(executable_scope_key("fixture", "src/provider.incn", digest)?)?
+    base = store_snapshot(memory_root()).map_err((error) => error.message())?
+    origin = commit(put(begin(base), scope_key, scope)).map_err((error) => error.message())?
+    initial_scope = select_executable_scope(ExecutableSnapshot(graph=origin, origin="fixture"), "src/provider.incn", digest, None)?
+    edited = commit(put(begin(origin), "unrelated", b"new")).map_err((error) => error.message())?
+    before = read_counts()
+    bound = select_executable_scope(ExecutableSnapshot(graph=edited, origin="fixture"), "src/provider.incn", digest, Some(initial_scope.revision.clone()))?
+    after = read_counts()
+    assert after.records == before.records and after.bytes == before.bytes, "resident scope read its frame again"
+    assert bound.revision == initial_scope.revision and bound.value is None
+    changed_graph = commit(put(begin(edited), scope_key, b"changed scope")).map_err((error) => error.message())?
+    replaced = select_executable_scope(ExecutableSnapshot(graph=changed_graph, origin="fixture"), "src/provider.incn", digest, Some(initial_scope.revision.clone()))?
+    assert replaced.revision != initial_scope.revision and replaced.value is not None
+    assert select_executable_scope(ExecutableSnapshot(graph=changed_graph, origin="other"), "src/provider.incn", digest, Some(initial_scope.revision.clone())).is_err()
+    print(f"typed namespace with nested function, schema and canonical declaration identity: {len(encoded)} bytes")
+    return Ok(None)

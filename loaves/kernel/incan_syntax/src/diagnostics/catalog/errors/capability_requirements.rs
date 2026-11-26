@@ -87,6 +87,36 @@ pub fn member_type_lacks_automatic_derives(
     )
 }
 
+/// Refuse a foreign field when its automatic Clone obligation has no retained owned implementation candidate.
+/// This describes unavailable admission evidence, not a negative Rust trait implementation.
+pub fn native_field_clone_not_retained(
+    owner_kind: &str,
+    owner_name: &str,
+    member: DerivedMember<'_>,
+    member_type: &str,
+    span: Span,
+) -> CompileError {
+    let member_text = member_description(owner_kind, owner_name, member);
+    CompileError::type_error(
+        format!("{member_text} requires an owned Rust Clone implementation; none is retained for '{member_type}'"),
+        span,
+    )
+    .with_stable_code(AUTOMATIC_DERIVE_FIELD_CODE)
+    .with_note("Models, classes, and enums require Clone; a borrowed implementation does not clone the owned field")
+    .with_hint("Keep the foreign owner in a local or parameter, or use a cloneable shared owner")
+}
+
+/// Refuse an owned tuple-field binding without Clone evidence, preserving explicit shared-reference bindings.
+pub fn native_tuple_field_copy_not_retained(binding: &str, member_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Owned binding '{binding}' of foreign tuple field type '{member_type}' requires retained Clone evidence"
+        ),
+        span,
+    )
+    .with_hint("Use a shared-reference binding (&T) or pass the field directly to a borrowing receiver")
+}
+
 /// Report a member whose type has no JSON form for the `std.serde.json` trait its declaration provides (#1886,
 /// #1867).
 ///

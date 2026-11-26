@@ -1,0 +1,21 @@
+[project]
+name = "interop_shims_named"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+schema = 1
+
+[[interop.c.targets]]
+target = "aarch64-apple-darwin"
+toolchain = { capability = "apple-clang" }
+headers = ["interop/include/bridge.h"]
+
+[[interop.c.targets.shims]]
+name = "bridge_shim"
+language = "cxx"
+sources = ["interop/src/bridge.cpp"]
+headers = ["interop/include/bridge.h"]
+output = "bridge_shim"

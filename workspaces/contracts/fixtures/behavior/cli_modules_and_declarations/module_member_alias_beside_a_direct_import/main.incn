@@ -1,0 +1,11 @@
+# behavior: a module that imports a member directly for its own use and re-exports it through an alias of the module member hands consumers the alias (#1764)
+# expect-stdout:
+#   42
+#   12
+
+from facade import quadruple, twice
+
+
+def main() -> None:
+    println(twice(21))
+    println(quadruple(3))

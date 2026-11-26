@@ -1,7 +1,0 @@
-from std.serde import json
-
-@derive(json)
-model Account:
-    type_ [alias="type"]: str
-    class_ as "class": str
-    name: str

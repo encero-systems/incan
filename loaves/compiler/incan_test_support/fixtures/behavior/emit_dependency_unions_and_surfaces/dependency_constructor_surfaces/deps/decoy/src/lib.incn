@@ -1,5 +1,0 @@
-pub class Vault:
-    pub unrelated: bool
-
-    def reveal(self) -> str:
-        return f"decoy {self.unrelated}"

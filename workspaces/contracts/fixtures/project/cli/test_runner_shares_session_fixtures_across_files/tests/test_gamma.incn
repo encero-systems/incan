@@ -1,0 +1,11 @@
+from std.testing import assert_eq
+
+
+def test_gamma_fails(run_wide: int) -> None:
+    println("gamma fails")
+    assert_eq(run_wide, 11)
+
+
+def test_gamma_passes(run_wide: int) -> None:
+    println("gamma passes")
+    assert_eq(run_wide, 10)

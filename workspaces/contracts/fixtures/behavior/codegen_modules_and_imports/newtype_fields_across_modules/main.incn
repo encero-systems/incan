@@ -1,0 +1,18 @@
+# behavior: a newtype imported from another module retains its wrapped field in function parameters and nested calls
+# expect-stdout:
+#   root
+#   root
+#   true
+#   root
+
+from paths import Path
+from files import text, forwarded, native
+
+
+def main() -> None:
+    """Read a provider newtype through a sibling module's parameter."""
+    path = Path("root")
+    println(text(path))
+    println(forwarded(path))
+    println(native(path))
+    println(path.text())

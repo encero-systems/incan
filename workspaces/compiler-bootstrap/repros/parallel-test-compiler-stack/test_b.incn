@@ -1,7 +1,0 @@
-"""Regression for compiler stack inheritance in parallel test workers (#2213)."""
-
-
-def test_b() -> None:
-    """Compile a left-nested condition on an independently scheduled worker."""
-    value = 1
-    assert value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1 and value == 1

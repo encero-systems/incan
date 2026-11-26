@@ -1,42 +1,12 @@
-The supported release channels install the same Incan toolchain payload. Choose the command manager that already fits your environment:
+Put the downloaded `incan` executable first on `PATH` and place its matching `toolchain.tar.zst` archive in your working directory. For a published release, place its matching `toolchain.tar.zst.sigstore.json` beside the archive. With `rustup` installed, install the pinned Rust compiler and then the Incan toolchain archive.
 
-=== "Direct installer"
+To install in a separate home, export `INCAN_HOME` with an absolute path before running these commands. Keep it set when using that installation, and update it if you move the home.
 
-    ```bash
-    --8<-- "_snippets/commands/direct_install.sh"
-    export PATH="$HOME/.local/bin:$PATH"
-    incan --version
-    incan-lsp --version
-    ```
+```bash
+rustup toolchain install 1.98.0 --profile minimal --component rustc-dev
+incan toolchain install ./toolchain.tar.zst
+export PATH="${INCAN_HOME:-$HOME/.incan}/bin:$PATH"
+incan --version
+```
 
-    This path verifies the release manifest and checksum and can provision the pinned Rust 1.98.0 backend through `rustup`.
-
-=== "Homebrew"
-
-    ```bash
-    brew tap encero-systems/tap
-    brew install incan
-    incan --version
-    ```
-
-    Homebrew installs the prebuilt command binaries. Manage Rust separately.
-
-=== "npm"
-
-    ```bash
-    npm install -g @incan/toolchain
-    incan --version
-    ```
-
-    npm installs command shims without a lifecycle script; the first `incan` run provisions the checksum-verified toolchain for your host. Manage Rust and the `wasm32-wasip1` target separately.
-
-=== "pipx"
-
-    ```bash
-    pipx install incan
-    incan --version
-    ```
-
-    `pipx` keeps the command package isolated and routes installation through the shared release installer.
-
-Native Windows and Linux arm64 are not supported by the current binary installer. Use WSL2 or a source build on those hosts.
+The archive contains the Incan compiler, standard library, and native dependencies. Installation binds the toolchain to the local Rust 1.98.0 sysroot. Leave `INCAN_STDLIB` unset when using the installed standard library.

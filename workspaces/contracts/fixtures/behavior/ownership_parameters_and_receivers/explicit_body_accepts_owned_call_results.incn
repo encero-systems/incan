@@ -1,0 +1,40 @@
+# behavior: an explicit input body accepts an ordinary call that produces fresh owned storage, and a named cursor keeps its temporary aggregate owner alive (#2500)
+# expect-stdout:
+#   2
+#   2
+
+class Graph:
+    pub values: list[int]
+
+    pub def read_view(self) -> Borrowed[Graph] from self:
+        """Borrow this graph's stored values."""
+        return self
+
+    pub def select(self) -> Selection[Borrowed[Graph]] from self:
+        """Retain this graph inside a fresh selection."""
+        return Selection[Borrowed[Graph]](graph=self)
+
+
+class Selection[S]:
+    pub graph: S
+
+    pub def cursor(self) -> Cursor[Borrowed[Selection[S]]] from self:
+        """Borrow this selection into a cursor."""
+        return Cursor[Borrowed[Selection[S]]](selection=self)
+
+
+class Cursor[S]:
+    pub selection: S
+
+
+def build_graph() -> Graph:
+    """Build fresh graph storage for the caller."""
+    return Graph(values=[1, 2])
+
+
+def main() -> None:
+    graph = build_graph()
+    reader = graph.read_view()
+    println(len(reader.values))
+    cursor = graph.select().cursor()
+    println(len(cursor.selection.graph.values))

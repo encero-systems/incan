@@ -1,0 +1,16 @@
+# behavior: `incan fmt --diff` shows each line formatting would change without writing it, so repeating it shows the same change; with no PATH it formats the current directory, as 0.5.1 does (#3143).
+# cli-commands:
+#   fmt --diff src/main.incn
+#   fmt --diff src
+#   fmt --diff
+# expect-stdout-contains:
+#   --- original
+#   +++ formatted
+#   -  15 |     values = [1,2,  3]
+#   +  15 |     values = [1, 2, 3]
+#   1 file(s) need formatting
+# expect-exit: 1
+
+def main() -> None:
+    values = [1,2,  3]
+    println(values)

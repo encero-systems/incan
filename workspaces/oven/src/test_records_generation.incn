@@ -1,0 +1,20 @@
+"""
+Whatever writes a record belongs in the identity that admits it: an engine's records generation names its compiler
+and its Oven, so two Ovens with one compiler generation over one store never reuse each other's records.
+"""
+
+from engine_state import Identity, records_generation
+
+
+pub def test_two_ovens_of_one_compiler_generation_write_records_of_different_generations() -> Result[None, str]:
+    """The records generation changes with the service generation alone, and with the compiler generation alone."""
+    first = Identity(store_id="store", profile="incan.engine.unit-records/1", service_generation="oven-a", compiler_generation="compiler-a", uid=501)
+    mut other_oven = first
+    other_oven.service_generation = "oven-b"
+    mut other_compiler = first
+    other_compiler.compiler_generation = "compiler-b"
+    generation = records_generation(first)?
+    assert generation != records_generation(other_oven)?, "two Ovens of one compiler generation share a records generation"
+    assert generation != records_generation(other_compiler)?, "two compilers under one Oven share a records generation"
+    assert generation == records_generation(first)?
+    return Ok(None)

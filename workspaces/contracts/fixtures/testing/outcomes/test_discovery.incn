@@ -1,0 +1,25 @@
+# behavior: collection honors the explicit test marker and never runs an unmarked helper or a skipped test
+# expect-stdout-contains:
+#   test_discovery.incn::explicit_case PASSED
+#   test_discovery.incn::test_skipped SKIPPED (must not execute)
+
+"""Test collection belongs to the checked session's marker semantics."""
+
+from std.testing import skip, test
+
+
+def helper() -> None:
+    """An ordinary helper is not a collected test."""
+    assert false
+
+
+@test
+def explicit_case() -> None:
+    """The marker collects a function without the test prefix."""
+    assert true
+
+
+@skip("must not execute")
+def test_skipped() -> None:
+    """Skipping must suppress execution, even for a body that would fail."""
+    assert false

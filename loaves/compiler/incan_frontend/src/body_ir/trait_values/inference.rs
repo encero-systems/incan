@@ -54,7 +54,7 @@ fn adoption_arguments(
     let identity = identities.get(name)?;
     let owner = nominals
         .iter()
-        .find(|owner| &owner.canonical == identity && owner.name == *name)?;
+        .find(|owner| &owner.canonical == identity && owner.template_carrier_name() == *name)?;
     if owner.type_parameters.len() != arguments.len() {
         return None;
     }

@@ -1,0 +1,23 @@
+# behavior: `oven env show ENV --format json` reports the resolved environment in 0.5.1's shape: `env`, the overlay chain from `project`, `requires_incan` with its effective requirement, layers and verdict, an absolute `cwd`, and the declared `dependencies` (#3140).
+# cli-commands:
+#   oven env show ci --format json
+# expect-stdout-contains:
+#   {
+#     "dependencies": {
+#       "helper": {
+#         "path": "../helper"
+#     "env": "ci",
+#     "overlay_chain": [
+#       "project",
+#       "dev",
+#       "ci"
+#     "requires_incan": {
+#       "effective": ">=0.5, <1.0",
+#           "source": "envs.ci.requires-incan"
+#       "satisfied": true
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose environment the case shows."""
+    pass

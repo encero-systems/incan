@@ -1,0 +1,94 @@
+"""Publish independently selectable executable scopes and bind them to the checked records that use them."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Transaction, stage_put
+from pub::internal_models import CompiledBodyOutputs
+from pub::internal_models.executable_scope import (
+    EXECUTABLE_SCOPE_DIRECTORY, executable_scope_key, prepare_executable_scope_reader,
+    read_executable_scope_source,
+)
+from pub::internal_models.records import RecordKey, encode_record_key
+from compiler_executable_metadata import (
+    ExecutableOwnerMetadata, executable_view, namespace_digests, typed_executable_output, typed_namespace_reader,
+    typed_owner_metadata, typed_owner_reader,
+)
+from compiler_prepared_records import PreparedBodyRecordSource
+
+const MAX_SCOPE_BYTES: int = 67108864
+
+
+pub model ExecutableScopePayload:
+    """Compiler bytes verified against the referenced record key."""
+
+    pub digest: str
+    pub value: bytes
+
+
+pub model ExecutableScopeInputs:
+    """The exact new scope witnesses and owner headers named by compiler sidecar records."""
+
+    pub typed: bool = false
+    pub owners: Dict[str, ExecutableOwnerMetadata] = {}
+    pub namespaces: Dict[str, list[RecordKey]] = {}
+    pub values: Dict[str, ExecutableScopePayload] = {}
+
+
+pub def compiled_executable_scopes(output: Path, origin: str, records: Borrowed[CompiledBodyOutputs]) -> Result[ExecutableScopeInputs, str]:
+    """Resolve the bounded sidecar addresses named by checked owners and namespaces."""
+    if not typed_executable_output(output.0):
+        return Ok(ExecutableScopeInputs())
+
+    owner_reader = typed_owner_reader()?
+    namespace_reader = typed_namespace_reader()?
+    mut owners: Dict[str, ExecutableOwnerMetadata] = {}
+    mut namespaces: Dict[str, list[RecordKey]] = {}
+    mut wanted: Dict[str, RecordKey] = {}
+    for value in records.values:
+        header = typed_owner_metadata(owner_reader, value.body_ir)?
+        if header.identity != value.identity or header.source != value.module or header.name != value.name:
+            return Err("executable owner disagrees with its compiled checker row")
+        owners[value.identity] = header
+        if let Some(digest) = header.scope:
+            wanted[digest] = executable_scope_key(origin, value.module, digest)?
+    for namespace in records.namespaces:
+        mut keys: list[RecordKey] = []
+        for digest in namespace_digests(namespace_reader, namespace.module, namespace.published_record)?:
+            key = executable_scope_key(origin, namespace.module, digest)?
+            wanted[digest] = key
+            keys.append(key)
+        namespaces[namespace.module] = keys
+
+    values = read_scope_values(output.joinpath(EXECUTABLE_SCOPE_DIRECTORY), wanted)?
+    return Ok(ExecutableScopeInputs(typed=true, owners=owners, namespaces=namespaces, values=values))
+
+
+def read_scope_values(directory: Path, wanted: Borrowed[Dict[str, RecordKey]]) -> Result[Dict[str, ExecutableScopePayload], str]:
+    """Authenticate each referenced file once, leaving retired sidecar scopes outside the transaction."""
+    mut values: Dict[str, ExecutableScopePayload] = {}
+    if len(wanted) == 0:
+        return Ok(values)
+    reader = prepare_executable_scope_reader()?
+    for digest in sorted([digest for digest in wanted.keys()]):
+        key = wanted[digest]
+        path = directory.joinpath(digest + ".crumb")
+        if not path.is_file():
+            return Err("compiled executable scope is missing from the sidecar")
+        size = path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        if size <= 0 or size > MAX_SCOPE_BYTES:
+            return Err("compiled executable scope exceeds its byte bound")
+        data = path.read_bytes().map_err((error) => error.message())?
+        if len(data) != size or hexlify(sha256.digest(data)) != digest:
+            return Err("compiled executable scope disagrees with its sidecar digest")
+        if read_executable_scope_source(reader, executable_view(data)?)? != key.identity:
+            return Err("compiled executable scope belongs to another module")
+        values[encode_record_key(key)?] = ExecutableScopePayload(digest=digest, value=data)
+    return Ok(values)
+
+
+pub def stage_executable_scopes(mut transaction: Transaction, mut source: PreparedBodyRecordSource, inputs: Borrowed[ExecutableScopeInputs]) -> None:
+    """Stage each authenticated scope before a dependent body or namespace writes its receipt."""
+    for key in sorted([key for key in inputs.values.keys()]):
+        stage_put(transaction, key, inputs.values[key].value)
+        source.add_verified_executable_scope(key, inputs.values[key].digest)

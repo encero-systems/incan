@@ -1,0 +1,181 @@
+"""Context item presentation and byte accounting shared by preparation and budget selection."""
+
+from std.json import JsonValue
+from std.fs import Path
+from files import json_text
+from graph_queries import display, nested, text
+from observation import file_metadata
+
+
+pub def node_item(
+    record: JsonValue, identifier: str, stable: str, local: str, score: int, reason: str, root: str,
+) -> JsonValue:
+    """Present one proved node; ranking and identity selection remain with the context index."""
+    return JsonValue.object({
+        "record": JsonValue.string("node"), "local_id": JsonValue.string(local),
+        "id": JsonValue.string(identifier), "stable_key": JsonValue.string(stable),
+        "kind": JsonValue.string(text(record, "record")), "label": JsonValue.string(display(record)),
+        "anchor": JsonValue.string(anchor(record, root)), "signature": nested(record, "signature"),
+        "provenance": nested(record, "provenance"), "degraded": nested(record, "degraded"),
+        "author": nested(record, "author"),
+        "score": JsonValue.int(score), "reason": JsonValue.string(reason), "details": node_details(record),
+    })
+
+
+pub def minimum_sizes(record: JsonValue, root: str) -> Result[tuple[int, int], str]:
+    """
+    Measure a node's fixed contribution at the requesting repository root, before its rank is known.
+
+    1. Use the shortest possible local id, positive-score width and ranking reason, with empty identity fields.
+    2. Measure through the same item renderer used during selection.
+    Identity bytes and differences in local id, score and reason are added at request time.
+    """
+    # 1. Every ranking reason is at least as long as `task match`; every positive score takes at least one digit.
+    item = node_item(record, "", "", "n0", 0, "task match", root)
+    # 2. JSON and JSONL have the same one-item contribution, including their separator.
+    return Ok((item_tokens(item, "compact")?, item_tokens(item, "json")?))
+
+
+pub def item_tokens(item: JsonValue, format: str) -> Result[int, str]:
+    """Measure one exact item plus its separator; context-header digests have fixed widths in every format."""
+    if format == "compact":
+        return Ok(tokens(compact_line(item)?) + 1)
+    return Ok(tokens(json_text(item)?) + 1)
+
+
+pub def compact_line(item: JsonValue) -> Result[str, str]:
+    """Render one context item identically for final output, byte accounting and prepared minimum sizes."""
+    status = nested(item, "degraded").to_json().unwrap_or("null")
+    trust = f"{text(item, 'provenance')} degraded={status} author={written_by(nested(item, 'author'))}"
+    where = json_text(nested(item, "anchor"))?
+    if text(item, "record") == "edge":
+        return Ok(f"{text(item, 'source')} -{text(item, 'kind')}-> {text(item, 'target')} [{trust}] {where}")
+    label = json_text(nested(item, "label"))?
+    signature = json_text(nested(item, "signature"))?
+    reason = json_text(nested(item, "reason"))?
+    mut detail = ""
+    if not nested(item, "details").is_null():
+        detail = f" details={json_text(nested(item, 'details'))?}"
+    local = text(item, "local_id")
+    kind = text(item, "kind")
+    return Ok(f"{local} {kind} {label} [{trust}] {where} {signature} why={reason}{detail}")
+
+
+pub def written_by(author: JsonValue) -> str:
+    """
+    Name an item's author on its compact line: `toolchain`, `workspace`, or `dependency:` and the dependency's
+    identity as a JSON string, since the name is the dependency's own text. An item without one says `unknown`.
+    """
+    kind = text(author, "kind")
+    if kind == "":
+        return "unknown"
+    if kind != "dependency":
+        return kind
+    identity = nested(author, "identity").to_json().unwrap_or("null")
+    return f"{kind}:{identity}"
+
+
+pub def tokens(value: str) -> int:
+    """Bound tokens by UTF-8 bytes, avoiding an unversioned or model-specific tokenizer."""
+    return len(value.encode("utf-8"))
+
+
+pub def anchor(record: JsonValue, root: str) -> str:
+    """Retain source location separately from logical identity and use repository-relative display where possible."""
+    span = source_span(record)
+    mut file = text(span, "file")
+    if file.startswith(f"{root}/"):
+        file = file[len(root) + 1:]
+    if file == "":
+        return "<unknown>:0"
+    return f"{file}:{nested(span, 'start_line').to_json().unwrap_or('0')}"
+
+
+pub model AnchorObservation:
+    """The ordinary display anchor and any failure to observe the markers that select it."""
+
+    pub path: Path
+    pub failure: Option[str] = None
+
+
+pub def anchor_root(path: Path) -> Path:
+    """Prefer repository-relative anchors, retaining ordinary paths' absent-on-error behavior."""
+    return resolve_anchor_root(path, false).path
+
+
+pub def observe_anchor_root(path: Path, marker_only: bool = false) -> AnchorObservation:
+    """Watch the marker checks once, preserving both the display anchor and its observation result."""
+    return resolve_anchor_root(path, true, marker_only)
+
+
+pub def observed_anchor_root(path: Path) -> Result[Path, str]:
+    """Require a fully observed repository boundary to attribute authored evidence."""
+    result = observe_anchor_root(path)
+    if let Some(problem) = result.failure:
+        return Err(problem)
+    return Ok(result.path)
+
+
+def resolve_anchor_root(path: Path, observed: bool, marker_only: bool = false) -> AnchorObservation:
+    """Find the nearest repository or owning project, retaining the first marker observation failure."""
+    mut result = AnchorObservation(path=path)
+    mut directory = path
+    if selected_marker(directory, false, observed, marker_only, result):
+        directory = directory.parent()
+    mut project = directory
+    mut found = false
+    while true:
+        if selected_marker(directory.joinpath(".git"), true, observed, marker_only, result):
+            result.path = directory
+            return result
+        if not found and selected_marker(directory.joinpath("loaf.toml"), false, observed, marker_only, result):
+            project = directory
+            found = true
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 in [".", ""]:
+            result.path = project
+            return result
+        directory = parent
+
+
+def selected_marker(
+    path: Path, allow_directory: bool, observed: bool, marker_only: bool, mut result: AnchorObservation,
+) -> bool:
+    """Treat an unobservable marker as absent for display without marking it safe for attribution or reuse."""
+    match anchor_marker(path, allow_directory, observed, marker_only):
+        Ok(found) => return found
+        Err(problem) =>
+            if result.failure is None:
+                result.failure = Some(problem)
+            return false
+
+
+def anchor_marker(path: Path, allow_directory: bool, observed: bool, marker_only: bool) -> Result[bool, str]:
+    """Apply the same file-kind rules, recording present and absent facts for cached definition answers."""
+    if not observed:
+        return Ok(path.is_file() or (allow_directory and path.is_dir()))
+    if let Some(info) = file_metadata(path, marker_only=marker_only)?:
+        return Ok(info.is_file() or (allow_directory and info.is_directory()))
+    return Ok(false)
+
+
+def source_span(record: JsonValue) -> JsonValue:
+    """Use the primary diagnostic span only when the ordinary source span is absent."""
+    span = nested(record, "span")
+    if span.is_null():
+        return nested(record, "primary_span")
+    return span
+
+
+def node_details(record: JsonValue) -> JsonValue:
+    """Keep diagnostic messages and raw process evidence when their records fit the selected context budget."""
+    kind = text(record, "record")
+    if kind == "diagnostic":
+        return JsonValue.object({key: nested(record, key) for key in ["code", "message"]})
+    if kind == "risk_signal":
+        if text(record, "source") == "coverage_report":
+            keys = ["source", "covered_lines", "instrumented_lines", "report_digest", "evidence", "controls"]
+            return JsonValue.object({key: nested(record, key) for key in keys})
+        keys = ["source", "head", "churn", "ownership", "co_changes", "evidence", "controls"]
+        return JsonValue.object({key: nested(record, key) for key in keys})
+    return JsonValue.null()

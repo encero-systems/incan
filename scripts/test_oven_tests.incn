@@ -1,0 +1,746 @@
+"""Verify the Oven test step's options, invocation order, admission, log joining, id parsing and summary."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_support import read, repository_root
+from check_test_support import write
+from pub::incan_platform.probes import process_table
+from oven_tests import (
+    CUSTODY_INTERVAL_MS,
+    HEADROOM_BYTES,
+    LOWERING_RESERVATION_BYTES,
+    PROJECT_RESERVATION_BYTES,
+    Invocation,
+    admission_order,
+    admitted,
+    compile_ahead,
+    custody_due,
+    default_jobs,
+    file_lines,
+    free_worker,
+    invocations,
+    join_logs,
+    planned_outcome,
+    log_name,
+    parse_options,
+    remove_worker_projects,
+    run_all,
+    run_all_failures,
+    run_planned,
+    selected_builder_bakery,
+    shared_memory,
+    summarize,
+    summary_document,
+    oven_test_state_root,
+)
+from verify_installation import (
+    VerificationPhase,
+    pin_phase_verifier,
+    verification_phase_arguments,
+    verification_phase_plans,
+    verification_trace_environment,
+)
+
+const GIB: int = 1073741824
+
+
+def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
+    """A positive configured count wins; otherwise the cores decide, and at least one runs."""
+    assert default_jobs("3", 18) == 3
+    assert default_jobs("", 18) == 18
+    assert default_jobs("two", 4) == 4
+    assert default_jobs("0", 4) == 4
+    assert default_jobs("", 0) == 1
+    return Ok(None)
+
+
+def test_reservations_share_physical_memory_less_the_headroom() -> Result[None, str]:
+    """Project-scale work reserves 4 GiB and lowering-scale work 6 GiB, and 1 GiB is never reserved."""
+    assert PROJECT_RESERVATION_BYTES == 4 * GIB
+    assert LOWERING_RESERVATION_BYTES == 6 * GIB
+    assert HEADROOM_BYTES == GIB
+    assert shared_memory(7 * GIB) == 6 * GIB
+    assert shared_memory(16 * GIB) == 15 * GIB
+    assert shared_memory(0) == 0
+    return Ok(None)
+
+
+def test_explicit_options_override_the_defaults() -> Result[None, str]:
+    """`--jobs` selects the count and `--memory` the shared memory in GiB, before or after the operands."""
+    options = parse_options(["--jobs", "5", "oven", "evidence"], "2", 18, 7 * GIB)?
+    assert options.jobs == 5
+    assert options.memory == 6 * GIB
+    assert options.oven == "oven"
+    assert options.evidence.0.endswith("/evidence")
+    assert parse_options(["oven", "evidence"], "", 18, 4 * GIB)?.jobs == 18
+    assert parse_options(["oven", "evidence"], "2", 18, 4 * GIB)?.jobs == 2
+    assert parse_options(["oven", "evidence", "--jobs", "1"], "", 18, 0)?.jobs == 1
+    assert parse_options(["oven", "evidence", "--memory", "15"], "", 18, 128 * GIB)?.memory == 15 * GIB
+    return Ok(None)
+
+
+def test_admission_keeps_reservations_within_memory() -> Result[None, str]:
+    """A 7 GiB host runs every invocation alone; a 16 GiB host runs three Oven units, or lowering beside two."""
+    reservations = [4 * GIB, 4 * GIB, 4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB]
+    everything = [0, 1, 2, 3, 4, 5]
+    small = shared_memory(7 * GIB)
+    assert admitted(reservations, everything, [], 3, small) == [0]
+    assert admitted(reservations, [1, 2, 3, 4, 5], [4 * GIB], 3, small) == []
+    assert admitted(reservations, [4, 5], [], 3, small) == [4]
+    large = shared_memory(16 * GIB)
+    assert admitted(reservations, everything, [], 4, large) == [0, 1, 2]
+    assert admitted(reservations, [3, 4, 5], [4 * GIB, 4 * GIB], 4, large) == [3]
+    assert admitted(reservations, [4, 5], [4 * GIB, 4 * GIB], 4, large) == [4]
+    assert admitted(reservations, [5], [6 * GIB, 4 * GIB, 4 * GIB], 4, large) == []
+    assert admitted(reservations, [4, 5], [6 * GIB], 4, large) == [4]
+    return Ok(None)
+
+
+def test_a_pooled_invocation_takes_the_first_free_worker() -> Result[None, str]:
+    """A worker project runs one invocation at a time; any free one serves, and none free means waiting."""
+    assert free_worker(["/w/0", "/w/1", "/w/2"], []) == "/w/0"
+    assert free_worker(["/w/0", "/w/1", "/w/2"], ["/w/0", ""]) == "/w/1"
+    assert free_worker(["/w/0", "/w/1", "/w/2"], ["/w/2", "/w/0"]) == "/w/1"
+    assert free_worker(["/w/0", "/w/1"], ["/w/1", "/w/0"]) == ""
+    assert free_worker([], ["/w/0"]) == ""
+    return Ok(None)
+
+
+def test_an_oversized_reservation_runs_alone_and_zero_memory_bounds_nothing() -> Result[None, str]:
+    """Work larger than memory still starts when nothing runs; unknown memory leaves only the count."""
+    reservations = [6 * GIB, 4 * GIB, 4 * GIB]
+    assert admitted(reservations, [0, 1, 2], [], 4, 4 * GIB) == [0]
+    assert admitted(reservations, [1, 2], [6 * GIB], 4, 4 * GIB) == []
+    assert admitted(reservations, [0, 1, 2], [], 2, 0) == [0, 1]
+    assert admitted(reservations, [0, 1, 2], [], 1, 64 * GIB) == [0]
+    return Ok(None)
+
+
+def test_verification_phases_reserve_their_complete_parallel_work() -> Result[None, str]:
+    """The concurrent audit and gates reserve every worker and fixed project-scale phase."""
+    plans = verification_phase_plans(6)
+    assert [plan.phase for plan in plans] == [
+        VerificationPhase.Relocation,
+        VerificationPhase.Oven,
+        VerificationPhase.RustFacets,
+        VerificationPhase.DriverIntegration,
+        VerificationPhase.Census,
+        VerificationPhase.Memory,
+    ]
+    assert [plan.reservation for plan in plans] == [2 * GIB, 48 * GIB, 12 * GIB, 6 * GIB, 26 * GIB, 6 * GIB]
+    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4, 5], [], 6, 0) == [0, 1, 2, 3, 4, 5]
+    assert verification_phase_plans(0)[1].reservation == 8 * GIB
+    assert verification_phase_plans(0)[2].reservation == 2 * GIB
+    assert verification_phase_plans(0)[4].reservation == 6 * GIB
+    assert len(verification_trace_environment(Path("/evidence"), "census", false)) == 0
+    traces = verification_trace_environment(Path("/evidence"), "census", true)
+    assert traces["INCAN_ENGINE_TRACE"] == "/evidence/traces/census"
+    assert traces["INCAN_NATIVE_TIMING"] == "1"
+    assert len(traces) == 2
+    assert verification_phase_arguments("census", Path("/run"), Path("/runner"), 6, 900) == [
+        "--phase",
+        "census",
+        "/run",
+        "/runner",
+        "6",
+        "900",
+    ]
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    # A later phase can start after the shared script output has been replaced by a sibling script.
+    run = temporary.path()
+    shared_output = run.joinpath("incan_release_scripts")
+    replacement = run.joinpath("new-script")
+    write(run, "incan_release_scripts", "verifier")?
+    pinned = pin_phase_verifier(shared_output, run)?
+    write(run, "new-script", "oven tests")?
+    _ = replacement.replace(shared_output).map_err((error) => error.message())?
+    assert pinned.read_text("utf-8", "strict").map_err((error) => error.message())? == "verifier"
+    assert shared_output.read_text("utf-8", "strict").map_err((error) => error.message())? == "oven tests"
+    assert selected_builder_bakery("", "") == ""
+    assert selected_builder_bakery("", temporary.path().0) == ""
+    temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
+    assert selected_builder_bakery("", temporary.path().0) == temporary.path().joinpath("bakery").0
+    return Ok(None)
+
+
+def test_every_release_test_asks_the_builder_bakery_which_admits_units_by_identity() -> Result[None, str]:
+    """
+    Oven sources and Loaf tests alike ask the selected Bakery, which admits existing units by full identity. Outside
+    a release every invocation keeps the installation's own bakery.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    shared = invocations(root, evidence, logs, 2, "/builder/bakery")?
+    assert [len(item.environment) for item in shared] == [1, 1, 1, 1, 1, 1, 1, 1]
+    assert [item.environment["INCAN_BAKERY"] for item in shared] == ["/builder/bakery" for _ in range(8)]
+    assert [item.environment["INCAN_BAKERY"] for item in compile_ahead(shared)] == ["/builder/bakery"]
+    remove_worker_projects(shared)?
+    own = invocations(root, evidence, logs, 2)?
+    assert [len(item.environment) for item in own] == [0, 0, 0, 0, 0, 0, 0, 0]
+    remove_worker_projects(own)?
+    return Ok(None)
+
+
+def test_only_the_installed_oven_step_prepares_the_settled_protocol() -> Result[None, str]:
+    """The installed scope lists the protocol source once, then keeps its standalone execution."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    planned = invocations(root, evidence, evidence.joinpath("oven-tests"), 2, "/selected/bakery")?
+    ahead = compile_ahead(planned)
+    assert [item.arguments for item in ahead] == [["test", "src/test_engine_protocol.incn", "--list"]]
+    assert [item.environment["INCAN_BAKERY"] for item in ahead] == ["/selected/bakery"]
+    assert [item.arguments for item in planned if item.alone] == [["test", "src/test_engine_protocol.incn"]]
+    remove_worker_projects(planned)?
+
+    # The native package build leaves this invocation to installed verification.
+    scripts = repository_root()?.joinpath("scripts")
+    assert "oven_test_library_step" not in read(scripts.joinpath("release.incn"))?
+    assert "oven-test-library" not in read(scripts.joinpath("native_build.incn"))?
+    return Ok(None)
+
+
+def test_refused_arguments_name_the_problem() -> Result[None, str]:
+    """Missing operands, unknown options and bad counts are refused."""
+    assert refusal(parse_options(["oven"], "", 1, 0)) == "OVEN and EVIDENCE are required"
+    assert refusal(parse_options(["oven", "a", "b"], "", 1, 0)) == "OVEN and EVIDENCE are required"
+    assert refusal(parse_options(["--fast", "oven", "a"], "", 1, 0)) == "unknown option `--fast`"
+    assert refusal(parse_options(["oven", "a", "--jobs"], "", 1, 0)) == "`--jobs` needs a positive number"
+    assert refusal(parse_options(["oven", "a", "--jobs", "0"], "", 1, 0)) == "`--jobs` needs a positive number"
+    assert refusal(parse_options(["oven", "a", "--memory", "x"], "", 1, 0)) == "`--memory` needs a positive number"
+    return Ok(None)
+
+
+def test_passing_and_failing_lines_match_whole_test_ids() -> Result[None, str]:
+    """Only exact result lines count; failures may carry a reason, passes may not."""
+    lines = [
+        "test_b.incn::test_two PASSED",
+        "test_a.incn::test_one PASSED",
+        "test_a.incn::test_skip SKIPPED",
+        "test_c.incn::test_bad FAILED",
+        "test_c.incn::test_lucky XPASS (strict)",
+        "test_c.incn::test_worse FAILED: assertion",
+        "  test_d.incn::test_indented PASSED",
+        "test_d.incn::test_trailing PASSED ",
+        "test-e.incn::test_dash PASSED",
+        "test_e.incn::check_name PASSED",
+        "test_e.incn::test_noted PASSED in 2ms",
+        "test_f.incn::test_carriage PASSED\r",
+    ]
+    summary = summarize("\n".join(lines) + "\n", "test_a.incn::test_one\ntest_b.incn::test_two\n")?
+    assert summary.passed == 2
+    assert summary.failed == 2
+    assert summary.passed_ids == ["test_a.incn::test_one", "test_b.incn::test_two"]
+    return Ok(None)
+
+
+def test_ids_sort_in_byte_order() -> Result[None, str]:
+    """Ids sort as `LC_ALL=C sort` orders them: digits and capitals before the underscore and lowercase."""
+    names = ["test_b", "test_B", "test_1", "test__"]
+    log = "".join([f"test_z.incn::{name} PASSED\n" for name in names])
+    summary = summarize(log, "test_z.incn::test_b\ntest_z.incn::test_1\n")?
+    assert summary.passed_ids == [
+        "test_z.incn::test_1",
+        "test_z.incn::test_B",
+        "test_z.incn::test__",
+        "test_z.incn::test_b",
+    ]
+    assert summary.expected_ids == ["test_z.incn::test_1", "test_z.incn::test_b"]
+    return Ok(None)
+
+
+def test_expected_lines_count_as_wc_does() -> Result[None, str]:
+    """A final newline ends the last line; blank lines inside the list still count."""
+    assert file_lines("a\nb\n") == ["a", "b"]
+    assert file_lines("a\n\nb\n") == ["a", "", "b"]
+    assert file_lines("a") == ["a"]
+    assert file_lines("") == []
+    return Ok(None)
+
+
+def test_summary_document_is_spelled_as_jq_prints_it() -> Result[None, str]:
+    """The counts document keeps the former `jq` spelling byte for byte."""
+    summary = summarize("test_a.incn::test_one PASSED\ntest_a.incn::test_two FAILED\n", "x\ny\nz\n")?
+    assert summary_document(summary) == "{\n  \"passed\": 1,\n  \"failed\": 1,\n  \"expected\": 3\n}\n"
+    return Ok(None)
+
+
+def test_log_names_sort_in_invocation_order() -> Result[None, str]:
+    """A zero-padded position orders the logs; the stem names the source."""
+    assert log_name(0, Path("/r/test_cli.incn")) == "000-test_cli.log"
+    assert log_name(42, Path("/r/test_owner.incn")) == "042-test_owner.log"
+    assert log_name(1234, Path("/r/test_x.incn")) == "1234-test_x.log"
+    return Ok(None)
+
+
+def test_invocations_follow_the_declared_order_and_package_ownership() -> Result[None, str]:
+    """Private Oven projects run first, then every Loaf test from its owner, with compiler-scale reservations."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    planned = invocations(root, evidence, logs, 2)?
+    oven_a = root.joinpath(".agents/state/release-oven-tests/evidence/0/workspaces/oven")
+    oven_b = root.joinpath(".agents/state/release-oven-tests/evidence/1/workspaces/oven")
+    models = root.joinpath("loaves/compiler/internal_models")
+    lowering = root.joinpath("loaves/compiler/lowering")
+    loaf_a = root.joinpath("loaves/group_b/loaf_a")
+    loaf_b = root.joinpath("loaves/group_a/loaf_b")
+    assert [item.arguments for item in planned] == [
+        ["test", "src/test_alpha.incn"],
+        ["test", "src/test_beta.incn"],
+        ["test", "src/test_engine_protocol.incn"],
+        ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
+        ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
+        ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
+        ["test", loaf_a.joinpath("tests/test_one.incn").0, "--profile", "release"],
+        ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
+    ]
+    assert [item.directory for item in planned] == ["", "", "", models.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0]
+    assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
+    assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
+    assert [item.reservation for item in planned] == [
+        4 * GIB,
+        4 * GIB,
+        4 * GIB,
+        6 * GIB,
+        6 * GIB,
+        4 * GIB,
+        4 * GIB,
+        4 * GIB,
+    ]
+    assert [item.alone for item in planned] == [false, false, true, false, false, false, false, false]
+    workers = [oven_a.0, oven_b.0]
+    assert [item.workers for item in planned] == [workers, workers, workers, [], [], [], [], []]
+    assert oven_a.joinpath("src/test_beta.incn").is_file()
+    assert oven_b.joinpath("src/test_alpha.incn").is_file()
+    assert oven_a.joinpath("tests/fixture.txt").is_file()
+    assert oven_a.parent().parent().joinpath("workbench/app/loaf.toml").is_file()
+    assert oven_a.parent().parent().joinpath("loaves").is_symlink()
+    assert planned[3].log.0 == logs.joinpath("003-test_record_scope.log").0
+    # Every invocation has exited before the worker checkouts go; the Loaf projects they name are not theirs to remove.
+    remove_worker_projects(planned)?
+    assert not oven_a.parent().parent().exists() and not oven_b.parent().parent().exists()
+    assert root.joinpath("loaves").is_dir() and loaf_a.joinpath("tests/test_one.incn").is_file()
+    return Ok(None)
+
+
+def test_a_settled_source_compiles_beside_the_others() -> Result[None, str]:
+    """A source that needs a settled installation is compiled ahead in the pool; only its run waits for the others."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    planned = invocations(root, evidence, logs, 2)?
+    ahead = compile_ahead(planned)
+    assert [item.arguments for item in ahead] == [["test", "src/test_engine_protocol.incn", "--list"]]
+    assert [item.alone for item in ahead] == [false]
+    assert ahead[0].workers == planned[2].workers
+    assert ahead[0].reservation == planned[2].reservation
+    assert ahead[0].log.0 == logs.joinpath("002-test_engine_protocol-compile.log").0
+    assert ahead[0].log.0 not in [item.log.0 for item in planned]
+    remove_worker_projects(planned)?
+    return Ok(None)
+
+
+def test_loaf_tests_run_while_the_first_oven_source_builds_the_shared_project_library() -> Result[None, str]:
+    """
+    Every Oven source links the project library that the first of them to start builds, and no Loaf test does: the
+    pool admits the compile-ahead first, then every Loaf test, then the other Oven sources. Without a settled source
+    the first Oven source leads. Positions, and so the joined log, keep the planned order.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    planned = invocations(root, evidence, logs, 2)?
+    early = compile_ahead(planned)
+    pooled = early + [item for item in planned if not item.alone]
+    assert [len(item.workers) > 0 for item in pooled] == [true, true, true, false, false, false, false, false]
+    assert admission_order(pooled) == [0, 3, 4, 5, 6, 7, 1, 2]
+    without_ahead = [item for item in planned if not item.alone]
+    assert admission_order(without_ahead) == [0, 2, 3, 4, 5, 6, 1]
+    assert admission_order([]) == []
+    remove_worker_projects(planned)?
+    return Ok(None)
+
+
+def test_the_planned_invocations_alone_decide_the_outcome() -> Result[None, str]:
+    """
+    The compile-ahead runs in the pool before the settled run, and its status never decides the step.
+
+    The settled invocation passes only after both the pooled invocation and its own compile-ahead ran, and the
+    compile-ahead itself fails, which the outcome ignores; a failing settled run still fails the step.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    pooled = "touch pooled"
+    settled = "if [ \"$1\" = --list ]; then touch ahead; exit 1; fi; [ -e pooled ] && [ -e ahead ] && touch settled"
+    settled_run = Invocation(
+        arguments=["-c", settled, "sh"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-b.log"),
+        alone=true,
+    )
+    first = Invocation(arguments=["-c", pooled], directory=root.0, reservation=GIB, log=logs.joinpath("000-a.log"))
+    assert run_planned("/bin/sh", [first, settled_run], 2, 0)?
+    assert root.joinpath("settled").is_file()
+    assert logs.joinpath("001-b-compile.log").is_file()
+    root.joinpath("pooled").unlink().map_err((error) => error.message())?
+    idle = Invocation(arguments=["-c", "exit 0"], directory=root.0, reservation=GIB, log=logs.joinpath("000-a.log"))
+    assert not run_planned("/bin/sh", [idle, settled_run], 2, 0)?
+    return Ok(None)
+
+
+def test_pooled_invocations_never_wait_behind_a_busy_worker() -> Result[None, str]:
+    """
+    A long invocation holds its worker project while later ones run, one at a time, in the free one.
+
+    The first invocation waits until the last one has run, so a fixed assignment that queued the last one behind it in
+    the same worker would fail it. A second invocation in an occupied worker fails at `mkdir busy`.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    workers = [root.joinpath("w0").0, root.joinpath("w1").0]
+    for worker in workers:
+        Path(worker).mkdir(true, true).map_err((error) => error.message())?
+    done = root.joinpath("done").0
+    waits = "i=0; while [ ! -e \"$1\" ]; do i=$((i+1)); if [ $i -gt 200 ]; then exit 1; fi; sleep 0.05; done"
+    mut planned: list[Invocation] = []
+    for index in range(5):
+        mut script = f"mkdir busy || exit 1; touch ran-{index}; sleep 0.05"
+        if index == 0:
+            script = f"mkdir busy || exit 1; {waits}; touch ran-0"
+        elif index == 4:
+            script += "; touch \"$1\""
+        script += "; rmdir busy"
+        log = logs.joinpath(log_name(index, Path(f"/r/test_{index}.incn")))
+        arguments = ["-c", script, "sh", done]
+        planned.append(Invocation(arguments=arguments, directory="", reservation=GIB, log=log, workers=workers))
+    assert run_all_failures("/bin/sh", planned, 2, 0)? == []
+    assert Path(workers[0]).joinpath("ran-0").is_file()
+    for index in range(1, 5):
+        assert Path(workers[1]).joinpath(f"ran-{index}").is_file(), f"invocation {index} did not run in the free worker"
+    return Ok(None)
+
+
+def test_missing_oven_sources_fail_the_step() -> Result[None, str]:
+    """The step refuses a checkout without Oven test sources."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    write(root, "workspaces/oven/src/main.incn", "")?
+    evidence = root.joinpath("evidence")
+    assert refusal(invocations(root, evidence, evidence, 1)) == "Oven test sources are absent"
+    return Ok(None)
+
+
+def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[None, str]:
+    """Logs written at once join in invocation order, and one failure fails the run."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    mut planned: list[Invocation] = []
+    for index in range(7):
+        log = logs.joinpath(log_name(index, Path(f"/r/test_{index}.incn")))
+        planned.append(Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log))
+    assert run_all("/bin/echo", planned, 5, 3 * GIB)?
+    joined = join_logs(planned, root.joinpath("joined.log"))?
+    assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
+    assert not run_all("/usr/bin/false", planned, 4, 0)?
+    assert run_all_failures("/usr/bin/false", planned, 1, 0)? == [0]
+    environment_log = logs.joinpath("environment.log")
+    environment = Invocation(
+        arguments=["OVEN_TEST_PROBE"],
+        directory=root.0,
+        reservation=GIB,
+        log=environment_log,
+        environment={"OVEN_TEST_PROBE": "visible"},
+    )
+    assert run_all("/usr/bin/printenv", [environment], 1, 0)?
+    assert environment_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "visible\n"
+    return Ok(None)
+
+
+def test_concurrent_invocations_have_distinct_compiler_worker_scopes() -> Result[None, str]:
+    """Each child receives its own compiler worker identity before the scheduler manages its lifetime."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    mut planned: list[Invocation] = []
+    for name in ["first", "second"]:
+        log = root.joinpath(name + ".log")
+        planned.append(Invocation(arguments=["INCAN_RELEASE_INVOCATION"], directory=root.0, reservation=GIB, log=log))
+    assert run_all("/usr/bin/printenv", planned, 2, 2 * GIB)?
+    for item in planned:
+        found = item.log.read_text("utf-8", "strict").map_err((error) => error.message())?
+        assert found == item.log.0 + "\n"
+    return Ok(None)
+
+
+def test_a_running_invocation_is_probed_for_its_process_tree_at_most_once_a_second() -> Result[None, str]:
+    """
+    Each probe of a running tree starts `ps`, so a running invocation is probed when it starts being watched and then at
+    most once per interval, and always just before it is stopped; a settled one is not probed again.
+    """
+    assert CUSTODY_INTERVAL_MS == 1000
+    assert custody_due(None, 0)
+    assert not custody_due(Some(0), 999)
+    assert custody_due(Some(0), 1000)
+    assert custody_due(Some(4000), 5200)
+    assert not custody_due(Some(4900), 5200)
+    return Ok(None)
+
+
+def test_first_failure_stops_later_admission_and_cancels_a_running_child_tree() -> Result[None, str]:
+    """One real failure prevents queued work and stops a concurrently running shell plus its child."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    failure = Invocation(
+        arguments=["-c", "while [ ! -e ready ]; do sleep 0.01; done; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-failure.log"),
+    )
+    running = Invocation(
+        arguments=["-c", "echo $$ > root.pid; sleep 60 & echo $! > child.pid; touch ready; wait"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-running.log"),
+    )
+    queued = Invocation(
+        arguments=["-c", "touch queued"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-queued.log"),
+    )
+    assert run_all_failures("/bin/sh", [failure, running, queued], 2, 0)? == [0]
+    assert not root.joinpath("queued").exists()
+    # Evidence directories can be reused. A queued invocation's older file must never enter this run's report.
+    queued.log.write_text("stale output", "utf-8", "strict", None).map_err((error) => error.message())?
+    first = Invocation(arguments=["-c", "echo failure-message; exit 1"], directory=root.0, reservation=GIB, log=failure.log)
+    outcome = planned_outcome("/bin/sh", [first, queued], 1, 0)?
+    assert not outcome.succeeded
+    assert [item.log.0 for item in outcome.started] == [first.log.0]
+    assert join_logs(outcome.started, root.joinpath("joined.log"))? == "failure-message\n"
+    pids = [read_pid(root.joinpath("root.pid"))?, read_pid(root.joinpath("child.pid"))?]
+    assert live_pids(pids)? == [], f"fail-fast cancellation left processes alive: {pids}"
+    return Ok(None)
+
+
+def test_keep_going_runs_every_planned_invocation_after_a_failure() -> Result[None, str]:
+    """With `--keep-going` a failure stops nothing: later pooled and settled invocations still run and are reported."""
+    assert parse_options(["oven", "evidence", "--keep-going"], "", 2, 4 * GIB)?.keep_going
+    assert not parse_options(["oven", "evidence"], "", 2, 4 * GIB)?.keep_going
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    failure = Invocation(
+        arguments=["-c", "echo failure-message; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-failure.log"),
+    )
+    queued = Invocation(
+        arguments=["-c", "touch queued; echo queued-message"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-queued.log"),
+    )
+    settled = Invocation(
+        arguments=["-c", "touch settled; echo settled-message"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-settled.log"),
+        alone=true,
+    )
+    outcome = planned_outcome("/bin/sh", [failure, queued, settled], 1, 0, true)?
+    assert not outcome.succeeded
+    assert [item.log.0 for item in outcome.started] == [failure.log.0, queued.log.0, settled.log.0]
+    assert root.joinpath("queued").exists() and root.joinpath("settled").exists()
+    joined = join_logs(outcome.started, root.joinpath("joined.log"))?
+    assert joined == "failure-message\nqueued-message\nsettled-message\n"
+    return Ok(None)
+
+
+def test_an_ignored_prefix_covering_every_position_stops_no_invocation() -> Result[None, str]:
+    """Independent release gates ignore every position, so each gate runs and each failure is named."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    first = Invocation(arguments=["-c", "exit 1"], directory=root.0, reservation=GIB, log=logs.joinpath("000-first.log"))
+    second = Invocation(
+        arguments=["-c", "touch second; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-second.log"),
+    )
+    third = Invocation(
+        arguments=["-c", "touch third"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-third.log"),
+    )
+    assert run_all_failures("/bin/sh", [first, second, third], 1, 0, 3)? == [0, 1]
+    assert root.joinpath("second").exists() and root.joinpath("third").exists()
+    return Ok(None)
+
+
+def test_completed_slot_is_settled_before_queued_admission() -> Result[None, str]:
+    """A failure raised during another child's cleanup is observed before its freed slot admits queued work."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    failure = Invocation(
+        arguments=["-c", "while [ ! -e gate ]; do sleep 0.01; done; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-failure.log"),
+    )
+    completed = Invocation(
+        arguments=[
+            "-c",
+            "(trap 'touch gate; exit 0' TERM; touch armed; while :; do sleep 1; done) & " + "while [ ! -e armed ]; do sleep 0.01; done",
+        ],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-completed.log"),
+    )
+    queued_log = logs.joinpath("002-queued.log")
+    queued = Invocation(arguments=["-c", "touch queued"], directory=root.0, reservation=GIB, log=queued_log)
+    assert run_all_failures("/bin/sh", [failure, completed, queued], 2, 0)? == [0]
+    assert not queued_log.exists(), "the queued invocation was admitted before the active failure was settled"
+    assert not root.joinpath("queued").exists()
+    return Ok(None)
+
+
+def test_start_error_drains_every_owned_process_tree() -> Result[None, str]:
+    """A later admission error stops both active shells and both of their children before returning the error."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    mut planned: list[Invocation] = []
+    for index in range(2):
+        planned.append(
+            Invocation(
+                arguments=[
+                    "-c",
+                    f"trap 'touch stopped-{index}; exit 0' TERM; echo $$ > root-{index}.pid; " + f"sleep 60 & echo $! > child-{index}.pid; touch ready-{index}; wait",
+                ],
+                directory=root.0,
+                reservation=GIB,
+                log=logs.joinpath(f"00{index}-running.log"),
+            ),
+        )
+    planned.append(
+        Invocation(
+            arguments=["-c", "while [ ! -e ready-0 ] || [ ! -e ready-1 ]; do sleep 0.01; done"],
+            directory=root.0,
+            reservation=GIB,
+            log=logs.joinpath("002-completed.log"),
+        ),
+    )
+    planned.append(
+        Invocation(
+            arguments=["-c", "exit 0"],
+            directory=root.joinpath("absent").0,
+            reservation=GIB,
+            log=logs.joinpath("003-cannot-start.log"),
+        ),
+    )
+    message = refusal(run_all_failures("/bin/sh", planned, 3, 0))
+    assert message.contains("cannot start `/bin/sh`"), message
+    assert root.joinpath("stopped-0").exists()
+    assert root.joinpath("stopped-1").exists()
+    pids = [
+        read_pid(root.joinpath("root-0.pid"))?,
+        read_pid(root.joinpath("child-0.pid"))?,
+        read_pid(root.joinpath("root-1.pid"))?,
+        read_pid(root.joinpath("child-1.pid"))?,
+    ]
+    assert live_pids(pids)? == [], f"start-error cleanup left processes alive: {pids}"
+    return Ok(None)
+
+
+def test_timeout_stops_the_complete_child_tree_and_later_admission() -> Result[None, str]:
+    """One invocation deadline stops its shell and child before any queued invocation starts."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    timed = Invocation(
+        arguments=["-c", "echo $$ > root.pid; sleep 60 & echo $! > child.pid; wait"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-timed.log"),
+        timeout_seconds=1,
+    )
+    queued = Invocation(
+        arguments=["-c", "touch queued"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-queued.log"),
+    )
+    assert run_all_failures("/bin/sh", [timed, queued], 1, 0)? == [0]
+    assert not root.joinpath("queued").exists()
+    pids = [read_pid(root.joinpath("root.pid"))?, read_pid(root.joinpath("child.pid"))?]
+    assert live_pids(pids)? == [], f"timeout cancellation left processes alive: {pids}"
+    return Ok(None)
+
+
+def read_pid(path: Path) -> Result[int, str]:
+    """Read one decimal process identity written by a shell fixture."""
+    text = path.read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
+    return Ok(int(text))
+
+
+def live_pids(wanted: list[int]) -> Result[list[int], str]:
+    """Return fixture process identities that remain in the operating-system process table."""
+    return Ok([row.pid for row in process_table()? if row.pid in wanted])
+
+
+def fixture(root: Path) -> Result[None, str]:
+    """A checkout with Oven units, Loaf tests, hidden and excluded entries, and the record contract sources."""
+    write(root, "workspaces/oven/loaf.toml", "[project]\nname = \"oven\"\nversion = \"0.1.0\"\n")?
+    write(root, "workspaces/oven/src/test_beta.incn", "")?
+    write(root, "workspaces/oven/src/test_alpha.incn", "")?
+    write(root, "workspaces/oven/src/test_engine_protocol.incn", "")?
+    write(root, "workspaces/oven/src/main.incn", "")?
+    write(root, "workspaces/oven/tests/fixture.txt", "fixture")?
+    write(root, "workbench/app/loaf.toml", "[project]\nname = \"workbench\"\nversion = \"0.1.0\"\n")?
+    write(root, "workspaces/oven/src/test_note.md", "")?
+    write(root, "loaves/group_b/loaf_a/tests/test_two.incn", "")?
+    write(root, "loaves/group_b/loaf_a/tests/test_one.incn", "")?
+    write(root, "loaves/group_b/loaf_a/tests/helper.incn", "")?
+    write(root, "loaves/group_b/loaf_a/tests/test_folder.incn/inner.incn", "")?
+    write(root, "loaves/group_a/loaf_b/tests/test_one.incn", "")?
+    write(root, "loaves/group_a/.hidden/tests/test_one.incn", "")?
+    write(root, "loaves/group_a/loaf_c/src/test_source.incn", "")?
+    write(root, "loaves/compiler/internal_models/tests/canonical_record_controls.incn", "")?
+    write(root, "loaves/compiler/internal_models/tests/test_record_scope.incn", "")?
+    write(root, "loaves/compiler/lowering/tests/test_three.incn", "")?
+    return Ok(None)
+
+
+def refusal[T](result: Result[T, str]) -> str:
+    """The refusal message, or nothing when the call succeeded."""
+    match result:
+        Ok(_) => return ""
+        Err(message) => return message

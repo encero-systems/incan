@@ -1,0 +1,14 @@
+# behavior: a test names classes of a module beside its project's entry that adopt a Rust trait, one filling the trait's required method and keeping its provided one, one overriding both, and lends them to Rust, as Oven's tests do with `PreparedBodyRecordSource`, which adopts the Rust `RecordSource`.
+# cli-commands:
+#   test tests
+# expect-stdout-contains:
+#   test_holder.incn::test_a_project_class_fills_the_required_method PASSED
+#   test_holder.incn::test_a_project_class_overrides_the_provided_method PASSED
+#   test_holder.incn::test_a_project_function_reads_through_a_class_it_builds PASSED
+# expect-exit: 0
+
+from holder import lookup
+
+
+def main() -> None:
+    println(lookup("a", 7))

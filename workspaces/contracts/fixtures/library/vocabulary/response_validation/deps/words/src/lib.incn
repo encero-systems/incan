@@ -1,0 +1,35 @@
+"""Return distinct invalid public responses to check validation and continued module checking."""
+
+from std.vocab import (
+    ClauseSurface, DeclarationSurface, DesugarError, DesugarOutput, DesugarRequest, DesugarResponse,
+    DslSurface, IncanExpr, IncanExprKind, Span, VocabRegistration, VocabSyntaxNode,
+)
+
+
+pub def marker() -> int:
+    """Keep the ordinary import surface independent of custom expansion."""
+    return 7
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register three expression forms, each with a different invalid expansion."""
+    mut surface = DslSurface.on_import("words")
+    for keyword in ["bad_schema", "bad_span", "bad_position"]:
+        declaration = DeclarationSurface.named(keyword).with_clause_body().desugars_to_expression()
+        surface = surface.with_declaration(declaration.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Produce schema, source-map or output-position violations selected by the declaration."""
+    span = request.node.span()
+    match request.node:
+        VocabSyntaxNode.Declaration(declaration) =>
+            if declaration.keyword == "bad_schema":
+                expr = IncanExpr(span=span, kind=IncanExprKind.Int(1))
+                return Ok(DesugarResponse(output=DesugarOutput.Expression(expr), schema_version=999))
+            if declaration.keyword == "bad_span":
+                expr = IncanExpr(span=Span(start=0, end=999999), kind=IncanExprKind.Int(1))
+                return Ok(DesugarResponse(output=DesugarOutput.Expression(expr)))
+            return Ok(DesugarResponse(output=DesugarOutput.Statements([])))
+        _ => return Err(DesugarError.at(span, "expected a declaration"))

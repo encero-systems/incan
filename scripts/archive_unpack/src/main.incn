@@ -1,0 +1,30 @@
+"""Unpack one gzip-compressed tar archive for release qualification."""
+
+from rust::std::env import args
+from rust::std::io import Cursor
+from rust::std::process import exit
+from rust::tar @ "0.4" import Archive
+from std.compression.gzip import decompress as decompress_gzip
+from std.fs import Path
+
+
+def main() -> None:
+    """1. Parse the archive and destination. 2. Decompress the layer. 3. Unpack it or report a refusal."""
+    arguments = [str(argument) for argument in args()][1:]
+    if len(arguments) != 2:
+        println("usage: archive_unpack ARCHIVE DESTINATION")
+        exit(2)
+    match unpack(Path(arguments[0]), Path(arguments[1])):
+        Ok(_) => exit(0)
+        Err(message) =>
+            println(f"archive-unpack: {message}")
+            exit(1)
+
+
+def unpack(source: Path, destination: Path) -> Result[None, str]:
+    """Decompress and unpack `source` below the caller-created `destination`."""
+    bytes = source.read_bytes().map_err((error) => error.message())?
+    decompressed = decompress_gzip(bytes).map_err((error) => error.message())?
+    mut archive = Archive.new(Cursor.new(decompressed))
+    archive.unpack(destination.0).map_err((error) => error.to_string())?
+    return Ok(None)

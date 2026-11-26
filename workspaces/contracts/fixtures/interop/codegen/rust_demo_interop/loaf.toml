@@ -1,0 +1,11 @@
+[project]
+name = "rust_demo_interop"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+demo = { loaf = "demo", path = "rust/demo" }
+demo_derive = { loaf = "demo_derive", path = "rust/demo_derive" }
+client_probe = { loaf = "client_probe", path = "rust/client_probe" }

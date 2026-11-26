@@ -1,0 +1,199 @@
+"""Collect the checked Body authorities selected during a reported lowering activation."""
+
+from pub::incan_platform.store import Snapshot
+from pub::incan_mir_plan import AdmittedFunction
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import RecordKey
+from compiler_body_keys import EXECUTABLE_BODY_PROFILE
+from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord, select_body_inventory_of
+from compiler_graph_records import EditCutoff, OutputSlots, reusable_family_records
+from compiler_owner_records import read_body_frame
+from compiler_executable_metadata import predecessor_owner_metadata, selected_owner_metadata_reader, typed_owner_metadata
+from compiler_plan_modules import PlanModuleAdmissions
+from compiler_plan_values import AdmittedPlanModule
+from engine_lowering_evidence import BodyRootAuthority, SelectedBodyRoot
+
+
+model CoveredRoot:
+    """An already admitted member's source file and native symbol."""
+
+    source: str
+    symbol: str
+
+
+pub model BodyRootSelection:
+    """Retain selected authority once per owner and withhold an incomplete proof."""
+
+    pub enabled: bool = false
+    pub restored: set[str] = set()
+    refused: bool = false
+    roots: Dict[str, SelectedBodyRoot] = {}
+    demanded_whole: Dict[str, CoveredRoot] = {}
+
+    pub def published(mut self, key: Borrowed[RecordKey], name: str) -> None:
+        """Record a Body IR evaluation once its prepared receipt names the exact checked root."""
+        if not self.enabled:
+            return
+        authority = match key.identity in self.restored:
+            true => BodyRootAuthority.CompilerRestored
+            false => BodyRootAuthority.CompilerPublished
+        self.add(key.identity, name, key.context, authority)
+
+    pub def retained(mut self, key: Borrowed[RecordKey], name: str, source: str, symbol: str) -> None:
+        """Record the individually selected Body once, with its actual whole-module admission when present."""
+        if not self.enabled:
+            return
+        mut authority = BodyRootAuthority.GraphRetained
+        if key.identity in self.demanded_whole:
+            module_owner = self.demanded_whole[key.identity]
+            if source != module_owner.source or symbol != module_owner.symbol:
+                self.refused = true
+                return
+            authority = BodyRootAuthority.WholeModule
+        self.add(key.identity, name, key.context, authority)
+
+    def add(mut self, owner: str, name: str, root: str, authority: BodyRootAuthority) -> None:
+        """Refuse an empty or duplicate authority instead of letting arrival order select a root."""
+        if not self.enabled:
+            return
+        if owner == "" or name == "" or root == "" or owner in self.roots:
+            self.refused = true
+            return
+        self.roots[owner] = SelectedBodyRoot(owner=owner, function=name, root=root, authority=authority)
+
+    pub def selected(self) -> Option[list[SelectedBodyRoot]]:
+        """Return only a nonempty complete cohort in owner order."""
+        if not self.enabled or self.refused or len(self.roots) == 0:
+            return None
+        for owner in self.demanded_whole.keys():
+            if owner not in self.roots or self.roots[owner].authority != BodyRootAuthority.WholeModule:
+                return None
+        return Some([self.roots[owner] for owner in sorted([owner for owner in self.roots.keys()])])
+
+    pub def select_rescued(
+        mut self, selected: Option[Snapshot], origin: str, demanded: list[str], covered: Borrowed[CoveredBodyOwners],
+        admitted: Borrowed[list[AdmittedPlanModule]], admissions: Borrowed[PlanModuleAdmissions],
+        retained: Borrowed[list[SelectedBodyRecord]], fresh: Borrowed[set[str]], typed: bool,
+        cutoff: EditCutoff = EditCutoff(),
+    ) -> Result[list[SelectedBodyRecord], str]:
+        """Restore individually demanded checked values and report admitted whole-module roots.
+
+        1. Select the graph for this request.
+        2. Read whole-module Body roots that only reporting needs.
+        3. Restore complete checked values only for actual lowering demands.
+        """
+        # 1. Keep every selection on the request's graph.
+        if not self.enabled and len(demanded) == 0:
+            return Ok([])
+        graph = match selected:
+            Some(current) => current
+            None =>
+                if len(demanded) > 0:
+                    return Err("covered lowering owner has no selected graph")
+                self.refused = true
+                return Ok([])
+        demand_ids = set(demanded)
+        # 2. Let real lowering demands supply their own proofs when their values are restored.
+        if self.enabled:
+            mut proof_owners: Dict[str, CoveredRoot] = {}
+            match whole_body_owners(graph, origin, covered, admitted, admissions, retained, fresh):
+                Ok(owners) =>
+                    # Defer an individually demanded Body to the same checked witness that serves lowering.
+                    for owner in owners.keys():
+                        if owner in demand_ids:
+                            self.demanded_whole[owner] = owners[owner]
+                        else:
+                            proof_owners[owner] = owners[owner]
+                Err(_) => self.refused = true
+            self.add_whole_roots(graph, origin, proof_owners, typed, cutoff)?
+        # 3. Keep the full checked inventory on the route that uses it.
+        if len(demand_ids) == 0:
+            return Ok([])
+        return select_body_inventory_of(graph, CHECKER_PROFILE, origin, sorted([owner for owner in demand_ids]))
+
+    def add_whole_roots(
+        mut self, graph: Snapshot, origin: str, owners: Borrowed[Dict[str, CoveredRoot]],
+        typed: bool, cutoff: EditCutoff,
+    ) -> Result[None, str]:
+        """Report a whole-module member from its current executable Body and its checked owner header."""
+        if len(owners) == 0:
+            return Ok(None)
+        reader = selected_owner_metadata_reader(typed)?
+        identities = [owner for owner in owners.keys()]
+        slots = OutputSlots(origin=origin, identity_profile=EXECUTABLE_BODY_PROFILE, included=Some(identities))
+        mut present: set[str] = set()
+        for record in reusable_family_records(graph, "body-ir", CHECKER_PROFILE, Some(slots), cutoff=cutoff)?:
+            identity = record.key.identity
+            root = record.key.context
+            frame = read_body_frame(record.key, CHECKER_PROFILE, record.value)?
+            header = match reader:
+                Some(prepared) => typed_owner_metadata(prepared, frame)?
+                None => predecessor_owner_metadata(frame)?
+            owner = owners[identity]
+            if header.identity != identity or header.source != owner.source or header.symbol != owner.symbol:
+                self.refused = true
+                continue
+            self.add(identity, header.name, root, BodyRootAuthority.WholeModule)
+            present.add(identity)
+        if len(present) != len(owners):
+            self.refused = true
+        return Ok(None)
+
+
+def whole_body_owners(
+    graph: Borrowed[Snapshot], origin: str, covered: Borrowed[CoveredBodyOwners], admitted: Borrowed[list[AdmittedPlanModule]],
+    admissions: Borrowed[PlanModuleAdmissions], retained: Borrowed[list[SelectedBodyRecord]], fresh: Borrowed[set[str]],
+) -> Result[Dict[str, CoveredRoot], str]:
+    """Select only owner and symbol pairs verified by the actual module admission on this request's graph."""
+    retained_owners = set([record.identity for record in retained])
+    mut owners: Dict[str, CoveredRoot] = {}
+    for module in admitted:
+        file = module.key.identity
+        name = module.plan.module
+        compact = name in admissions.compact
+        if not compact and (name not in admissions.scalar or not admissions.scalar[name].complete):
+            continue
+        if module.admitted_snapshot != graph.digest or module.key.origin != origin:
+            return Err("whole-module Body authority belongs to another selected graph")
+        # Compact admissions already verified the selected page's placement, digest and member count at intake.
+        mut scalar: Dict[str, AdmittedFunction] = {}
+        if not compact:
+            scalar = scalar_members(admissions.scalar[name].functions, len(module.plan.functions))?
+        for member in module.plan.functions:
+            owner = member.identity
+            if covered.owners.get(owner, "") != file or covered.symbols.get(member.symbol, "") != owner:
+                continue
+            if owner in fresh or owner in retained_owners:
+                continue
+            symbol = match compact:
+                true => member.symbol
+                false => scalar_symbol(scalar, member.function, member.symbol, member.key)?
+            if owner in owners:
+                return Err("whole-module Body owner has ambiguous admission")
+            owners[owner] = CoveredRoot(source=file, symbol=symbol)
+    return Ok(owners)
+
+
+def scalar_members(members: list[AdmittedFunction], expected: int) -> Result[Dict[str, AdmittedFunction], str]:
+    """Index the observed scalar members only when the whole admitted roster is present."""
+    mut indexed: Dict[str, AdmittedFunction] = {}
+    for member in members:
+        if member.function in indexed:
+            return Err("scalar admission repeats a module member")
+        indexed[member.function] = member
+    if len(indexed) != expected:
+        return Err("scalar admission lacks the selected module's members")
+    return Ok(indexed)
+
+
+def scalar_symbol(members: Borrowed[Dict[str, AdmittedFunction]], name: str, expected: str, key: str) -> Result[str, str]:
+    """An updated symbol must be witnessed by the admitted product's current placement."""
+    if name not in members:
+        return Err("scalar admission lacks the selected member")
+    member = members[name]
+    if member.identity == expected:
+        return Ok(expected)
+    if let Some(placement) = member.placement:
+        if placement.key == key:
+            return Ok(member.identity)
+    return Err("scalar admission gives no witness for its selected symbol")

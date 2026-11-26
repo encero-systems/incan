@@ -19,5 +19,5 @@ for found in re.find_iter("one two"):
 ```
 """
 
-from std.regex._core import Regex, RegexError, compile
-from std.regex.types import Captures, CapturesIterator, Match, MatchIterator, SplitIterator
+pub from crate.regex._core import Regex, RegexError, compile
+pub from crate.regex.types import Captures, CapturesIterator, Match, MatchIterator, SplitIterator

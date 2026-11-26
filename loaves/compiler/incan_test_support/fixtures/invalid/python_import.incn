@@ -1,5 +1,0 @@
-import python "requests" as pyreq
-
-
-def main() -> None:
-    pass

@@ -1,0 +1,33 @@
+"""A shipped standard Loaf is current only for the compiler that produced it."""
+
+from std.fs import Path
+
+
+pub def recorded_producer(directory: Path) -> Result[str, str]:
+    """The compiler identity a published Loaf recorded beside its outputs, or empty when it recorded none."""
+    inputs = directory.joinpath(".oven-inputs.sha256")
+    if not inputs.is_file():
+        return Ok("")
+    text = inputs.read_text("utf-8", "strict").map_err((error) => error.message())?
+    for line in text.split("\n"):
+        if line.startswith("compiler "):
+            return Ok(line[9:].strip())
+    return Ok("")
+
+
+pub def stale_standard_refusal(name: str, directory: Path, current: str) -> Result[Option[str], str]:
+    """
+    Name a shipped standard Loaf that another compiler produced.
+
+    A relink replaces the compiler but keeps the toolchain's standard Loaves, whose records that compiler may no longer
+    read. Such a Loaf is stale for this installation, so it is refused here rather than deep in checking or lowering.
+    """
+    recorded = recorded_producer(directory)?
+    if recorded == "" or recorded == current:
+        return Ok(None)
+    return Ok(
+        Some(
+            f"stale standard Loaf {name}: produced by compiler {recorded[:12]}, but this installation's compiler is "
+            + f"{current[:12]}; rebuild the standard Loaves with this compiler",
+        ),
+    )

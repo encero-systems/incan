@@ -1,0 +1,9 @@
+"""The third owner of Item."""
+
+
+pub model Item:
+    """A three-field source value."""
+
+    pub value: int
+    pub extra: int
+    pub tail: int

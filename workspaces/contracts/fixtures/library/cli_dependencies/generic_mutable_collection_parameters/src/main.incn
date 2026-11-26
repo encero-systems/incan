@@ -1,0 +1,29 @@
+# behavior: imported generic mut collection parameters change plain locals and forwarded parameters (#2501)
+# expect-stdout:
+#   2 3
+
+"""Exercise generic mutable collection parameters from a separately compiled Loaf."""
+
+from pub::collection_mutations.mutations import append_value, insert_value
+
+
+def append_forwarded(mut values: list[int]) -> None:
+    """Forward caller-owned list storage to the imported generic mutation."""
+    append_value(values, 2)
+
+
+def insert_forwarded(mut values: Dict[str, int]) -> None:
+    """Forward caller-owned dictionary storage to the imported generic mutation."""
+    insert_value(values, "forwarded", 2)
+
+
+def main() -> None:
+    """Print collection observations after direct and forwarded imported calls."""
+    mut values: list[int] = []
+    append_value(values, 1)
+    append_forwarded(values)
+
+    mut counts: Dict[str, int] = {}
+    insert_value(counts, "direct", 1)
+    insert_forwarded(counts)
+    println(f"{len(values)} {counts["direct"] + counts["forwarded"]}")

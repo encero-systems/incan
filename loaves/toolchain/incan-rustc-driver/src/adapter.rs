@@ -1,10 +1,13 @@
 //! The only rustc-private boundary: Incan declarations enter as AST items and bodies enter as MIR.
 
 use crate::error::PlanError;
-use crate::identity::{self, IdentityError};
-use crate::plan::{Plan, PlanType};
+use crate::identity::DriverIdentity;
+use crate::native_crates::native_roots;
+use crate::plan::{CalleeKind, Carrier, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
+use incan_driver::unit::{ToolchainAccess, UnitKind};
+use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
@@ -13,24 +16,33 @@ use rustc_middle::mir::Body;
 use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_session::config::Input;
 use rustc_span::FileName;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Compilation is serialized until stage 3d supplies a resident driver with request isolation.
+mod active_plan;
+mod callbacks;
+mod completed_codegen;
+mod library_verification;
+mod native_object_products;
+mod rustc_queries;
+pub(crate) mod stable_link;
+
+pub(crate) use active_plan::PlanReader;
+use library_verification::*;
+pub(crate) use native_object_products::PREDECESSOR_LOCATOR;
+pub(crate) use rustc_queries::*;
+
+/// Serialize native compiles and the typed failure and extern-binding state they share.
 static COMPILATION: Mutex<()> = Mutex::new(());
-/// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot.
-static PLAN: Mutex<Option<Arc<Plan>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
+/// Qualified development reuse requires tracked plan records and content-addressed Darwin link inputs.
+const NATIVE_INCREMENTAL_QUALIFIED: bool = true;
 
-/// Preserve a typed plan refusal when an admitted external signature cannot name its native representation.
-fn native_type_or_refuse<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Ty<'tcx> {
-    match types::native_type(tcx, ty) {
-        Ok(ty) => ty,
-        Err(error) => refuse(tcx, error),
-    }
-}
+/// Stable name of rustc's empty synthetic input; authored source spans are loaded separately from the native plan.
+const SYNTHETIC_SOURCE_NAME: &str = "source";
 
 /// Typed refusals and native compiler failures remain distinct at the executable boundary.
 #[derive(Debug, thiserror::Error)]
@@ -38,9 +50,6 @@ pub enum DriverError {
     /// The scalar plan violates its preflight contract.
     #[error(transparent)]
     Plan(#[from] PlanError),
-    /// Build-bound toolchain evidence does not match the runtime.
-    #[error(transparent)]
-    Identity(#[from] IdentityError),
     /// rustc refused the compilation after valid preflight input.
     #[error("native compilation failed")]
     Compilation,
@@ -52,527 +61,438 @@ pub enum DriverError {
     Invocation(String),
 }
 
-/// Read the active plan without retaining the slot lock while rustc resolves callees.
-fn active_plan() -> Result<Arc<Plan>, DriverError> {
-    PLAN.lock()
-        .map_err(|_| DriverError::State)?
-        .as_ref()
-        .map(Arc::clone)
-        .ok_or(DriverError::State)
-}
-
-/// Retain a typed adapter error, then abort this rustc invocation through its diagnostic boundary.
-fn refuse(tcx: TyCtxt<'_>, error: PlanError) -> ! {
-    let message = error.to_string();
-    if let Ok(mut failure) = FAILURE.lock() {
-        *failure = Some(error);
-    }
-    tcx.dcx().fatal(message)
-}
-
-/// Override only source-named planned functions; all compiler-generated items retain rustc's provider.
-fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>> {
-    let plan = match active_plan() {
-        Ok(plan) => plan,
-        Err(error) => tcx.dcx().fatal(error.to_string()),
-    };
-    let name = tcx.opt_item_name(def.to_def_id());
-    let function = plan.functions.iter().find(|function| {
-        tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
-            && tcx.parent(def.to_def_id()).is_crate_root()
-            && name.is_some_and(|name| name.as_str() == function.name)
-    });
-    match function {
-        // A closure constructor keeps rustc's own body, built from its injected boxing expression.
-        Some(function)
-            if crate::closures::constructor(function).is_some()
-                || crate::shared_callables::constructor(function).is_some()
-                || function.is_async
-                || function.future_callee.is_some() =>
-        {
-            (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def)
-        }
-        Some(function) => match if crate::captured_generators::producer(function).is_some() {
-            crate::captured_generators::constructor(tcx, def, function)
-        } else {
-            bodies::body(tcx, def, function)
-        } {
-            Ok(body) => tcx.alloc_steal_mir(body),
-            Err(error) => refuse(tcx, error),
-        },
-        None => {
-            let parent = tcx.parent(def.to_def_id());
-            let coroutine = plan.functions.iter().find(|function| {
-                function.is_async
-                    && tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
-                    && tcx
-                        .opt_item_name(parent)
-                        .is_some_and(|name| name.as_str() == function.name)
-            });
-            if let Some(function) = coroutine {
-                return match crate::coroutines::body(tcx, def, function) {
-                    Ok(body) => tcx.alloc_steal_mir(body),
-                    Err(error) => refuse(tcx, error),
-                };
-            }
-            let constructor = plan.functions.iter().find(|function| {
-                tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
-                    && tcx
-                        .opt_item_name(parent)
-                        .is_some_and(|name| name.as_str() == function.name)
-                    && crate::captured_generators::producer(function).is_some()
-            });
-            let closure = plan.functions.iter().find(|function| {
-                tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
-                    && tcx
-                        .opt_item_name(parent)
-                        .is_some_and(|name| name.as_str() == function.name)
-                    && crate::closures::constructor(function).is_some()
-            });
-            match (constructor, closure) {
-                (Some(function), _) => match crate::captured_generators::callback(tcx, def, function) {
-                    Ok(body) => tcx.alloc_steal_mir(body),
-                    Err(error) => refuse(tcx, error),
-                },
-                (None, Some(function)) => match crate::closures::callback(tcx, def, function) {
-                    Ok(body) => tcx.alloc_steal_mir(body),
-                    Err(error) => refuse(tcx, error),
-                },
-                (None, None) => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
-            }
-        }
-    }
-}
-
 /// Inject the prevalidated declarations after parsing an empty Incan crate root.
 struct Callbacks {
+    /// The unstable features the unit's description declares; this session enables them and no others.
+    features: Vec<String>,
     plan: Arc<Plan>,
-}
-
-impl rustc_driver::Callbacks for Callbacks {
-    /// Install the source-free root and the MIR query override; cap lints that only see placeholder bodies.
-    fn config(&mut self, config: &mut interface::Config) {
-        config.input = Input::Str {
-            name: FileName::Custom(self.plan.span.file.clone()),
-            input: String::new(),
-        };
-        config.override_queries = Some(|_session, providers| providers.queries.mir_built = mir_built);
-    }
-
-    /// Add function signatures and load the declared external crates, without parsing generated source.
-    fn after_crate_root_parsing(
-        &mut self,
-        compiler: &interface::Compiler,
-        krate: &mut ast::Crate,
-    ) -> rustc_driver::Compilation {
-        let sources = Sources::new(compiler.sess.source_map());
-        let span = match sources.span(&self.plan.span) {
-            Ok(span) => span,
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        };
-        match crate::cloneable_closures::items(&self.plan, span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        for output in crate::futures::outputs(&self.plan) {
-            krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
-            krate
-                .items
-                .push(crate::futures::borrowed_alias(&output, krate.spans.inner_span));
-        }
-        for value in &self.plan.enums {
-            let span = match sources.span(&value.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate
-                .items
-                .extend(enum_items(value, &compiler.sess.psess.attr_id_generator, span));
-        }
-        for model in &self.plan.models {
-            let span = match sources.span(&model.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate.items.extend(declarations::model_items(
-                model,
-                &compiler.sess.psess.attr_id_generator,
-                span,
-            ));
-            if !model.checked_deserialize.is_empty() {
-                krate.items.push(crate::checked_json::forwarding_impl(model, span));
-            }
-            if !model.string_conversion_root.is_empty() {
-                krate
-                    .items
-                    .push(crate::checked_json::source_forwarding_impl(model, span));
-            }
-        }
-        for function in &self.plan.functions {
-            let span = match sources.span(&function.span) {
-                Ok(span) => span,
-                Err(error) => {
-                    let message = error.to_string();
-                    if let Ok(mut failure) = FAILURE.lock() {
-                        *failure = Some(error);
-                    }
-                    compiler.sess.dcx().fatal(message);
-                }
-            };
-            krate.items.push(declarations::function(function, span));
-        }
-        krate
-            .items
-            .extend(crate::shared_callables::items(&self.plan, krate.spans.inner_span));
-        match crate::field_metadata::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::comparison_bridges::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::fallible_bridges::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::fallible_bridges::ordinary_items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::callable_bridges::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::marker_traits::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        // Computed statics keep rustc's own MIR for their storage and accessors (see `statics`).
-        for cell in &self.plan.statics {
-            let span = match sources.span(&cell.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate.items.extend(crate::statics::items(cell, span));
-            match crate::statics::method_items(&self.plan, cell, span) {
-                Ok(items) => krate.items.extend(items),
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            }
-        }
-        let mut roots: BTreeSet<_> = self
-            .plan
-            .externals
-            .iter()
-            .filter_map(|external| external.path.split("::").next())
-            .chain(
-                self.plan
-                    .models
-                    .iter()
-                    .map(|model| &model.library_item)
-                    .chain(self.plan.enums.iter().map(|value| &value.library_item))
-                    .filter_map(|item| item.split("::").next())
-                    .filter(|root| !root.is_empty()),
-            )
-            .collect();
-        if self.plan.functions.iter().any(|function| {
-            function.locals.iter().any(|local| {
-                matches!(
-                    local.ty,
-                    crate::plan::PlanType::Generator(..)
-                        | crate::plan::PlanType::GeneratorMutRef(..)
-                        | crate::plan::PlanType::GeneratorYield(..)
-                        | crate::plan::PlanType::GeneratorYieldRef(..)
-                )
-            })
-        }) {
-            roots.insert("incan_std_core");
-        }
-        for function in &self.plan.functions {
-            if let Some(callee) = &function.future_callee {
-                let path = match &callee.kind {
-                    crate::plan::CalleeKind::External(path)
-                    | crate::plan::CalleeKind::Instantiated(path, _)
-                    | crate::plan::CalleeKind::FutureMethod(path, _) => Some(path),
-                    _ => None,
-                };
-                if let Some(root) = path.and_then(|path| path.split("::").next()) {
-                    roots.insert(root);
-                }
-            }
-        }
-        for root in roots {
-            krate
-                .items
-                .push(declarations::external_crate(root, krate.spans.inner_span));
-        }
-        rustc_driver::Compilation::Continue
-    }
-
-    /// Verify admitted external signatures against canonical dependency metadata before any planned MIR is built.
-    fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
-        if let Err(error) = verify_library_argument_profiles(tcx, &self.plan) {
-            refuse(tcx, error);
-        }
-        match instantiate_generic_externals(tcx, &self.plan) {
-            Ok(Some(plan)) => {
-                self.plan = Arc::new(plan);
-                match PLAN.lock() {
-                    Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
-                    Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
-                }
-            }
-            Ok(None) => {}
-            Err(error) => refuse(tcx, error),
-        }
-        for model in self.plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-            if let Err(error) = verify_library_layout(tcx, model) {
-                refuse(tcx, error);
-            }
-        }
-        for value in self.plan.enums.iter().filter(|value| !value.library_item.is_empty()) {
-            if let Err(error) = verify_library_enum(tcx, value) {
-                refuse(tcx, error);
-            }
-        }
-        if let Err(error) = crate::cloneable_closures::verify_captures(tcx, &self.plan) {
-            refuse(tcx, error);
-        }
-        for external in &self.plan.externals {
-            let def = match callees::external(tcx, &external.path) {
-                Ok(def) => def,
-                Err(error) => refuse(tcx, error),
-            };
-            let args = match callees::arguments(tcx, def, &external.type_arguments) {
-                Ok(args) => args,
-                Err(error) => refuse(tcx, error),
-            };
-            if let Err(error) = callees::verify_bounds(tcx, def, args) {
-                refuse(tcx, error);
-            }
-            if let Err(error) = callees::verify_return_abi(tcx, def, args, &external.return_type, &external.path) {
-                refuse(tcx, error);
-            }
-            let signature = tcx
-                .fn_sig(def)
-                .instantiate(tcx, args)
-                .map(|signature| tcx.instantiate_bound_regions_with_erased(signature));
-            let raw_signature = signature.skip_normalization();
-            // A hidden concrete factory layout is not the SDK method's opaque return ABI. Borrow checking still
-            // requires the opaque type, so revealing its layout here would admit a broken MIR call destination.
-            if has_opaque_return_abi(tcx, raw_signature.output())
-                && raw_signature.output() != native_type_or_refuse(tcx, &external.return_type)
-            {
-                refuse(
-                    tcx,
-                    PlanError::Unsupported {
-                        function: external.path.clone(),
-                        reason: "opaque SDK trait return ABI differs from its concrete carrier".into(),
-                    },
-                );
-            }
-            // Ordinary associated outputs still normalize under the checked concrete Self implementation.
-            let signature =
-                tcx.normalize_erasing_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), signature);
-            let parameters: Vec<_> = external
-                .parameters
-                .iter()
-                .map(|ty| tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, ty)))
-                .collect();
-            if signature.inputs() != parameters
-                || signature.output()
-                    != tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, &external.return_type))
-                || signature.c_variadic()
-                || signature.safety().is_unsafe()
-            {
-                refuse(
-                    tcx,
-                    PlanError::Invalid {
-                        function: external.path.clone(),
-                        reason: "external metadata differs from the admitted safe scalar signature".into(),
-                    },
-                );
-            }
-        }
-        rustc_driver::Compilation::Continue
-    }
-}
-
-/// Identify opaque return ABIs before normalization can reveal their implementation layout. Ordinary associated
-/// projections remain eligible for concrete normalization; an implicit return-position `impl Trait` associated type
-/// keeps the opaque boundary its caller must satisfy before constructing MIR.
-fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> bool {
-    match output.kind() {
-        rustc_middle::ty::Alias(_, alias) => match alias.kind {
-            rustc_middle::ty::Opaque { .. } => true,
-            rustc_middle::ty::Projection { def_id } => tcx.is_impl_trait_in_trait(def_id),
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
-/// Check a stdlib layout against its crate's metadata at the plan's explicit type arguments, including their bounds.
-/// Fields keep their names and instantiated types in order. An opaque layout records no fields, so the plan never
-/// projects one.
-fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
-    let invalid = |reason: &str| PlanError::Unsupported {
-        function: model.library_item.clone(),
-        reason: reason.into(),
-    };
-    let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
-    if tcx.generics_of(def).count() != model.library_type_arguments.len() {
-        return Err(invalid(
-            "unsupported stdlib layout type argument count differs from metadata",
-        ));
-    }
-    let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
-    callees::verify_bounds(tcx, def, arguments)?;
-    if model.fields.is_empty() {
-        return Ok(());
-    }
-    let adt = tcx.adt_def(def);
-    let declared = &adt.non_enum_variant().fields;
-    if declared.len() != model.fields.len() {
-        return Err(invalid("stdlib layout field count differs from metadata"));
-    }
-    for (field, planned) in declared.iter().zip(&model.fields) {
-        if field.name.as_str() != planned.name
-            || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
-        {
-            return Err(invalid("stdlib layout field differs from metadata"));
-        }
-    }
-    Ok(())
-}
-
-/// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
-/// native metadata. Construction and matching address variants by index; generic templates never authorize storage.
-fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
-    let invalid = |reason: &str| PlanError::Invalid {
-        function: value.library_item.clone(),
-        reason: reason.into(),
-    };
-    let def = callees::library_item(tcx, &value.library_item, rustc_hir::def::DefKind::Enum)?;
-    if tcx.generics_of(def).count() != value.library_type_arguments.len() {
-        return Err(invalid(
-            "unsupported stdlib enum type argument count differs from metadata",
-        ));
-    }
-    let declared = tcx.adt_def(def).variants();
-    if declared.len() != value.variants.len() {
-        return Err(invalid("unsupported stdlib enum variant count differs from metadata"));
-    }
-    let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
-    callees::verify_bounds(tcx, def, arguments)?;
-    for (variant, planned) in declared.iter().zip(&value.variants) {
-        if variant.name.as_str() != planned.name || variant.fields.len() != planned.fields.len() {
-            return Err(invalid("unsupported stdlib enum variant differs from metadata"));
-        }
-        for (field, ty) in variant.fields.iter().zip(&planned.fields) {
-            if field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, ty)? {
-                return Err(invalid("unsupported stdlib enum payload differs from metadata"));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// One planned enum as it is injected: its declaration with derive attributes, then the impls legacy writes by hand.
-///
-/// A union prints the member it holds through its own `Debug`; a value enum's serde form is its raw values, so its
-/// serde derives become impls beside it instead of attributes, while any other enum derives serde as legacy does.
-fn enum_items(
-    value: &crate::plan::EnumDeclaration,
-    generator: &ast::attr::AttrIdGenerator,
-    span: rustc_span::Span,
-) -> Vec<Box<ast::Item>> {
-    let value_enum = !value.raw_kind.is_empty();
-    let mut item = declarations::enum_declaration(value, span);
-    if value.carrier.is_empty() {
-        for derive in value
-            .derives
-            .iter()
-            .filter(|derive| !(value_enum && derive.starts_with("serde::")))
-        {
-            item.attrs.push(declarations::derive_attribute(generator, derive, span));
-        }
-    }
-    let mut items = vec![item];
-    if value.member_debug {
-        items.push(union_debug::member_debug_impl(value, span));
-    }
-    if value_enum && value.derives.iter().any(|derive| derive == "serde::Serialize") {
-        items.push(value_enum_serde::serialize_impl(value, span));
-    }
-    if value_enum && value.derives.iter().any(|derive| derive == "serde::Deserialize") {
-        items.push(value_enum_serde::deserialize_impl(value, span));
-    }
-    items
-}
-
-/// Give each generic external declared without type arguments its inferred ones, and its calls the matching
-/// instantiated callee, so signature verification and MIR construction see one explicit instantiation.
-fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
-    use crate::plan::{CalleeKind, TerminatorKind};
-    let mut instantiated = plan.clone();
-    let mut inferred = std::collections::BTreeMap::new();
-    for external in &mut instantiated.externals {
-        if !external.type_arguments.is_empty() {
-            continue;
-        }
-        let def = callees::external(tcx, &external.path)?;
-        if tcx.generics_of(def).count() == 0 {
-            continue;
-        }
-        external.type_arguments = callees::inferred_arguments(tcx, def, external)?;
-        inferred.insert(external.path.clone(), external.type_arguments.clone());
-    }
-    if inferred.is_empty() {
-        return Ok(None);
-    }
-    for block in instantiated
-        .functions
-        .iter_mut()
-        .flat_map(|function| function.blocks.iter_mut())
-    {
-        let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind else {
-            continue;
-        };
-        let CalleeKind::External(path) = &callee.kind else {
-            continue;
-        };
-        let Some(types) = inferred.get(path) else {
-            continue;
-        };
-        callee.kind = CalleeKind::Instantiated(path.clone(), types.clone());
-    }
-    Ok(Some(instantiated))
+    library_facades: Vec<crate::library_exports::LibraryFacade>,
+    search: Vec<rustc_session::search_paths::SearchPath>,
+    shared: Vec<String>,
+    development: bool,
+    loaded: Vec<(PathBuf, String)>,
+    timing: crate::native_timing::Timing,
+    rustc_started: std::time::Instant,
+    codegen_started: Option<std::time::Instant>,
+    /// The link's uniquely issued file and any earlier group admitted under the same private holder.
+    completed_objects: Option<(std::fs::File, BTreeMap<String, stable_link::PreviousObject>)>,
+    /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
+    /// are published, and a test harness selects each test by its module path.
+    partition: bool,
+    /// Record-backed native definitions and their complete per-definition tracked inputs.
+    reader: Arc<PlanReader>,
 }
 
 /// Compile a plan supplied directly by an Incan caller function into a native binary.
 ///
-/// Preflight and exact toolchain/library identity verification precede rustc. External crates are explicit rlib
-/// paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant is used.
+/// The caller supplies the exact toolchain/library identity already verified before checking. External crates are
+/// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
+/// is used: the unstable features and toolchain libraries a unit uses are the ones its description declares (`access`).
+/// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
+/// validation. A library supplies its already checked public facades as compact aliases of canonical native items,
+/// without retaining its frontend manifest. Development executables retain debug information for edit-time
+/// diagnostics; release executables omit it, while libraries retain metadata for their downstream consumers.
+/// A development store derives shared carriers from those same native identities and records loader witnesses;
+/// ordinary builds and release compilation do not select that policy.
+/// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
+/// rustc applies the same policy to the arithmetic it compiles from Rust crates, such as inlined standard library code.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
     output: &Path,
-    sysroot: &Path,
+    identity: &DriverIdentity,
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
-    native_link: &std::process::Command,
+    rustc_args: &[String],
+    access: &ToolchainAccess,
+    shared_store: Option<&Path>,
+    kind: UnitKind,
+    overflow_checks: bool,
+    library_facades: Vec<crate::library_exports::LibraryFacade>,
+    plan_record_report: Option<&Path>,
+    compact_definitions: Vec<incan_mir_plan_native::AdmittedDefinition>,
+    previous_link_locator: Option<&Path>,
 ) -> Result<(), DriverError> {
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
-    validation::validate(&plan)?;
-    let identity = identity::verify(sysroot)?;
+    ensure_no_active_plan()?;
+    let mut timing = crate::native_timing::Timing::requested();
+    force_plan_failure_once()?;
+    let features = declared_features(access)?;
+
+    // ---- Validated source plan ----
+    write_validation_report(&plan, kind)?;
+    validation::validate(&plan, kind != UnitKind::Program)?;
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
     }
+    timing.mark("validated_plan");
+
+    // ---- Optional shared native dependencies ----
     let _compilation = COMPILATION.lock().map_err(|_| DriverError::State)?;
+    if shared_store.is_some() && kind == UnitKind::Library {
+        return Err(DriverError::Invocation(
+            "shared native linking requires a development executable".into(),
+        ));
+    }
+    let shared = match shared_store {
+        Some(store) => {
+            let mut roots = native_roots(&plan);
+            if kind == UnitKind::Test {
+                roots.insert("test");
+            }
+            crate::native_shared::libraries(roots, externs, dependency_search_paths, identity, store)?
+        }
+        None => Vec::new(),
+    };
+    timing.mark("shared_dependencies");
+
+    // ---- Fresh rustc session and planned MIR ----
     let plan = Arc::new(plan);
-    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&plan));
+    let reader = Arc::new(
+        PlanReader::new(Arc::clone(&plan), plan_record_report, compact_definitions).map_err(DriverError::Invocation)?,
+    );
+    reader.write_fingerprint_report()?;
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
+    let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
+    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &all);
+    let search = crate::native_search::dependencies(&all, dependency_search_paths);
+    let links_sysroot = access.links_sysroot() && kind != UnitKind::Library;
+    append_native_linkage(&mut args, &shared, identity, shared_store, links_sysroot)?;
+    args.extend_from_slice(rustc_args);
+    let private = match plan_record_report {
+        Some(report)
+            if NATIVE_INCREMENTAL_QUALIFIED
+                && kind == UnitKind::Program
+                && overflow_checks
+                && reader.has_record_inputs() =>
+        {
+            native_incremental(
+                &mut args,
+                crate_name,
+                &identity.toolchain,
+                &identity.target,
+                report,
+                &all,
+            )?
+        }
+        _ => None,
+    };
+    let stores_objects = shared_store.is_some() && identity.target.ends_with("-apple-darwin");
+    let mut completed = native_object_products::LinkCapture::issue(
+        private.as_ref().zip(shared_store).filter(|_| stores_objects),
+        &mut args,
+        previous_link_locator,
+    );
+    timing.mark("native_arguments");
+    let mut callbacks = Callbacks {
+        features,
+        plan,
+        library_facades,
+        search,
+        shared: shared.iter().map(|(name, _)| name.clone()).collect(),
+        development: shared_store.is_some(),
+        loaded: Vec::new(),
+        timing,
+        rustc_started: std::time::Instant::now(),
+        codegen_started: None,
+        completed_objects: completed.as_mut().and_then(|capture| capture.backend_input()),
+        partition: kind == UnitKind::Program,
+        reader,
+    };
+    run_plan_compiler(&args, &mut callbacks)?;
+
+    // ---- Completed loader witnesses ----
+    if let Some(held) = &private {
+        // A development link on Darwin has already stored every unit object by its content.
+        held.publish(output, stores_objects)?;
+    }
+    if shared_store.is_some() {
+        crate::native_shared::write_witness(output, &callbacks.loaded)?;
+    }
+    if let Some(capture) = completed {
+        capture.store_result(output);
+    }
+    callbacks.timing.mark("loader_witness");
+    Ok(())
+}
+
+/// Keep the optional first-refusal report ahead of the normal validation result.
+fn write_validation_report(plan: &Plan, kind: UnitKind) -> Result<(), DriverError> {
+    if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
+        let mut report = String::new();
+        for refusal in validation::refusals(plan, kind != UnitKind::Program) {
+            report.push_str(&refusal.to_string().replace('\n', " "));
+            report.push('\n');
+        }
+        std::fs::write(path, report)
+            .map_err(|error| DriverError::Invocation(format!("cannot write native validation report: {error}")))?;
+    }
+    Ok(())
+}
+
+/// Run the ordinary compiler and collect its typed failure while the caller holds the compilation lease.
+fn run_plan_compiler(args: &[String], callbacks: &mut Callbacks) -> Result<(), DriverError> {
+    let capture = crate::native_timing::Capture::begin();
+    crate::native_crates::release_extern_crates();
+    let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(args, callbacks));
+    crate::native_crates::release_extern_crates();
+    capture.finish(callbacks.codegen_started.map(|started| started.elapsed()));
+    callbacks.timing.mark("rustc_codegen_link_teardown");
+    if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
+        return Err(DriverError::Plan(error));
+    }
+    result.map_err(|_| DriverError::Compilation)
+}
+
+/// Append the selected development and toolchain link flags in their ordinary rustc argument order.
+fn append_native_linkage(
+    args: &mut Vec<String>,
+    shared: &[(String, PathBuf)],
+    identity: &DriverIdentity,
+    shared_store: Option<&Path>,
+    links_sysroot: bool,
+) -> Result<(), DriverError> {
+    if let Some(store) = shared_store {
+        // Rustc's relative `-Crpath` entries would name the store from the staged output, not from the viewed copy.
+        args.push("-Cprefer-dynamic".into());
+        // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
+        // The development linker gives every object a content-derived store path before forwarding the otherwise
+        // unchanged argument vector to ld. Darwin records those paths in the debug map.
+        let darwin = identity.target.ends_with("-apple-darwin");
+        if darwin {
+            let linker = development_linker().map_err(|error| {
+                DriverError::Invocation(format!("cannot locate stable development linker: {error}"))
+            })?;
+            args.push(format!("-Clinker={}", linker.display()));
+            args.push("-Clinker-flavor=ld".into());
+            args.push(format!("-Clink-arg={}{}", stable_link::STORE_ARGUMENT, store.display()));
+        }
+        // The executable is linked in the bakery and run from a copy elsewhere, so its carriers are found through
+        // absolute search paths into the bakery's shared native store, which every home on that bakery reads.
+        args.extend(absolute_rpaths(shared, identity, darwin));
+    }
+    if links_sysroot {
+        args.extend(sysroot_linkage(identity));
+    }
+    Ok(())
+}
+
+/// Use a stable crate identity for a program whose every function has a record input. Only the holder of its
+/// private output uses the associated incremental session. A contender still compiles to its requested output.
+/// The session is named by the crates the program links (`linked`) as well, see [`incremental_session`].
+fn native_incremental(
+    args: &mut Vec<String>,
+    crate_name: &str,
+    toolchain: &str,
+    target: &str,
+    report: &Path,
+    linked: &[(String, PathBuf)],
+) -> Result<Option<PrivateOutput>, DriverError> {
+    args.retain(|argument| !argument.starts_with("-Cmetadata=incan-unit-"));
+    let parent = report
+        .parent()
+        .ok_or_else(|| DriverError::Invocation("native plan report has no private unit directory".into()))?;
+    // Older writers must not populate or retire the receipt-compatible session or its private link output.
+    let compiler = incan_semantics_core::semantic_digest::semantic_digest(&("incan.native-objects/1", toolchain))
+        .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
+    let compiler = compiler.trim_start_matches("sha256:");
+    let mut private = PrivateOutput::acquire(parent, crate_name, compiler)?;
+    let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
+        crate_name.to_owned(),
+        toolchain.to_owned(),
+        target.to_owned(),
+    ])
+    .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
+    args.push("-C".into());
+    args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
+    if let Some(held) = &mut private {
+        let incremental = incremental_session(parent, crate_name, compiler, linked)?;
+        args.push("-C".into());
+        args.push(format!("incremental={}", incremental.display()));
+        held.session = Some(incremental);
+        held.redirect(args);
+    }
+    Ok(private)
+}
+
+/// The incremental session directory of a program: named by its crate, its compiler and the crates it links, each by
+/// its name, physical path and file generation.
+///
+/// rustc cannot load a session that names a crate whose identity changed since: a Rust facet built under another
+/// `-C metadata` (as when `INCAN_RUST_INCREMENTAL` changes) or an edited Incan library has another `StableCrateId`, and
+/// marking the earlier session's nodes green stops rustc ("uninterned StableCrateId"). A changed linked crate
+/// therefore starts a new session. A compilation that holds the program's private output removes the sessions named
+/// for other crates, except one a compilation is still working in.
+fn incremental_session(
+    parent: &Path,
+    crate_name: &str,
+    compiler: &str,
+    linked: &[(String, PathBuf)],
+) -> Result<PathBuf, DriverError> {
+    let mut crates = linked
+        .iter()
+        .map(|(name, path)| {
+            let physical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            let generation = crate::native_search::file_identity(&physical).unwrap_or_default();
+            format!("{name}\t{}\t{generation}", physical.display())
+        })
+        .collect::<Vec<_>>();
+    crates.sort();
+    let digest = incan_semantics_core::semantic_digest::semantic_digest(&crates)
+        .map_err(|error| DriverError::Invocation(format!("cannot fingerprint linked crates: {error}")))?;
+    let prefix = format!(".{crate_name}.{compiler}.");
+    let name = format!(
+        "{prefix}{}.rustc-incremental",
+        &digest.trim_start_matches("sha256:")[..16]
+    );
+    for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
+        let other = entry.file_name().to_string_lossy().into_owned();
+        let earlier = other != name && other.starts_with(&prefix) && other.ends_with(".rustc-incremental");
+        if earlier && !working(&entry.path()) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    let session = parent.join(name);
+    std::fs::create_dir_all(&session)
+        .map_err(|error| DriverError::Invocation(format!("cannot create private incremental directory: {error}")))?;
+    Ok(session)
+}
+
+/// Whether a compilation is working in an incremental session directory: rustc keeps each crate's sessions in a
+/// directory of their own and names the one it works in `s-...-working` until it finishes.
+fn working(session: &Path) -> bool {
+    std::fs::read_dir(session)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|crate_sessions| {
+            std::fs::read_dir(crate_sessions.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().ends_with("-working"))
+        })
+}
+
+/// The private output of a program compiled with native incremental reuse, named by its crate and compiler alone.
+/// rustc's output filenames are an input of every codegen unit, so compiling to the build's own staging path would
+/// make every unit's code stale on every edit; the executable is published to the requested output afterwards. The
+/// lock keeps a concurrent compilation of the same crate on its own requested output.
+struct PrivateOutput {
+    path: PathBuf,
+    _lock: std::fs::File,
+    session: Option<PathBuf>,
+}
+
+impl PrivateOutput {
+    /// Hold the private output beside the unit's incremental directory, or none while another compilation holds it.
+    fn acquire(parent: &Path, crate_name: &str, compiler: &str) -> Result<Option<Self>, DriverError> {
+        let failed =
+            |error: std::io::Error| DriverError::Invocation(format!("cannot hold private native output: {error}"));
+        let directory = parent.join(format!(".{crate_name}.{compiler}.rustc-output"));
+        std::fs::create_dir_all(&directory).map_err(failed)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(directory.join(".lock"))
+            .map_err(failed)?;
+        match lock.try_lock() {
+            Ok(()) => Ok(Some(Self {
+                path: directory.join(crate_name),
+                _lock: lock,
+                session: None,
+            })),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(failed(error)),
+        }
+    }
+
+    /// Point rustc's output argument at the private output.
+    fn redirect(&self, args: &mut [String]) {
+        if let Some(position) = args.iter().position(|argument| argument == "-o")
+            && let Some(slot) = args.get_mut(position + 1)
+        {
+            *slot = self.path.to_string_lossy().into_owned();
+        }
+    }
+
+    /// Move the executable to the requested output, copying it across volumes. When the development link has stored
+    /// every unit object by its content, the objects are removed: each is a hard link to a work product the
+    /// incremental session keeps, which the next build's codegen would otherwise write over in place.
+    fn publish(&self, output: &Path, objects_stored: bool) -> Result<(), DriverError> {
+        let failed =
+            |error: std::io::Error| DriverError::Invocation(format!("cannot publish private native output: {error}"));
+        match std::fs::rename(&self.path, output) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
+                std::fs::copy(&self.path, output).map_err(failed)?;
+                std::fs::remove_file(&self.path).map_err(failed)?;
+            }
+            Err(error) => return Err(failed(error)),
+        }
+        let Some(directory) = self.path.parent().filter(|_| objects_stored) else {
+            return Ok(());
+        };
+        for entry in std::fs::read_dir(directory).map_err(failed)? {
+            let path = entry.map_err(failed)?.path();
+            if path.extension().is_some_and(|extension| extension == "o") {
+                std::fs::remove_file(&path).map_err(failed)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Force one malformed-plan failure for the end-to-end refusal-retention contract, consuming the named sentinel.
+/// An absent sentinel leaves ordinary compilation unchanged; a sentinel that cannot be consumed is a host failure.
+fn force_plan_failure_once() -> Result<(), DriverError> {
+    let Some(path) = std::env::var_os("INCAN_TEST_PLAN_FAILURE_ONCE") else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Err(DriverError::Plan(PlanError::Invalid {
+            function: "test seam".into(),
+            reason: "forced toolchain plan failure".into(),
+        })),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(DriverError::Invocation(format!(
+            "cannot consume one-shot plan failure {}: {error}",
+            Path::new(&path).display()
+        ))),
+    }
+}
+
+/// The program a development link runs as its linker: the dedicated `incan-link` installed beside this driver under
+/// the same suffix, or this driver itself where none is installed. The dedicated program is small and never relinked,
+/// so a link pays neither the driver's start nor a first-run check.
+pub(crate) fn development_linker() -> std::io::Result<PathBuf> {
+    let driver = std::env::current_exe()?;
+    if let Some(suffix) = driver
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("incan-rustc-driver"))
+    {
+        let linker = driver.with_file_name(format!("incan-link{suffix}"));
+        if linker.is_file() {
+            return Ok(linker);
+        }
+    }
+    Ok(driver)
+}
+
+/// Preserve the ordinary native argument sequence; optional development linkage is appended only by its caller.
+/// Overflow checks follow the unit profile: on in debug, off in release.
+fn compilation_arguments(
+    crate_name: &str,
+    output: &Path,
+    identity: &DriverIdentity,
+    kind: UnitKind,
+    overflow_checks: bool,
+    externs: &[(String, PathBuf)],
+) -> Vec<String> {
+    let overflow = if overflow_checks { "yes" } else { "no" };
+    let optimization = optimization_level(overflow_checks);
+    let debuginfo = debuginfo(kind, overflow_checks);
     let mut args = vec![
         "incan-rustc-driver".into(),
         "--sysroot".into(),
@@ -584,69 +504,216 @@ pub fn compile(
         "--cap-lints".into(),
         "allow".into(),
         "-C".into(),
-        "overflow-checks=yes".into(),
+        format!("overflow-checks={overflow}"),
         "-C".into(),
-        "opt-level=3".into(),
+        format!("opt-level={optimization}"),
         "-C".into(),
-        "debuginfo=2".into(),
+        format!("debuginfo={debuginfo}"),
         "-o".into(),
         output.to_string_lossy().into_owned(),
-        "-".into(),
+        // A named input is never read: the callback installs the source-free root without consuming stdin. Its name
+        // is stable because authored spans are loaded from the plan and remapped independently.
+        SYNTHETIC_SOURCE_NAME.into(),
     ];
+    if kind == UnitKind::Library {
+        args.extend(["--crate-type".into(), "lib".into()]);
+    }
+    if kind == UnitKind::Test {
+        args.push("--test".into());
+    }
+    if kind != UnitKind::Library && debuginfo != "0" {
+        args.push("-Csplit-debuginfo=unpacked".into());
+    }
     for (name, path) in externs {
         args.push("--extern".into());
         args.push(format!("{name}={}", path.display()));
-        if let Some(parent) = path.parent() {
-            args.push("-L".into());
-            args.push(format!("dependency={}", parent.display()));
-        }
     }
-    for path in dependency_search_paths {
-        args.push("-L".into());
-        args.push(format!("dependency={}", path.display()));
-    }
-    args.extend(native_link.get_args().map(|arg| arg.to_string_lossy().into_owned()));
-    let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut Callbacks { plan }));
-    *PLAN.lock().map_err(|_| DriverError::State)? = None;
-    if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
-        return Err(DriverError::Plan(error));
-    }
-    result.map_err(|_| DriverError::Compilation)
+    args
 }
 
-/// Check every foreign alias's arity and parameter kinds before any native type query can expand an alias.
-/// Bounds follow argument dependency order, so an invalid child cannot surface as a Rust alias diagnostic first.
-fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
-    for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-        let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
-        let generics = tcx.generics_of(def);
-        let reason = if generics.count() != model.library_type_arguments.len() {
-            Some("stdlib layout type argument count differs from metadata")
-        } else if generics.parent_count != 0
-            || generics
-                .own_params
-                .iter()
-                .any(|parameter| !matches!(&parameter.kind, rustc_middle::ty::GenericParamDefKind::Type { .. }))
-        {
-            Some("stdlib layout generic parameter is not a type")
+/// Select unoptimized native code for the debug profile and optimized native code for the release profile.
+fn optimization_level(overflow_checks: bool) -> &'static str {
+    if overflow_checks { "0" } else { "3" }
+}
+
+/// Select full debug metadata for libraries and development executables, but omit metadata stripped from release
+/// executables.
+fn debuginfo(kind: UnitKind, overflow_checks: bool) -> &'static str {
+    if kind == UnitKind::Library || overflow_checks {
+        "2"
+    } else {
+        "0"
+    }
+}
+
+/// The unstable features a unit's description declares, each a Rust identifier the crate root enables.
+fn declared_features(access: &ToolchainAccess) -> Result<Vec<String>, DriverError> {
+    let identifier = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    access
+        .unstable_features
+        .iter()
+        .map(|name| {
+            if identifier(name) {
+                Ok(name.clone())
+            } else {
+                Err(DriverError::Invocation(format!(
+                    "unit declares unstable feature `{name}`, which is not a Rust identifier"
+                )))
+            }
+        })
+        .collect()
+}
+
+/// An executable that links declared toolchain libraries loads them from the verified sysroot at run time, with the
+/// standard library they were built with. Rustc links every crate it has as a shared library dynamically, and the
+/// runtime search path names the sysroot's `lib` before its target libraries, so a toolchain library loaded from `lib`
+/// finds the libraries it loads itself.
+fn sysroot_linkage(identity: &DriverIdentity) -> Vec<String> {
+    let libraries = identity.sysroot.join("lib");
+    let target = identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib");
+    let mut args = vec![
+        "-Cprefer-dynamic".to_owned(),
+        format!("-Lnative={}", libraries.display()),
+    ];
+    for directory in [&libraries, &target] {
+        args.push(format!("-Clink-arg=-Wl,-rpath,{}", directory.display()));
+    }
+    args
+}
+
+/// Absolute run-time search paths for a shared-linkage executable: the directory of each shared carrier, in the
+/// bakery's shared native store, and the toolchain's standard library directory. A viewed copy of the executable loads
+/// them wherever it is placed, and no path names the home that linked it. Proc-macro and other compile-time
+/// libraries are never loaded at run time, so their directories are not searched.
+fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darwin: bool) -> Vec<String> {
+    let mut directories: Vec<PathBuf> = vec![identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib")];
+    for (_, path) in linked {
+        let shared = matches!(path.extension().and_then(|e| e.to_str()), Some("dylib" | "so"));
+        if let (true, Some(parent)) = (shared, path.parent()) {
+            if !directories.iter().any(|known| known == parent) {
+                directories.push(parent.to_path_buf());
+            }
+        }
+    }
+    let mut args = Vec::new();
+    for directory in directories {
+        if darwin {
+            args.push("-Clink-arg=-rpath".into());
+            args.push(format!("-Clink-arg={}", directory.display()));
         } else {
-            None
+            args.push(format!("-Clink-arg=-Wl,-rpath,{}", directory.display()));
+        }
+    }
+    args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
+    use std::path::Path;
+
+    /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
+    /// output filenames, an input of every codegen unit, are the same between edits; one compilation holds it at a
+    /// time.
+    #[test]
+    fn a_program_with_native_reuse_compiles_to_one_private_output() -> Result<(), Box<dyn std::error::Error>> {
+        let units = tempfile::tempdir()?;
+        let arguments = |requested: &str| {
+            vec![
+                "incan-rustc-driver".to_owned(),
+                "-o".to_owned(),
+                requested.to_owned(),
+                "lib.incn".to_owned(),
+            ]
         };
-        if let Some(reason) = reason {
-            return Err(PlanError::Unsupported {
-                function: model.library_item.clone(),
-                reason: reason.into(),
-            });
-        }
+        let report = units.path().join("native-report");
+        let prepare = |args: &mut Vec<String>| native_incremental(args, "oven", "pinned-rustc", "target", &report, &[]);
+        let (mut first, mut contender, mut second) = (
+            arguments("/staging/one/oven"),
+            arguments("/staging/contender/oven"),
+            arguments("/staging/two/oven"),
+        );
+        let held = prepare(&mut first)?.ok_or("the private output is free")?;
+        let incremental_arguments = |args: &[String]| {
+            args.iter()
+                .filter(|argument| argument.starts_with("incremental="))
+                .count()
+        };
+        assert_eq!(incremental_arguments(&first), 1);
+        assert!(prepare(&mut contender)?.is_none());
+        assert_eq!(contender[2], "/staging/contender/oven");
+        assert_eq!(
+            incremental_arguments(&contender),
+            0,
+            "a compilation without the native output lease must not write its predecessor's incremental root"
+        );
+        drop(held);
+        let _again = prepare(&mut second)?.ok_or("the private output is free again")?;
+        assert_eq!(first, second);
+        assert!(Path::new(&first[2]).starts_with(units.path()));
+        Ok(())
     }
-    for index in validation::library_model_order(plan)? {
-        let model = &plan.models[index];
-        if model.library_item.is_empty() {
-            continue;
-        }
-        let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
-        let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
-        callees::verify_bounds(tcx, def, arguments)?;
+
+    /// The executable reaches the requested output, and the unit objects the development link already stored by
+    /// content do not stay behind to be written again in place by the next build.
+    #[test]
+    fn a_private_output_publishes_its_executable_and_keeps_no_stored_objects() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (units, staging) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let held = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free")?;
+        let mut arguments = vec!["-o".to_owned(), String::new()];
+        held.redirect(&mut arguments);
+        let executable = Path::new(&arguments[1]).to_path_buf();
+        std::fs::write(&executable, b"executable")?;
+        let object = executable.with_file_name("oven.unit.rcgu.o");
+        std::fs::write(&object, b"object")?;
+        let requested = staging.path().join("oven");
+        held.publish(&requested, true)?;
+        assert_eq!(std::fs::read(&requested)?, b"executable");
+        assert!(!executable.exists());
+        assert!(!object.exists());
+        Ok(())
     }
-    Ok(())
+
+    /// A program's incremental session is named by the crates it links as well as by its crate and compiler: the same
+    /// linked crates name the same session; a linked crate that changed, such as a Rust facet built under another
+    /// `-C metadata`, names a new one, since rustc stops on a session naming a crate whose identity changed; and the
+    /// session named for the earlier crates is removed.
+    #[test]
+    fn a_program_s_incremental_session_is_named_by_the_crates_it_links() -> Result<(), Box<dyn std::error::Error>> {
+        let (units, crates) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let library = crates.path().join("libfacet.rlib");
+        std::fs::write(&library, b"facet built under one metadata")?;
+        let linked = vec![("facet".to_owned(), library.clone())];
+        let first = incremental_session(units.path(), "oven", "abc", &linked)?;
+        assert!(first.is_dir());
+        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked)?, first);
+        std::fs::write(&library, b"facet built under another metadata")?;
+        let second = incremental_session(units.path(), "oven", "abc", &linked)?;
+        assert_ne!(second, first, "a changed linked crate kept the earlier session");
+        assert!(second.is_dir());
+        assert!(!first.exists(), "the session named for the earlier crates was kept");
+        Ok(())
+    }
+
+    /// Release executables omit debug metadata while development executables and libraries retain it.
+    #[test]
+    fn debug_metadata_follows_unit_contract() {
+        assert_eq!(debuginfo(UnitKind::Program, false), "0");
+        assert_eq!(debuginfo(UnitKind::Test, false), "0");
+        assert_eq!(debuginfo(UnitKind::Program, true), "2");
+        assert_eq!(debuginfo(UnitKind::Library, false), "2");
+    }
+
+    /// Debug compilation remains fast while release compilation retains optimized native code.
+    #[test]
+    fn optimization_follows_unit_profile() {
+        assert_eq!(optimization_level(true), "0");
+        assert_eq!(optimization_level(false), "3");
+    }
 }

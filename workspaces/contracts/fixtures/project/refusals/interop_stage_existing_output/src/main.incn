@@ -1,0 +1,9 @@
+# behavior: staging creates a new output directory and never replaces an existing one (#3134)
+# cli-commands:
+#   oven interop stage --target aarch64-linux-android --adapter android --output staged
+# expect-exit: 1
+# expect-stderr-contains:
+#   staging output `staged` already exists and will not be replaced
+
+def main() -> None:
+    println("not run")

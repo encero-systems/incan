@@ -1,0 +1,126 @@
+"""Control the shared Plan module census against one exact selected graph."""
+
+from std.fs import Path
+from pub::incan_mir_plan import (
+    ADMITTED_MODULE_NOTE,
+    PARTIAL_MODULE_NOTE,
+    PLAN_MODULE_FAMILY,
+    AdmittedFunction,
+    AdmittedModule,
+    AdmittedPlacement,
+    EventPosition,
+    PlanModuleFunction,
+    PlanModuleValue,
+    WholeModuleAdmission,
+    encode_whole_module_admission,
+    write_module_placement,
+)
+from pub::internal_models.records import RecordKey, encode_record_key
+from pub::incan_platform.store import Snapshot, snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from compiler_body_keys import body_key
+from compiler_plan_modules import PlanModuleAdmissions, plan_module_admissions
+from compiler_plan_values import AdmittedPlanModule
+from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord
+from compiler_selected_body_roots import BodyRootSelection
+from graph_read_demands import begin_graph_demands, finish_graph_demands
+
+
+pub def verify_compact_module_admission_scope(report: Path) -> Result[None, str]:
+    """Count a real compact note with the same result that retains the current sparse scalar note."""
+    graph = snapshot(memory_root()).map_err((error) => error.message())?
+    digest = "20baf725c459a5defc74c441d1125de78dd65f16ffc5a96e1cd70c24efe1b3ce"
+    pin = "70c6649e507632f11a3f810a01fbe7d19d61fd99e81bfcc903e3880cc2bd0f24"
+    sidecar = report.joinpath("62" + PARTIAL_MODULE_NOTE + ".placement")
+    sparse = AdmittedPlacement(key=digest, positions=[EventPosition(line=4, column=3)])
+    ordinary = AdmittedFunction(function="main", identity="function:main", references=[], placement=Some(sparse))
+    write_module_placement(sidecar, AdmittedModule(module="b", complete=false, functions=[ordinary], inspected=true))?
+    key = body_key(PLAN_MODULE_FAMILY, "probe", "src/c.incn", "checked", digest)
+    function = PlanModuleFunction(
+        identity="function:c::run|signature",
+        symbol="pub::c::run",
+        function="c_run",
+        key=digest,
+        event=b"",
+    )
+    module = AdmittedPlanModule(
+        key=key,
+        plan=PlanModuleValue(module="c", functions=[function]),
+        value_digest=digest,
+        namespace=1,
+        certificate="proof",
+        admitted_snapshot=graph.digest,
+        placement_current=true,
+        events=false,
+    )
+    note = WholeModuleAdmission(module="c", output=encode_record_key(key)?, digest=digest, count=1, selection=pin)
+    saved = report.joinpath("63" + ADMITTED_MODULE_NOTE)
+    saved.write_bytes(encode_whole_module_admission(note)?).map_err((error) => error.message())?
+    admitted = plan_module_admissions(report, Some(graph), [module], Some(pin))?
+    assert len(admitted.compact) == 1, "the selected positioned admission produced no compact result"
+    assert admitted.restored_modules() == ["a", "b", "c"]
+    assert admitted.restored_modules(whole_only=true) == ["a", "c"]
+    assert admitted.compact["c"].output == note.output and admitted.compact["c"].selection == pin
+    assert admitted.scalar["b"].inspected
+    match admitted.scalar["b"].functions[0].placement:
+        Some(placement) =>
+            assert placement.key == digest and placement.positions[0].line == 4 and placement.positions[0].column == 3
+        None => return Err("the scalar note lost its exact sparse placement")
+    match plan_module_admissions(report, Some(graph), [module], Some(digest)):
+        Ok(_) => return Err("the compact note joined another dispatched selection")
+        Err(reason) =>
+            assert "selection" in reason
+    mut moved = module.clone()
+    moved.placement_current = false
+    match plan_module_admissions(report, Some(graph), [moved], Some(pin)):
+        Ok(_) => return Err("the compact note accepted another positioned result")
+        Err(reason) =>
+            assert "positioned graph page" in reason
+    match plan_module_admissions(report, Some(graph), [module], None):
+        Ok(_) => return Err("an ordinary scalar request accepted an unpinned compact note")
+        Err(_) => pass
+    empty_request = report.joinpath("empty-activation")
+    empty_request.joinpath("report").mkdir(true, true).map_err((error) => error.message())?
+    products = empty_request.joinpath("products")
+    products.mkdir(true, true).map_err((error) => error.message())?
+    empty = plan_module_admissions(products.joinpath("admissions"), Some(graph), [], Some(pin))?
+    assert empty.restored_modules() == [] and len(empty.compact) == 0
+    saved.unlink().map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def verify_report_only_owner_reads(
+    graph: Snapshot, local: RecordKey, final: RecordKey, body: RecordKey,
+) -> Result[None, str]:
+    """A whole admitted member reports from the Body frame alone and still refuses an invalid owner header."""
+    owner = body.identity
+    file = "src/main.incn"
+    key = body_key("plan-module", body.origin, file, "checked", "report-fixture")
+    symbol = "function:main::member"
+    member = PlanModuleFunction(identity=owner, symbol=symbol, function="main_member", key="product", event=b"")
+    module = AdmittedPlanModule(key=key, plan=PlanModuleValue(module="main", functions=[member]), value_digest="plan",
+        namespace=0, certificate="rank", admitted_snapshot=graph.digest, placement_current=true)
+    note = WholeModuleAdmission(module="main", output=encode_record_key(key)?, digest="plan", count=1, selection="pin")
+    admissions = PlanModuleAdmissions(compact={"main": note})
+    mut covered = CoveredBodyOwners()
+    covered.include(file, owner, symbol)?
+    mut selection = BodyRootSelection(enabled=true)
+    body_key_text = encode_record_key(body)?
+    local_key = encode_record_key(local)?
+    final_key = encode_record_key(final)?
+    checker_keys = [local_key, final_key]
+
+    demanded: list[str] = []
+    retained: list[SelectedBodyRecord] = []
+    fresh: set[str] = set()
+    begin_graph_demands(true)
+    result = selection.select_rescued(
+        Some(graph), body.origin, demanded, covered, [module], admissions, retained, fresh, true,
+    )
+    demands = finish_graph_demands()
+    assert len([item for item in demands if item.role == "evaluation-value" and item.key == body_key_text]) == 1
+    checker_values = [item for item in demands if item.role == "evaluation-value" and item.key in checker_keys]
+    assert len(checker_values) == 0, f"report-only owner opened {len(checker_values)} Local and Final values"
+    assert result.is_err(), "the report accepted an invalid Body IR owner header"
+    assert selection.selected() is None
+    return Ok(None)

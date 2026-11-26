@@ -1,0 +1,9 @@
+[project]
+name = "arc_source_loan"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+indices = { path = "deps/indices" }

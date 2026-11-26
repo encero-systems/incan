@@ -1,0 +1,6 @@
+"""
+The compiler worker's protocols for Incan callers. Implemented in Rust by `incan_worker_host_native`, which the
+rustc driver's resident worker runs as its host; this Loaf keeps the reference import paths for Oven, the client.
+"""
+
+pub from rust::incan_worker_host_native import completed_checker_key

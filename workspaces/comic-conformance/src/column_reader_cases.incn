@@ -1,0 +1,168 @@
+"""Run column literals through production readers and re-encode actual decoded values and choices."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_block_read import read_block
+from std.primitives.crumb.column_block_write import write_block
+from std.primitives.crumb.column_data_read import read_column, column_at
+from std.primitives.crumb.column_data_write import write_column
+from std.primitives.crumb.column_value_dictionary import ColumnDictionary, build_keys, encode_keys, dictionary_type
+from std.primitives.crumb.column_key_read import ColumnKeys, read_keys, key_at
+from std.primitives.crumb.column_presence import cell_type
+from std.primitives.crumb.column_types import ColumnChoice
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
+from std.primitives.crumb.selectors import parse_type
+from std.primitives.crumb.types import TypeNode, AbsentPolicy
+from std.primitives.crumb.values import Value
+from case_data import CaseOperation, CaseTransform, FixtureScalarAlias, array, field, hex_bytes, text, absence
+from column_case_data import key_values, encoding
+from column_envelope_cases import check_envelope
+from column_read_data import refusal, case_budget, same_values, require_accepted
+from fixture_adapter import logical_items, integer
+from encoding_test_support import backing
+
+
+pub def check_columns(example: JsonValue) -> Result[bool, str]:
+    """Every proper prefix is a separate decoder invocation with fresh operation budgets."""
+    data = hex_bytes(text(example, "input_hex")?)?
+    if let Some(transform) = example.get("transform"):
+        match CaseTransform.from_value(transform.expect_str().map_err((e) => e.message())?):
+            Some(CaseTransform.AllProperPrefixes) => pass
+            None => return Err("unknown column transform")
+        for length in range(len(data)):
+            if not check_one(example, data[:length])?:
+                return Err("column prefix mismatch at " + str(length))
+        return Ok(true)
+    return check_one(example, data)
+
+
+def check_one(example: JsonValue, data: bytes) -> Result[bool, str]:
+    """Setup errors are harness failures, never counted as typed production refusals."""
+    operation = match CaseOperation.from_value(text(example, "operation")?):
+        Some(selected) => selected
+        None => return Err("unknown column operation")
+
+    if operation == CaseOperation.BinaryDecode:
+        return check_envelope(example, data)
+    mut setup = Budget.create(bytes=134217728, elements=8388608, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    mut name = text(example, "type")?
+    # The negative vector's legacy spelling is translated explicitly before shared selector parsing.
+    if let Some(alias) = FixtureScalarAlias.from_value(name):
+        name = alias.scalar_kind().value()
+    node = parse_type(name, setup).map_err((e) => e.message())?
+    mut absent = AbsentPolicy.Required
+    if let Some(value) = example.get("absent"):
+        absent = absence(value.expect_str().map_err((e) => e.message())?)?
+    match operation:
+        CaseOperation.ColumnDictionary => return check_keys(example, data, node, dictionary, setup)
+        CaseOperation.ColumnBlock => return check_block(example, data, node, absent, dictionary, setup)
+        CaseOperation.ColumnData => return check_column(example, data, node, absent, dictionary, setup)
+        _ => return Err("unknown column operation")
+
+
+def check_keys(
+    example: JsonValue,
+    data: bytes,
+    node: TypeNode,
+    dictionary: Dictionary,
+    mut setup: Budget,
+) -> Result[bool, str]:
+    """Reconstruct each key through its restart, compare logical expectations and re-encode decoded keys."""
+    expected = field(example, "expected")?
+    mut budget = case_budget(example)?
+    match read_keys(node, backing(data)?, 0, dictionary, budget):
+        Err(error) => return refusal(error, expected)
+        Ok(keys) =>
+            require_accepted(expected)?
+            mut values: list[Value] = []
+            for code in range(keys.count):
+                values.append(key_at(keys, code, dictionary, setup).map_err((e) => e.message())?)
+            wanted = key_values(expected, text(example, "type")?, "keys_hex", "values")?
+            same_values(values, wanted, setup)?
+            rebuilt = build_keys(node, values, dictionary, setup).map_err((e) => e.message())?
+            encoded = encode_keys(node, rebuilt, dictionary, setup).map_err((e) => e.message())?
+            return compare_bytes(encoded, data)
+
+
+def check_block(
+    example: JsonValue,
+    data: bytes,
+    node: TypeNode,
+    absent: AbsentPolicy,
+    dictionary: Dictionary,
+    mut setup: Budget,
+) -> Result[bool, str]:
+    """The external key context is an input; the block's values and physical encoding must be decoded."""
+    expected = field(example, "expected")?
+    stored_type = cell_type(node, absent, setup).map_err((e) => e.message())?
+    input_keys = key_values(example, text(example, "type")?, "dictionary_keys_hex", "dictionary_values")?
+    mut writer_keys: Option[ColumnDictionary] = None
+    mut keys: Option[ColumnKeys] = None
+    if len(input_keys) != 0:
+        mut key_type = stored_type
+        if not dictionary_type(stored_type):
+            # Invalid block types still receive the independently declared external key context.
+            # The reader must reject encoding/type compatibility before using these keys.
+            supplied = array(example, "dictionary_values")?
+            key_type = parse_type(text(supplied[0], "type")?, setup).map_err((e) => e.message())?
+        built = build_keys(key_type, input_keys, dictionary, setup).map_err((e) => e.message())?
+        raw = encode_keys(key_type, built, dictionary, setup).map_err((e) => e.message())?
+        keys = Some(read_keys(key_type, backing(raw)?, 0, dictionary, setup).map_err((e) => e.message())?)
+        writer_keys = Some(built)
+    mut budget = case_budget(example)?
+    decoded = read_block(node, absent, integer(example, "logical_count")?, backing(data)?, 0, keys, dictionary, budget)
+    match decoded:
+        Err(error) => return refusal(error, expected)
+        Ok((block, values)) =>
+            require_accepted(expected)?
+            same_values(values, logical_items(array(expected, "values")?)?, setup)?
+            if block.encoding != encoding(integer(expected, "encoding")?)?:
+                return Err("decoded encoding differs")
+            encoded = write_block(node, absent, values, block.encoding, writer_keys, dictionary, setup).map_err(
+                (e) => e.message(),
+            )?
+            return compare_bytes(encoded, data)
+
+
+def check_column(
+    example: JsonValue,
+    data: bytes,
+    node: TypeNode,
+    absent: AbsentPolicy,
+    dictionary: Dictionary,
+    mut setup: Budget,
+) -> Result[bool, str]:
+    """Whole-column membership is checked before selected reads and original-choice re-encoding."""
+    expected = field(example, "expected")?
+    mut budget = case_budget(example)?
+    decoded = read_column(node, absent, integer(example, "logical_count")?, backing(data)?, 0, dictionary, budget)
+    match decoded:
+        Err(error) => return refusal(error, expected)
+        Ok(column) =>
+            require_accepted(expected)?
+            mut values: list[Value] = []
+            for position in range(column.rows):
+                values.append(column_at(column, position, dictionary, setup).map_err((e) => e.message())?)
+            same_values(values, logical_items(array(expected, "values")?)?, setup)?
+            expected_encodings = array(expected, "encodings")?
+            if len(column.blocks) != len(expected_encodings):
+                return Err("decoded block count differs")
+            mut choices = ColumnChoice(blocks=[])
+            for index in range(len(column.blocks)):
+                if column.blocks[index].encoding != encoding(
+                    expected_encodings[index].expect_int().map_err((e) => e.message())?,
+                )?:
+                    return Err("decoded block encoding differs")
+                choices.blocks.append(column.blocks[index].encoding)
+            encoded = write_column(node, absent, values, choices, dictionary, setup).map_err((e) => e.message())?
+            return compare_bytes(encoded, data)
+
+
+def compare_bytes(encoded: bytes, original: bytes) -> Result[bool, str]:
+    """Original-choice re-encoding compares real generated output, never echoes the admitted input range."""
+    if encoded != original:
+        return Err("actual decoded values and physical choices do not re-encode to the independent literal")
+    return Ok(true)

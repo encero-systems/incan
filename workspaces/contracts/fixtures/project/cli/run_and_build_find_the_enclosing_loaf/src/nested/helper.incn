@@ -1,0 +1,5 @@
+"""An invalid module outside the program's import reach."""
+
+
+def helper() -> int:
+    return "unused"

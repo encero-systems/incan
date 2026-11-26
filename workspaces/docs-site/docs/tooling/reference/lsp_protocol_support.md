@@ -1,6 +1,6 @@
 # LSP protocol support
 
-This page lists the Language Server Protocol methods `incan-lsp` serves and what each returns. The server communicates over stdio and identifies itself as `incan-lsp` with its version.
+This page lists the Language Server Protocol methods `incan-lsp` serves and what each returns. `incan-lsp [--profile NAME]` communicates over stdio and identifies itself as `incan-lsp` with its version. The profile is a string, defaults to `debug`, and selects the standard-package and native-support artifacts for every document analyzed during that server process.
 
 ## Methods
 
@@ -11,21 +11,32 @@ This page lists the Language Server Protocol methods `incan-lsp` serves and what
 | `textDocument/didChange` | Full-document sync: each change carries the whole text, which is analyzed again. |
 | `textDocument/didClose` | Drops the document and publishes an empty diagnostic list for it. |
 | `textDocument/hover` | See [Hover](#hover). |
-| `textDocument/signatureHelp` | The signature of a function declared in the same document, at a call to it inside a function or method body. Triggered by `(` and `,`, and retriggered by `,`. |
+| `textDocument/signatureHelp` | The signature of a function declared in the same document, at a call to it inside a function or method body, including a call inside an embedded fragment's expression hole. Triggered by `(` and `,`, and retriggered by `,`. |
 | `textDocument/definition` | For an `@describe` decorator, the subject it describes; for a raw C call, its binding declaration; for a standard-library module named in an import, or the module of a decorator, that module's source; for a symbol of a library vocabulary, the `pub::` import that brings it into scope; for any other checked name, such as a local partial or its target, the declaration of its canonical identity. A token inside an embedded fragment has no definition. |
 | `textDocument/references` | The locations of the checked declaration under the cursor across the open documents, matched by canonical identity; the declaration itself is included when the request asks for it. |
 | `textDocument/documentSymbol` | The document outline, including module-level partial declarations. |
 | `textDocument/completion` | Basic completions, including local partial names as function-like items. Triggered by `.`, `:` and `[`. |
+| `textDocument/codeAction` | For an `INCAN-T0134` diagnostic, returns one quick fix per exact publisher, Loaf, or project trust entry offered by Oven. No action is returned when the unattended stop offered no entry. For an `INCAN-P0101` diagnostic whose range covers exactly one bidirectional control, returns two quick fixes over that range: `Replace with \u{XXXX}`, the preferred fix, which writes the control as its escape, and `Remove bidirectional control`. |
 | `textDocument/semanticTokens/full` | See [Semantic tokens](#semantic-tokens). |
-| `workspace/executeCommand` | The one command `incan.metadata.model.emit`, which emits contract-backed model source or bundle JSON for a project, a bundle JSON file or a `.incnlib` artifact. Its arguments are in [Checked contract metadata](contract_metadata.md#lsp-command). Any other command returns an object with an `error`. |
+| `textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls`, `callHierarchy/outgoingCalls` | See [Graph navigation](#graph-navigation). |
+| `workspace/executeCommand` | Supports `incan.metadata.model.emit`, whose arguments are in [Checked contract metadata](contract_metadata.md#lsp-command), and `incan.trust.add` with string arguments `[kind, value]`. The trust command accepts `publisher`, `loaf`, or `project`, asks the client to confirm, then runs the sibling compiler as `oven trust add KIND VALUE`; it returns an object with `applied` or `error`. Any other command returns an object with an `error`. |
 
 No other method is advertised: `textDocument/semanticTokens/range` is advertised as unsupported, and semantic-token deltas, `textDocument/rename` and `textDocument/formatting` are not advertised.
+
+## Trust diagnostics
+
+The server obtains every unit with `oven describe-unit --unattended`. Dependencies that cannot be prepared without untrusted compile-time execution contribute `INCAN-T0134` informational diagnostics rather than ordinary compiler errors. Each unexpanded vocabulary block receives one diagnostic and remains an opaque placeholder, so it produces no follow-on type error. Imports from an unavailable dependency receive the same informational diagnostic. A trust action changes only user configuration and does not select or widen an execution mode.
+
+## Graph navigation
+
+Definition, references and incoming/outgoing call hierarchy project the portable graph records of [codegraph inspection](agent_context_cli.md) from the open documents. Source ranges use the document text's UTF-16 positions. The consumer's declared Loaves must have compiled interfaces. A changed or closed document invalidates dependent results. Call hierarchy items carry a document version; an item from an earlier version returns null. Without a current analysis, navigation returns no result.
 
 ## Hover
 
 After a document type-checks, hover shows:
 
-- for a public declaration, a public partial callable preset, a checked public method, a field of a public model or class, or a public enum variant: the [checked API metadata](checked_api_metadata.md) preview, with its checked signature, raw docstring, field visibility, alias and description metadata, value-enum backing type and raw value, derives, trait adoptions and safe const values. A private field's preview labels it private.
+- for a public declaration, a public partial callable preset, a checked method of a public type, a field of a public model or class, or a public enum variant: the [checked API metadata](checked_api_metadata.md) preview, with its checked signature, raw docstring, field visibility, alias and description metadata, value-enum backing type and raw value, derives, trait adoptions and safe const values. A private field's or method's preview labels it private.
+- the authored signature and canonical identity of a private module-level function when the cursor is on its name in the declaration. The returned UTF-16 range covers the name.
 - for a partial: the projected callable signature, with presets shown as default parameters, and the target and preset provenance.
 - for a decorated function whose checked binding is callable-valued: the callable signature the checked API metadata exposes.
 - for a computed property, in hover and completion: its owner and return type, such as `property Account.total -> int`.
@@ -33,7 +44,7 @@ After a document type-checks, hover shows:
 - for a canonical or supported-alias `@describe` decorator: the checked registry, key, descriptor and described subject.
 - for a checked C binding declaration: its header, logical system-library capability, resources and release operations, symbols with their checked C signatures, enum carriers and plain structures; for a direct raw C call: its checked declaration and its `unsafe:` acknowledgment.
 
-A document with parse or type errors keeps its diagnostics, and hover shows syntax-level details instead of checked metadata. No command returns the checked API metadata package; `incan tools metadata api` prints it.
+A document with parse or type errors keeps its diagnostics, and hover shows syntax-level details instead of checked metadata. No LSP command returns the checked API metadata package.
 
 ## Semantic tokens
 

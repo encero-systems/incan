@@ -21,8 +21,8 @@ Choose Incan when you want:
 
 - a simpler authoring experience (Python-like syntax) with strong, explicit types
 - strong structure for “application code” without writing Rust everywhere
-- Cargo + Rust crates as the current implementation path and escape hatch, not the primary authoring language
-- less time spent on ownership/lifetime “plumbing” for everyday app code (Incan uses safe ownership defaults and the current backend emits Rust that satisfies the borrow checker)
+- Rust crates as the escape hatch, not the primary authoring language
+- less time spent on ownership/lifetime “plumbing” for everyday app code (Incan uses safe ownership defaults and the compiler satisfies the borrow checker for you)
 
 ## Tradeoffs and boundaries to keep in mind
 

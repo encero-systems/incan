@@ -1,0 +1,10 @@
+# behavior: Inspection commands report a project whose `requires-incan` the active toolchain does not satisfy without refusing it (RFC 073, #3140).
+# cli-commands:
+#   check src/main.incn
+#   oven env list
+#   oven env show dev
+# expect-exit: 0
+
+def main() -> None:
+    """A program inspection checks without running."""
+    pass

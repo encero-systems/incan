@@ -1,6 +1,0 @@
-@derive(Debug)
-model Account:
-    type_ [alias="type"]: str
-
-    def get_type(self) -> str:
-        return self.type

@@ -1,0 +1,5 @@
+pub class Thing:
+    pub name: str
+
+    pub def label(self) -> str:
+        return f"thing {self.name}"

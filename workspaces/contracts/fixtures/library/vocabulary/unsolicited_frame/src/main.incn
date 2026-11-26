@@ -1,0 +1,16 @@
+# behavior: a frame the worker writes beyond its reply retires the worker, so the next request gets a fresh worker and its own reply (rust-9)
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary provider `words`: unsolicited frame
+#   vocabulary provider `words`: answered other
+
+from other import other_query
+from pub::words import marker
+
+
+def main() -> None:
+    """The entry module's request leaves a stale frame queued behind its reply."""
+    value = query:
+        FROM 1
+    other_query()
+    println(marker())

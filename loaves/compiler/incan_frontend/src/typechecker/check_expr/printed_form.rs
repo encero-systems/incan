@@ -43,6 +43,7 @@ impl TypeChecker {
         operand_ty: &ResolvedType,
     ) {
         let operand_ty = self.expand_type_aliases(operand_ty.clone());
+        self.record_source_display_method(operand.span, &operand_ty);
         let name = match &operand.node {
             Expr::Ident(name) => Some(name.as_str()),
             Expr::SelfExpr => Some("self"),

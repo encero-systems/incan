@@ -43,8 +43,7 @@ impl<'a> Parser<'a> {
     ///
     /// ## Notes
     /// - For ID-carrying tokens (keywords/operators/punctuation), the IDs must match.
-    /// - For data-bearing tokens (identifiers/literals), the variant is compared and the
-    ///   payload value is ignored.
+    /// - For data-bearing tokens (identifiers/literals), the variant is compared and the payload value is ignored.
     fn check(&self, kind: &TokenKind) -> bool {
         match (kind, &self.peek().kind) {
             (TokenKind::Keyword(k1), TokenKind::Keyword(k2)) => k1 == k2,
@@ -84,13 +83,20 @@ impl<'a> Parser<'a> {
             return None;
         }
         let namespace = incan_lang::lang::keywords::activation(id)?;
-        Some(errors::soft_keyword_requires_import(name, namespace, self.current_span()))
+        Some(errors::soft_keyword_requires_import(
+            name,
+            namespace,
+            self.current_span(),
+        ))
     }
 
-    /// Return the currently-active soft keyword id, if the current token is an active soft keyword spelling.
-    fn current_active_soft_keyword(&self) -> Option<KeywordId> {
+    /// Return the current registry keyword when its parser surface is globally reserved or active in this module.
+    fn current_active_surface_keyword(&self) -> Option<KeywordId> {
         match &self.peek().kind {
-            TokenKind::Keyword(id) if incan_lang::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id) => {
+            TokenKind::Keyword(id)
+                if incan_lang::lang::keywords::is_hard(*id)
+                    || (incan_lang::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id)) =>
+            {
                 Some(*id)
             }
             TokenKind::Ident(name) => {
@@ -107,7 +113,8 @@ impl<'a> Parser<'a> {
 
     /// Return `true` if keyword `id` is allowed in the requested parser surface.
     ///
-    /// Imported-library registrations are checked first so consumer-side vocab metadata can widen accepted surfaces for active soft keywords; builtin metadata is used as fallback.
+    /// Imported-library registrations are checked first so consumer-side vocab metadata can widen accepted surfaces for
+    /// active soft keywords; builtin metadata is used as fallback.
     fn keyword_supports_surface_usage(&self, id: KeywordId, usage: KeywordSurfaceKind) -> bool {
         let keyword_name = incan_lang::lang::keywords::as_str(id);
         if let Some(specs) = self.active_imported_keyword_specs.get(keyword_name)
@@ -121,9 +128,9 @@ impl<'a> Parser<'a> {
         incan_lang::lang::keywords::supports_surface_kind(id, usage)
     }
 
-    /// Return the active soft keyword id if it is valid for the requested parser surface.
+    /// Return the globally reserved or module-active keyword when it is valid for the requested parser surface.
     fn current_surface_keyword(&self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
-        let id = self.current_active_soft_keyword()?;
+        let id = self.current_active_surface_keyword()?;
         if self.keyword_supports_surface_usage(id, usage) {
             Some(id)
         } else {
@@ -131,20 +138,34 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Consume and return the active soft keyword id if it is valid for the requested parser surface.
+    /// Consume and return a globally reserved or module-active keyword valid for the requested parser surface.
     fn match_surface_keyword(&mut self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
         let id = self.current_surface_keyword(usage)?;
         self.advance();
         Some(id)
     }
 
-    /// Whether the current token stream starts a function/method declaration (`[soft_kw ...] def`).
+    /// Whether the current token stream starts a function or method declaration (`[surface modifier ...] def`).
     fn starts_surface_function_decl(&self) -> bool {
-        if self.check_keyword(KeywordId::Def) {
+        self.starts_surface_function_decl_at(self.pos)
+    }
+
+    /// Whether the current token stream starts a method declaration in a type body, optionally marked `pub`.
+    fn starts_method_decl(&self) -> bool {
+        self.starts_surface_function_decl()
+            || (self.check_keyword(KeywordId::Pub) && self.starts_surface_function_decl_at(self.pos + 1))
+    }
+
+    /// Whether the tokens from `start` begin a function or method declaration (`[surface modifier ...] def`).
+    fn starts_surface_function_decl_at(&self, start: usize) -> bool {
+        if matches!(
+            self.tokens.get(start).map(|t| &t.kind),
+            Some(TokenKind::Keyword(KeywordId::Def))
+        ) {
             return true;
         }
 
-        let mut idx = self.pos;
+        let mut idx = start;
         let mut saw_modifier = false;
         while let Some(token) = self.tokens.get(idx) {
             let id = match &token.kind {
@@ -155,7 +176,7 @@ impl<'a> Parser<'a> {
             let Some(id) = id else {
                 break;
             };
-            if !self.active_soft_keywords.contains(&id)
+            if (!incan_lang::lang::keywords::is_hard(id) && !self.active_soft_keywords.contains(&id))
                 || !self.keyword_supports_surface_usage(id, KeywordSurfaceKind::DeclarationModifier)
             {
                 break;
@@ -367,7 +388,9 @@ impl<'a> Parser<'a> {
             || self.check_keyword(KeywordId::None)
             || self.check_keyword(KeywordId::Not)
             || self.check_keyword(KeywordId::SelfKw)
-            || self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression).is_some()
+            || self
+                .current_surface_keyword(KeywordSurfaceKind::PrefixExpression)
+                .is_some()
             || self.check_keyword(KeywordId::Match)
             || self.check_keyword(KeywordId::If)
             || self.check_keyword(KeywordId::Loop)
@@ -377,11 +400,20 @@ impl<'a> Parser<'a> {
             || self.check_op(OperatorId::Minus)
     }
 
-    /// Return whether the current token starts an import-activated `race for` expression.
+    /// Return whether the current tokens spell the complete language-owned `race for <name>:` header.
+    ///
+    /// Requiring the binding and colon keeps `[race for race in races]` on the ordinary comprehension path.
     fn is_active_race_for_expr(&self) -> bool {
-        self.std_async_vocab_active
-            && matches!(&self.peek().kind, TokenKind::Ident(name) if name == "race")
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == "race")
             && self.peek_next().kind == TokenKind::Keyword(KeywordId::For)
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            && matches!(
+                self.tokens.get(self.pos + 3).map(|token| &token.kind),
+                Some(TokenKind::Punctuation(PunctuationId::Colon))
+            )
     }
 
     /// After consuming `Indent` into a `model` / `class` / `enum` body, optionally parse a leading `"""..."""`.
@@ -399,13 +431,13 @@ impl<'a> Parser<'a> {
         }
         docstring
     }
-
 }
 
-fn keyword_surface_supports_usage(
-    surface_kind: incan_vocab::KeywordSurfaceKind,
-    usage: KeywordSurfaceKind,
-) -> bool {
+/// Whether a vocabulary keyword declared with `surface_kind` may appear where the parser expects `usage`.
+///
+/// Control-flow and block-context keywords take statement arguments, function-declaration keywords act as declaration
+/// modifiers, and try-block keywords start a prefix expression; every other pairing is refused at the call site.
+fn keyword_surface_supports_usage(surface_kind: incan_vocab::KeywordSurfaceKind, usage: KeywordSurfaceKind) -> bool {
     matches!(
         (surface_kind, usage),
         (

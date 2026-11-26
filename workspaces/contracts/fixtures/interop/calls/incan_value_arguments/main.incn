@@ -1,0 +1,44 @@
+# behavior: Rust calls retain source owners across mutable arguments, same-named module models, and an aliased enum (#2256)
+# expect-stdout:
+#   2 1
+#   8
+#   8 16 24
+#   1 2 3
+#   ready
+
+"""Keep the existing native argument contract and distinct source declaration owners together."""
+
+from left import Item as LeftItem
+from left import Signal as SourceSignal
+from middle import Item as MiddleItem
+from right import Item as RightItem
+from rust::std::mem import size_of_val, swap
+from rust::std::cell import Cell
+from rust::std::convert import identity
+
+
+model Item:
+    """A source model whose native layout contains one integer."""
+
+    value: int
+
+
+def main() -> None:
+    """Preserve caller storage and each canonical argument owner through native signatures."""
+    mut first = Item(value=1)
+    mut second = Item(value=2)
+    swap(first, second)
+    println(f"{first.value} {second.value}")
+    println(size_of_val(first))
+    left = LeftItem(value=1)
+    middle = MiddleItem(value=2, extra=20)
+    right = RightItem(value=3, extra=30, tail=300)
+    println(f"{size_of_val(left)} {size_of_val(middle)} {size_of_val(right)}")
+    left_cell = Cell.new(left)
+    middle_cell = Cell.new(middle)
+    right_cell = Cell.new(right)
+    println(f"{left_cell.into_inner().value} {middle_cell.into_inner().value} {right_cell.into_inner().value}")
+    signal = identity(SourceSignal.Ready)
+    match signal:
+        SourceSignal.Ready => println("ready")
+        SourceSignal.Done => println("done")

@@ -1,0 +1,39 @@
+# behavior: source actions after a lazy reader's last use remain accepted through ordinary calls, loops, comprehensions and exits (#2426)
+# expect-accepted:
+
+
+def show(value: int) -> None:
+    println(value)
+
+
+def decide(flag: bool) -> list[int]:
+    """Use the iterator before every ordinary construct that follows it."""
+    mut xs = [1, 2, 3]
+    it = xs.iter()
+    println(it.collect())
+    println(abs(-2))
+    for value in range(2):
+        show(value)
+    for value in [4, 5]:
+        show(value)
+    mut count = 0
+    while count < 2:
+        count += 1
+    doubled = [value * 2 for value in [4, 5]]
+    match count:
+        2 => show(count)
+        _ => show(0)
+    for value in doubled:
+        if value == 8:
+            continue
+        if value == 10:
+            break
+        show(value)
+    if flag:
+        return [4]
+    xs = doubled
+    return xs
+
+
+def main() -> None:
+    println(decide(false))

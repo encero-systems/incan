@@ -1,0 +1,21 @@
+# behavior: `[[interop.c.targets]]` carries 0.5's per-target requirements: a `toolchain` and an `sdk` capability with a version requirement, preprocessor `definitions`, Android and iOS `platform` facts and `kind = "system"` artifacts naming a capability; declaring them leaves an ordinary host run unchanged (#3135)
+# cli-commands:
+#   oven run src/main.incn
+# expect-stdout:
+#   5
+
+from std.interop import c
+
+
+binding Probe:
+    header = "interop/include/probe.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def main() -> None:
+    """Call through a binding whose package declares requirements for several targets."""
+    unsafe:
+        println(Probe.absolute(-5))

@@ -1,0 +1,58 @@
+# behavior: each std.fs failure names the operation that failed and its path, never the bare word `fs`
+# expect-stdout:
+#   read missing.txt
+#   read missing.txt
+#   list directory missing.txt
+#   metadata missing.txt
+#   resolve missing.txt
+#   remove missing.txt
+#   remove directory missing.txt
+#   write child
+#   create directory child
+#   move missing.txt
+#   copy missing.txt
+
+from std.fs import Path, IoError
+from std.tempfile import TemporaryDirectory
+
+
+def report[T](result: Result[T, IoError], path: Path) -> None:
+    """Print the refused operation and the name of its path, after checking the message carries both."""
+    match result:
+        Ok(_) => println(f"unexpectedly succeeded for {path.name()}")
+        Err(error) =>
+            if error.message().startswith(f"{error.operation} {path.0}: "):
+                println(f"{error.operation} {path.name()}")
+            else:
+                println(f"unnamed: {error.message()}")
+
+
+def main() -> Result[None, IoError]:
+    """
+    Refuse each common operation and print what it reports.
+
+    1. Read, list, inspect, resolve and remove a path that does not exist.
+    2. Write and create a directory below a parent that is a file.
+    3. Move and copy a path that does not exist.
+    """
+    scratch = TemporaryDirectory.try_new()?
+    root = scratch.path()
+    missing = root.joinpath("missing.txt")
+    # 1. Each read-side operation names itself.
+    report(missing.read_text("utf-8", "strict"), missing)
+    report(missing.read_bytes(), missing)
+    report(missing.iterdir(), missing)
+    report(missing.stat(), missing)
+    report(missing.resolve(), missing)
+    report(missing.unlink(), missing)
+    report(missing.rmdir(), missing)
+    # 2. A file in the way of a write or a directory.
+    blocker = root.joinpath("blocker")
+    blocker.write_text("file", "utf-8", "strict", None)?
+    below = blocker.joinpath("child")
+    report(below.write_text("content", "utf-8", "strict", None), below)
+    report(below.mkdir(false, false), below)
+    # 3. Moving or copying what is not there.
+    report(missing.move(root.joinpath("moved.txt")), missing)
+    report(missing.copy(root.joinpath("copied.txt"), true, false), missing)
+    return Ok(None)

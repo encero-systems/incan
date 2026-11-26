@@ -1,0 +1,28 @@
+# behavior: a loop replacement is refused when the loop exit reaches a later generic-selection use carrying the original reader (#2500)
+# expect-diagnostic: INCAN-T0126
+
+
+class Reader:
+    pub values: list[int]
+
+
+class Selection[R]:
+    pub reader: R
+
+
+def select(reader: Borrowed[Reader]) -> Selection[Borrowed[Reader]] from reader:
+    return Selection[Borrowed[Reader]](reader=reader)
+
+
+def conflict(mut reader: BorrowedMut[Reader]) -> int:
+    selection = select(reader)
+    mut index = 0
+    while index < 1:
+        reader.values = [index]
+        index += 1
+    return selection.reader.values[0]
+
+
+def main() -> int:
+    mut reader = Reader(values=[1])
+    return conflict(reader)

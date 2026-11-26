@@ -207,9 +207,7 @@ impl TypeChecker {
             let type_params: Vec<String> = func.type_params.iter().map(|param| param.name.clone()).collect();
             let forward = without_type_params(&forward, &type_params);
             let bindings = &mut self.type_info.declarations;
-            let by_span = bindings
-                .function_bindings_by_span
-                .get_mut(&(declaration.span.start, declaration.span.end));
+            let by_span = bindings.function_bindings_by_span.get_mut(&declaration.span);
             let by_name = bindings.function_bindings.get_mut(&func.name);
             for binding in by_span.into_iter().chain(by_name) {
                 for param in &mut binding.params {

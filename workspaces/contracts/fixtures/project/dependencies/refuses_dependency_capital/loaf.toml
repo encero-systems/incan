@@ -1,0 +1,9 @@
+[project]
+name = "refuses_dependency_capital"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+widget = { loaf = "Acme/widgets", version = "1" }

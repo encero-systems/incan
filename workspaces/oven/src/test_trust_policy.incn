@@ -1,0 +1,149 @@
+"""Compile-time trust policy, digest exemption and configuration mutation contracts."""
+
+from std.fs import Path
+from installation_codec import Installation
+from payload_types import InstalledPayload, PayloadAdmission
+from toolchain_types import InstalledCompiler
+from files import make_directory, read, write
+from observation import file_digest
+from scratch import scratch_directory
+from trust_commands import list_policy, updated_config
+from trust_policy import LOAF, PROJECT, PUBLISHER, coverage, read_policy, toolchain_digest
+
+
+def compiler() -> InstalledCompiler:
+    """A minimal installed compiler fact for a synthetic installation page."""
+    return InstalledCompiler(
+        driver="driver",
+        sysroot="sysroot",
+        rust_abi=[],
+        externs=[],
+        search=[],
+        registry_units="",
+        registry_lock="",
+        c_compiler="",
+        target="",
+    )
+
+
+def page(path: Path, digest: str) -> Installation:
+    """An installation page admitting exactly `path` with `digest`."""
+    payload = InstalledPayload(
+        path=path.0,
+        record="record",
+        record_stamp="stamp",
+        admission=PayloadAdmission(identity="unit", payload=digest, observation="observation", provenance=[]),
+    )
+    return Installation(toolchain=compiler(), manifests=[], paths=[], stamps=[], payloads=[payload])
+
+
+pub def test_trust_entries_are_external_typed_and_removable() -> Result[None, str]:
+    """
+    User and organization configuration merge by kind, release defaults remain ordinary entries until an explicit
+    publisher list replaces them, adopted scopes accept only Loaf entries, and project-owned policy is refused.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    user = root.joinpath("user/config.toml")
+    organization = root.joinpath("organization/config.toml")
+    make_directory(user.parent())?
+    make_directory(organization.parent())?
+    write(
+        organization,
+        f"[trust]\nloaves = [\"crates-io/serde_derive\"]\nprojects = [\"{root.joinpath("shared").0}\"]\n",
+    )?
+    write(user, "[storage]\nmin-free-bytes = 0\n\n[trust]\npublishers = [\"acme\"]\nloaves = [\"tools/compiler\"]\n")?
+    policy = read_policy(user, Some(organization), ["incan"], None)?
+    assert policy.values(PUBLISHER) == ["acme"], str(policy.values(PUBLISHER))
+    assert policy.values(LOAF) == ["crates-io/serde_derive", "tools/compiler"]
+    assert len(policy.values(PROJECT)) == 1
+    listed = list_policy(policy)
+    assert "publisher acme" in listed and user.0 in listed and organization.0 in listed, listed
+    # Removing every explicit publisher is represented by an empty ordinary list; it does not restore the default.
+    write(user, "[trust]\npublishers = []\n")?
+    removed = read_policy(user, Some(organization), ["incan"], None)?
+    assert removed.values(PUBLISHER) == [], str(removed.values(PUBLISHER))
+    # An adopted scope is never accepted wholesale.
+    write(user, "[trust]\npublishers = [\"crates-io\"]\n")?
+    match read_policy(user, None, [], None):
+        Ok(_) =>
+            assert false, "accepted an adopted publisher scope"
+        Err(reason) =>
+            assert "accepts only Loaf entries" in reason, reason
+    # Configuration inside the project being authorized is not user or organization authority.
+    project = root.joinpath("project")
+    make_directory(project)?
+    project_config = project.joinpath("config.toml")
+    write(project_config, "[trust]\nloaves = [\"acme/macros\"]\n")?
+    match read_policy(project_config, None, [], Some(project)):
+        Ok(_) =>
+            assert false, "accepted trust configuration from the consuming project"
+        Err(reason) =>
+            assert "must not be inside the consuming project" in reason, reason
+    return Ok(None)
+
+
+pub def test_trust_coverage_names_the_exact_entry_or_installed_digest() -> Result[None, str]:
+    """
+    Publisher, Loaf and project entries emit stable evidence labels. A toolchain exemption requires an exact admitted
+    path and digest; a foreign artifact carrying the same `std` name is not exempt.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    config = root.joinpath("config.toml")
+    project = root.joinpath("trusted-project")
+    make_directory(project)?
+    write(
+        config,
+        f"[trust]\npublishers = [\"acme\"]\nloaves = [\"crates-io/serde_derive\"]\nprojects = [\"{project.0}\"]\n",
+    )?
+    mut policy = read_policy(config, None, [], None)?
+    mut covered = coverage(policy, "acme/macros", None, None, None)?
+    assert covered == Some("entry trust.publishers.acme"), f"publisher: {covered}"
+    policy = read_policy(config, None, [], None)?
+    covered = coverage(policy, "crates-io/serde_derive", None, None, None)?
+    assert covered == Some("entry trust.loaves.crates-io/serde_derive"), f"loaf: {covered}"
+    policy = read_policy(config, None, [], None)?
+    trusted_project = policy.values(PROJECT)[0]
+    covered = coverage(policy, "local/macros", Some(project.joinpath("src").0), None, None)?
+    assert covered == Some(f"entry trust.projects.{trusted_project}"), f"project: {covered}"
+    installed = root.joinpath("toolchain/loaves/std/std.incnlib")
+    foreign = root.joinpath("project/loaves/std/std.incnlib")
+    make_directory(installed.parent())?
+    make_directory(foreign.parent())?
+    write(installed, "signed toolchain bytes")?
+    write(foreign, "foreign bytes")?
+    digest = file_digest(installed)?
+    admitted = page(installed, digest)
+    covered = toolchain_digest(installed, admitted)?
+    assert covered == Some(digest), f"toolchain: {covered}"
+    covered = toolchain_digest(foreign, page(installed, digest))?
+    assert covered == None, f"foreign: {covered}"
+    write(installed, "changed after admission")?
+    covered = toolchain_digest(installed, page(installed, digest))?
+    assert covered == None, f"changed: {covered}"
+    return Ok(None)
+
+
+pub def test_trust_mutation_preserves_unrelated_configuration() -> Result[None, str]:
+    """Adding or replacing `[trust]` leaves unrelated tables and comments unchanged and renders stable arrays."""
+    storage = "# retained\n[storage]\nmin-free-bytes = 0\n"
+    added = updated_config(storage, ["incan"], ["acme/macros"], ["/work/app"])?
+    assert added.startswith(storage), added
+    assert "[trust]\npublishers = [\"incan\"]" in added, added
+    source = "# retained\n[trust]\npublishers = [\"old\"]\n\n[storage]\nmin-free-bytes = 0\n"
+    replaced = updated_config(source, [], ["acme/macros"], [])?
+    assert replaced.startswith("# retained\n[trust]\npublishers = []\n"), replaced
+    assert replaced.endswith("[storage]\nmin-free-bytes = 0\n"), replaced
+    assert "old" not in replaced
+    match updated_config("[trust]\nloaves = []\n[trust]\nprojects = []\n", [], [], []):
+        Ok(_) =>
+            assert false, "accepted repeated trust tables"
+        Err(reason) =>
+            assert "more than one" in reason, reason
+    match updated_config("trust.publishers = [\"acme\"]\n", [], [], []):
+        Ok(_) =>
+            assert false, "rewrote a dotted trust definition ambiguously"
+        Err(reason) =>
+            assert "ordinary [trust] table" in reason, reason
+    return Ok(None)

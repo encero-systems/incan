@@ -1,0 +1,285 @@
+//! Process-local immutable artifact readings, guarded again for every request. Sessions, resolved source facts and
+//! checking outcomes never enter these stores. Replacements and restored-mtime edits invalidate through ctime;
+//! unsupported observations keep the ordinary reader. A path artifact pool also bounds the total inputs retained.
+//! Stores drop obsolete generations before admitting new values.
+
+use incan_loaf_names::artifact_stem;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use crate::library_manifest::executable_surface::ExecutableSurface;
+use crate::library_manifest::install_record::PathInstallFacts;
+use crate::rust_abi_cache::RustAbiCache;
+
+use super::manifest_input::{Generation, generation};
+use super::{LoafArtifact, LoafIdentity, LoafIndexError};
+
+/// The largest reading retained, in bytes of the files it was read from; a larger one is read for each request.
+const MAX_READING_BYTES: u64 = 384 * 1024 * 1024;
+
+/// Bound the decoded path artifacts by the bytes of the manifest and optional ABI files that authorize them.
+const PATH_ARTIFACT_INPUT_BUDGET: u64 = 32 * 1024 * 1024;
+const PATH_READING_COUNT_LIMIT: usize = 32;
+/// Charge the authorizing files against the surface pool. Each surface retains the executable descriptor and
+/// public identities without holding the manifest tables or ABI payload.
+const PATH_SURFACE_INPUT_BUDGET: u64 = MAX_READING_BYTES;
+
+static ARTIFACTS: OnceLock<Mutex<Store<LoafArtifact>>> = OnceLock::new();
+type LoafViews<T> = OnceLock<Mutex<Store<(LoafIdentity, Arc<T>)>>>;
+static SURFACES: LoafViews<ExecutableSurface> = OnceLock::new();
+static INSTALL_FACTS: LoafViews<PathInstallFacts> = OnceLock::new();
+static ABI: OnceLock<Mutex<Store<Arc<RustAbiCache>>>> = OnceLock::new();
+
+/// The current generations of all files a decoded value depends on, including optional assets' absence.
+#[derive(Clone, PartialEq, Eq)]
+struct Inputs {
+    files: Vec<(PathBuf, Option<Generation>)>,
+    bytes: u64,
+}
+
+impl Inputs {
+    /// Whether every file still has the generation this reading was authorized by.
+    fn current(&self) -> bool {
+        let paths: Vec<PathBuf> = self.files.iter().map(|(path, _)| path.clone()).collect();
+        observe(&paths).as_ref() == Some(self)
+    }
+}
+
+/// One immutable reading and the exact generations that authorized it.
+struct Reading<T> {
+    inputs: Inputs,
+    value: T,
+}
+
+/// Current readings whose files still match their admitted generations.
+struct Store<T> {
+    readings: BTreeMap<PathBuf, Reading<T>>,
+}
+
+impl<T> Default for Store<T> {
+    /// Start with no retained inputs or values.
+    fn default() -> Self {
+        Self {
+            readings: BTreeMap::new(),
+        }
+    }
+}
+
+impl<T> Store<T> {
+    /// Count the source bytes supporting all retained values in this store.
+    fn input_bytes(&self) -> u64 {
+        self.readings.values().map(|reading| reading.inputs.bytes).sum()
+    }
+}
+
+impl<T: Clone> Store<T> {
+    /// Borrow a decoded value only for its complete current input generation.
+    fn get(&self, key: &Path, inputs: &Inputs) -> Option<T> {
+        self.readings
+            .get(key)
+            .filter(|reading| reading.inputs == *inputs)
+            .map(|reading| reading.value.clone())
+    }
+
+    /// Keep one stable reading within the per-reading bound, after dropping each reading whose files changed;
+    /// dropping changes performance only.
+    fn insert(&mut self, key: PathBuf, inputs: Inputs, value: T, pool_budget: Option<u64>) {
+        self.readings.remove(&key);
+        self.readings.retain(|_, reading| reading.inputs.current());
+        if inputs.bytes > MAX_READING_BYTES {
+            return;
+        }
+        if let Some(budget) = pool_budget
+            && (self.readings.len() >= PATH_READING_COUNT_LIMIT
+                || self.input_bytes().saturating_add(inputs.bytes) > budget)
+        {
+            return;
+        }
+        self.readings.insert(key, Reading { inputs, value });
+    }
+}
+
+/// Observe a canonical artifact's required files and optional ABI asset, without making absence into acceptance.
+fn observe(paths: &[PathBuf]) -> Option<Inputs> {
+    let mut files = Vec::new();
+    let mut bytes = 0_u64;
+    for path in paths {
+        let state = match fs::metadata(path) {
+            Ok(metadata) => {
+                bytes = bytes.checked_add(metadata.len())?;
+                Some(generation(&metadata)?)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return None,
+        };
+        files.push((path.clone(), state));
+    }
+    Some(Inputs { files, bytes })
+}
+
+/// Reuse a Loaf's validated manifest and authenticated ABI only while both current files match their reading.
+pub(super) fn artifact(dir: &Path, name: &str) -> Result<LoafArtifact, LoafIndexError> {
+    let canonical = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let key = canonical.join(format!("{}.incnlib", artifact_stem(name)));
+    let paths = [key.clone(), canonical.join(format!("{}.rustabi", artifact_stem(name)))];
+    let before = observe(&paths);
+    let store = ARTIFACTS.get_or_init(Mutex::default);
+    if let Some(inputs) = &before
+        && let Some(mut value) = store.lock().ok().and_then(|store| store.get(&key, inputs))
+        && value.name == name
+        && observe(&paths).as_ref() == Some(inputs)
+    {
+        value.dir = dir.to_owned();
+        tracing::debug!(target: "incan::invocation", loaf = name, "retained immutable Loaf");
+        return Ok(value);
+    }
+    let value = LoafArtifact::read_path_manifest(dir, name)?;
+    if let Some(inputs) = before
+        && observe(&paths).as_ref() == Some(&inputs)
+        && let Ok(mut store) = store.lock()
+    {
+        store.insert(key, inputs, value.clone(), Some(PATH_ARTIFACT_INPUT_BUDGET));
+    }
+    Ok(value)
+}
+
+/// Reuse the surface derived from the admitted manifest only while the current file selects the same identity and
+/// generation. A reader who has observed a replacement must admit it before using its surface.
+pub(super) fn executable_surface(
+    path: &Path,
+    identity: &LoafIdentity,
+    read: impl FnOnce() -> Result<Arc<ExecutableSurface>, LoafIndexError>,
+) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
+    let paths = [path.to_owned(), path.with_extension("rustabi")];
+    loaf_view(&SURFACES, &paths, identity, "executable surface", read)
+}
+
+/// Reuse named lookup values only while both the manifest and its authenticated facts sidecar retain their generation.
+pub(super) fn path_install_facts(
+    path: &Path,
+    identity: &LoafIdentity,
+    read: impl FnOnce() -> Result<Arc<PathInstallFacts>, LoafIndexError>,
+) -> Result<Arc<PathInstallFacts>, LoafIndexError> {
+    let paths = [path.to_owned(), path.with_extension("incnfacts")];
+    loaf_view(&INSTALL_FACTS, &paths, identity, "install facts", read)
+}
+
+/// Retain a compact view of an admitted path Loaf under the full identity and the generations of its inputs.
+fn loaf_view<T>(
+    views: &LoafViews<T>,
+    paths: &[PathBuf],
+    identity: &LoafIdentity,
+    view: &str,
+    read: impl FnOnce() -> Result<Arc<T>, LoafIndexError>,
+) -> Result<Arc<T>, LoafIndexError> {
+    let Some(key) = paths.first().and_then(|path| fs::canonicalize(path).ok()) else {
+        return read();
+    };
+    let before = observe(paths);
+    let store = views.get_or_init(Mutex::default);
+    if let Some(inputs) = &before
+        && let Some((selected, surface)) = store.lock().ok().and_then(|store| store.get(&key, inputs))
+        && &selected == identity
+        && observe(paths).as_ref() == Some(inputs)
+    {
+        tracing::debug!(target: "incan::invocation", loaf = identity.name, view, "retained immutable Loaf view");
+        return Ok(surface);
+    }
+    let surface = read()?;
+    if let Some(inputs) = before
+        && inputs.bytes != 0
+        && observe(paths).as_ref() == Some(&inputs)
+        && let Ok(mut store) = store.lock()
+    {
+        store.insert(
+            key,
+            inputs,
+            (identity.clone(), Arc::clone(&surface)),
+            Some(PATH_SURFACE_INPUT_BUDGET),
+        );
+    }
+    Ok(surface)
+}
+
+/// Open the file-backed toolchain or unit ABI index once per unchanged generation; malformed inputs are never retained,
+/// and item payloads stay lazy.
+pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("cannot resolve Rust ABI index {}: {error}", path.display()))?;
+    let paths = [canonical.clone()];
+    let before = observe(&paths);
+    let store = ABI.get_or_init(Mutex::default);
+    if let Some(inputs) = &before
+        && let Some(value) = store.lock().ok().and_then(|store| store.get(&canonical, inputs))
+        && observe(&paths).as_ref() == Some(inputs)
+    {
+        tracing::debug!(target: "incan::invocation", path = %path.display(), "retained immutable Rust ABI index");
+        return Ok(value);
+    }
+    let value = {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::open_rust_abi_index", path = %path.display()).entered();
+        Arc::new(RustAbiCache::open(&canonical)?)
+    };
+    if let Some(inputs) = before
+        && observe(&paths).as_ref() == Some(&inputs)
+        && let Ok(mut store) = store.lock()
+    {
+        store.insert(canonical, inputs, Arc::clone(&value), None);
+    }
+    Ok(value)
+}
+
+/// The artifact, executable surface and ABI readings held by the worker, with the bytes of their authorizing files.
+pub(super) fn inventory() -> [(&'static str, usize, u64); 4] {
+    let (artifacts, artifact_bytes) = stored(&ARTIFACTS);
+    let (surfaces, surface_bytes) = stored(&SURFACES);
+    let (facts, fact_bytes) = stored(&INSTALL_FACTS);
+    let (indexes, index_bytes) = stored(&ABI);
+    [
+        ("Loaf artifacts", artifacts, artifact_bytes),
+        ("Loaf executable surfaces", surfaces, surface_bytes),
+        ("Loaf path install facts", facts, fact_bytes),
+        ("Rust ABI indexes", indexes, index_bytes),
+    ]
+}
+
+/// How many readings a store keeps and the bytes of the files they were read from.
+fn stored<T>(store: &OnceLock<Mutex<Store<T>>>) -> (usize, u64) {
+    store
+        .get()
+        .and_then(|store| store.lock().ok())
+        .map(|store| (store.readings.len(), store.input_bytes()))
+        .unwrap_or((0, 0))
+}
+
+/// Drop retained Loaf artifacts and projected surfaces. File-backed Rust ABI indexes stay and read their items lazily.
+pub(super) fn release_artifacts() {
+    if let Some(store) = ARTIFACTS.get()
+        && let Ok(mut store) = store.lock()
+    {
+        store.readings.clear();
+    }
+    if let Some(store) = SURFACES.get()
+        && let Ok(mut store) = store.lock()
+    {
+        store.readings.clear();
+    }
+    if let Some(store) = INSTALL_FACTS.get()
+        && let Ok(mut store) = store.lock()
+    {
+        store.readings.clear();
+    }
+}
+
+/// Whether a reading of the Loaf `name` in `dir` is retained.
+#[cfg(test)]
+pub(super) fn retains_artifact(dir: &Path, name: &str) -> bool {
+    let canonical = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let key = canonical.join(format!("{}.incnlib", artifact_stem(name)));
+    ARTIFACTS
+        .get()
+        .and_then(|store| store.lock().ok())
+        .is_some_and(|store| store.readings.contains_key(&key))
+}

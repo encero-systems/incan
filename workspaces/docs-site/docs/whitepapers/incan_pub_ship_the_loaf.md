@@ -1,5 +1,5 @@
 ---
-title: "Ship the loaf, not the recipe: why Incan and Rust need incan.pub"
+title: "Ship the loaf, not the recipe: why Incan and Rust need loaves.pub"
 status: "Draft positioning paper"
 snapshot_date: "2026-09-09"
 authors:
@@ -8,7 +8,7 @@ audience:
   - "Rust developers evaluating Incan, including those who think crates.io already solved this"
   - "Registry, packaging, and supply-chain practitioners"
   - "Incan contributors and prospective collaborators"
-scope: "Product positioning for incan.pub as a compiled, attested distribution tier for Oven-built projects, and the measured cost of Rust's source-only model that motivates it."
+scope: "Product positioning for loaves.pub as a compiled, attested distribution tier for Oven-built projects, and the measured cost of Rust's source-only model that motivates it."
 normative: false
 related_rfc:
   - "RFC 034 (superseded by RFC 125)"
@@ -36,11 +36,11 @@ related_whitepapers:
 review_after: "When a compiled-artifact tier ships in any Rust-ecosystem registry, or when Cargo's cross-workspace cache gains a remote tier"
 ---
 
-# Ship the loaf, not the recipe: why Incan and Rust need `incan.pub`
+# Ship the loaf, not the recipe: why Incan and Rust need `loaves.pub`
 
 --8<-- "_snippets/callouts/whitepaper_status.md"
 
-> **Current boundary:** `incan.pub` does not exist as a service. This paper argues what such a registry should be measured against and why the contract is worth building. Every number below was collected on 2026-09-09 with the scripts and versions named in the measurements section, on two ordinary machines, and is reproducible from those scripts. Nothing here is a benchmark of `incan.pub` itself.
+> **Current boundary:** `loaves.pub` does not exist as a service. This paper argues what such a registry should be measured against and why the contract is worth building. Every number below was collected on 2026-09-09 with the scripts and versions named in the measurements section, on two ordinary machines, and is reproducible from those scripts. Nothing here is a benchmark of `loaves.pub` itself.
 
 ## Abstract
 
@@ -48,7 +48,7 @@ Rust's compiled artifacts are excellent. Producing them is the expensive part, a
 
 This paper measures what that costs on two hosts for three widely used libraries and for the Incan compiler itself, examines why Rust in particular never shipped compiled dependencies when Java, Python, Nix, and Homebrew all did, and derives the properties any answer would need to satisfy. What is missing is not a cache but a **verifiable identity model for compiled work**: a way to say precisely enough, about a stranger's artifact, that its inputs were the same as yours, that its bytes are the ones its builder attested, and whose claim you are accepting. A registry follows from that; it does not substitute for it.
 
-One candidate is then measured against those properties — Oven's receipt model, with `incan.pub` as an exchange built on the identities it produces — without touching crates.io, and without asking any Rust project to adopt anything. The properties come first on purpose: they are a standard any answer can be judged against, including this one.
+One candidate is then measured against those properties — Oven's receipt model, with `loaves.pub` as an exchange built on the identities it produces — without touching crates.io, and without asking any Rust project to adopt anything. The properties come first on purpose: they are a standard any answer can be judged against, including this one.
 
 ## The claim
 
@@ -62,7 +62,7 @@ For Rust, the compiled artifact is the product, and the ecosystem makes every co
 
 The aim is to improve the foundation Rust already laid, not to displace it. The compiler, the crate model, the sparse index, and the lockfile stay. crates.io stays and is consumed as-is. What is added is the layer Rust never built: an exchangeable identity for a compiled artifact, and somewhere to exchange artifacts that carry it.
 
-It is worth being exact about what that place is, because one word invites the wrong fear. For projects that publish a Loaf, `incan.pub` is a registry in the ordinary sense — a source of record, with versions and a scoped namespace. For crates.io dependencies it is not a second source registry at all; it is an artifact exchange layered over crates.io, holding compiled work whose source continues to live, unmirrored, where it always did. The fragmentation worry attaches to the second case, and in that case there is nothing to fragment. Java, Python, Nix, and Homebrew each added that layer on top of their source ecosystems, and none of them is remembered as a fork.
+It is worth being exact about what that place is, because one word invites the wrong fear. For projects that publish a Loaf, `loaves.pub` is a registry in the ordinary sense — a source of record, with versions and a scoped namespace. For crates.io dependencies it is not a second source registry at all; it is an artifact exchange layered over crates.io, holding compiled work whose source continues to live, unmirrored, where it always did. The fragmentation worry attaches to the second case, and in that case there is nothing to fragment. Java, Python, Nix, and Homebrew each added that layer on top of their source ecosystems, and none of them is remembered as a fork.
 
 ## What Cargo and crates.io got right
 
@@ -116,11 +116,11 @@ Unit-seconds is the sum of the durations cargo attributes to each compilation un
 
 ### The compiler is the same shape
 
-Incan is, at its core, a very large Rust project, and it feels every one of these costs first. A cold release build of the `incan` command at the current development head compiles 340 crates in 1 minute 47 seconds on the laptop, 722 unit-seconds, for a 73 MB binary; the rust-analyzer and Wasmtime families it depends on are half of that time. Toggling one Cargo feature afterwards recompiled 53 units because tokio's feature set changed underneath them. A freshly generated Incan hello-world project compiles fourteen dependency rlibs into a 51 MB local Loaf per profile before it prints a line, and two such projects on one machine each did it separately. Importing two functions from `std.hash` raised that to thirty-nine rlibs. These are the compiler's own findings about itself, and they are the reason Incan's toolchain has to be shaped differently from an ordinary Cargo workspace.
+Incan is, at its core, a very large Rust project, and it feels every one of these costs first. In the measured historical checkout, a cold release build of the `incan` command compiled 340 crates in 1 minute 47 seconds on the laptop, 722 unit-seconds, for a 73 MB binary; its Rust analysis and embedded vocabulary-engine families were half of that time. Toggling one Cargo feature afterwards recompiled 53 units because tokio's feature set changed underneath them. A freshly generated Incan hello-world project compiled fourteen dependency rlibs into a 51 MB local Loaf per profile before it printed a line, and two such projects on one machine each did it separately. Importing two functions from `std.hash` raised that to thirty-nine rlibs. These historical findings explain why Incan's toolchain has to be shaped differently from an ordinary Cargo workspace; the native vocabulary route has since removed the embedded engine.
 
 ### Disk is the second symptom
 
-On the laptop, in its resting state after a cleanup, one development root held twenty `target/` directories totaling 52 GB, two of them the Incan compiler itself at 10.8 GB and 10.4 GB a few commits apart. The registry cache held 6.5 GB of `.crate` files. The maintainer's periodic cleanups run to 500 GB or more. This is not an argument for a registry, but it is the same design fact from another angle: a compiled artifact with no identity anyone else can trust cannot be shared and cannot be safely deleted, so every worktree keeps its own copy of the same wasmtime, and nothing can tell that two 10 GB directories are the same thing.
+On the laptop, in its resting state after a cleanup, one development root held twenty `target/` directories totaling 52 GB, two of them the Incan compiler itself at 10.8 GB and 10.4 GB a few commits apart. The registry cache held 6.5 GB of `.crate` files. The maintainer's periodic cleanups run to 500 GB or more. This is not an argument for a registry, but it is the same design fact from another angle: a compiled artifact with no identity anyone else can trust cannot be shared and cannot be safely deleted, so every worktree keeps its own copy of the same runtime dependencies, and nothing can tell that two 10 GB directories are the same thing.
 
 ## Compilation is infrastructure, not developer experience
 
@@ -275,7 +275,7 @@ The source input is a semantic digest rather than a hash of file bytes, so where
 
 This is a design, not a proof. It encodes the inputs Cargo lacks when it has to decide whether compiled artifacts are interchangeable; it does not demonstrate that no input has been overlooked. That distinction matters, and the honest claim is the narrower one.
 
-## What changes with Oven and `incan.pub`
+## What changes with Oven and `loaves.pub`
 
 The shape, in the terms a user sees:
 
@@ -291,17 +291,17 @@ The shape, in the terms a user sees:
 
 What that does not yet do is share *below* the plan. Two projects with identical dependency closures each sealed their own 51 MB Loaf holding the same fourteen rlibs, and twenty build directories under one development root totaled 52 GB. Both are the same defect: the plan, not the compiled unit, is the unit of reuse. Making the compiled unit the store's addressable object — keyed by an identity over its effective compilation inputs, kept distinct from where its source was published — shares units across projects and worktrees, lets a version-only republication of unchanged code still hit, and makes the store collectable by reachability. A registry then exchanges those same identities across machines rather than inventing a second notion of sameness.
 
-**crates.io is consumed, not replaced.** `crate` dependencies resolve against the crates.io sparse index through the same client, verification, and store as `incan.pub` Loaves. The registry never mirrors crates.io source and never publishes to it. Where it can help Rust users directly is by publishing attested, registry-built assets for popular crates at the closures a toolchain pins, so that consuming DataFusion through Oven is a download even though DataFusion itself lives on crates.io.
+**crates.io is consumed, not replaced.** `crate` dependencies resolve against the crates.io sparse index through the same client, verification, and store as `loaves.pub` Loaves. The registry never mirrors crates.io source and never publishes to it. Where it can help Rust users directly is by publishing attested, registry-built assets for popular crates at the closures a toolchain pins, so that consuming DataFusion through Oven is a download even though DataFusion itself lives on crates.io.
 
 **The Incan toolchain is the first customer.** The standard library's components and the base Loaf families the compiler needs become ordinary assets in the index, keyed by toolchain and target. A hello-world project stops compiling tokio and serde_json because the toolchain already published them; the web stack stops being sealed into every user's base Loaf because it is a separate asset that only web projects match. Standard library fixes ship as registry publications without a compiler release.
 
-The client and trust design borrows deliberately. From uv: one HTTPS client with pure-Rust TLS and an opt-in for the platform certificate store, a content-addressed cache that installs by linking rather than copying, one universal lockfile valid on every host, and the discipline that resolution never executes package code. From npm's history: content addressing with integrity on every entry, keyless signing with a public transparency log and trusted publishing from CI, scoped names so that a Rust crate and an `incan.pub` Loaf can share a short name without colliding, root-only overrides, and a prompt before running anything not already local. From Cargo: the index and the lockfile themselves.
+The client and trust design borrows deliberately. From uv: one HTTPS client with pure-Rust TLS and an opt-in for the platform certificate store, a content-addressed cache that installs by linking rather than copying, one universal lockfile valid on every host, and the discipline that resolution never executes package code. From npm's history: content addressing with integrity on every entry, keyless signing with a public transparency log and trusted publishing from CI, scoped names so that a Rust crate and a `loaves.pub` Loaf can share a short name without colliding, root-only overrides, and a prompt before running anything not already local. From Cargo: the index and the lockfile themselves.
 
 ## The fragmentation objection
 
 The reasonable objection from a Rust reader is that a second registry splits the ecosystem. The answer has to be direct.
 
-`incan.pub` publishes nothing to crates.io and presents nothing as a crates.io package; RFC 119 rules that out. It does not mirror crates.io source. It does not change how a Cargo project resolves anything, because a Cargo project never talks to it; only a project that has adopted `loaf.toml` does, and adoption is explicit. Its community namespace is scoped, so `acme/regex` on `incan.pub` and `regex` on crates.io are different names in different registries selected by different dependency keys. A Rust library author who never hears of Incan is unaffected, and one who publishes a Loaf keeps publishing the crate.
+`loaves.pub` publishes nothing to crates.io and presents nothing as a crates.io package; RFC 119 rules that out. It does not mirror crates.io source. It does not change how a Cargo project resolves anything, because a Cargo project never talks to it; only a project that has adopted `loaf.toml` does, and adoption is explicit. Its community namespace is scoped, so `acme/regex` on `loaves.pub` and `regex` on crates.io are different names in different registries selected by different dependency keys. A Rust library author who never hears of Incan is unaffected, and one who publishes a Loaf keeps publishing the crate.
 
 What the tier adds is the same thing a Nix binary cache adds to nixpkgs or a wheel adds to an sdist: a compiled, attested form of something whose source of truth stays where it was. The ecosystem is not split when an artifact tier is layered over a source tier; it is split when two source tiers compete, and this design has exactly one.
 
@@ -309,7 +309,7 @@ What the tier adds is the same thing a Nix binary cache adds to nixpkgs or a whe
 
 - It does not claim a measured speedup from the asset path. The measurements above are the cost of the source path; the asset path does not exist yet to be measured.
 - It does not claim that every dependency can be precompiled for every target, toolchain, and feature closure. The index never promises completeness; a miss is a bake, not a failure, and small crates may never have assets at all.
-- It does not turn `incan.pub` into a binary-only channel. The source Loaf is the publication of record, is always retained, and is what every asset is attested against.
+- It does not turn `loaves.pub` into a binary-only channel. The source Loaf is the publication of record, is always retained, and is what every asset is attested against.
 - It does not give the registry authority over a project. Trust policy per builder kind, registered sources, and overrides belong to the consuming project, as RFC 117 already requires.
 - It does not decide who bakes. Whether a registry bakery arrives with the first release or after publisher-built assets is deliberately left open.
 - It does not claim the numbers are stable. They are a snapshot of two machines, three libraries, and one toolchain on one day, reproducible from the scripts that produced them, and they will drift.

@@ -1,0 +1,62 @@
+"""Native logical integer and decimal operations shared by all Crumb representations."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.values import IntegerValue
+from crate.primitives.crumb.wide_integer import WideInteger
+
+
+pub def integer_wide(value: IntegerValue) -> WideInteger:
+    """Widen a logical signed or unsigned integer for exact physical transforms."""
+    match value:
+        IntegerValue.Signed(number) => return WideInteger.from_signed(number)
+        IntegerValue.Unsigned(number) => return WideInteger.from_unsigned(number)
+
+
+pub def integer_compare(left: IntegerValue, right: IntegerValue) -> int:
+    """Compare signed and unsigned logical integers by mathematical value."""
+    return integer_wide(left).compare(integer_wide(right))
+
+
+pub def integer_spelling(value: IntegerValue) -> str:
+    """Format a native logical integer only at the COMIC text boundary."""
+    match value:
+        IntegerValue.Signed(number) => return str(number)
+        IntegerValue.Unsigned(number) => return str(number)
+
+
+pub model NormalizedDecimal:
+    """One trailing-zero-free native coefficient and its corresponding scale."""
+
+    pub coefficient: i128
+    pub scale: int
+
+
+pub def normalize_decimal(coefficient: i128, scale: int) -> Result[NormalizedDecimal, CrumbError]:
+    """Return the unique trailing-zero-free coefficient and scale, refusing scale underflow."""
+    if coefficient == 0i128:
+        return Ok(NormalizedDecimal(coefficient=0i128, scale=0))
+    mut normalized = coefficient
+    mut normalized_scale = scale
+    while normalized % 10i128 == 0i128:
+        if normalized_scale == -9223372036854775808:
+            return Err(CrumbError.invalid_input("decimal scale underflow"))
+        normalized = normalized // 10i128
+        normalized_scale -= 1
+    return Ok(NormalizedDecimal(coefficient=normalized, scale=normalized_scale))
+
+
+pub def compare_decimals(
+    left: i128,
+    left_scale: int,
+    right: i128,
+    right_scale: int,
+    mut budget: Budget,
+) -> Result[int, CrumbError]:
+    """Compare exact decimals using widened coefficients when scale alignment exceeds i128."""
+    a = normalize_decimal(left, left_scale)?
+    b = normalize_decimal(right, right_scale)?
+    common = max([a.scale, b.scale])
+    a_wide = WideInteger.from_signed(a.coefficient).scale_decimal(common - a.scale, budget)?
+    b_wide = WideInteger.from_signed(b.coefficient).scale_decimal(common - b.scale, budget)?
+    return Ok(a_wide.compare(b_wide))

@@ -1,0 +1,727 @@
+//! Request-local transport for named lowering products, explicit refusals, the complete native interface and the
+//! notes of admitted modules: one Crumb graph row each.
+
+use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
+
+use internal_models_bindings::MappedView;
+
+use crate::records::plan_function::projected_product_digest;
+use crate::records::plan_module::{
+    WHOLE_ADMISSION, WHOLE_ADMISSION_SELECTOR, WholeModuleAdmission, whole_admission_fields,
+};
+use crate::wire::{
+    MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, admit_row, boolean_value,
+    decode_graph_row, encode_graph_row, items, number, required, text, tuple_items,
+};
+
+const EVENT: &[u8] = b"lowevt\x00";
+const REFUSAL: &[u8] = b"lowref\x00";
+const EVALUATED_REFUSAL: &[u8] = b"lowevr\x00";
+const INTERFACE: &[u8] = b"lowint\x00";
+const DEFINITIONS: &[u8] = b"admdef\x00";
+const NOTE: &[u8] = b"admnot\x00";
+const PLACEMENT: &[u8] = b"admgeo\x00";
+
+/// The filename of the native interface report, shared by the lowering publisher and native reader.
+pub const INTERFACE_REPORT: &str = "native-interface.crumb";
+/// The filename for definitions already admitted by lowering.
+pub const ADMITTED_DEFINITIONS: &str = "admitted-definitions.crumb";
+/// The filename naming a native input for every plan function no event or admitted definition names: a helper frame by
+/// the product that carries it, a generated function by its own content. Native incremental reuse reads it.
+pub const NATIVE_DEFINITIONS: &str = "native-definitions.crumb";
+
+/// One field of a record shape.
+const fn field(identity: &'static [u8], name: &'static str, storage: &'static str) -> ShapeField {
+    ShapeField {
+        identity,
+        name,
+        storage,
+    }
+}
+
+static EVENT_SHAPE: Shape = Shape {
+    selector: EVENT,
+    path: "incan.lowering-event/3",
+    body: ShapeBody::Record(&[
+        field(b"admitt", "admitted", "boolean"),
+        field(b"demand", "demand", "string"),
+        field(b"funct_", "function", "string"),
+        field(b"identi", "identity", "string"),
+        field(b"key___", "key", "string"),
+        field(b"module", "module", "string"),
+        field(b"positi", "positions", "list<tuple<i64,i64>>"),
+        field(b"produc", "product", "binary"),
+        field(b"refere", "references", "list<tuple<string,i64,string>>"),
+        field(b"reused", "reused", "boolean"),
+        field(b"role__", "role", "string"),
+        field(b"runtim", "runtime_requirements", "i64"),
+    ]),
+};
+static EVENT_SCHEMA: Schema = Schema::new(&[&EVENT_SHAPE]);
+
+static REFUSAL_SHAPE: Shape = Shape {
+    selector: REFUSAL,
+    path: "incan.lowering-refusal/3",
+    body: ShapeBody::Record(&[
+        field(b"funct_", "function", "string"),
+        field(b"identi", "identity", "string"),
+        field(b"reason", "refusal", "string"),
+    ]),
+};
+static REFUSAL_SCHEMA: Schema = Schema::new(&[&REFUSAL_SHAPE]);
+static EVALUATED_REFUSAL_SHAPE: Shape = Shape {
+    selector: EVALUATED_REFUSAL,
+    path: "incan.evaluated-lowering-refusal/1",
+    body: ShapeBody::Record(&[
+        field(b"funct_", "function", "string"),
+        field(b"identi", "identity", "string"),
+        field(b"key___", "key", "string"),
+        field(b"reason", "refusal", "string"),
+    ]),
+};
+static EVALUATED_REFUSAL_SCHEMA: Schema = Schema::new(&[&EVALUATED_REFUSAL_SHAPE]);
+static REQUEST_REFUSAL_SCHEMA: Schema = Schema::new(&[&REFUSAL_SHAPE, &EVALUATED_REFUSAL_SHAPE]);
+
+static INTERFACE_SHAPE: Shape = Shape {
+    selector: INTERFACE,
+    path: "incan.native-interface/3",
+    body: ShapeBody::Record(&[field(b"entry_", "entry", "string"), field(b"plan__", "plan", "binary")]),
+};
+static INTERFACE_SCHEMA: Schema = Schema::new(&[&INTERFACE_SHAPE]);
+
+static DEFINITIONS_SHAPE: Shape = Shape {
+    selector: DEFINITIONS,
+    path: "incan.admitted-definitions/1",
+    body: ShapeBody::Record(&[field(
+        b"define",
+        "definitions",
+        "list<tuple<string,string,string,string>>",
+    )]),
+};
+static DEFINITIONS_SCHEMA: Schema = Schema::new(&[&DEFINITIONS_SHAPE]);
+
+static NOTE_SHAPE: Shape = Shape {
+    selector: NOTE,
+    path: "incan.module-admission/2",
+    body: ShapeBody::Record(&[
+        field(b"all___", "complete", "boolean"),
+        field(
+            b"funct_",
+            "functions",
+            "list<tuple<string,string,list<tuple<string,i64,string>>>>",
+        ),
+        field(b"module", "module", "string"),
+    ]),
+};
+static NOTE_SCHEMA: Schema = Schema::new(&[&NOTE_SHAPE]);
+static REQUEST_NOTE_SCHEMA: Schema = Schema::new(&[&NOTE_SHAPE, &WHOLE_ADMISSION]);
+
+static PLACEMENT_SHAPE: Shape = Shape {
+    selector: PLACEMENT,
+    path: "incan.module-admission-placement/1",
+    body: ShapeBody::Record(&[
+        field(
+            b"funct_",
+            "functions",
+            "list<tuple<string,string,string,list<tuple<i64,i64>>>>",
+        ),
+        field(b"module", "module", "string"),
+    ]),
+};
+static PLACEMENT_SCHEMA: Schema = Schema::new(&[&PLACEMENT_SHAPE]);
+
+/// A named ordinal's position in the current model, enum or static cell table.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct EventReference {
+    pub kind: String,
+    pub index: i64,
+    pub name: String,
+}
+
+/// A Body IR node's current source coordinates.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EventPosition {
+    pub line: i64,
+    pub column: i64,
+}
+
+/// The exact published product and its use in this request.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct LoweringEvent {
+    pub identity: String,
+    pub key: String,
+    pub function: String,
+    pub product: Vec<u8>,
+    pub reused: bool,
+    pub admitted: bool,
+    pub module: String,
+    pub role: String,
+    pub demand: String,
+    pub runtime_requirements: i64,
+    pub references: Vec<EventReference>,
+    pub positions: Vec<EventPosition>,
+}
+
+/// An explicit per-function reason lowering could not publish a reusable product.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LoweringRefusal {
+    pub identity: String,
+    pub function: String,
+    pub refusal: String,
+}
+
+/// The standalone entry key and its complete loss-checked native plan.
+#[derive(Clone, PartialEq, Eq)]
+pub struct NativeInterface {
+    pub entry: String,
+    pub plan: Vec<u8>,
+}
+
+/// A restored function's authenticated native definition inputs.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct AdmittedDefinition {
+    pub function: String,
+    pub identity: String,
+    pub key: String,
+    pub digest: String,
+}
+
+/// Current Body IR node coordinates for an admitted scalar in a physically edited file.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AdmittedPlacement {
+    pub key: String,
+    pub positions: Vec<EventPosition>,
+}
+
+/// A restored function's identity and native declaration positions in this request.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AdmittedFunction {
+    pub function: String,
+    pub identity: String,
+    pub references: Vec<EventReference>,
+    pub placement: Option<AdmittedPlacement>,
+}
+
+/// Actual restored functions of a named module, including whether every ordinary body was restored.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AdmittedModule {
+    pub module: String,
+    pub complete: bool,
+    pub functions: Vec<AdmittedFunction>,
+    pub inspected: bool,
+}
+
+/// The exact request note class. Native readers only need a legacy note's module and completeness status.
+pub enum RequestModuleNote {
+    Scalar { module: String, complete: bool },
+    Whole(WholeModuleAdmission),
+}
+
+// Oven prints these records in the reference models' `Name(field=value, ...)` text, and keys sets by them.
+crate::structural_debug!(EventReference, "EventReference", kind, index, name);
+crate::structural_debug!(EventPosition, "EventPosition", line, column);
+crate::structural_debug!(
+    LoweringEvent,
+    "LoweringEvent",
+    identity,
+    key,
+    function,
+    product,
+    reused,
+    admitted,
+    module,
+    role,
+    demand,
+    runtime_requirements,
+    references,
+    positions
+);
+crate::structural_debug!(LoweringRefusal, "LoweringRefusal", identity, function, refusal);
+crate::structural_debug!(NativeInterface, "NativeInterface", entry, plan);
+crate::structural_debug!(
+    AdmittedDefinition,
+    "AdmittedDefinition",
+    function,
+    identity,
+    key,
+    digest
+);
+crate::structural_debug!(AdmittedPlacement, "AdmittedPlacement", key, positions);
+crate::structural_debug!(
+    AdmittedFunction,
+    "AdmittedFunction",
+    function,
+    identity,
+    references,
+    placement
+);
+crate::structural_debug!(AdmittedModule, "AdmittedModule", module, complete, functions, inspected);
+
+/// The filename shared by the lowering publisher and native reader.
+pub fn native_interface_filename() -> String {
+    INTERFACE_REPORT.to_owned()
+}
+
+/// The filename for definitions already admitted by lowering.
+pub fn admitted_definitions_filename() -> String {
+    ADMITTED_DEFINITIONS.to_owned()
+}
+
+/// A reference as its Crumb tuple: kind, index, native name.
+fn reference_value(reference: &EventReference) -> Wire {
+    Wire::Tuple(vec![
+        Wire::Text(reference.kind.clone()),
+        Wire::integer(reference.index),
+        Wire::Text(reference.name.clone()),
+    ])
+}
+
+/// A position as its Crumb tuple: line, column.
+fn position_value(position: &EventPosition) -> Wire {
+    Wire::Tuple(vec![Wire::integer(position.line), Wire::integer(position.column)])
+}
+
+/// Read one reference tuple, refusing a kind other than a model or enum.
+fn read_reference(item: &Wire, refusal: &str) -> Result<EventReference, String> {
+    let parts = tuple_items(item, 3)?;
+    let kind = text(&parts[0])?;
+    if kind != "model" && kind != "enum" && kind != "static" {
+        return Err(refusal.to_owned());
+    }
+    Ok(EventReference {
+        kind,
+        index: number(&parts[1])?,
+        name: text(&parts[2])?,
+    })
+}
+
+/// Read a list of position tuples.
+fn read_positions(value: &Wire) -> Result<Vec<EventPosition>, String> {
+    items(value)?
+        .iter()
+        .map(|item| {
+            let pair = tuple_items(item, 2)?;
+            Ok(EventPosition {
+                line: number(&pair[0])?,
+                column: number(&pair[1])?,
+            })
+        })
+        .collect()
+}
+
+/// Require a binary field.
+fn binary(value: &Wire, refusal: &str) -> Result<Vec<u8>, String> {
+    match value {
+        Wire::Binary(data) => Ok(data.clone()),
+        _ => Err(refusal.to_owned()),
+    }
+}
+
+/// Transport the authenticated plan-function record without reconstructing or transcoding it.
+pub fn encode_lowering_event(event: &LoweringEvent) -> Result<Vec<u8>, String> {
+    encode_graph_row(
+        EVENT,
+        &EVENT_SCHEMA,
+        vec![
+            required(b"admitt", Wire::Boolean(event.admitted)),
+            required(b"demand", Wire::Text(event.demand.clone())),
+            required(b"funct_", Wire::Text(event.function.clone())),
+            required(b"identi", Wire::Text(event.identity.clone())),
+            required(b"key___", Wire::Text(event.key.clone())),
+            required(b"module", Wire::Text(event.module.clone())),
+            required(
+                b"positi",
+                Wire::List(event.positions.iter().map(position_value).collect()),
+            ),
+            required(b"produc", Wire::Binary(event.product.clone())),
+            required(
+                b"refere",
+                Wire::List(event.references.iter().map(reference_value).collect()),
+            ),
+            required(b"reused", Wire::Boolean(event.reused)),
+            required(b"role__", Wire::Text(event.role.clone())),
+            required(b"runtim", Wire::integer(event.runtime_requirements)),
+        ],
+    )
+}
+
+/// Validate the complete event, including ordinal table, node positions and entry role.
+pub fn decode_lowering_event(encoded: &[u8]) -> Result<LoweringEvent, String> {
+    let fields = decode_graph_row(encoded, EVENT, &EVENT_SCHEMA, 12)?;
+    let admitted = boolean_value(&fields[0].value).map_err(|_| "lowering event has no admission flag".to_owned())?;
+    let references = items(&fields[8].value)?
+        .iter()
+        .map(|item| read_reference(item, "invalid lowering event nominal kind"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let positions = read_positions(&fields[6].value)?;
+    let product = binary(&fields[7].value, "lowering event has no binary product")?;
+    let reused = boolean_value(&fields[9].value).map_err(|_| "lowering event has no reuse flag".to_owned())?;
+    let role = text(&fields[10].value)?;
+    let demand = text(&fields[1].value)?;
+    validate_event_role(&role, &demand)?;
+    Ok(LoweringEvent {
+        admitted,
+        demand,
+        function: text(&fields[2].value)?,
+        identity: text(&fields[3].value)?,
+        key: text(&fields[4].value)?,
+        module: text(&fields[5].value)?,
+        positions,
+        product,
+        references,
+        reused,
+        role,
+        runtime_requirements: number(&fields[11].value)?,
+    })
+}
+
+/// Require the same ordinary or entry role and demand relationship on every event reader.
+fn validate_event_role(role: &str, demand: &str) -> Result<(), String> {
+    if (role != "" && role != "entry") || (role == "entry") != !demand.is_empty() {
+        return Err("invalid lowering event role or entry demand".into());
+    }
+    Ok(())
+}
+
+/// Read an authenticated positioned event's native fingerprint while its product bytes remain in the parent page.
+pub(crate) fn projected_definition(
+    view: &MappedView,
+    module: &str,
+    function: &str,
+    symbol: &str,
+    key: &str,
+) -> Result<AdmittedDefinition, String> {
+    let mut event = admit_root_view(view, EVENT, &EVENT_SCHEMA, "positioned lowering event")?;
+    if text(&event.row.read_field(b"module")?)? != module
+        || text(&event.row.read_field(b"funct_")?)? != function
+        || text(&event.row.read_field(b"identi")?)? != symbol
+        || text(&event.row.read_field(b"key___")?)? != key
+    {
+        return Err("positioned lowering event differs from its selected member".into());
+    }
+    let role = text(&event.row.read_field(b"role__")?)?;
+    let demand = text(&event.row.read_field(b"demand")?)?;
+    validate_event_role(&role, &demand)?;
+    let digest = projected_product_digest(&event.binary_view(b"produc")?)?;
+    Ok(AdmittedDefinition {
+        function: function.to_owned(),
+        identity: symbol.to_owned(),
+        key: key.to_owned(),
+        digest,
+    })
+}
+
+/// Encode one explicit skipped producer.
+pub fn encode_lowering_refusal(value: &LoweringRefusal) -> Result<Vec<u8>, String> {
+    encode_refusal(value, None)
+}
+
+/// Record the witnessed key of a lowered ordinary frame whose reusable product was refused.
+pub fn encode_evaluated_lowering_refusal(value: &LoweringRefusal, key: &str) -> Result<Vec<u8>, String> {
+    require_evaluated_refusal_key(key, &value.identity)?;
+    encode_refusal(value, Some(key))
+}
+
+/// Encode a refusal using the record variant selected by its optional scalar key.
+fn encode_refusal(value: &LoweringRefusal, key: Option<&str>) -> Result<Vec<u8>, String> {
+    let mut fields = vec![
+        required(b"funct_", Wire::Text(value.function.clone())),
+        required(b"identi", Wire::Text(value.identity.clone())),
+    ];
+    let (selector, schema) = if let Some(key) = key {
+        fields.push(required(b"key___", Wire::Text(key.to_owned())));
+        (EVALUATED_REFUSAL, &EVALUATED_REFUSAL_SCHEMA)
+    } else {
+        (REFUSAL, &REFUSAL_SCHEMA)
+    };
+    fields.push(required(b"reason", Wire::Text(value.refusal.clone())));
+    encode_graph_row(selector, schema, fields)
+}
+
+/// Authenticate a reported refusal before accepting an omitted native interface.
+pub fn decode_lowering_refusal(encoded: &[u8]) -> Result<LoweringRefusal, String> {
+    lowering_refusal_evidence(encoded).map(|(refusal, _)| refusal)
+}
+
+/// Preserve a witnessed evaluation key only on the typed evaluated refusal record.
+pub fn lowering_refusal_evidence(encoded: &[u8]) -> Result<(LoweringRefusal, Option<String>), String> {
+    let (row, dictionary) = admit_row(encoded, &REQUEST_REFUSAL_SCHEMA, MAX_RECORD_BYTES)?;
+    if row.records() != 1 || dictionary.entries != 1 || dictionary.inline {
+        return Err("lowering refusal must contain one exact described row".into());
+    }
+    let (selector, value) = row.read_root()?;
+    let Wire::Record(fields) = value else {
+        return Err("expected a lowering refusal record".into());
+    };
+    let (reason, key) = match (selector.as_slice(), fields.as_slice()) {
+        (REFUSAL, [_, _, reason]) => (reason, None),
+        (EVALUATED_REFUSAL, [_, identity, key, reason]) => {
+            let key = text(&key.value)?;
+            require_evaluated_refusal_key(&key, &text(&identity.value)?)?;
+            (reason, Some(key))
+        }
+        _ => return Err("unexpected lowering refusal selector or fields".into()),
+    };
+    let refusal = LoweringRefusal {
+        function: text(&fields[0].value)?,
+        identity: text(&fields[1].value)?,
+        refusal: text(&reason.value)?,
+    };
+    Ok((refusal, key))
+}
+
+/// Require a nonempty owner and a lowercase hexadecimal scalar key for an evaluated refusal.
+fn require_evaluated_refusal_key(key: &str, identity: &str) -> Result<(), String> {
+    if identity.is_empty()
+        || key.len() != 64
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err("evaluated lowering refusal lacks a witnessed owner and scalar key".into());
+    }
+    Ok(())
+}
+
+/// Bind the keyed entry to the native plan verified by the producer.
+pub fn encode_native_interface(value: &NativeInterface) -> Result<Vec<u8>, String> {
+    encode_graph_row(
+        INTERFACE,
+        &INTERFACE_SCHEMA,
+        vec![
+            required(b"entry_", Wire::Text(value.entry.clone())),
+            required(b"plan__", Wire::Binary(value.plan.clone())),
+        ],
+    )
+}
+
+/// Read the complete producer report from its versioned Crumb row.
+pub fn decode_native_interface(encoded: &[u8]) -> Result<NativeInterface, String> {
+    let fields = decode_graph_row(encoded, INTERFACE, &INTERFACE_SCHEMA, 2)?;
+    Ok(NativeInterface {
+        entry: text(&fields[0].value)?,
+        plan: binary(&fields[1].value, "native interface has no binary plan")?,
+    })
+}
+
+/// Persist the named, restored definitions without duplicating their full products.
+pub fn encode_admitted_definitions(definitions: &[AdmittedDefinition]) -> Result<Vec<u8>, String> {
+    let values = definitions
+        .iter()
+        .map(|definition| {
+            Wire::Tuple(vec![
+                Wire::Text(definition.function.clone()),
+                Wire::Text(definition.identity.clone()),
+                Wire::Text(definition.key.clone()),
+                Wire::Text(definition.digest.clone()),
+            ])
+        })
+        .collect();
+    encode_graph_row(
+        DEFINITIONS,
+        &DEFINITIONS_SCHEMA,
+        vec![required(b"define", Wire::List(values))],
+    )
+}
+
+/// Read the exact function identity, key and digest used to populate the native query inputs.
+pub fn decode_admitted_definitions(encoded: &[u8]) -> Result<Vec<AdmittedDefinition>, String> {
+    let fields = decode_graph_row(encoded, DEFINITIONS, &DEFINITIONS_SCHEMA, 1)?;
+    items(&fields[0].value)?
+        .iter()
+        .map(|value| {
+            let parts = tuple_items(value, 4)?;
+            Ok(AdmittedDefinition {
+                function: text(&parts[0])?,
+                identity: text(&parts[1])?,
+                key: text(&parts[2])?,
+                digest: text(&parts[3])?,
+            })
+        })
+        .collect()
+}
+
+/// Publish a complete, versioned worker note for native assembly and reuse counting.
+pub fn encode_module_note(value: &AdmittedModule) -> Result<Vec<u8>, String> {
+    let functions = value
+        .functions
+        .iter()
+        .map(|function| {
+            Wire::Tuple(vec![
+                Wire::Text(function.function.clone()),
+                Wire::Text(function.identity.clone()),
+                Wire::List(function.references.iter().map(reference_value).collect()),
+            ])
+        })
+        .collect();
+    encode_graph_row(
+        NOTE,
+        &NOTE_SCHEMA,
+        vec![
+            required(b"all___", Wire::Boolean(value.complete)),
+            required(b"funct_", Wire::List(functions)),
+            required(b"module", Wire::Text(value.module.clone())),
+        ],
+    )
+}
+
+/// Admit one produced note and every restored function before counting the module or restoring its inputs.
+pub fn decode_module_note(encoded: &[u8]) -> Result<AdmittedModule, String> {
+    let fields = decode_graph_row(encoded, NOTE, &NOTE_SCHEMA, 3)?;
+    let complete = boolean_value(&fields[0].value).map_err(|_| "invalid module admission status".to_owned())?;
+    let mut functions = Vec::new();
+    let mut names = BTreeSet::new();
+    for value in items(&fields[1].value)? {
+        let parts = tuple_items(value, 3)?;
+        let name = text(&parts[0])?;
+        if name.is_empty() || !names.insert(name.clone()) {
+            return Err("module admission repeated or omitted a function name".into());
+        }
+        let references = items(&parts[2])?
+            .iter()
+            .map(|cell| read_reference(cell, "invalid module admission reference kind"))
+            .collect::<Result<Vec<_>, _>>()?;
+        functions.push(AdmittedFunction {
+            function: name,
+            identity: text(&parts[1])?,
+            references,
+            placement: None,
+        });
+    }
+    let module = text(&fields[2].value)?;
+    if module.is_empty() || functions.is_empty() {
+        return Err("module admission lacks its module or restored function".into());
+    }
+    Ok(AdmittedModule {
+        module,
+        complete,
+        functions,
+        inspected: false,
+    })
+}
+
+/// Admit one existing request note shape and materialize only the compact fields or the scalar envelope's owner.
+pub fn decode_request_module_note(encoded: &[u8]) -> Result<RequestModuleNote, String> {
+    let (mut row, dictionary) = admit_row(encoded, &REQUEST_NOTE_SCHEMA, MAX_RECORD_BYTES)?;
+    if row.records() != 1 || dictionary.entries != 1 || dictionary.inline {
+        return Err("request module note must contain one exact described row".into());
+    }
+    match row.root_key().as_slice() {
+        NOTE => {
+            let module = text(&row.read_field(b"module")?)?;
+            let complete = boolean_value(&row.read_field(b"all___")?)?;
+            if module.is_empty() {
+                return Err("scalar module admission lacks a module name".into());
+            }
+            Ok(RequestModuleNote::Scalar { module, complete })
+        }
+        WHOLE_ADMISSION_SELECTOR => {
+            let (_, value) = row.read_root()?;
+            let Wire::Record(fields) = value else {
+                return Err("expected a whole-module admission record".into());
+            };
+            Ok(RequestModuleNote::Whole(whole_admission_fields(&fields)?))
+        }
+        _ => Err("request module note has an unsupported selector".into()),
+    }
+}
+
+/// Store only changed placements at the companion path `path`, given as text as an Incan caller passes it. Refuse a
+/// stale companion if it cannot be removed.
+pub fn write_module_placement(path: &str, note: &AdmittedModule) -> Result<(), String> {
+    let path = Path::new(path);
+    let mut functions: Vec<Wire> = Vec::new();
+    for function in &note.functions {
+        if let Some(placement) = &function.placement {
+            functions.push(Wire::Tuple(vec![
+                Wire::Text(function.function.clone()),
+                Wire::Text(function.identity.clone()),
+                Wire::Text(placement.key.clone()),
+                Wire::List(placement.positions.iter().map(position_value).collect()),
+            ]));
+        }
+    }
+    if functions.is_empty() && !note.inspected {
+        if path.is_file() {
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+    let fields: Vec<WireField> = vec![
+        required(b"funct_", Wire::List(functions)),
+        required(b"module", Wire::Text(note.module.clone())),
+    ];
+    let encoded = encode_graph_row(PLACEMENT, &PLACEMENT_SCHEMA, fields)?;
+    std::fs::write(path, encoded).map_err(|error| error.to_string())
+}
+
+/// Bind a sparse coordinates companion to the exact functions and identities in the admission at `path`, given as text
+/// as an Incan caller passes it.
+pub fn read_module_admission(path: &str) -> Result<AdmittedModule, String> {
+    let path = Path::new(path);
+    let mut note = decode_module_note(&std::fs::read(path).map_err(|error| error.to_string())?)?;
+    let companion = Path::new(&format!("{}.placement", path.display())).to_path_buf();
+    if !companion.is_file() {
+        return Ok(note);
+    }
+    let encoded = std::fs::read(&companion).map_err(|error| error.to_string())?;
+    let fields = decode_graph_row(&encoded, PLACEMENT, &PLACEMENT_SCHEMA, 2)?;
+    if text(&fields[1].value)? != note.module {
+        return Err("placement belongs to a different admitted module".into());
+    }
+    note.inspected = true;
+    let index: HashMap<String, usize> = note
+        .functions
+        .iter()
+        .enumerate()
+        .map(|(position, function)| (function.function.clone(), position))
+        .collect();
+    for value in items(&fields[0].value)? {
+        let parts = tuple_items(value, 4)?;
+        let name = text(&parts[0])?;
+        let Some(position) = index.get(&name).copied() else {
+            return Err("placement names an unreported function".into());
+        };
+        let function = &mut note.functions[position];
+        if function.placement.is_some() || function.identity != text(&parts[1])? {
+            return Err("placement repeats or changes an admitted function".into());
+        }
+        function.placement = Some(AdmittedPlacement {
+            key: text(&parts[2])?,
+            positions: read_positions(&parts[3])?,
+        });
+    }
+    Ok(note)
+}
+
+/// Move only physical placement fields of a product already admitted under its original scalar key.
+pub fn placed_admission(
+    original: &LoweringEvent,
+    module: &str,
+    function: &AdmittedFunction,
+) -> Result<LoweringEvent, String> {
+    let mut event = original.clone();
+    place_admitted_event(&mut event, module, function)?;
+    Ok(event)
+}
+
+/// Apply the current positions to an owned event without copying its admitted product bytes.
+pub fn place_admitted_event(
+    event: &mut LoweringEvent,
+    module: &str,
+    function: &AdmittedFunction,
+) -> Result<(), String> {
+    if event.function != function.function || event.module != module {
+        return Err("admitted lowering event names a different function or module".into());
+    }
+    if let Some(placement) = &function.placement {
+        if placement.key != event.key || placement.positions.len() != event.positions.len() {
+            return Err("admitted position map disagrees with its normalized scalar".into());
+        }
+        event.positions = placement.positions.clone();
+    }
+    event.identity = function.identity.clone();
+    event.references = function.references.clone();
+    Ok(())
+}

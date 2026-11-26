@@ -1,0 +1,18 @@
+"""Canonical Crumb envelopes shared by the graph publisher and the selected compiler worker. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    DEMAND_SCHEMA,
+    PREPARED_SCHEMA,
+    WORK_SCHEMA,
+    DEMAND_FAMILY,
+    PREPARED_FAMILY,
+    WORK_FAMILY,
+    encode_demand_page,
+    decode_demand_page,
+    encode_prepared_inputs,
+    decode_prepared_inputs,
+    encode_ready_work,
+    decode_ready_work,
+    envelope_key,
+    stage_name,
+)

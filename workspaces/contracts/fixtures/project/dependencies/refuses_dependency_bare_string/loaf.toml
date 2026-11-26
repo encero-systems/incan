@@ -1,0 +1,9 @@
+[project]
+name = "refuses_dependency_bare_string"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+regex = "1"

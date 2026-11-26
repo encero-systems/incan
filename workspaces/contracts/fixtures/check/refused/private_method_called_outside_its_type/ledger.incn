@@ -1,0 +1,8 @@
+pub class Ledger:
+    pub total: int
+
+    pub def report(self) -> int:
+        return self.checksum()
+
+    def checksum(self) -> int:
+        return self.total * 31

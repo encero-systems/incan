@@ -1,0 +1,3 @@
+pub enum Decision:
+    Approved(int)
+    Rejected(str)

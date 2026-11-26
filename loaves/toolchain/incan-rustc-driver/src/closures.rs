@@ -5,6 +5,7 @@
 //! The constructor keeps rustc's own MIR; only the closure's executable body is replaced, with a call that forwards
 //! the captures and then the closure's inputs to the Incan-planned lifted function.
 
+use crate::ast_build::ident as identifier;
 use crate::error::PlanError;
 use crate::plan::{Callee, CalleeKind, Function, PlanType, TerminatorKind};
 use crate::{callees, declarations};
@@ -13,16 +14,71 @@ use rustc_hir::def_id::LocalDefId;
 use rustc_index::IndexVec;
 use rustc_middle::ty::TyCtxt;
 use rustc_middle::{mir, ty};
-use rustc_span::{Ident, Span, Spanned, Symbol};
+use rustc_span::{Span, Spanned};
 use thin_vec::{ThinVec, thin_vec};
 
-/// Report whether a capture of this type moves into the environment and is cloned out for each call: owned text and
-/// owned lists, model snapshots and owned zip snapshots. Every other admitted capture is a Copy scalar.
-pub fn owned_capture(ty: &PlanType) -> bool {
-    matches!(
-        ty,
-        PlanType::String | PlanType::List(_, _) | PlanType::Model(_, _) | PlanType::ZipIterator(_, _)
-    )
+/// Whether this synthesized function constructs an environment whose references bound the returned callable.
+fn borrowing_constructor(function: &Function) -> Option<&[PlanType]> {
+    match &function.return_type {
+        PlanType::BorrowingClosure(signature) => Some(signature),
+        _ => None,
+    }
+}
+
+/// Give a borrowing constructor one result lifetime bounded by every independently borrowed capture.
+pub(crate) fn constructor_generics(function: &Function, span: Span) -> ast::Generics {
+    let mut generics = ast::Generics::default();
+    if borrowing_constructor(function).is_none() {
+        return generics;
+    }
+    generics.params.push(lifetime_parameter("'closure", Vec::new(), span));
+    for (index, parameter) in function.parameters.iter().enumerate() {
+        let ty = declarations::ty(&parameter.ty, span);
+        if matches!(ty.kind, ast::TyKind::Ref(..)) {
+            let bound = ast::GenericBound::Outlives(lifetime("'closure", span));
+            generics
+                .params
+                .push(lifetime_parameter(&format!("'capture_{index}"), vec![bound], span));
+        }
+    }
+    generics
+}
+
+/// Preserve a constructor capture's type while naming each outer reference lifetime independently.
+pub(crate) fn constructor_parameter_type(function: &Function, index: usize, span: Span) -> Box<ast::Ty> {
+    let mut ty = crate::futures::constructor_parameter_type(function, index, span);
+    if borrowing_constructor(function).is_some()
+        && let ast::TyKind::Ref(region, _) = &mut ty.kind
+    {
+        *region = Some(lifetime(&format!("'capture_{index}"), span));
+    }
+    ty
+}
+
+/// Bind a borrowing closure result to the common lifetime all of its capture loans outlive.
+pub(crate) fn constructor_return_type(function: &Function, span: Span) -> Option<Box<ast::Ty>> {
+    borrowing_constructor(function).map(|signature| declarations::borrowing_closure_ast(signature, "'closure", span))
+}
+
+/// Build one named lifetime use for a generated signature.
+fn lifetime(name: &str, span: Span) -> ast::Lifetime {
+    ast::Lifetime {
+        id: ast::DUMMY_NODE_ID,
+        ident: rustc_span::Ident::new(rustc_span::Symbol::intern(name), span),
+    }
+}
+
+/// Declare one generated lifetime parameter with its outlives bounds.
+fn lifetime_parameter(name: &str, bounds: Vec<ast::GenericBound>, span: Span) -> ast::GenericParam {
+    ast::GenericParam {
+        id: ast::DUMMY_NODE_ID,
+        ident: rustc_span::Ident::new(rustc_span::Symbol::intern(name), span),
+        attrs: ThinVec::new(),
+        bounds,
+        is_placeholder: false,
+        kind: ast::GenericParamKind::Lifetime,
+        colon_span: None,
+    }
 }
 
 /// Identify a reusable or consuming closure constructor, returning the lifted function and its capture count.
@@ -49,11 +105,6 @@ fn expression(kind: ast::ExprKind, span: Span) -> Box<ast::Expr> {
     })
 }
 
-/// Name an injected parameter or path segment without parsing source text.
-fn identifier(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
-}
-
 /// Create an AST block without source tokens.
 fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
     Box::new(ast::Block {
@@ -72,7 +123,11 @@ fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
 /// replaces its MIR. Preflight proves the constructor's object kind and exact capture parameters.
 pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Block>> {
     constructor(function)?;
-    let (PlanType::Closure(signature) | PlanType::ClosureOnce(signature)) = &function.return_type else {
+    let (PlanType::Closure(signature)
+    | PlanType::ClosureOnce(signature)
+    | PlanType::NativeClosure(signature, _, _)
+    | PlanType::BorrowingClosure(signature)) = &function.return_type
+    else {
         return None;
     };
     let consumes_environment = matches!(function.return_type, PlanType::ClosureOnce(_));
@@ -241,7 +296,7 @@ pub fn callback<'tcx>(
         let owned = constructor_function
             .parameters
             .get(index)
-            .is_some_and(|parameter| owned_capture(&parameter.ty));
+            .is_some_and(|parameter| crate::plan::owned_capture(parameter.ty.clone()));
         let node = if consumes_environment {
             mir::Operand::Move(field)
         } else if owned {

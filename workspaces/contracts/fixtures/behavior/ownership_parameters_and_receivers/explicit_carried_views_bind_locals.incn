@@ -1,0 +1,56 @@
+# behavior: a view `?` takes out of a carried `Result` binds a new local that names the caller's own storage: a write through a `Reference` view changes the caller's value, a `Borrowed` view reads it, and an error leaves the value as the last success left it (#2500).
+# expect-stdout:
+#   3
+#   3
+#   closed
+#   3
+#   2
+#   mismatch
+
+"""Bind carried views to locals, write and read through them, and leave the source unchanged on an error."""
+
+
+class Counter:
+    pub value: int
+    pub open: bool
+
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
+        if not self.open:
+            return Err("closed")
+        self.value += 1
+        return Ok(self)
+
+    pub def expect(self, wanted: int) -> Result[Borrowed[Self], str] from self:
+        if self.value != wanted:
+            return Err("mismatch")
+        return Ok(self)
+
+
+def bump_twice(mut counter: BorrowedMut[Counter]) -> Result[int, str]:
+    mut view = counter.bump()?
+    view.value += 1
+    return Ok(view.value)
+
+
+def read(counter: Borrowed[Counter], wanted: int) -> Result[int, str]:
+    seen = counter.expect(wanted)?
+    return Ok(seen.value - 1)
+
+
+def main() -> None:
+    mut counter = Counter(value=1, open=true)
+    match bump_twice(counter):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    println(counter.value)
+    counter.open = false
+    match bump_twice(counter):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    println(counter.value)
+    match read(counter, 3):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match read(counter, 4):
+        Ok(value) => println(value)
+        Err(error) => println(error)

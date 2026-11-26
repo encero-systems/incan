@@ -1,0 +1,37 @@
+"""A provider whose methods return views of their receiver, directly and carried in a `Result`."""
+
+
+pub class SampleBuffer:
+    pub capacity: int
+    pub samples: list[int]
+
+    pub def edit_samples(mut self) -> Reference[list[int]] from self.samples:
+        return self.samples
+
+    pub def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
+        if len(self.samples) >= self.capacity:
+            return Err("full")
+        self.samples.append(sample)
+        return Ok(self)
+
+
+pub class BufferView[T]:
+    pub buffer: T
+
+
+pub def view_buffer(buffer: Borrowed[SampleBuffer]) -> BufferView[Borrowed[SampleBuffer]] from buffer:
+    """Retain a borrowed buffer in a provider-defined generic carrier."""
+    return BufferView[Borrowed[SampleBuffer]](buffer=buffer)
+
+
+pub enum ReadMode:
+    Count
+    Plus(int)
+
+
+pub def inspect_mode(mode: ReadMode, buffer: Borrowed[SampleBuffer]) -> int:
+    """A provider enum match preserves an unrelated buffer's shared input contract."""
+    match mode:
+        ReadMode.Count => return len(buffer.samples)
+        ReadMode.Plus(extra) => return len(buffer.samples) + extra
+    return 0

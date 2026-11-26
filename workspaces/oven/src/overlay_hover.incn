@@ -1,0 +1,144 @@
+"""Hover through an editor view: a declaration's signature from the overlay's buffer or from the view's records."""
+
+from std.fs import Path
+from pub::incan_platform.store import get
+from pub::internal_models.records import encode_record_key
+from pub::internal_models.source_value_records import source_value
+from compiler_source_projection import project_source, signature_key, signature_record
+from intake import ManifestReader, read_project
+from store_path_conversion import snapshot
+
+
+pub def overlay_hover(
+    store: Path,
+    view: str,
+    program: Path,
+    entry: Path,
+    document: str,
+    text: str,
+    line: int,
+    column: int,
+    declaration_end_column: Option[int] = None,
+) -> Result[Option[str], str]:
+    """
+    The signature of the declaration named at one-based `line` and `column` of the document's buffer `text`.
+
+    A checked function binding includes its exclusive `declaration_end_column`. Its exact source owner determines
+    the signature, even if other declarations have the same name. Without that binding, ordinary name lookup
+    checks the buffer's declarations before the imported module's declaration-signature records in `view`.
+    """
+    rows = text.split("\n")
+    if line < 1 or line > len(rows):
+        return Ok(None)
+    name = identifier_at(rows[line - 1], column)
+    if name == "":
+        return Ok(None)
+    mut declaration_offset: Option[int] = None
+    if let Some(end_column) = declaration_end_column:
+        declaration_offset = checked_token_offset(rows, line, column, end_column, name)
+        if declaration_offset is None:
+            return Ok(None)
+    origin = program_origin(program, entry)?
+    facets = declaration_facets(name)
+    projection = project_source(origin, document, text)?
+    for owner in projection.owners:
+        if owner.key.facet not in facets:
+            continue
+        if let Some(offset) = declaration_offset:
+            if owner.key.facet != name or offset < owner.start or offset >= owner.end:
+                continue
+        return Ok(Some(signature_record(owner).text.strip()))
+    if declaration_offset is not None:
+        return Ok(None)
+    # Ordinary imported names use the editor view's retained signature.
+    match imported_module(text, name):
+        None => return Ok(None)
+        Some(found) =>
+            path = imported_path(document, found[0])
+            selected = snapshot(store, view).map_err((error) => error.message())?
+            for facet in declaration_facets(found[1]):
+                signature = signature_key(origin, path, facet)
+                key = encode_record_key(signature)?
+                match get(selected, key):
+                    Ok(Some(value)) =>
+                        match source_value(signature, value)?.decode():
+                            Ok(signature_text) => return Ok(Some(signature_text.strip()))
+                            Err(_) => return Err(f"invalid declaration signature text: {path}:{facet}")
+                    Ok(None) => pass
+                    Err(error) => return Err(error.message())
+            return Ok(None)
+
+
+def checked_token_offset(rows: list[str], line: int, column: int, end_column: int, name: str) -> Option[int]:
+    """Match both checked token endpoints, then place the token in the projector's scalar coordinates."""
+    row = rows[line - 1]
+    start = column - 1
+    end = end_column - 1
+    if start < 0 or end <= start or end > len(row) or row[start:end] != name:
+        return None
+    mut offset = start
+    for previous in rows[:line - 1]:
+        offset += len(previous) + 1
+    return Some(offset)
+
+
+def identifier_at(row: str, column: int) -> str:
+    """The identifier covering one-based `column` of this row, or empty text when none does."""
+    characters = [character for character in row]
+    at = column - 1
+    if at < 0 or at >= len(characters) or not identifier_character(characters[at]):
+        return ""
+    mut begin = at
+    while begin > 0 and identifier_character(characters[begin - 1]):
+        begin -= 1
+    mut end = at
+    while end < len(characters) and identifier_character(characters[end]):
+        end += 1
+    return "".join(characters[begin:end])
+
+
+pub def imported_module(text: str, name: str) -> Option[list[str]]:
+    """The module and original name of a `from MODULE import …` line that binds `name`, for a project module."""
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line.startswith("from ") or " import " not in line:
+            continue
+        parts = line[5:].split(" import ")
+        module = parts[0].strip()
+        if len(parts) != 2 or module.startswith("pub::") or module.startswith("rust::") or module.startswith("std."):
+            continue
+        for item in parts[1].replace("(", "").replace(")", "").split(","):
+            pieces = item.strip().split(" as ")
+            if pieces[len(pieces) - 1].strip() == name:
+                return Some([module, pieces[0].strip()])
+    return None
+
+
+def imported_path(document: str, module: str) -> str:
+    """The project-relative source of an imported module, beside the importing document."""
+    relative = module.replace(".", "/") + ".incn"
+    directory = Path(document).parent().0
+    if directory == "" or directory == ".":
+        return relative
+    return directory + "/" + relative
+
+
+def program_origin(program: Path, entry: Path) -> Result[str, str]:
+    """The record origin of the program: its package's name, or a manifest-free entry's file stem."""
+    if program.joinpath("loaf.toml").is_file():
+        project = read_project(program, ManifestReader()).map_err((error) => error.message())?
+        return Ok(project.intent.name)
+    return Ok(entry.stem())
+
+
+def declaration_facets(name: str) -> list[str]:
+    """The projection facets one top-level declaration named `name` can have, one per declaration kind."""
+    mut facets = [name]
+    for kind in ["model", "class", "enum", "trait", "newtype", "capability", "const", "static", "partial", "alias"]:
+        facets.append(kind + ":" + name)
+    return facets
+
+
+def identifier_character(character: str) -> bool:
+    """Whether one character can be part of an identifier."""
+    return character in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"

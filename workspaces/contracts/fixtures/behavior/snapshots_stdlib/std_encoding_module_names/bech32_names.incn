@@ -1,0 +1,13 @@
+from std.encoding.bech32 import EncodingError, decode
+
+
+pub def refusal_line(text: str) -> str:
+    """Name the refusal `std.encoding.bech32` gives malformed text, through the names it publishes."""
+    match decode(text):
+        Ok(_) => return "bech32 accepted"
+        Err(error) => return describe(error)
+
+
+def describe(error: EncodingError) -> str:
+    """Report the refusal's encoding and whether it explains itself."""
+    return f"bech32 {error.encoding} {len(error.detail) > 0}"

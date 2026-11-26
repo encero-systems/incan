@@ -1,0 +1,14 @@
+# behavior: an overdue vocabulary provider names the invocation time bound on its source node
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary provider `words`
+#   exceeded its 10 s invocation time bound
+
+from pub::words import marker
+
+
+def main() -> None:
+    """An endless provider is bounded independently of consumer execution."""
+    value = query:
+        FROM 1
+    println(value)

@@ -1,0 +1,20 @@
+"""Tests selected by the markers the compiler reports."""
+
+from std.testing import mark, slow
+
+const TEST_MARKERS: FrozenList[str] = ["db"]
+
+
+@mark("db")
+def test_database() -> None:
+    assert 1 + 1 == 2
+
+
+@mark("db")
+@slow
+def test_slow_database() -> None:
+    assert true
+
+
+def test_plain() -> None:
+    assert true

@@ -1,0 +1,21 @@
+# behavior: a body whose `Result` error carries a view cannot use `?` on a call whose error is an owned value instead of a view of the body's declared source (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+class Account:
+    pub name: str
+    pub balance: int
+
+    def withdraw(mut self, amount: int, mut counter: BorrowedMut[Counter]) -> Result[int, Borrowed[str]] from self.name:
+        seen = counter.bump()?
+        if amount > self.balance:
+            return Err(self.name)
+        self.balance -= amount
+        return Ok(seen.value)

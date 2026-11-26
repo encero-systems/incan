@@ -1,0 +1,33 @@
+"""Reading a project's manifest and typed values from it, reporting every failure as the TOML library's message."""
+
+from std.fs import Path
+from std.toml import TomlValue
+from intake import ManifestReader, read_manifest_snapshot
+
+
+pub def read_manifest(project: Path, reader: ManifestReader = ManifestReader()) -> Result[TomlValue, str]:
+    """The parsed `loaf.toml` of the project at `project`."""
+    snapshot = read_manifest_snapshot(project, reader).map_err((error) => error.message())?
+    return Ok(snapshot.parsed)
+
+
+pub def required_string(table: TomlValue, key: str) -> Result[str, str]:
+    """The string declared at the dotted path `key`."""
+    return table.get[str](key).map_err((error) => error.message())
+
+
+pub def optional_string(table: TomlValue, key: str) -> Result[Option[str], str]:
+    """The string declared at the dotted path `key`, when one is."""
+    return table.get_optional[str](key).map_err((error) => error.message())
+
+
+pub def optional_strings(table: TomlValue, key: str) -> Result[Option[list[str]], str]:
+    """The list of strings declared at the dotted path `key`, when one is."""
+    return table.get_optional[list[str]](key).map_err((error) => error.message())
+
+
+pub def optional_flag(table: TomlValue, key: str, fallback: bool) -> Result[bool, str]:
+    """The flag declared at `key`; an omitted flag takes its documented default, a malformed one is an error."""
+    match table.get_optional[bool](key).map_err((error) => error.message())?:
+        Some(selected) => return Ok(selected)
+        None => return Ok(fallback)

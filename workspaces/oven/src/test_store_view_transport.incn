@@ -1,0 +1,50 @@
+"""A private bakery view projection agrees with older readers across a copied, damaged or rebound configuration."""
+
+from std.fs import Path
+from files import read_json
+from home_paths import BakeryLocation
+from home_views import bind_home_view
+from json_fields import required_text
+from pub::incan_worker_host.record_snapshot import select_store_view
+from scratch import scratch_directory
+
+
+pub def test_store_view_transport() -> Result[None, str]:
+    scratch = scratch_directory()?
+    root = scratch.path()
+    first = root.joinpath("first")
+    second = root.joinpath("second")
+    copied = root.joinpath("copied")
+    for directory in [first, second, copied]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    location = BakeryLocation(path=root.joinpath("store"), source="config")
+    view = bind_home_view(first, location)?.unwrap_or("")
+    other = bind_home_view(second, location)?.unwrap_or("")
+    assert view != "" and other != view
+    descriptor = first.joinpath("bakery.view")
+    row = first.joinpath("bakery.view.crumb")
+    portable = descriptor.read_bytes().map_err((error) => error.message())?
+    frame = row.read_bytes().map_err((error) => error.message())?
+    assert frame[:4] == b"CRMB" and required_text(read_json(descriptor)?, "home_view")? == view
+    assert not select_store_view(descriptor.0)?.backfill
+
+    # A legacy reader copies only the portable descriptor. Its first current owner adopts the identical view.
+    copy = copied.joinpath("bakery.view")
+    copy.write_bytes(portable).map_err((error) => error.message())?
+    assert select_store_view(copy.0)?.backfill
+    assert bind_home_view(copied, location)?.unwrap_or("") == view
+    assert copied.joinpath("bakery.view.crumb").read_bytes().map_err((error) => error.message())? == frame
+
+    # Another home's well-formed row must never override this portable configuration.
+    other_frame = second.joinpath("bakery.view.crumb").read_bytes().map_err((error) => error.message())?
+    row.write_bytes(other_frame).map_err((error) => error.message())?
+    selected = select_store_view(descriptor.0)?
+    assert selected.binding.home_view == view and selected.backfill
+    assert bind_home_view(first, location)?.unwrap_or("") == view
+    assert row.read_bytes().map_err((error) => error.message())? == frame
+    row.write_bytes(b"CRMBtruncated").map_err((error) => error.message())?
+    assert bind_home_view(first, location)?.unwrap_or("") == view
+    assert row.read_bytes().map_err((error) => error.message())? == frame
+    descriptor.write_bytes(b"invalid portable configuration").map_err((error) => error.message())?
+    assert select_store_view(descriptor.0).is_err()
+    return Ok(None)

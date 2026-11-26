@@ -81,9 +81,8 @@ fn plan<'a>(
 
 impl BodyBuilder<'_, '_> {
     /// Freeze supplied values in written order, then materialize exactly one owned pack per declared rest role.
-    /// Checked spreads and ordinary borrowed inputs retain the existing generalized planner; open or mutable pack
-    /// elements remain refused. Registry-owned immutable SDK task packs use that planner's existing homogeneous
-    /// storage retention; equal-spelled source types grant no such contract.
+    /// Checked spreads, nominal elements and ordinary borrowed inputs use the generalized planner. The checker's
+    /// instantiated slot supplies element storage; open or mutable pack elements cannot authorize an owned pack.
     pub(super) fn bind_rest_args(
         &mut self,
         callee: &str,
@@ -95,17 +94,12 @@ impl BodyBuilder<'_, '_> {
         if parameters
             .iter()
             .filter(|parameter| parameter.kind != IncanCallableParamKind::Normal)
-            .any(|parameter| {
-                parameter.is_mut
-                    || (!matches!(parameter.ty, IncanType::Primitive(_))
-                        && (!super::runtime_nominals::retains_task_storage(self.type_info, &parameter.ty)
-                            || self.leaves_type_open(&parameter.ty)))
-            })
+            .any(|parameter| parameter.is_mut || self.leaves_type_open(&parameter.ty))
         {
             return Err(format!("{callee}: rest call with an unretained concrete pack element"));
         }
-        // Closed SDK arms and handles already own their checked storage. The general packer moves those values into
-        // their declared list ABI; the scalar fast path cannot represent their payloads.
+        // The general packer moves closed nominal values into their declared list ABI; the scalar fast path cannot
+        // represent their payloads.
         if parameters.iter().any(|parameter| {
             parameter.kind != IncanCallableParamKind::Normal && !matches!(parameter.ty, IncanType::Primitive(_))
         }) || arguments.iter().any(|argument| {

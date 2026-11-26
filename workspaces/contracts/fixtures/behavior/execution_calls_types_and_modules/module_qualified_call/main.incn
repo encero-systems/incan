@@ -1,0 +1,188 @@
+# behavior: a module binding reaches each published declaration exactly as an import by name does, including constructors, annotations, generic and concrete decorators, decorator factories, async functions and nested modules; a field, method and enum variant resolve on their declaring type through a plain import, an alias and three re-export links (#2675)
+# expect-stdout:
+#   concrete decorator
+#   generic decorator
+#   sync factory
+#   generic decorator
+#   generic decorator
+#   async factory
+#   11
+#   42
+#   2
+#   x
+#   imported
+#   thing imported
+#   alias
+#   thing alias
+#   linked
+#   thing linked
+#   14
+#   14
+#   14
+#   10
+#   11
+#   12
+#   13
+#   sub
+#   nested
+#   14
+#   15
+#   html
+#   3
+#   4
+#   5
+#   6
+#   7
+#   7
+#   9
+
+"""Exercise published declarations through module bindings and by-name imports."""
+
+import helper
+import helper as h
+import nested.provider
+import pkg
+from helper import Mode, Mode as ModeAlias, Thing, Thing as ThingAlias, preserve as direct_preserve
+from links.third import Mode as LinkedMode, Thing as LinkedThing
+from pkg import sub
+from std import web
+
+
+# Qualified function values keep the selected declaration through an alias binding.
+module_bump = alias helper.bump
+const MODULE_NUMBER: int = helper.NUMBER
+
+
+class LocalClass:
+    """Expose a static member through a local class namespace."""
+
+    @staticmethod
+    pub def number() -> int:
+        return 10
+
+
+model LocalModel:
+    """Expose a static constructor through a local model namespace."""
+
+    value: int
+
+    @staticmethod
+    def make(value: int) -> LocalModel:
+        return LocalModel(value=value)
+
+
+enum LocalEnum:
+    """Expose a variant through a local enum namespace."""
+
+    Ready
+
+
+type LocalId = newtype int:
+    """Expose a static constructor through a local newtype namespace."""
+
+    @staticmethod
+    def make(value: int) -> LocalId:
+        return LocalId(value)
+
+
+def local_enum_number(value: LocalEnum) -> int:
+    """Map the selected local enum variant to its observable value."""
+    match value:
+        LocalEnum.Ready => return 12
+
+
+def mode_number(value: Mode) -> int:
+    """Map an imported enum variant selected through its type namespace."""
+    match value:
+        Mode.Ready => return 14
+
+
+def marker_number[T with helper.Marker](value: T) -> int:
+    """Call a trait method through a qualified bound."""
+    return value.number()
+
+
+@helper.keep
+def concrete_decorated(value: int) -> int:
+    """Return a value through a concrete decorator whose receiver remains a namespace."""
+    return value
+
+
+@helper.preserve
+def generic_decorated(value: int) -> int:
+    """Return a value through a generic decorator selected from a module namespace."""
+    return value
+
+
+@helper.factory("sync factory")
+def factory_decorated(value: int) -> int:
+    """Return a value through a factory selected from a module namespace."""
+    return value
+
+
+@helper.preserve
+async def qualified_async(value: int) -> int:
+    """Return a value through a qualified generic decorator around an async callable."""
+    return value
+
+
+@direct_preserve
+async def imported_async(value: int) -> int:
+    """Return a value through the equivalent generic decorator imported by name."""
+    return value
+
+
+@helper.factory("async factory")
+async def factory_async(value: int) -> int:
+    """Return a value through a qualified decorator factory around an async callable."""
+    return value
+
+
+def qualified_html() -> web.Html:
+    """Construct and return the standard web type through its module binding."""
+    # The module spelling must retain the same native owner as a by-name constructor and annotation.
+    return web.Html("<p>namespace</p>")
+
+
+async def main() -> None:
+    """Print the fixture values in the expected order."""
+    operation: (int) -> int = module_bump
+    println(MODULE_NUMBER)
+    println(operation(41))
+    println(h.bump(1))
+    # A source module constructor retains its declaration field binding.
+    thing: helper.Thing = helper.Thing(name="x")
+    println(thing.name)
+    imported = Thing.named("imported")
+    println(imported.name)
+    println(imported.label())
+    aliased = ThingAlias.named("alias")
+    println(aliased.name)
+    println(aliased.label())
+    linked = LinkedThing.named("linked")
+    println(linked.name)
+    println(linked.label())
+    println(mode_number(Mode.Ready))
+    println(mode_number(ModeAlias.Ready))
+    println(mode_number(LinkedMode.Ready))
+    println(LocalClass.number())
+    println(LocalModel.make(11).value)
+    println(local_enum_number(LocalEnum.Ready))
+    println(LocalId.make(13).0)
+    # A directly imported child module keeps the child's canonical annotation and constructor owner.
+    direct_nested: sub.Thing = sub.Thing(name="sub")  # Equal short name, distinct canonical owner.
+    println(direct_nested.name)
+    # Every intermediate segment remains a namespace rather than a runtime value.
+    nested: pkg.sub.Thing = pkg.sub.Thing(name="nested")
+    println(nested.name)
+    println(mode_number(Mode.Ready))
+    println(marker_number(helper.Marked(value=15)))
+    _page = qualified_html()
+    println("html")
+    println(concrete_decorated(3))
+    println(generic_decorated(4))
+    println(factory_decorated(5))
+    println(await qualified_async(6))
+    println(await imported_async(7))
+    println((await factory_async(8)) - 1)
+    println(provider.bump(8))

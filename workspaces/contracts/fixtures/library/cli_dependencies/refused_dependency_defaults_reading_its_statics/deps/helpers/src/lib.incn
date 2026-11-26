@@ -1,0 +1,11 @@
+"""Defaults that read this library's own static."""
+
+pub static ITEMS: list[int] = [1, 2]
+
+
+pub def has(flag: bool = ITEMS.contains(2)) -> bool:
+    return flag
+
+
+pub def size(n: int = len(ITEMS)) -> int:
+    return n

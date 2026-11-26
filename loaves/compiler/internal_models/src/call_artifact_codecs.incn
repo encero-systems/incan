@@ -1,0 +1,7 @@
+"""The codec each generated call-artifact field writes, so a record row validates by that codec's grammar. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    CallArtifactCodec,
+    OperatorKind,
+    call_artifact_codec,
+)

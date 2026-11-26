@@ -1,0 +1,26 @@
+from std.traits import Sum
+from std.derives.collection import Callable1, Callable2
+
+
+def summed[T with Sum[int]](values: T) -> T:
+    """Name std.traits' Sum as a bound."""
+    return values
+
+
+def apply[F with Callable1[int, int]](f: F, value: int) -> int:
+    """Call through std.derives.collection's Callable1 bound."""
+    return f(value)
+
+
+def combine[F with Callable2[int, int, int]](f: F, a: int, b: int) -> int:
+    """Name std.derives.collection's Callable2 as a bound."""
+    return f(a, b)
+
+
+model Doubler with Callable1[int, int]:
+    def __call__(self, value: int) -> int:
+        return value * 2
+
+
+pub def traits_line() -> str:
+    return f"traits {apply(Doubler(), 21)}"

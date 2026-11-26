@@ -5,7 +5,7 @@
 ## Imports
 
 ```incan
-from std.logging import ColorPolicy, Level, LogFormat, LogRecord, LogStyle, Logger, basic_config, get_logger
+from std.logging import ColorPolicy, Level, LogFormat, LogRecord, LogStyle, Logger, basic_config, get_logger, log
 ```
 
 ## Logger acquisition
@@ -13,7 +13,7 @@ from std.logging import ColorPolicy, Level, LogFormat, LogRecord, LogStyle, Logg
 | API | Returns | Description |
 | --- | --- | --- |
 | `get_logger(name: Option[str] = None)` | `Logger` | Return a logger with no bound fields. When `name` is omitted, caller module metadata is used where available and metadata-free snippets fall back to `"root"`. |
-| `log` | `Logger` | Ambient logger binding available when no local `log` binding shadows it. |
+| `log` | `Logger` | Root logger exported by the standard prelude. A parameter, local declaration or explicit import named `log` shadows it. |
 
 Logger names use the validated `LoggerName` newtype. Names are dot-separated and must not be empty, start or end with `.`, or contain empty segments such as `app..loader`.
 
@@ -22,16 +22,16 @@ Logger names use the validated `LoggerName` newtype. Names are dot-separated and
 | API | Returns | Description |
 | --- | --- | --- |
 | `logger.child(suffix: str)` | `Logger` | Return a descendant logger named `<logger.name>.<suffix>`. |
-| `logger.bind(fields)` | `Logger` | Return a logger with additional bound structured context. New fields override existing bound fields with the same key. |
+| `logger.bind(fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]])` | `Logger` | Return a logger with additional bound structured context. New fields override existing bound fields with the same key. |
 | `logger.is_enabled(level: Level)` | `bool` | Return whether an event at `level` would pass the current source-level threshold. |
-| `logger.trace(message: str, fields = {})` | `None` | Emit a trace event if enabled. |
-| `logger.debug(message: str, fields = {})` | `None` | Emit a debug event if enabled. |
-| `logger.info(message: str, fields = {})` | `None` | Emit an info event if enabled. |
-| `logger.warning(message: str, fields = {})` | `None` | Emit a warning event if enabled. |
-| `logger.error(message: str, fields = {})` | `None` | Emit an error event if enabled. |
-| `logger.critical(message: str, fields = {})` | `None` | Emit a critical event if enabled. |
+| `logger.trace(message: str, fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {})` | `None` | Emit a trace event if enabled. |
+| `logger.debug(message: str, fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {})` | `None` | Emit a debug event if enabled. |
+| `logger.info(message: str, fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {})` | `None` | Emit an info event if enabled. |
+| `logger.warning(message: str, fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {})` | `None` | Emit a warning event if enabled. |
+| `logger.error(message: str, fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {})` | `None` | Emit an error event if enabled. |
+| `logger.critical(message: str, fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {})` | `None` | Emit a critical event if enabled. |
 
-Event fields accept strings, booleans, integers, floats, `None`, and `std.telemetry.core.TelemetryValue` for nested arrays, maps, encoded bytes, or values that have already crossed a telemetry boundary. Event-specific fields override bound fields with the same key for that event.
+Event fields accept strings, booleans, integers, floats, `None`, and `std.telemetry.core.TelemetryValue` for nested arrays, maps, encoded bytes, or values that have already crossed a telemetry boundary. Omitting the dictionary uses the empty default. Event-specific fields override bound fields with the same key for that event.
 
 ## Levels
 
@@ -90,7 +90,9 @@ Libraries should acquire loggers and emit events, but should not call `basic_con
 
 ## Boundaries
 
-`std.logging` uses `std.datetime` for timestamps and ordinary `rust::std::io` imports for stdout/stderr delivery. It does not use a Rust backing logging module. Project defaults in `loaf.toml`, `INCAN_LOG_*` environment overrides, `incan run --log-*` flags, exporters, and colorized terminal output are not implemented yet.
+`Logger`, its telemetry values and the root `log` static are declared by `std.primitives`; `std.logging` reexports those same declarations and `std.prelude` reexports the same `log` identity. The primitive implementation imports no higher standard package. A program that does not use `log` or another logging declaration does not reach the primitive logger through the prelude alone. Logging uses the host clock and ordinary native stdout/stderr delivery; it does not use a Rust backing logging module.
+
+The logging API does not define project defaults in `loaf.toml`, `INCAN_LOG_*` environment overrides, `incan run --log-*` flags, exporters, or colorized terminal output.
 
 ## See also
 

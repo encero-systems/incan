@@ -1,0 +1,13 @@
+# behavior: reading a field directly while a later use still needs a writable alias of it is refused as separate access to an exclusively borrowed place (RFC 129, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the check accepts the program.
+# expect-diagnostic: INCAN-T0126
+
+class Cart:
+    pub items: list[str]
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    mut items = cart.items
+    println(cart.items)
+    items.append("orange")

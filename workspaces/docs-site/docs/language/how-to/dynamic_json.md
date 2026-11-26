@@ -64,7 +64,7 @@ def mark_seen(source: str) -> Result[str, JsonError]:
     return data.to_pretty_json()
 ```
 
-`set(...)` and `append(...)` return `JsonError` when the receiver is the wrong JSON kind.
+`set(...)` and `append(...)` return `JsonError` when the receiver is the wrong JSON kind. Build numbers with `JsonValue.float(...)` only from finite values: JSON has no spelling for NaN or infinities, so the constructor returns an error for them.
 
 ## Keep Stable Fields Typed
 

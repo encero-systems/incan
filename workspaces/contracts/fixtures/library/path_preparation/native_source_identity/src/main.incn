@@ -1,0 +1,36 @@
+# behavior: source models returned through Rust generics retain their declaring identity without an import (#2256)
+# expect-stdout:
+#   7
+#   7
+#   index:7
+#   9
+#   11
+#   13
+#   consumer
+
+"""Observe a producer's source model without binding its name in the consumer."""
+
+from rust::std::convert import AsRef
+from pub::indices import listed_index, make_index, optional_index
+
+
+model Index:
+    """Ensure a same-named consumer model cannot replace the producer model."""
+
+    label: str
+
+
+def main() -> Result[None, str]:
+    """Print fields and methods through native loans and keep the consumer type distinct."""
+    owner, companions = make_index()?
+    println(owner.as_ref().owners["first"])
+    println(owner.as_ref().value())
+    println(owner.as_ref())
+    println(companions[0])
+    match optional_index():
+        Some(optional) => println(optional.as_ref().owners["first"])
+        None => return Err("missing optional owner")
+    owners = listed_index()
+    println(owners[0].as_ref().owners["first"])
+    println(Index(label="consumer").label)
+    return Ok(None)

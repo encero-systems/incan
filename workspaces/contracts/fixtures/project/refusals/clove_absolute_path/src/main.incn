@@ -1,0 +1,11 @@
+# behavior: a C facet that names an absolute path is refused: it names only paths inside the Loaf (#3133, RFC 159)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   `/usr/local/include` is an absolute path; a C facet names only paths inside the Loaf
+
+def main() -> None:
+    println("unreachable")

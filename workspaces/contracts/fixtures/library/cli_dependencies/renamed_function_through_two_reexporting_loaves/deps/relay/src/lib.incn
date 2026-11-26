@@ -1,0 +1,3 @@
+"""Re-export a dependency's renamed function under a third name."""
+
+pub from pub::facades import facade_calculate as relay_calculate

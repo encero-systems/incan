@@ -1,0 +1,6 @@
+"""Expose an ordinary value beside an overdue vocabulary provider."""
+
+
+pub def marker() -> int:
+    """Return the public library value."""
+    return 7

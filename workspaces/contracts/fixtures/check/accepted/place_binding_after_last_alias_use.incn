@@ -1,0 +1,19 @@
+# behavior: a writable alias ends at its last use, so replacing the owner, reading the field or taking a second alias afterward is accepted, as is reading through the alias itself and changing a sibling field while it is live (RFC 129, #1846).
+# expect-accepted:
+
+class Cart:
+    pub items: list[str]
+    pub label: str
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"], label="first")
+    mut items = cart.items
+    println(items)
+    cart.label = "second"
+    items.append("orange")
+    println(cart.items)
+    mut again = cart.items
+    again.append("plum")
+    cart = Cart(items=["pear"], label="third")
+    println(cart.items)

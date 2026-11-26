@@ -1,0 +1,17 @@
+# behavior: unattended graph inspection stops before an untrusted vocabulary provider runs (#2484)
+# graph-commands:
+#   src/main.incn --query defs main
+# expect-stderr-contains:
+#   error[INCAN-T0134]
+#   Loaf `words`
+# expect-exit: 1
+
+from provider import helper
+
+
+def main() -> None:
+    """Expand the registered query while retaining the ordinary library binding."""
+    value = query:
+        FROM helper()
+    println(value)
+    println(helper())

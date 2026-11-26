@@ -56,7 +56,7 @@ Narrowing can be correct. It just needs to say what should happen when the value
 
 `try_resize()` says failure is data. `wrapping_resize()` says fixed-width wraparound is intended. `saturating_resize()` says clipping is intended. `resize()` says no data loss is allowed.
 
-That makes code review sharper. A reviewer can accept or challenge the policy by reading the method name, rather than discovering it in generated Rust or runtime behavior.
+That makes code review sharper. A reviewer can accept or challenge the policy by reading the method name, rather than discovering it in runtime behavior.
 
 ## `float` is `f64`
 
@@ -92,7 +92,7 @@ Keeping Rust interop on the same exact-or-lossless rule prevents a separate "int
 
 Decimal types are included because fixed-scale values are central to data, finance, and analytics code. Precision and scale belong in the type because they define what values can be represented.
 
-Decimal arithmetic is a separate language-design problem. Addition, multiplication, division, rounding, overflow, scale propagation, and aggregation need explicit rules. The implemented surface therefore stops at decimal type syntax, literal validation, comparison, formatting, runtime representation, generated Rust, and display. Parsing decimal values from strings and rich decimal math stay library-owned until the language specifies those semantics.
+Decimal arithmetic is a separate language-design problem. Addition, multiplication, division, rounding, overflow, scale propagation, and aggregation need explicit rules. The implemented surface therefore stops at decimal type syntax, literal validation, comparison, formatting, runtime representation, and display. Parsing decimal values from strings and rich decimal math stay library-owned until the language specifies those semantics.
 
 ## What this design does not claim
 

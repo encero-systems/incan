@@ -94,23 +94,20 @@ The checked entry retains its original registry and subject identity. Inspection
 
 ## Choose the loaded or checked view
 
-Use `loaded_entries()` when application code needs entries from modules loaded in the current process. Use `incan inspect registry` when tooling needs the complete checked package projection without executing user code.
+Use `loaded_entries()` when application code needs entries from modules loaded in the current process. Use checked codegraph records when tooling needs source-owned registration facts without executing user code.
 
-A tool reads registry meaning from `incan inspect registry` or from the checked codegraph `registry` records. It must not infer registry meaning by scanning `@describe` syntax or by loading runtime state.
+A tool reads registry meaning from checked codegraph `registry` records. It must not infer registry meaning by scanning `@describe` syntax or by loading runtime state.
 
 ## Inspect a local or dependency registry
 
-Inspect a local module-level identity:
+Export the checked graph and select registry records:
 
 ```console
-incan inspect registry text::functions --project . --format json
+incan inspect codegraph . --format jsonl > codegraph.jsonl
+jq 'select(.record == "registry")' codegraph.jsonl
 ```
 
-The selector may also use dots: `text.functions`. If two packages publish the same module-level identity, qualify the selector with the package:
-
-```console
-incan inspect registry analytics-kit::text::functions --project . --format json
-```
+Read each record's registry and subject identities. Dev.8 does not expose a separate registry-selector command.
 
 Dependency inspection reads the checked registry projection embedded in the dependency's `.incnlib`; it does not load dependency source or run dependency initialization. Only public registries and public entries are visible to consumers. Local source inspection may include private registries owned by the selected package.
 
@@ -123,9 +120,9 @@ Use this sequence when a library currently registers functions through its own d
 3. Define one `Registry[K, T]` as the canonical declaration authority.
 4. Replace the custom registration decorator with `@describe(registry, key, descriptor)`.
 5. Replace runtime enumeration with `loaded_entries()` where process-local behavior is intended.
-6. Replace source scanning or documentation extraction with `incan inspect registry`.
+6. Replace source scanning or documentation extraction with checked codegraph records.
 7. Remove the old mutable or queued registry. Keeping it as a fallback would create two authorities that can disagree.
-8. Test direct imports, facade reexports, package consumers, compiled test batches, inspection JSON, and generated Rust.
+8. Test direct imports, facade reexports, package consumers, tests and codegraph records.
 
 Dynamic-only registration may remain custom when entries genuinely depend on runtime values. Document that such a catalog has no complete static projection rather than presenting it as equivalent to `std.registry`.
 
@@ -138,7 +135,6 @@ Dynamic-only registration may remain custom when entries genuinely depend on run
 | Descriptor is not structural | Add `@derive(Descriptor)` and remove mutable containers, functions, Rust handles, open generics, or recursive descriptor graphs. |
 | Subject kind is rejected | Add the required `SubjectKind` to `Registry.define(...)` or choose the correct registry. |
 | Duplicate key is rejected | Give each entry a unique typed key within that registry. Reexports do not require a new entry. |
-| Dependency registry is missing | Rebuild the dependency with an SDK that publishes RFC 113 metadata; older `.incnlib` artifacts do not contain the projection. |
-| Selector is ambiguous | Use `package::module::registry` instead of the shorter module-local identity. |
+| Dependency registry is missing | Rebuild the dependency with the installed toolchain; older `.incnlib` artifacts do not contain the registry projection. |
 
 For the complete type and JSON contracts, see the [`std.registry` reference](../reference/stdlib/registry.md). For the design boundary between loaded and checked views, see [Checked catalogs and loaded registries](../explanation/checked_and_loaded_registries.md).

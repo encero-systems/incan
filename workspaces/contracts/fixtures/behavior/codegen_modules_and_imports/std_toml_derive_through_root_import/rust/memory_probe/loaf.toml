@@ -1,0 +1,6 @@
+[project]
+name = "memory_probe"
+version = "0.1.0"
+
+[dependencies]
+libc = { loaf = "crates-io/libc", version = "0.2", features = [], default-features = true }

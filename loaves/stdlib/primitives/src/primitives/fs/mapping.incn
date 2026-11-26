@@ -1,0 +1,15 @@
+"""Read-only file mappings exposed through placement-neutral immutable byte views."""
+
+from rust::incan_std_primitives::mapping import MappedFile as NativeMapping
+from crate.primitives.fs.path import PrimitivePath
+pub from crate.primitives.views import MappedFile, MappedView
+
+
+pub def map_read(path: PrimitivePath) -> Result[MappedFile, str]:
+    """Map a file read-only while requiring callers to preserve its inode until the last view is released."""
+    return _map_read(f"{path.value}")
+
+
+def _map_read(path: str) -> Result[MappedFile, str]:
+    """Map a file through an independently owned path string."""
+    return NativeMapping.open(path).map((mapping) => MappedFile(mapping))

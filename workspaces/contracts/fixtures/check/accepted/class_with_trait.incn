@@ -1,0 +1,15 @@
+# behavior: a class adopting a trait implements the trait's method
+# expect-accepted:
+
+trait Loggable:
+    def log(self, msg: str) -> Unit: ...
+
+
+class Service with Loggable:
+    name: str
+
+    def log(self, msg: str) -> Unit:
+        pass
+
+    def run(self) -> Unit:
+        pass

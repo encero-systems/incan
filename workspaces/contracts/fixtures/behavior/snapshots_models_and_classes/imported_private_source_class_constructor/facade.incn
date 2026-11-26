@@ -1,0 +1,2 @@
+pub from provider import Vault as FacadeVault
+pub from provider import create_vault as create_facade_vault

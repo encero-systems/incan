@@ -1,0 +1,27 @@
+"""Verify how native release production schedules the shipped tools beside the debug standard providers."""
+
+from native_build import (
+    PROJECT_RESERVATION_BYTES,
+    STANDARD_RESERVATION_BYTES,
+    ShippedToolOverlap,
+    shipped_tool_overlap,
+)
+
+const GIB: int = 1073741824
+
+
+def test_oven_starts_first_and_never_waits_for_the_debug_providers_it_does_not_read() -> Result[None, str]:
+    """
+    Oven is the longest shipped build: with two children it runs beside the debug waves and the language server, which
+    take turns in the other; with three every one runs beside the others; with one, or without memory for a second
+    project child beside a standard one, they run in turn.
+    """
+    assert shipped_tool_overlap(1, 64 * GIB) == ShippedToolOverlap.Serial
+    assert shipped_tool_overlap(2, 64 * GIB) == ShippedToolOverlap.OvenBeside
+    assert shipped_tool_overlap(3, 64 * GIB) == ShippedToolOverlap.AllBeside
+    assert shipped_tool_overlap(8, 64 * GIB) == ShippedToolOverlap.AllBeside
+    one_beside = PROJECT_RESERVATION_BYTES + STANDARD_RESERVATION_BYTES
+    assert shipped_tool_overlap(3, one_beside) == ShippedToolOverlap.OvenBeside
+    assert shipped_tool_overlap(3, one_beside + PROJECT_RESERVATION_BYTES) == ShippedToolOverlap.AllBeside
+    assert shipped_tool_overlap(4, one_beside - 1) == ShippedToolOverlap.Serial
+    return Ok(None)

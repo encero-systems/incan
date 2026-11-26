@@ -1,0 +1,62 @@
+"""Exact packed unsigned values, including residuals and zigzag deltas wider than u128."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer
+from crate.primitives.crumb.wide_integer import WideInteger
+
+
+pub def bit_length(value: WideInteger, mut budget: Budget) -> Result[int, CrumbError]:
+    """Return exact magnitude width; canonical zero needs no packed bits."""
+    return value.bit_length(budget)
+
+
+pub def packed_length(width: int, count: int) -> Result[int, CrumbError]:
+    """Check the multiplication before computing ceil(bits/8), without overflowing bits+7."""
+    if width < 0 or count < 0:
+        return Err(CrumbError.invalid_input("packed dimensions"))
+    if width != 0 and count > 9223372036854775807 // width:
+        return Err(CrumbError.limit("packed bit length"))
+    bits = width * count
+    mut length = bits // 8
+    if bits % 8 != 0:
+        length += 1
+    return Ok(length)
+
+
+pub def pack(width: int, values: list[WideInteger], mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Pack exactly width low-first bits per nonnegative widened value, with zero final padding."""
+    length = packed_length(width, len(values))?
+    budget.charge_elements(width)?
+    budget.charge_elements(len(values))?
+    budget.charge_bytes(length)?
+    mut output = EncodingBuffer.create()
+    mut pending = 0
+    mut used = 0
+    for value in values:
+        if value.bit_length(budget)? > width:
+            return Err(CrumbError.invalid_input("packed value exceeds width"))
+        magnitude = value.bytes()
+        for position in range(width):
+            budget.charge_elements(1)?
+            mut bit = 0
+            byte_index = position // 8
+            if byte_index < len(magnitude):
+                bit = (int(magnitude[byte_index]) >> (position % 8)) & 1
+            pending |= bit << used
+            used += 1
+            if used == 8:
+                output.octet(pending, budget)?
+                pending = 0
+                used = 0
+    if used != 0:
+        output.octet(pending, budget)?
+    return output.finish(budget)
+
+
+pub def magnitude_bytes(value: WideInteger, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Return shortest little-endian octets for a strictly positive dictionary difference."""
+    if value.is_negative() or value.is_zero():
+        return Err(CrumbError.invalid_input("nonpositive dictionary difference"))
+    budget.charge_bytes(len(value.bytes()))?
+    return Ok(value.bytes())

@@ -1,0 +1,9 @@
+[project]
+name = "closure_skips_an_unused_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+alpha = { path = "deps/alpha" }

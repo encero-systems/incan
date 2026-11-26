@@ -1,0 +1,9 @@
+# behavior: a dependency declared under a key other than its package name is listed with that key and its package name
+# expect-dependencies:
+#   tools toolkit
+
+from pub::tools import toolkit_value
+
+
+def main() -> None:
+    println(toolkit_value())

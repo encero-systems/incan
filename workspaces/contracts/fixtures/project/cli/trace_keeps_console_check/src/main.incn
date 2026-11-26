@@ -1,0 +1,12 @@
+# behavior: a check that fails prints the same diagnostic and exits the same with tracing on as with it off, and the trace directory holds Oven's reasoning and the compiler's invocation records (12.4)
+# trace-invariant:
+# cli-commands:
+#   check src/main.incn
+# expect-stderr-contains:
+#   Assignment to 'count' has type mismatch: expected 'Int', found 'Str'
+# expect-stdout:
+# expect-exit: 1
+
+def main() -> None:
+    count: int = "seven"
+    println(f"{count}")

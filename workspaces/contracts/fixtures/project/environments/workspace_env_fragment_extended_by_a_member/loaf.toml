@@ -1,0 +1,13 @@
+[project]
+name = "workspace_env_fragment_extended_by_a_member"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["app"]
+
+[workspace.envs.ci]
+env-vars = { SHARED = "workspace", ROOT = "1" }
+scripts.show = ["sh", "-c", "echo SHARED=$SHARED ROOT=$ROOT"]

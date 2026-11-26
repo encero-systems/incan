@@ -1,0 +1,3 @@
+example.Person = Record { id: i64, note: string? = None, city: string? = None }
+
+example.Person << [(1, city="Delft"), (2)]

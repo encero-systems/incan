@@ -173,7 +173,8 @@ struct PollTypes<'tcx> {
     polled: ty::Ty<'tcx>,
 }
 
-/// Resolve language items and normalize the exact Future implementation's output before emitting a poll loop.
+/// Prove the closed Future::poll predicates before normalizing its output and emitting a poll loop. Conditional
+/// metadata impl templates alone cannot authorize a native future or reach borrow checking with an invalid call.
 fn poll_types<'tcx>(tcx: TyCtxt<'tcx>, future: ty::Ty<'tcx>) -> Result<PollTypes<'tcx>, PlanError> {
     let pin_owner = tcx
         .lang_items()
@@ -194,6 +195,7 @@ fn poll_types<'tcx>(tcx: TyCtxt<'tcx>, future: ty::Ty<'tcx>) -> Result<PollTypes
         .lang_items()
         .future_poll_fn()
         .ok_or_else(|| PlanError::UnknownCallee("unsupported Future::poll".into()))?;
+    crate::callees::verify_bounds(tcx, poll, tcx.mk_args(&[future.into()]))?;
     let borrowed = ty::Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, future);
     let pinned = ty::Ty::new_adt(tcx, tcx.adt_def(pin_owner), tcx.mk_args(&[borrowed.into()]));
     let context_args = context_arguments(tcx, context);

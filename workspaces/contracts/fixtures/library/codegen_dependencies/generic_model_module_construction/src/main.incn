@@ -1,0 +1,22 @@
+# behavior: explicit module-qualified generic model construction uses checked field slots and retains defaults (#2526)
+# expect-stdout:
+#   module-model-ok
+
+from pub::shapes import Holder, Defaulted, Plain
+import pub::shapes as shapes
+
+
+def main() -> None:
+    """Compare direct and module construction with reordered fields and defaulted slots."""
+    direct: Holder[int] = Holder[int](value=6, label="direct")
+    qualified: Holder[int] = shapes.Holder[int](value=7, label="qualified")
+    assert direct.value == 6
+    assert direct.label == "direct"
+    assert qualified.value == 7
+    assert qualified.label == "qualified"
+    defaulted: Defaulted[int] = shapes.Defaulted[int](value=8)
+    assert defaulted.value == 8
+    assert defaulted.label == "default"
+    plain: Plain = shapes.Plain(value=9)
+    assert plain.value == 9
+    println("module-model-ok")

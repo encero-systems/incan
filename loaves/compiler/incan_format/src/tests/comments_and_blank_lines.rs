@@ -6,6 +6,40 @@
 
 use super::*;
 
+/// Leading trivia starts the file with or without a module docstring, including gaps and comments before imports.
+#[test]
+fn test_format_source_preserves_comments_around_module_docstring() -> Result<(), FormatError> {
+    for source in [
+        "# A comment-only module.\n# Another comment.\n",
+        "# A comment-only module.\n\n# A separate block.\n",
+        "# A leading comment.\n# Another comment.\n\"\"\"Module documentation.\"\"\"\n",
+        "# A leading comment.\n# Another comment.\n\n\"\"\"Module documentation.\"\"\"\n",
+        "# A leading comment.\n\n\"\"\"Module documentation.\"\"\"\n\n# Import comment.\nimport rust::std::fmt\n",
+        "def main() -> None:\n    # A leading suite comment.\n\n    pass\n",
+        "# A file banner.\n\n# A module comment.\n\n\"\"\"Module documentation.\"\"\"\n",
+        r#"# behavior: a header stays before a module docstring
+# expect-accepted:
+
+"""A module with a contract header."""
+
+
+def main() -> None:
+    """Keep the file executable."""
+    pass
+"#,
+    ] {
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        assert_eq!(format_source(&formatted)?, formatted);
+    }
+    let source = "# A file banner.\n\nfrom rust::std::fmt import Debug\nfrom rust::std::fmt import Display\n";
+    let expected = "# A file banner.\n\nfrom rust::std::fmt import Debug, Display\n";
+    let formatted = format_source(source)?;
+    assert_eq!(formatted, expected);
+    assert_eq!(format_source(&formatted)?, formatted);
+    Ok(())
+}
+
 #[test]
 fn test_normalized_line_buffer_allows_double_blanks_only_at_root() {
     let mut buffer = NormalizedLineBuffer::new();
@@ -404,15 +438,18 @@ fn test_format_source_collapses_many_docstring_blank_lines_but_preserves_slash_n
     Ok(())
 }
 
+/// Literal slash text and escaped docstring backslashes retain their meaning and spelling.
 #[test]
 fn test_format_source_preserves_literal_slash_n_sequences() -> Result<(), FormatError> {
     let source = r#"def explain() -> str:
+    """Explain \\n and \\t text."""
     # /n/n/n/n this is valid
     value = "/n/n/n/n and so is this"
     return value
 "#;
     let formatted = format_source(source)?;
     assert_eq!(formatted, source);
+    assert_eq!(format_source(&formatted)?, formatted);
     Ok(())
 }
 
@@ -488,7 +525,7 @@ fn test_format_source_trailing_comment_after_multiline_function_stays_after_suit
     Ok(())
 }
 
-/// Root-level section comments retain both gaps after a function with two paragraph docstring.
+/// A leading section comment takes declaration spacing; its following source gap stays attached.
 #[test]
 fn test_top_level_comment_after_two_paragraph_docstring() -> Result<(), FormatError> {
     let source = r#"def count() -> int:
@@ -515,7 +552,9 @@ def other() -> int:
             let gap = format!("{}# Section comment{}", "\n".repeat(before + 1), "\n".repeat(after + 1));
             let variant = source.replace("\n\n\n# Section comment\n\n\n", &gap);
             let formatted = format_source(&variant)?;
-            assert_eq!(formatted, variant, "gaps: before={before}, after={after}");
+            let expected_gap = format!("\n\n\n# Section comment{}", "\n".repeat(after + 1));
+            let expected = source.replace("\n\n\n# Section comment\n\n\n", &expected_gap);
+            assert_eq!(formatted, expected, "gaps: before={before}, after={after}");
             assert_eq!(format_source(&formatted)?, formatted);
         }
     }
@@ -542,12 +581,7 @@ def other() -> int:
 "#;
     for source in [source.to_string(), source.replace("    return total\n", "")] {
         let formatted = format_source(&source)?;
-        // Assignment arms expand into block form under the existing formatter contract.
-        let expected = source.replace(
-            "            0 => total += 1",
-            "            0 =>\n                total += 1",
-        );
-        assert_eq!(formatted, expected);
+        assert_eq!(formatted, source);
         assert_eq!(count_line_comments(&formatted), 1);
         assert_eq!(format_source(&formatted)?, formatted);
     }

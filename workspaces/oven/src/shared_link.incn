@@ -1,0 +1,76 @@
+"""Select local debug linkage and bind its loader generations at link time."""
+
+from std.fs import Path
+from std.json import parse
+from bakery import fact_file
+from bakery_records import Fact
+from home_paths import bakery
+from unit import UnitDescription
+from unit_freshness import Key, fingerprint
+
+# Version 2 admits the witness's frozen loader generations when the native unit is recorded instead of on each use.
+# Version 3 links carriers from the bakery's shared native store through bakery-absolute search paths only, so an
+# executable linked in one home runs in every home that shares the bakery.
+const LINKAGE_SCHEMA: str = "incan.native-shared-linkage/3"
+
+
+pub def development_link(unit: UnitDescription, requested: bool) -> bool:
+    """
+    Requested debug executables use shared linkage; libraries and release programs retain static linkage. A unit that
+    links the toolchain's own libraries uses the standard library they were built with, so it shares no carriers.
+    """
+    sysroot = len(unit.toolchain_access.sysroot_dependencies) > 0
+    return requested and unit.profile == "debug" and unit.kind != "library" and not sysroot
+
+
+pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
+    """Keep source and artifact evidence while separating shared development outputs from ordinary build outputs."""
+    if not shared or key.refusal != "":
+        return Ok(key)
+    return Ok(
+        Key(
+            digest="sha256:" + fingerprint([LINKAGE_SCHEMA, key.digest])?,
+            parts=key.parts + [f"linkage {LINKAGE_SCHEMA}"],
+            codegen=key.codegen,
+            provenance=key.provenance,
+            descriptor=key.descriptor,
+            compiler=key.compiler,
+        ),
+    )
+
+
+pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[str], str]:
+    """
+    Select the bakery's immutable shared native store only for a requested development executable. Its carriers are
+    content-addressed, so every home that shares the bakery reads the carriers an executable fact was linked against.
+    """
+    if not development_link(unit, requested):
+        return Ok([])
+    directory = bakery()?.joinpath("native-shared").absolute().map_err(
+        (error) => f"cannot {error.message()}",
+    )?
+    return Ok(["--shared-native", directory.0])
+
+
+pub def library_witness(binary: Path) -> Path:
+    """The native compiler's exact dynamic-library generations beside a completed development executable."""
+    return Path(f"{binary.0}.native-shared.json")
+
+
+pub def carriers_present(store: Path, fact: Fact, binary: Path) -> Result[bool, str]:
+    """
+    Whether every library the development executable `binary` of `fact` loads is still in place. The executable loads
+    them by path when it starts, so a carrier removed from the shared native store since the link means linking it
+    again. An executable without a loader witness was linked statically and loads none.
+    """
+    match fact_file(store, fact, library_witness(Path(binary.name())).0):
+        None => return Ok(true)
+        Some(witness) =>
+            text = witness.read_text("utf-8", "strict").map_err((error) => f"{witness.0}: {error.message()}")?
+            document = parse(text).map_err((error) => f"{witness.0}: {error.message()}")?
+            listed = document.require("libraries").map_err((error) => f"{witness.0}: {error.message()}")?
+            for library in listed.expect_array().map_err((error) => f"{witness.0}: {error.message()}")?:
+                loaded = library.require("path").map_err((error) => f"{witness.0}: {error.message()}")?
+                if not Path(loaded.expect_str().map_err((error) => f"{witness.0}: {error.message()}")?).is_file():
+                    return Ok(false)
+            return Ok(true)

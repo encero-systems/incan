@@ -91,17 +91,20 @@ impl TypeChecker {
     /// identity for the bindings it declares, so a binding nothing reads can be reported when its own block ends
     /// (#1720): a block is where a local's readers stop being possible.
     pub fn check_statement_block(&mut self, body: &[Spanned<Statement>]) {
-        let enclosing_block = self.current_statement_block;
-        self.statement_block_serial += 1;
-        self.current_statement_block = self.statement_block_serial;
-        self.enter_item_taking_block();
+        let enclosing_block = self.statement_blocks.current;
+        self.statement_blocks.serial += 1;
+        self.statement_blocks.current = self.statement_blocks.serial;
         self.report_unreachable_after_return(body);
-        for stmt in body {
+        for (index, stmt) in body.iter().enumerate() {
+            // Documentation has no effect and never reaches Body IR, so it has nothing to check and leaves no fact for
+            // a checker record to anchor.
+            if crate::documentation::is_documentation(stmt, &body[index + 1..]) {
+                continue;
+            }
             self.check_statement(stmt);
         }
-        self.exit_item_taking_block();
-        self.reject_unread_open_rust_generic_bindings_of_block(self.current_statement_block);
-        self.current_statement_block = enclosing_block;
+        self.reject_unread_open_rust_generic_bindings_of_block(self.statement_blocks.current);
+        self.statement_blocks.current = enclosing_block;
     }
 
     /// Warn about the block's unreachable tail without checking its statements.

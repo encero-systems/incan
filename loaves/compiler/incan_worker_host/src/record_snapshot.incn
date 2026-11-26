@@ -1,0 +1,26 @@
+"""Content-named compiler snapshot descriptors and each home's store binding. Implemented in Rust by `incan_worker_host_native`; this module keeps the reference import path."""
+
+pub from rust::incan_worker_host_native import (
+    SNAPSHOT_FORMAT_PROFILE,
+    STORE_VIEW_SCHEMA,
+    SnapshotFaultKind,
+    SnapshotFault,
+    StoreView,
+    SelectedStoreView,
+    SnapshotHandle,
+    StagedCompilerOutputs,
+    ResolvedSnapshot,
+    encode_store_view,
+    portable_store_view,
+    encode_store_binding,
+    select_store_view,
+    encode_snapshot_handle,
+    encode_snapshot_record,
+    snapshot_handle_digest,
+    read_snapshot_record,
+    snapshot_record_key,
+    staged_key,
+    canonical_roots,
+    resolve_snapshot,
+    valid_digest,
+)

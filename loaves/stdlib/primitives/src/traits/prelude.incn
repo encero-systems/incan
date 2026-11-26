@@ -1,0 +1,10 @@
+"""
+Foundational traits prelude - Re-exports std.traits modules
+"""
+
+pub from crate.traits.convert import From, Into, TryFrom, TryInto
+pub from crate.traits.ops import Add, Sub, Mul, Div, Neg, Mod
+pub from std.derives.collection import Sum
+pub from crate.traits.error import Error
+pub from crate.traits.indexing import Index, IndexMut, Sliceable
+pub from crate.traits.callable import Callable0, Callable1, Callable2

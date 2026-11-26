@@ -1,0 +1,6 @@
+pub model Item:
+    pub value: int
+
+
+pub def make() -> Item:
+    return Item(value=33)

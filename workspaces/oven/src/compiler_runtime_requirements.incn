@@ -1,0 +1,22 @@
+"""Select the compiler's typed runtime recipe in the unit's successful plan graph."""
+
+from pub::incan_platform.store import Snapshot, Transaction, locate_value, stage_delete, stage_put
+
+pub const RUNTIME_REQUIREMENTS: str = "runtime-requirements.crumb2"
+pub const RUNTIME_REQUIREMENTS_REPORT: str = "runtime-requirements.crumb2.report"
+
+const RUNTIME_RECIPE_KEY: str = "incan.engine.runtime-requirements/2"
+
+
+pub def runtime_requirements_key(origin: str, source: str, profile: str) -> str:
+    """Select a prior successful plan for this exact program entry and profile in the request's view."""
+    return f"{RUNTIME_RECIPE_KEY}\t{origin}\t{source}\t{profile}"
+
+
+pub def stage_runtime_recipe(mut transaction: Transaction, graph: Snapshot, key: str, value: bytes) -> Result[None, str]:
+    """Publish the new recipe and retire the old key with the same successful unit transaction."""
+    old_key = "incan.engine.runtime-requirements/1" + key[len(RUNTIME_RECIPE_KEY):]
+    if locate_value(graph, old_key).map_err((error) => error.message())?.is_some():
+        stage_delete(transaction, old_key)
+    stage_put(transaction, key, value)
+    return Ok(None)

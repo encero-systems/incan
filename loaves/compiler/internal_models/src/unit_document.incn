@@ -1,0 +1,6 @@
+"""Private compiler units use a closed Crumb schema; the public JSON field projection remains shared with describe-unit. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    encode_unit_document,
+    decode_unit_document,
+)

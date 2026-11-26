@@ -1,0 +1,14 @@
+"""Bounded public-Crumb row setup shared by the compiler's Incan-owned record models. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    ModelField,
+    operation_budget,
+    model_description,
+    required_value,
+    field_value,
+    encode_rows,
+    decode_rows,
+    description_field,
+    admit_rows,
+    admit_rows_view,
+)

@@ -43,7 +43,7 @@ pub(crate) fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, Plan
             continue;
         }
         validate(plan, owner, model)?;
-        let mut path = global_path(&["incan_stdlib_core", "traits", "callable", "Callable1"], span);
+        let mut path = global_path(&["incan_stdlib_primitives", "traits", "callable", "Callable1"], span);
         crate::shared_callables::type_arguments(
             &mut path,
             model

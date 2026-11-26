@@ -1,0 +1,26 @@
+# behavior: a generator expression captures a function parameter and applies it lazily to each item
+# expect-stdout:
+#   created
+#   test 1
+#   test 2
+#   test 3
+#   test 4
+#   [2, 4]
+
+
+def even(value: int) -> bool:
+    """Expose predicate execution so the generator's lazy order is observable."""
+    println(f"test {value}")
+    return value % 2 == 0
+
+
+def selected(predicate: (int) -> bool) -> Generator[int]:
+    """Retain a callable parameter in the reusable generator step."""
+    return (value for value in [1, 2, 3, 4] if predicate(value))
+
+
+def main() -> None:
+    """Create the generator before any predicate is called, then drain it."""
+    values = selected(even)
+    println("created")
+    println(list(values))

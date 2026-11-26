@@ -1,0 +1,7 @@
+"""Store-backed compiler record reads over one pinned, allowed-root snapshot. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    StoreRecordSource,
+    encode_record_key,
+    selected_record_bytes,
+)

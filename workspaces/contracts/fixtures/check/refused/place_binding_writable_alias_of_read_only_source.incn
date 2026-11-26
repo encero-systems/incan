@@ -1,0 +1,13 @@
+# behavior: a writable alias needs a source that permits mutation; `mut items = cart.items` from a read-only `cart` is refused and never becomes a silent copy or a move (RFC 129 writable alias rule 2, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the check accepts the program.
+# expect-diagnostic: INCAN-T0126
+
+class Cart:
+    pub items: list[str]
+
+
+def main() -> None:
+    cart = Cart(items=["apple"])
+    mut items = cart.items
+    items.append("plum")
+    println(cart.items)

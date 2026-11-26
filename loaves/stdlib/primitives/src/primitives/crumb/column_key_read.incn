@@ -1,0 +1,155 @@
+"""Exact column dictionary admission and bounded sixteen-key restart lookup."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_value_dictionary import dictionary_type
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive, overflow
+from crate.primitives.crumb.column_numbers import numeric_type, coefficient, from_coefficient
+from crate.primitives.crumb.column_pack_read import positive_difference
+from crate.primitives.crumb.ordering import compare
+from crate.primitives.crumb.cell_read import cell
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.encoding_errors import BinaryFailure, failure as binary_failure
+from crate.primitives.crumb.encoding_index import CellIndex, read_index, selected, offset_at
+from crate.primitives.crumb.types import ScalarKind, TypeNode
+from crate.primitives.crumb.values import Value, Projection
+from crate.primitives.text import encode_utf8, decode_utf8
+from crate.primitives.views import MappedView
+
+
+pub model ColumnKeys:
+    """Admitted restart ranges; complete decoded key arrays are not retained for selected access."""
+
+    pub node: TypeNode
+    pub count: int
+    pub restarts: CellIndex
+
+
+pub def read_keys(
+    node: TypeNode,
+    view: MappedView,
+    origin: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[ColumnKeys, ColumnError]:
+    """Validate every key and exact restart boundary before returning any dictionary handle."""
+    if not dictionary_type(node):
+        return Err(failure(ColumnFailure.EncodingType, origin))
+    mut cursor = EncodingCursor.create(view, origin).map_err(shared)?
+    count = cursor.length(budget).map_err(shared)?
+    if count == 0:
+        return Err(failure(ColumnFailure.DictionaryMembership, origin))
+    budget.charge_elements(count).map_err((e) => primitive(e, origin))?
+    encoded = cursor.frame(budget).map_err(shared)?
+    encoded_origin = cursor.absolute() - encoded.len()
+    cursor.finished().map_err(shared)?
+    mut inner = EncodingCursor.create(encoded, encoded_origin).map_err(shared)?
+    mut chunks = count // 16
+    if count % 16 != 0:
+        chunks += 1
+    restarts = read_index(inner, chunks, budget).map_err(shared)?
+    mut entries = EncodingCursor.create(restarts.data, restarts.data_origin).map_err(shared)?
+    mut previous = Value.NoneValue
+    for index in range(count):
+        budget.charge_elements(1).map_err((e) => primitive(e, entries.absolute()))?
+        if index % 16 == 0:
+            expected = offset_at(restarts.table, index // 16, restarts.width, restarts.table_origin, budget).map_err(
+                shared,
+            )?
+            if entries.consumed() != expected:
+                return Err(failure(ColumnFailure.RestartOffset, entries.absolute()))
+        value = next_key(node, index, previous, entries, dictionary, budget)?
+        if (
+            index > 0
+            and compare(previous, value, Projection.Object, budget).map_err((e) => primitive(e, entries.absolute()))? >= 0
+        ):
+            return Err(failure(ColumnFailure.DictionaryOrder, entries.absolute()))
+        previous = value
+    entries.finished().map_err(shared)?
+    return Ok(ColumnKeys(node=node, count=count, restarts=restarts))
+
+
+pub def key_at(keys: ColumnKeys, code: int, dictionary: Dictionary, mut budget: Budget) -> Result[Value, ColumnError]:
+    """Start at the selected restart and reconstruct at most sixteen keys, never all preceding keys."""
+    if code < 0 or code >= keys.count:
+        return Err(failure(ColumnFailure.DictionaryCode, keys.restarts.data_origin))
+    chunk = code // 16
+    view, origin = selected(keys.restarts, chunk, budget).map_err(shared)?
+    mut cursor = EncodingCursor.create(view, origin).map_err(shared)?
+    mut value = Value.NoneValue
+    for index in range(chunk * 16, code + 1):
+        budget.charge_elements(1).map_err((e) => primitive(e, cursor.absolute()))?
+        value = next_key(keys.node, index, value, cursor, dictionary, budget)?
+    return Ok(value)
+
+
+def next_key(
+    node: TypeNode,
+    index: int,
+    previous: Value,
+    mut cursor: EncodingCursor,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
+    """A restart is absolute; other entries reconstruct exact raw prefixes or positive numeric differences."""
+    offset = cursor.absolute()
+    if numeric_type(node):
+        raw = cursor.frame(budget).map_err(shared)?
+        origin = cursor.absolute() - raw.len()
+        if index % 16 == 0:
+            return cell(node, raw, origin, dictionary, budget).map_err(shared)
+        difference = positive_difference(raw, origin, budget)?
+        before = coefficient(node, previous, budget).map_err((e) => primitive(e, origin))?
+        number = before.add(difference, budget).map_err((e) => primitive(e, origin))?
+        return from_coefficient(node, number, budget).map_err((e) => overflow(e, origin))
+    prefix = cursor.length(budget).map_err(shared)?
+    if index == 0 and prefix != 0:
+        return Err(failure(ColumnFailure.InvalidPrefix, offset))
+    if index % 16 == 0 and prefix != 0:
+        return Err(failure(ColumnFailure.RestartPrefix, offset))
+    mut before: bytes = b""
+    if index % 16 != 0:
+        before = raw_key(previous, offset, budget)?
+    if prefix > len(before):
+        return Err(failure(ColumnFailure.InvalidPrefix, offset))
+    suffix_view = cursor.frame(budget).map_err(shared)?
+    suffix = copied(suffix_view, cursor.absolute() - suffix_view.len(), budget).map_err(shared)?
+    if prefix > 9223372036854775807 - len(suffix):
+        return Err(shared(binary_failure(BinaryFailure.LimitExceeded, offset)))
+    budget.charge_bytes(prefix + len(suffix)).map_err((e) => primitive(e, offset))?
+    mut combined = EncodingBuffer.create()
+    combined.append(before[:prefix], budget).map_err((e) => primitive(e, offset))?
+    combined.append(suffix, budget).map_err((e) => primitive(e, offset))?
+    raw = combined.finish(budget).map_err((e) => primitive(e, offset))?
+    if index % 16 != 0:
+        mut longest = 0
+        while longest < len(before) and longest < len(raw):
+            budget.charge_elements(1).map_err((e) => primitive(e, offset))?
+            if before[longest] != raw[longest]:
+                break
+            longest += 1
+        if longest != prefix:
+            return Err(failure(ColumnFailure.NonmaximalPrefix, offset))
+    match node:
+        TypeNode.Scalar(ScalarKind.Binary) => return Ok(Value.Binary(raw))
+        TypeNode.Scalar(ScalarKind.String) =>
+            budget.charge_bytes(len(raw)).map_err((e) => primitive(e, offset))?
+            valid, text = decode_utf8(raw, false)
+            if not valid:
+                return Err(shared(binary_failure(BinaryFailure.InvalidUtf8, offset)))
+            return Ok(Value.Text(text))
+        _ => return Err(failure(ColumnFailure.EncodingType, offset))
+
+
+def raw_key(value: Value, origin: int, mut budget: Budget) -> Result[bytes, ColumnError]:
+    """Charge independently reconstructed raw bytes, not merely compressed suffix lengths."""
+    match value:
+        Value.Binary(raw) =>
+            budget.charge_bytes(len(raw)).map_err((e) => primitive(e, origin))?
+            return Ok(raw)
+        Value.Text(text) =>
+            for _ in range(4):
+                budget.charge_bytes(len(text)).map_err((e) => primitive(e, origin))?
+            return Ok(encode_utf8(text))
+        _ => return Err(failure(ColumnFailure.EncodingType, origin))

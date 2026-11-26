@@ -1,0 +1,16 @@
+[project]
+name = "show_json_in_the_0_5_1_shape"
+version = "0.1.0"
+requires-incan = ">=0.5"
+
+[project.scripts]
+main = "src/main.incn"
+
+[envs.ci]
+requires-incan = "<1.0"
+cwd = "src"
+env-vars = { CI_MODE = "on" }
+scripts.show = ["sh", "-c", "pwd"]
+
+[envs.ci.dependencies]
+helper = { path = "../helper" }

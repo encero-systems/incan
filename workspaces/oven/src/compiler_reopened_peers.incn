@@ -1,0 +1,67 @@
+"""Supply checked peers only when a compiler reopens an admitted namespace for a changed call contract."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from pub::incan_platform.store import Snapshot
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.executable_snapshot import executable_snapshot_descriptor, reopen_executable_snapshot
+pub from pub::internal_models.executable_snapshot import REOPEN_SELECTION
+from pub::incan_mir_plan import PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
+from pub::internal_models.records import ReadWitness, encode_record_key
+from compiler_body_keys import IDENTITY_PROFILE, body_key
+from compiler_body_values import SelectedBodyPage, encode_body_inventory, select_body_inventory_of
+from compiler_graph_records import reusable_owner_records
+from compiler_plan_values import LOWERING_PROFILE
+from publication import publish_binary
+
+pub def selection(snapshot: Snapshot, origin: str) -> Result[SelectedBodyPage, str]:
+    """Keep the identity of the request's pinned view. Each owner payload stays in the store until requested."""
+    value = executable_snapshot_descriptor(snapshot, origin)?
+    return Ok(SelectedBodyPage(key=REOPEN_SELECTION, value=value))
+
+
+pub def supply(arguments: list[str]) -> Result[None, str]:
+    """Validate the exact previously selected module and materialize only its unaffected checker-backed owners."""
+    if len(arguments) < 5:
+        return Err("reopened peer selection needs a bakery, a request directory, a private output directory, a module and its changed readers")
+    bakery = Path(arguments[0])
+    directory = Path(arguments[1])
+    destination = Path(arguments[2])
+    source = arguments[3]
+    changed = set(arguments[4:])
+    raw = directory.joinpath(REOPEN_SELECTION).read_bytes().map_err((error) => error.message())?
+    selected = reopen_executable_snapshot(bakery.0, raw)?
+    origin = selected.origin
+    graph = selected.graph
+    mut peers: list[str] = []
+    for retained in reusable_owner_records(graph, PLAN_MODULE_FAMILY, LOWERING_PROFILE, origin, [source], IDENTITY_PROFILE)?:
+        value = decode_plan_module(retained.value).map_err((error) => f"invalid reopened module: {error:?}")?
+        basename = hexlify(value.module.encode("utf-8"))
+        mut offered: list[Path] = []
+        for suffix in [POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PLAN_MODULE_PAGE]:
+            page = directory.joinpath(basename + suffix)
+            if page.is_file():
+                offered.append(page)
+        if len(offered) == 0:
+            continue
+        if len(offered) != 1:
+            return Err("reopened module has conflicting placement pages")
+        if offered[0].read_bytes().map_err((error) => error.message())? != retained.value:
+            return Err("reopened plan module differs from the selected snapshot")
+        mut witnessed: set[str] = set()
+        for read in retained.receipt.witnesses:
+            if let ReadWitness.Found(previous, _) = read:
+                if previous.request.key.family == "plan-function":
+                    witnessed.add(encode_record_key(previous.request.key)?)
+        for function in value.functions:
+            if function.symbol in changed or function.identity == function.symbol:
+                continue
+            key = body_key("plan-function", origin, function.identity, "body:" + function.function, function.key)
+            if encode_record_key(key)? in witnessed:
+                peers.append(function.identity)
+    for page in encode_body_inventory(select_body_inventory_of(graph, CHECKER_PROFILE, origin, peers, mint_body_ir=true)?)?:
+        # A previously selected or ranked page is already authoritative for this activation.
+        path = directory.joinpath(page.key)
+        if not path.exists():
+            publish_binary(destination.joinpath(page.key), page.value)?
+    return Ok(None)

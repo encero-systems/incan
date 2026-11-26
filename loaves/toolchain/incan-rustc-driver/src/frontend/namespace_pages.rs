@@ -1,0 +1,723 @@
+//! Restore editable namespaces from request-local pages or the pinned store selected by Oven.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
+
+use incan_frontend::checker_records::{
+    ExecutableScopeWitness, GraphNamespaceHeader, GraphNamespaceRecord, RecordAdapterFault,
+};
+use incan_frontend::typechecker::executable_frames::restore_graph_executable_namespace;
+use incan_semantics_core::SymbolOrigin;
+use incan_semantics_core::body_ir::BodyIrModule;
+use internal_models::{GraphNamespaceView, NamespaceReference};
+use internal_models_native::{MappedView, PreparedWireReader, decode_prepared_checked_projection};
+use sha2::{Digest, Sha256};
+
+use super::CheckedProgram;
+use super::graph_scope_access::GraphScopeAccess;
+use super::namespace_admission::{FrameAccess, ResidentInterfaces, admit_header};
+use super::namespace_crumb;
+use super::namespace_layout_pages::{LayoutPages, admit_layouts, reference_for};
+
+const RETAINED_BODY_BYTES: usize = 128 * 1024 * 1024;
+const RETAINED_NAMESPACES: usize = 512;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProgramScope {
+    bakery: PathBuf,
+    project: PathBuf,
+    typed_executable: bool,
+}
+
+/// The graph selected these exact immutable producer bytes. Both values survive a fresh request's staging directory.
+#[derive(Debug, PartialEq, Eq)]
+struct NamespaceDigest {
+    frame: Option<Vec<u8>>,
+    value: String,
+}
+
+impl NamespaceDigest {
+    fn from_reference(reference: &NamespaceReference) -> Self {
+        Self {
+            frame: Some(reference.frame_digest.clone()),
+            value: reference.value_digest.clone(),
+        }
+    }
+
+    fn matches(&self, reference: &NamespaceReference) -> bool {
+        self.value == reference.value_digest && self.frame.as_ref().is_none_or(|frame| frame == &reference.frame_digest)
+    }
+}
+
+#[derive(Debug)]
+struct SelectedBody {
+    digest: NamespaceDigest,
+    header: Arc<GraphNamespaceHeader>,
+    interface_digest: Option<namespace_crumb::InterfaceDigest>,
+    wire_bytes: usize,
+    executable_scopes: Vec<ExecutableScopeWitness>,
+    /// Exact authored bytes held only until the backend returns a reusable decoded body.
+    authored: Option<Vec<u8>>,
+}
+
+struct ResidentBody {
+    selected: SelectedBody,
+    body: ResidentBodyIr,
+}
+
+/// Own one representation. A worker can decode the bytes it already published when native preparation moved
+/// parts of the decoded representation into an invocation-specific context.
+enum ResidentBodyIr {
+    Decoded(BodyIrModule),
+    Authored(Vec<u8>),
+}
+
+struct ResidentBodies {
+    scope: ProgramScope,
+    values: HashMap<String, ResidentBody>,
+    wire_bytes: usize,
+    installed_interfaces: Arc<ResidentInterfaces>,
+}
+
+static RESIDENT: Mutex<Option<ResidentBodies>> = Mutex::new(None);
+
+/// Sorted frame addresses owned by one request. Oven keeps the producing snapshot leased until the request ends.
+#[derive(Debug, Default)]
+pub(super) struct NamespacePages {
+    references: Vec<NamespaceReference>,
+    /// The header beside each offered frame, sorted like `references`; empty when Oven offers none.
+    headers: Vec<NamespaceReference>,
+    layouts: Option<LayoutPages>,
+    access: Option<FrameAccess>,
+    scope: Option<ProgramScope>,
+    installed_interfaces: Option<Arc<ResidentInterfaces>>,
+    checked: Mutex<HashMap<String, SelectedBody>>,
+    pub(super) typed_executable: bool,
+    pub(super) scope_access: GraphScopeAccess,
+}
+
+/// Prepare one closed graph executable dictionary per installed compiler process.
+static EXECUTABLE_NAMESPACE: LazyLock<Result<PreparedWireReader, String>> =
+    LazyLock::new(internal_models::prepare_executable_namespace_reader);
+
+impl NamespacePages {
+    /// Read the bounded transport once. Older installations write ordinary keyed namespace files.
+    pub(super) fn open(
+        directory: &Path,
+        bakery: Option<&Path>,
+        project: &Path,
+        retain_bodies: bool,
+    ) -> Result<Self, String> {
+        use internal_models_native::{
+            namespace_header_key, namespace_header_reference_filename, namespace_key,
+            namespace_layout_candidate_filename, namespace_layout_key, namespace_layout_reference_filename,
+        };
+        let typed_executable = GraphScopeAccess::requested(directory)?;
+        let scope_access = GraphScopeAccess::new(directory, bakery);
+        let frames = read_references(
+            directory,
+            &internal_models::namespace_reference_filename(),
+            namespace_key,
+        )?;
+        let layouts = read_references(directory, &namespace_layout_reference_filename(), namespace_layout_key)?;
+        if frames.is_none() && layouts.is_none() {
+            return Ok(Self::with_selection(
+                Vec::new(),
+                None,
+                bakery,
+                project,
+                retain_bodies,
+                typed_executable,
+                scope_access,
+            ));
+        }
+        let bakery = bakery
+            .and_then(Path::to_str)
+            .ok_or("namespace frame references require a UTF-8 Bakery anchor")?;
+        let access = FrameAccess::new(incan_worker_host_native::namespace_frame_reader(bakery));
+        let mut selection = Self::with_selection(
+            frames.unwrap_or_default(),
+            Some(access.clone()),
+            Some(Path::new(bakery)),
+            project,
+            retain_bodies,
+            typed_executable,
+            scope_access,
+        );
+        selection.headers = read_references(directory, &namespace_header_reference_filename(), namespace_header_key)?
+            .unwrap_or_default();
+        if let Some(layouts) = layouts {
+            let previous =
+                read_references(directory, &namespace_layout_candidate_filename(), namespace_key)?.unwrap_or_default();
+            selection.layouts = Some(LayoutPages {
+                layouts,
+                previous,
+                access,
+            });
+        }
+        Ok(selection)
+    }
+
+    /// Retain decoded Body IR only under the exact addresses selected for this request.
+    fn with_selection(
+        references: Vec<NamespaceReference>,
+        access: Option<FrameAccess>,
+        bakery: Option<&Path>,
+        project: &Path,
+        retain_bodies: bool,
+        typed_executable: bool,
+        scope_access: GraphScopeAccess,
+    ) -> Self {
+        let scope = bakery.filter(|_| retain_bodies).map(|bakery| ProgramScope {
+            bakery: bakery.to_owned(),
+            project: project.to_owned(),
+            typed_executable,
+        });
+        let installed_interfaces = if let Some(scope) = &scope
+            && let Ok(mut resident) = RESIDENT.lock()
+        {
+            let contents = resident.get_or_insert_with(|| ResidentBodies {
+                scope: scope.clone(),
+                values: HashMap::new(),
+                wire_bytes: 0,
+                installed_interfaces: Arc::default(),
+            });
+            if &contents.scope != scope {
+                contents.scope = scope.clone();
+                contents.values.clear();
+                contents.wire_bytes = 0;
+                contents.installed_interfaces = Arc::default();
+            }
+            contents.values.retain(|source, cached| {
+                references
+                    .binary_search_by(|reference| reference.key.identity.as_str().cmp(source))
+                    .is_ok_and(|index| cached.selected.digest.matches(&references[index]))
+            });
+            contents.wire_bytes = contents.values.values().map(|body| body.selected.wire_bytes).sum();
+            Some(Arc::clone(&contents.installed_interfaces))
+        } else {
+            None
+        };
+        Self {
+            references,
+            headers: Vec::new(),
+            layouts: None,
+            access,
+            scope,
+            installed_interfaces,
+            checked: Mutex::default(),
+            typed_executable,
+            scope_access,
+        }
+    }
+
+    /// Recover an admitted namespace through the selected address, verifying both frame and evaluation digests.
+    pub(super) fn read(
+        &self,
+        directory: &Path,
+        source: &str,
+    ) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+        let Ok(index) = self
+            .references
+            .binary_search_by(|reference| reference.key.identity.as_str().cmp(source))
+        else {
+            return read_legacy_namespace(self, directory, source);
+        };
+        let reference = &self.references[index];
+        if let Some(mut retained) = self.take(source, reference) {
+            if retained.selected.digest.frame.is_none() {
+                retained.selected.digest.frame = Some(reference.frame_digest.clone());
+            }
+            for scope in &mut retained.selected.executable_scopes {
+                self.scope_access
+                    .reuse(source, scope)
+                    .map_err(RecordAdapterFault::InvalidField)?;
+            }
+            let body_ir = match retained.body {
+                ResidentBodyIr::Decoded(body) => {
+                    tracing::trace!(target: "incan::invocation", module = source, wire_bytes = retained.selected.wire_bytes,
+                        "reused resident namespace Body IR");
+                    body
+                }
+                ResidentBodyIr::Authored(bytes) => {
+                    let _decode = tracing::trace_span!(
+                        target: "incan::invocation", "incan_rustc_driver::decode_resident_namespace_body_ir",
+                        module = source, bytes = bytes.len(),
+                    )
+                    .entered();
+                    let body = if self.typed_executable {
+                        let reader = EXECUTABLE_NAMESPACE
+                            .as_ref()
+                            .map_err(|error| RecordAdapterFault::InvalidField(error.clone()))?;
+                        let value = decode_prepared_checked_projection(reader, &bytes)
+                            .map_err(RecordAdapterFault::InvalidField)?;
+                        self.restore_typed_body(value, source, &mut retained.selected.executable_scopes)?
+                    } else {
+                        decode_namespace_body(&bytes)?
+                    };
+                    retained.selected.authored = Some(bytes);
+                    body
+                }
+            };
+            let record = GraphNamespaceRecord {
+                header: Arc::clone(&retained.selected.header),
+                body_ir,
+            };
+            self.note(source, retained.selected);
+            return Ok(Some(record));
+        }
+        let access = self
+            .access
+            .as_ref()
+            .ok_or_else(|| RecordAdapterFault::InvalidField("namespace frame has no Bakery reader".into()))?;
+        let bytes = reference.length
+            - reference.key.family.len() as i64
+            - reference.key.identity_profile.len() as i64
+            - reference.key.origin.len() as i64
+            - reference.key.identity.len() as i64
+            - reference.key.facet.len() as i64
+            - reference.key.context.len() as i64
+            - 8 // frame key length prefix
+            - 5; // separators in the six-field record key
+        let _page = tracing::trace_span!(
+            target: "incan::invocation", "incan_rustc_driver::restore_namespace",
+            module = source, bytes, backing = "bakery"
+        )
+        .entered();
+        let view = {
+            let _frame = tracing::trace_span!(
+                target: "incan::invocation", "incan_rustc_driver::open_namespace_frame",
+                module = source, segment = reference.segment.as_str(), bytes,
+            )
+            .entered();
+            access.frame(source, reference)?
+        };
+        let record = {
+            let _row = tracing::trace_span!(
+                target: "incan::invocation", "incan_rustc_driver::admit_namespace_envelope",
+                module = source, bytes,
+            )
+            .entered();
+            internal_models::decode_graph_namespace_view(&view).map_err(namespace_codec_error)?
+        };
+        let mut executable_scopes = Vec::new();
+        let Some((record, interface_digest, wire_bytes)) = admit_namespace(source, record, |body| {
+            self.decode_body_view(body, source, &mut executable_scopes)
+        })?
+        else {
+            return Ok(None);
+        };
+        self.note(
+            source,
+            SelectedBody {
+                digest: NamespaceDigest::from_reference(reference),
+                header: Arc::clone(&record.header),
+                interface_digest: Some(interface_digest),
+                wire_bytes,
+                executable_scopes,
+                authored: None,
+            },
+        );
+        Ok(Some(record))
+    }
+
+    /// Decode the selected typed module without copying its immutable input range.
+    fn decode_body_view(
+        &self,
+        body: &MappedView,
+        source: &str,
+        scopes: &mut Vec<ExecutableScopeWitness>,
+    ) -> Result<BodyIrModule, RecordAdapterFault> {
+        if !self.typed_executable {
+            return decode_namespace_body(body.0.as_bytes());
+        }
+        let reader = EXECUTABLE_NAMESPACE
+            .as_ref()
+            .map_err(|error| RecordAdapterFault::InvalidField(error.clone()))?;
+        let value = internal_models::decode_executable_namespace_view(reader, body)
+            .map_err(RecordAdapterFault::InvalidField)?;
+        self.restore_typed_body(value, source, scopes)
+    }
+
+    /// Retain the exact scope suppliers so a resident body authenticates them in its next snapshot.
+    fn restore_typed_body(
+        &self,
+        value: internal_models::NamespaceAtom,
+        source: &str,
+        scopes: &mut Vec<ExecutableScopeWitness>,
+    ) -> Result<BodyIrModule, RecordAdapterFault> {
+        scopes.clear();
+        restore_graph_executable_namespace(value, source, |digest| {
+            let witness = self.scope_access.resolve_witness(source, digest)?;
+            let bindings = Arc::clone(&witness.bindings);
+            scopes.push(witness);
+            Ok(bindings)
+        })
+        .map_err(RecordAdapterFault::InvalidField)
+    }
+
+    /// Admit an unchanged namespace by the header Oven offers beside its frame, without opening the frame. `None` when
+    /// the request offers no header for `source`, or no frame beside it; the caller then reads the namespace whole.
+    pub(super) fn read_header(
+        &self,
+        source: &str,
+    ) -> Result<Option<incan_frontend::checker_records::GraphNamespaceAdmission>, RecordAdapterFault> {
+        let by_source = |reference: &NamespaceReference| reference.key.identity.as_str().cmp(source);
+        let (Ok(header), Ok(frame), Some(access)) = (
+            self.headers.binary_search_by(by_source),
+            self.references.binary_search_by(by_source),
+            self.access.as_ref(),
+        ) else {
+            return Ok(None);
+        };
+        admit_header(
+            access,
+            source,
+            &self.headers[header],
+            &self.references[frame],
+            self.installed_interfaces.clone(),
+        )
+        .map(Some)
+    }
+
+    /// Take the one decoded owner. The cache never keeps a second copy alongside an active compiler.
+    fn take(&self, source: &str, reference: &NamespaceReference) -> Option<ResidentBody> {
+        let scope = self.scope.as_ref()?;
+        let mut resident = RESIDENT.lock().ok()?;
+        let held = resident.as_mut().filter(|held| &held.scope == scope)?;
+        let entry = held.values.remove(source)?;
+        held.wire_bytes -= entry.selected.wire_bytes;
+        entry.selected.digest.matches(reference).then_some(entry)
+    }
+
+    fn note(&self, source: &str, selected: SelectedBody) {
+        if self.scope.is_some()
+            && let Ok(mut checked) = self.checked.lock()
+        {
+            checked.insert(source.to_owned(), selected);
+        }
+    }
+
+    /// Record the compiler's exact value and scope witnesses. The next selected reference supplies its frame seal.
+    pub(super) fn publish(
+        &self,
+        header: Arc<GraphNamespaceHeader>,
+        value: String,
+        body_ir: Vec<u8>,
+        executable_scopes: Vec<ExecutableScopeWitness>,
+    ) {
+        let source = header.source.clone();
+        self.note(
+            &source,
+            SelectedBody {
+                digest: NamespaceDigest { frame: None, value },
+                header,
+                interface_digest: None,
+                wire_bytes: body_ir.len(),
+                executable_scopes,
+                authored: Some(body_ir),
+            },
+        );
+    }
+
+    /// Resolve the layout companion for each reached project module. Only a module freshly produced in this request
+    /// may publish a new companion. Admitted modules use the exact value digest of their selected namespace frame.
+    pub(super) fn prepare_layouts(
+        &self,
+        program: &CheckedProgram,
+        project: &Path,
+        output: &Path,
+    ) -> Result<Arc<incan_lowering::RecordedLayouts>, String> {
+        let Some(layouts) = &self.layouts else {
+            return Ok(Arc::default());
+        };
+        let project = project.canonicalize().map_err(|error| error.to_string())?;
+        let checked = self
+            .checked
+            .lock()
+            .map_err(|_| "checked namespace selections are poisoned")?;
+        let mut recorded = incan_lowering::RecordedLayouts::default();
+        for (ir, path) in program.modules[program.own..].iter().zip(&program.files[program.own..]) {
+            if ir.nominal_declarations.is_empty() && ir.enum_declarations.is_empty() {
+                continue;
+            }
+            let Ok(source) = Path::new(path).strip_prefix(&project) else {
+                continue;
+            };
+            let source = source.to_string_lossy();
+            let Some(current) = checked.get(source.as_ref()) else {
+                continue;
+            };
+            if current.digest.frame.is_none() {
+                layouts.publish(&source, ir, current.digest.value.clone(), output, &mut recorded)?;
+            } else if let Some(namespace) = reference_for(&self.references, &source)
+                && current.digest.matches(namespace)
+                && let Some(layout) = layouts.read(&source, namespace)
+            {
+                admit_layouts(ir, layout, &mut recorded);
+            }
+        }
+        Ok(Arc::new(recorded))
+    }
+
+    pub(super) fn retains(&self, source: &str) -> bool {
+        self.scope.is_some() && self.checked.lock().is_ok_and(|checked| checked.contains_key(source))
+    }
+
+    /// Move the authoritative Body IR back after the backend has borrowed it. Retain only owned header state.
+    pub(super) fn retain(&self, source: &str, body: &mut BodyIrModule) {
+        let Some(mut selected) = self.checked.lock().ok().and_then(|mut checked| checked.remove(source)) else {
+            return;
+        };
+        if let Some(digest) = &selected.interface_digest {
+            let Some(interface) = digest
+                .resolve()
+                .ok()
+                .and_then(|digest| namespace_crumb::resident_interface(&digest))
+            else {
+                return;
+            };
+            Arc::make_mut(&mut selected.header).interface = interface;
+        }
+        selected.authored = None;
+        self.keep(source.to_owned(), selected, || {
+            ResidentBodyIr::Decoded(std::mem::replace(body, BodyIrModule::declarations_only(String::new())))
+        });
+    }
+
+    /// Preserve the available authored bytes under the same bound, after giving decoded bodies first admission.
+    pub(super) fn settle(&self) {
+        let pending = self
+            .checked
+            .lock()
+            .ok()
+            .map(|mut checked| std::mem::take(&mut *checked));
+        for (source, mut selected) in pending.into_iter().flatten() {
+            if let Some(body) = selected.authored.take() {
+                self.keep(source, selected, || ResidentBodyIr::Authored(body));
+            }
+        }
+    }
+
+    fn keep(&self, source: String, selected: SelectedBody, body: impl FnOnce() -> ResidentBodyIr) {
+        let Some(scope) = &self.scope else { return };
+        let Ok(mut resident) = RESIDENT.lock() else { return };
+        let Some(held) = resident.as_mut().filter(|held| &held.scope == scope) else {
+            return;
+        };
+        if held.values.len() >= RETAINED_NAMESPACES || held.wire_bytes + selected.wire_bytes > RETAINED_BODY_BYTES {
+            return;
+        }
+        let body = body();
+        held.wire_bytes += selected.wire_bytes;
+        match &body {
+            ResidentBodyIr::Decoded(_) => tracing::trace!(target: "incan::invocation",
+                module = source.as_str(), wire_bytes = selected.wire_bytes, "kept decoded namespace Body IR"),
+            ResidentBodyIr::Authored(_) => tracing::trace!(target: "incan::invocation",
+                module = source.as_str(), wire_bytes = selected.wire_bytes, "kept authored namespace encoding"),
+        }
+        held.values.insert(source, ResidentBody { selected, body });
+    }
+}
+
+/// Read one bounded transport page, confined to its expected record family and sorted by source.
+fn read_references(
+    directory: &Path,
+    filename: &str,
+    expected_key: impl Fn(&str, &str) -> internal_models_native::records::RecordKey,
+) -> Result<Option<Vec<NamespaceReference>>, String> {
+    let path = directory.join(filename);
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot inspect {filename}: {error}")),
+    };
+    if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
+        return Err(format!("{filename} requires a bounded regular page"));
+    }
+    let bytes = std::fs::read(path).map_err(|error| format!("cannot read {filename}: {error}"))?;
+    let mut headers = internal_models::decode_namespace_references(&bytes)?;
+    let key = |reference: &NamespaceReference| expected_key(&reference.key.origin, &reference.key.identity);
+    if headers.iter().any(|reference| reference.key != key(reference)) {
+        return Err(format!("{filename} references another record family"));
+    }
+    headers.sort_unstable_by(|left, right| left.key.identity.cmp(&right.key.identity));
+    Ok(Some(headers))
+}
+
+/// Report a schema refusal identically for both namespace transports.
+fn namespace_codec_error(error: internal_models::CodecFault) -> RecordAdapterFault {
+    RecordAdapterFault::InvalidField(format!("graph namespace page refused: {error:?}"))
+}
+
+fn decode_namespace_body(bytes: &[u8]) -> Result<BodyIrModule, RecordAdapterFault> {
+    incan_semantics_core::executable_representation::decode_namespace_module(bytes)
+        .map_err(|error| RecordAdapterFault::InvalidField(format!("graph namespace Body IR refused: {error}")))
+}
+
+/// Read a complete namespace page staged by an Oven that did not offer store references.
+fn read_legacy_namespace(
+    pages: &NamespacePages,
+    root: &Path,
+    source: &str,
+) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+    const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+    let key = format!("namespace-{}", hex::encode(Sha256::digest(source.as_bytes())));
+    let path = root.join(key);
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                format!("cannot inspect graph namespace page {}: {error}", path.display()),
+            ));
+        }
+    };
+    if !metadata.is_file() || metadata.len() > MAX_PAGE_BYTES {
+        return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+            "graph namespace page is not a bounded regular file".into(),
+        ));
+    }
+    let _page = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::restore_namespace", module = source, bytes = metadata.len()).entered();
+    let encoded = std::fs::read(&path).map_err(|error| {
+        incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+            "cannot read graph namespace page {}: {error}",
+            path.display()
+        ))
+    })?;
+    let record = internal_models::decode_owned_namespace_view(&encoded).map_err(namespace_codec_error)?;
+    admit_namespace(source, record, |body| {
+        pages.decode_body_view(body, source, &mut Vec::new())
+    })
+    .map(|selected| selected.map(|(record, _, _)| record))
+}
+
+/// Bind compiler-owned namespace metadata and Body IR to the source whose graph record was opened.
+fn admit_namespace(
+    source: &str,
+    record: GraphNamespaceView,
+    decode_body: impl FnOnce(&MappedView) -> Result<BodyIrModule, RecordAdapterFault>,
+) -> Result<Option<(GraphNamespaceRecord, namespace_crumb::InterfaceDigest, usize)>, RecordAdapterFault> {
+    if record.module != source {
+        return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+            "graph namespace page disagrees with its requested source".into(),
+        ));
+    }
+    if !record.call_reads_known {
+        return Ok(None);
+    }
+    let interface_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_interface", module = source, bytes = record.interface.0.as_bytes().len()).entered();
+    let (checked, interface_digest) = namespace_crumb::admit(source, &record.identity_proof, record.interface)
+        .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
+    drop(interface_span);
+    let wire_bytes = record.body_ir.0.as_bytes().len();
+    let body_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_body_ir", module = source, bytes = record.body_ir.0.as_bytes().len()).entered();
+    let body_ir = decode_body(&record.body_ir)?;
+    drop(body_span);
+    // Join witnesses by exact kernel owner path once per namespace. Duplicate declarations stay ambiguous.
+    let mut owners = std::collections::HashMap::new();
+    if !record.lowering_inputs.is_empty() {
+        for body in &body_ir.bodies {
+            owners
+                .entry(body.direct_call_id.path())
+                .and_modify(|found| *found = None)
+                .or_insert(Some(&body.direct_call_id));
+        }
+    }
+    let mut lowering_inputs = Vec::with_capacity(record.lowering_inputs.len());
+    for input in record.lowering_inputs {
+        let [owner, witness]: [String; 2] = input.try_into().map_err(|_| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph namespace lowering witness has the wrong field count".into(),
+            )
+        })?;
+        let id = match owners.get(owner.as_str()) {
+            Some(Some(id)) => *id,
+            Some(None) => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace lowering witness names multiple Body IR owners".into(),
+                ));
+            }
+            None => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace lowering witness names no Body IR owner".into(),
+                ));
+            }
+        };
+        lowering_inputs.push((id.clone(), witness));
+    }
+    let mut package_roots = Vec::with_capacity(record.package_roots.len());
+    for encoded in record.package_roots {
+        let identity = incan_semantics_core::decode_incan_symbol_identity(&encoded)
+            .ok()
+            .flatten()
+            .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
+            .ok_or_else(|| {
+                incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace has an invalid package declaration root".into(),
+                )
+            })?;
+        package_roots.push(identity);
+    }
+    let call_reads = record
+        .call_reads
+        .into_iter()
+        .map(|r| incan_frontend::body_ir::SettledCallRead {
+            reader: r.reader,
+            target: r.target,
+            digest: r.digest,
+        })
+        .collect::<Arc<[_]>>();
+    let settled = super::checked_program::settle_lowering_witnesses(&mut lowering_inputs, call_reads.iter())
+        .map_err(RecordAdapterFault::InvalidField)?;
+    tracing::trace!(target: "incan::invocation", module = source, settled, "prepared namespace lowering witnesses");
+    let header = Arc::new(GraphNamespaceHeader {
+        source: record.module,
+        call_reads,
+        interface: checked,
+        package_roots: package_roots.into(),
+        lowering_inputs: lowering_inputs.into(),
+    });
+    Ok(Some((
+        GraphNamespaceRecord { header, body_ir },
+        interface_digest,
+        wire_bytes,
+    )))
+}
+
+/// The worker host's frame reference for one admitted namespace reference: the same fields in the Rust record model,
+/// until the record models are one Rust type.
+pub(super) fn frame_reference(
+    reference: &NamespaceReference,
+) -> internal_models_native::namespace_references::NamespaceReference {
+    let key = &reference.key;
+    internal_models_native::namespace_references::NamespaceReference {
+        key: internal_models_native::records::RecordKey {
+            family: key.family.clone(),
+            identity: key.identity.clone(),
+            identity_profile: key.identity_profile.clone(),
+            origin: key.origin.clone(),
+            facet: key.facet.clone(),
+            context: key.context.clone(),
+        },
+        segment: reference.segment.clone(),
+        offset: reference.offset,
+        length: reference.length,
+        frame_digest: reference.frame_digest.clone(),
+        value_digest: reference.value_digest.clone(),
+    }
+}
+
+/// The namespace bodies this worker keeps for its program and the wire bytes they were read from.
+pub(crate) fn resident_inventory() -> (usize, u64) {
+    RESIDENT
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .map(|bodies| (bodies.values.len(), bodies.wire_bytes as u64))
+        })
+        .unwrap_or((0, 0))
+}

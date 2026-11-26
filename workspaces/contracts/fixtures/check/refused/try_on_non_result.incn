@@ -1,0 +1,7 @@
+# behavior: `?` on a value that is not a Result is refused
+# expect-diagnostic: INCAN-T0001
+
+def foo() -> Result[int, str]:
+    x = 42
+    y = x?
+    return Ok(y)

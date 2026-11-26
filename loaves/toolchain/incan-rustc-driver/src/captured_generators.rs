@@ -3,6 +3,7 @@
 //! AST placeholders establish closure identities and capture layouts. Their executable blocks are replaced
 //! with MIR that calls the Incan-planned producer; no generated source or eager producer execution is used.
 
+use crate::ast_build::ident as identifier;
 use crate::error::PlanError;
 use crate::plan::{Callee, CalleeKind, Function, TerminatorKind};
 use crate::{bodies, callees, declarations, spans::Sources, types, values};
@@ -11,7 +12,7 @@ use rustc_hir::def_id::LocalDefId;
 use rustc_index::IndexVec;
 use rustc_middle::ty::TyCtxt;
 use rustc_middle::{mir, ty};
-use rustc_span::{Ident, Span, Spanned, Symbol};
+use rustc_span::{Span, Spanned};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Identify constructors whose spawn operation has an explicit construction-time environment.
@@ -35,11 +36,6 @@ fn expression(kind: ast::ExprKind, span: Span) -> Box<ast::Expr> {
         attrs: ThinVec::new(),
         tokens: None,
     })
-}
-
-/// Name an injected source parameter without parsing source text.
-fn identifier(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
 }
 
 /// Declare a closure whose references establish exactly the source-ordered owned capture fields.

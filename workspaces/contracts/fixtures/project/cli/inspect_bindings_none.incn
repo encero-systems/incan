@@ -1,0 +1,12 @@
+# behavior: `incan inspect bindings` on a project that declares no C binding says so, as 0.5.1 did, instead of printing nothing.
+# cli-commands:
+#   inspect bindings
+#   inspect bindings .
+# expect-stdout:
+#   No checked C bindings.
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """A program that declares no binding."""
+    pass

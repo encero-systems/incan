@@ -1,0 +1,30 @@
+"""Register primitive vocabulary contracts through their compatibility facade."""
+
+from std.primitives.vocab import ClauseSurface, DeclarationSurface, DslSurface
+from std.primitives.vocab import VOCAB_SYNTAX_VERSION as PRIMITIVE_VOCAB_SYNTAX_VERSION
+from std.primitives.vocab import DesugarRequest as PrimitiveDesugarRequest, VocabRegistration as PrimitiveRegistration
+from std.vocab import DesugarRequest, IncanExpr, Span, VocabRegistration, VocabSyntaxNode, VOCAB_SYNTAX_VERSION
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Publish primitive descriptors through their identity-preserving facade types."""
+    expression = IncanExpr.path("orders", Span(start=10, end=16))
+    primitive_request = PrimitiveDesugarRequest(node=VocabSyntaxNode.Expression(expression), module_path="consumer.incn")
+    request: DesugarRequest = primitive_request
+    assert VOCAB_SYNTAX_VERSION == PRIMITIVE_VOCAB_SYNTAX_VERSION
+    match DesugarRequest.from_json(request.to_json()):
+        Ok(decoded) =>
+            assert decoded.schema_version == VOCAB_SYNTAX_VERSION
+            assert decoded.module_path == "consumer.incn"
+            assert decoded.node.span().start == 10
+            assert decoded.node.span().end == 16
+        Err(_) =>
+            assert false
+    mut note = DeclarationSurface.named("note").with_header_args().with_clause_body()
+    clause = ClauseSurface.expr("VALUE OF").required()
+    note = note.with_clause(clause)
+    primitive_registration = PrimitiveRegistration
+        .new()
+        .with_surface(DslSurface.on_import("words").with_declaration(note))
+    registration: VocabRegistration = primitive_registration
+    return registration

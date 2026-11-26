@@ -1,5 +1,0 @@
-pub struct Widget
----
-pub name: String
----
-pub fn make_widget(name: String) -> Widget

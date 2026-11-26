@@ -1,0 +1,30 @@
+"""Tests with their own time limits, shared resources and a serial test."""
+
+from std.testing import resource, serial, timeout
+
+
+@timeout("100ms")
+def test_runs_forever() -> None:
+    mut count = 0
+    while true:
+        count += 1
+
+
+@timeout("10s")
+def test_finishes_in_time() -> None:
+    assert 1 + 1 == 2
+
+
+@resource("database")
+def test_first_writer() -> None:
+    assert true
+
+
+@resource("database")
+def test_second_writer() -> None:
+    assert true
+
+
+@serial
+def test_alone() -> None:
+    assert true

@@ -1,0 +1,10 @@
+# behavior: std.prelude imports as a module, plain and under an alias, and the program runs
+# expect-stdout:
+#   ok
+
+import std.prelude
+import std.prelude as foundation
+
+
+def main() -> None:
+    println("ok")

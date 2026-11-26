@@ -1,0 +1,13 @@
+"""Verified payload identity and generation, shared by publication and frozen installation readings."""
+
+
+pub from pub::internal_models.unit_admission import PayloadAdmission
+
+
+pub model InstalledPayload:
+    """An exact installed payload and the transported producer-record generation admitted with it."""
+
+    pub path: str
+    pub record: str
+    pub record_stamp: str
+    pub admission: PayloadAdmission

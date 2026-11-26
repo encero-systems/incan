@@ -1,0 +1,620 @@
+"""
+Metadata reconciliation: what a build learns about its input files without reading them again.
+
+A ledger retains, for each file, the metadata it had when its bytes were last hashed (device and inode, size, mode, and
+the nanosecond times of its last modification and last status change) with the digest of those bytes, and for each
+directory the metadata it had when it was last listed with its Incan sources and subdirectories. Reconciling observes
+metadata only. A file whose metadata is unchanged keeps its digest without being read; an unchanged directory is not
+listed; a changed file is a reason to hash its bytes again, and only a different digest changes what a build is keyed
+on.
+
+A write can leave a file's metadata exactly as it was recorded when it lands within the clock's granularity of the
+recording. An observation taken less than `settle` seconds after the file's last change is therefore stored unsettled,
+and the next reconciliation hashes it again.
+
+`FileMetadata` is the one status query every metadata-first check builds on: the ledgers here and request capture
+(`engine_capture`) alike.
+"""
+
+from rust::std::fs import Metadata, metadata
+from rust::std::rc import Rc
+from rust::std::io import ErrorKind
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::time import SystemTime, UNIX_EPOCH
+from std.encoding.hex import hexlify, unhexlify
+from std.environ import get_optional, get_or
+from std.fs import Path
+from std.hash import sha256
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, items, text, tuple_items
+from publication import publish_binary
+from semantic_text import positioned_source
+from pub::incan_platform.trace import Operation
+from jec import begin, record
+from trace_adapter import reason, relay as relay_observations
+
+# How old a file's last change must be before its metadata can vouch for its bytes.
+pub const SETTLE_SECONDS: int = 2
+const OBSERVATION_LEDGER: bytes = b"obsled\x00"
+const NANOSECONDS: int = 1000000000
+# The file type bits of a mode (`S_IFMT`), and the types of a regular file and a directory.
+const FILE_TYPE: int = 61440
+const REGULAR_FILE: int = 32768
+const DIRECTORY: int = 16384
+
+
+@derive(Eq)
+pub model FileMetadata:
+    """
+    What the filesystem reports about a file or directory, following symbolic links: a change detector, never content
+    identity. Replacing a file changes its inode; rewriting it in place changes its status change time even when the
+    modification time is put back.
+    """
+
+    pub device: int
+    pub inode: int
+    pub size: int
+    # The file type and permission bits.
+    pub mode: int
+    # The nanosecond times since the Unix epoch of its last modification and its last status change.
+    pub modified_ns: int
+    pub changed_ns: int
+
+    pub def stamp(self) -> str:
+        """The metadata as one comparable text, as ledgers and stamps record it."""
+        modified = f"{self.modified_ns // NANOSECONDS}.{self.modified_ns % NANOSECONDS}"
+        changed = f"{self.changed_ns // NANOSECONDS}.{self.changed_ns % NANOSECONDS}"
+        return f"{self.device}:{self.inode}:{self.size}:{self.mode}:{modified}:{changed}"
+
+    pub def newest_second(self) -> int:
+        """The whole second of its latest modification or status change."""
+        modified = self.modified_ns // NANOSECONDS
+        changed = self.changed_ns // NANOSECONDS
+        if changed > modified:
+            return changed
+        return modified
+
+    pub def settled(self, settle: int) -> bool:
+        """Whether its last change is at least `settle` seconds old, so these metadata can vouch for its bytes."""
+        return settled_since(self.newest_second(), settle)
+
+    pub def settled_for_capture(self, settle: int) -> bool:
+        """Require an observation after the timestamp tick when status changes have whole-second precision."""
+        if settle < SETTLE_SECONDS and self.changed_ns % NANOSECONDS == 0:
+            return self.settled(SETTLE_SECONDS)
+        return self.settled(settle)
+
+    pub def is_file(self) -> bool:
+        """Whether it describes a regular file."""
+        return (self.mode & FILE_TYPE) == REGULAR_FILE
+
+    pub def is_directory(self) -> bool:
+        """Whether it describes a directory."""
+        return (self.mode & FILE_TYPE) == DIRECTORY
+
+
+pub model Children:
+    """A directory's files of one kind and its subdirectories worth entering, by name and sorted."""
+
+    pub files: list[str]
+    pub directories: list[str]
+    # How many children had their type checked: each check is a status query.
+    pub checked: int = 0
+
+
+pub model Observation:
+    """The metadata a file or directory had when it was observed."""
+
+    pub stamp: str
+    # The second of its latest modification or status change.
+    pub newest: int
+
+
+pub model SourceReading:
+    """An editable source read once for this request, with both identities its consumers need."""
+
+    pub text: str
+    pub raw_digest: str
+    pub positioned_digest: str
+    pub comments: str = ""
+
+
+pub def source_reading(text: str, raw_digest: str, retain_comments: bool = false) -> SourceReading:
+    """Keep the raw and positioned identities and collect comments for a durable request projection."""
+    positioned, comments = positioned_source(text, retain_comments)
+    mut digest = raw_digest
+    if positioned != text:
+        digest = hexlify(sha256.digest(positioned.encode("utf-8")))
+    return SourceReading(text=text, raw_digest=raw_digest, positioned_digest=digest, comments=comments)
+
+
+model FileEntry:
+    """
+    A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled. `code` is
+    the digest of the file's text without comments, every position kept, once something asked for it.
+    """
+
+    stamp: str
+    digest: str
+    code: str = ""
+
+
+model DirectoryEntry:
+    """A directory's metadata when it was last listed, with the Incan sources and the subdirectories it held."""
+
+    stamp: str
+    files: list[str]
+    directories: list[str]
+
+
+pub model Ledger:
+    """The retained observations of one consumer, saved beside it and reconciled by each pass that asks for digests."""
+
+    pub location: Path
+    pub settle: int
+    # Which files a listing keeps: those whose names end with this, every file when it is empty.
+    pub extension: str = ".incn"
+    # A records request already owns these readings and validates their observations before publication.
+    pub readings: Option[Rc[Dict[str, SourceReading]]] = None
+    # Files hashed and directories listed since the ledger was loaded: the work reconciliation could not avoid.
+    pub hashed: int = 0
+    pub listed: int = 0
+    changed: bool = false
+    files: Dict[str, FileEntry] = {}
+    directories: Dict[str, DirectoryEntry] = {}
+
+    pub def digest(mut self, path: Path) -> Result[str, str]:
+        """The digest of `path`'s bytes, read only when its metadata differs from the retained observation."""
+        if let Some(readings) = self.readings:
+            captured = readings.as_ref()
+            if path.0 in captured:
+                return Ok(captured[path.0].raw_digest)
+        observed = observe(path)?
+        if path.0 in self.files and self.files[path.0].stamp == observed.stamp:
+            return Ok(self.files[path.0].digest)
+        trace(f"hashing {path.0}")
+        content = file_digest(path)?
+        self.hashed += 1
+        self.changed = true
+        self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content)
+        return Ok(content)
+
+    pub def code_digest(mut self, path: Path) -> Result[str, str]:
+        """
+        The digest of `path`'s text without its comments, every line and column of code kept; read only when its
+        metadata differs from the retained observation or no code digest was retained. A comment edit that moves no
+        code leaves it unchanged.
+        """
+        if let Some(readings) = self.readings:
+            captured = readings.as_ref()
+            if path.0 in captured:
+                return Ok(captured[path.0].positioned_digest)
+        observed = observe(path)?
+        if path.0 in self.files and self.files[path.0].stamp == observed.stamp and self.files[path.0].code != "":
+            return Ok(self.files[path.0].code)
+        trace(f"hashing {path.0}")
+        raw = read_file_bytes(path)?
+        clock = begin()
+        content = hexlify(sha256.digest(raw))
+        record(Operation.FileHash, path.0, clock, len(raw))
+        mut code = content
+        match raw.decode("utf-8", "strict"):
+            Ok(text) => code = source_reading(text, content).positioned_digest
+            Err(_) => pass
+        self.hashed += 1
+        self.changed = true
+        self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content, code=code)
+        return Ok(code)
+
+    pub def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
+        """
+        The files under `root` that this ledger keeps (Incan sources unless its extension says otherwise), sorted.
+
+        Only directories whose metadata changed are listed again. The compiler's own collection rules exclude
+        hidden directories, build output, vendored packages and nested projects. A child can gain or lose its own
+        manifest while its parent's directory listing stays unchanged, so check the boundary as it is reached.
+        """
+        mut found: list[str] = []
+        mut pending = [root]
+        mut index = 0
+        while index < len(pending):
+            directory = pending[index]
+            index += 1
+            if index > 1 and not entered(directory):
+                continue
+            entry = self.listing(directory)?
+            for name in entry.files:
+                found.append(directory.joinpath(name).0)
+            if recursive:
+                for name in entry.directories:
+                    pending.append(directory.joinpath(name))
+        return Ok(sorted(found))
+
+    def listing(mut self, directory: Path) -> Result[DirectoryEntry, str]:
+        """
+        A directory's retained file and directory names, listed again only when its metadata changed.
+
+        1. An unchanged directory keeps the listing it was retained with.
+        2. A changed one is listed for file and candidate directory names. Boundary checks happen while walking.
+        3. The new listing is retained.
+        """
+        # 1. A directory whose metadata is as recorded is not listed again.
+        observed = observe(directory)?
+        if directory.0 in self.directories and self.directories[directory.0].stamp == observed.stamp:
+            return Ok(self.directories[directory.0])
+        # 2. Names are stable under this directory's metadata, independently of each child's manifest.
+        found = children(directory, self.extension, include_nested=true)?
+        # 3. The new listing is kept under the metadata it was taken at, and counts as work the pass could not avoid.
+        entry = DirectoryEntry(stamp=retained(observed, self.settle), files=found.files, directories=found.directories)
+        trace(f"listing {directory.0}")
+        self.listed += 1
+        self.changed = true
+        self.directories[directory.0] = entry
+        return Ok(entry)
+
+    pub def read(mut self) -> Result[None, str]:
+        """
+        Take the rows of the saved document; any malformed row refuses the whole document.
+
+        1. The document is a ledger of this version, for the files this ledger keeps.
+        2. Each file row and each directory row is read in full.
+        """
+        # 1. Only a ledger of this version, for the same kind of files, can vouch for the files it names.
+        encoded = self.location.read_bytes().map_err((error) => error.message())?
+        fields = decode_graph_row(encoded, OBSERVATION_LEDGER, ledger_description(), 3)?
+        if text(fields[1].value)? != self.extension:
+            return Err("observation ledger selects a different source extension")
+        # Stage both inventories before replacing any part of the old state.
+        mut directories: Dict[str, DirectoryEntry] = {}
+        mut files: Dict[str, FileEntry] = {}
+        for row in items(fields[0].value)?:
+            parts = tuple_items(row, 4)?
+            path = text(parts[0])?
+            if path in directories:
+                return Err("duplicate observed directory")
+            directories[path] = DirectoryEntry(stamp=text(parts[1])?, files=read_names(parts[2])?, directories=read_names(parts[3])?)
+        for row in items(fields[2].value)?:
+            parts = tuple_items(row, 4)?
+            path = text(parts[0])?
+            if path in files or path in directories:
+                return Err("duplicate observed file")
+            files[path] = FileEntry(stamp=text(parts[1])?, digest=read_digest(parts[2], false)?, code=read_digest(parts[3], true)?)
+        self.directories = directories
+        self.files = files
+        return Ok(None)
+
+    pub def save(mut self) -> Result[None, str]:
+        """
+        Publish the ledger atomically when this pass changed it, leaving out what no longer exists.
+
+        1. A ledger no pass changed is not rewritten.
+        2. The document keeps the rows of the files and directories that still exist.
+        3. It is published beside the ledger's directory, which is created when it is missing.
+        """
+        # 1. A pass that learned nothing leaves the saved ledger untouched.
+        if not self.changed:
+            return Ok(None)
+        # 2. The ledger forgets files and directories that no longer exist.
+        encoded = self.encode()?
+        # 3. A reader sees the old ledger or the new one, never half of either.
+        parent = self.location.parent()
+        parent.mkdir(true, true).map_err((error) => f"{parent.0}: {error.message()}")?
+        publish_binary(self.location, encoded)?
+        self.changed = false
+        return Ok(None)
+
+    def encode(self) -> Result[bytes, str]:
+        """Encode observations in path order, excluding removed entries. An empty code digest means unrequested."""
+        mut files: list[Value] = []
+        for path in sorted([key for key in self.files.keys()]):
+            if Path(path).is_file():
+                file = self.files[path]
+                raw = unhexlify(file.digest).map_err((error) => error.message())?
+                code = unhexlify(file.code).map_err((error) => error.message())?
+                files.append(Value.Tuple([Value.Text(path), Value.Text(file.stamp), Value.Binary(raw), Value.Binary(code)]))
+        mut directories: list[Value] = []
+        for path in sorted([key for key in self.directories.keys()]):
+            if Path(path).is_dir():
+                directory = self.directories[path]
+                directories.append(Value.Tuple([Value.Text(path), Value.Text(directory.stamp),
+                    Value.List([Value.Text(name) for name in directory.files]), Value.List([Value.Text(name) for name in directory.directories])]))
+        return encode_graph_row(OBSERVATION_LEDGER, ledger_description(), [
+            required_value(b"dirs__", Value.List(directories)), required_value(b"extend", Value.Text(self.extension)),
+            required_value(b"files_", Value.List(files)),
+        ])
+
+
+pub def entered(directory: Path) -> bool:
+    """
+    Whether a walk of a project's sources enters a directory. It never enters a hidden directory, build output or
+    vendored packages (see `skipped_directory`), and never a nested project, a directory with its own `loaf.toml`:
+    that project's sources are its own, compiled against its own dependencies, as the compiler's collection has it.
+    """
+    return not skipped_directory(directory.name()) and not directory.joinpath("loaf.toml").is_file()
+
+
+pub def skipped_directory(name: str) -> bool:
+    """Hidden directories, build output (`target`) and vendored packages (`node_modules`) are not entered."""
+    return name.startswith(".") or name == "target" or name == "node_modules"
+
+
+pub def children(directory: Path, extension: str, include_nested: bool = false) -> Result[Children, str]:
+    """
+    List a directory once: the files whose names end with `extension` (every file when it is empty) and the
+    subdirectories worth entering (see `entered`). Membership capture may ask for candidate directory names so it can
+    check for a nested project at the child even when its parent's name listing is unchanged.
+    """
+    mut files: list[str] = []
+    mut directories: list[str] = []
+    mut checked = 0
+    for child in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        name = child.name()
+        checked += 1
+        if child.is_dir():
+            if include_nested:
+                if not skipped_directory(name):
+                    directories.append(name)
+            else:
+                checked += 1
+                if entered(child):
+                    directories.append(name)
+            continue
+        checked += 1
+        if child.is_file() and name.endswith(extension):
+            files.append(name)
+    return Ok(Children(files=sorted(files), directories=sorted(directories), checked=checked))
+
+
+def ledger_description() -> Description:
+    """One local observation cache. Files bind both content digests, and directories retain their immediate children."""
+    return model_description(OBSERVATION_LEDGER, "incan.oven.observations/3", [
+        ModelField(identity=b"dirs__", name="directories", storage="list<tuple<string,string,list<string>,list<string>>>"),
+        ModelField(identity=b"extend", name="extension", storage="string"),
+        ModelField(identity=b"files_", name="files", storage="list<tuple<string,string,binary,binary>>"),
+    ])
+
+
+def read_names(value: Value) -> Result[list[str], str]:
+    mut names: list[str] = []
+    for item in items(value)?:
+        names.append(text(item)?)
+    return Ok(names)
+
+
+def read_digest(value: Value, optional: bool) -> Result[str, str]:
+    match value:
+        Value.Binary(raw) =>
+            if len(raw) == 32 or (optional and len(raw) == 0):
+                return Ok(hexlify(raw))
+        _ => pass
+    return Err("invalid digest in observation ledger")
+
+
+pub def file_digest(path: Path) -> Result[str, str]:
+    """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
+    content = read_file_bytes(path)?
+    clock = begin()
+    result = hexlify(sha256.digest(content))
+    record(Operation.FileHash, path.0, clock, len(content))
+    return Ok(result)
+
+
+def read_file_bytes(path: Path) -> Result[bytes, str]:
+    """Read bytes without a separate text-mode reopen, and attribute the actual file read."""
+    clock = begin()
+    content = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
+    record(Operation.FileRead, path.0, clock, len(content))
+    return Ok(content)
+
+
+pub def observe(path: Path) -> Result[Observation, str]:
+    """A file or directory's identity as the filesystem reports it, following symbolic links."""
+    prefix = f"{path.0}: "
+    clock = begin()
+    found = metadata(path.0)
+    record(Operation.FileStat, path.0, clock)
+    info = described(found.map_err((error) => f"{prefix}{error}")?)
+    WATCHED.note(path.0, Some(info))
+    return Ok(Observation(stamp=info.stamp(), newest=info.newest_second()))
+
+
+pub def file_metadata(path: Path, marker_only: bool = false) -> Result[Option[FileMetadata], str]:
+    """Observe file metadata once, optionally marking an observation used only to choose a display anchor."""
+    clock = begin()
+    found = metadata(path.0)
+    record(Operation.FileStat, path.0, clock)
+    match found:
+        Ok(info) =>
+            described_info = described(info)
+            WATCHED.note(path.0, Some(described_info), marker_only)
+            return Ok(Some(described_info))
+        Err(error) =>
+            if error.kind() == ErrorKind.NotFound:
+                WATCHED.note(path.0, None, marker_only)
+                return Ok(None)
+            return Err(f"{path.0}: {error}")
+
+
+model Watched:
+    """
+    The files and directories this process observed while a request watched its inputs, each with the metadata it
+    had when first observed (empty when nothing was there), and the environment variables it read, each by an
+    observation of its value.
+    """
+
+    active: bool = false
+    seen: Dict[str, str] = {}
+    anchor_markers: Dict[str, bool] = {}
+    variables: Dict[str, str] = {}
+    fresh: list[str] = []
+
+    def start(mut self) -> None:
+        """Watch from now, forgetting any earlier watch."""
+        self.active = true
+        self.seen = {}
+        self.anchor_markers = {}
+        self.variables = {}
+        self.fresh = []
+
+    def watching(self) -> bool:
+        """Whether a request is watching its inputs."""
+        return self.active
+
+    def note(mut self, path: str, info: Option[FileMetadata], marker_only: bool = false) -> None:
+        """
+        Remember a path's first observation while watching: its metadata, empty when nothing was there, and whether it
+        was a file changed too recently for its metadata to vouch for its bytes. Any preparation use makes the
+        observation required, even when the same path also serves as an anchor marker.
+        """
+        if not self.active:
+            return
+        if path in self.seen:
+            if not marker_only and path in self.anchor_markers:
+                self.anchor_markers[path] = false
+            return
+        if marker_only:
+            self.anchor_markers[path] = true
+        match info:
+            Some(found) =>
+                self.seen[path] = found.stamp()
+                if found.is_file() and not found.settled(SETTLE_SECONDS):
+                    self.fresh.append(path)
+            None => self.seen[path] = ""
+
+    def note_variable(mut self, name: str, observed: str) -> None:
+        """Remember an environment variable's first observation while watching."""
+        if self.active and name not in self.variables:
+            self.variables[name] = observed
+
+    def finish(mut self) -> WatchedInputs:
+        """Stop watching and return what was observed."""
+        self.active = false
+        found = WatchedInputs(
+            stamps={path: self.seen[path] for path in self.seen.keys()},
+            variables={name: self.variables[name] for name in self.variables.keys()},
+            fresh=[path for path in self.fresh],
+            anchor_markers=[path for path in self.anchor_markers.keys() if self.anchor_markers[path]],
+        )
+        self.seen = {}
+        self.anchor_markers = {}
+        self.variables = {}
+        self.fresh = []
+        return found
+
+
+pub model WatchedInputs:
+    """
+    The paths a watch observed, each with its first metadata (empty when nothing was there), and the environment
+    variables, each with an observation of its value that names no value.
+    """
+
+    pub stamps: Dict[str, str]
+    pub variables: Dict[str, str] = {}
+    # The observed files whose last change was too recent for their metadata to vouch for their bytes.
+    pub fresh: list[str] = []
+    # These paths were observed only to choose a display anchor, even after ordinary preparation completed.
+    pub anchor_markers: list[str] = []
+
+
+static WATCHED: Watched = Watched()
+
+
+pub def watch_inputs() -> None:
+    """Record every file and directory observed from now on, until `watched_inputs`."""
+    WATCHED.start()
+
+
+pub def watched_inputs() -> WatchedInputs:
+    """End the watch: each path observed since `watch_inputs`, with its first metadata (empty when absent)."""
+    return WATCHED.finish()
+
+
+pub def note_directory(path: Path) -> Result[None, str]:
+    """Observe a directory whose entries a reading selected, while a watch is on; otherwise do nothing."""
+    if WATCHED.watching():
+        _ = file_metadata(path)?
+    return Ok(None)
+
+
+pub def described(info: Metadata) -> FileMetadata:
+    """The fields of the operating system's status record that detect a change."""
+    return FileMetadata(
+        device=int(info.dev()),
+        inode=int(info.ino()),
+        size=int(info.size()),
+        mode=int(info.mode()),
+        modified_ns=int(info.mtime()) * NANOSECONDS + int(info.mtime_nsec()),
+        changed_ns=int(info.ctime()) * NANOSECONDS + int(info.ctime_nsec()),
+    )
+
+
+def retained(observed: Observation, settle: int) -> str:
+    """The stamp to retain: the observed one once it is old enough to trust, else an empty one that never matches."""
+    if settled_since(observed.newest, settle):
+        return observed.stamp
+    return ""
+
+
+pub def settled_since(newest: int, settle: int) -> bool:
+    """Whether a change in the whole second `newest` is at least `settle` seconds old; an unreadable clock says no."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => return int(now.as_secs()) >= newest + settle
+        Err(_) => return false
+
+
+pub def load_ledger(location: Path, settle: int, extension: str = ".incn") -> Ledger:
+    """The ledger saved at `location`; a missing or unreadable one is an empty ledger, since it only saves work."""
+    empty = Ledger(location=location, settle=settle, extension=extension)
+    if not location.is_file():
+        return empty
+    mut loaded = empty
+    match loaded.read():
+        Ok(_) => return loaded
+        Err(_) => return empty
+
+
+pub def trace_boundary(boundary: str) -> None:
+    """Record an opt-in preparation boundary on the launch clock; ordinary invocations read no clock here."""
+    if get_optional("INCAN_NATIVE_TIMING") is None or not reasoning_traced():
+        return
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => trace(f"prepare epoch={now.as_secs_f64()} boundary={boundary}")
+        Err(_) => trace(f"prepare epoch=unavailable boundary={boundary}")
+
+
+pub def trace_launch(program: str) -> None:
+    """Record a pre-launch Unix timestamp only when tracing is enabled, naming an unavailable clock explicitly."""
+    if not reasoning_traced():
+        return
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => trace(f"launch epoch={now.as_secs_f64()} program={program}")
+        Err(_) => trace(f"launch epoch=unavailable program={program}")
+
+
+pub def trace(message: str) -> None:
+    """Record build reasoning through platform observations and the requested compatibility export."""
+    reason(message)
+
+
+pub def relay(lines: list[str]) -> None:
+    """Relay owner reasoning through the same observation adapter as local events."""
+    relay_observations(lines)
+
+
+pub def now_seconds() -> int:
+    """The current time in whole seconds since the Unix epoch."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => return int(now.as_secs())
+        Err(_) => return 0
+
+
+pub def note_variable(name: str, observed: str) -> None:
+    """Record, while a watch is on, an environment variable a request read, by an observation of its value."""
+    WATCHED.note_variable(name, observed)
+
+
+def reasoning_traced() -> bool:
+    """Whether this command records Oven's reasoning: the channel is on, or `OVEN_TRACE` for one more release."""
+    return get_or("INCAN_ENGINE_TRACE", "") != "" or get_or("OVEN_TRACE", "") != ""

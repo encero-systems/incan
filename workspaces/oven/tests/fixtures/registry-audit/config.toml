@@ -1,0 +1,6 @@
+[registries.fixture]
+kind = "loaf"
+id = "sha256:8822a599af5b58bc7b2e535cfe9ef02ba5389c510ffb4c736f550c20857454cd"
+root-keys = ["ed25519:MCowBQYDK2VwAyEAicjFZiGPQnetbLV1Hilna6yqtwJ/cku/clpqF3QPLT0="]
+endpoints = ["https://audit-fixture.invalid"]
+trust = "require-signature"

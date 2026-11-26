@@ -1,0 +1,11 @@
+"""Tests that omit the defaults of the project's shared library."""
+
+from helpers import has, size
+
+
+def test_a_default_reading_its_module_static_is_omitted() -> None:
+    assert has()
+
+
+def test_a_default_reading_the_static_through_a_call_is_omitted() -> None:
+    assert size() == 2

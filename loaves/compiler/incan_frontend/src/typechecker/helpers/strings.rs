@@ -10,9 +10,13 @@ use incan_lang::lang::types::stringlike::StringLikeId;
 /// This returns `true` for:
 /// - `str` (runtime string)
 /// - `FrozenStr` (const-eval / frozen string)
+/// - shared native `&String` and `&str` views, without changing their checked storage
 pub fn is_str_like(ty: &ResolvedType) -> bool {
     matches!(ty, ResolvedType::Str | ResolvedType::FrozenStr)
         || matches!(ty, ResolvedType::Named(name) if stringlike_type_id(name.as_str()) == Some(StringLikeId::FrozenStr))
+        || matches!(ty, ResolvedType::Ref(inner)
+            if matches!(inner.as_ref(), ResolvedType::Str)
+                || matches!(inner.as_ref(), ResolvedType::RustPath(path) if path == "str"))
 }
 
 /// Check whether a resolved type is `FrozenStr`.
@@ -40,8 +44,7 @@ pub fn frozen_bytes_ty() -> ResolvedType {
 /// Return one canonical string-method identity and its resolved result type, if the receiver admits it.
 ///
 /// Returning the identity beside the type lets a later compiler stage retain the typechecker's selected operation
-/// without resolving the source spelling a second time. Callers that only need the result type should use
-/// [`string_method_return`].
+/// without resolving the source spelling a second time.
 pub fn string_method_identity_and_return(method: &str, include_len: bool) -> Option<(StringMethodId, ResolvedType)> {
     let id = string_methods::from_str(method)?;
     let result = string_method_return_for_id(id, include_len)?;
@@ -61,11 +64,6 @@ pub fn runtime_string_method_identity_and_return(method: &str) -> Option<(String
         string_method_return_for_id(id, false)?
     };
     Some((id, result))
-}
-
-/// Return the resolved type for a supported string method, if known.
-pub fn string_method_return(method: &str, include_len: bool) -> Option<ResolvedType> {
-    string_method_identity_and_return(method, include_len).map(|(_, result)| result)
 }
 
 /// Return the resolved type associated with one already-resolved string-method identity.

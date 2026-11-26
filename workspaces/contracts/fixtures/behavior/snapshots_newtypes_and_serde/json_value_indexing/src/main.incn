@@ -1,0 +1,128 @@
+# behavior: JSON indexing and pointers preserve missing/error results and independent snapshots without copying intermediate trees (#2256)
+# expect-stdout:
+#   found
+#   missing
+#   found
+#   missing
+
+from std.json import JsonValue, parse
+from rust::std::env import current_exe, var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from rust::memory_probe import peak_resident_bytes
+
+
+pub def by_name(data: JsonValue) -> Option[JsonValue]:
+    return data["name"]
+
+
+pub def by_index(data: JsonValue) -> Option[JsonValue]:
+    return data[0]
+
+
+def report(value: Option[JsonValue]) -> None:
+    match value:
+        Some(_) => println("found")
+        None => println("missing")
+
+
+def main() -> Result[None, str]:
+    """1. Measure a fresh child. 2. Keep indexing checks. 3. Check pointer ownership and memory."""
+    # 1. Compare allocation and traversal in separate fresh processes.
+    if let Ok(mode) = var("INCAN_JSON_MEMORY_CHILD"):
+        memory_child(mode)?
+        println(peak_resident_bytes().map_err((error) => str(error))?)
+        return Ok(None)
+
+    # 2. Preserve the original key and position output.
+    match parse("{\"name\": \"ada\"}"):
+        Ok(object) =>
+            report(by_name(object))
+            report(by_index(object))
+        Err(_) => println("error")
+    match parse("[1]"):
+        Ok(array) =>
+            report(by_index(array))
+            report(by_name(array))
+        Err(_) => println("error")
+    # 3. Retain snapshots across mutation and reject invalid pointer syntax.
+    pointer_controls()?
+    baseline = measure("baseline")?
+    traversed = measure("pointer")?
+    assert traversed <= baseline + baseline // 4 + 16 * 1024 * 1024, f"{traversed} bytes for {baseline} bytes"
+    return Ok(None)
+
+
+def pointer_controls() -> Result[None, str]:
+    """Check empty, escaped, missing, malformed, scalar and array paths and result independence."""
+    mut original = parse("{\"a/b\":{\"~\":[7]},\"\":9}").map_err((error) => error.message())?
+    selected = original.require_pointer("/a~1b/~0").map_err((error) => error.message())?
+    entire = original.require_pointer("").map_err((error) => error.message())?
+    assert original.require_pointer("/").map_err((error) => error.message())?.as_int() == Some(9)
+    assert original.require_pointer("/a~1b/~0/0").map_err((error) => error.message())?.as_int() == Some(7)
+    for path in ["/missing", "/a~1b/~0/01", "/a~1b/~0/-", "/a~1b/~0/0/value"]:
+        match original.pointer(path).map_err((error) => error.message())?:
+            None => pass
+            Some(_) =>
+                assert false, "missing pointer returned a value"
+    for path in ["bad", "/~2", "/~"]:
+        match original.pointer(path):
+            Err(_) => pass
+            Ok(_) =>
+                assert false, "malformed pointer succeeded"
+    original.set("a/b", JsonValue.null()).map_err((error) => error.message())?
+    assert selected.require_pointer("/0").map_err((error) => error.message())?.as_int() == Some(7)
+    assert entire.require_pointer("/a~1b/~0/0").map_err((error) => error.message())?.as_int() == Some(7)
+    return Ok(None)
+
+
+def memory_child(mode: str) -> Result[None, str]:
+    """Keep a large deep document observable while repeatedly selecting its scalar leaf."""
+    owner = large_document()?
+    assert owner.is_object()
+    if mode == "pointer":
+        path = repeated("/child", 12) + "/value"
+        for _ in range(8):
+            selected = owner.require_pointer(path).map_err((error) => error.message())?
+            assert selected.as_int() == Some(7)
+    assert owner.is_object()
+    return Ok(None)
+
+
+def large_document() -> Result[JsonValue, str]:
+    """Construct the JSON source once without retaining intermediate growing strings."""
+    mut source = RustString.with_capacity(33555000)
+    for _ in range(12):
+        source.push_str("{\"child\":")
+    source.push_str("{\"payload\":\"")
+    block = repeated("x", 1024)
+    for _ in range(32768):
+        source.push_str(block)
+    source.push_str("\",\"value\":7}")
+    for _ in range(12):
+        source.push_str("}")
+    return parse(str(source)).map_err((error) => error.message())
+
+
+def measure(mode: str) -> Result[int, str]:
+    """Return the resident high-water mark from a successful fresh child."""
+    executable = current_exe().map_err((error) => str(error))?
+    output = Command.new(executable).env("INCAN_JSON_MEMORY_CHILD", mode).output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(f"JSON memory child failed: {mode}")
+    text = RustString.from_utf8(output.stdout).map_err((error) => str(error))?
+    return Ok(int(text.strip()))
+
+
+def repeated(text: str, count: int) -> str:
+    """Build a large string with logarithmically many concatenations."""
+    mut output = ""
+    mut piece = text
+    mut remaining = count
+    while remaining > 0:
+        if remaining % 2 == 1:
+            output += piece
+        remaining = remaining // 2
+        if remaining > 0:
+            piece += piece
+    return output

@@ -1,0 +1,34 @@
+"""A consumer wrapping members into a dependency's Option and Result unions."""
+
+from pub::unions.options import Choice, Holder, Kind, count_present, describe, result_kind
+
+
+def pick() -> Option[Choice]:
+    return Some("picked")
+
+
+def choose(flag: bool) -> Option[Choice]:
+    choice: Option[Choice] = match flag:
+        true => Some("arm")
+        false => None
+    return choice
+
+
+pub def run_option_unions() -> None:
+    """Wrap each member into the union the dependency declares at every destination."""
+    println(describe(Some("plain")))
+    println(describe(Some(Kind("k"))))
+    println(describe(None))
+    println(count_present([Some("a"), None, Some(Kind("b"))]))
+    holder = Holder(value=Some("held"))
+    println(describe(holder.value))
+    chosen: Option[Choice] = Some(Kind("c"))
+    println(describe(chosen))
+    println(describe(pick()))
+    println(result_kind(Ok("fine")))
+    println(result_kind(Err("bad")))
+    println(describe(choose(true)))
+    println(describe(choose(false)))
+    mut reassigned = Holder(value=None)
+    reassigned.value = Some("assigned")
+    println(describe(reassigned.value))

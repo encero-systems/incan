@@ -1,0 +1,268 @@
+"""Bakery unit records: their codec and store keys, and the claim and staging paths every bakery module names."""
+
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.fs import Path
+from std.json import JsonValue
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, field_value, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as integer_field, items, number, text, tuple_items
+from files import json_text
+from json_fields import required_items, required_text, string_value
+from pub::incan_platform.store.files import StoreError
+
+const UNIT_ROW: bytes = b"bakuni\x00"
+const UNIT_SCHEMA: str = "incan.bakery.unit/1"
+const VARIANTS_ROW: bytes = b"bakvar\x00"
+
+
+pub model FactFile:
+    """One payload file of a unit: where it sits inside the unit, the digest it is stored under, its size and mode."""
+
+    pub path: str
+    pub digest: str
+    pub size: int
+    pub program: bool
+
+
+pub model Fact:
+    """One baked unit: its identity, kind and name, the identities it reaches, and its payload files."""
+
+    pub identity: str
+    pub kind: str
+    pub name: str
+    pub reaches: list[str]
+    pub files: list[FactFile]
+
+
+pub model UnitVariant:
+    """One exact unit fact and the original bytes kept under the unit's current record."""
+
+    pub fact: Fact
+    pub encoded: bytes
+
+
+pub def record_key(identity: str) -> str:
+    """The full store key of a unit record: its complete unit identity."""
+    return f"incan.bakery.unit\t{identity}"
+
+
+pub def store_failure(error: StoreError) -> str:
+    """A store error as an Oven message."""
+    return error.message()
+
+
+def unit_description() -> Description:
+    """Name the unit schema and distinguish content fields from diagnostic provenance."""
+    return model_description(UNIT_ROW, "incan.bakery.unit/2", [
+        ModelField(identity=b"files_", name="files", storage="list<tuple<string,string,i64,boolean>>"),
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"kind__", name="kind", storage="string"),
+        ModelField(identity=b"name__", name="name", storage="string"),
+        ModelField(identity=b"proven", name="provenance", storage="string", canonical=false),
+        ModelField(identity=b"reache", name="reaches", storage="list<string>"),
+    ])
+
+
+pub def encode_fact(fact: Fact, provenance: str) -> Result[bytes, str]:
+    """Store a unit's exact members and reachability edges as one typed Crumb."""
+    mut files: list[Value] = []
+    for file in fact.files:
+        files.append(Value.Tuple([Value.Text(file.path), Value.Text(file.digest), integer_field(file.size), Value.Boolean(file.program)]))
+    return encode_graph_row(UNIT_ROW, unit_description(), [
+        required_value(b"files_", Value.List(files)),
+        required_value(b"ident_", Value.Text(fact.identity)),
+        required_value(b"kind__", Value.Text(fact.kind)),
+        required_value(b"name__", Value.Text(fact.name)),
+        field_value(b"proven", Value.Text(provenance), false),
+        required_value(b"reache", Value.List([Value.Text(identity) for identity in fact.reaches])),
+    ])
+
+
+def read_unit(encoded: bytes) -> Result[Fact, str]:
+    """Recover the member files and edges from an authenticated unit row."""
+    fields = decode_graph_row(encoded, UNIT_ROW, unit_description(), 6)?
+    mut files: list[FactFile] = []
+    for entry in items(fields[0].value)?:
+        parts = tuple_items(entry, 4)?
+        program = match parts[3]:
+            Value.Boolean(flag) => flag
+            _ => return Err("invalid bakery member mode")
+        files.append(FactFile(path=text(parts[0])?, digest=text(parts[1])?, size=number(parts[2])?, program=program))
+    mut reaches: list[str] = []
+    for member in items(fields[5].value)?:
+        reaches.append(text(member)?)
+    return Ok(Fact(identity=text(fields[1].value)?, kind=text(fields[2].value)?, name=text(fields[3].value)?, reaches=reaches, files=files))
+
+
+pub def layout_fact_text(fact: Fact, provenance: str) -> Result[str, str]:
+    """Reproduce the original immutable library layout fingerprint and its embedded snapshot."""
+    mut files: list[JsonValue] = []
+    for file in fact.files:
+        files.append(
+            JsonValue.object(
+                {"path": JsonValue.string(file.path), "sha256": JsonValue.string(file.digest), "size": JsonValue.int(
+                    file.size,
+                ), "program": JsonValue.bool(file.program)},
+            ),
+        )
+    document = JsonValue.object(
+        {"schema": JsonValue.string(UNIT_SCHEMA), "identity": JsonValue.string(fact.identity), "kind": JsonValue.string(
+            fact.kind,
+        ), "name": JsonValue.string(fact.name), "reaches": JsonValue.array(
+            [JsonValue.string(item) for item in fact.reaches],
+        ), "payload": JsonValue.array(files), "provenance": JsonValue.string(provenance)},
+    )
+    return json_text(document)
+
+
+pub def decode_fact(value: bytes) -> Option[Fact]:
+    """A unit record, when `value` is one."""
+    if value[:4] == b"CRMB":
+        match read_unit(value):
+            Ok(fact) => return Some(fact)
+            Err(_) => return None
+    # Previously baked units and immutable library layouts retain their original snapshot.
+    match RustString.from_utf8(value):
+        Err(_) => return None
+        Ok(text) =>
+            match JsonValue.parse(str(text)):
+                Err(_) => return None
+                Ok(document) =>
+                    match fact_document(document):
+                        Ok(fact) => return Some(fact)
+                        Err(_) => return None
+
+
+def variants_description() -> Description:
+    """Describe the sorted original fact rows for a unit with conflicting executable payloads."""
+    return model_description(
+        VARIANTS_ROW,
+        "incan.bakery.unit-variants/1",
+        [ModelField(identity=b"rows__", name="records", storage="list<binary>")],
+    )
+
+
+pub def executable_member(fact: Fact) -> Option[FactFile]:
+    """Identify a standalone executable only when its primary staged file is unique."""
+    mut found: Option[FactFile] = None
+    for file in fact.files:
+        if file.program and "/" not in file.path:
+            if found is not None:
+                return None
+            found = Some(file)
+    return found
+
+
+pub def encode_unit_variants(variants: list[UnitVariant]) -> Result[bytes, str]:
+    """Keep a singleton's original encoding and retain complete fact rows for a conflict."""
+    if len(variants) == 1:
+        return Ok(variants[0].encoded)
+    return encode_graph_row(
+        VARIANTS_ROW,
+        variants_description(),
+        [required_value(b"rows__", Value.List([Value.Binary(row.encoded) for row in variants]))],
+    )
+
+
+pub def decode_unit_variants(value: bytes) -> Result[list[UnitVariant], str]:
+    """Read either an old unit fact or a canonical set of independently digest-pinned unit facts."""
+    if let Some(single) = decode_fact(value):
+        return Ok([UnitVariant(fact=single, encoded=value)])
+    fields = decode_graph_row(value, VARIANTS_ROW, variants_description(), 1).map_err((_) => "invalid unit record")?
+    records = items(fields[0].value)?
+    if len(records) < 2:
+        return Err("a unit variants record must contain at least two executable payloads")
+    mut variants: list[UnitVariant] = []
+    mut previous = ""
+    mut executable_name = ""
+    for item in records:
+        encoded = match item:
+            Value.Binary(row) => row
+            _ => return Err("invalid unit variant row")
+
+        fact = match decode_fact(encoded):
+            Some(found) => found
+            None => return Err("invalid unit variant fact")
+
+        executable = match executable_member(fact):
+            Some(found) => found
+            None => return Err("a unit variant must have one standalone executable")
+
+        if not canonical_payload_digest(executable.digest) or executable.digest <= previous:
+            return Err("unit variants must have distinct, ordered executable digests")
+        if len(variants) > 0:
+            first = variants[0].fact
+            if fact.identity != first.identity or fact.kind != first.kind or fact.name != first.name:
+                return Err("unit variant names another unit")
+            if executable.path != executable_name:
+                return Err("unit variant names another executable")
+        else:
+            executable_name = executable.path
+        previous = executable.digest
+        variants.append(UnitVariant(fact=fact, encoded=encoded))
+    return Ok(variants)
+
+
+def canonical_payload_digest(digest: str) -> bool:
+    """Recognize the exact hexadecimal digest a stored executable supplies."""
+    if len(digest) != 64:
+        return false
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return false
+    return true
+
+
+def fact_document(document: JsonValue) -> Result[Fact, str]:
+    """Read a decoded unit record; any missing field refuses it."""
+    if required_text(document, "schema")? != UNIT_SCHEMA:
+        return Err("another record schema")
+    mut files: list[FactFile] = []
+    for entry in required_items(document, "payload")?:
+        files.append(fact_file_entry(entry)?)
+    mut reaches: list[str] = []
+    for item in required_items(document, "reaches")?:
+        reaches.append(string_value(item)?)
+    return Ok(
+        Fact(
+            identity=required_text(document, "identity")?,
+            kind=required_text(document, "kind")?,
+            name=required_text(document, "name")?,
+            reaches=reaches,
+            files=files,
+        ),
+    )
+
+
+def fact_file_entry(entry: JsonValue) -> Result[FactFile, str]:
+    """One payload entry of a unit record."""
+    mut size = -1
+    match entry.get("size"):
+        Some(value) =>
+            match value.as_int():
+                Some(found) => size = found
+                None => return Err("size")
+        None => return Err("size")
+    mut program = false
+    match entry.get("program"):
+        Some(value) =>
+            match value.as_bool():
+                Some(found) => program = found
+                None => return Err("program")
+        None => return Err("program")
+    return Ok(
+        FactFile(path=required_text(entry, "path")?, digest=required_text(entry, "sha256")?, size=size, program=program),
+    )
+
+
+pub def claim_file(store: Path, identity: str) -> Path:
+    """The lock file whose exclusive lock is the claim of `identity`."""
+    return store.joinpath("claims").joinpath(hexlify(sha256.digest(record_key(identity).encode("utf-8"))))
+
+
+pub def staging_root(store: Path) -> Path:
+    """Where bakes in progress stage their files."""
+    return store.joinpath("staging")

@@ -1,0 +1,6 @@
+[project]
+name = "trace_keeps_console_test"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

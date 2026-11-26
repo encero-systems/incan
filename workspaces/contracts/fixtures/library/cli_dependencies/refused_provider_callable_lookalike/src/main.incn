@@ -1,0 +1,12 @@
+# behavior: an ordinary typed closure does not implement a different provider's same-named Callable1 trait
+# expect-exit: 1
+# expect-stderr-contains:
+#   Call to 'apply_custom' violates generic bound
+#   requires 'Callable1[Int, Int]' but got '(Int) -> Int'
+
+from pub::counterfeit import apply_custom
+
+
+def main() -> None:
+    operation: (int) -> int = (value) => value + 1
+    println(apply_custom(operation, 40))

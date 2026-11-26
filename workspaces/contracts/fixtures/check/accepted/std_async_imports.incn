@@ -1,0 +1,16 @@
+# behavior: std.async names check once they are imported
+# expect-accepted:
+
+"""Valid fixture: std.async imports are required"""
+
+from std.async import sleep, spawn, JoinHandle, Mutex
+
+async def work() -> int:
+    await sleep(0.1)
+    return 1
+
+def launch() -> JoinHandle[int]:
+    return spawn(work())
+
+def touch_lock(lock: Mutex[int]) -> None:
+    pass

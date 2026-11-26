@@ -1,0 +1,149 @@
+"""Replay published executable-fragment requirements from canonical dependency roots for the hello read census."""
+
+from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, decode_incan_symbol_identity, encode_incan_symbol_identity
+from rust::incan_semantics_core::executable_representation import DeclarationCoverage, ExecutableDeclaration, SurfaceIndex
+from std.fs import MappedView, Path
+from pub::incan_platform.store.index import view_digest
+from std.hash import sha256
+from std.encoding.hex import hexlify
+from std.json import JsonValue
+from json_fields import required_text
+
+
+pub model Surface:
+    """One independently opened artifact and its verified relative fragment address space."""
+
+    pub index: SurfaceIndex
+    pub payload: MappedView
+    pub sealed: bool
+    pub digest: str
+    pub prefix: int
+
+
+pub model BodyDemand:
+    """The requesting package authorizes private edges only within itself."""
+
+    pub identity: str
+    pub requester: str = ""
+    pub optional: bool = true
+
+
+pub def indexed_surface(row: JsonValue, directory: Path) -> Result[Surface, str]:
+    """Bind the inspected surface to the prepared unit, verify its digest and independently parse its header."""
+    path = Path(required_text(row, "path")?)
+    if path.parent().resolve().map_err((error) => error.message())?.0 != directory.resolve().map_err((error) => error.message())?.0:
+        return Err(f"body artifact outside its prepared Loaf directory: {path.0}")
+    mapped = path.map_read().map_err((error) => error.message())?
+    view = match mapped.view(0, mapped.len()):
+        Some(value) => value
+        None => return Err(f"body mapping has no range: {path.0}")
+    digest = required_text(row, "digest")?
+    mut sealed = false
+    match row.get("proof"):
+        Some(proof) => sealed = proof.as_str().unwrap_or("") == "sealed-range"
+        None => pass
+    mut version = 0
+    while version < 5:
+        byte = match view.read_u8(version):
+            Some(value) => int(value)
+            None => return Err("short executable version prefix")
+        version += 1
+        if byte < 128:
+            break
+    length = match view.read_u64_le(version):
+        Some(value) => int(value)
+        None => return Err("short executable index length")
+    prefix = version + 8 + length
+    header = match view.slice(0, prefix):
+        Some(value) => value
+        None => return Err("executable header extends beyond file")
+    if sealed:
+        if hexlify(view_digest(header)) != required_text(row, "header_digest")?:
+            return Err(f"header differs from the sealed package: {path.0}")
+    elif hexlify(view_digest(view)) != digest:
+        return Err(f"sidecar differs from the legacy package: {path.0}")
+    encoded = match header.slice(version + 8, length):
+        Some(part) => part.to_bytes()
+        None => return Err("invalid executable index range")
+    payload = match view.slice(prefix, view.len() - prefix):
+        Some(part) => part
+        None => return Err("invalid executable payload offset")
+    size: u64 = payload.len().wrapping_resize()
+    index = SurfaceIndex.decode(encoded, size).map_err((error) => str(error))?
+    if index.library != required_text(row, "loaf")?:
+        return Err(f"executable index names another package: {path.0}")
+    return Ok(Surface(index=index, payload=payload, sealed=sealed, digest=digest, prefix=prefix))
+
+
+pub def range_key(digest: str, identity: str, offset: int, absolute: int) -> str:
+    """Relative and absolute positions identify the selected range in these authenticated bytes."""
+    return f"{digest}\t{identity}\t{offset}\t{absolute}"
+
+
+pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface], fragment_digests: Dict[str, str]) -> Result[tuple[Dict[str, int], set[str], set[str]], str]:
+    """Start with settled roots and follow published type-context, private, transitive and lazy-default edges."""
+    mut pending = roots
+    mut visited: set[str] = set()
+    mut ranges: Dict[str, int] = {}
+    mut packages: set[str] = set()
+    mut members: set[str] = set()
+    mut cursor = 0
+    while cursor < len(pending):
+        item = pending[cursor]
+        cursor += 1
+        identity = match decode_incan_symbol_identity(item.identity).map_err((error) => str(error))?:
+            Some(value) => value
+            None => return Err("dependency root lacks a canonical identity")
+        package = package_name(identity)?
+        if identity.kind == SemanticSourceTargetKind.Module:
+            continue
+        packages.add(package)
+        members.add(package + "\t" + item.identity)
+        if package not in surfaces:
+            return Err(f"missing independently authenticated surface for {package}")
+        surface = surfaces[package]
+        mut coverage = surface.index.coverage(identity)
+        if item.requester == package:
+            coverage = surface.index.execution_coverage(identity)
+        selected = coverage.map_err((error) => str(error))?
+        match selected:
+            DeclarationCoverage.Uncovered(_) =>
+                if not item.optional:
+                    return Err(f"required dependency is uncovered: {item.identity}")
+            DeclarationCoverage.TypeContext(owner=owner) =>
+                if item.identity not in visited:
+                    visited.add(item.identity)
+                    pending.append(BodyDemand(identity=encode_incan_symbol_identity(owner), requester=package, optional=false))
+            DeclarationCoverage.Covered(offset=offset, length=length, requirements=requirements) =>
+                if item.identity in visited:
+                    continue
+                visited.add(item.identity)
+                start = int(offset)
+                size = int(length)
+                ranges[range_key(surface.digest, item.identity, start, surface.prefix + start)] = size
+                for dependency in requirements:
+                    pending.append(BodyDemand(identity=encode_incan_symbol_identity(dependency), requester=package, optional=false))
+                raw = match surface.payload.slice(start, size):
+                    Some(part) => part.to_bytes()
+                    None => return Err(f"invalid published fragment range: {item.identity}")
+                if surface.sealed and hexlify(sha256.digest(raw)) != fragment_digests.get(package + "\t" + item.identity, ""):
+                    return Err(f"fragment differs from its sealed range: {item.identity}")
+                fragment = surface.index.decode_declaration(identity, raw).map_err((error) => str(error))?
+                match fragment:
+                    ExecutableDeclaration.NominalWithTraits(_, implementations) =>
+                        for link in implementations:
+                            if link.implementation == link.method:
+                                pending.append(BodyDemand(identity=encode_incan_symbol_identity(link.method)))
+                    ExecutableDeclaration.NominalWithCallables(nominal=_layout, implementations=implementations, callables=_callables) =>
+                        for link in implementations:
+                            if link.implementation == link.method:
+                                pending.append(BodyDemand(identity=encode_incan_symbol_identity(link.method)))
+                    _ => pass
+    return Ok((ranges, packages, members))
+
+
+def package_name(identity: CanonicalSymbolId) -> Result[str, str]:
+    """A foreign executable obligation names exactly one authenticated package."""
+    match identity.origin:
+        SymbolOrigin.Package(library=library, module_path=_path) => return Ok(library)
+        _ => return Err("external dependency has no package origin")

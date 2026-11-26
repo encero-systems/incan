@@ -1,0 +1,11 @@
+[project]
+name = "rustc_driver_entry"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[build]
+unstable-features = ["rustc_private"]
+toolchain-components = ["rustc-dev"]
+sysroot-dependencies = ["rustc_driver"]

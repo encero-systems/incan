@@ -1,0 +1,1252 @@
+"""Engine control-channel boundaries reject malformed input before allocating or admitting work."""
+
+from core_process import executable, spawn_detached
+from rust::std::thread import sleep, spawn
+from rust::std::time import Duration
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from files import write, json_text
+from bakery_roots import Collected, collect
+from compiler_graph_records import ReceiptProjectionCache
+from engine_programs import (
+    read_program,
+    select_program,
+    program_handle,
+    NativeUnit,
+    obtain,
+    selected_program,
+    view_sealed,
+)
+from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection
+from engine_epochs import prepare_admitted_submit, prepare_submit
+from engine_client import service_generation, service_identity
+from pub::incan_platform.store import SnapshotAdmission, Transaction, durable_commits, begin, get, put, commit, commit_group
+from store_path_conversion import compact, snapshot, store_path
+from engine_proofs import report
+from std.json import JsonValue, parse
+from rust::std::process import Child, Command
+from pub::incan_platform.ipc import Connection, listen
+from engine_endpoint import owner_uid, connect_with
+from engine_service import greet
+from toolchain import load_toolchain, toolchain_directory
+from engine_channel import Channel
+from engine_messages import (
+    BindingOutcome,
+    CompletionStatus,
+    Message,
+    Hello,
+    Submit,
+    Accepted,
+    Captured,
+    Event,
+    Complete,
+    Drain,
+    Stop,
+    Refused,
+)
+from engine_state import Identity, ServiceState
+from scratch import scratch_directory
+from engine_wire import RefusalKind, zero_id, joined, scalar
+from engine_protocol_fixtures import (
+    await_connection, await_exit, await_service, detail, json_text_is, launch_service, release_service_result, stop_engine,
+)
+from trace_adapter import count_work, finish_counting
+
+
+pub def test_a_frame_read_waits_when_the_peer_would_block_between_parts() -> Result[None, str]:
+    """A nonblocking transport resumes one frame after its peer pauses between partial writes."""
+    scratch = scratch_directory()?
+    socket = scratch.path().joinpath("split.sock")
+    source = scratch.path().joinpath("writer.incn")
+    write(
+        source,
+        "from rust::std::io import Write\nfrom rust::std::os::unix::net import UnixStream\nfrom rust::std::thread import sleep\nfrom rust::std::time import Duration\ndef main() -> None:\n    mut peer = UnixStream.connect(\"" + socket.0 + "\").unwrap()\n    peer.write_all([97u8 for _index in range(17)]).unwrap()\n    sleep(Duration.from_millis(20))\n    peer.write_all([98u8 for _index in range(47)]).unwrap()\n",
+    )?
+    mut listener = listen(socket.0, true)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut writer = spawn_detached(binary, ["run", source.0], {})?
+    reader = listener.accept()?
+    worker = spawn(() => read_split_frame(reader))
+    match worker.join():
+        Ok(outcome) => outcome?
+        Err(_) => return Err("split-frame reader thread panicked")
+    return await_exit(writer, true)
+
+
+def read_split_frame(reader: Connection) -> Result[None, str]:
+    """Own an accepted connection on another thread and finish its interrupted frame read there."""
+    mut connection = reader
+    connection.poll_reads()?
+    frame = connection.read_part(64, 64)?
+    assert len(frame) == 64 and frame[0] == 97u8 and frame[16] == 97u8
+    assert frame[17] == 98u8 and frame[63] == 98u8
+    return Ok(None)
+
+
+pub def test_records_engine_check_uses_the_build_route_without_codegen() -> Result[None, str]:
+    """Records checks produce no native binary and resolve standard imports against the caller's selected sources."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("main.incn")
+    write(
+        source,
+        "# behavior: a model with typed fields, one with a default, checks beside a function\n# expect-accepted:\n\nmodel User:\n    name: str\n    age: int = 0\n    email: str\n\ndef greet(name: str) -> str:\n    return \"Hello\"\n",
+    )?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    checked = exercise_records_check(binary, source, store, project)
+    if store.joinpath("CURRENT").is_file():
+        match stop_engine(store, binary):
+            Err(cleanup) =>
+                match checked:
+                    Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
+                    Ok(_) => return Err(cleanup)
+            Ok(_) => pass
+    checked?
+    return check_explicit_standard_sources(binary, root)
+
+
+def exercise_records_check(binary: str, source: Path, store: Path, project: Path) -> Result[None, str]:
+    """Run one accepted and one refused census check while the caller owns engine cleanup."""
+    accepted = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    expected = b"{\x0a  \"schema_version\": 2,\x0a  \"ok\": true,\x0a  \"diagnostics\": []\x0a}\x0a"
+    assert accepted.status.success() and accepted.stdout == expected and accepted.stderr == b""
+    assert not project.joinpath("target/incan/debug/bin").exists(), "records check generated a native binary directory"
+    write(
+        source,
+        "# behavior: returning a str from a function declared to return int is refused\n# expect-diagnostic: INCAN-T0001\n\ndef foo() -> int:\n    return \"not an int\"\n",
+    )?
+    refused = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    report = RustString.from_utf8(refused.stdout).map_err((error) => str(error))?
+    assert refused.status.code() == Some(1i32) and "INCAN-T0001" in str(report) and refused.stderr == b""
+    assert not project.joinpath("target/incan/debug/bin").exists(), "refused records check generated code"
+    return Ok(None)
+
+
+def check_explicit_standard_sources(binary: str, root: Path) -> Result[None, str]:
+    """An explicit empty standard source root supplies no standard packages to a records check."""
+    standard = root.joinpath("empty-standard")
+    standard.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("use_fs.incn")
+    write(source, "from std.fs import Path\n\ndef main() -> None:\n    println(Path(\".\").0)\n")?
+    store = root.joinpath("override-store")
+    result = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .env("INCAN_STDLIB", standard.0)
+        .output()
+        .map_err((error) => str(error))?
+    if store.joinpath("CURRENT").is_file():
+        stop_engine(store, binary)?
+    report = RustString.from_utf8(result.stdout).map_err((error) => str(error))?
+    assert result.status.code() == Some(1i32) and "Unknown stdlib module `std.fs`" in str(report), str(report)
+    return Ok(None)
+
+
+pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() -> Result[None, str]:
+    """
+    A compiler worker names the native inputs of shared carriers, the driver among them, by their bytes once per file
+    identity: the store records each digest, so a fresh worker hashes no input an earlier worker hashed.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("hello.incn")
+    store = root.joinpath("store")
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for edit in range(2):
+        write(source, f"def main() -> None:\n    println(\"fresh {edit}\")\n")?
+        # Each activation retires its worker, so the second edit is compiled by a fresh one.
+        outcome = Command
+            .new(binary)
+            .arg("run")
+            .arg(source.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_ENGINE_TRACE", observations.0)
+            .env("INCAN_WORKER_FOOTPRINT_BOUND", "1")
+            .output()
+            .map_err((error) => str(error))?
+        if not outcome.status.success() or outcome.stdout != f"fresh {edit}\n".encode("utf-8"):
+            error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+            _ = stop_engine(store, binary)
+            return Err(f"fresh-worker run {edit}: status={outcome.status.code()} stderr={error}")
+    stop_engine(store, binary)?
+    mut hashed_by: Dict[str, int] = {}
+    for entry in observations.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut inputs: set[str] = set()
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if json_text_is(document, "kind", "begin") and json_text_is(
+                document,
+                "function",
+                "incan_rustc_driver::native_input_digest",
+            ):
+                fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                    (error) => error.message(),
+                )?
+                inputs.add(fields["input"].expect_str().map_err((error) => error.message())?)
+        for input in inputs:
+            hashed_by[input] = hashed_by.get(input, 0) + 1
+    println(f"native inputs hashed: {len(hashed_by)}")
+    # The first edit's worker names every carrier input, so a driver that traces none of its hashes cannot pass.
+    assert len(hashed_by) > 0, "no worker traced a native input hash"
+    again = sorted([input for input in hashed_by.keys() if hashed_by[input] > 1])
+    assert len(again) == 0, f"fresh workers hashed native inputs an earlier worker hashed: {again}"
+    return Ok(None)
+
+
+def check_native_program_records(store: Path, unit: NativeUnit, handle: str, view: str) -> Result[None, str]:
+    """Reopen typed and legacy views, reject swapped rows, and preserve unchanged legacy descriptor bytes."""
+    key = f"incan.engine.native-unit\t{handle}"
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    expected = unit.encoded(key)?
+    assert expected[:4] == b"CRMB"
+    assert get(selected, key).map_err((error) => error.message())? == Some(expected)
+    pointer = encode_selection(view, handle)?
+    assert get(selected, SELECTION_KEY).map_err((error) => error.message())? == Some(pointer)
+    assert read_program(store, handle)? == Some(unit)
+    assert decode_program(key + "other", expected).is_err()
+    assert decode_program(key, pointer).is_err()
+    assert decode_selection(view, expected).is_err()
+    assert decode_selection("other", pointer).is_err()
+    assert decode_selection(view, b"other").is_err()
+    assert decode_program(key, b'{"schema":"unrecognized","unit":"unit","binary":"program","payload":"payload"}').is_err()
+    legacy_view = "prior-native-selection"
+    legacy_handle = program_handle("epoch", "compiler", legacy_view)?
+    legacy_key = f"incan.engine.native-unit\t{legacy_handle}"
+    legacy = b'{"schema":"incan.engine.native-unit/1","unit":"unit","binary":"program","payload":"payload"}'
+    initial = snapshot(store, legacy_view).map_err((error) => error.message())?
+    mut transaction = put(begin(initial), legacy_key, legacy)
+    transaction = put(transaction, SELECTION_KEY, legacy_handle.encode("utf-8"))
+    prior = commit(transaction).map_err((error) => error.message())?
+    assert read_program(store, legacy_handle)? == Some(unit)
+    repeat = select_program(store, legacy_view, unit, legacy_handle)?
+    assert repeat.encodings == 0 and repeat.commits == 0 and repeat.snapshot.digest == prior.digest
+    next_handle = program_handle("second epoch", "compiler", legacy_view)?
+    select_program(store, legacy_view, unit, next_handle)?
+    restored = select_program(store, legacy_view, unit, legacy_handle)?
+    assert get(restored.snapshot, legacy_key).map_err((error) => error.message())? == Some(legacy)
+    assert get(restored.snapshot, SELECTION_KEY).map_err((error) => error.message())? == Some(encode_selection(legacy_view, legacy_handle)?)
+    return Ok(None)
+
+
+pub def test_a_finished_request_s_spans_reach_the_trace_while_its_engine_runs() -> Result[None, str]:
+    """
+    A resident engine writes every span of a request, the commit's included, before its caller hears that the request
+    finished: a caller that ends the engine right after its build, as a finished run's process group is, loses none.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    store = root.joinpath("store")
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for edit in range(2):
+        write(source, f"def main() -> None:\n    println(\"traced {edit}\")\n")?
+        # A build, as a cold build is: its caller exits as soon as it hears the build finished.
+        outcome = Command
+            .new(binary)
+            .arg("build")
+            .arg(source.0)
+            .current_dir(project.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_ENGINE_TRACE", observations.0)
+            .env_remove("OVEN_TRACE")
+            .env_remove("INCAN_JEC_TRACE")
+            .env_remove("INCAN_TRACE_DIR")
+            .env_remove("INCAN_NATIVE_TIMING")
+            .output()
+            .map_err((error) => str(error))?
+        if not outcome.status.success():
+            error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+            _ = stop_engine(store, binary)
+            return Err(f"traced run {edit}: status={outcome.status.code()} stderr={error}")
+    # Both builds are finished. The engine is ended at once, as a finished run's process group is, and its own trace
+    # must already hold the unit span each build ends with.
+    engine = engine_trace(observations)?
+    pid = engine.name().split("engine-oven-")[1].split(".")[0]
+    ended = Command.new("/bin/kill").arg("-KILL").arg(pid).status().map_err((error) => str(error))?
+    if not ended.success():
+        return Err("the resident engine could not be ended")
+    text = engine.read_text("utf-8", "strict").map_err((error) => error.message())?
+    units = len(text.split("\"operation\":\"engine_unit\"")) - 1
+    if units != 2:
+        return Err(f"the engine's trace held {units} of the two finished builds' unit spans when it ended")
+    return Ok(None)
+
+
+pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
+    """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
+    admission = scratch_directory()?
+    store = admission.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    installed = service_identity(store)?
+    prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
+    count_work(prefix)
+    assert snapshot(store).map_err((error) => error.message())?.generation == 0
+    assert service_identity(store)?.compiler_generation == installed.compiler_generation
+    repeated = finish_counting()
+    assert repeated.stats == 0 and repeated.reads == 0 and repeated.hashes == 0, f"repeated service identity touched frozen inputs: stats={repeated.stats} reads={repeated.reads} hashes={repeated.hashes}"
+    assert snapshot(store).map_err((error) => error.message())?.generation == 0
+    admissions = durable_commits()
+    other = admission.path().joinpath("another-store")
+    other.mkdir(true, true).map_err((error) => error.message())?
+    assert service_identity(other)?.compiler_generation == installed.compiler_generation
+    assert durable_commits() == admissions, "a fresh store repeated installation admission in the same home"
+    assert service_identity(Path(f"{store.0}/."))?.store_id == installed.store_id
+    native = NativeUnit(identity="unit", payload="payload", binary="program")
+    handle = program_handle("epoch", "compiler", "selection")?
+    first_selection = select_program(store, "selection", native, handle)?
+    repeat_selection = select_program(store, "selection", native, handle)?
+    assert first_selection.encodings == 1 and first_selection.commits == 1
+    assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
+    assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
+    check_native_program_records(store, native, handle, first_selection.snapshot.view)?
+    check_collection_before_selection()?
+    check_collection_during_execution()?
+    process_lifecycle()?
+    check_project_directory_selection()?
+    check_worker_residency()?
+    identity = Identity(
+        store_id="store",
+        profile="profile",
+        service_generation="service",
+        compiler_generation="compiler",
+        uid=7u32,
+    )
+    mut state = ServiceState(identity=identity, last_active=100)
+    state.negotiate(identity.hello(), 7u32).map_err(detail)?
+    mut wrong = identity.hello()
+    wrong.profile = "other"
+    assert handshake_refused(state, wrong, 7u32)
+    wrong = identity.hello()
+    wrong.service_generation = "other"
+    assert handshake_refused(state, wrong, 7u32)
+    wrong = identity.hello()
+    wrong.compiler_generation = "other"
+    assert handshake_refused(state, wrong, 7u32)
+    wrong = identity.hello()
+    wrong.store_id = "other"
+    assert handshake_refused(state, wrong, 7u32)
+    assert handshake_refused(state, identity.hello(), 8u32)
+    first = joined([scalar(1, 8), scalar(0, 8)])
+    second = joined([scalar(2, 8), scalar(0, 8)])
+    state.accept(first, "shared-work", "first").map_err(detail)?
+    state.accept(second, "shared-work", "second").map_err(detail)?
+    state.pin("reader").map_err(detail)?
+    state.draining = true
+    match state.accept(joined([scalar(3, 8), scalar(0, 8)]), "work", "third"):
+        Ok(_) =>
+            assert false, "draining service accepted another request"
+        Err(refusal) =>
+            assert refusal.kind == RefusalKind.Draining
+    assert not state.exits(1000)
+    state.detach(first, "first").map_err(detail)?
+    assert len(state.interests) == 1
+    assert state.interests[0].token == "second"
+    state.detach(second, "second").map_err(detail)?
+    assert not state.exits(1001)
+    state.release("reader").map_err(detail)?
+    assert state.exits(1002)
+    mut idle = ServiceState(identity=identity, last_active=100)
+    assert not idle.exits(101, 2)
+    assert idle.exits(102, 2)
+    idle.clients = 1
+    assert not idle.exits(200, 2)
+    idle.clients = 0
+    idle.workers = 1
+    assert not idle.exits(300, 2)
+    idle.workers = 0
+    idle.effects = 1
+    assert not idle.exits(400, 2)
+    idle.effects = 0
+    assert not idle.exits(401, 2)
+    assert idle.exits(402, 2)
+    return Ok(None)
+
+
+def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
+    """Whether negotiation refused before accepting any work."""
+    match state.negotiate(hello, uid):
+        Ok(_) => return false
+        Err(_) => return true
+
+
+def check_project_directory_selection() -> Result[None, str]:
+    """The records engine resolves a project directory to its declared main entry."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"engine-project\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(project.joinpath("src/main.incn"), "def main() -> None:\n    println(\"hello\")\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(project.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
+        error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+        return Err(f"project records run: status={outcome.status.code()} stderr={error}")
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="project selection proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("project selection proof did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+def check_worker_residency() -> Result[None, str]:
+    """One compiler serves both activations under a deep runtime path, retains no bulk manifests, and reads frozen records."""
+    check_worker_residency_case(false)?
+    match check_worker_residency_case(true):
+        Err(error) =>
+            assert error == "injected worker-residency failure"
+        Ok(_) => return Err("injected worker-residency failure unexpectedly passed")
+    return Ok(None)
+
+
+def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
+    """Run one residency case and stop any engine it starts before returning success or failure."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    checked = exercise_worker_residency(root, binary, inject_failure)
+    store = root.joinpath("store")
+    if store.joinpath("CURRENT").is_file():
+        match stop_engine(store, binary):
+            Err(cleanup) =>
+                match checked:
+                    Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
+                    Ok(_) => return Err(cleanup)
+            Ok(_) => pass
+    match checked:
+        Err(error) => return Err(error)
+        Ok(_) => pass
+    check_frozen_installation_reads(root.joinpath("jec"))?
+    # Stop acknowledges that the resident service drained its buffered observations.
+    lines = observed_lines(root.joinpath("observations"))?
+    waits = len([line for line in lines if "worker_observer_joined" in line])
+    detached = len([line for line in lines if "worker_observer_detached" in line])
+    releases = len([line for line in lines if "worker_heap_released" in line])
+    compilations = len([line for line in lines if "rustc_codegen_link_teardown" in line])
+    frontend_releases = len([line for line in lines if "frontend_heap_released" in line])
+    checked_releases = len([line for line in lines if "checked_heap_released" in line])
+    # Each compilation returns its checked program's freed heap before rustc allocates on top of it.
+    assert compilations > 0 and frontend_releases == compilations, f"{frontend_releases} of {compilations} compilations released the frontend heap before rustc"
+    # Each compilation also returns its checking heap before lowering builds its contexts.
+    assert checked_releases == compilations, f"{checked_releases} of {compilations} compilations released the checking heap before lowering"
+    # Both requests use the same resident worker for Rust-import discovery and compilation, releasing its free heap
+    # after each activation. No activation may be detached from the observer that owns its completion.
+    assert waits == 4 and detached == 0 and releases == 4, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    released_requests = [line for line in lines if "engine request released:" in line]
+    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
+    assert "captures=0 verification=0" in released_requests[0]
+    check_worker_clock(root.joinpath("observations"))?
+    return Ok(None)
+
+
+def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> Result[None, str]:
+    """Exercise the resident worker; the caller owns unconditional engine retirement."""
+    mut runtime = root.joinpath("var/folders/yd/1lgl20914vn4nhg0hgpjd4gr0000gn/T")
+    while len(runtime.0) <= 100:
+        runtime = runtime.joinpath("a-runtime-directory-deeper-than-a-socket-path-may-be")
+    runtime.mkdir(true, true).map_err((error) => error.message())?
+    # The engine gets a runtime root other than this process's, as another shell's environment would give it: this
+    # process must still find the engine it stops, wherever that engine listens.
+    fallback_runtime = "/tmp"
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    _ = load_toolchain()?
+    jec = root.joinpath("jec")
+    jec.mkdir(true, true).map_err((error) => error.message())?
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", root.joinpath("store").0)
+        .env("INCAN_NATIVE_TIMING", "1")
+        .env("INCAN_ENGINE_TRACE", observations.0)
+        .env("INCAN_JEC_TRACE", jec.0)
+        .env("INCAN_ENGINE_RUN", "host-clock-proof")
+        .env("INCAN_ENGINE_REQUEST", "worker-order")
+        .env("TMPDIR", fallback_runtime)
+        .env("XDG_RUNTIME_DIR", runtime.0)
+        .output()
+        .map_err((error) => str(error))?
+    if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
+        error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+        return Err(f"initial records run: status={outcome.status.code()} stderr={error}")
+    if inject_failure:
+        return Err("injected worker-residency failure")
+    initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
+    initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
+    initial_records = compiler_records_read(observations)?
+    initial_digests = link_input_digests(observations)?
+    initial_abi_opens = invocation_count(observations, "incan_frontend::open_rust_abi_index")
+    if initial_abi_opens == 0:
+        return Err("the initial build recorded no open of the Rust ABI index")
+    write(source, "def main() -> None:\n    println(\"hullo\")\n")?
+    edited = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", root.joinpath("store").0)
+        .env("INCAN_NATIVE_TIMING", "1")
+        .env("INCAN_ENGINE_TRACE", observations.0)
+        .env("INCAN_JEC_TRACE", jec.0)
+        .env("INCAN_ENGINE_RUN", "host-clock-proof")
+        .env("INCAN_ENGINE_REQUEST", "worker-order-edited")
+        .env("TMPDIR", fallback_runtime)
+        .env("XDG_RUNTIME_DIR", runtime.0)
+        .output()
+        .map_err((error) => str(error))?
+    if not edited.status.success() or edited.stdout != b"hullo\x0a" or edited.stderr != b"":
+        error = RustString.from_utf8(edited.stderr).map_err((decode_error) => str(decode_error))?
+        return Err(f"edited records run: status={edited.status.code()} stderr={error}")
+    manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest") - initial_manifest_reads
+    if manifest_reads != 0:
+        return Err(f"one-body edit reopened {manifest_reads} whole Loaf manifests")
+    record_reads = invocation_count(observations, "incan_frontend::read_compiler_records") - initial_record_reads
+    if record_reads > 6:
+        return Err(f"one-body edit reconstructed {record_reads} compiler-record groups")
+    records = compiler_records_read(observations)? - initial_records
+    if records > 86:
+        return Err(f"one-body edit opened {records} compiler records")
+    # The resident compiler keeps the unchanged Rust ABI index it opened, so the edit opens none.
+    abi_opens = invocation_count(observations, "incan_frontend::open_rust_abi_index") - initial_abi_opens
+    if abi_opens != 0:
+        return Err(f"one-body edit opened the unchanged Rust ABI index {abi_opens} times")
+    processes = invocation_processes(observations, "incan_rustc_driver::compile_unit")?
+    if processes != 1:
+        return Err(f"initial build and one-body edit used {processes} unit compiler processes")
+    # The edited link names the same archives; each was hashed once at its file identity, so none is hashed again.
+    mut hashed: list[str] = []
+    edited_digests = link_input_digests(observations)?
+    for input in sorted([path for path in edited_digests.keys()]):
+        earlier = initial_digests.get(input, 0)
+        if earlier > 0 and edited_digests[input] > earlier and not input.endswith(".o"):
+            hashed.append(input)
+    if len(edited_digests) == 0:
+        return Err("the development links recorded no input digests")
+    if len(hashed) > 0:
+        return Err(f"one-body edit's link hashed {len(hashed)} unchanged archives again: {hashed}")
+    # The links run the dedicated linker shipped beside the driver, never the driver itself.
+    for linker in link_processes(observations)?:
+        if not Path(linker).name().startswith("incan-link"):
+            return Err(f"a development link ran {linker} instead of the dedicated linker")
+    # A trace splits each of the two links into preparing its inputs and running ld.
+    prepared = invocation_count(observations, "incan_rustc_driver::link_inputs")
+    ran = invocation_count(observations, "incan_rustc_driver::run_linker")
+    if prepared < 2 or ran < 2:
+        return Err(f"the two development links recorded {prepared} input preparations and {ran} linker runs")
+    return Ok(None)
+
+
+def observed_lines(directory: Path) -> Result[list[str], str]:
+    """Every line of every engine trace file in `directory`, the files in name order."""
+    mut names: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.is_file():
+            names.append(entry.0)
+    mut lines: list[str] = []
+    for name in sorted(names):
+        lines.extend(Path(name).read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"))
+    return Ok(lines)
+
+
+def engine_trace(directory: Path) -> Result[Path, str]:
+    """The trace file the engine process writes: the one with a plan-module selection and no client request span."""
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file() or not entry.name().startswith("engine-oven-"):
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if "\"key\":\"plan-modules\"" in text and "\"operation\":\"engine_request\"" not in text:
+            return Ok(entry)
+    return Err("no trace file of the resident engine")
+
+
+def invocation_count(directory: Path, function: str) -> int:
+    """Count completed compiler invocation-span starts with the exact instrumented function name."""
+    mut count = 0
+    match directory.iterdir():
+        Err(_) => return count
+        Ok(entries) =>
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                match entry.read_text("utf-8", "strict"):
+                    Err(_) => continue
+                    Ok(text) =>
+                        for line in text.split("\n"):
+                            if line == "":
+                                continue
+                            match parse(line):
+                                Err(_) => continue
+                                Ok(document) =>
+                                    if (
+                                        json_text_is(document, "kind", "begin")
+                                        and json_text_is(document, "function", function)
+                                    ):
+                                        count += 1
+    return count
+
+
+def compiler_records_read(directory: Path) -> Result[int, str]:
+    """Sum the independently addressed values opened by completed compiler-record group demands."""
+    mut count = 0
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (
+                not json_text_is(document, "kind", "begin")
+                or not json_text_is(document, "function", "incan_frontend::read_compiler_records")
+            ):
+                continue
+            fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                (error) => error.message(),
+            )?
+            count += fields["records"].expect_int().map_err((error) => error.message())?
+    return Ok(count)
+
+
+def link_processes(directory: Path) -> Result[list[str], str]:
+    """The executables of the processes that hashed link inputs, from their invocation trace files."""
+    mut executables: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut executable = ""
+        mut linked = false
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if json_text_is(document, "kind", "process"):
+                match document.get("executable"):
+                    Some(value) => executable = value.as_str().unwrap_or("")
+                    None => pass
+            elif json_text_is(document, "kind", "begin") and json_text_is(
+                document,
+                "function",
+                "incan_rustc_driver::link_input_digest",
+            ):
+                linked = true
+        if linked and executable not in executables:
+            executables.append(executable)
+    return Ok(executables)
+
+
+def link_input_digests(directory: Path) -> Result[Dict[str, int], str]:
+    """How often the development linker hashed each input path, from its invocation spans."""
+    mut counts: Dict[str, int] = {}
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (
+                not json_text_is(document, "kind", "begin")
+                or not json_text_is(document, "function", "incan_rustc_driver::link_input_digest")
+            ):
+                continue
+            fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                (error) => error.message(),
+            )?
+            input = fields["input"].expect_str().map_err((error) => error.message())?
+            counts[input] = counts.get(input, 0) + 1
+    return Ok(counts)
+
+
+def invocation_processes(directory: Path, function: str) -> Result[int, str]:
+    """Count invocation files containing the requested compiler entry; one resident process owns one such file."""
+    mut count = 0
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut found = false
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (json_text_is(document, "kind", "begin") and json_text_is(document, "function", function)):
+                found = true
+        if found:
+            count += 1
+    return Ok(count)
+
+
+model InstallationReadCounts:
+    """Installation selections and completed engine requests grouped by their emitting process."""
+
+    reused: int = 0
+    service_requests: Dict[str, int] = {}
+    page_selections: Dict[str, int] = {}
+    reuse_processes: list[str] = []
+
+    def observe(mut self, event: JsonValue, category: str) -> Result[None, str]:
+        """Count one service request or installation-page selection from the compatibility trace."""
+        process = str(trace_number(event, "process")?)
+        if category == "engine_unit":
+            self.service_requests[process] = self.service_requests.get(process, 0) + 1
+        if category == "installation_page" or category == "installation_page_reuse":
+            self.page_selections[process] = self.page_selections.get(process, 0) + 1
+        if category == "installation_page_reuse":
+            self.reused += 1
+            self.reuse_processes.append(process)
+        return Ok(None)
+
+    def check(self) -> None:
+        """Require one selection per request while the shared service reuses its decoded first-request page."""
+        assert self.reused == 1, f"two service requests reused their process page {self.reused} times instead of once"
+        process = self.reuse_processes[0]
+        assert self.service_requests.get(process, 0) == 2, "the page reuse did not span the two service requests"
+        assert self.page_selections.get(process, 0) == 2, "a service request selected its installation page more than once"
+
+
+def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
+    """After first admission, a service request selects installed facts without touching a frozen input."""
+    prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
+    mut events = 0
+    mut reads = 0
+    mut frozen_accesses = 0
+    mut completed: Dict[str, int] = {}
+    mut counts = InstallationReadCounts()
+    for file in directory.iterdir().map_err((error) => error.message())?:
+        # The events just before a refused access name the work that reached for the frozen input.
+        mut recent: list[str] = []
+        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line == "":
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            events += 1
+            category = trace_text(event, "category")?
+            counts.observe(event, category)?
+            process = str(trace_number(event, "process")?)
+            if category in ["file_stat", "file_read", "file_hash"]:
+                input = trace_text(event, "input")?
+                if (input.startswith(prefix) or "/.rustup/" in input) and completed.get(process, 0) > 0:
+                    frozen_accesses += 1
+                    before = " | ".join(recent)
+                    return Err(f"service process {process} {category} touched frozen input {input} after: {before}")
+            recent.append(category + " " + trace_text(event, "input").unwrap_or(""))
+            if len(recent) > 8:
+                recent = recent[1:]
+            if category == "file_read":
+                reads += 1
+            if category == "engine_unit":
+                completed[process] = completed.get(process, 0) + 1
+    assert events > 0 and reads > 0, "the cold invocation must record its actual file reads"
+    assert frozen_accesses == 0
+    counts.check()
+    return Ok(None)
+
+
+def check_worker_clock(directory: Path) -> Result[None, str]:
+    """The engine's request encloses its real compiler worker's activation on one host clock across two processes."""
+    mut engines: list[JsonValue] = []
+    mut workers: list[JsonValue] = []
+    for file in directory.iterdir().map_err((error) => error.message())?:
+        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line == "":
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if not json_text_is(row, "operation", "driver_request"):
+                continue
+            assert trace_text(row, "clock")? == "host-monotonic-raw"
+            assert trace_text(row, "run")? == "host-clock-proof"
+            assert trace_text(row, "request")? == "worker-order"
+            if trace_text(row, "producer")? == "compiler-worker":
+                workers.append(row)
+            else:
+                engines.append(row)
+    assert len(workers) > 0 and len(engines) > 0, "both engine and worker must produce trace records"
+    for worker in workers:
+        mut enclosed = false
+        for engine in engines:
+            if trace_number(engine, "process")? == trace_number(worker, "process")?:
+                continue
+            if trace_number(engine, "start_ns")? <= trace_number(worker, "start_ns")?:
+                if trace_number(worker, "end_ns")? <= trace_number(engine, "end_ns")?:
+                    enclosed = true
+        assert enclosed, "worker timestamps must be inside the engine's request interval"
+    return Ok(None)
+
+
+def trace_text(row: JsonValue, key: str) -> Result[str, str]:
+    """Read a required schema string without accepting an absent field."""
+    return row.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
+
+
+def trace_number(row: JsonValue, key: str) -> Result[int, str]:
+    """Read a required nanosecond or process field without coercion."""
+    return row.require(key).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def check_collection_before_selection() -> Result[None, str]:
+    """A published cold unit and a reused warm unit remain selectable when collection runs before selection."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    store = root.joinpath("store")
+    mut receipts = ReceiptProjectionCache.empty()
+    for turn in range(2):
+        view = f"selection-{turn}"
+        mut admission = SnapshotAdmission.for_store(store_path(store))
+        captured = prepare_admitted_submit(
+            admission,
+            Submit(
+                command="build",
+                view=view,
+                input_selection="debug",
+                requested_roots=source.0,
+                options="",
+                observation_policy="",
+            ),
+        )?
+        handle = program_handle(captured.identity, "collection-proof", view)?
+        produced = obtain(
+            store,
+            admission,
+            captured.revision,
+            handle,
+            root.joinpath("console").0,
+            receipts,
+            Some(captured.epoch),
+            "collection-proof",
+            Some(captured.selected),
+        )?
+        if produced.code != 0:
+            console = root.joinpath("console.err").read_text("utf-8", "strict").map_err((error) => error.message())?
+            return Err(f"turn {turn} refused with code {produced.code}: {console}")
+        assert produced.evaluations == 1 - turn and produced.native_bakes == 1 - turn, f"turn {turn}: {produced.evaluations} evaluations, {produced.native_bakes} native bakes"
+        mut group: list[Transaction] = []
+        if let Some(transaction) = captured.transaction:
+            group.append(transaction)
+        if let Some(transaction) = produced.transaction:
+            group.append(transaction)
+        committed = commit_group(group).map_err((error) => error.message())?
+        view_sealed(store, produced.sealed)?
+        # The publication handle pins the result while no caller view has selected it.
+        collect(store, -1)?
+        match produced.unit:
+            None => return Err("native publication had no unit")
+            Some(unit) =>
+                selected = select_program(store, view, unit, handle)?
+                assert selected_program(selected.snapshot, handle)? == Some(unit), f"turn {turn} lost its selected program"
+                ran = Command.new(unit.binary).output().map_err((error) => str(error))?
+                assert ran.status.success() and ran.stdout == b"hello\x0a", f"turn {turn} selected an unusable program"
+        assert committed.generation > 0, f"turn {turn} committed no store generation"
+    return Ok(None)
+
+
+def check_collection_during_execution() -> Result[None, str]:
+    """
+    A running program keeps executing from its selected view while collection retires obsolete layouts.
+
+    The program stops at a barrier: it writes `started`, waits until the test writes `release`, then writes `finished`.
+    While it waits, the test supersedes the store's generation and collects it. Collection must remove obsolete layouts
+    without retiring the running program's own, so the program still finishes and exits cleanly. The first turn runs
+    the program cold, the second warm from the store.
+
+    1. Write the barrier program.
+    2. Each turn: run it to the barrier, collect, release it, and check that it finished.
+    3. Stop the engine the runs started.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    barrier = Barrier(
+        started=root.joinpath("started"),
+        release=root.joinpath("release"),
+        finished=root.joinpath("finished"),
+    )
+    # 1. The barrier's marker paths are written into the program as literals.
+    source = write_barrier_program(root.joinpath("project"), barrier)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    # 2. The program is alive at the barrier when collection runs; it must still finish once released.
+    for _turn in range(2):
+        mut child = run_to_barrier(binary, source, store, barrier)?
+        collected = collect_superseded(store)
+        alive = child.try_wait().map_err((error) => str(error))? is None
+        write(barrier.release, "release")?
+        status = child.wait().map_err((error) => str(error))?
+        assert alive and status.success() and barrier.finished.is_file(), "collection affected a running view"
+        assert collected?.layouts_removed > 0
+        barrier.reset()?
+    # 3. The records engine the runs started keeps serving until it is told to stop.
+    return stop_engine(store, binary)
+
+
+model Barrier:
+    """The three marker files a barrier program and its test exchange."""
+
+    started: Path
+    release: Path
+    finished: Path
+
+    def reset(self) -> Result[None, str]:
+        """Remove all three markers before the next turn."""
+        self.started.unlink().map_err((error) => error.message())?
+        self.release.unlink().map_err((error) => error.message())?
+        self.finished.unlink().map_err((error) => error.message())?
+        return Ok(None)
+
+
+def write_barrier_program(project: Path, barrier: Barrier) -> Result[Path, str]:
+    """Write a program that signals `started`, waits for `release`, then signals `finished`."""
+    project.mkdir(true, true).map_err((error) => error.message())?
+    started = json_text(JsonValue.string(barrier.started.0))?
+    release = json_text(JsonValue.string(barrier.release.0))?
+    finished = json_text(JsonValue.string(barrier.finished.0))?
+    lines = [
+        "from std.fs import Path",
+        "from rust::std::thread import sleep",
+        "from rust::std::time import Duration",
+        "",
+        "def main() -> Result[None, str]:",
+        f"    Path({started}).write_text(\"started\", \"utf-8\", \"strict\", None).map_err((error) => error.message())?",
+        f"    while not Path({release}).is_file():",
+        "        sleep(Duration.from_millis(2))",
+        f"    Path({finished}).write_text(\"finished\", \"utf-8\", \"strict\", None).map_err((error) => error.message())?",
+        "    return Ok(None)",
+    ]
+    source = project.joinpath("hello.incn")
+    write(source, "\n".join(lines) + "\n")?
+    return Ok(source)
+
+
+def run_to_barrier(binary: str, source: Path, store: Path, barrier: Barrier) -> Result[Child, str]:
+    """
+    Run the program on the records engine and wait up to 30 seconds for its `started` signal. A program that exits
+    first, or never arrives, is released and reaped before the failure is returned.
+    """
+    mut child = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .spawn()
+        .map_err((error) => str(error))?
+    mut arrived = false
+    for _poll in range(15000):
+        if barrier.started.is_file():
+            arrived = true
+            break
+        if child.try_wait().map_err((error) => str(error))? is not None:
+            return Err("program exited before its execution lease could be tested")
+        sleep(Duration.from_millis(2))
+    # The child is handed out after the loop, where returning it moves it.
+    if arrived:
+        return Ok(child)
+    write(barrier.release, "release")?
+    child.kill().map_err((error) => str(error))?
+    child.wait().map_err((error) => str(error))?
+    return Err("program did not reach its execution barrier")
+
+
+def collect_superseded(store: Path) -> Result[Collected, str]:
+    """Supersede and compact layouts while another process holds an execution lease over the old generation."""
+    fields = store.joinpath("CURRENT").read_text("utf-8", "strict").map_err((error) => error.message())?.strip().split(
+        " ",
+    )
+    manifest = store.joinpath(f"snapshots/{fields[0]}.{fields[1][:16]}.manifest")
+    for turn in range(4):
+        commit(
+            put(begin(snapshot(store).map_err((error) => error.message())?), "execution-test", str(turn).encode("utf-8")),
+        ).map_err((error) => error.message())?
+    compact(store).map_err((error) => error.message())?
+    reclaimed = collect(store, -1)?
+    assert manifest.is_file(), "collection discarded a running program's leased generation"
+    return Ok(reclaimed)
+
+
+def process_lifecycle() -> Result[None, str]:
+    """Two real starters share one lifetime lock; drain settles requests and a disconnected idle service exits."""
+    mut configured = spawn_detached(
+        "/bin/sh",
+        ["-c", "test \"$INCAN_PROCESS_PROBE\" = selected"],
+        {"INCAN_PROCESS_PROBE": "selected"},
+    )?
+    await_exit(configured, true)?
+    scratch = scratch_directory()?
+    root = scratch.path()
+    root.joinpath("project").mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("project/hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    identity = Identity(
+        store_id="process-store",
+        profile="v1",
+        service_generation="service",
+        compiler_generation="compiler",
+        uid=owner_uid(root).map_err(detail)?,
+    )
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut first = launch_service(binary, root, identity)?
+    mut second = launch_service(binary, root, identity)?
+    mut silent = await_connection(root, identity)?
+    mut channel = await_service(root, identity)?
+    # The handshake bound ended with the handshake: this client waits for its build as long as a command does.
+    channel.transport.wait_at_most(600)
+    silent.close()?
+    peer = channel.transport.peer()?
+    assert peer.pid == Some(first.pid()) or peer.pid == Some(second.pid())
+    mut first_done = false
+    mut second_done = false
+    for _poll in range(2500):
+        first_done = first.poll()? is not None
+        second_done = second.poll()? is not None
+        if first_done or second_done:
+            break
+        sleep(Duration.from_millis(2))
+    assert first_done != second_done, "two concurrent starters did not yield exactly one live service"
+    request = joined([scalar(1, 8), scalar(0, 8)])
+    later = joined([scalar(2, 8), scalar(0, 8)])
+    channel
+        .send(
+            request,
+            Message.Submit(
+                Submit(
+                    command="build",
+                    view="view",
+                    input_selection="debug",
+                    requested_roots=source.0,
+                    options="",
+                    observation_policy="",
+                ),
+            ),
+        )
+        .map_err(detail)?
+    channel.send(zero_id(), Message.Drain(Drain(reason="test"))).map_err(detail)?
+    channel
+        .send(
+            later,
+            Message.Submit(
+                Submit(
+                    command="build",
+                    view="view",
+                    input_selection="inputs",
+                    requested_roots="roots",
+                    options="",
+                    observation_policy="",
+                ),
+            ),
+        )
+        .map_err(detail)?
+    mut accepted = false
+    mut captured = false
+    mut completed = false
+    mut refused = false
+    for _index in range(10):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Accepted(_) => accepted = true
+            Message.Captured(value) =>
+                assert accepted
+                assert len(value.epoch) == 64
+                assert value.snapshot != ""
+                captured = true
+            Message.Complete(value) =>
+                assert captured
+                assert value.binding_outcome == BindingOutcome.Selected
+                assert value.status == CompletionStatus.Success
+                assert value.admission_proof.startswith("sha256:")
+                # Capture, the shared unit and this caller's selection publish atomically once.
+                publications = snapshot(root).map_err((error) => error.message())?.generation
+                assert publications == 1, f"native request published {publications} generations instead of 1"
+                completed = true
+            Message.Refused(value) =>
+                assert value.code == 13
+                assert frame.header.request == later
+                refused = true
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+        if completed and refused:
+            break
+    assert accepted and captured and completed and refused
+    channel.transport.close()?
+    await_exit(first, not first_done)?
+    await_exit(second, not second_done)?
+    return check_idle_service_reuse(binary, root, identity, source)
+
+
+def check_idle_service_reuse(binary: str, root: Path, identity: Identity, source: Path) -> Result[None, str]:
+    """Require native reuse after restart and verify the service exits when its last connection closes."""
+    # A fresh service with a one-second timeout exits after its last client disconnects, without Drain.
+    mut idle = launch_service(binary, root, identity)?
+    mut idle_channel = await_service(root, identity)?
+    check_unchanged_request(idle_channel, root, source)?
+    another = root.joinpath("another-project")
+    another.mkdir(true, true).map_err((error) => error.message())?
+    copied_source = another.joinpath("hello.incn")
+    write(copied_source, source.read_text("utf-8", "strict").map_err((error) => error.message())?)?
+    for turn in range(50):
+        check_service_reuse(idle_channel, root, copied_source, turn)?
+    observations = another.joinpath("target/incan/observations")
+    mut ledgers: list[str] = []
+    if observations.is_dir():
+        ledgers = sorted([entry.name() for entry in observations.iterdir().map_err((error) => error.message())?])
+    assert not observations.exists(), f"a native hit repeated unit preparation: {ledgers:?}"
+    idle_channel.transport.close()?
+    await_exit(idle, true)?
+    return Ok(None)
+
+
+def check_unchanged_request(mut channel: Channel, root: Path, source: Path) -> Result[None, str]:
+    """The first rerun after projection publishes zero durable generations and performs zero capture encodings."""
+    before = snapshot(root).map_err((error) => error.message())?
+    request = joined([scalar(20, 8), scalar(0, 8)])
+    submit = Submit(
+        command="run",
+        view="view",
+        input_selection="debug",
+        requested_roots=source.0,
+        options="",
+        observation_policy="",
+    )
+    captured = prepare_submit(root, submit)?
+    assert captured.encodings == 0 and captured.commits == 0 and captured.identity_encodings == 0
+    _ = channel.send(request, Message.Submit(submit)).map_err(detail)?
+    mut complete = false
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Complete(value) =>
+                assert value.status == CompletionStatus.Success
+                assert snapshot(root).map_err((error) => error.message())?.generation == before.generation
+                complete = true
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+        if complete:
+            break
+    assert complete
+    release_service_result(channel, request)?
+    return Ok(None)
+
+def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: int) -> Result[None, str]:
+    """A new virtual view reuses the prior build; its unchanged repeat also reads and hashes no source."""
+    request = joined([scalar(3 + turn, 8), scalar(0, 8)])
+    _ = channel
+        .send(
+            request,
+            Message.Submit(
+                Submit(
+                    command="run",
+                    view="second-view",
+                    input_selection="debug",
+                    requested_roots=source.0,
+                    options="",
+                    observation_policy="proofs",
+                ),
+            ),
+        )
+        .map_err(detail)?
+    mut captured = false
+    mut completed = false
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Captured(_) => captured = true
+            Message.Complete(value) =>
+                assert captured
+                assert value.binding_outcome == BindingOutcome.Selected
+                assert value.status == CompletionStatus.Success
+                proof = parse(report(root, value.observation_handle)?).map_err((error) => error.message())?
+                mut counters = ["unit_evaluations", "native_bakes"]
+                if turn > 0:
+                    counters.extend(["source_reads", "source_hashes", "epoch_reads"])
+                else:
+                    assert proof.require("epoch_reads").map_err((error) => error.message())?.expect_int().map_err(
+                        (error) => error.message(),
+                    )? == 0, "the new virtual view reread its already captured epoch"
+                for name in counters:
+                    assert proof.require(name).map_err((error) => error.message())?.expect_int().map_err(
+                        (error) => error.message(),
+                    )? == 0
+                match read_program(root, value.result_handles)?:
+                    None => return Err("completed program descriptor is missing")
+                    Some(unit) =>
+                        assert Path(f"{unit.binary}.native-shared.json").is_file()
+                        output = Command.new(unit.binary).output().map_err((error) => str(error))?
+                        assert output.status.success()
+                        assert output.stdout == b"hello\x0a"
+                completed = true
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+        if completed:
+            break
+    assert completed
+    release_service_result(channel, request)?
+    return Ok(None)

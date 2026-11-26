@@ -1,0 +1,6 @@
+from std.async.time import Duration
+
+
+pub def interval() -> Duration:
+    """Return the shared standard type without a text conversion."""
+    return Duration.from_millis(42250)

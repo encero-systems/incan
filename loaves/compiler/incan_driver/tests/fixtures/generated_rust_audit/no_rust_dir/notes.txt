@@ -1,1 +1,0 @@
-This fixture intentionally contains no Rust source files.

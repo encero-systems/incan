@@ -1,6 +1,6 @@
 //! Lowering for `await` and `race` suspension points.
 
-use super::control_flow::intersect_range_layouts;
+use super::control_flow::intersect_local_states;
 use super::reads::*;
 use super::*;
 
@@ -10,6 +10,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// The awaited operand is read through the ordinary ownership path, so the suspension carries the same
     /// [`bir::OwnershipFact`]/last-use discipline as any other read. The resumed value lands in a fresh temporary,
     /// which is what makes the suspension's destination explicit rather than implied by the surrounding statement.
+    /// The checker's selected output crosses unchanged, including native error and provider identities.
     ///
     /// Records [`AbiV0RuntimeRequirement::AsyncRuntime`] on the enclosing body so a consumer reads the requirement
     /// off the body it applies to instead of re-deriving it from the program's imports and declaration modifiers.
@@ -20,13 +21,69 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        if let ast::Expr::Try(inner) = &awaited.node
+            && self.checked_async_call(inner)
+        {
+            let result_type = self.resolve_ty(inner.span);
+            let operand = self.emit_await(inner, result_type.clone(), inner.span, scope, out);
+            return self.emit_try(operand, result_type, span, scope, out);
+        }
+        if let Some((call_span, access)) = self.awaited_direct_view(awaited) {
+            let output = super::returned_views::reference_value(self.resolve_ty(call_span), access);
+            let _physical_reference = self.emit_await(awaited, output, span, scope, out);
+            return match self.awaited_view_places.remove(&call_span) {
+                Some((place, retained_access)) if retained_access == access => {
+                    bir::Operand::place(place, super::returned_views::view_fact(access), false)
+                }
+                _ => self.unsupported_operand(
+                    "awaited returned view has no substituted source place".into(),
+                    scope,
+                    hir_span(span),
+                    out,
+                ),
+            };
+        }
+        self.emit_await(awaited, self.resolve_ty(span), span, scope, out)
+    }
+
+    /// Find the direct view selected for an awaited call through redundant grouping. The source-level call result is
+    /// value typed; only this suspension boundary asks for its physical reference carrier.
+    fn awaited_direct_view(
+        &self,
+        expression: &ast::Spanned<ast::Expr>,
+    ) -> Option<(ast::Span, incan_semantics_core::IncanInputAccess)> {
+        if let ast::Expr::Paren(inner) = &expression.node {
+            return self.awaited_direct_view(inner);
+        }
+        let (access, ..) = self.type_info.selected_call_view(expression.span)?;
+        Some((expression.span, access))
+    }
+
+    /// Read the checker's async-call selection through grouping, without resolving a callable or guessing from its
+    /// result type. A synchronous Result containing a future must still propagate before suspension.
+    fn checked_async_call(&self, expression: &ast::Spanned<ast::Expr>) -> bool {
+        if let ast::Expr::Paren(inner) = &expression.node {
+            return self.checked_async_call(inner);
+        }
+        let key = expression.span;
+        self.type_info.calls.body_ir_async_call_targets.contains_key(&key)
+            || self.type_info.rust.async_call_realizations.contains(&key)
+    }
+
+    /// Suspend an already checked await operand into its logical output carrier. The caller chooses whether a
+    /// following propagation consumes that output; this boundary evaluates the operand exactly once.
+    fn emit_await(
+        &mut self,
+        awaited: &ast::Spanned<ast::Expr>,
+        ty: IncanType,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        let operand = self.lower_expr_to_operand(awaited, scope, out);
+        let operand = self.lower_await_operand(awaited, scope, out);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
-        let ty = self
-            .retained_await_output(&operand)
-            .unwrap_or_else(|| self.resolve_ty(span));
-        self.settled_types.insert((span.start, span.end), ty.clone());
+        self.settled_types.insert(span, ty.clone());
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Await {
@@ -38,12 +95,43 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.temp_operand(destination, &ty)
     }
 
+    /// Evaluate an await operand once, then apply only its checker-selected IntoFuture conversion. Await and race
+    /// share this boundary so both preserve the same native carrier and ownership decision before suspension.
+    fn lower_await_operand(
+        &mut self,
+        awaited: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let operand = self.lower_expr_to_operand(awaited, scope, out);
+        let Some(conversion) = self.type_info.rust.await_conversions.get(&awaited.span).cloned() else {
+            return operand;
+        };
+        self.emit_checked_rust_call(
+            &conversion,
+            vec![bir::ArgumentElement::One(operand)],
+            bir::ArgumentBinding::resolved_positional(1),
+            awaited.span,
+            scope,
+            out,
+        )
+        .unwrap_or_else(|| {
+            self.unsupported_operand(
+                "await conversion without a native identity".to_owned(),
+                scope,
+                hir_span(awaited.span),
+                out,
+            )
+        })
+    }
+
     /// Lower `race for value:` into a [`bir::StatementKind::Race`].
     ///
     /// Each arm's awaitable is lowered into the enclosing block *before* any arm body, which is what makes "every
     /// awaitable is evaluated before selection" observable in the statement sequence rather than a claim in prose.
     /// Each arm then gets its own scope and type-refined local. Those locals retain the one canonical identity and
     /// exact token span of the shared header binding, so different arm types do not invent different source objects.
+    /// Reads in a winning arm retain enclosing owners for the other selectable paths and their scope-exit drops.
     ///
     /// An arm body containing an unsupported construct keeps its own `Unsupported` node *inside* the represented
     /// race rather than collapsing the whole expression, so a consumer loses only the construct it cannot handle.
@@ -60,7 +148,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // enclosing block. Only the winning arm's body runs, so arm bodies are lowered into their own blocks below.
         let mut awaitables = Vec::with_capacity(race.arms.len());
         for arm in &race.arms {
-            awaitables.push(self.lower_expr_to_operand(&arm.awaitable, scope, out));
+            awaitables.push(self.lower_await_operand(&arm.awaitable, scope, out));
         }
         self.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
 
@@ -102,12 +190,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
 
             let mut arm_stmts = Vec::new();
+            self.conditional_scopes.push(arm_scope);
             let result = match &arm.body {
                 ast::RaceForBody::Expr(expr) => self.lower_expr_to_operand(expr, arm_scope, &mut arm_stmts),
                 ast::RaceForBody::Block(stmts) => {
                     self.lower_race_arm_block(stmts, arm.awaitable.span, arm_scope, &mut arm_stmts)
                 }
             };
+            self.conditional_scopes.pop();
             self.insert_scope_drops(&mut arm_stmts, arm_scope);
 
             // Every name an arm bound -- its winner binding and any local its block body declared -- is scoped to
@@ -129,7 +219,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         // Code after the race follows exactly one selected arm. A range layout is usable only if it survives
         // every possible winner; an empty arm set conservatively carries no constructed-layout fact.
-        self.materialized_range_locals = intersect_range_layouts(range_layouts_after_arms);
+        self.materialized_range_locals = intersect_local_states(range_layouts_after_arms);
 
         let ty = self.resolve_ty(span);
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);

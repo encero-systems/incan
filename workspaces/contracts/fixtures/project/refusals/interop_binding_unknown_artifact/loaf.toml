@@ -1,0 +1,21 @@
+[project]
+name = "interop_binding_unknown_artifact"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+
+[[interop.c.targets]]
+target = "aarch64-apple-darwin"
+
+[[interop.c.targets.artifacts]]
+name = "bridge"
+kind = "static"
+path = "interop/lib/libbridge.a"
+
+[[interop.c.targets.bindings]]
+module = ["main"]
+name = "Bridge"
+artifacts = ["bridge", "helper"]

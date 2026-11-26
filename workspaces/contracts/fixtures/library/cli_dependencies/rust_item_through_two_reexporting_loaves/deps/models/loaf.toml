@@ -1,0 +1,6 @@
+[project]
+name = "models"
+version = "0.1.0"
+
+[dependencies]
+native = { loaf = "native", path = "../native" }

@@ -1,0 +1,14 @@
+# behavior: Without a member selection, a project command at a workspace root with `default-members` acts on those members, not the root project, as in 0.5.1 (#3141).
+# cli-commands:
+#   oven run
+#   incan run
+#   oven check
+#   oven test
+#   oven build
+# expect-stdout-contains:
+#   workspace member beta: beta
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program, which these commands leave out."""
+    println("root ran")

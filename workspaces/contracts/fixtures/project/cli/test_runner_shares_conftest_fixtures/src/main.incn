@@ -1,0 +1,11 @@
+# behavior: a `conftest.incn` beside a test file under `tests/` shares its fixtures, autouse ones included, with the file's tests; a fixture the file declares itself takes precedence, as 0.5.1 does (#3149).
+# cli-commands:
+#   test tests --nocapture
+# expect-stdout-contains:
+#   shared autouse ran
+#   test_shared.incn::test_uses_a_shared_fixture PASSED
+#   test_shared.incn::test_prefers_its_own_fixture PASSED
+#   test_shared.incn::test_combines_shared_and_own_fixtures PASSED
+
+def main() -> None:
+    println("main")

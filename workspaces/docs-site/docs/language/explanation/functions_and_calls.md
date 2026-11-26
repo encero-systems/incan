@@ -100,7 +100,7 @@ means a call with explicit containers:
 collect("event", [1] + xs, <dict containing "kind": "demo" plus labels inserted in source order>)
 ```
 
-The generated Rust builds those containers with ordinary `Vec` and `HashMap` construction. Nothing is inspected at runtime to decide how arguments bind, and rest parameters are not the variadics of C or Rust. That is also why a function type that merely ends in a list or dictionary parameter is not rest-aware: the rest markers belong to the declaration, and a function value made from that declaration keeps them.
+The compiled code builds those containers with ordinary `Vec` and `HashMap` construction. Nothing is inspected at runtime to decide how arguments bind, and rest parameters are not the variadics of C or Rust. That is also why a function type that merely ends in a list or dictionary parameter is not rest-aware: the rest markers belong to the declaration, and a function value made from that declaration keeps them.
 
 ### Unpacking into fixed parameters
 
@@ -132,3 +132,5 @@ Writing such a default is still valid; only callers in other packages must pass 
 A `mut` marker is part of a function type, so diagnostics and hovers spell it, as in `(mut Counter, int) -> int`. Two function types that differ only in a marker are different types, and the spelled marker shows where they differ.
 
 An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names only a callable's parameter list. A marker with N parameters is checked as the `CallableN` bound with those parameter types and the return type of the value passed. A call supplies that value, so a marker can bound a function's or method's type parameter; on the type parameter of a model, class or other type declaration no call supplies a return type, and the marker is refused there. The traits themselves are in [Callable objects](../reference/stdlib_traits/callable.md).
+
+`Result` methods can call the corresponding `std.result` helper for a named callback. Callable objects and closures can stay on the direct method path and retain the behavior of `Callable1`. Both paths have the same branch behavior, return type, and borrowing rules for observers. Use method syntax for a chain of calls or import a helper when you need a function value. See [`std.result`](../reference/stdlib/result.md).

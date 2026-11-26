@@ -1,0 +1,12 @@
+# behavior: a compiler worker whose footprint after a request is over its bound replies `retired` and exits, so the next request starts a new worker instead of dialing the retired one (WP24); the test-only bound below retires a worker after every request
+# environment:
+#   INCAN_WORKER_FOOTPRINT_BOUND=1
+# cli-commands:
+#   fmt --check src/plain.incn
+#   fmt --check src/plain.incn
+# expect-exit: 0
+# expect-trace-contains:
+#   compiler worker: started pid
+#   compiler worker: retired after its request
+
+"""Name the source the commands format."""

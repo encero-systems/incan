@@ -1,0 +1,113 @@
+"""Compact little-endian byte encoding helpers for the `std.collections.OrdinalMap` wire format."""
+
+from rust::std::string import String as RustString
+
+
+pub def _compact_width(max_value: int) -> int:
+    """Choose the smallest supported byte width for a non-negative integer domain."""
+    if max_value <= 255:
+        return 1
+    if max_value <= 65535:
+        return 2
+    if max_value <= 4294967295:
+        return 4
+    return 8
+
+
+pub def _ordinal_key_section(offset_width: int, offsets: bytes, records: bytes) -> bytes:
+    """Assemble the serialized key section from offset metadata and key bytes."""
+    mut out: list[u8] = []
+    _append_byte(out, offset_width)
+    _append_bytes(out, offsets)
+    _append_bytes(out, records)
+    return out
+
+
+pub def _ordinal_lookup_section(slot_width: int, slot_count: int, slots: bytes) -> bytes:
+    """Assemble the serialized lookup section from slot metadata."""
+    mut out: list[u8] = []
+    _append_byte(out, slot_width)
+    _append_u64_le(out, slot_count)
+    _append_bytes(out, slots)
+    return out
+
+
+pub def _append_section(mut out: list[u8], section: bytes) -> None:
+    """Append a length-prefixed binary section to a container buffer."""
+    _append_u64_le(out, len(section))
+    _append_bytes(out, section)
+
+
+pub def _append_bytes(mut out: list[u8], data: bytes) -> None:
+    """Append raw bytes to a container buffer."""
+    for index in range(len(data)):
+        out.append(data[index])
+
+
+pub def _append_compact_int(mut out: list[u8], value: int, width: int) -> None:
+    """Append a non-negative integer using the selected compact little-endian width."""
+    _append_byte(out, value % 256)
+    if width >= 2:
+        _append_byte(out, (value // 256) % 256)
+    if width >= 4:
+        _append_byte(out, (value // 65536) % 256)
+        _append_byte(out, (value // 16777216) % 256)
+    if width >= 8:
+        _append_byte(out, (value // 4294967296) % 256)
+        _append_byte(out, (value // 1099511627776) % 256)
+        _append_byte(out, (value // 281474976710656) % 256)
+        _append_byte(out, (value // 72057594037927936) % 256)
+
+
+pub def _append_u16_le(mut out: list[u8], value: int) -> None:
+    """Append a little-endian 16-bit container field."""
+    _append_byte(out, value % 256)
+    _append_byte(out, (value // 256) % 256)
+
+
+pub def _append_u16_prefixed_bytes(mut out: list[u8], data: bytes) -> None:
+    """Append a small byte payload prefixed by a little-endian `u16` length."""
+    _append_u16_le(out, len(data))
+    _append_bytes(out, data)
+
+
+pub def _utf8_bytes(value: str) -> bytes:
+    """Encode an internal container identifier as UTF-8 bytes."""
+    return RustString.from(value).into_bytes()
+
+
+pub def _append_u64_le(mut out: list[u8], value: int) -> None:
+    """Append a little-endian 64-bit container field."""
+    _append_compact_int(out, value, 8)
+
+
+pub def _append_byte(mut out: list[u8], value: int) -> None:
+    """Append the low byte of an integer to a container buffer."""
+    byte: u8 = value.wrapping_resize()
+    out.append(byte)
+
+
+pub def _read_compact_int(data: bytes, offset: int, width: int) -> int:
+    """Read a non-negative integer encoded with a compact little-endian width."""
+    mut value = int(data[offset])
+    if width >= 2:
+        value += int(data[offset + 1]) * 256
+    if width >= 4:
+        value += int(data[offset + 2]) * 65536
+        value += int(data[offset + 3]) * 16777216
+    if width >= 8:
+        value += int(data[offset + 4]) * 4294967296
+        value += int(data[offset + 5]) * 1099511627776
+        value += int(data[offset + 6]) * 281474976710656
+        value += int(data[offset + 7]) * 72057594037927936
+    return value
+
+
+pub def _read_u16_le(data: bytes, offset: int) -> int:
+    """Read a little-endian 16-bit integer from bytes."""
+    return _read_compact_int(data, offset, 2)
+
+
+pub def _read_u64_le(data: bytes, offset: int) -> int:
+    """Read a little-endian 64-bit integer from bytes."""
+    return _read_compact_int(data, offset, 8)

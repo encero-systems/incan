@@ -1,0 +1,22 @@
+# behavior: a place binding still used after an await keeps its place borrowed across the suspension; an awaited call that changes the place in between is refused (RFC 129, #1846).
+# pending: a bare local declared from a place is still an independent copy, so the check accepts the program; awaiting a function with a caller-visible `mut` parameter then fails in lowering.
+# expect-diagnostic: INCAN-T0126
+
+class Cart:
+    pub items: list[str]
+
+
+async def grow(mut cart: Cart, item: str) -> int:
+    cart.items.append(item)
+    return len(cart.items)
+
+
+async def overlap(mut cart: Cart) -> int:
+    items = cart.items
+    grown = await grow(cart, "plum")
+    return grown + len(items)
+
+
+async def main() -> None:
+    mut cart = Cart(items=["apple"])
+    println(await overlap(cart))

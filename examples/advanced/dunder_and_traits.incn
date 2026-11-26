@@ -14,10 +14,10 @@ model User:
     name: str
     email: str
     cache_key: str
-    
+
     def __eq__(self, other: User) -> bool:
         return self.id == other.id
-    
+
     def __str__(self) -> str:
         return f"User({self.name}, id={self.id})"
 
@@ -31,11 +31,19 @@ class Product with Describable:
     name: str
     price: float
 
+    @staticmethod
+    pub def new(name: str, price: float) -> Product:
+        return Product(name=name, price=price)
+
 
 class Book with Describable:
     title: str
     author: str
     pages: int
+
+    @staticmethod
+    pub def new(title: str, author: str, pages: int) -> Book:
+        return Book(title=title, author=author, pages=pages)
 
     def describe(self) -> str:
         return f"'{self.title}' by {self.author} ({self.pages} pages)"
@@ -54,13 +62,13 @@ def main() -> None:
     if user1 == user2:
         println("Users are equal (same id)")
     println(f"User representation: {user1}")
-    
-    product = Product(name="Laptop", price=999.99)
+
+    product = Product.new(name="Laptop", price=999.99)
     println(f"Product: {product.describe()}")
-    
-    book = Book(title="The Rust Programming Language", author="Steve Klabnik & Carol Nichols", pages=552)
+
+    book = Book.new(title="The Rust Programming Language", author="Steve Klabnik & Carol Nichols", pages=552)
     println(f"Book: {book.describe()}")
-    
+
     config = Config(host="localhost", port=8080, debug=true)
     println(f"Config type: {config.__class_name__()}")
     println("Config fields:")

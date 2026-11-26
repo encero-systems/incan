@@ -1,0 +1,105 @@
+"""Helpers the engine protocol tests share: a refusal's detail as test text, stopping a records engine, a JSON text
+field check, and reaping a test's child process."""
+
+from core_process import Process, spawn_detached
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from engine_client import service_generation, service_identity
+from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, dial
+from engine_channel import Channel
+from engine_endpoint import connect_with, endpoint, handshake
+from engine_messages import Message, Release, Stop
+from engine_state import Identity
+from engine_wire import Refusal, zero_id
+from std.encoding.hex import hexlify
+
+
+pub def detail(refusal: Refusal) -> str:
+    """Expose typed test failures through the Oven harness's textual error boundary."""
+    return refusal.detail
+
+
+pub def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
+    """Whether one optional JSON field is text equal to `expected`, without comparing carrier values."""
+    match document.get(key):
+        None => return false
+        Some(value) =>
+            match value.as_str():
+                None => return false
+                Some(found) => return found == expected
+
+
+pub def stop_engine(store: Path, binary: str) -> Result[None, str]:
+    """Stop the records engine serving `store`, and require its acknowledgment."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="execution collection proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("execution collection proof did not stop its engine")
+    # Stop is acknowledged; peer withdrawal may race the local shutdown.
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+pub def await_exit(mut child: Process, expected_success: bool) -> Result[None, str]:
+    """Reap this test's child, killing only that child if the lifecycle deadline fails."""
+    for _poll in range(2500):
+        match child.poll()?:
+            Some(status) =>
+                assert status == expected_success
+                return Ok(None)
+            None => sleep(Duration.from_millis(2))
+    child.terminate()?
+    return Err("test engine did not exit")
+
+
+pub def launch_service(
+    binary: str, root: Path, identity: Identity, mut environment: dict[str, str] = {},
+) -> Result[Process, str]:
+    """Launch a directly owned service against the installed standard library."""
+    environment["INCAN_STDLIB"] = ""
+    return spawn_detached(
+        binary,
+        [
+            "--internal-engine", root.0, identity.store_id, identity.profile,
+            identity.service_generation, identity.compiler_generation, "1",
+        ],
+        environment,
+    )
+
+
+pub def await_service(root: Path, identity: Identity) -> Result[Channel, str]:
+    """Wait for one of the explicit starters' endpoints without starting another process."""
+    return handshake(Channel(transport=await_connection(root, identity)?), identity).map_err(detail)
+
+
+pub def await_connection(root: Path, identity: Identity) -> Result[Connection, str]:
+    """Wait for a transport without beginning its engine handshake."""
+    selected = endpoint(root, identity).map_err(detail)?
+    for _poll in range(2500):
+        match dial(selected.socket):
+            Ok(transport) => return Ok(transport)
+            Err(_) => sleep(Duration.from_millis(2))
+    return Err("test engine did not start")
+
+
+pub def release_service_result(mut channel: Channel, request: bytes) -> Result[None, str]:
+    """Release the exact result pin before another request uses the control window."""
+    token = f"{hexlify(channel.session)}:{hexlify(request)}"
+    _ = channel.send(request, Message.Release(Release(lease_id=token))).map_err(detail)?
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        channel.acknowledge(frame).map_err(detail)?
+        match frame.message:
+            Message.Event(event) =>
+                if event.status == "Released":
+                    return Ok(None)
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+    return Err("service did not release the completed request")

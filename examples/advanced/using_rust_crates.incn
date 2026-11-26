@@ -12,7 +12,7 @@ from rust::serde_json import from_str as json_parse
 from rust::std::env import var as env_var
 from rust::std::time import Instant
 from rust::std::collections import HashMap
-from rust::uuid import Uuid
+from rust::uuid @ "1.0" with ["v4"] import Uuid
 from rust::rand import Rng, thread_rng
 from rust::serde @ "1.0" import Deserialize
 
@@ -26,9 +26,9 @@ model UserData:
     name: str
     email: str
 
-def parse_user_data(json_str: str) -> UserData:
-    """Parse JSON string into a typed model (recommended approach)."""
-    return json_parse(json_str).unwrap()
+def parse_user_data(json_str: str) -> Result[UserData, str]:
+    """Parse JSON into a typed model, returning a malformed document's error as text."""
+    return json_parse(json_str).map_err((error) => error.to_string())
 
 
 # =============================================================================
@@ -51,11 +51,11 @@ def word_frequency(text: str) -> HashMap[str, int]:
     This demonstrates iterating over string methods and using HashMap.
     `get` returns the stored count, or None for a word not seen yet.
     """
-    mut counts = HashMap.new()
+    mut counts: HashMap[str, int] = HashMap.new()
     
     for word in text.split_whitespace():
         # .unwrap_or(0) provides the default, like Python's dict.get(key, 0)
-        current = counts.get(word).unwrap_or(0)
+        current = counts.get(word).copied().unwrap_or(0)
         counts.insert(word.to_string(), current + 1)
     
     return counts
@@ -124,7 +124,17 @@ def random_choice(items: List[str]) -> str:
 # Main: Run all examples
 # =============================================================================
 
-def main() -> None:
+def main() -> Result[None, str]:
+    """
+    Run the Rust interop examples, propagating JSON parsing failures.
+
+    1. Parse typed JSON.
+    2. Generate UUIDs.
+    3. Count words with a HashMap.
+    4. Measure an operation.
+    5. Read environment variables.
+    6. Generate random values.
+    """
     println("============================================================")
     println("Rust Interoperability Examples")
     println("============================================================")
@@ -132,7 +142,7 @@ def main() -> None:
     # Example 1: JSON parsing
     println("\n1. JSON Parsing with Typed Model:")
     user_json = '{"name": "Alice", "email": "alice@example.com"}'
-    user = parse_user_data(user_json)
+    user = parse_user_data(user_json)?
     println(f"   Parsed user: {user.name} ({user.email})")
     
     # Example 2: UUID generation
@@ -144,9 +154,9 @@ def main() -> None:
     println("\n3. Word Frequency (HashMap):")
     text = "the quick brown fox jumps over the lazy dog the fox"
     freq = word_frequency(text)
-    println(f"   'the' appears {freq.get('the').unwrap_or(0)} times")
-    println(f"   'fox' appears {freq.get('fox').unwrap_or(0)} times")
-    println(f"   'cat' appears {freq.get('cat').unwrap_or(0)} times")
+    println(f"   'the' appears {freq.get('the').copied().unwrap_or(0)} times")
+    println(f"   'fox' appears {freq.get('fox').copied().unwrap_or(0)} times")
+    println(f"   'cat' appears {freq.get('cat').copied().unwrap_or(0)} times")
     
     # Example 4: Time measurement
     println("\n4. Time Measurement (Instant):")
@@ -168,3 +178,4 @@ def main() -> None:
     println(f"   Random color: {random_choice(colors)}")
     
     println("\n============================================================")
+    return Ok(None)

@@ -1,0 +1,17 @@
+# behavior: two test modules that import one project module compile the project's modules once, then reuse them
+# environment:
+#   INCAN_BAKERY=target/case-bakery
+# cli-commands:
+#   oven test tests/test_area.incn
+#   oven test tests/test_sides.incn
+# expect-exit: 0
+# expect-trace-contains:
+#   unit test_modules_share_one_compiled_project_module_project_library library:
+# expect-trace-at-most-once:
+#   unit test_modules_share_one_compiled_project_module_project_library library: compiled
+from shapes import Square, area
+
+
+def main() -> None:
+    """Print the area of a square of side 3."""
+    println(str(area(Square(side=3))))

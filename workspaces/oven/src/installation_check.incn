@@ -1,0 +1,55 @@
+"""Qualify the installed development runtime through the ordinary run route before installation returns."""
+
+from pub::incan_platform.trace import Operation
+from rust::std::env import current_exe
+from rust::std::fs import create_dir, remove_dir_all
+from rust::std::process import Command, id
+from std.fs import Path
+from files import write
+from rust_target import decoded
+from jec import begin, record
+
+const GREETING: str = "incan installation verified"
+
+
+pub def verify_installed_runtime(directory: Path) -> Result[None, str]:
+    """Check the installed compiler, development runtime and loader with this Oven's ordinary command route."""
+    oven = current_exe().map_err((error) => str(error))?
+    return verify_runtime(str(oven.display()), directory)
+
+
+pub def verify_runtime(oven: str, directory: Path) -> Result[None, str]:
+    """
+    Qualify one installation, preserving its native preparation and removing only this check's temporary project.
+
+    1. Create an exclusive temporary project beside the installation.
+    2. Compile and execute the built-in program through the ordinary run command.
+    3. Remove the project on success or failure; shared runtime artifacts remain available in the home.
+    """
+    # 1. A collision refuses rather than overwrite an existing project.
+    project = directory.parent().joinpath(f".installation-check-{id()}")
+    create_dir(project.0).map_err((error) => str(error))?
+    # 2. The same route prepares installed manifest facts and the reached development runtime once.
+    result = check_program(oven, project.joinpath("main.incn"))
+    # 3. The project belongs entirely to this check, including when compilation or execution failed.
+    cleanup = remove_dir_all(project.0).map_err((error) => str(error))
+    result?
+    return cleanup
+
+
+def check_program(oven: str, source: Path) -> Result[None, str]:
+    """Require the installed runtime's observable result, with no developer standard-library override."""
+    write(source, f"def main() -> None:\n    println(\"{GREETING}\")\n")?
+    mut command = Command.new(oven)
+    command.arg("run").arg(source.0)
+    command.env_remove("INCAN_STDLIB")
+    command.env_remove("INCAN_SOURCE_ROOT")
+    command.env_remove("RUSTC_BOOTSTRAP")
+    clock = begin()
+    output = command.output().map_err((error) => str(error))?
+    record(Operation.InstallationRuntime, source.0, clock)
+    if not output.status.success():
+        return Err(f"installed runtime verification failed: {decoded(output.stderr)}")
+    if decoded(output.stdout) != GREETING + "\n":
+        return Err("installed runtime verification returned unexpected output")
+    return Ok(None)

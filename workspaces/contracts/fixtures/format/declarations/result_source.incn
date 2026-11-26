@@ -1,0 +1,13 @@
+# behavior: Result-source paths survive canonical function and abstract method formatting.
+# expect-formatted:
+#   def view(value: Borrowed[str]) -> Borrowed[str] from value:
+#       return value
+#
+#
+#   trait View:
+#       def name(self) -> Borrowed[str] from self.name
+
+def view( value:Borrowed[str])->Borrowed[str] from value:
+    return value
+trait View:
+    def name(self)->Borrowed[str] from self.name

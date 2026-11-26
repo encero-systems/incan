@@ -1,0 +1,11 @@
+# behavior: a member's `[envs.test.dependencies] NAME = { workspace = true }` inherits from its workspace root, as 0.5.1's `[rust-dev-dependencies] NAME = { workspace = true }` did, so a root that does not declare `NAME` is refused instead of the entry being dropped (#3141).
+# cli-commands:
+#   check app/src/main.incn
+# expect-stderr-contains:
+#   ["envs", "test", "dependencies", "insta", "workspace"]: missing: the workspace at
+#   declares no [workspace.dependencies] `insta`
+# expect-exit: 1
+
+def main() -> None:
+    """The workspace root's own program, which this case does not run."""
+    pass

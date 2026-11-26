@@ -1,0 +1,15 @@
+# behavior: Unknown oven commands and subcommands report an error and point to oven's help with exit status two.
+# cli-commands:
+#   oven nonexistent
+#   oven owner nonexistent
+#   oven bakery nonexistent
+#   oven inspect nonexistent
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown command
+#   Run `oven --help` for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that unknown command invocations never compile."""
+    pass

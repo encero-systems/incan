@@ -1,0 +1,7 @@
+"""Bytes iteration needs its selected runtime operations, not every runtime export."""
+
+pub def total(data: bytes) -> int:
+    mut value = 0
+    for byte in data:
+        value += int(byte)
+    return value

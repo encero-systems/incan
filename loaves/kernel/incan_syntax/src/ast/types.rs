@@ -8,7 +8,7 @@ use super::{Ident, IntLiteral, Spanned};
 // Types
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Type {
     /// Simple type: `int`, `str`, `MyType`
     Simple(Ident),
@@ -51,7 +51,7 @@ pub enum Type {
 }
 
 /// Ordered comparison key accepted inside an RFC 017 constrained primitive type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum TypeConstraintKey {
     /// Greater than or equal: `ge=...`.
     Ge,
@@ -94,7 +94,7 @@ impl fmt::Display for TypeConstraintKey {
 }
 
 /// One parsed RFC 017 primitive type constraint, preserving the literal spelling for formatting.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TypeConstraint {
     /// Constraint comparison operator.
     pub key: TypeConstraintKey,

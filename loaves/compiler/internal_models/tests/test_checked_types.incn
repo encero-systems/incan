@@ -1,0 +1,82 @@
+"""Complete authored checked-type controls for recursive structure, binder position and native ownership facts."""
+
+from checked_types import (
+    CheckedCallableParam,
+    CheckedCallableParamKind,
+    CheckedInputAccess,
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedRuntimeBuiltin,
+    CheckedType,
+    valid_checked_type,
+)
+from compiler_records import CanonicalSymbolId, DeclarationKind, HirSourceSpan, SymbolNamespace, SymbolOrigin
+
+
+pub def test_checked_types() -> None:
+    """Construct every checked type alternative and retain nested binder, access, pointer and trait identity facts."""
+    trait_identity = CanonicalSymbolId(
+        namespace=SymbolNamespace.OrdinaryLexical,
+        origin=SymbolOrigin.Module(["contracts"]),
+        declaration_name="Readable",
+        kind=DeclarationKind.Trait,
+        scope_discriminant=None,
+        declaration_span=HirSourceSpan(file="src/main.incn", start=4, end=12),
+    )
+    parameter = CheckedCallableParam(
+        name=Some("value"),
+        ty=CheckedType.TypeVar("T"),
+        kind=CheckedCallableParamKind.Normal,
+        has_default=true,
+        is_partial_preset=true,
+        is_mut=true,
+        native_owned=true,
+        input_access=CheckedInputAccess.Exclusive,
+    )
+    types = [
+        CheckedType.Never,
+        CheckedType.Primitive(CheckedPrimitiveType.Numeric(CheckedNumericType.I64)),
+        CheckedType.Named("Invoice"),
+        CheckedType.Generic("Result", [CheckedType.TypeVar("T"), CheckedType.TypeVar("T")]),
+        CheckedType.Decimal(38, 4),
+        CheckedType.Function([parameter], [CheckedType.TypeVar("T")]),
+        CheckedType.TypeToken([CheckedType.Named("Invoice")]),
+        CheckedType.Tuple([CheckedType.Primitive(CheckedPrimitiveType.Bool)]),
+        CheckedType.TypeVar("T"),
+        CheckedType.SelfType,
+        CheckedType.Ref([CheckedType.TypeVar("T")]),
+        CheckedType.RefMut([CheckedType.TypeVar("T")]),
+        CheckedType.RustInteropPath("std::path::PathBuf"),
+        CheckedType.NativeBuiltin(CheckedRuntimeBuiltin.ValidationError),
+        CheckedType.Unsupported("opaque"),
+        CheckedType.Infer,
+        CheckedType.Unknown,
+        CheckedType.NativeArray([CheckedType.Primitive(CheckedPrimitiveType.Bytes)], 18446744073709551615u64),
+        CheckedType.NativeTraitObject("std::fmt::Debug", true, false),
+        CheckedType.NativePointer(true, [CheckedType.NativeCChar]),
+        CheckedType.NativeCChar,
+        CheckedType.Trait(trait_identity),
+    ]
+    assert len(types) == 22
+    for ty in types:
+        assert valid_checked_type(ty)
+        assert ty == ty
+    assert CheckedType.TypeVar("T") != CheckedType.Named("T")
+    assert CheckedType.Ref([CheckedType.TypeVar("T")]) != CheckedType.RefMut([CheckedType.TypeVar("T")])
+    owner_then_method = CheckedType.Function([parameter], [CheckedType.Ref([CheckedType.TypeVar("T")])])
+    method_then_owner = CheckedType.Function(
+        [
+            CheckedCallableParam(
+                name=Some("value"),
+                ty=CheckedType.Ref([CheckedType.TypeVar("T")]),
+                kind=CheckedCallableParamKind.Normal,
+                has_default=true,
+                is_partial_preset=true,
+                is_mut=true,
+                native_owned=true,
+                input_access=CheckedInputAccess.Exclusive,
+            ),
+        ],
+        [CheckedType.TypeVar("T")],
+    )
+    assert owner_then_method != method_then_owner

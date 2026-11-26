@@ -10,8 +10,6 @@ from std.regex import Captures, Match, Regex, RegexError
 
 ## Engine boundary
 
-The stdlib regex engine is the safe default: it follows the predictable Rust-regex/RE2-style model rather than a fully backtracking Python/PCRE-style model.
-
 | Surface | Contract |
 | --- | --- |
 | Supported patterns | Literals, character classes, quantifiers, alternation, grouping, anchors, indexed captures, named captures, inline flags, and Unicode-aware matching by default. |
@@ -93,4 +91,3 @@ Rejected pattern syntax returns a `RegexError`. Error text is diagnostic text; p
 - [Regular expressions](../../how-to/regular_expressions.md)
 - [Strings and bytes](../strings.md)
 - [Callable objects](../stdlib_traits/callable.md)
-- [RFC 059: std.regex](../../../RFCs/closed/implemented/059_std_regex.md)

@@ -1,0 +1,46 @@
+"""Checked borrowed enum fields that clone only the selected carrier."""
+
+@derive(Clone)
+type Kind = newtype str
+type Choice = Kind | str
+
+model Holder:
+    value: Option[Choice]
+
+model Envelope:
+    holder: Holder
+
+def take(value: Option[Choice]) -> Option[Choice]:
+    return value
+
+def payload(value: Option[Choice]) -> Choice:
+    if value is not None:
+        return value
+    return "missing"
+
+def describe(value: Option[Choice]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        if isinstance(value, Kind):
+            return f"kind {value.0}"
+    return "missing"
+
+
+pub def run_projected_carriers() -> None:
+    """Read repeated borrows and replaced parents back through the selected carrier."""
+    mut holder = Holder(value=Some(Kind("retained")))
+    first = take(holder.value)
+    second = take(holder.value)
+    println(describe(holder.value))
+    println(describe(holder.value))
+    holder.value = None
+    println(describe(holder.value))
+    println(describe(first))
+    println(describe(second))
+    mut nested = Envelope(holder=Holder(value=Some("nested")))
+    println(describe(nested.holder.value))
+    nested.holder.value = Some("replacement")
+    println(describe(nested.holder.value))
+    println(describe(nested.holder.value))
+    println(describe(Some(payload(Some(Kind("deep"))))))

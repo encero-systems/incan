@@ -1,0 +1,1223 @@
+"""Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
+
+from cfg_predicate import identifier
+from compiler_body_keys import EXECUTABLE_BODY_PROFILE
+from pub::internal_models.executable_scope import EXECUTABLE_SCOPE_FAMILY
+from graph_read_demands import note_graph_demand, note_graph_witness_demand
+from pub::internal_models.namespace_order import decode_namespace_order
+from pub::internal_models.record_scope import checked_row_family, checked_row_request
+from pub::internal_models.source_value_records import SOURCE_PROFILE
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::incan_platform.store import (
+    EXPECT_ANY,
+    Lookup,
+    Snapshot,
+    Transaction,
+    begin,
+    commit,
+    get,
+    first_stored_key,
+    keys_with_prefix,
+    locate_value,
+    lookup,
+    owned,
+    read_frame,
+    revisions_with_prefix,
+    stage_delete,
+    stage_put,
+)
+from pub::incan_platform.store.codec import KIND_TOMBSTONE, KIND_VALUE, Write, matches_value_frame
+from pub::incan_platform.store.files import index_failure
+from pub::incan_platform.store.index import Location, entries_with_prefix
+from pub::internal_models import (
+    ProducerRank,
+    ProducerStage,
+    StoreRecordSource,
+    decode_read_receipt_view,
+    encode_read_receipt,
+)
+from pub::internal_models.records import (
+    ReadReceipt,
+    ReadScope,
+    ReadWitness,
+    RecordRead,
+    READ_SCHEMA,
+    RecordKey,
+    RecordRequest,
+    encode_record_key,
+)
+pub from compiler_receipt_projections import ReceiptProjectionCache
+from compiler_receipt_projections import authenticated_receipt, validate_receipt_authority
+from compiler_graph_rows import (
+    Evaluation, IncomingEdge, OutgoingEdge, encode_evaluation, encode_incoming, encode_outgoing, encode_pointer,
+    evaluation_value_digest, read_evaluation, read_identity, read_incoming, read_outgoing, read_pointer,
+)
+
+
+pub model PublishedEvaluation:
+    """The one selected generation and identities installed by a completed evaluation transaction."""
+
+    pub snapshot: Snapshot
+    pub value_key: str
+    pub value_digest: str
+    pub receipt_key: str
+    pub receipt_root: str
+    pub evaluation_key: str
+    pub edge_count: int
+
+
+pub model PreparedEvaluation:
+    """One evaluation and all graph records staged in a caller-owned transaction for atomic request publication."""
+
+    pub value_key: str
+    pub value_digest: str
+    pub receipt_key: str
+    pub receipt_root: str
+    pub evaluation_key: str
+    pub edge_count: int
+
+
+pub model ReusableEvaluation:
+    """One persisted compiler value admitted only after every recorded dependency still validates."""
+
+    pub value: bytes
+    pub value_digest: str
+    pub receipt: ReadReceipt
+    pub receipt_bytes: int
+    pub namespace: int
+    pub location: Option[Location] = None
+
+
+pub model ReusableRecord:
+    """One graph-admitted reusable value together with its complete logical record key."""
+
+    pub key: RecordKey
+    pub value: bytes
+    pub value_digest: str
+    pub receipt: ReadReceipt
+    pub namespace: int
+    pub location: Option[Location] = None
+
+
+model EdgeFact:
+    """One compiler witness normalized once for the receipt and both graph directions."""
+
+    kind: str
+    target: str
+    request: RecordRequest
+    evidence: str
+
+
+pub def publish_evaluation(
+    selected: Snapshot,
+    claim_key: str,
+    rank: ProducerRank,
+    value: bytes,
+    receipt: ReadReceipt,
+) -> Result[PublishedEvaluation, str]:
+    """Publish a value, evaluation, completed receipt and both edge directions in one store transaction."""
+    mut transaction = begin(selected)
+    prepared = prepare_evaluation(transaction, claim_key, rank, value, receipt)?
+    published = commit(transaction).map_err((error) => error.message())?
+    return Ok(
+        PublishedEvaluation(
+            snapshot=published,
+            value_key=prepared.value_key,
+            value_digest=prepared.value_digest,
+            receipt_key=prepared.receipt_key,
+            receipt_root=prepared.receipt_root,
+            evaluation_key=prepared.evaluation_key,
+            edge_count=prepared.edge_count,
+        ),
+    )
+
+
+pub def prepare_evaluation(
+    mut transaction: Transaction,
+    claim_key: str,
+    rank: ProducerRank,
+    value: bytes,
+    receipt: ReadReceipt,
+    expected_value_digest: str = "",
+) -> Result[PreparedEvaluation, str]:
+    """Stage a value, evaluation, completed receipt and both edge directions in a caller-owned transaction."""
+    if claim_key == "" or receipt.scope.profile == "" or receipt.schema != READ_SCHEMA:
+        return Err("a completed evaluation requires a claim, profile and read-receipt schema")
+    if rank.namespace < 0 or rank.dependency < 0:
+        return Err("a completed evaluation requires a nonnegative certified rank")
+    value_key = encode_record_key(receipt.preparation.output)?
+    value_digest = content_digest(value)
+    if expected_value_digest != "" and value_digest != expected_value_digest:
+        return Err("retained compiler value differs from its selected witness")
+    edges = normalized_edges(receipt.witnesses)?
+    receipt_bytes = encode_read_receipt(receipt)?
+    receipt_root = content_digest(receipt_bytes)
+    receipt_key = "incan.engine.receipt\t" + receipt_root
+    evaluation_key = evaluation_record_key(receipt.scope.profile, value_key)
+    evaluation = encode_evaluation(receipt.scope.profile, value_key, claim_key, value_digest, receipt_root, rank)?
+
+    stage_put(transaction, value_key, value)
+    stage_put(transaction, receipt_key, receipt_bytes)
+    stage_put(transaction, evaluation_key, evaluation)
+    stage_put(transaction, output_index_key(receipt.scope.profile, value_key)?, encode_pointer(value_key)?)
+    outgoing = outgoing_prefix(receipt.scope.profile, record_slot(value_key)?)
+    mut forward: list[OutgoingEdge] = []
+    for fact in edges:
+        forward.append(OutgoingEdge(reader=value_key, profile=receipt.scope.profile, kind=fact.kind, request=fact.request, evidence=fact.evidence))
+    incoming = incoming_keys(forward)?
+    slot = record_slot(value_key)?
+    for index in range(len(forward)):
+        stage_put(transaction, f"{outgoing}{index}", encode_outgoing(forward[index])?)
+        reverse = IncomingEdge(reader=slot, profile=receipt.scope.profile, target=edges[index].target)
+        stage_put(transaction, incoming[index], encode_incoming(reverse)?)
+    return Ok(
+        PreparedEvaluation(
+            value_key=value_key,
+            value_digest=value_digest,
+            receipt_key=receipt_key,
+            receipt_root=receipt_root,
+            evaluation_key=evaluation_key,
+            edge_count=len(edges),
+        ),
+    )
+
+
+pub model EditCutoff:
+    """
+    The selected evaluations whose witnesses an edit can have made stale, named once from the prior graph's reverse
+    edges: every evaluation that reads a record the edit changed, and every evaluation that reads such an
+    evaluation's output, in the profiles the edit is read in. Every other evaluation is valid by the snapshot it is
+    selected from, so its witnesses are not read back through the store. The default cutoff is inactive and validates
+    every selected evaluation.
+    """
+
+    pub active: bool = false
+    pub stale: set[str] = set()
+    # The unit's modules captured with the bytes their selected projection was made from: their source records are
+    # the selected graph's, so a retained owner's current source need not be projected to be compared with them.
+    pub carried: set[str] = set()
+
+    pub def revalidates(self, value_key: str) -> bool:
+        """Whether the evaluation of this output must have its witnesses read back before it is reused."""
+        return not self.active or value_key in self.stale
+
+
+pub def edit_cutoff(selected: Snapshot, changed: list[RecordKey], profiles: list[str]) -> Result[EditCutoff, str]:
+    """Name every evaluation of `profiles` that reads one of the `changed` records, directly or through other readers."""
+    return Ok(select_edit_readers(selected, changed, profiles, true)?.cutoff)
+
+
+pub model DirectReader:
+    """A selected output and the producer profile under which it read the input."""
+
+    pub profile: str
+    pub output: RecordKey
+
+
+pub model InputReaders:
+    """The exact input and current outputs whose prior evaluations read it."""
+
+    pub input: RecordKey
+    pub readers: list[DirectReader] = []
+
+
+pub model EditReaders:
+    """The direct readers of changed inputs and the transitive cutoff derived from the same snapshot."""
+
+    pub direct: list[InputReaders]
+    pub cutoff: EditCutoff
+
+
+pub def select_edit_readers(
+    selected: Snapshot, changed: list[RecordKey], profiles: list[str], follow_readers: bool,
+) -> Result[EditReaders, str]:
+    """
+    Load the direct readers once for all profiles and retain the exact input causes for downstream selection.
+    When requested, follow those same readers to build the cutoff. Only this walk owns the decoded index rows.
+    """
+    mut ranges = ReaderRanges()
+    direct = ranges.select(selected, changed, profiles)?
+    if not follow_readers:
+        return Ok(EditReaders(direct=direct, cutoff=EditCutoff()))
+    mut cutoff = EditCutoff(active=true)
+    mut frontier = stale_reader_outputs(direct, cutoff)?
+    while len(frontier) > 0:
+        readers = ranges.select(selected, frontier, profiles)?
+        frontier = stale_reader_outputs(readers, cutoff)?
+    return Ok(EditReaders(direct=direct, cutoff=cutoff))
+
+
+def stale_reader_outputs(
+    inputs: Borrowed[list[InputReaders]], mut cutoff: EditCutoff,
+) -> Result[list[RecordKey], str]:
+    """Mark every reached output stale and visit a shared or cyclic reader's own range at most once."""
+    mut frontier: list[RecordKey] = []
+    for input in inputs:
+        for reader in input.readers:
+            output = encode_record_key(reader.output)?
+            if output not in cutoff.stale:
+                cutoff.stale.add(output)
+                frontier.append(reader.output)
+    return Ok(frontier)
+
+
+pub def reusable_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+    cutoff: EditCutoff = EditCutoff(),
+) -> Result[Option[ReusableEvaluation], str]:
+    """
+    Read one selected evaluation and admit its value only while every recorded dependency still witnesses the input.
+    Under an active `cutoff`, only an evaluation the edit can have made stale reads its witnesses back.
+
+    Absence is an ordinary miss. Malformed or incomplete graph state is damage and fails closed rather than silently
+    recomputing through a second authority.
+    """
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]] = {}
+    return select_evaluation(selected, output, profile, selected_witnesses, cutoff=cutoff)
+
+
+pub def matching_plan_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+    expected: Borrowed[bytes],
+    cutoff: EditCutoff,
+) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
+    """Authenticate a current Plan function whose caller already owns the exact product bytes."""
+    evaluation, receipt = match evaluation_authority(selected, output, profile)?:
+        Some(authority) => authority
+        None => return Ok(None)
+    note_graph_demand("evaluation-value", selected, evaluation.output)
+    mapped = match lookup(selected, evaluation.output).map_err((error) => error.message())?:
+        Lookup.Found(value) => value
+        _ => return Err("selected compiler evaluation is incomplete")
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    if cutoff.revalidates(evaluation.output) and not witnesses_validate(
+        selected, evaluation.receipt_root, receipt, verified,
+    )?:
+        return Ok(None)
+    if mapped.len() != len(expected) or not mapped.0.as_bytes().starts_with(expected):
+        return Err("restored module event differs from its selected function product")
+    return Ok(Some((evaluation, receipt)))
+
+
+pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
+    """Bind an exact output slot to its completed, content-addressed read receipt."""
+    match sized_evaluation_authority(selected, output, profile)?:
+        Some((evaluation, receipt, _)) => return Ok(Some((evaluation, receipt)))
+        None => return Ok(None)
+
+
+def sized_evaluation_authority(
+    selected: Snapshot, output: RecordKey, profile: str,
+) -> Result[Option[tuple[Evaluation, ReadReceipt, int]], str]:
+    """Keep the authenticated receipt's encoded size for request-local retention limits."""
+    value_key = encode_record_key(output)?
+    evaluation = match selected_evaluation(selected, value_key, profile)?:
+        Some(value) => value
+        None => return Ok(None)
+    mapped = authenticated_receipt(selected, evaluation.receipt_root)?
+    receipt_bytes = mapped.len()
+    receipt = decode_read_receipt_view(mapped)?
+    validate_receipt_authority(receipt.scope.profile, encode_record_key(receipt.preparation.output)?, evaluation)?
+    return Ok(Some((evaluation, receipt, receipt_bytes)))
+
+
+def selected_evaluation(selected: Snapshot, value_key: str, profile: str) -> Result[Option[Evaluation], str]:
+    """Authenticate the exact evaluation before consulting its receipt or value."""
+    if profile == "":
+        return Err("a reusable compiler evaluation requires a producer profile")
+    evaluation_key = evaluation_record_key(profile, value_key)
+    note_graph_demand("evaluation", selected, evaluation_key)
+    encoded = match get(selected, evaluation_key).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Ok(None)
+
+    evaluation = read_evaluation(encoded)?
+    if evaluation.profile != profile or evaluation.output != value_key:
+        return Err("selected compiler evaluation has mismatched authority")
+    return Ok(Some(evaluation))
+
+
+def select_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
+    defer_payload: bool = false,
+    cutoff: EditCutoff = EditCutoff(),
+    plan_reach: Option[PlanImportReach] = None,
+) -> Result[Option[ReusableEvaluation], str]:
+    """
+    Validate an output, unless the edit's `cutoff` leaves it valid by the snapshot, and share only successful
+    selections of the same pinned family read.
+    """
+    evaluation, receipt, receipt_bytes = match sized_evaluation_authority(selected, output, profile)?:
+        Some(authority) => authority
+        None => return Ok(None)
+    if let Some(reach) = plan_reach:
+        mut scoped = reach
+        if not scoped.permits(selected, output, receipt.preparation.rank_certificate)?:
+            return Ok(None)
+    value_key = evaluation.output
+    value_digest = evaluation.value_digest
+    mut value: bytes = b""
+    mut location: Option[Location] = None
+    if defer_payload:
+        location = Some(deferred_frame(selected, value_key)?)
+    else:
+        # The store has just checked the value's frame against the index; the evaluation's value digest was bound to
+        # this frame when both were published in one transaction, so the value is hashed once, there.
+        note_graph_demand("evaluation-value", selected, value_key)
+        value = required_value(selected, value_key)?
+    if cutoff.revalidates(value_key) and not witnesses_validate(
+        selected, evaluation.receipt_root, receipt, selected_witnesses,
+    )?:
+        return Ok(None)
+    # A checked row is already authenticated by this snapshot and the evaluation digest. Its complete
+    # contents have the same digest as the canonical whole-row witness used by the next checker phase.
+    if not defer_payload and output.identity_profile != SOURCE_PROFILE and checked_row_family(output.family) and len(selected_witnesses) < 8192 and len(value_key) <= 4096:
+        if let Ok(request) = checked_row_request(output, len(value)):
+            selected_witnesses[value_key] = (request, value_digest)
+    return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt,
+        receipt_bytes=receipt_bytes, namespace=evaluation.namespace, location=location)))
+
+
+def deferred_frame(selected: Snapshot, key: str) -> Result[Location, str]:
+    """Select the current value's frame without authenticating a payload its eventual consumer will read."""
+    note_graph_demand("evaluation-frame", selected, key)
+    match locate_value(selected, key).map_err((error) => error.message())?:
+        Some(location) => return Ok(location)
+        None => return Err("selected compiler evaluation is incomplete")
+
+
+pub class PlanImportReach:
+    """A plan selection's authenticated source reach and the rank groups checked against it in one view."""
+
+    root: str
+    snapshot: str
+    index: str
+    origin: str
+    modules: set[str]
+    named_modules: Option[set[str]]
+    groups: Dict[str, bool] = {}
+
+    @staticmethod
+    pub def open(selected: Snapshot, origin: str, modules: list[str], named_modules: Option[set[str]]) -> PlanImportReach:
+        """Bind the reachable source modules to the graph view used for selection."""
+        return PlanImportReach(root=selected.root.value, snapshot=selected.digest, index=selected.index,
+            origin=origin, modules=set(modules), named_modules=named_modules)
+
+    pub def validate(self, selected: Snapshot, origin: str) -> Result[None, str]:
+        """Keep one request's source reach within its own authenticated graph and origin."""
+        if selected.root.value != self.root or selected.digest != self.snapshot or selected.index != self.index or origin != self.origin:
+            return Err("plan import reach belongs to another graph view or origin")
+        return Ok(None)
+
+    pub def named_owner(self, owner: str) -> Option[bool]:
+        """Classify only ordinary top-level functions in the stable declaration identity's compact spelling."""
+        names = match self.named_modules:
+            Some(modules) => modules
+            None => return None
+        parts = owner.split("|")
+        signature = "incan.source-signature/2:sha256:"
+        if len(parts) != 2 or not parts[0].startswith("function:") or not parts[1].startswith(signature):
+            return None
+        digest = parts[1][len(signature):]
+        if len(digest) != 64:
+            return None
+        for digit in digest:
+            if digit not in "0123456789abcdef":
+                return None
+        qualified = parts[0][len("function:"):].split("::")
+        if len(qualified) < 2 or qualified[0] in ["pub", "rust", "builtin"]:
+            return None
+        for part in qualified:
+            if not identifier(part):
+                return None
+        return Some("::".join(qualified[:len(qualified) - 1]) in names)
+
+    pub def permits(mut self, selected: Snapshot, output: RecordKey, certificate: str) -> Result[bool, str]:
+        """Use an authenticated namespace certificate for an owner whose key gives no exact source module."""
+        self.validate(selected, output.origin)?
+        if let Some(included) = self.named_owner(output.identity):
+            return Ok(included)
+        if certificate == "compiled-check":
+            return Ok(true)
+        if certificate in self.groups:
+            return Ok(self.groups[certificate])
+        mut included = true
+        if let Some(value) = get(selected, "incan.compiler.namespace-order\t" + certificate).map_err((error) => error.message())?:
+            order = decode_namespace_order(value, self.origin)?
+            if order.evidence != certificate:
+                return Err("plan namespace certificate differs from its content identity")
+            included = len(order.members) == 0
+            for module in order.members:
+                if module in self.modules:
+                    included = true
+                    break
+        self.groups[certificate] = included
+        return Ok(included)
+
+
+pub model OutputSlots:
+    """A selection over output-index keys that can be answered before reading their values."""
+
+    pub origin: str
+    pub identity_profile: str = ""
+    pub included: Option[list[str]] = None
+    pub excluded: list[str] = []
+    pub excluded_outputs: list[str] = []
+    pub plan_reach: Option[PlanImportReach] = None
+
+
+pub def reusable_family_records(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None, defer_payload: bool = false,
+    cutoff: EditCutoff = EditCutoff(),
+) -> Result[list[ReusableRecord], str]:
+    """
+    Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
+    family's range of it. The index holds one entry per slot, which names the slot's current record. Under an active
+    `cutoff`, only the values the edit can have made stale read their witnesses back.
+    """
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    return select_family_records(selected, family, profile, slots, verified, defer_payload, cutoff)
+
+
+pub model NamespaceRecord:
+    """Selected namespace products and their rank certificate, without the receipt's witness list."""
+    pub key: RecordKey
+    pub value: bytes = b""
+    pub value_digest: str = ""
+    pub rank_certificate: str
+    pub location: Option[Location] = None
+
+
+pub model NamespaceRecordSelection:
+    """The selected namespace frames and the headers beside them, verified under one shared set of witness reads."""
+
+    pub frames: list[NamespaceRecord] = []
+    pub headers: list[NamespaceRecord] = []
+
+
+pub def reusable_namespace_records(
+    selected: Snapshot, profile: str, slots: OutputSlots, cutoff: EditCutoff, mut receipts: ReceiptProjectionCache,
+) -> Result[NamespaceRecordSelection, str]:
+    """Select every namespace frame and namespace header; a header reads the same witnesses as its frame."""
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    frames = select_namespace_records(selected, "namespace", profile, slots, verified, cutoff, receipts)?
+    headers = select_namespace_records(selected, "namespace-header", profile, slots, verified, cutoff, receipts)?
+    return Ok(NamespaceRecordSelection(frames=frames, headers=headers))
+
+
+pub def select_namespace_records(
+    selected: Snapshot, family: str, profile: str, slots: OutputSlots,
+    mut verified: Dict[str, tuple[RecordRequest, str]], cutoff: EditCutoff, mut receipts: ReceiptProjectionCache,
+) -> Result[list[NamespaceRecord], str]:
+    """Defer namespace payloads and retain only their certified metadata when witnesses need no recheck."""
+    mut records: list[NamespaceRecord] = []
+    for output in family_outputs(selected, family, profile, Some(slots))?:
+        key = decode_record_key(output)?
+        if cutoff.revalidates(output) or slots.plan_reach is not None:
+            match select_evaluation(selected, key, profile, verified, true, cutoff, slots.plan_reach)?:
+                Some(full) =>
+                    records.append(NamespaceRecord(key=key, value_digest=full.value_digest, location=full.location,
+                        rank_certificate=full.receipt.preparation.rank_certificate))
+                None => pass
+        else:
+            evaluation = match selected_evaluation(selected, output, profile)?:
+                Some(value) => value
+                None => continue
+            certificate = receipts.certificate(selected, evaluation)?
+            location = deferred_frame(selected, output)?
+            records.append(NamespaceRecord(key=key, value_digest=evaluation.value_digest, location=Some(location),
+                rank_certificate=certificate))
+    return Ok(records)
+
+pub def reusable_checker_records(
+    selected: Snapshot, profile: str, slots: Option[OutputSlots], executable: bool = true, cutoff: EditCutoff = EditCutoff(),
+) -> Result[tuple[list[ReusableRecord], list[ReusableRecord], list[ReusableRecord]], str]:
+    """Validate the selected checker families against one pinned snapshot, sharing their exact input reads."""
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    locals = select_family_records(selected, "local", profile, slots, verified, false, cutoff)?
+    finals = select_family_records(selected, "final", profile, slots, verified, false, cutoff)?
+    mut bodies: list[ReusableRecord] = []
+    if executable:
+        mut body_slots: Option[OutputSlots] = None
+        if let Some(selected_slots) = slots:
+            mut current = selected_slots.clone()
+            current.identity_profile = EXECUTABLE_BODY_PROFILE
+            body_slots = Some(current)
+        bodies = select_family_records(selected, "body-ir", profile, body_slots, verified, false, cutoff)?
+    return Ok((locals, finals, bodies))
+
+
+def select_family_records(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots], mut verified: Dict[str, tuple[RecordRequest, str]],
+    defer_payload: bool = false, cutoff: EditCutoff = EditCutoff(),
+) -> Result[list[ReusableRecord], str]:
+    """Read one family under the snapshot and profile that own the verified selections."""
+    mut reach: Option[PlanImportReach] = None
+    if let Some(scope) = slots:
+        reach = scope.plan_reach
+    mut records: list[ReusableRecord] = []
+    for output in family_outputs(selected, family, profile, slots)?:
+        key = decode_record_key(output)?
+        if family == "body-ir" and key.identity_profile != EXECUTABLE_BODY_PROFILE:
+            continue
+        match select_evaluation(selected, key, profile, verified, defer_payload, cutoff, reach)?:
+            Some(reused) =>
+                records.append(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
+                    receipt=reused.receipt, namespace=reused.namespace, location=reused.location))
+            None => pass
+    return Ok(records)
+
+
+pub def reusable_owner_records(
+    selected: Snapshot,
+    family: str,
+    profile: str,
+    origin: str,
+    owners: list[str],
+    identity_profile: str = "",
+) -> Result[list[ReusableRecord], str]:
+    """
+    Select the witnessed values of one family/profile for only the owners of `origin` that `owners` names, reading and
+    validating no other owner's evaluation.
+    """
+    slots = OutputSlots(origin=origin, identity_profile=identity_profile, included=Some(owners))
+    return reusable_family_records(selected, family, profile, Some(slots))
+
+
+pub def owner_evaluations(
+    selected: Snapshot,
+    families: list[str],
+    profile: str,
+    origin: str,
+    identity_profile: str = "",
+) -> Result[Dict[str, str], str]:
+    """
+    Each owner of `origin` with current outputs in `families`, and one digest of its outputs' keys and the value
+    digests their evaluations record. Another output, or another value under an output's old key, changes the owner's
+    digest; evaluating the same value again does not. No value is read or validated.
+    """
+    mut parts: Dict[str, list[str]] = {}
+    slots = OutputSlots(origin=origin, identity_profile=identity_profile)
+    for family in families:
+        for value_key in family_outputs(selected, family, profile, Some(slots))?:
+            key = decode_record_key(value_key)?
+            mut evaluation = ""
+            note_graph_demand("evaluation-digest", selected, evaluation_record_key(profile, value_key))
+            if let Some(document) = get(selected, evaluation_record_key(profile, value_key)).map_err(
+                (error) => error.message(),
+            )?:
+                evaluation = evaluation_value_digest(document)?
+            mut listed: list[str] = []
+            if key.identity in parts:
+                listed = parts[key.identity]
+            listed.append(f"{value_key}\n{evaluation}")
+            parts[key.identity] = listed
+    mut owners: Dict[str, str] = {}
+    for identity in parts.keys():
+        owners[identity] = digest("\n".join(sorted(parts[identity])).encode("utf-8"))
+    return Ok(owners)
+
+
+pub def family_outputs(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None,
+) -> Result[list[str], str]:
+    """Read pointers only for selected slots that do not already have an authenticated output in hand."""
+    mut base = family_range(family, profile)?
+    mut ranges = [base]
+    mut included: Option[set[str]] = None
+    mut excluded: set[str] = set()
+    mut carried: Dict[str, list[str]] = {}
+    if let Some(scope) = slots:
+        if "\t" in scope.origin or "\t" in scope.identity_profile:
+            return Err("invalid compiler output range")
+        if let Some(reach) = scope.plan_reach:
+            reach.validate(selected, scope.origin)?
+        excluded = set(scope.excluded)
+        if let Some(owners) = scope.included:
+            if len(owners) == 0:
+                return Ok([])
+            included = Some(set(owners))
+        if scope.identity_profile != "":
+            base = base + scope.identity_profile + "\t" + scope.origin + "\t"
+            ranges = [base]
+            if let Some(names) = included:
+                ranges = []
+                for name in sorted([name for name in names]):
+                    if "\t" in name:
+                        return Err("invalid compiler output owner")
+                    ranges.append(base + name + "\t")
+        for output in scope.excluded_outputs:
+            if let Ok(indexed) = output_index_key(profile, output):
+                if indexed not in carried:
+                    carried[indexed] = []
+                carried[indexed].append(output)
+    mut listed: list[str] = []
+    for prefix in ranges:
+        entries = entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => index_failure(error).message())?
+        for entry in entries:
+            indexed = entry.key
+            fields = indexed.split("\t")
+            if len(fields) != 7:
+                continue
+            if let Some(scope) = slots:
+                if fields[4] != scope.origin or fields[5] in excluded:
+                    continue
+                if let Some(names) = included:
+                    if fields[5] not in names:
+                        continue
+                if let Some(reach) = scope.plan_reach:
+                    if reach.named_owner(fields[5]) == Some(false):
+                        continue
+            if let Some(location) = entry.location:
+                if not location.tombstone:
+                    note_graph_demand("output-slot", selected, indexed)
+                    prior = carried.get(indexed).unwrap_or([])
+                    if let Some(output) = uncarried_output(selected, profile, indexed, location, prior)?:
+                        listed.append(output)
+    return Ok(listed)
+
+
+def uncarried_output(
+    selected: Snapshot, profile: str, key: str, location: Location, carried: Borrowed[list[str]],
+) -> Result[Option[str], str]:
+    """Use the authenticated index revision to skip a pointer to an exact output already supplied by its module."""
+    for output in carried:
+        pointer = Write(key=key, kind=KIND_VALUE, value=encode_pointer(output)?, expect=EXPECT_ANY)
+        if matches_value_frame(pointer, location).map_err((error) => error.message())?:
+            return Ok(None)
+    match read_frame(selected.root, key, location).map_err((error) => error.message())?:
+        Lookup.Found(mapped) =>
+            output = read_pointer(owned(mapped))?
+            if output_index_key(profile, output)? != key:
+                return Err("compiler output index entry names a record of another slot")
+            if output in carried:
+                return Ok(None)
+            return Ok(Some(output))
+        Lookup.Deleted | Lookup.Absent => return Err("selected compiler evaluation is incomplete")
+
+
+pub model OutputSlot:
+    """One selected slot of a family's output index: the entry's key and the revision of the entry."""
+
+    pub indexed: str
+    pub revision: str
+
+
+pub def family_slots(selected: Snapshot, family: str, profile: str, slots: OutputSlots) -> Result[list[OutputSlot], str]:
+    """
+    The output-index entries of one family's slots of an origin, with their revisions, read from index pages alone: no
+    pointer, evaluation or value is read. They are the slots `family_outputs` reads the pointers of.
+    """
+    if "\t" in slots.origin or "\t" in slots.identity_profile or slots.identity_profile == "":
+        return Err("invalid compiler output range")
+    prefix = family_range(family, profile)? + slots.identity_profile + "\t" + slots.origin + "\t"
+    excluded = set(slots.excluded)
+    mut listed: list[OutputSlot] = []
+    for entry in entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => f"{error.object}: {error.detail}")?:
+        if let Some(location) = entry.location:
+            if location.tombstone:
+                continue
+            fields = entry.key.split("\t")
+            if len(fields) != 7 or fields[4] != slots.origin or fields[5] in excluded:
+                continue
+            if let Some(names) = slots.included:
+                if fields[5] not in names:
+                    continue
+            listed.append(OutputSlot(indexed=entry.key, revision=hexlify(location.digest)))
+    return Ok(listed)
+
+
+pub def slot_output(selected: Snapshot, profile: str, slot: OutputSlot) -> Result[str, str]:
+    """The record key one slot's output-index entry names."""
+    note_graph_demand("output-slot", selected, slot.indexed)
+    output = read_pointer(required_value(selected, slot.indexed)?)?
+    if output_index_key(profile, output)? != slot.indexed:
+        return Err("compiler output index entry names a record of another slot")
+    return Ok(output)
+
+
+pub def evaluation_revision(selected: Snapshot, profile: str, output: str) -> Result[str, str]:
+    """The revision of an output's evaluation in the selected index, read from index pages alone; empty when it has none."""
+    match locate_value(selected, evaluation_record_key(profile, output)).map_err((error) => error.message())?:
+        Some(location) => return Ok(hexlify(location.digest))
+        None => return Ok("")
+
+
+pub def select_slot_record(selected: Snapshot, output: str, profile: str, cutoff: EditCutoff) -> Result[Option[ReusableRecord], str]:
+    """Select one slot's current output as `select_family_records` selects each of a family's."""
+    key = decode_record_key(output)?
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    match select_evaluation(selected, key, profile, verified, false, cutoff)?:
+        Some(reused) =>
+            return Ok(Some(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
+                receipt=reused.receipt, namespace=reused.namespace, location=reused.location)))
+        None => return Ok(None)
+
+
+pub def family_listing(
+    selected: Snapshot, family: str, profile: str, identity_profile: str = "", origin: str = "",
+) -> Result[list[str], str]:
+    """The ordered output index revisions for one family, optionally restricted to the program's origin."""
+    prefix = family_range(family, profile)?
+    if identity_profile == "":
+        return revisions_with_prefix(selected, prefix).map_err((error) => error.message())
+    if "\t" in identity_profile or "\t" in origin:
+        return Err("invalid compiler output range")
+    return revisions_with_prefix(selected, prefix + identity_profile + "\t" + origin + "\t").map_err((error) => error.message())
+
+
+def family_range(family: str, profile: str) -> Result[str, str]:
+    """The key range of the output index that holds one family/profile's entries."""
+    if family == "" or profile == "" or "\t" in family or "\t" in profile:
+        return Err("reusable compiler family selection requires delimiter-free family and profile names")
+    return Ok("incan.engine.output/2\t" + profile + "\t" + family + "\t")
+
+
+pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
+    """Return the ordered, deduplicated reader outputs of the selected profile."""
+    mut ranges = ReaderRanges()
+    mut readers: Dict[str, RecordKey] = {}
+    for input in ranges.select(selected, changed, [profile])?:
+        for reader in input.readers:
+            readers[encode_record_key(reader.output)?] = reader.output
+    return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
+model ReaderRanges:
+    """
+    Authenticated reverse ranges and output slots for one walk of one pinned view. A slot's edge frames are decoded
+    once, even when the walk reaches different exact contexts in that slot. Nothing is retained across selections.
+    """
+
+    visited: set[str] = set()
+    incoming: Dict[str, Dict[str, list[IncomingEdge]]] = {}
+    outputs: Dict[str, Option[RecordKey]] = {}
+
+    def select(
+        mut self, selected: Snapshot, inputs: list[RecordKey], profiles: list[str],
+    ) -> Result[list[InputReaders], str]:
+        """Resolve each exact input against the cached range for its slot, in the caller's input order."""
+        mut result: list[InputReaders] = []
+        if len(profiles) == 0:
+            return Ok(result)
+        for target in inputs:
+            exact = encode_record_key(target)?
+            if exact in self.visited:
+                continue
+            self.visited.add(exact)
+            prefix = "incan.engine.edge-in/3\t" + record_slot(exact)? + "\t"
+            if prefix not in self.incoming:
+                self.incoming[prefix] = read_incoming_range(selected, prefix)?
+            if exact not in self.incoming[prefix]:
+                continue
+            readers = select_input_readers(selected, self.incoming[prefix][exact], self.outputs, profiles)?
+            if len(readers) > 0:
+                result.append(InputReaders(input=target, readers=readers))
+        return Ok(result)
+
+
+def read_incoming_range(selected: Snapshot, prefix: str) -> Result[Dict[str, list[IncomingEdge]], str]:
+    """Read every incoming frame in one selected slot, refusing damaged graph evidence."""
+    mut edges: Dict[str, list[IncomingEdge]] = {}
+    for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
+        note_graph_demand("reverse-edge", selected, indexed)
+        edge = read_incoming(required_value(selected, indexed)?)?
+        if edge.target not in edges:
+            edges[edge.target] = []
+        edges[edge.target].append(edge)
+    return Ok(edges)
+
+
+def select_input_readers(
+    selected: Snapshot, edges: Borrowed[list[IncomingEdge]], mut outputs: Dict[str, Option[RecordKey]],
+    profiles: list[str],
+) -> Result[list[DirectReader], str]:
+    """Resolve prior witnesses of an exact input through each selected profile's current output index."""
+    mut readers: list[DirectReader] = []
+    for edge in edges:
+        if edge.profile not in profiles:
+            continue
+        key = edge.profile + "\t" + edge.reader
+        if key not in outputs:
+            outputs[key] = match current_reader(selected, edge.profile, edge.reader)?:
+                Some(output) => Some(decode_record_key(output)?)
+                None => None
+        if let Some(output) = outputs[key]:
+            readers.append(DirectReader(profile=edge.profile, output=output))
+    return Ok(readers)
+
+
+def index_components(selected: Snapshot, prefix: str) -> Result[list[str], str]:
+    """Seek each immediately nested component once. A tab's byte successor skips the entire component."""
+    mut components: list[str] = []
+    mut lower = prefix
+    while let Some(key) = first_stored_key(selected, lower).map_err((error) => error.message())?:
+        if not key.startswith(prefix):
+            break
+        fields = key[len(prefix):].split("\t")
+        if len(fields) < 2 or fields[0] == "":
+            return Err("invalid compiler output index component")
+        components.append(fields[0])
+        lower = prefix + fields[0] + "\n"
+    return Ok(components)
+
+
+pub def retire_compiler_versions(selected: Snapshot, mut transaction: Transaction, origin: str, current: str) -> Result[None, str]:
+    """
+    Remove obsolete output pointers for this producer and source origin before publishing new values.
+    Compiler versions can produce different physical bytes for the same logical output key. The source
+    transaction retires their old indexes and edges atomically. Earlier snapshots still own their values.
+    """
+    if selected.index == "":
+        return Ok(None)
+    parts = current.split("/")
+    if len(parts) != 2 or parts[0] == "" or parts[1] == "" or "\t" in current or "\t" in origin:
+        return Err("invalid compiler version or source origin")
+    versions = "incan.engine.output/2\t" + parts[0] + "/"
+    for version in index_components(selected, versions)?:
+        if version == parts[1]:
+            continue
+        family_root = versions + version + "\t"
+        for family in index_components(selected, family_root)?:
+            identities = family_root + family + "\t"
+            for identity in index_components(selected, identities)?:
+                scoped = identities + identity + "\t" + origin + "\t"
+                for key in keys_with_prefix(selected, scoped).map_err((error) => error.message())?:
+                    stage_delete(transaction, key)
+    return Ok(None)
+
+
+pub def retire_executable_predecessors(selected: Snapshot, mut transaction: Transaction, origin: str, checker: str) -> Result[None, str]:
+    """Withdraw the old executable owner and namespace pointers only for the publishing project."""
+    body_slots = OutputSlots(origin=origin, identity_profile="incan.stable-declaration/1")
+    for prior in family_outputs(selected, "body-ir", checker, Some(body_slots))?:
+        retire_output(transaction, checker, decode_record_key(prior)?)?
+    namespace_slots = OutputSlots(origin=origin, identity_profile="incan.editable-namespace-crumb/7")
+    for family in ["namespace", "namespace-header", "namespace-layout"]:
+        for prior in family_outputs(selected, family, checker, Some(namespace_slots))?:
+            retire_output(transaction, checker, decode_record_key(prior)?)?
+    return Ok(None)
+
+
+pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> Result[None, str]:
+    """
+    Retire the outputs and edges that a transaction's new evaluations replace, so each slot indexes one output and each
+    record's readers are its current evaluations.
+
+    An output's slot is its profile, family, identity profile, origin, identity and facet; its context is the
+    evaluated content, which an edit changes. The output index is keyed by the slot and names the slot's current
+    record, so the new evaluation writes its entry over the earlier one's. A slot's edges are keyed by the slot and the
+    read, and an incoming entry by the slot of the record it reads, not by an evaluated context or the read's evidence,
+    so the new evaluation writes its edges over the earlier one's, under the same keys, also when the edit replaced
+    the records it reads; only the earlier edges it does not write again leave. A family selection and a reader lookup
+    then meet one output per slot and one edge per current read instead of one per earlier edit, and neither index
+    grows with edits. The superseded values, evaluations and receipts stay, content named.
+    """
+    if selected.index == "":
+        return Ok(None)
+    writing, slots, renewed_scopes = output_replacements(transaction.writes)
+    mut removed_scope_edges: set[str] = set()
+    for slot in sorted([key for key in slots]):
+        # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
+        for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
+            stage_delete(transaction, old)
+        fields = slot.split("\t")
+        retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing, removed_scope_edges)?
+    # Both source-binding and executable scope facts stay while the active graph has a reader.
+    candidates = set(["\t".join(key.split("\t")[1:6]) for key in removed_scope_edges])
+    for slot in sorted([item for item in candidates if item not in renewed_scopes]):
+        readers = keys_with_prefix(selected, "incan.engine.edge-in/3\t" + slot + "\t").map_err((error) => error.message())?
+        mut retained = false
+        for reader in readers:
+            if reader not in removed_scope_edges:
+                retained = true
+                break
+        if not retained:
+            stage_delete(transaction, slot + "\t")
+    return Ok(None)
+
+
+pub def output_replacements(writes: Borrowed[list[Write]]) -> tuple[Dict[str, int], set[str], set[str]]:
+    """Collect replacement write positions, output slots, and source scopes renewed by this transaction."""
+    mut writing: Dict[str, int] = {}
+    mut slots: set[str] = set()
+    mut renewed_scopes: set[str] = set()
+    mut position = -1
+    for write in writes:
+        position += 1
+        key = write.key
+        if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
+            slots.add(key)
+        if write.kind != KIND_TOMBSTONE:
+            if key.startswith("incan.engine.edge-out/3\t") or key.startswith("incan.engine.edge-in/3\t"):
+                writing[key] = position
+            if is_demanded_scope_edge(key):
+                renewed_scopes.add("\t".join(key.split("\t")[1:6]))
+    return (writing, slots, renewed_scopes)
+
+
+def is_demanded_scope_edge(key: str) -> bool:
+    """Identify reverse witnesses of independent scope values whose last consumer controls retirement."""
+    return key.startswith("incan.engine.edge-in/3\tscope-name\t") or key.startswith(
+        "incan.engine.edge-in/3\t" + EXECUTABLE_SCOPE_FAMILY + "\t",
+    )
+
+
+def retire_edges(
+    selected: Snapshot,
+    mut transaction: Transaction,
+    outgoing: str,
+    writing: Dict[str, int],
+    mut removed_scope_edges: set[str],
+) -> Result[None, str]:
+    """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
+    mut earlier: list[OutgoingEdge] = []
+    for entry in entries_with_prefix(selected.root, selected.index, outgoing).map_err((error) => f"{error.object}: {error.detail}")?:
+        if let Some(location) = entry.location:
+            if location.tombstone:
+                continue
+            key = entry.key
+            if let Some(position) = writing.get(key):
+                if matches_value_frame(transaction.writes[position], location).map_err((error) => error.message())?:
+                    # The authenticated previous frame has exactly these bytes. Commit still verifies its storage.
+                    earlier.append(read_outgoing(transaction.writes[position].value)?)
+                    continue
+            earlier.append(read_outgoing(required_value(selected, key)?)?)
+            if key not in writing:
+                stage_delete(transaction, key)
+    mut retired: set[str] = set()
+    for incoming in incoming_keys(earlier)?:
+        if incoming not in writing and incoming not in retired:
+            stage_delete(transaction, incoming)
+            retired.add(incoming)
+            if is_demanded_scope_edge(incoming):
+                removed_scope_edges.add(incoming)
+    return Ok(None)
+
+
+def outgoing_prefix(profile: str, slot: str) -> str:
+    """
+    Where an evaluation's outgoing edges are listed: under its profile and slot, not its evaluated context, so the next
+    evaluation of the slot writes its edges over the earlier one's instead of beside them.
+    """
+    return f"incan.engine.edge-out/3\t{profile}\t{slot}\t"
+
+
+def incoming_keys(edges: list[OutgoingEdge]) -> Result[list[str], str]:
+    """
+    The reverse index entries of one evaluation's encoded edges, in their order. Each is the slot of the edge's target
+    and its kind, the identity of the read itself (the reading slot, profile and selection), and the edge's place among
+    the evaluation's edges with that read, counted in the order of their exact targets.
+
+    Neither the target's evaluated context, the read's evidence nor the reader's context is in the key, so the next
+    evaluation of the slot that makes the same read writes over the entry in place, also when the edit replaced the
+    record it reads. An evaluation that makes the same read of two contexts of one record keeps an entry for each.
+    """
+    mut reads: list[str] = []
+    mut targets: list[str] = []
+    mut by_read: Dict[str, set[str]] = {}
+    for edge in edges:
+        target = encode_record_key(edge.request.key)?
+        identity = read_identity(record_slot(edge.reader)?, edge)?
+        read = f"{record_slot(target)?}\t{edge.kind}\t{identity}"
+        mut seen = by_read.get(read).unwrap_or(set())
+        seen.add(target)
+        by_read[read] = seen
+        reads.append(read)
+        targets.append(target)
+    mut keys: list[str] = []
+    for index in range(len(reads)):
+        place = len([other for other in by_read[reads[index]] if other < targets[index]])
+        keys.append(f"incan.engine.edge-in/3\t{reads[index]}\t{place}")
+    return Ok(keys)
+
+
+def record_slot(key: str) -> Result[str, str]:
+    """An encoded record key's slot: every field but the evaluated context, which an edit changes."""
+    fields = key.split("\t")
+    if len(fields) != 6:
+        return Err("compiler graph record key is malformed")
+    return Ok("\t".join(fields[:5]))
+
+
+pub def evaluation_record_key(profile: str, output: str) -> str:
+    """Return the selected evaluation identity for one output under one exact producer profile."""
+    identity = digest(("crumb-evaluation/2\n" + profile + "\n" + output).encode("utf-8"))
+    return "incan.engine.evaluation\t" + identity
+
+
+def output_index_key(profile: str, output: str) -> Result[str, str]:
+    """
+    Where one profile's current output of a slot is indexed: under the slot, not the output's evaluated context, so the
+    next evaluation of the slot writes its entry over the earlier one's. The entry's value is the output's record key.
+    """
+    return Ok("incan.engine.output/2\t" + profile + "\t" + record_slot(output)?)
+
+
+pub def decode_record_key(encoded: str) -> Result[RecordKey, str]:
+    """Decode the canonical six-field record key retained verbatim as the output index's value."""
+    fields = encoded.split("\t")
+    if len(fields) != 6:
+        return Err("compiler output index contains a malformed record key")
+    return Ok(
+        RecordKey(
+            family=fields[0],
+            identity_profile=fields[1],
+            origin=fields[2],
+            identity=fields[3],
+            facet=fields[4],
+            context=fields[5],
+        ),
+    )
+
+
+def normalized_edges(witnesses: list[ReadWitness]) -> Result[list[EdgeFact], str]:
+    """Normalize each successful read once so forward and reverse indexes cannot disagree."""
+    mut edges: list[EdgeFact] = []
+    for witness in witnesses:
+        match witness:
+            ReadWitness.Found(found, selection_digest) =>
+                edges.append(
+                    edge(
+                        "present",
+                        found.request,
+                        found.revision + "\n" + found.semantic_digest + "\n" + selection_digest,
+                    )?,
+                )
+            ReadWitness.Deleted(deleted) => edges.append(edge("deleted", deleted.request, deleted.revision)?)
+            ReadWitness.Absent(absent) => edges.append(edge("absent", absent.request, absent.exclusion_digest)?)
+            ReadWitness.Members(_, request, membership_digest, continuation) =>
+                edges.append(edge("members", request, membership_digest + "\n" + continuation)?)
+    return Ok(edges)
+
+
+def edge(kind: str, request: RecordRequest, evidence: str) -> Result[EdgeFact, str]:
+    """Bind one typed witness to the exact canonical target key and nonempty evidence."""
+    if evidence == "":
+        return Err("a graph edge requires witness evidence")
+    return Ok(EdgeFact(kind=kind, target=encode_record_key(request.key)?, request=request, evidence=evidence))
+
+
+def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Option[str], str]:
+    """
+    The record an incoming entry's reader names now. The entry names the reading slot, and the output index names the
+    slot's current record; an entry an earlier Oven wrote names the reading record itself.
+    """
+    if len(reader.split("\t")) == 6:
+        return Ok(Some(reader))
+    indexed = "incan.engine.output/2\t" + profile + "\t" + reader
+    note_graph_demand("output-slot", selected, indexed)
+    match get(selected, indexed).map_err((error) => error.message())?:
+        Some(output) =>
+            return Ok(Some(read_pointer(output)?))
+        None => return Ok(None)
+
+
+def witnesses_validate(
+    selected: Snapshot,
+    receipt_root: str,
+    receipt: ReadReceipt,
+    mut verified: Dict[str, tuple[RecordRequest, str]],
+) -> Result[bool, str]:
+    """Authenticate each exact dependency request in the pinned view and compare its invalidation meaning."""
+    scope = ReadScope(snapshot=selected.digest, profile=receipt.scope.profile)
+    mut roots: list[str] = []
+    for witness in receipt.witnesses:
+        roots.append(encode_record_key(witness_request(witness).key)?)
+    source = StoreRecordSource.open(selected, scope, roots)
+    for index in range(len(receipt.witnesses)):
+        witness = receipt.witnesses[index]
+        request = witness_request(witness)
+        key = roots[index]
+        if let ReadWitness.Found(expected, _) = witness:
+            if key in verified:
+                known = verified[key]
+                if known[0] == request:
+                    if known[1] != expected.semantic_digest:
+                        return Ok(false)
+                    continue
+        note_graph_witness_demand(selected, receipt_root, index, key)
+        current = source.read(scope, request)
+        match witness:
+            ReadWitness.Found(expected, _) =>
+                match current:
+                    RecordRead.Found(found) =>
+                        if found.evidence.semantic_digest != expected.semantic_digest:
+                            return Ok(false)
+                        # The selection retains its one leased snapshot and producer profile for the whole loop.
+                        # Keep no selected bytes, and retry any different range, field or allowance through the owner.
+                        if len(verified) < 8192 and len(key) <= 4096:
+                            verified[key] = (request, found.evidence.semantic_digest)
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+            ReadWitness.Deleted(_) =>
+                match current:
+                    RecordRead.Deleted(_) | RecordRead.Absent(_) => pass
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+            ReadWitness.Absent(_) =>
+                match current:
+                    RecordRead.Absent(_) => pass
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+            ReadWitness.Members(_, _, membership, continuation) =>
+                match current:
+                    RecordRead.Members(found) =>
+                        if found.membership_digest != membership or found.continuation != continuation:
+                            return Ok(false)
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+    return Ok(true)
+
+
+def witness_request(witness: ReadWitness) -> RecordRequest:
+    """Return the exact request retained by one typed witness."""
+    match witness:
+        ReadWitness.Found(found, _) => return found.request
+        ReadWitness.Deleted(deleted) => return deleted.request
+        ReadWitness.Absent(absent) => return absent.request
+        ReadWitness.Members(_, request, _, _) => return request
+
+
+def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
+    """Read one graph-owned value whose absence makes the selected evaluation incomplete."""
+    match get(selected, key).map_err((error) => error.message())?:
+        Some(value) => return Ok(value)
+        None => return Err("selected compiler evaluation is incomplete")
+
+
+def digest(value: bytes) -> str:
+    """Return one lowercase content identity."""
+    return hexlify(sha256.digest(value))
+
+
+def content_digest(value: bytes) -> str:
+    """The digest an evaluation binds a value or receipt by, counting the bytes hashed."""
+    hashed["bytes"] = hashed.get("bytes", 0) + len(value)
+    return digest(value)
+
+
+# Bytes this process hashed to bind values and receipts to their evaluations, for measuring; nothing is cached by them.
+static hashed: dict[str, int] = {}
+
+
+pub def authenticated_bytes() -> int:
+    """The bytes this process has hashed to bind evaluations to their values and receipts, or to check that binding."""
+    return hashed.get("bytes", 0)
+
+
+pub def retire_output(mut transaction: Transaction, profile: str, output: RecordKey) -> Result[None, str]:
+    """
+    Take one output out of its profile's output index without a successor, so no later request selects it. Its value,
+    evaluation and receipt stay, content named, as a superseded output's do.
+    """
+    stage_delete(transaction, output_index_key(profile, encode_record_key(output)?)?)
+    return Ok(None)

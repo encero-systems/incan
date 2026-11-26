@@ -1,0 +1,75 @@
+# behavior: unrelated nodes do not change local adjacency counts and tombstones compact once they outnumber live entries (#2524)
+# expect-stdout:
+#   size 0 before 4 4 0 after 1 1 0
+#   size 10 before 4 4 0 after 1 1 0
+#   size 100 before 4 4 0 after 1 1 0
+
+from std.graph import DiGraph, GraphError, NodeId
+
+
+def exercise(unrelated: int) -> None:
+    mut graph = DiGraph[int]()
+    hub = graph.add_node(0)
+    mut targets: list[NodeId] = []
+    for value in range(4):
+        target = graph.add_node(value + 1)
+        targets.append(target)
+        graph.add_edge(hub, target)
+    for value in range(unrelated):
+        graph.add_node(value)
+    before_physical = graph.adjacency_physical_count(hub)
+    before_live = graph.adjacency_live_count(hub)
+    before_tombstones = graph.adjacency_tombstone_count(hub)
+    graph.remove_edge(hub, targets[0])
+    graph.remove_edge(hub, targets[1])
+    graph.remove_edge(hub, targets[2])
+    after_physical = graph.adjacency_physical_count(hub)
+    after_live = graph.adjacency_live_count(hub)
+    after_tombstones = graph.adjacency_tombstone_count(hub)
+    match before_physical:
+        Ok(physical) =>
+            match before_live:
+                Ok(live) =>
+                    match before_tombstones:
+                        Ok(tombstones) => print_after(
+                            unrelated,
+                            physical,
+                            live,
+                            tombstones,
+                            after_physical,
+                            after_live,
+                            after_tombstones,
+                        )
+                        Err(_) => println("before tombstones error")
+                Err(_) => println("before live error")
+        Err(_) => println("before physical error")
+
+
+def print_after(
+    unrelated: int,
+    physical: int,
+    live: int,
+    tombstones: int,
+    after_physical: Result[int, GraphError],
+    after_live: Result[int, GraphError],
+    after_tombstones: Result[int, GraphError],
+) -> None:
+    """Print one counter row once all post-removal counters are available."""
+    match after_physical:
+        Ok(physical_after) =>
+            match after_live:
+                Ok(live_after) =>
+                    match after_tombstones:
+                        Ok(tombstones_after) =>
+                            println(
+                                f"size {unrelated} before {physical} {live} {tombstones} after {physical_after} {live_after} {tombstones_after}",
+                            )
+                        Err(_) => println("after tombstones error")
+                Err(_) => println("after live error")
+        Err(_) => println("after physical error")
+
+
+def main() -> None:
+    exercise(0)
+    exercise(10)
+    exercise(100)

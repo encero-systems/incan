@@ -1,0 +1,87 @@
+# behavior: value enums retain value conversion and messages, while projected enums use their authored string method
+# expect-stdout:
+#   development
+#   production
+#   Dev
+#   development
+#   parsed Prod
+#   unknown
+#   200
+#   404
+#   parsed NotFound
+#   unknown
+#   Ready
+#   Busy
+#   heading: north
+#   north
+#   north
+#   North
+
+"""Observe value-enum lookup and authored display through a borrowed enum field."""
+
+pub enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+
+pub enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+
+enum PrivateState:
+    Ready
+    Busy
+
+
+enum Heading:
+    """A source enum whose text differs from its variant spelling."""
+
+    North
+
+    def __str__(self) -> str:
+        """Return the user-facing heading."""
+        return "north"
+
+
+model Leg:
+    """Store the enum so formatting must retain a field projection."""
+    heading: Heading
+
+
+def main() -> None:
+    """
+    Observe enum values and borrowed display without consuming their owner.
+
+    1. Read and look up string-backed enum values.
+    2. Read and look up integer-backed enum values.
+    3. Read plain enum messages and render a projected enum through each display form.
+    """
+    # 1. String-backed enums retain their values and variant messages.
+    println(str(Env.Dev))
+    println(f"{Env.Prod}")
+    println(Env.Dev.message())
+    println(Env.Dev.value())
+    match Env.from_value("production"):
+        Some(env) => println(f"parsed {env.message()}")
+        None => println("unknown")
+    match Env.from_value("staging"):
+        Some(env) => println(f"parsed {env.message()}")
+        None => println("unknown")
+    # 2. Integer-backed enums retain their values and lookup behavior.
+    println(HttpStatus.Ok.value())
+    println(str(HttpStatus.NotFound))
+    match HttpStatus.from_value(404):
+        Some(status) => println(f"parsed {status.message()}")
+        None => println("unknown")
+    match HttpStatus.from_value(500):
+        Some(status) => println(f"parsed {status.message()}")
+        None => println("unknown")
+    # 3. Authored projected display keeps the owner available for later reads.
+    println(PrivateState.Ready.message())
+    println(PrivateState.Busy.message())
+    leg = Leg(heading=Heading.North)
+    println(f"heading: {leg.heading}")
+    println(leg.heading)
+    println(str(leg.heading))
+    println(leg.heading.message())

@@ -1,0 +1,9 @@
+# behavior: DAG storage is private so callers cannot bypass cycle checks (#2524)
+# expect-diagnostic: INCAN-T0001
+
+from std.graph import Dag
+
+
+def bypass() -> None:
+    graph = Dag[str]()
+    println(len(graph.graph.active_node_ids()))

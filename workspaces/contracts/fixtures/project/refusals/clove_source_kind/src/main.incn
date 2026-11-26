@@ -1,0 +1,11 @@
+# behavior: a C facet compile entry that names a file of another kind is refused (#3133, RFC 159)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   `csrc/r.rs` is not a C (.c), assembly (.S, .s) or C++ (.cc, .cpp, .cxx) source
+
+def main() -> None:
+    println("unreachable")

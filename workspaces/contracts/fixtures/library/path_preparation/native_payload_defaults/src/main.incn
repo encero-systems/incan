@@ -1,0 +1,26 @@
+# behavior: library Result payloads retain Arc defaults through tuples, Option, lists and dictionaries (#2256)
+# expect-stdout:
+#   7
+#   9
+#   11
+#   13
+#   17
+
+"""Observe source mappings through native owners returned by a compiled library."""
+
+from pub::indices import listed_index, make_index, mapped_index, optional_index, owner_value
+
+
+def main() -> Result[None, str]:
+    """Print the values retained by each nested library payload."""
+    owner, companions = make_index()?
+    println(owner_value(owner))
+    println(companions[0])
+    match optional_index()?:
+        Some(optional) => println(owner_value(optional))
+        None => return Err("missing optional owner")
+    owners = listed_index()?
+    println(owner_value(owners[0]))
+    mapping = mapped_index()?
+    println(owner_value(mapping["entry"]))
+    return Ok(None)

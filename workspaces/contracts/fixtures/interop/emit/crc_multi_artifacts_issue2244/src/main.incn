@@ -1,0 +1,28 @@
+# behavior: a registry crate that also provides native library formats remains usable as a Rust dependency (#2244), and a native encoding result retains its unsized byte slice type argument until consumed into owned bytes
+# expect-stdout:
+#   crc32 907060870
+#   2
+
+from rust::crc_fast import CrcAlgorithm, checksum
+from rust::encoding_rs import Encoding
+
+
+def show_checksum() -> None:
+    """Compute the issue's checksum through the public dependency API."""
+    value = checksum(CrcAlgorithm.Crc32IsoHdlc, b"hello")
+    println(f"crc32 {value}")
+
+
+def show_encoded_length() -> None:
+    """Read an encoding's Cow<[u8]> result as owned bytes."""
+    match Encoding.for_label(b"utf-8"):
+        Some(encoding) =>
+            encoded = encoding.encode("ab")
+            println(len(encoded.0.into_owned()))
+        None => println("missing")
+
+
+def main() -> None:
+    """Run each registry observation in the order of the cases it carries."""
+    show_checksum()
+    show_encoded_length()

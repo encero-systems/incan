@@ -1,0 +1,21 @@
+# behavior: gzip-compressed bytes are recognized and decoded by the auto decoder, which names the codec
+# expect-stdout:
+#   gzip
+#   true
+
+from std.compression import Codec, decompress_auto
+from std.compression.gzip import compress
+
+
+def main() -> None:
+    match compress(b"hello compression"):
+        Ok(packed) =>
+            match decompress_auto(packed, allowed=Codec.all()):
+                Ok(decoded) =>
+                    codec, data = decoded
+                    match codec:
+                        Codec.Gzip => println("gzip")
+                        _ => println("other")
+                    println(data == b"hello compression")
+                Err(error) => println(error.message())
+        Err(error) => println(error.message())

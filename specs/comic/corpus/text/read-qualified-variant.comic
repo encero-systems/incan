@@ -1,0 +1,7 @@
+a.Status = Enum { Pending }
+
+b.State = Enum { Pending }
+
+example.Value = Record { value: a.Status | b.State }
+
+example.Value << (value=Status.Pending)

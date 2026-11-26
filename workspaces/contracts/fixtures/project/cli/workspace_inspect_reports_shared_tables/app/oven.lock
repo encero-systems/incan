@@ -1,0 +1,1 @@
+# Not a lock Oven wrote: a member has no lock of its own, because the workspace root holds the one lock (RFC 117).

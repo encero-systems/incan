@@ -1,0 +1,70 @@
+"""Edit-stable and nominal-owner controls for Incan-owned compiler identities."""
+
+from compiler_records import (
+    DeclarationKind,
+    DeclarationSignature,
+    PackageIdentity,
+    StableDeclarationComponent,
+    StableDeclarationId,
+    StableDeclarationLocation,
+    SymbolNamespace,
+    SymbolOrigin,
+    valid_stable_declaration_id,
+)
+
+
+pub def test_stable_identity() -> None:
+    """Keep equivalent factories equal while package version, module owner and nested owner order remain identity inputs."""
+    before = stable("1.4.0", "models")
+    equivalent = stable("1.4.0", "models")
+    other_module = stable("1.4.0", "archive")
+    successor = stable("2.0.0", "models")
+    assert before == equivalent
+    assert before != other_module
+    assert before != successor
+
+    assert valid_stable_declaration_id(nested([owner("Invoice", None)]))
+    assert not valid_stable_declaration_id(nested([owner("Invoice", Some(0))]))
+    assert not valid_stable_declaration_id(nested([owner("Invoice", None), owner("Line", None)]))
+    assert valid_stable_declaration_id(nested([owner("Invoice", None), owner("Line", Some(0))]))
+
+
+def nested(owners: list[StableDeclarationComponent]) -> StableDeclarationId:
+    """Build a nested field identity with the supplied root-to-nearest owner path."""
+    return StableDeclarationId(
+        namespace=SymbolNamespace.Member,
+        origin=package_origin("1.4.0", "models"),
+        declaration_name="total",
+        kind=DeclarationKind.Field,
+        location=StableDeclarationLocation.Nested(owners, 3),
+        signature=Some(DeclarationSignature(spelling="Decimal")),
+    )
+
+
+def owner(name: str, binding_ordinal: Option[int]) -> StableDeclarationComponent:
+    """Build one owner-path component with an explicit nesting ordinal."""
+    return StableDeclarationComponent(
+        namespace=SymbolNamespace.OrdinaryLexical,
+        origin=package_origin("1.4.0", "models"),
+        declaration_name=name,
+        kind=DeclarationKind.Model,
+        binding_ordinal=binding_ordinal,
+        signature=None,
+    )
+
+
+def stable(version: str, module: str) -> StableDeclarationId:
+    """Build one module-level stable identity without positional source input."""
+    return StableDeclarationId(
+        namespace=SymbolNamespace.OrdinaryLexical,
+        origin=package_origin(version, module),
+        declaration_name="Invoice",
+        kind=DeclarationKind.Model,
+        location=StableDeclarationLocation.ModuleLevel,
+        signature=None,
+    )
+
+
+def package_origin(version: str, module: str) -> SymbolOrigin:
+    """Build a structured selected-package owner without display-text parsing."""
+    return SymbolOrigin.Package(PackageIdentity(name="billing", version=version), [module])

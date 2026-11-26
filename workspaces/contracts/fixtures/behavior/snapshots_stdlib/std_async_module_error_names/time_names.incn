@@ -1,0 +1,16 @@
+from std.async.time import Error
+
+
+model TimeFailure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+pub def time_line() -> str:
+    """Adopt the Error name `std.async.time` published in 0.5.1."""
+    return f"time {TimeFailure(detail="time failed").message()}"

@@ -35,27 +35,23 @@ incan run hello.incn
 A single `hello.incn` file is the fastest way to try one language construct. Once you want tests, dependencies, a stable source root, release metadata, or repeatable project commands, create an Incan project:
 
 ```bash
-incan new hello_project --yes
+mkdir -p hello_project/src hello_project/tests
 cd hello_project
 ```
 
-This creates `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The manifest is the project metadata file; it names the project, records the project version and toolchain requirement, and declares the default entry point under `[project.scripts]`.
+Create `loaf.toml` with the identity below. Copy `hello.incn` to `src/main.incn` and add a test source as shown in [Getting started](../../../tooling/tutorials/getting_started.md). Dev.8 requires explicit source paths and does not provide scaffolding.
 
 ```toml title="loaf.toml"
 [project]
 name = "hello_project"
 version = "0.1.0"
-requires-incan = ">=0.5.0-0,<0.6.0"
-
-[project.scripts]
-main = "src/main.incn"
 ```
 
 Run the project entry point:
 
 ```bash
-incan run
-incan test
+incan run src/main.incn
+incan test tests/test_main.incn
 ```
 
 For the full lifecycle workflow, see [Project lifecycle](../../how-to/project_lifecycle.md).

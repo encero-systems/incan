@@ -1,0 +1,21 @@
+[project]
+name = "clove_without_compiler_override"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[c]
+library = "r"
+public-headers = ["include/r.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/r.c"]
+
+[c.configurations.default]
+defines = { R_VALUE = "1" }
+
+[c.configurations.wide]
+extends = "default"
+defines = { R_WIDE = "1" }

@@ -1,0 +1,20 @@
+# behavior: `clear()` on a list, dict or set removes every element in place, so a caller-visible `mut` parameter's collection is emptied for the caller (RFC 129, #1846).
+# pending: `clear()` is not a method of `list`, `dict` or `set` yet; the check refuses it with "Type 'List[Str]' has no method 'clear(...)'".
+# expect-stdout:
+#   0 0 0
+
+"""RFC 129's in-place clear."""
+
+
+def empty(mut items: list[str], mut counts: dict[str, int], mut seen: set[int]) -> None:
+    items.clear()
+    counts.clear()
+    seen.clear()
+
+
+def main() -> None:
+    mut items = ["apple"]
+    mut counts = {"apple": 1}
+    mut seen = {1, 2}
+    empty(items, counts, seen)
+    println(f"{len(items)} {len(counts)} {len(seen)}")

@@ -1,0 +1,26 @@
+"""Module- and session-scoped fixtures, set up once for the file."""
+
+from std.testing import assert_eq, fixture
+
+
+@fixture(scope="module")
+def per_file() -> int:
+    println("module setup")
+    yield 1
+    println("module teardown")
+
+
+@fixture(scope="session")
+def per_run() -> int:
+    println("session setup")
+    return 2
+
+
+def test_first(per_file: int, per_run: int) -> None:
+    println("first test")
+    assert_eq(per_file + per_run, 3)
+
+
+def test_second(per_file: int, per_run: int) -> None:
+    println("second test")
+    assert_eq(per_file + per_run, 3)

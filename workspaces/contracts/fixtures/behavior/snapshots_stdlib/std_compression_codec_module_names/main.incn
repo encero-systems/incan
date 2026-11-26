@@ -1,0 +1,46 @@
+# behavior: each codec module publishes the Codec, CompressionError and File names 0.5.1 published, and a module importing them from there uses them
+# expect-stdout:
+#   gzip true true
+#   zlib true true
+#   deflate true true
+#   zstd true true
+#   bz2 true true
+#   lzma true true
+#   snappy true true
+#   raw snappy true true
+#   files 7
+
+from gzip_names import refusal_line as gzip_line, no_file as gzip_file
+from zlib_names import refusal_line as zlib_line, no_file as zlib_file
+from deflate_names import refusal_line as deflate_line, no_file as deflate_file
+from zstd_names import refusal_line as zstd_line, no_file as zstd_file
+from bz2_names import refusal_line as bz2_line, no_file as bz2_file
+from lzma_names import refusal_line as lzma_line, no_file as lzma_file
+from snappy_names import refusal_line as snappy_line, no_file as snappy_file
+from raw_names import refusal_line as raw_line
+
+
+def main() -> None:
+    junk = b"not a compressed stream"
+    println(gzip_line(junk))
+    println(zlib_line(junk))
+    println(deflate_line(junk))
+    println(zstd_line(junk))
+    println(bz2_line(junk))
+    println(lzma_line(junk))
+    println(snappy_line(junk))
+    println(raw_line(b"\xff\xff\xff\xff\xff"))
+    files = [
+        gzip_file(),
+        zlib_file(),
+        deflate_file(),
+        zstd_file(),
+        bz2_file(),
+        lzma_file(),
+        snappy_file(),
+    ]
+    mut empty = 0
+    for slot in files:
+        if slot:
+            empty += 1
+    println(f"files {empty}")

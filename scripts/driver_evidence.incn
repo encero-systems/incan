@@ -1,0 +1,169 @@
+"""Retain qualified driver-unit identities and dependency scans without admitting them for reuse."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from release_support import digest, tree_bytes, tree_digest, write_json
+
+
+pub model DriverEvidence:
+    """One compiler-qualified evidence directory, its retained unit count and logical byte size."""
+
+    pub identity: str
+    pub directory: Path
+    pub units: int
+    pub bytes: int
+
+
+pub model DriverQualification:
+    """The exact compiler, complete sysroot and selected SDK identities that qualify driver evidence."""
+
+    pub identity: str
+    pub compiler: str
+    pub sysroot: str
+    pub sdk: str
+
+
+pub def driver_qualification(compiler: Path, sysroot: Path, sdk_settings: Path) -> Result[DriverQualification, str]:
+    """Identify the compiler executable, complete sysroot tree and selected SDK settings by content."""
+    compiler_identity = digest(compiler)?
+    sysroot_identity = tree_digest(sysroot)?
+    mut sdk_identity = "none"
+    if sdk_settings.0 != "":
+        sdk_identity = digest(sdk_settings)?
+    identity = qualified_identity(compiler_identity, sysroot_identity, sdk_identity)?
+    return Ok(
+        DriverQualification(identity=identity, compiler=compiler_identity, sysroot=sysroot_identity, sdk=sdk_identity),
+    )
+
+
+pub def retain_driver_evidence(
+    target: Path,
+    output: Path,
+    compiler: Path,
+    sysroot: Path,
+    sdk_settings: Path,
+) -> Result[DriverEvidence, str]:
+    """
+    Retain a successful driver build's local Rust-unit identities and dependency scans as qualification evidence.
+
+    1. Key the evidence by the exact compiler executable, complete sysroot and selected SDK settings.
+    2. Copy each library's dependency scan and portable native-input proof while recording its published identity.
+    3. Retain the location-bound driver binary's scan with its explicit identity refusal, never as reusable evidence.
+    """
+    qualification = driver_qualification(compiler, sysroot, sdk_settings)?
+    directory = output.joinpath("driver-units").joinpath(qualification.identity)
+    directory.mkdir(true, true).map_err((error) => error.message())?
+
+    mut units: list[JsonValue] = []
+    for candidate in sorted([entry.0 for entry in target.iterdir().map_err((error) => error.message())?]):
+        source = Path(candidate)
+        if source.is_dir() and source.joinpath("library.d").is_file():
+            units.append(retain_library_unit(source, directory)?)
+    if len(units) == 0:
+        return Err(f"driver build retained no Rust library dependency scans: {target.0}")
+
+    binary = retain_driver_binary(target, directory)?
+    write_json(
+        directory.joinpath("manifest.json"),
+        JsonValue.object(
+            {"schema": JsonValue.string("incan.release-driver-units/1"), "qualification": qualification_json(
+                qualification,
+            ), "units": JsonValue.array(units), "binary": binary},
+        ),
+    )?
+    bytes = tree_bytes(directory)?
+    return Ok(DriverEvidence(identity=qualification.identity, directory=directory, units=len(units), bytes=bytes))
+
+
+def retain_library_unit(source: Path, evidence: Path) -> Result[JsonValue, str]:
+    """Copy one complete library scan and native proof, and retain its published native producer identity."""
+    dependencies = source.joinpath("library.d")
+    portable = source.joinpath("library.portable-inputs")
+    if not portable.is_file():
+        return Err(f"driver unit has no portable native identity: {source.0}")
+    graphs = source.glob("*.incngraph").map_err((error) => error.message())?
+    publications = source.glob("*.rlib.oven-unit").map_err((error) => error.message())?
+    if len(graphs) != 1 or len(publications) != 1:
+        return Err(f"driver unit evidence is ambiguous: {source.0}")
+
+    native_identity = portable.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")[0]
+    require_identity(native_identity, source)?
+    publication = JsonValue
+        .parse(publications[0].read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+    published_identity = publication
+        .require("unit")
+        .and_then((value) => value.expect_str())
+        .map_err((error) => error.message())?
+    require_identity(published_identity, source)?
+    if published_identity != native_identity:
+        return Err(f"driver unit's published identity disagrees with its portable proof: {source.0}")
+
+    name = graphs[0].stem()
+    destination = evidence.joinpath(name)
+    destination.mkdir(true, true).map_err((error) => error.message())?
+    _ = dependencies.copy(destination.joinpath("library.d"), true, true).map_err((error) => error.message())?
+    _ = portable.copy(destination.joinpath("library.portable-inputs"), true, true).map_err((error) => error.message())?
+    return Ok(
+        JsonValue.object(
+            {"unit": JsonValue.string(name), "native_identity": JsonValue.string(native_identity), "published_identity": JsonValue.string(
+                published_identity,
+            ), "dependency_scan": JsonValue.string(f"{name}/library.d"), "portable_proof": JsonValue.string(
+                f"{name}/library.portable-inputs",
+            ), "dependency_sha256": JsonValue.string(digest(dependencies)?), "portable_sha256": JsonValue.string(
+                digest(portable)?,
+            )},
+        ),
+    )
+
+
+def retain_driver_binary(target: Path, evidence: Path) -> Result[JsonValue, str]:
+    """Retain the driver binary's dependency scan while declaring why it has no portable unit identity."""
+    source = target.joinpath("bin/incan-rustc-driver.d")
+    if not source.is_file():
+        return Err(f"driver binary dependency scan is absent: {source.0}")
+    destination = evidence.joinpath("binary")
+    destination.mkdir(true, true).map_err((error) => error.message())?
+    _ = source.copy(destination.joinpath("incan-rustc-driver.d"), true, true).map_err((error) => error.message())?
+    return Ok(
+        JsonValue.object(
+            {"unit": JsonValue.string("incan-rustc-driver"), "unit_identity": JsonValue.null(), "identity_refusal": JsonValue.string(
+                "absolute runtime search path",
+            ), "dependency_scan": JsonValue.string("binary/incan-rustc-driver.d"), "dependency_sha256": JsonValue.string(
+                digest(source)?,
+            )},
+        ),
+    )
+
+
+def qualification_json(qualification: DriverQualification) -> JsonValue:
+    """Encode one path-independent driver evidence qualification."""
+    return JsonValue.object(
+        {"identity": JsonValue.string(qualification.identity), "compiler_sha256": JsonValue.string(
+            qualification.compiler,
+        ), "sysroot_tree_sha256": JsonValue.string(qualification.sysroot), "sdk_settings_sha256": JsonValue.string(
+            qualification.sdk,
+        )},
+    )
+
+
+def qualified_identity(compiler: str, sysroot: str, sdk: str) -> Result[str, str]:
+    """Hash tagged qualification fields so their boundaries and roles cannot alias."""
+    mut hasher = sha256.new()
+    for value in [f"compiler {compiler}", f"sysroot {sysroot}", f"sdk {sdk}"]:
+        encoded = value.encode("utf-8")
+        hasher.update(f"{len(encoded)}:".encode("utf-8"))
+        hasher.update(encoded)
+    return Ok(hexlify(hasher.finalize_bytes()))
+
+
+def require_identity(identity: str, source: Path) -> Result[None, str]:
+    """Require one complete lowercase SHA-256 unit identity."""
+    if not identity.startswith("sha256:") or len(identity) != 71:
+        return Err(f"driver unit has an invalid identity in {source.0}")
+    for character in identity[7:]:
+        if character not in "0123456789abcdef":
+            return Err(f"driver unit has an invalid identity in {source.0}")
+    return Ok(None)

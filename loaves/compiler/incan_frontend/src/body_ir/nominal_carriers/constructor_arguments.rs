@@ -1,6 +1,9 @@
 //! Constructor and comparison arguments retain their checked declaration-owned field context.
 
-use super::{CanonicalSymbolId, Identities, IncanType, bir, retain_declared_return_type};
+use super::{
+    CanonicalSymbolId, Identities, IncanType, bir, retain_declared_return_type, retain_return_type_identities,
+};
+use crate::body_ir::ContextModules;
 use incan_semantics_core::CompilerNodeId;
 use std::collections::BTreeMap;
 
@@ -22,12 +25,16 @@ pub(super) struct ConstructorCarrier {
 pub(super) type ConstructorCarriers = BTreeMap<CanonicalSymbolId, ConstructorCarrier>;
 
 /// Snapshot selected declaration facts before frame qualification mutates the current module's carrier names.
-pub(super) fn collect(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) -> ConstructorCarriers {
+pub(super) fn collect(module: &bir::BodyIrModule, context: ContextModules<'_>) -> ConstructorCarriers {
     context
         .iter()
         .flat_map(|module| &module.nominal_declarations)
         .chain(&module.nominal_declarations)
         .map(|declaration| {
+            let mut identities = Identities::new();
+            for ty in &declaration.field_types {
+                retain_return_type_identities(ty, &declaration.named_type_identities, &mut identities);
+            }
             (
                 declaration.canonical.clone(),
                 ConstructorCarrier {
@@ -35,7 +42,7 @@ pub(super) fn collect(module: &bir::BodyIrModule, context: &[bir::BodyIrModule])
                     fields: declaration.fields.clone(),
                     field_identities: declaration.field_identities.clone(),
                     types: declaration.field_types.clone(),
-                    identities: declaration.named_type_identities.clone(),
+                    identities,
                 },
             )
         })
@@ -50,7 +57,7 @@ pub(super) fn retain_comparison(
     left: &bir::Operand,
     right: &bir::Operand,
     locals: &mut [bir::LocalDecl],
-    identities: &mut Identities,
+    identities: &mut bir::SharedIdentities,
     declarations: &ConstructorCarriers,
 ) {
     for (field, argument) in [(left, right), (right, left)] {
@@ -112,7 +119,7 @@ pub(super) fn retain(
     target: &bir::ConstructorTarget,
     operands: &[bir::ArgumentElement],
     locals: &mut [bir::LocalDecl],
-    identities: &mut Identities,
+    identities: &mut bir::SharedIdentities,
     constructors: &ConstructorCarriers,
 ) {
     let Some(declaration) = target

@@ -1,0 +1,15 @@
+# behavior: `oven env show ENV` shows the resolved environment: its overlay chain, requirement, variables and scripts, as 0.5.1's `incan env show` did (#3140).
+# cli-commands:
+#   oven env show release
+# expect-stdout-contains:
+#   release
+#     overlay chain: project -> dev -> ci -> release
+#     CI_MODE=on
+#     STAGE=release
+#     show             sh -c "echo CI_MODE=$CI_MODE STAGE=$STAGE"
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose environments the case shows."""
+    pass

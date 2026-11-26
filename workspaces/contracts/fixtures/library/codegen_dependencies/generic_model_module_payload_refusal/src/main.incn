@@ -1,0 +1,12 @@
+# behavior: a generic model's checked field contract rejects incompatible payloads before lowering (#2526)
+# expect-exit: 1
+# expect-stderr-contains:
+#   Cannot assign 'Str' to field 'value' of type 'Int'
+
+from pub::shapes import Holder
+import pub::shapes as shapes
+
+
+def main() -> None:
+    """Reject a string payload where the selected generic field requires an integer."""
+    value: Holder[int] = shapes.Holder[int](label="bad", value="wrong")

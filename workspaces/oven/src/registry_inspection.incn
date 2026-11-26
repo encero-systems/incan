@@ -1,0 +1,215 @@
+"""
+`incan inspect registry`: one complete compiler-checked typed registry (RFC 113) and its entries, without running any
+module.
+
+The candidates are the inspected package's registries, private ones included, and the public registries of the
+dependency Loaves it reaches, as 0.5.1 selected them. The document is 0.5.1's: schema version, provenance, package,
+the registry definition and its entries.
+"""
+
+from rust::incan_loaf_names import artifact_stem
+from std.fs import Path
+from std.json import JsonValue
+from files import read_json
+from unit import UnitLoaf
+
+# The checked registry metadata schema this inspection reads and prints.
+const REGISTRY_SCHEMA_VERSION: int = 1
+
+
+model Candidate:
+    """One inspectable registry: the package that owns it, its definition and its entries."""
+
+    package: Option[JsonValue]
+    package_name: str
+    registry: JsonValue
+    entries: list[JsonValue]
+
+    def identity(self) -> str:
+        """The registry's module-local identity, `<module>::<binding>`."""
+        return text(self.registry, "identity")
+
+    def selector(self) -> str:
+        """The unambiguous package-qualified identity, or the module-local one without a package."""
+        if self.package_name == "":
+            return self.identity()
+        return f"{self.package_name}::{self.identity()}"
+
+    def matches(self, requested: str) -> bool:
+        """A module-local or package-qualified identity, in `::` or dotted spelling."""
+        for spelled in [self.identity(), self.selector()]:
+            if requested == spelled or requested == spelled.replace("::", "."):
+                return true
+        return false
+
+
+pub def inspect_registry(name: str, local: JsonValue, loaves: list[UnitLoaf]) -> Result[i32, str]:
+    """
+    Print the one registry `name` selects among the inspected package's registries and its dependencies' public ones.
+
+    1. Collect the candidates: every local registry, then each dependency Loaf's public registries.
+    2. Select exactly one, or refuse with the available or the ambiguous identities.
+    3. Print the document.
+    """
+    # 1. A dependency publishing another registry schema is named in the refusal instead of read.
+    mut all = candidates(local, true)?
+    mut unavailable: list[str] = []
+    for loaf in loaves:
+        if loaf.standard:
+            continue
+        manifest = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
+        if not manifest.is_file():
+            continue
+        match read_json(manifest)?.get("contract_metadata"):
+            None => continue
+            Some(metadata) =>
+                match metadata.get("registry"):
+                    None => continue
+                    Some(registry) =>
+                        if number(registry.get("schema_version")) != REGISTRY_SCHEMA_VERSION:
+                            unavailable.append(f"Loaf `{loaf.key}` publishes unsupported checked registry metadata")
+                            continue
+                        all = all + candidates(registry, false)?
+    # 2. One identity names one registry.
+    selected = [candidate for candidate in ordered(all) if candidate.matches(name)]
+    if len(selected) == 0:
+        mut available = "(none)"
+        mut listed: list[str] = []
+        for candidate in all:
+            if candidate.selector() not in listed:
+                listed.append(candidate.selector())
+        selectors = sorted(listed)
+        if len(selectors) > 0:
+            available = ", ".join(selectors)
+        mut notes = ""
+        if len(unavailable) > 0:
+            notes = "; " + "; ".join(unavailable)
+        return Err(f"checked registry `{name}` was not found; available registries: {available}{notes}")
+    if len(selected) > 1:
+        choices = ", ".join([candidate.selector() for candidate in selected])
+        return Err(f"registry identity `{name}` is ambiguous; use one of: {choices}")
+    # 3. The document 0.5.1 printed.
+    chosen = selected[0]
+    mut document: Dict[str, JsonValue] = {}
+    document["schema_version"] = JsonValue.int(REGISTRY_SCHEMA_VERSION)
+    document["provenance"] = JsonValue.string("checked")
+    if let Some(package) = chosen.package:
+        document["package"] = package
+    document["registry"] = chosen.registry
+    document["entries"] = JsonValue.array(chosen.entries)
+    println(JsonValue.object(document).to_pretty_json().map_err((error) => error.message())?)
+    return Ok(0)
+
+
+def candidates(metadata: JsonValue, include_private: bool) -> Result[list[Candidate], str]:
+    """Each registry of one checked registry package and its entries, ordered by subject and registration."""
+    package = metadata.get("package")
+    mut package_name = ""
+    if let Some(identity) = package:
+        package_name = text(identity, "name")
+    mut found: list[Candidate] = []
+    for module in items(metadata.get("modules"))?:
+        for registry in items(module.get("registries"))?:
+            public = flag(registry.get("public"))
+            if not include_private and not public:
+                continue
+            mut entries: list[JsonValue] = []
+            for entry in items(module.get("entries"))?:
+                if text(entry, "registry_identity") == text(registry, "identity"):
+                    if include_private or flag(entry.get("registry_public")):
+                        entries.append(entry)
+            found.append(
+                Candidate(package=package, package_name=package_name, registry=registry, entries=by_subject(entries)),
+            )
+    return Ok(found)
+
+
+def by_subject(entries: list[JsonValue]) -> list[JsonValue]:
+    """Entries ordered by subject identity, then registration start and end."""
+    mut ordered_entries: list[JsonValue] = []
+    for entry in entries:
+        # A stable insertion: an entry goes before the first one it sorts before, so equal entries keep their order.
+        mut placed: list[JsonValue] = []
+        mut inserted = false
+        for current in ordered_entries:
+            if not inserted and entry_before(entry, current):
+                placed.append(entry)
+                inserted = true
+            placed.append(current)
+        if not inserted:
+            placed.append(entry)
+        ordered_entries = placed
+    return ordered_entries
+
+
+def entry_before(left: JsonValue, right: JsonValue) -> bool:
+    """Whether `left` sorts before `right` by subject identity, then registration anchor start and end."""
+    left_subject = text(left, "subject_identity")
+    right_subject = text(right, "subject_identity")
+    if left_subject != right_subject:
+        return left_subject < right_subject
+    left_start, left_end = anchor(left)
+    right_start, right_end = anchor(right)
+    if left_start != right_start:
+        return left_start < right_start
+    return left_end < right_end
+
+
+def anchor(entry: JsonValue) -> Tuple[int, int]:
+    """An entry's registration anchor start and end."""
+    match entry.get("registration_anchor"):
+        None => return (0, 0)
+        Some(found) => return (number(found.get("start")), number(found.get("end")))
+
+
+def ordered(all: list[Candidate]) -> list[Candidate]:
+    """Candidates ordered by identity, then package name."""
+    mut result: list[Candidate] = []
+    for candidate in all:
+        # A stable insertion, as in `by_subject`.
+        mut placed: list[Candidate] = []
+        mut inserted = false
+        for current in result:
+            if not inserted and candidate_before(candidate, current):
+                placed.append(candidate)
+                inserted = true
+            placed.append(current)
+        if not inserted:
+            placed.append(candidate)
+        result = placed
+    return result
+
+
+def candidate_before(left: Candidate, right: Candidate) -> bool:
+    """Whether `left` sorts before `right` by identity, then package name."""
+    if left.identity() != right.identity():
+        return left.identity() < right.identity()
+    return left.package_name < right.package_name
+
+
+def items(value: Option[JsonValue]) -> Result[list[JsonValue], str]:
+    """An optional array field; an absent one is empty."""
+    match value:
+        None => return Ok([])
+        Some(found) => return found.expect_array().map_err((error) => error.message())
+
+
+def text(value: JsonValue, key: str) -> str:
+    """A string field, or an empty string."""
+    match value.get(key):
+        None => return ""
+        Some(found) => return found.as_str().unwrap_or("")
+
+
+def flag(value: Option[JsonValue]) -> bool:
+    """A Boolean field; an absent one is false."""
+    match value:
+        None => return false
+        Some(found) => return found.expect_bool().unwrap_or(false)
+
+
+def number(value: Option[JsonValue]) -> int:
+    """An integer field, or zero."""
+    match value:
+        None => return 0
+        Some(found) => return found.expect_int().unwrap_or(0)

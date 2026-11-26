@@ -1,0 +1,11 @@
+# behavior: `oven env run ENV SCRIPT` runs a script `[envs.NAME]` declares with the environment's variables, inheriting scripts and variables through `extends`, as 0.5.1's `incan env run` did (#3140).
+# cli-commands:
+#   oven env run release show
+# expect-stdout:
+#   CI_MODE=on STAGE=release
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose environments the case runs."""
+    pass

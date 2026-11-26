@@ -1,0 +1,22 @@
+"""The interop vocabulary's keyword constants keep their 0.5.1 names and spellings."""
+
+from interop import (
+    BINDING_KEYWORD,
+    ENUM_KEYWORD,
+    NAMESPACE,
+    OUTCOME_KEYWORD,
+    RESOURCE_KEYWORD,
+    STRUCT_KEYWORD,
+    SYMBOL_KEYWORD,
+)
+
+
+pub def test_vocabulary_keyword_constants_keep_their_spellings() -> None:
+    """Each constant spells the namespace or declaration keyword it named in 0.5.1's vocabulary companion."""
+    assert NAMESPACE == "std.interop", "namespace"
+    assert BINDING_KEYWORD == "binding", "binding keyword"
+    assert SYMBOL_KEYWORD == "symbol", "symbol keyword"
+    assert RESOURCE_KEYWORD == "resource", "resource keyword"
+    assert ENUM_KEYWORD == "enum", "enum keyword"
+    assert STRUCT_KEYWORD == "struct", "struct keyword"
+    assert OUTCOME_KEYWORD == "outcome", "outcome keyword"

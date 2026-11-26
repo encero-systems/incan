@@ -1,0 +1,40 @@
+# behavior: named arguments written out of declaration order keep each concrete value at its declared trait parameter
+# expect-stdout:
+#   3:x
+
+trait Named:
+    """A value that supplies its own label."""
+
+    def label(self) -> str:
+        """Return the value's label."""
+        ...
+
+
+model One with Named:
+    """A numeric labeled value."""
+
+    number: int
+
+    def label(self) -> str:
+        """Use the number as this value's label."""
+        return str(self.number)
+
+
+model Two with Named:
+    """A textual labeled value."""
+
+    text: str
+
+    def label(self) -> str:
+        """Use the text as this value's label."""
+        return self.text
+
+
+def consume(left: Named, right: Named) -> str:
+    """Read the two trait parameters in declaration order."""
+    return left.label() + ":" + right.label()
+
+
+def main() -> None:
+    """Pass different concrete types with the named arguments reversed."""
+    println(consume(right=Two(text="x"), left=One(number=3)))

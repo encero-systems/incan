@@ -1,0 +1,17 @@
+# behavior: a provider's error reply keeps its worker, so one worker answers the nodes of every module in a check (rust-8)
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary provider `words`
+#   refused on call 1
+#   refused on call 2
+
+from other import other_query
+from pub::words import marker
+
+
+def main() -> None:
+    """Both modules' query nodes reach the worker that refused the first one."""
+    value = query:
+        FROM 1
+    other_query()
+    println(marker())

@@ -1,2 +1,5 @@
 # Incan sources: highlight as Python until GitHub Linguist knows Incan, without counting them as Python.
 *.incn linguist-language=Python -linguist-detectable
+
+# COMIC text: highlight as Python until GitHub Linguist knows COMIC, without counting it as Python.
+*.comic linguist-language=Python -linguist-detectable

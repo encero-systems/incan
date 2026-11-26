@@ -1,0 +1,11 @@
+"""Expose one public member while retaining one private member."""
+
+
+pub def shown() -> int:
+    """Return the public fixture value."""
+    return 1
+
+
+def hidden() -> int:
+    """Return a value unavailable outside this module."""
+    return 2

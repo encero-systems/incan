@@ -4,7 +4,9 @@
 //! arm therefore delegates to the held member's own `Debug`, exactly as legacy's generated impl does, where
 //! `#[derive(Debug)]` would print `V0(7)`.
 
-use crate::ast_build::{binding, expression, global_path, ident, inherited, local, path_ty, self_value};
+use crate::ast_build::{
+    RUST_FMT_DEBUG_SYMBOL, binding, expression, global_path, ident, inherited, local, path_ty, self_value,
+};
 use crate::plan::EnumDeclaration;
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, kw, respan};
@@ -55,7 +57,7 @@ pub fn member_debug_impl(value: &EnumDeclaration, span: Span) -> Box<ast::Item> 
         safety: ast::Safety::Default,
         polarity: ast::ImplPolarity::Positive,
         trait_ref: ast::TraitRef {
-            path: global_path(&["core", "fmt", "Debug"], span),
+            path: global_path(&["core", "fmt", RUST_FMT_DEBUG_SYMBOL], span),
             ref_id: ast::DUMMY_NODE_ID,
         },
     };
@@ -76,7 +78,7 @@ pub fn member_debug_impl(value: &EnumDeclaration, span: Span) -> Box<ast::Item> 
 }
 
 /// `fn fmt(&self, formatter: &mut ::core::fmt::Formatter) -> ::core::fmt::Result`, the trait method's signature.
-fn fmt_signature(span: Span) -> ast::FnSig {
+pub(crate) fn fmt_signature(span: Span) -> ast::FnSig {
     let receiver = ast::Param::from_self(
         ThinVec::new(),
         respan(span, ast::SelfKind::Region(None, ast::Mutability::Not)),
@@ -126,7 +128,7 @@ fn member_arm(variant: &str, span: Span) -> ast::Arm {
     let delegate = expression(
         ast::ExprKind::Call(
             expression(
-                ast::ExprKind::Path(None, global_path(&["core", "fmt", "Debug", "fmt"], span)),
+                ast::ExprKind::Path(None, global_path(&["core", "fmt", RUST_FMT_DEBUG_SYMBOL, "fmt"], span)),
                 span,
             ),
             thin_vec![local("value", span), local("formatter", span)],

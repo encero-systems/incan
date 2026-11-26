@@ -10,6 +10,9 @@ Create a project with this manifest:
 [project]
 name = "registry-tour"
 version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
 ```
 
 Create `src/main.incn` and define the domain-owned key and descriptor types:
@@ -65,26 +68,27 @@ Run the program:
 incan run src/main.incn
 ```
 
-The process prints that two descriptions are loaded and then prints `incan`. The important word is *loaded*: `loaded_entries()` reports entries contributed by modules initialized in this process. It is useful for runtime dispatch and local discovery, but it does not claim to know every entry in an unloaded package.
+The program prints `loaded 2 function descriptions` followed by `incan`. `loaded_entries()` denotes entries contributed by modules initialized in a process, rather than every entry in an unloaded package.
 
 ## Inspect the complete checked view
 
 Ask the compiler for the complete source catalog:
 
 ```console
-incan inspect registry main::functions --project . --format json
+incan inspect codegraph . --format jsonl > codegraph.jsonl
+jq 'select(.record == "registry" and .registry_identity == "main::functions")' codegraph.jsonl
 ```
 
-This command type-checks the project through one compilation session and emits deterministic JSON without running `main` or module initialization. The output identifies the package, the registry definition, both entries, their structural key and descriptor values, subject identities, source anchors, visibility, and checked provenance.
+The graph exposes checked registry entries without running `main` or module initialization. Read each entry's registry identity, structural key and descriptor, subject identity, source spans, visibility and provenance. An unchecked-unit warning means the export is incomplete.
 
-The registry identity is `main::functions`: `main` is the source module and `functions` is the registry binding. If multiple packages in the resolved dependency closure publish that same module-local identity, use a package-qualified selector such as `registry-tour::main::functions`.
+The registry identity is `main::functions`: `main` is the source module and `functions` is the registry binding. Keep the graph's package and snapshot context with the entry.
 
 ## What you built
 
 The same source declarations now support two deliberately different consumers:
 
 - application code uses `loaded_entries()` for the process-local runtime view;
-- tools use `incan inspect registry` for the complete compiler-checked view.
+- tools read the checked graph's registry entries.
 
 Neither view scrapes comments or invents a second registry definition. Both originate from the typed `Registry[FunctionId, FunctionSpec]` declaration and its `@describe` sites.
 

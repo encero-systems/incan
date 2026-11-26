@@ -1,0 +1,20 @@
+# behavior: a compiled dependency's `pub` methods on a model, a class, an enum and a newtype are callable by a consumer and reach the unmarked helpers of their own type, and an unmarked method that implements the dependency's public trait is callable through the type (#2570)
+# expect-stdout:
+#   ada: 8
+#   account of ada
+#   3
+#   stop
+#   go
+#   14
+from pub::ledger import Account, Counter, Light, Meters
+
+
+def main() -> None:
+    """Call each public method of the dependency's types."""
+    account = Account(owner="ada", balance=4)
+    println(account.summary())
+    println(account.describe())
+    println(Counter(count=2).following())
+    println(Light.Red.label())
+    println(Light.Green.label())
+    println(Meters(7).doubled())

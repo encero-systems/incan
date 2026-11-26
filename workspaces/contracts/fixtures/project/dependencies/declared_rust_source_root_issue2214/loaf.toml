@@ -1,0 +1,9 @@
+[project]
+name = "declared_rust_source_root_issue2214"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+child_alias = { loaf = "child-package", path = "deps/child" }

@@ -1,0 +1,14 @@
+[project]
+name = "clove_reuse"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[c]
+library = "reuse"
+public-headers = ["include/reuse.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/reuse.c"]

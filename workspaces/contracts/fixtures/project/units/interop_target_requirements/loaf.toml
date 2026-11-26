@@ -1,0 +1,72 @@
+[project]
+name = "interop_target_requirements"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+
+[[interop.c.targets]]
+target = "aarch64-apple-darwin"
+toolchain = { capability = "apple-clang", version = ">=15" }
+sdk = { capability = "macosx", version = ">=13" }
+headers = ["interop/include/probe.h"]
+definitions = ["PROBE_LEVEL=2"]
+
+[[interop.c.targets.artifacts]]
+name = "libc"
+kind = "system"
+capability = "apple.library.System"
+
+[[interop.c.targets]]
+target = "x86_64-unknown-linux-gnu"
+toolchain = { capability = "clang", version = ">=17" }
+headers = ["interop/include/probe.h"]
+definitions = ["PROBE_LEVEL=2"]
+
+[[interop.c.targets.artifacts]]
+name = "libc"
+kind = "system"
+capability = "linux.library.c"
+
+[[interop.c.targets]]
+target = "aarch64-linux-android"
+toolchain = { capability = "android-ndk", version = ">=29, <30" }
+sdk = { capability = "android", version = ">=36, <37" }
+platform = { kind = "android", api-level = 34 }
+headers = ["interop/include/probe.h"]
+
+[[interop.c.targets.artifacts]]
+name = "log"
+kind = "system"
+capability = "android.library.log"
+
+[[interop.c.targets]]
+target = "aarch64-apple-ios"
+toolchain = { capability = "apple-clang", version = ">=17" }
+sdk = { capability = "iphoneos", version = ">=18" }
+platform = { kind = "ios", deployment-target = "13.0" }
+headers = ["interop/include/probe.h"]
+
+[[interop.c.targets.artifacts]]
+name = "foundation"
+kind = "system"
+capability = "apple.framework.Foundation"
+
+[[interop.c.targets.artifacts]]
+name = "bridge"
+kind = "static"
+path = "interop/lib/libbridge.a"
+dependencies = ["foundation"]
+
+[[interop.c.targets.bindings]]
+module = ["main"]
+name = "Probe"
+artifacts = ["bridge", "foundation"]
+
+[[interop.c.targets]]
+target = "aarch64-apple-ios-sim"
+sdk = { capability = "iphonesimulator" }
+platform = { kind = "ios", deployment-target = "14.5" }
+headers = ["interop/include/probe.h"]

@@ -1,0 +1,83 @@
+<svg viewBox="0 0 1280 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0013-layers-title dd0013-layers-desc">
+<title id="dd0013-layers-title">Layers: OS facilities, std.primitives, the platform, standard packages and the engine</title>
+<desc id="dd0013-layers-desc">OS and Rust facilities sit at the bottom. The foundational std.primitives package uses those facilities through explicit interop and imports no other standard package. The platform depends only on std.primitives among standard packages. Every other standard package and the build engine sit above the platform.</desc>
+<defs>
+<style>
+.dd13-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600}
+.dd13-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:9px}
+.dd13-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-tc{fill:#48f0ef;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.dd13-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
+.dd13-c{text-anchor:middle}
+.dd13-m{fill:#030304}
+.dd13-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.dd13-store{fill:rgba(228,235,242,0.04);stroke:#98a2ad;stroke-width:1}
+.dd13-focal{fill:rgba(255,193,90,0.10);stroke:#ffc15a;stroke-width:1}
+.dd13-ext{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
+.dd13-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.dd13-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.dd13-zonea{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
+.dd13-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
+.dd13-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.dd13-wa{fill:none;stroke:#ffc15a;stroke-width:1.4}
+.dd13-wc{fill:none;stroke:#48f0ef;stroke-width:1.2}
+.dd13-d{stroke-dasharray:4 3}
+.dd13-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+</style>
+<marker id="dd0013e-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#030304"/>
+<rect x="24" y="24" width="1232" height="88" rx="8" class="dd13-zone"/>
+<rect x="36" y="28" width="220" height="12" rx="2" class="dd13-m"/>
+<text x="146" y="37" class="dd13-t dd13-c">4 · CONSUMERS ABOVE THE PLATFORM</text>
+<rect x="24" y="136" width="1232" height="104" rx="8" class="dd13-zone"/>
+<rect x="36" y="140" width="200" height="12" rx="2" class="dd13-m"/>
+<text x="136" y="149" class="dd13-t dd13-c">3 · OS-FACING PLATFORM LAYER</text>
+<rect x="24" y="264" width="1232" height="96" rx="8" class="dd13-zonea"/>
+<rect x="36" y="268" width="228" height="12" rx="2" class="dd13-m"/>
+<text x="150" y="277" class="dd13-ta dd13-c">2 · FOUNDATIONAL STANDARD PACKAGE</text>
+<rect x="24" y="384" width="1232" height="96" rx="8" class="dd13-zonec"/>
+<rect x="36" y="388" width="260" height="12" rx="2" class="dd13-m"/>
+<text x="166" y="397" class="dd13-tc dd13-c">1 · OS AND RUST FACILITIES · VIA INCAN INTEROP</text>
+<path d="M336,104 V160" class="dd13-w" marker-end="url(#dd0013e-arrow)"/>
+<rect x="344" y="116" width="124" height="12" rx="2" class="dd13-m"/>
+<text x="348" y="125" class="dd13-l">WRAPS FOR USERS</text>
+<path d="M944,104 V160" class="dd13-w" marker-end="url(#dd0013e-arrow)"/>
+<rect x="952" y="116" width="60" height="12" rx="2" class="dd13-m"/>
+<text x="956" y="125" class="dd13-l">USES</text>
+<path d="M640,216 V296" class="dd13-w" marker-end="url(#dd0013e-arrow)"/>
+<rect x="648" y="236" width="156" height="12" rx="2" class="dd13-m"/>
+<text x="652" y="245" class="dd13-l">SOLE STANDARD DEPENDENCY</text>
+<path d="M640,344 V416" class="dd13-w" marker-end="url(#dd0013e-arrow)"/>
+<rect x="648" y="364" width="140" height="12" rx="2" class="dd13-m"/>
+<text x="652" y="373" class="dd13-l">EXPLICIT RUST:: INTEROP</text>
+<rect x="48" y="52" width="576" height="52" rx="6" class="dd13-box"/>
+<text x="336" y="76" class="dd13-n dd13-c">Other standard packages</text>
+<text x="336" y="92" class="dd13-s dd13-c">std.fs · std.process · std.db · std.graph · std.async</text>
+<rect x="656" y="52" width="584" height="52" rx="6" class="dd13-box"/>
+<text x="948" y="76" class="dd13-n dd13-c">Build engine and compiler record service</text>
+<text x="948" y="92" class="dd13-s dd13-c">Oven engine · record workers · readers · execution policy</text>
+<rect x="48" y="168" width="1192" height="48" rx="6" class="dd13-store"/>
+<text x="644" y="188" class="dd13-n dd13-c">incan_platform</text>
+<text x="644" y="204" class="dd13-s dd13-c">store · mapping · durable I/O · IPC · process control · probes · tracing</text>
+<rect x="48" y="296" width="1192" height="48" rx="6" class="dd13-focal"/>
+<text x="644" y="316" class="dd13-n dd13-c">std.primitives</text>
+<text x="644" y="332" class="dd13-s dd13-c">values · errors · traits · async mechanisms · vocabulary contracts</text>
+<rect x="48" y="416" width="280" height="48" rx="6" class="dd13-ext"/>
+<text x="188" y="436" class="dd13-n dd13-c">Memory and files</text>
+<text x="188" y="452" class="dd13-s dd13-c">mmap · sync · rename · locks</text>
+<rect x="344" y="416" width="280" height="48" rx="6" class="dd13-ext"/>
+<text x="484" y="436" class="dd13-n dd13-c">Transport</text>
+<text x="484" y="452" class="dd13-s dd13-c">sockets · pipes · peer identity</text>
+<rect x="640" y="416" width="296" height="48" rx="6" class="dd13-ext"/>
+<text x="788" y="436" class="dd13-n dd13-c">Processes and clocks</text>
+<text x="788" y="452" class="dd13-s dd13-c">spawn · groups · limits · time</text>
+<rect x="952" y="416" width="288" height="48" rx="6" class="dd13-ext"/>
+<text x="1096" y="436" class="dd13-n dd13-c">Rust std and crates</text>
+<text x="1096" y="452" class="dd13-s dd13-c">explicit native dependencies</text>
+<line x1="24" y1="504" x2="1256" y2="504" class="dd13-rule"/>
+<text x="24" y="528" class="dd13-i">Guardrail: std.primitives imports no other standard package; incan_platform imports no standard package except std.primitives.</text>
+<text x="24" y="548" class="dd13-i">Higher-level packages compose these mechanisms and preserve compatibility through re-export, never through a second implementation.</text>
+</svg>

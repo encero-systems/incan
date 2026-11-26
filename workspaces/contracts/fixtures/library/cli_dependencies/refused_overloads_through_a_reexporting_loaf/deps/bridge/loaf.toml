@@ -1,0 +1,6 @@
+[project]
+name = "bridge"
+version = "0.1.0"
+
+[dependencies]
+converters = { path = "../converters" }

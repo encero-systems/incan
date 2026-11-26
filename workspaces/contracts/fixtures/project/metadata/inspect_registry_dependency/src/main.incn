@@ -1,0 +1,17 @@
+# behavior: `incan inspect registry` also selects a public registry of a dependency Loaf by its package-qualified identity, as 0.5.1 did (#3142).
+# cli-commands:
+#   inspect registry catalog::lib::functions
+# expect-stdout-contains:
+#   {
+#       "name": "catalog",
+#       "identity": "lib::functions",
+#         "subject_identity": "lib.normalize",
+# expect-stderr:
+# expect-exit: 0
+
+from pub::catalog import normalize
+
+
+def main() -> None:
+    """The program whose dependency's registry the case inspects."""
+    println(normalize("  INCAN  "))

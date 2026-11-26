@@ -1,0 +1,129 @@
+"""Compiler-owned activation envelopes persist with their demand, prepared inputs and ready work, and a checking sweep
+evaluates them once each in certified rank order."""
+
+from compiler_graph_record_fixtures import family_key, required
+from pub::incan_platform.store import snapshot as store_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from pub::internal_models import (
+    certified_namespace_order,
+    decode_namespace_order,
+    DemandPage,
+    InputSnapshot,
+    PreparedInputs,
+    ProducerProfile,
+    ProducerRank,
+    ProducerStage,
+    RankCertificate,
+    ReadyWork,
+    RecordRoot,
+    decode_demand_page,
+    decode_prepared_inputs,
+    decode_ready_work,
+    encode_prepared_inputs,
+    encode_ready_work,
+)
+from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
+from std.io import BytesIO
+
+
+pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, str]:
+    """Persist the three compiler-owned activation roots and evaluate local/final outputs once in certified order."""
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    first = activation("local", "first", 1)
+    second = activation("local", "second", 0)
+    final_record = activation("final", "first", 2)
+    persisted = persist_activation(before, DemandPage(keys=[first.ready.output]), first.prepared, first.ready)?
+    demand_bytes = required(before=persisted.snapshot, key=persisted.demand_key)?
+    assert demand_bytes[:4] == b"CRMB"
+    forged = model_description(b"demand\x00", "another.schema", [ModelField(identity=b"keys__", name="keys", storage=f"list<{KEY_TYPE}>")])
+    inline = Description(metadata=forged.metadata, mode=DescriptionMode.Inline)
+    impostor = encode_graph_row(b"demand\x00", inline, [required_value(b"keys__", Value.List([]))])?
+    assert decode_demand_page(impostor).is_err()
+    assert decode_ready_work(demand_bytes).is_err()
+    demand = decode_demand_page(demand_bytes)?
+    prepared_bytes = required(before=persisted.snapshot, key=persisted.prepared_key)?
+    assert prepared_bytes[:4] == b"CRMB"
+    assert decode_demand_page(prepared_bytes).is_err()
+    prepared = decode_prepared_inputs(prepared_bytes)?
+    ready_bytes = required(before=persisted.snapshot, key=persisted.work_key)?
+    assert ready_bytes[:4] == b"CRMB"
+    assert decode_prepared_inputs(ready_bytes).is_err()
+    ready = decode_ready_work(ready_bytes)?
+    assert demand.keys == [first.ready.output]
+    assert encode_prepared_inputs(prepared)? == encode_prepared_inputs(first.prepared)?
+    assert encode_ready_work(ready)? == encode_ready_work(first.ready)?
+
+    mut sweep = RankedCheckingSweep.schedule([final_record, first, second])?
+    assert selected_identity(sweep.next()) == "second"
+    assert selected_identity(sweep.next()) == "first"
+    assert selected_family(sweep.next()) == "final"
+    assert selected_identity(sweep.next()) == ""
+    assert sweep.evaluation_count() == 3
+    order = certified_namespace_order("project", {
+        "entry": ["consumer", "left", "right", "leaf"],
+        "consumer": ["left", "right", "leaf"],
+        "left": ["right", "leaf"],
+        "right": ["left", "leaf"],
+        "leaf": [],
+        "incomplete": ["absent"],
+    })?
+    assert order["leaf"].rank == 0
+    assert order["left"].members == ["left", "right"]
+    assert order["left"].rank == 1
+    assert order["left"].evidence == order["right"].evidence
+    roundtrip = decode_namespace_order(order["right"].certificate.clone(), "project")?
+    assert roundtrip.members == ["left", "right"]
+    assert roundtrip.rank == 1
+    assert roundtrip.evidence == order["left"].evidence
+    assert decode_namespace_order(order["left"].certificate.clone(), "another-project").is_err()
+    tampered = BytesIO(order["left"].certificate)
+    tampered.seek(0, 2).map_err((error) => error.message())?
+    tampered.write_bytes(b"x").map_err((error) => error.message())?
+    assert decode_namespace_order(tampered.getvalue(), "project").is_err()
+    assert order["consumer"].rank == 3
+    assert order["entry"].rank == 4
+    assert "incomplete" not in order
+    match certified_namespace_order("project", {"first": ["second"], "second": ["third"], "third": []}):
+        Ok(_) => return Err("accepted an incomplete transitive import closure")
+        Err(_) => pass
+    return Ok(None)
+
+
+def activation(family: str, identity: str, dependency: int) -> RankedActivation:
+    """Create one complete checking-family activation with no environment reads."""
+    output = family_key(family, identity)
+    snapshot = InputSnapshot(root=RecordRoot(digest="snapshot"))
+    profile = ProducerProfile(identity=RecordRoot(digest="profile"))
+    prepared = PreparedInputs(
+        output=output,
+        snapshot=snapshot,
+        profile=profile,
+        required_reads=[],
+        rank_certificate=RankCertificate(
+            rank=ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=dependency),
+            evidence=RecordRoot(digest=f"rank-{dependency}"),
+        ),
+        selector_witnesses=RecordRoot(digest=f"selectors-{dependency}"),
+    )
+    return RankedActivation(
+        ready=ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile),
+        prepared=prepared,
+    )
+
+
+def selected_identity(activation: Option[RankedActivation]) -> str:
+    """Read the selected output identity without requiring native equality for the complete activation model."""
+    match activation:
+        Some(value) => return value.ready.output.identity
+        None => return ""
+
+
+def selected_family(activation: Option[RankedActivation]) -> str:
+    """Read the selected output family without requiring native equality for the complete activation model."""
+    match activation:
+        Some(value) => return value.ready.output.family
+        None => return ""

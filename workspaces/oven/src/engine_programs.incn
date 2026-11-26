@@ -1,0 +1,1298 @@
+"""The E1a unit-record producer: obtain today's whole native unit and select its exact payload in a project view."""
+
+from pub::incan_platform.store import stage_put
+from pub::incan_platform.store import FrameRead
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from std.environ import get_or
+from std.primitives.locking import LockGuard
+from rust::std::rc import Rc
+from rust::std::mem import drop, take
+from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
+from bakery import fact_file, find_executable_payload, find_launch_executable_payload
+from bakery_records import Fact
+from bakery_roots import register_root
+from check_pages import check_page_directory, keep_check_pages
+from compiler_body_publication import (
+    LoweringDemandWork,
+    PreparedCompiledBodies,
+    PreparedSourceInputs,
+    prepare_captured_source_inputs,
+    prepare_compiled_bodies,
+    source_origin,
+)
+from compiler_body_values import (
+    CoveredBodyOwners,
+    SelectedBodyPage,
+    SelectedBodyRecord,
+    body_owners_reading,
+    encode_body_inventory,
+    reached_body_owners,
+    reached_namespaces,
+    select_body_inventory_except,
+    select_namespace_inventory_except,
+)
+from compiler_plan_values import (
+    AdmittedPlanModule, LOWERING_PROFILE, RetainedPlanInputs, SelectedPlanModule, encode_plan_selection,
+    plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules,
+)
+from compiler_plan_modules import plan_module_admissions
+from compiler_source_projection import SourceProjection
+from compiler_refusals import PreparedWarnings, replay_checked_warnings
+from compiler_graph_records import (
+    EditCutoff, EditReaders, PlanImportReach, ReceiptProjectionCache,
+    retire_compiler_versions, retire_executable_predecessors, select_edit_readers, supersede_outputs,
+)
+from compiler_body_fallbacks import plan_module_origins
+from graph_read_demands import GraphDemand, note_graph_demand
+from engine_epochs import load_epoch
+pub from engine_program_records import NativeUnit
+from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection, program_view
+from features import FeatureRequest
+from home import StandardPackage, dependency_artifact_dir
+from owner_endpoint import prepare_directory
+from incan_units import (
+    Made, check_prepared, executable_project_root, executable_view, obtain_executable, prepare_project_library,
+    program_binary, view_executable,
+)
+from project_library import planned_program
+from pub::incan_platform.store import (
+    EXPECT_REPAIR, HOME_VIEW, PreparedPayload, Snapshot, SnapshotAdmission, Transaction, begin, commit, get, put,
+)
+from compile_time_trust import MISSING_TRUST_CODE
+from engine_overlay import OverlayDiagnostic, is_editor_view
+from store_path_conversion import pin_payload, snapshot, store_path
+from toolchain import Toolchain, load_toolchain, toolchain_directory
+from unit import UnitDescription, describe, with_c_abi_target
+from engine_unit_options import decode_unit_options
+from clove_units import serve_c_compiler
+from unit_compiler import (
+    CheckerRecordCounts,
+    CompletedPlanEvents,
+    PlanRecordCounts,
+    checker_record_counts,
+    checker_record_report_path,
+    crate_name,
+    graph_body_output_path,
+    plan_record_counts,
+    plan_record_report_path,
+)
+from unit_rust import compile_library_unit, prepare_native
+from unit_transport import CompilerSourceCapture
+from callable_products import desugared_by_a_dependency
+from unit_freshness import Key, fingerprint, unit_key, unit_key_and_reach
+from unit_sources import SourceGraph
+from observation import FileMetadata, SourceReading, file_metadata, trace
+from shared_link import carriers_present, development_link, linkage_key, library_witness
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from compiler_ranked_build import RankedBuildInputs
+from engine_lowering_evidence import LoweringWork
+from trace_adapter import request_label
+from compiler_reopened_peers import selection as reopen_selection
+from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT
+from std.primitives.text import copy_frozen_bytes
+from compiler_runtime_requirements import (
+    RUNTIME_REQUIREMENTS, RUNTIME_REQUIREMENTS_REPORT, runtime_requirements_key, stage_runtime_recipe,
+)
+
+pub model SealedProgram:
+    """A baked executable's fact, the path of its view and whether it was linked against shared carriers."""
+
+    pub fact: Fact
+    pub binary: str
+    pub shared: bool
+
+
+pub model ProgramOutcome:
+    """One caller's selection and the whole-unit producer work performed for it."""
+
+    pub code: i32
+    pub unit: Option[NativeUnit] = None
+    pub evaluations: int = 0
+    pub body_evaluations: int = 0
+    # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
+    pub body_reuses: int = 0
+    # Checked-body pages the request selected, encoded and wrote; and restored pages the compiler had to decode.
+    pub body_page_writes: int = 0
+    pub body_page_decodes: int = 0
+    pub body_ir_evaluations: int = 0
+    pub native_bakes: int = 0
+    pub plan_function_evaluations: int = 0
+    pub plan_function_reuses: int = 0
+    pub lowering_demand_evaluations: int = 0
+    pub lowering_demand_reuses: int = 0
+    pub native_interface_evaluations: int = 0
+    # Modules whose functions the compiler restored from their module plan records, lowering none of their bodies.
+    pub plan_module_reuses: int = 0
+    pub reusable_declarations: int = 0
+    pub all_declarations: int = 0
+    pub checker_reuse: str = "0/0 reusable declarations"
+    pub artifact_refusals: Dict[str, int] = {}
+    pub console: str = ""
+    pub epoch_reads: int = 0
+    # Index pages this engine read and keys it listed while producing the unit, before the request commits.
+    pub index_pages: int = 0
+    pub keys_listed: int = 0
+    pub store_frames_read: int = 0
+    pub store_frame_bytes: int = 0
+    pub store_decoded_bytes: int = 0
+    pub store_metadata_bytes_copied: int = 0
+    pub store_index_bytes_checked: int = 0
+    pub store_digest_only_payload_bytes: int = 0
+    pub store_digest_only_reads: int = 0
+    pub frame_reads: list[FrameRead] = []
+    pub graph_demands: list[GraphDemand] = []
+    # Present only when the reported activation can prove the complete lowering cohort.
+    pub lowering_work: Option[LoweringWork] = None
+    pub transaction: Option[Transaction] = None
+    # Source and checked-body records for an editor overlay or a library-linked executable in its own graph view.
+    pub view_transaction: Option[Transaction] = None
+    pub claim: Option[Rc[LockGuard]] = None
+    pub prepared_warnings: Option[PreparedWarnings] = None
+    # The executable this request baked, whose view waits for the request's commit: see `view_sealed`.
+    pub sealed: Option[SealedProgram] = None
+    # Why the records producer gave this unit no per-declaration records, when the engine compiled it whole.
+    pub whole_unit: str = ""
+    # A library build, which succeeds with no native descriptor to select.
+    pub library: bool = false
+
+
+pub model CheckOutcome:
+    """One compiler check completion and the console frame containing its text or JSON report."""
+
+    pub code: i32
+    pub console: str
+    # A selected pre-check refusal has no compiler report or graph publication.
+    pub preparation_stop: Option[OverlayDiagnostic] = None
+    # Top-level function bodies the check checked, and those it restored from the request view's records.
+    pub body_evaluations: int = 0
+    pub body_reuses: int = 0
+    # Pages the check wrote for its view, and restored pages the compiler decoded itself.
+    pub body_page_writes: int = 0
+    pub body_page_decodes: int = 0
+
+
+pub model BodyReading:
+    """A request view's graph and the source projections this request staged against it."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+
+
+pub model BodySelection:
+    """A request view's checked-body records for one prepared unit, selected before the compiler checks it."""
+
+    pub reading: BodyReading
+    pub invalid: list[str]
+    pub reached: EditReaders
+
+
+model ProgramHome:
+    """The request-owned compiler and standard packages used to describe and build one program."""
+
+    toolchain: Toolchain
+    standard: Option[list[StandardPackage]] = None
+
+
+pub model PreparedProgram:
+    """One request's prepared unit, exact key and compiler source lease, kept through native activation."""
+
+    pub unit: UnitDescription
+    pub toolchain: Toolchain
+    # Owns the private directory named by the toolchain for both graph collection and native compilation.
+    pub sources: CompilerSourceCapture
+    pub whole: str
+    pub key: Option[Key] = None
+    pub reach: Option[SourceGraph] = None
+
+
+pub model NativeSelection:
+    """The exact selected view and the encoding and publication work needed to select it."""
+
+    pub snapshot: Snapshot
+    pub encodings: int = 1
+    pub commits: int = 1
+    pub transaction: Option[Transaction] = None
+
+
+pub def check_program(
+    store: Path,
+    mut admission: SnapshotAdmission,
+    revision: str,
+    console: str,
+    format: str,
+    captured: Option[BuildEpoch] = None,
+    selected_home: Option[SelectedHome] = None,
+    view: str = "",
+    unit_options: str = "",
+    record_writer: str = "",
+    scheduled_origin: str = "",
+) -> Result[CheckOutcome, str]:
+    """
+    Describe and check one captured build reach without requesting code generation or a native selection. The check
+    restores each unchanged checked body from the request view's records, from pages the view keeps between requests.
+    """
+    epoch = request_epoch(store, revision, captured, "check")?
+    if len(epoch.roots) != 1:
+        return Err("unit records require exactly one program root")
+    home = program_home(selected_home)?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    verify_scheduled_origin(asked, scheduled_origin)?
+    ready = prepared_for(view, asked, toolchain)?
+    if ready.trust_stop != "":
+        if not is_editor_view(view) or format != "json":
+            return Err(ready.trust_stop)
+        stopped = OverlayDiagnostic(
+            message=ready.trust_stop, path=ready.source, line=1, column=1, severity="information",
+            code=MISSING_TRUST_CODE, preparation_stop=true,
+        )
+        return Ok(CheckOutcome(code=1, console=console, preparation_stop=Some(stopped)))
+    # A unit without per-declaration records is checked whole, keyed by its full inputs as every check is.
+    whole = whole_unit_reason(ready, unit_options)?
+    if whole != "":
+        trace(f"unit {ready.package} {ready.kind}: whole-unit check ({whole})")
+        whole_check = check_prepared(ready, toolchain, format, None, is_editor_view(view))?
+        return Ok(CheckOutcome(code=whole_check.code, console=console))
+    # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
+    reading = body_reading(admission, view, ready, epoch.inputs, record_writer)?
+    invalidating = begin_work()
+    invalid = body_owners_reading(reading.graph, reading.projected.keys, CHECKER_PROFILE)?
+    record_work(Operation.EngineSelect, "invalid-owners", invalidating)
+    directory = check_page_directory(store, view, ready)
+    pages = keep_check_pages(reading.graph, source_origin(ready), invalid, ready, directory)?
+    checked = check_prepared(ready, toolchain, format, Some(pages.directory), is_editor_view(view))?
+    return Ok(
+        CheckOutcome(
+            code=checked.code,
+            console=console,
+            body_evaluations=checked.bodies.checked,
+            body_reuses=checked.bodies.reused,
+            body_page_writes=pages.written,
+            body_page_decodes=checked.bodies.decoded,
+        ),
+    )
+
+
+def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    Prepare a request's unit. An editor's overlay request was never asked for by its user, so it is unattended: it
+    stops before compile-time code that no trust entry covers, and the stop names what lacks trust (RFC 117).
+    """
+    return prepare_native(described, toolchain, is_editor_view(view))
+
+
+def body_reading(
+    mut admission: SnapshotAdmission,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    record_writer: str,
+    retain_projections: bool = false,
+) -> Result[BodyReading, str]:
+    """
+    Stage source changes against the graph that owns this request's checked bodies. An editor reads its own view.
+    A linked build has a separate view because its bodies name the compiled provider's declarations. The shared
+    graph supplies ordinary source builds and checks. The writer generation is one input to the projections.
+    """
+    mut graph_view = str(HOME_VIEW)
+    if is_editor_view(view):
+        graph_view = view
+    else:
+        if let Some(library) = ready.project_library:
+            graph_view = f"linked-{fingerprint([view, library])?}"
+    reading = begin_work()
+    graph = admission.open(graph_view).map_err((error) => error.message())?
+    record_work(Operation.EngineSelect, "graph-snapshot", reading)
+    projecting = begin_work()
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer, retain_projections)?
+    record_work(Operation.EngineSelect, "captured-sources", projecting)
+    return Ok(BodyReading(graph=graph, projected=projected))
+
+
+def select_bodies(
+    mut admission: SnapshotAdmission,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    listing_refusals: bool,
+    record_writer: str,
+) -> Result[BodySelection, str]:
+    """
+    Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
+    refusals checks every owner afresh.
+    """
+    reading = body_reading(admission, view, ready, inputs, record_writer, retain_projections=true)?
+    origin = source_origin(ready)
+    selecting = begin_work()
+    reached = select_edit_readers(reading.graph, reading.projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE], not listing_refusals)?
+    mut invalid: list[str] = []
+    if listing_refusals:
+        invalid = [
+            record.identity
+            for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
+        ]
+    else:
+        invalid = reached_body_owners(reached.direct, CHECKER_PROFILE)
+    record_work(Operation.EngineSelect, "edit-readers", selecting)
+    return Ok(BodySelection(reading=reading, invalid=invalid, reached=reached))
+
+
+model RecordProgramRequest:
+    """The inputs already bound to this program before the records producer runs."""
+
+    store: Path
+    view: str
+    epoch: BuildEpoch
+    unit: UnitDescription
+    toolchain: Toolchain
+    compiled_key: Key
+    selector: Option[str]
+    console: str
+    epoch_reads: int
+    record_writer: str
+    listing_refusals: bool
+    report_lowering: bool
+
+
+model SelectedProgramRecords:
+    """The pinned inputs carried from selection into native execution and checked-record publication."""
+
+    origin: str
+    bodies: list[SelectedBodyRecord]
+    pages: list[SelectedBodyPage]
+    ranked: Option[RankedBuildInputs]
+    covered: CoveredBodyOwners
+    plan_records: list[AdmittedPlanModule]
+    kept_plans: list[SelectedPlanModule]
+    plan_selection: Option[str]
+    retained_plans: RetainedPlanInputs
+    runtime_key: str
+    previous_link: Option[PreviousLinkMember]
+
+
+pub def obtain(
+    store: Path,
+    mut admission: SnapshotAdmission,
+    revision: str,
+    handle: str,
+    console: str,
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
+    captured: Option[BuildEpoch] = None,
+    producer: str = "",
+    selected_home: Option[SelectedHome] = None,
+    unit_options: str = "",
+    record_writer: str = "",
+    scheduled_origin: str = "",
+    source_readings: Option[Rc[Dict[str, SourceReading]]] = None,
+    prepared: Option[PreparedProgram] = None,
+    report_lowering: bool = false,
+) -> Result[ProgramOutcome, str]:
+    """
+    Ask for a unit record, using the existing RFC 124 producer on a miss.
+
+    1. Read a previously finalized native descriptor without preparing frozen inputs again.
+    2. Otherwise read the captured epoch, bind the program's shared provider and finalize its RFC 124 identity.
+    3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
+    4. Return the descriptor after checking capture; caller selection publishes it in the caller's view.
+    5. A unit baked here is returned unviewed: the caller commits the request and then calls `view_sealed`.
+    """
+    listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
+    request_view = program_view(handle)?
+    # The project descriptor, standalone index and checked graph select their own current view in this request.
+    # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
+    # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
+    # A unit with options is described and keyed afresh on every request: its inputs reach beyond the captured
+    # sources, as a Clove's C sources do, and its bakery key, not the capture, proves it unchanged.
+    mut previous_view: Option[Snapshot] = None
+    mut view_retry: Option[NativeUnit] = None
+    if not listing_refusals and unit_options == "":
+        selected = admission.open(request_view).map_err((error) => error.message())?
+        match selected_program(selected, handle)?:
+            Some(unit) =>
+                if restore_program(store, unit, console)?:
+                    return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console))
+                view_retry = Some(unit)
+            None => pass
+        previous_view = Some(selected)
+    # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
+    opening = begin_work()
+    mut epoch_reads = 0
+    if captured is None:
+        epoch_reads = 1
+    epoch = request_epoch(store, revision, captured, handle)?
+    record_work(Operation.EngineEpoch, revision, opening)
+    if len(epoch.roots) != 1:
+        return Err("unit records require exactly one program root")
+    # The standalone index names a unit by its inputs alone; a unit with options is found by its own view's handle.
+    mut selector: Option[str] = None
+    if unit_options == "":
+        selector = standalone_selector(epoch, producer)?
+    mut indexed_retry: Option[NativeUnit] = None
+    if not listing_refusals:
+        if let Some(unit) = indexed_program(store, epoch, selector, admission)?:
+            # A miss in the held request view cannot be replaced by another variant of that same Unit.
+            if view_retry is None and restore_program(store, unit, console)?:
+                return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console, epoch_reads=epoch_reads))
+            indexed_retry = Some(unit)
+    preparation = match prepared:
+        Some(found) => found
+        None => prepare_program(epoch, request_view, console, selected_home, unit_options, scheduled_origin, source_readings)?
+    ready = preparation.unit
+    toolchain = preparation.toolchain
+    if preparation.whole != "":
+        return whole_unit_program(
+            store, selector, ready, toolchain, console, preparation.whole, epoch_reads, view_retry, indexed_retry,
+        )
+    compiled_key = match preparation.key:
+        Some(key) => key
+        None => return Err("prepared records program has no unit key")
+    request = RecordProgramRequest(
+        store=store, view=request_view, epoch=epoch, unit=ready, toolchain=toolchain, compiled_key=compiled_key,
+        selector=selector, console=console, epoch_reads=epoch_reads, record_writer=record_writer,
+        listing_refusals=listing_refusals, report_lowering=report_lowering,
+    )
+    return obtain_record_program(request, admission, previous_view, view_retry, indexed_retry, receipts)
+
+
+def obtain_record_program(
+    request: RecordProgramRequest, mut admission: SnapshotAdmission, previous_view: Option[Snapshot],
+    view_retry: Option[NativeUnit], indexed_retry: Option[NativeUnit],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[ProgramOutcome, str]:
+    """Keep the request's sidecars and native claim alive through the success or failure that consumes them."""
+    let ready: Borrowed[UnitDescription] = request.unit
+    let toolchain: Borrowed[Toolchain] = request.toolchain
+    report_parent = plan_record_report_path(ready, request.compiled_key, toolchain.unit_descriptor_crumb).parent()
+    body_output = graph_body_output_path(ready, request.compiled_key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
+    if request.compiled_key.refusal != "":
+        return Err(request.compiled_key.refusal)
+    # Diagnosis has a separate native identity: a normal successful unit is not proof that all bodies were rechecked.
+    mut native_key = request.compiled_key
+    if request.listing_refusals:
+        native_key = refusal_diagnostic_key(request.compiled_key)?
+    # Build and run ask for the same debug program, including its existing shared native linkage policy.
+    shared_link = development_link(ready, true)
+    mut held_view = previous_view
+    if not shared_link:
+        held_view = None
+    key = linkage_key(native_key, shared_link)?
+    binary = program_binary(ready)
+    # 3. The native producer owns the payload claim. Checked records follow the graph that authorized them.
+    mut selection = select_bodies(
+        admission, request.view, ready, request.epoch.inputs, request.listing_refusals, request.record_writer,
+    )?
+    graph = selection.reading.graph
+    mut captured_sources = take(selection.reading.projected.projections)
+    mut projected = selection.reading.projected
+    carried = take(projected.carried)
+    invalid = selection.invalid
+    invalid_count = len(invalid)
+    mut source_modules: Option[list[str]] = None
+    if not request.listing_refusals and not is_editor_view(request.view):
+        source_modules = request.compiled_key.source_modules
+    mut selected = select_program_records(
+        request, graph, projected, invalid, selection.reached, carried, source_modules, held_view, shared_link, receipts,
+    )?
+    # Keep both request-owned directories alive through publication, beside the stable native session.
+    report_parent.mkdir(true, true).map_err((error) => error.message())?
+    admission_attempt = TemporaryDirectory.try_new_with("plan-admission-", "", Some(report_parent)).map_err((error) => error.message())?
+    admission_root = admission_attempt.path()
+    mut previous_payload: Option[PreparedPayload] = None
+    if let Some(predecessor) = take(selected.previous_link):
+        # The optional native witness requires an owner-only attempt. An unsecured attempt can still compile normally.
+        match prepare_directory(admission_root.0):
+            Ok(_) =>
+                selected.pages.append(predecessor.page)
+                previous_payload = Some(predecessor.payload)
+            Err(_) => pass
+    records = admission_root.joinpath("products")
+    report_attempt = TemporaryDirectory.try_new_with("plan-report-", "", Some(report_parent)).map_err((error) => error.message())?
+    plan_report = report_attempt.path()
+    selected_bodies = take(selected.pages)
+    checking = take(selected.ranked)
+    produced = obtain_executable(
+        ready, toolchain, binary, native_key, true, Some(request.store), true, Some(selected_bodies), checking, Some(records),
+        report_directory=Some(plan_report),
+        retry=program_retry(view_retry, indexed_retry, key.digest),
+    )?
+    plan_counts, completed_plan_events = read_completed_plan_report(produced, plan_report, request.report_lowering)?
+    if produced.code != 0:
+        return Ok(
+            ProgramOutcome(
+                code=produced.code,
+                evaluations=produced.evaluations,
+                body_evaluations=invalid_count,
+                body_page_writes=len(selected.bodies),
+                console=request.console,
+                epoch_reads=request.epoch_reads,
+                plan_function_evaluations=plan_counts.plan_evaluations,
+                plan_function_reuses=plan_counts.plan_reuses,
+            ),
+        )
+    drop(previous_payload)
+    drop(held_view)
+    return settle_record_program(
+        request, graph, projected, captured_sources, selection.reached.cutoff, selected,
+        produced, key, binary, body_output, records, plan_report, plan_counts, completed_plan_events,
+    )
+
+
+def select_program_records(
+    request: Borrowed[RecordProgramRequest], graph: Borrowed[Snapshot], projected: Borrowed[PreparedSourceInputs],
+    invalid: list[str], mut reached: BorrowedMut[EditReaders], carried: set[str], source_modules: Option[list[str]],
+    previous_view: Borrowed[Option[Snapshot]], shared_link: bool,
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
+) -> Result[SelectedProgramRecords, str]:
+    """Select checked bodies, plans and native witnesses from the same view before starting the worker."""
+    let ready: Borrowed[UnitDescription] = request.unit
+    listing_refusals = request.listing_refusals
+    origin = source_origin(ready)
+    mut modules: Option[list[str]] = None
+    mut plan_reach: Option[PlanImportReach] = None
+    if let Some(reach) = source_modules:
+        modules = Some(reach)
+        plan_reach = Some(PlanImportReach.open(graph, origin, reach, plan_module_origins(ready, reach)))
+    # Each selection stage before the unit request is one span, so an edit's fixed selection cost is measured.
+    mut selecting = begin_work()
+    invalid_namespaces = reached_namespaces(reached.direct, CHECKER_PROFILE)
+    # Only an evaluation that reads a record this edit changed, or reads such an evaluation, can be stale; every other
+    # selected evaluation is valid by the graph it is selected from. Listing refusals validates every owner.
+    if reached.cutoff.active:
+        reached.cutoff.carried = carried
+    let cutoff: Borrowed[EditCutoff] = reached.cutoff
+    namespaces = select_namespace_inventory_except(
+        graph, CHECKER_PROFILE, origin, invalid_namespaces, receipts,
+        request.toolchain.namespace_references and request.toolchain.closure_anchors, cutoff, use_layouts=true, reachable_modules=modules,
+    )?
+    record_work(Operation.EngineSelect, "namespace-inventory", selecting)
+    selecting = begin_work()
+    # A checked owner travels once when its exact plan slot and its whole checked namespace are both admitted.
+    plan_reads = plan_reads_changed(reached.direct)
+    invalid_plans = sorted([owner for owner in plan_reads.keys()])
+    positioned = set([key.identity for key in projected.keys if key.family == "source-positioned" and key.origin == origin])
+    plan_modules = select_plan_modules(
+        graph,
+        origin,
+        invalid_namespaces,
+        invalid + invalid_plans,
+        namespaces.complete,
+        positioned,
+        cutoff,
+        reachable_modules=modules,
+        compact_authority=request.toolchain.supports_plan_module_selection_digest,
+    )?
+    covered = plan_modules.covered
+    record_work(Operation.EngineSelect, "plan-modules", selecting)
+    selecting = begin_work()
+    retained_bodies = select_body_inventory_except(
+        graph, CHECKER_PROFILE, origin, invalid + [owner for owner in covered.owners.keys()], mint_body_ir=true,
+        cutoff=cutoff, plan_reach=plan_reach,
+    )?
+    mut selected_bodies = encode_body_inventory(retained_bodies)?
+    selected_bodies.append(SelectedBodyPage(key=EXECUTABLE_GRAPH_INPUT, value=copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT)))
+    record_work(Operation.EngineSelect, "body-inventory", selecting)
+    mut previous_link: Option[PreviousLinkMember] = None
+    if shared_link:
+        if let Some(selected) = previous_view:
+            previous_link = previous_link_member(request.store, selected)?
+    mut checking: Option[RankedBuildInputs] = None
+    if not listing_refusals and len(invalid) > 0:
+        checking = Some(RankedBuildInputs(
+            graph=graph, projected=projected.transaction, origin=origin, invalid=invalid,
+            changes=projected.keys, covered=covered, plan_reads=plan_reads,
+        ))
+    if graph.generation > 0:
+        selected_bodies.append(reopen_selection(graph, origin)?)
+    selected_bodies.extend(namespaces.pages)
+    selecting = begin_work()
+    scalar_plans = select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs, cutoff=cutoff,
+        plan_reach=plan_reach)?
+    record_work(Operation.EngineSelect, "plan-inventory", selecting)
+    selected_bodies.extend(scalar_plans.pages)
+    selected_bodies.extend(plan_modules.pages)
+    mut expected_plan_selection: Option[str] = None
+    if let Some(authority) = plan_modules.authority:
+        expected_plan_selection = Some(authority.digest)
+        selected_bodies.append(authority)
+    runtime_key = runtime_requirements_key(origin, ready.source, ready.profile)
+    if not listing_refusals:
+        if let Some(requirements) = get(graph, runtime_key).map_err((error) => error.message())?:
+            selected_bodies.append(SelectedBodyPage(key=RUNTIME_REQUIREMENTS, value=requirements))
+    return Ok(SelectedProgramRecords(
+        origin=origin, bodies=retained_bodies, pages=selected_bodies, ranked=checking,
+        covered=covered, plan_records=plan_modules.records, kept_plans=plan_modules.kept,
+        plan_selection=expected_plan_selection, retained_plans=scalar_plans.retained,
+        runtime_key=runtime_key, previous_link=previous_link,
+    ))
+
+
+def read_completed_plan_report(
+    produced: Borrowed[Made], plan_report: Path, report_lowering: bool,
+) -> Result[tuple[PlanRecordCounts, Option[CompletedPlanEvents]], str]:
+    """Read only this execution's report and retain events only for a successful native bake."""
+    # A bakery hit plans nothing and never reads an earlier report.
+    mut plan_counts = PlanRecordCounts()
+    mut completed_plan_events: Option[CompletedPlanEvents] = None
+    if produced.evaluations > 0:
+        reading_plan_sidecars = begin_work()
+        counts, events = plan_record_counts(
+            plan_report, produced.code == 0 and produced.native_bakes == 1, report_lowering=report_lowering,
+        )?
+        plan_counts = counts
+        completed_plan_events = events
+        record_work(Operation.EngineSidecarAuthentication, plan_report.0, reading_plan_sidecars)
+    return Ok((plan_counts, completed_plan_events))
+
+
+def settle_record_program(
+    request: RecordProgramRequest, graph: Snapshot, projected: PreparedSourceInputs,
+    mut captured_sources: Dict[str, SourceProjection], cutoff: EditCutoff, selected: SelectedProgramRecords,
+    produced: Made, key: Key, binary: Path, body_output: Path, records: Path, plan_report: Path, plan_counts: PlanRecordCounts,
+    completed_plan_events: Option[CompletedPlanEvents],
+) -> Result[ProgramOutcome, str]:
+    """Stage one successful unit, its compiler records and its index under their existing publication rules."""
+    let epoch: Borrowed[BuildEpoch] = request.epoch
+    origin = selected.origin
+    # 4. Source edits cannot certify a native unit for a different captured epoch.
+    verifying_inputs = begin_work()
+    installed = toolchain_directory()?.0
+    for input in epoch.inputs:
+        if frozen_path(input.path, installed, request.toolchain.sysroot):
+            continue
+        if not captured_file_current(Path(input.path), input.metadata):
+            return Err("captured inputs changed before native selection; submit a new request")
+    record_work(Operation.EngineInputVerification, epoch.roots[0], verifying_inputs)
+    shared_graph = graph.view == HOME_VIEW
+    mut request_transaction = projected.transaction
+    mut native = produced.transaction
+    if shared_graph:
+        request_transaction = merge_request_transaction(produced.transaction, projected.transaction)?
+        native = None
+    mut plan_module_reuses = 0
+    mut body_evaluations = 0
+    mut body_reuses = 0
+    mut body_ir_evaluations = 0
+    mut checker_counts = CheckerRecordCounts()
+    mut demand_work = LoweringDemandWork()
+    mut lowering_work: Option[LoweringWork] = None
+    if produced.native_bakes == 1:
+        bodies, counts, module_reuses = stage_program_bodies(
+            request, produced, request_transaction, graph, projected, captured_sources, cutoff,
+            selected, body_output, records, plan_report, completed_plan_events,
+        )?
+        checker_counts = counts
+        plan_module_reuses = module_reuses
+        request_transaction = bodies.transaction
+        demand_work = bodies.lowering_demands
+        if let Some(roots) = bodies.selected_body_roots:
+            lowering_work = Some(
+                LoweringWork(trace_request=request_label(), body_roots=roots, functions=bodies.lowered_functions),
+            )
+        body_evaluations = bodies.checking_evaluations
+        body_reuses = bodies.body_reuses
+        body_ir_evaluations = bodies.body_ir_evaluations
+    # The plan-module selection is recorded with the request: the next one selects again only the slots that changed.
+    stage_put(request_transaction, plan_selection_key(origin), encode_plan_selection(origin, selected.kept_plans)?)
+    # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
+    retire_compiler_versions(graph, request_transaction, origin, CHECKER_PROFILE)?
+    retire_executable_predecessors(graph, request_transaction, origin, CHECKER_PROFILE)?
+    retire_compiler_versions(graph, request_transaction, origin, LOWERING_PROFILE)?
+    supersede_outputs(graph, request_transaction)?
+    fact = produced_fact(produced.fact)?
+    unit = NativeUnit(
+        identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0, warnings=produced.warnings,
+    )
+    # A fact this request baked is still unsealed, so its view waits for the request's commit.
+    mut sealed: Option[SealedProgram] = None
+    if produced.transaction is not None:
+        sealed = Some(SealedProgram(fact=fact, binary=binary.0, shared=development_link(request.unit, true)))
+    # Content-addressed native results and the finalized-unit index stay where every build finds them.
+    mut shared = Some(request_transaction)
+    mut view_records: Option[Transaction] = None
+    if not shared_graph:
+        shared = native
+        view_records = Some(request_transaction)
+    indexing = begin_work()
+    indexed = index_program(request.store, request.selector, unit, shared)?
+    record_work(Operation.EngineProgramIndex, key.digest, indexing)
+    return Ok(
+        ProgramOutcome(
+            code=0,
+            unit=Some(unit),
+            evaluations=produced.evaluations,
+            body_evaluations=body_evaluations,
+            body_reuses=body_reuses,
+            body_page_writes=len(selected.bodies),
+            body_ir_evaluations=body_ir_evaluations,
+            native_bakes=produced.native_bakes,
+            plan_function_evaluations=plan_counts.plan_evaluations,
+            plan_function_reuses=plan_counts.plan_reuses,
+            lowering_demand_evaluations=demand_work.evaluations,
+            lowering_demand_reuses=demand_work.reuses,
+            native_interface_evaluations=plan_counts.native_interface_evaluations,
+            plan_module_reuses=plan_module_reuses,
+            reusable_declarations=checker_counts.reusable_declarations,
+            all_declarations=checker_counts.all_declarations,
+            checker_reuse=checker_counts.summary,
+            artifact_refusals=checker_counts.artifact_refusals, lowering_work=lowering_work,
+            console=request.console,
+            epoch_reads=request.epoch_reads,
+            transaction=indexed,
+            view_transaction=view_records,
+            claim=produced.claim,
+            prepared_warnings=produced.prepared_warnings,
+            sealed=sealed,
+        ),
+    )
+
+
+def stage_program_bodies(
+    request: Borrowed[RecordProgramRequest], produced: Borrowed[Made], transaction: Transaction, graph: Borrowed[Snapshot],
+    projected: Borrowed[PreparedSourceInputs], mut captured_sources: Dict[str, SourceProjection], cutoff: EditCutoff,
+    selected: Borrowed[SelectedProgramRecords], body_output: Path, records: Path, plan_report: Path,
+    completed_plan_events: Option[CompletedPlanEvents],
+) -> Result[tuple[PreparedCompiledBodies, CheckerRecordCounts, int], str]:
+    """Authenticate this bake's sidecars and stage its compiler records in the request transaction."""
+    let ready: Borrowed[UnitDescription] = request.unit
+    let toolchain: Borrowed[Toolchain] = request.toolchain
+    mut request_transaction = transaction
+    admission_report = records.joinpath("admissions")
+    reading_admissions = begin_work()
+    if produced.plan_module_selection_digest is not None and produced.plan_module_selection_digest != selected.plan_selection:
+        return Err("successful Plan dispatch differs from the selected module authority")
+    admissions = match produced.plan_module_selection_digest:
+        Some(digest) => plan_module_admissions(admission_report, Some(graph), selected.plan_records, Some(digest))?
+        None => plan_module_admissions(admission_report, None, [], None)?
+    plan_module_reuses = len(admissions.restored_modules(whole_only=true))
+    record_work(Operation.EngineSidecarAuthentication, admission_report.0, reading_admissions)
+    runtime_report = records.joinpath(RUNTIME_REQUIREMENTS_REPORT)
+    if runtime_report.is_file():
+        requirements = runtime_report.read_bytes().map_err((error) => error.message())?
+        stage_runtime_recipe(request_transaction, graph, selected.runtime_key, requirements)?
+    # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
+    reading_checker_sidecar = begin_work()
+    checker_counts = checker_record_counts(ready, request.compiled_key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)?
+    record_work(
+        Operation.EngineSidecarAuthentication,
+        checker_record_report_path(body_output).0,
+        reading_checker_sidecar,
+    )
+    bodies = prepare_compiled_bodies(
+        request_transaction,
+        ready,
+        body_output,
+        Some(plan_report),
+        Some(graph),
+        selected.bodies,
+        checker_counts.restored,
+        selected.plan_records,
+        checker_counts.restored_body_ir,
+        selected.covered,
+        projected.keys,
+        projected.positioned,
+        Some(admission_report),
+        selected.retained_plans,
+        cutoff,
+        request.record_writer,
+        captured_sources,
+        plan_admissions=Some(admissions),
+        completed_plan_events=completed_plan_events, report_roots=request.report_lowering,
+    )?
+    return Ok((bodies, checker_counts, plan_module_reuses))
+
+
+pub def prepare_program(
+    epoch: BuildEpoch, view: str, console: str, selected_home: Option[SelectedHome], unit_options: str,
+    scheduled_origin: str, source_readings: Option[Rc[Dict[str, SourceReading]]],
+) -> Result[PreparedProgram, str]:
+    """Prepare the unit and collect its graph once under the pinned compiler and private source lease."""
+    preparing = begin_work()
+    home = program_home(selected_home)?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    mut asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    asked.source_readings = source_readings
+    sources = CompilerSourceCapture.stage(toolchain, source_readings)?
+    toolchain.captured_source_directory = sources.path
+    verify_scheduled_origin(asked, scheduled_origin)?
+    asked.unattended = is_editor_view(view)
+    planned = match epoch.project_sources(asked.source_root):
+        Some(files) => planned_program(asked, false, Some(files))?
+        None => asked
+    shared = planned.project_library is not None
+    described, _ = prepare_project_library(planned, toolchain)?
+    ready = prepared_for(view, described, toolchain)?
+    if ready.trust_stop != "":
+        return Err(ready.trust_stop)
+    mut whole = whole_unit_reason(ready, unit_options)?
+    if whole == "" and not toolchain.graph_executable_crumb:
+        whole = "compiler predates typed executable graph records"
+    if whole == "" and shared and ready.project_library is None:
+        whole = "shared library refused"
+    if whole != "":
+        record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
+        return Ok(PreparedProgram(unit=ready, toolchain=toolchain, sources=sources, whole=whole))
+    key, reach = unit_key_and_reach(ready, toolchain)?
+    record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
+    return Ok(PreparedProgram(unit=ready, toolchain=toolchain, sources=sources, whole="", key=Some(key), reach=reach))
+
+
+def verify_scheduled_origin(unit: Borrowed[UnitDescription], scheduled: str) -> Result[None, str]:
+    """Refuse before graph production if a manifest edit changed the authority the coordinator reserved."""
+    if scheduled != "" and scheduled != source_origin(unit):
+        return Err("the unit's package name changed before settlement; submit a new request")
+    return Ok(None)
+
+
+def requested_unit(
+    root: Path,
+    profile: str,
+    unit_options: str,
+    toolchain: Toolchain,
+    standard: Option[list[StandardPackage]],
+) -> Result[UnitDescription, str]:
+    """
+    Describe the unit a request asks for, as the first engine describes it: the root's unit with the features, program
+    entries and interop target its caller parsed (`unit_options`), and a `lib.incn` root as a library.
+    """
+    options = decode_unit_options(unit_options)?
+    # A Clove is compiled the way the caller's environment says, never the engine's own.
+    serve_c_compiler(options.c_compiler)
+    mut described = describe(
+        root,
+        profile,
+        options.request,
+        selected_toolchain=Some(toolchain),
+        selected_standard=standard,
+    )?
+    described.program_entries = options.program_entries
+    described = with_c_abi_target(described, options.interop_target)?
+    if root.name() == "lib.incn":
+        described.kind = "library"
+    return Ok(described)
+
+
+def whole_unit_reason(ready: UnitDescription, unit_options: str) -> Result[str, str]:
+    """
+    Why the records producer cannot give this unit per-declaration records, or empty when it can. Each reason is a gap
+    the producer has yet to close; until it does, the engine compiles the unit whole, keyed by its full inputs.
+    """
+    if ready.kind != "program":
+        return Ok(f"{ready.kind} unit")
+    if ready.vocabulary:
+        return Ok("owned vocabulary")
+    if len(ready.contract_models) > 0:
+        return Ok("contract models")
+    if len(ready.c_headers) > 0:
+        return Ok("C headers")
+    if len(ready.cloves) > 0:
+        return Ok("Cloves")
+    if len(ready.program_entries) > 0:
+        return Ok("program entries")
+    if ready.c_abi_target is not None:
+        return Ok("interop target")
+    selected = decode_unit_options(unit_options)?.request
+    if len(selected.features) > 0 or not selected.default_features or selected.all_features:
+        return Ok("feature selection")
+    if ready.checked_context is None:
+        return Ok("no checked-source context")
+    if desugared_by_a_dependency(ready)?:
+        return Ok("dependency vocabulary desugaring")
+    return Ok("")
+
+
+def whole_unit_program(
+    store: Path,
+    selector: Option[str],
+    ready: UnitDescription,
+    toolchain: Toolchain,
+    console: str,
+    whole: str,
+    epoch_reads: int,
+    view_retry: Option[NativeUnit],
+    indexed_retry: Option[NativeUnit],
+) -> Result[ProgramOutcome, str]:
+    """
+    Compile a unit the records producer cannot give per-declaration records whole, through the unit compiler the first
+    engine used, keyed by its full inputs so an unchanged rerun bakes nothing. A library is built into its artifact
+    directory and selects no native descriptor.
+    """
+    trace(f"unit {ready.package} {ready.kind}: whole-unit compile ({whole})")
+    summary = "whole-unit: " + whole
+    if ready.kind == "library":
+        directory = dependency_artifact_dir(ready.project_root, ready.package, ready.profile)
+        built = compile_library_unit(ready, toolchain, directory.joinpath(f"lib{crate_name(ready)}.rlib"))?
+        return Ok(
+            ProgramOutcome(
+                code=built,
+                console=console,
+                epoch_reads=epoch_reads,
+                checker_reuse=summary,
+                whole_unit=whole,
+                library=true,
+            ),
+        )
+    compiled_key = unit_key(ready, toolchain)?
+    if compiled_key.refusal != "":
+        return Err(compiled_key.refusal)
+    key = linkage_key(compiled_key, development_link(ready, true))?
+    binary = program_binary(ready)
+    produced = obtain_executable(
+        ready, toolchain, binary, compiled_key, true, Some(store), true,
+        retry=program_retry(view_retry, indexed_retry, key.digest),
+    )?
+    if produced.code != 0:
+        return Ok(
+            ProgramOutcome(
+                code=produced.code,
+                evaluations=produced.evaluations,
+                console=console,
+                epoch_reads=epoch_reads,
+                checker_reuse=summary,
+                whole_unit=whole,
+            ),
+        )
+    fact = produced_fact(produced.fact)?
+    unit = NativeUnit(
+        identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0, warnings=produced.warnings,
+    )
+    mut sealed: Option[SealedProgram] = None
+    if produced.transaction is not None:
+        sealed = Some(SealedProgram(fact=fact, binary=binary.0, shared=development_link(ready, true)))
+    indexed = index_program(store, selector, unit, produced.transaction)?
+    return Ok(
+        ProgramOutcome(
+            code=0,
+            unit=Some(unit),
+            evaluations=produced.evaluations,
+            native_bakes=produced.native_bakes,
+            console=console,
+            epoch_reads=epoch_reads,
+            transaction=indexed,
+            claim=produced.claim,
+            prepared_warnings=produced.prepared_warnings,
+            sealed=sealed,
+            checker_reuse=summary,
+            whole_unit=whole,
+        ),
+    )
+
+
+pub def view_sealed(store: Path, sealed: Option[SealedProgram]) -> Result[None, str]:
+    """
+    Make the executable view of a unit its request baked. The caller has committed the request: that commit's full
+    flush is the seal of the unit's payloads, which were only ordered on storage before it, so no view of them may
+    exist earlier. A request that baked nothing has nothing to view here; its hit was viewed from a sealed fact.
+    """
+    match sealed:
+        None => return Ok(None)
+        Some(program) => return view_executable(store, program.fact, Path(program.binary), "program", program.shared)
+
+
+def program_home(selected: Option[SelectedHome]) -> Result[ProgramHome, str]:
+    """Use a request's selected installation, or load one for direct producer callers."""
+    match selected:
+        Some(home) => return Ok(ProgramHome(toolchain=home.toolchain, standard=Some(home.standard)))
+        None => return Ok(ProgramHome(toolchain=load_toolchain()?))
+
+
+def refusal_diagnostic_key(key: Key) -> Result[Key, str]:
+    """Keep list-mode compiler evidence separate from an ordinary reusable native unit."""
+    domain = "incan.body-refusal-list-native/1"
+    return Ok(
+        Key(
+            digest="sha256:" + fingerprint([domain, key.digest])?,
+            parts=key.parts + [f"diagnostic {domain}"],
+            codegen=key.codegen,
+            provenance=key.provenance,
+            descriptor=key.descriptor,
+        ),
+    )
+
+
+def merge_request_transaction(native: Option[Transaction], source: Transaction) -> Result[Transaction, str]:
+    """Publish the native payload and captured inputs against the graph that authorized their preparation."""
+    match native:
+        None => return Ok(source)
+        Some(value) =>
+            # Bakery prepares its payload after the compiler finishes. Capturing other views can advance the
+            # store's generation in between. Its writes carry their own publication preconditions and share the
+            # request's store and view. Keep the original graph generation for every admitted compiler record.
+            if (
+                value.root.value != source.root.value or value.root.placement != source.root.placement
+                or value.view != source.view or value.base < source.base or value.fork != "" or source.fork != ""
+                or (value.compared is not None and value.compared != source.compared)
+            ):
+                return Err("native and source transactions do not share a compatible request view")
+            mut combined = value
+            combined.base = source.base
+            combined.compared = source.compared
+            combined.writes.extend(source.writes)
+            combined.payloads.extend(source.payloads)
+            return Ok(combined)
+
+
+pub def select_program(store: Path, view: str, unit: NativeUnit, handle: str) -> Result[NativeSelection, str]:
+    """Commit a standalone selection through the engine's shared preparation boundary."""
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    mut selection = prepare_selection(admission, view, unit, handle)?
+    if let Some(transaction) = selection.transaction:
+        selection.snapshot = commit(transaction).map_err((error) => error.message())?
+    return Ok(selection)
+
+
+pub def prepare_selection(
+    mut admission: SnapshotAdmission, view: str, unit: NativeUnit, handle: str,
+) -> Result[NativeSelection, str]:
+    """Stage the descriptor and its caller selection; an equal selection encodes and publishes nothing."""
+    if program_view(handle)? != view:
+        return Err("native descriptor belongs to a different project view")
+    selected = admission.open(view).map_err((error) => error.message())?
+    mut current = false
+    if let Some(pointer) = get(selected, SELECTION_KEY).map_err((error) => error.message())?:
+        current = decode_selection(view, pointer)? == handle
+    key = program_key(handle)
+    prior = stored_program(selected, key)?
+    if current and prior is None:
+        return Err("selected native descriptor is missing")
+    if current and prior == Some(unit):
+        return Ok(NativeSelection(snapshot=selected, encodings=0, commits=0))
+    mut transaction = begin(selected)
+    if prior != Some(unit):
+        transaction = put(transaction, key, unit.encoded(key)?)
+    if not current:
+        transaction = put(transaction, SELECTION_KEY, encode_selection(view, handle)?)
+    return Ok(NativeSelection(snapshot=selected, transaction=Some(transaction)))
+
+
+pub def program_handle(epoch: str, producer: str, view: str) -> Result[str, str]:
+    """The opaque handle of a captured program's native descriptor, kept apart from its RFC 124 unit identity."""
+    return Ok(f"program:{fingerprint(["incan.engine.program/3", epoch, producer])?}:{view}")
+
+
+pub def read_program(store: Path, handle: str) -> Result[Option[NativeUnit], str]:
+    """Read one finalized descriptor by handle; damaged schema and missing selected payloads refuse."""
+    view = program_view(handle)?
+    return selected_program(snapshot(store, view).map_err((error) => error.message())?, handle)
+
+
+pub def selected_program(selected: Snapshot, handle: str) -> Result[Option[NativeUnit], str]:
+    """Read a descriptor from the exact immutable view whose generation the execution pin protects."""
+    if selected.view != program_view(handle)?:
+        return Err("native program handle belongs to another virtual view")
+    note_graph_demand("program-handle", selected, program_key(handle))
+    return stored_program(selected, program_key(handle))
+
+
+model PreviousLinkMember:
+    """One staged locator and the lease that protects its content name while the compiler uses it."""
+
+    page: SelectedBodyPage
+    payload: PreparedPayload
+
+
+def previous_link_member(store: Path, selected: Snapshot) -> Result[Option[PreviousLinkMember], str]:
+    """Find the authenticated regular-object member of the previous program selected in this exact view."""
+    pointer = get(selected, SELECTION_KEY).map_err((error) => error.message())?
+    if let Some(value) = pointer:
+        handle = decode_selection(selected.view, value)?
+        unit = match selected_program(selected, handle)?:
+            Some(found) => found
+            None => return Err("selected native descriptor is missing")
+        if let Some(fact) = unit_record(store, unit)?:
+            return regular_link_member(store, fact, Path(unit.binary).name() + ".native-objects.json")
+    return Ok(None)
+
+
+def regular_link_member(store: Path, fact: Fact, relative: str) -> Result[Option[PreviousLinkMember], str]:
+    """Stage one exact selected regular-object member by content name, preserving the existing missing-member path."""
+    members = [file for file in fact.files if file.path == relative]
+    if len(members) == 0:
+        return Ok(None)
+    if len(members) != 1 or members[0].program:
+        return Err("the previous native unit has an invalid regular-object member")
+    path = match fact_file(store, fact, relative):
+        Some(found) => found
+        None => return Err("the previous native unit has lost its regular-object member")
+    digest = members[0].digest
+    payload = pin_payload(store, digest).map_err((error) => error.message())?
+    if not path.is_file():
+        return Ok(None)
+    locator = JsonValue.object({"path": JsonValue.string(path.0), "sha256": JsonValue.string(digest)})
+    encoded = locator.to_json().map_err((error) => error.message())?.encode("utf-8")
+    if len(encoded) > 16_384:
+        return Err("the previous native link locator is too large")
+    page = SelectedBodyPage(key="native-link-predecessor.json", value=encoded)
+    return Ok(Some(PreviousLinkMember(page=page, payload=payload)))
+
+
+def stored_program(selected: Snapshot, key: str) -> Result[Option[NativeUnit], str]:
+    """Open the exact descriptor visible at the supplied snapshot."""
+    match get(selected, key).map_err((error) => error.message())?:
+        None => return Ok(None)
+        Some(data) => return Ok(Some(decode_program(key, data)?))
+
+
+pub def restore_program(store: Path, unit: NativeUnit, console: str = "") -> Result[bool, str]:
+    """
+    Validate the exact selected launch payload and its required companions, restoring only missing or changed views.
+    False tells the caller to resolve a missing carrier, a superseded executable, or a missing warning result.
+    """
+    match find_launch_executable_payload(store, unit.identity, Path(unit.binary).name(), unit.payload)?:
+        None => return Ok(false)
+        Some(fact) =>
+            if not carriers_present(store, fact, Path(unit.binary))?:
+                return Ok(false)
+            binary = Path(unit.binary)
+            view_executable(store, fact, binary, "program", loader_witness(store, fact, unit) is not None)?
+            if unit.warnings != "":
+                return replay_checked_warnings(store, unit.warnings, executable_project_root(binary), console)
+            return Ok(true)
+
+
+def unit_record(store: Path, unit: NativeUnit) -> Result[Option[Fact], str]:
+    """Look up the immutable fact for this exact descriptor and its admitted loader generations."""
+    return find_executable_payload(store, unit.identity, Path(unit.binary).name(), unit.payload)
+
+
+def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
+    """Resolve the loader witness through this unit's immutable payload binding, never an ambient path."""
+    binary = Path(unit.binary)
+    return fact_file(store, fact, library_witness(Path(binary.name())).0)
+
+
+def executable_payload(fact: Fact, name: str) -> Result[str, str]:
+    """The payload identity of the descriptor's executable, excluding sidecars and debug files."""
+    for file in fact.files:
+        if file.path == name and file.program:
+            return Ok(file.digest)
+    return Err("unit record does not contain the selected executable")
+
+
+def program_key(handle: str) -> str:
+    """The one record family that maps captured program inputs to a finalized native descriptor."""
+    return f"incan.engine.native-unit\t{handle}"
+
+
+def captured_file_current(path: Path, recorded: FileMetadata) -> bool:
+    """Refuse a file replaced while compilation ran; this observation never enters compilation identity."""
+    match file_metadata(path):
+        Ok(Some(found)) => return found == recorded
+        _ => return false
+
+
+def frozen_path(path: str, installed: str, sysroot: str) -> bool:
+    """Whether an obsolete captured row belongs to an installation already admitted as immutable."""
+    return path == installed or path.startswith(installed + "/") or path == sysroot or path.startswith(sysroot + "/")
+
+
+def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch], handle: str) -> Result[BuildEpoch, str]:
+    """Use this activation's captured inputs, or open a previously committed capture."""
+    match captured:
+        Some(epoch) => return Ok(epoch)
+        None => return load_epoch(store, revision, program_view(handle)?)
+
+
+def produced_fact(found: Option[Fact]) -> Result[Fact, str]:
+    """A successful native producer must return its exact staged or committed fact."""
+    match found:
+        Some(fact) => return Ok(fact)
+        None => return Err("producer completed without a native fact")
+
+
+def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str], str]:
+    """
+    Index an exact standalone input selection without redefining its native unit identity.
+
+    Only manifest-free units wholly inside their file's directory qualify. Logical names, exact input bytes, the
+    installed pin, profile and admitted compiler select an already finalized RFC 124 record. Any broader input shape
+    takes the existing producer path. Metadata, projection paths and absent ancestor manifests do not affect a unit.
+    """
+    if producer == "" or len(epoch.roots) != 1 or get_or("INCAN_STDLIB", "") != "":
+        return Ok(None)
+    source = Path(epoch.roots[0])
+    prefix = source.parent().0 + "/"
+    mut inputs = ["incan.engine.standalone-inputs/2", producer, source.name(), epoch.selection.profile]
+    inputs.extend([f"admitted:{item}" for item in epoch.admitted])
+    mut bindings: list[str] = []
+    for input in epoch.inputs:
+        if input.role == InputRole.ToolchainPin:
+            bindings.append(f"toolchain-pin:{input.path}:{input.digest}")
+        elif input.path.startswith(prefix) and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
+            bindings.append(f"{input.role.value()}:{input.path[len(prefix):]}:{input.digest}")
+        else:
+            return Ok(None)
+    for absent in epoch.absent:
+        if Path(absent.path).name() != "loaf.toml":
+            return Ok(None)
+    listed = {listing.path: true for listing in epoch.listings}
+    for listing in epoch.listings:
+        if not (listing.path == source.parent().0 or listing.path.startswith(prefix)):
+            return Ok(None)
+        names = [listing.path[len(source.parent().0):]]
+        contents = names + [f"file:{name}" for name in listing.files if name.endswith(".incn")] + [
+            f"directory:{name}" for name in listing.directories if Path(listing.path).joinpath(name).0 in listed
+        ]
+        bindings.append(f"listing:{fingerprint(contents)?}")
+    return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
+
+
+def program_retry(view: Option[NativeUnit], indexed: Option[NativeUnit], identity: str) -> Option[NativeUnit]:
+    """Keep the held view's payload for the final Unit, then consider the independently admitted index."""
+    if let Some(selected) = view:
+        if selected.identity == identity:
+            return Some(selected)
+    return indexed
+
+
+def indexed_program(
+    store: Path, epoch: BuildEpoch, selector: Option[str], mut admission: SnapshotAdmission,
+) -> Result[Option[NativeUnit], str]:
+    """Resolve a finalized unit index and give its executable the requesting project's ordinary projection path."""
+    match selector:
+        None => return Ok(None)
+        Some(key) =>
+            selected = admission.open().map_err((error) => error.message())?
+            note_graph_demand("standalone-selector", selected, key)
+            match stored_program(selected, key)?:
+                None => return Ok(None)
+                Some(unit) =>
+                    if unit.binary in ["", ".", ".."] or Path(unit.binary).name() != unit.binary:
+                        return Err("standalone native index contains an invalid executable name")
+                    mut retained = [unit.identity]
+                    if unit.warnings != "":
+                        retained.append(unit.warnings)
+                    register_root(store, Path(epoch.roots[0]).parent().0, f"program\t{unit.binary}", retained)?
+                    binary = executable_view(Path(epoch.roots[0]).parent(), epoch.selection.profile, "bin", unit.binary)
+                    return Ok(Some(NativeUnit(
+                        identity=unit.identity, payload=unit.payload, binary=binary.0, warnings=unit.warnings,
+                    )))
+
+
+pub def index_program(
+    store: Path,
+    selector: Option[str],
+    unit: NativeUnit,
+    native: Option[Transaction],
+) -> Result[Option[Transaction], str]:
+    """
+    Add a path-independent finalized-unit index to the same atomic request, never a second publication. The index names
+    the unit's sealed record, so it is written under the record's own expectation: a unit linked again to different
+    bytes replaces its record, and its index with it.
+    """
+    match selector:
+        None => return Ok(native)
+        Some(key) =>
+            mut transaction = match native:
+                Some(prepared) => prepared
+                None => begin(snapshot(store).map_err((error) => error.message())?)
+            descriptor = NativeUnit(
+                identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name(), warnings=unit.warnings,
+            )
+            stage_put(transaction, key, descriptor.encoded(key)?, EXPECT_REPAIR)
+            return Ok(Some(transaction))

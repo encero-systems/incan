@@ -1,0 +1,8 @@
+# behavior: a prepared Rust dependency without the requested feature is refused before the program runs
+# expect-exit: 1
+# expect-stderr-contains:
+#   no compiled registry unit of crates-io/libm satisfies 0.2 with features
+
+def main() -> None:
+    """A program whose dependency requires the unavailable Rust feature."""
+    println("must not run")

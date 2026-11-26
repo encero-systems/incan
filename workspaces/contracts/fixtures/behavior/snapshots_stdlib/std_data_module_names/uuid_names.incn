@@ -1,0 +1,53 @@
+from std.uuid import (
+    BytesIO,
+    Endian,
+    Error,
+    IoError,
+    OrdinalKey,
+    OrdinalMapError,
+    SystemTime,
+    hash_md5,
+    hash_sha1,
+)
+
+
+model UuidFailure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+def keyed[K with OrdinalKey](key: K) -> bool:
+    return true
+
+
+def little(endian: Endian) -> bool:
+    match endian:
+        Endian.Little => return true
+        Endian.Big => return false
+
+
+pub def uuid_line() -> str:
+    """Use each name std.uuid published in 0.5.1."""
+    buffer = BytesIO(b"incan")
+    io_error: Option[IoError] = None
+    map_error: Option[OrdinalMapError] = None
+    now: Option[SystemTime] = None
+    mut empty = 0
+    match io_error:
+        Some(_) => pass
+        None => empty += 1
+    match map_error:
+        Some(_) => pass
+        None => empty += 1
+    match now:
+        Some(_) => pass
+        None => empty += 1
+    return (
+        f"uuid {len(hash_md5.digest(b"incan"))} {len(hash_sha1.digest(b"incan"))} {little(Endian.Little)} "
+        + f"{len(buffer.getvalue())} {empty} {UuidFailure(detail="bad").message()}"
+    )

@@ -38,7 +38,7 @@ pub struct TraitBoundMapping {
     pub id: TraitBoundId,
     /// Incan-side name (as written in `with` clauses).
     pub incan_name: &'static str,
-    /// Rust-side trait path (as emitted in generated Rust code).
+    /// Rust-side trait path (as named in native bounds).
     pub rust_path: &'static str,
     pub description: &'static str,
     pub introduced_in_rfc: RfcId,
@@ -167,14 +167,20 @@ pub mod rust {
     // Async
     pub const FUTURE: &str = "std::future::Future";
     /// The runtime trait a `with Awaitable[T]` bound lowers to (`IntoFuture<Output = T>` behind a blanket impl).
-    pub const AWAITABLE: &str = "incan_std_async::task::Awaitable";
+    pub const AWAITABLE: &str = "incan_std_primitives::task::Awaitable";
+    /// The foundational future bridge used by primitive task and timeout functions.
+    pub const RUNTIME_FUTURE: &str = "incan_std_primitives::task::RuntimeFuture";
+    /// Compatibility path retained by the higher-level async Rust facet.
+    pub const LEGACY_RUNTIME_FUTURE: &str = "incan_std_async::task::RuntimeFuture";
+    /// The foundational no-argument callable bridge used by blocking task spawning.
+    pub const RUNTIME_FN_ONCE: &str = "incan_std_primitives::task::RuntimeFnOnce";
+    /// Compatibility path retained by the higher-level async Rust facet.
+    pub const LEGACY_RUNTIME_FN_ONCE: &str = "incan_std_async::task::RuntimeFnOnce";
 
     // Compiler-provided Incan reflection capabilities
-    pub const INCAN_CLASS_NAME: &str = "incan_std_core::reflection::HasClassName";
-    pub const INCAN_FIELD_METADATA: &str = "incan_std_core::reflection::HasFieldMetadata";
-    pub const INCAN_FIELD_VALUE_REFLECTION: &str = "incan_std_core::reflection::HasFieldValueReflection";
-    pub const INCAN_TYPE_CLASS_NAME: &str = "incan_std_core::reflection::HasTypeClassName";
-    pub const INCAN_TYPE_FIELD_METADATA: &str = "incan_std_core::reflection::HasTypeFieldMetadata";
+    pub const INCAN_CLASS_NAME: &str = "incan_std_primitives::reflection::HasClassName";
+    pub const INCAN_FIELD_VALUE_REFLECTION: &str = "incan_std_primitives::reflection::HasFieldValueReflection";
+    pub const INCAN_TYPE_CLASS_NAME: &str = "incan_std_primitives::reflection::HasTypeClassName";
 }
 
 /// Look up the Rust trait path for an Incan trait bound name.

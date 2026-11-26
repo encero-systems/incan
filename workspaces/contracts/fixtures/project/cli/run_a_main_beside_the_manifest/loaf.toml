@@ -1,0 +1,6 @@
+[project]
+name = "run_a_main_beside_the_manifest"
+version = "0.1.0"
+
+[project.scripts]
+main = "main.incn"

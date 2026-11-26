@@ -1,0 +1,416 @@
+//! Tests for module encoding, surface coverage and published declaration contexts.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::{
+    CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
+    ExecutableRepresentationError, MAX_SURFACE_INDEX_BYTES, OLDEST_SUPPORTED_VERSION, SurfaceIndex, SurfaceReader,
+    build_surface, decode_module, decode_owner, encode_module, encode_owner, publication, require_supported_version,
+};
+use crate::body_ir::{
+    ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,
+    NamedCallableTarget, ScopeId, Statement, StatementKind,
+};
+use crate::{
+    CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
+    SymbolNamespace, SymbolOrigin,
+};
+
+mod coverage;
+mod public_contexts;
+
+/// A coordinate attachment must be bounded, backed by a physical witness, and leave the following call row intact.
+#[test]
+fn graph_owner_coordinates_are_bounded_and_authenticated() -> Result<(), Box<dyn std::error::Error>> {
+    let owner = body("pick", 17);
+    let module = owner.decl_id.clone();
+    let stamped = super::encode_graph_owner(&module, "sample.incn", "pick", &owner, Some([17; 32]))?;
+    assert!(decode_owner(&stamped)?.coordinates.is_empty());
+    let mut encoded = stamped.clone();
+    super::append_owner_coordinates(&mut encoded, &[(1, 7), (9, 12)]);
+    assert!(decode_owner(&encoded[..encoded.len() - 1]).is_err());
+    let witness = b"CRMB\x01\x01\x00call";
+    encoded.extend_from_slice(witness);
+    let decoded = decode_owner(&encoded)?;
+    assert_eq!(decoded.coordinates, [(1, 7), (9, 12)]);
+    assert_eq!(decoded.call_witness.as_deref(), Some(witness.as_slice()));
+    let mut bare = encode_owner(&module, "sample.incn", "pick", &owner)?;
+    super::append_owner_coordinates(&mut bare, &[(1, 7)]);
+    assert!(decode_owner(&bare).is_err());
+    let mut invalid = stamped.clone();
+    super::append_owner_coordinates(&mut invalid, &[(7, 1)]);
+    assert!(decode_owner(&invalid).is_err());
+    let mut large = stamped.clone();
+    super::append_owner_coordinates(&mut large, &[(1, 7); super::MAX_OWNER_COORDINATES + 1]);
+    assert_eq!(large, stamped);
+    Ok(())
+}
+
+#[test]
+fn namespace_scopes_round_trip_and_restore_shared_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    let mut first = body("first", 1);
+    let mut second = body("second", 2);
+    let third = body("third", 3);
+    let bindings = BTreeMap::from([("Provider".into(), identity("Provider", 17))]);
+    first.named_type_identities = Arc::new(bindings.clone());
+    second.named_type_identities = Arc::new(bindings);
+    let mut source = module(vec![first, second, third]);
+    let native = crate::body_ir::rust_item_identity("std::fs::File").ok_or("missing test carrier")?;
+    let mut nominal = crate::body_ir::native_opaque_nominal(&native, 0).ok_or("missing nominal layout")?;
+    nominal.named_type_identities = Arc::new(source.bodies[0].named_type_identities.as_ref().clone());
+    source.nominal_declarations.push(nominal);
+    let mut enumeration =
+        crate::body_ir::native_enum_declaration("std::cmp::Ordering", vec![], vec![]).ok_or("missing enum layout")?;
+    enumeration.named_type_identities = Arc::clone(&source.bodies[0].named_type_identities);
+    source.enum_declarations.push(enumeration);
+    source
+        .type_alias_declarations
+        .push(crate::body_ir::TypeAliasDeclaration {
+            canonical: identity("Alias", 21),
+            ty: IncanType::Named("Provider".into()),
+            named_type_identities: Arc::clone(&source.bodies[0].named_type_identities),
+        });
+    let ordinary = encode_module(&source)?;
+    let mut legacy_module = source.clone();
+    for body in &mut legacy_module.bodies {
+        body.named_type_identities = Default::default();
+    }
+    let mut legacy_frame = b"INCNNS\x01".to_vec();
+    legacy_frame.extend(postcard::to_allocvec(&(
+        vec![
+            source.bodies[0].named_type_identities.as_ref(),
+            source.bodies[2].named_type_identities.as_ref(),
+        ],
+        [0_usize, 0, 1].as_slice(),
+    ))?);
+    legacy_frame.extend(encode_module(&legacy_module)?);
+    let frame = super::encode_namespace_module(&mut source)?;
+    assert!(frame.len() < legacy_frame.len());
+    assert_eq!(super::decode_namespace_module(&legacy_frame)?, source);
+    assert_eq!(encode_module(&source)?, ordinary);
+    let mut restored = super::decode_namespace_module(&frame)?;
+    assert_eq!(encode_module(&restored)?, ordinary);
+    assert_eq!(super::decode_namespace_module(&ordinary)?, restored);
+    assert!(Arc::ptr_eq(
+        &restored.bodies[0].named_type_identities,
+        &restored.bodies[1].named_type_identities
+    ));
+    assert!(!Arc::ptr_eq(
+        &restored.bodies[0].named_type_identities,
+        &restored.bodies[2].named_type_identities
+    ));
+    for scope in [
+        &restored.nominal_declarations[0].named_type_identities,
+        &restored.enum_declarations[0].named_type_identities,
+        &restored.type_alias_declarations[0].named_type_identities,
+    ] {
+        assert!(Arc::ptr_eq(&restored.bodies[0].named_type_identities, scope));
+    }
+    assert_eq!(super::encode_namespace_module(&mut restored)?, frame);
+    let truncated = &frame[..frame.len() / 2];
+    assert!(super::decode_namespace_module(truncated).is_err());
+    Ok(())
+}
+
+#[test]
+fn executable_owner_frame_round_trips_the_native_body_and_provenance() -> Result<(), Box<dyn std::error::Error>> {
+    let owner = body("retained", 4);
+    let module = CompilerNodeId::module("probe::lib");
+    let encoded = encode_owner(&module, "src/lib.incn", "function:probe::lib::retained", &owner)?;
+    let decoded = decode_owner(&encoded)?;
+
+    assert_eq!(decoded.version, EXECUTABLE_REPRESENTATION_VERSION);
+    assert_eq!(decoded.module, module);
+    assert_eq!(decoded.source, "src/lib.incn");
+    assert_eq!(decoded.identity, "function:probe::lib::retained");
+    assert_eq!(decoded.body, owner);
+    assert_eq!(
+        encode_owner(&decoded.module, &decoded.source, &decoded.identity, &decoded.body)?,
+        encoded
+    );
+    Ok(())
+}
+
+/// Distinct package identities remain stable even when input bodies are reordered.
+fn identity(name: &str, ordinal: usize) -> CanonicalSymbolId {
+    CanonicalSymbolId {
+        namespace: SymbolNamespace::OrdinaryLexical,
+        origin: SymbolOrigin::Package {
+            library: "probe".into(),
+            module_path: vec!["lib".into()],
+        },
+        declaration_name: name.into(),
+        kind: SemanticSourceTargetKind::Function,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(ordinal * 100, ordinal * 100 + 99),
+    }
+}
+
+/// Build a governed template with a stable identity so codec and body-audit tests retain executable statements.
+/// Tests of compiled contracts explicitly clear this fixture binder.
+fn body(name: &str, ordinal: usize) -> Body {
+    let identity = identity(name, ordinal);
+    Body {
+        nominal_instantiation: Vec::new(),
+        trait_default_instantiation: None,
+        type_parameters: vec!["Fixture".into()],
+        decl_id: CompilerNodeId::declaration_span(
+            "lib",
+            identity.declaration_span.start,
+            identity.declaration_span.end,
+        ),
+        direct_call_id: CompilerNodeId::declaration_span(
+            "lib",
+            identity.declaration_span.start,
+            identity.declaration_span.end,
+        ),
+        canonical: Some(identity.clone()),
+        name: name.into(),
+        span: identity.declaration_span,
+        return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+        checked_input_profile: None,
+        explicit_input_bindings: Vec::new(),
+        returned_view: None,
+        callable_representation: None,
+        named_type_identities: Default::default(),
+        locals: Vec::new(),
+        params: Vec::new(),
+        param_locals: Vec::new(),
+        scopes: Vec::new(),
+        block: Block {
+            scope: ScopeId(0),
+            stmts: Vec::new(),
+        },
+        runtime_requirements: Vec::new(),
+        panic_facts: Vec::new(),
+        is_async: false,
+        retired_rust_facade_wire: None,
+        native_attributes: Vec::new(),
+    }
+}
+
+/// Synthetic module context used only for codec and public-closure invariants.
+pub(super) fn module(bodies: Vec<Body>) -> BodyIrModule {
+    BodyIrModule {
+        runtime_callable_bindings: Vec::new(),
+        runtime_binding_scopes: Vec::new(),
+        decorated_bindings: Vec::new(),
+        entrypoint_effects: Vec::new(),
+        program_entrypoints: Vec::new(),
+        string_conversion_contract: crate::body_ir::StringConversionContract::Unselected,
+        constant_declarations: Vec::new(),
+        type_alias_declarations: Vec::new(),
+        trait_declarations: Vec::new(),
+        trait_implementations: Vec::new(),
+        published_callables: Vec::new(),
+        module_id: CompilerNodeId::module("lib"),
+        loaf_callables: Vec::new(),
+        native_union_declarations: Vec::new(),
+        enum_declarations: Vec::new(),
+        static_declarations: Vec::new(),
+        nominal_declarations: Vec::new(),
+        fieldless_enum_declarations: Vec::new(),
+        value_enum_declarations: Vec::new(),
+        bodies,
+    }
+}
+
+/// Build with an explicit public set, as the finalized manifest supplies at the real producer seam.
+fn publish(
+    module: &BodyIrModule,
+    public: &BTreeSet<CanonicalSymbolId>,
+) -> Result<Vec<u8>, ExecutableRepresentationError> {
+    build_surface(std::slice::from_ref(module), "probe", "1.2.3", public, &BTreeSet::new())
+}
+
+/// A canonical call participates in closure even before any branch is executed.
+fn call(target: CanonicalSymbolId) -> Statement {
+    Statement {
+        span: target.declaration_span,
+        kind: StatementKind::Call {
+            destination: None,
+            callee: Callee::Function(CallableTarget::Named(NamedCallableTarget {
+                receiver_type: None,
+                name: "arbitrary_alias".into(),
+                direct_call_id: None,
+                builtin: None,
+                type_args: Vec::new(),
+                binding: ArgumentBinding::UnresolvedPositional,
+                canonical: Some(target),
+            })),
+            args: Vec::new(),
+            may_panic: false,
+        },
+    }
+}
+
+/// Build the generic Holder layout used to test parameter scope and lazy protocol dependencies together.
+fn generic_holder_declaration(
+    owner: CanonicalSymbolId,
+    field: CanonicalSymbolId,
+) -> crate::body_ir::NominalDeclaration {
+    crate::body_ir::NominalDeclaration {
+        linked_layout_witness: None,
+        record_package_identity: None,
+        trait_adoptions: Vec::new(),
+        native_item: String::new(),
+        class_inheritance: None,
+        native_type_arguments: Vec::new(),
+        direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
+        canonical: owner,
+        name: "Holder".into(),
+        fields: vec!["value".into()],
+        field_identities: vec![field],
+        field_aliases: Vec::new(),
+        field_types: vec![IncanType::TypeVar("T".into())],
+        owned_callable_fields: Vec::new(),
+        field_public: vec![true],
+        reflection_fields: None,
+        display_method: None,
+        newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
+        newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
+        reflection_metadata: None,
+        comparison_equality: None,
+        public: true,
+        has_field_defaults: false,
+        field_default_body: None,
+        validated_constructor: None,
+        method_partial_defaults: Vec::new(),
+        derives: Vec::new(),
+        named_type_identities: Default::default(),
+        type_parameters: vec!["T".into()],
+        type_parameter_count: 1,
+    }
+}
+
+/// Current Body IR retains record metadata byte for byte and validates its identity from the earliest name.
+#[test]
+fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Holder", 2);
+    owner.origin = SymbolOrigin::Module(vec!["lib".into()]);
+    owner.kind = SemanticSourceTargetKind::Model;
+    owner.declaration_span = HirSourceSpan::new(200, 499);
+    let mut field = identity("value", 3);
+    field.origin = SymbolOrigin::Module(vec!["lib".into()]);
+    field.kind = SemanticSourceTargetKind::Field;
+    field.namespace = SymbolNamespace::Member;
+    let mut declaration = generic_holder_declaration(owner, field);
+    declaration.record_package_identity = Some(crate::record_identity::RecordPackageIdentity {
+        registry_id: "sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0".to_owned(),
+        scoped_name: "example/catalog".to_owned(),
+    });
+    declaration.reflection_fields = Some(vec![0]);
+    declaration.reflection_metadata = Some(vec![crate::body_ir::FieldMetadata {
+        position: 0,
+        name: "value".into(),
+        record_identity: crate::record_identity::record_member_identity("old_value").to_vec(),
+        record_canonical: false,
+        renamed_from: vec!["old_value".into()],
+        renamed_from_lifecycle: Some(crate::body_ir::LifecycleMetadata {
+            since: Some("0.6".into()),
+            retire_in: None,
+            message: Some("".into()),
+            by: None,
+            issue: Some("migration".into()),
+        }),
+        default_is_empty: false,
+        alias: Some("wireValue".into()),
+        description: Some("Retained value".into()),
+        type_name: "T".into(),
+        has_default: false,
+    }]);
+    let mut module = module(Vec::new());
+    module.nominal_declarations.push(declaration.clone());
+    assert!(module.is_well_formed_nominal_declaration(&declaration));
+    let decoded = decode_module(&encode_module(&module)?)?;
+    assert_eq!(decoded, module);
+
+    let mut invalid_namespace = declaration.clone();
+    if let Some(package) = &mut invalid_namespace.record_package_identity {
+        package.registry_id = "sha256:bad".to_owned();
+    }
+    assert!(!module.is_well_formed_nominal_declaration(&invalid_namespace));
+    invalid_namespace = declaration.clone();
+    invalid_namespace.canonical.origin = SymbolOrigin::Package {
+        library: "consumer/alias".to_owned(),
+        module_path: vec!["lib".to_owned()],
+    };
+    assert!(!module.is_well_formed_nominal_declaration(&invalid_namespace));
+
+    for invalid_kind in 0..3 {
+        let mut invalid = declaration.clone();
+        let record = invalid
+            .reflection_metadata
+            .as_mut()
+            .and_then(|records| records.first_mut())
+            .ok_or("missing reflection record")?;
+        match invalid_kind {
+            0 => record.position = 1,
+            1 => record.default_is_empty = true,
+            _ => {
+                record.renamed_from.clear();
+                record.record_identity = crate::record_identity::record_member_identity("value").to_vec();
+            }
+        }
+        assert!(!module.is_well_formed_nominal_declaration(&invalid));
+    }
+
+    let record = module
+        .nominal_declarations
+        .first_mut()
+        .and_then(|declaration| declaration.reflection_metadata.as_mut())
+        .and_then(|metadata| metadata.first_mut())
+        .ok_or("missing reflection record")?;
+    record.record_identity[0] ^= 255;
+    let invalid = module
+        .nominal_declarations
+        .first()
+        .cloned()
+        .ok_or("missing nominal declaration")?;
+    assert!(!module.is_well_formed_nominal_declaration(&invalid));
+    Ok(())
+}
+
+/// Validated construction retains exact generated and source identities through the executable representation.
+#[test]
+fn validated_constructor_round_trips_and_rejects_another_generated_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Checked", 2);
+    owner.origin = SymbolOrigin::Module(vec!["lib".into()]);
+    owner.kind = SemanticSourceTargetKind::Model;
+    owner.declaration_span = HirSourceSpan::new(200, 499);
+    let mut field = identity("value", 3);
+    field.origin = owner.origin.clone();
+    field.namespace = SymbolNamespace::Member;
+    field.kind = SemanticSourceTargetKind::Field;
+    field.declaration_span = HirSourceSpan::new(240, 260);
+    let mut validator = identity("validate", 4);
+    validator.origin = owner.origin.clone();
+    validator.namespace = SymbolNamespace::Member;
+    validator.kind = SemanticSourceTargetKind::Method;
+    validator.declaration_span = HirSourceSpan::new(300, 399);
+    let mut declaration = generic_holder_declaration(owner.clone(), field);
+    declaration.name = "Checked".into();
+    declaration.fields = vec!["value".into()];
+    declaration.derives = vec![incan_lang::lang::derives::as_str(incan_lang::lang::derives::DeriveId::Validate).into()];
+    declaration.validated_constructor = Some(crate::body_ir::ValidatedConstructor {
+        constructor: owner.generated_member(
+            incan_lang::lang::conventions::NEW_METHOD,
+            SemanticSourceTargetKind::Method,
+        ),
+        validator,
+        required_fields: vec![0],
+    });
+    let mut module = module(Vec::new());
+    module.nominal_declarations.push(declaration.clone());
+    assert!(module.is_well_formed_nominal_declaration(&declaration));
+    assert_eq!(decode_module(&encode_module(&module)?)?, module);
+
+    let contract = declaration
+        .validated_constructor
+        .as_mut()
+        .ok_or("missing validated constructor")?;
+    contract.constructor.declaration_span = HirSourceSpan::new(500, 599);
+    assert!(!module.is_well_formed_nominal_declaration(&declaration));
+    Ok(())
+}

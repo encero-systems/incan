@@ -2,7 +2,7 @@
 
 `std.result` exposes Incan-authored helper functions for the `Result[T, E]` combinator surface.
 
-Each helper has the same branch behavior as the corresponding `Result` method. The method form is usually the clearest spelling for pipelines; direct helper imports are available when a function-shaped API is clearer.
+Each helper has the same branch behavior and return type as the corresponding `Result` method.
 
 ## Functions
 
@@ -19,10 +19,7 @@ Each helper has the same branch behavior as the corresponding `Result` method. T
 
 `inspect` and `inspect_err` pass the observed payload through an implicit borrow when the original branch value must remain available after the callback. Source code still spells the observer as `Callable[T, None]` or `Callable[E, None]`; there is no separate borrowed callback syntax.
 
-## Relationship To Method Syntax
+## See also
 
-For named function callbacks, the compiler may lower method calls such as `result.map(double)` or `result.inspect(log_value)` through these `std.result` helpers. Callable objects and closure-shaped values can remain on the direct method-lowering path so they keep the same callable-object behavior documented for `Callable1`.
-
-That split is an implementation detail, not a semantic distinction users should depend on. The reference contract is that method syntax and the corresponding helper function have the same branch behavior, return type shape, and observer-preservation behavior.
-
-For workflow-oriented examples, see [Fallible and infallible paths](../../tutorials/fallible_and_infallible_paths.md). For the compiler-side ownership policy behind observer borrowing, see [Duckborrowing](../../../contributing/explanation/duckborrowing.md).
+- [Fallible and infallible paths](../../tutorials/fallible_and_infallible_paths.md)
+- [Function types and callable traits](../../explanation/functions_and_calls.md#function-types-and-callable-traits)

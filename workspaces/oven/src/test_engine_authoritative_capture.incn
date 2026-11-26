@@ -1,0 +1,248 @@
+"""The first named-project capture and its native descriptor use the compiler's selected source graph."""
+
+from rust::std::fs import File, FileTimes
+from rust::std::process import Command
+from std.environ import get_or
+from std.fs import Path
+from std.json import parse
+from pub::incan_platform.store import Lookup, Snapshot, begin, commit, keys_with_prefix, lookup, owned, put
+from engine_capture import BuildEpoch
+from engine_channel import Channel
+from engine_client import service_generation, service_identity
+from engine_epoch_records import read_epoch, read_head
+from engine_messages import BindingOutcome, Complete, CompletionStatus, Message, Submit
+from engine_programs import program_handle, selected_program
+from engine_protocol_fixtures import await_exit, await_service, detail, json_text_is, launch_service, release_service_result
+from engine_replies import refusal_code
+from engine_wire import RefusalKind, joined, scalar
+from files import make_directory, read, write
+from scratch import scratch_directory
+from store_path_conversion import snapshot
+
+
+const VIEW: str = "named-project-capture"
+const HEAD: str = "incan.engine.capture-head\t"
+const EPOCH: str = "incan.engine.build-epoch\t"
+
+
+pub def test_first_named_project_capture_uses_the_baked_program_reach() -> Result[None, str]:
+    """Prove the cold publication, an unchanged launch, an import edit, and a refused pinned publication."""
+    scratch = scratch_directory()?
+    root = scratch.path().resolve().map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    project = root.joinpath("project")
+    source = write_project(project)?
+    store = root.joinpath("bakery")
+    trace = root.joinpath("trace")
+    make_directory(store)?
+    make_directory(trace)?
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut child = launch_service(binary, store, identity, {"INCAN_ENGINE_TRACE": trace.0})?
+    mut channel = await_service(store, identity)?
+    channel.transport.wait_at_most(600)
+    result = check_requests(channel, store, trace, source)
+    channel.transport.close()?
+    await_exit(child, true)?
+    result?
+    return check_fault(binary, root)
+
+
+def write_project(project: Path) -> Result[Path, str]:
+    """Give a named project an invalid helper that the initial entry does not import."""
+    make_directory(project.joinpath("src/nested"))?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"capture_probe\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    source = project.joinpath("src/main.incn")
+    write(
+        source,
+        "# This package has a nested source outside the first program's compiler-reported import reach.\n"
+        + "def main() -> None:\n    println(\"cold\")\n",
+    )?
+    write(project.joinpath("src/nested/helper.incn"), "pub def helper() -> int:\n    return \"invalid while outside reach\"\n")?
+    return Ok(source)
+
+
+def check_requests(mut channel: Channel, store: Path, trace: Path, source: Path) -> Result[None, str]:
+    """
+    1. Publish the selected cold capture and descriptor in one generation.
+    2. Repeat the request against that generation without compiling or writing a new capture.
+    3. Add the omitted helper to the reachable graph and execute the rebuilt result.
+    """
+    before = snapshot(store, VIEW).map_err((error) => error.message())?
+    # 1. The first durable epoch must already agree with the reply and the exact prepared graph.
+    first_epoch, first = completed_request(channel, store, source, 1, b"cold\n")?
+    assert first.generation == before.generation + 1
+    helper = source.parent().joinpath("nested/helper.incn")
+    assert first_epoch.input(helper.0) is None, "first durable capture included the unimported helper"
+    assert len(first_epoch.listings) == 0, "first durable capture used source membership listings"
+    cold_requests = compiler_requests(trace)?
+    assert cold_requests == (1, 1), f"expected one graph collection and one native request, found {cold_requests}"
+    println(f"cold capture: generation {before.generation} to {first.generation}, requests {cold_requests}")
+    # 2. The same request must select the existing program.
+    repeated_epoch, repeated = completed_request(channel, store, source, 2, b"cold\n")?
+    assert repeated.digest == first.digest, "second identical request published a capture"
+    assert repeated_epoch == first_epoch
+    assert compiler_requests(trace)? == cold_requests, "second identical request activated the compiler"
+    println(f"identical repeat: generation {repeated.generation}, no driver requests")
+    # 3. Changing bytes with their mtime restored must still change the reachable graph.
+    edit_with_restored_mtime(helper, "pub def helper() -> int:\n    return 42\n")?
+    edit_with_restored_mtime(source, "from nested.helper import helper\n\ndef main() -> None:\n    println(helper())\n")?
+    edited_epoch, edited = completed_request(channel, store, source, 3, b"42\n")?
+    assert edited.digest != first.digest
+    assert edited_epoch.identity()? != first_epoch.identity()?
+    graphs, native = compiler_requests(trace)?
+    assert graphs > 1 and native == 2, "the changed import did not collect reach and activate the native compiler once"
+    println(f"restored-mtime import: generation {edited.generation}, total graph requests {graphs}, total native requests {native}")
+    return Ok(None)
+
+
+def submitted(mut channel: Channel, source: Path, turn: int) -> Result[bytes, str]:
+    """Submit one named source through the resident service's production endpoint."""
+    request = joined([scalar(turn, 8), scalar(0, 8)])
+    _ = channel.send(
+        request,
+        Message.Submit(
+            Submit(
+                command="run", view=VIEW, input_selection="debug", requested_roots=source.0,
+                directory=source.parent().parent().0, options="", observation_policy="",
+            ),
+        ),
+    ).map_err(detail)?
+    return Ok(request)
+
+
+def completed_request(
+    mut channel: Channel, store: Path, source: Path, turn: int, stdout: bytes,
+) -> Result[tuple[BuildEpoch, Snapshot], str]:
+    """Correlate the one wire capture with the durable selected epoch and pinned program result."""
+    request = submitted(channel, source, turn)?
+    mut accepted = false
+    mut capture_identity = ""
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        channel.acknowledge(frame).map_err(detail)?
+        assert frame.header.request == request
+        match frame.message:
+            Message.Accepted(_) =>
+                assert not accepted
+                accepted = true
+            Message.Captured(value) =>
+                assert accepted and capture_identity == "" and value.snapshot != ""
+                capture_identity = value.epoch
+            Message.Complete(value) =>
+                assert capture_identity != ""
+                selected = check_selected(store, capture_identity, value, stdout)
+                release_service_result(channel, request)?
+                return selected
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+    return Err("named-project request did not complete")
+
+
+def check_selected(store: Path, capture_identity: str, complete: Complete, stdout: bytes) -> Result[tuple[BuildEpoch, Snapshot], str]:
+    """Authenticate the committed program and execute it while the service holds its lease."""
+    assert complete.status == CompletionStatus.Success and complete.binding_outcome == BindingOutcome.Selected
+    selected = snapshot(store, VIEW).map_err((error) => error.message())?
+    assert complete.snapshot == selected.digest
+    heads = keys_with_prefix(selected, HEAD).map_err((error) => error.message())?
+    assert len(heads) == 1
+    revision, identity = read_head(record(selected, heads[0])?)?
+    epoch = read_epoch(record(selected, EPOCH + revision)?)?
+    assert identity == capture_identity and identity == epoch.identity()?
+    producer = service_identity(store)?.compiler_generation
+    assert complete.result_handles == program_handle(identity, producer, VIEW)?
+    match selected_program(selected, complete.result_handles)?:
+        None => return Err("completed descriptor is missing")
+        Some(unit) =>
+            assert unit.identity == complete.admission_proof
+            outcome = Command.new(unit.binary).output().map_err((error) => str(error))?
+            assert outcome.status.success() and outcome.stdout == stdout and outcome.stderr == b""
+    return Ok((epoch, selected))
+
+
+def record(selected: Snapshot, key: str) -> Result[bytes, str]:
+    """Read one authenticated record in the completed selection."""
+    match lookup(selected, key).map_err((error) => error.message())?:
+        Lookup.Found(found) => return Ok(owned(found))
+        _ => return Err(f"selected generation is missing {key}")
+
+
+def compiler_requests(trace: Path) -> Result[tuple[int, int], str]:
+    """Count actual argument-bearing driver requests, excluding mirrored compiler spans."""
+    mut graphs = 0
+    mut units = 0
+    for file in trace.glob("engine-oven-*.jsonl").map_err((error) => error.message())?:
+        for line in read(file)?.split("\n"):
+            if not "\"operation\":\"driver_request\"" in line:
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if not json_text_is(row, "producer", "oven"):
+                continue
+            key = row.require("key").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+            if key.startswith("--rust-imports "):
+                graphs += 1
+            elif key.startswith("--unit "):
+                units += 1
+            elif key.startswith("--"):
+                return Err(f"unexpected compiler request: {key}")
+    return Ok((graphs, units))
+
+
+def edit_with_restored_mtime(path: Path, source: str) -> Result[None, str]:
+    """Write changed bytes of the same size and restore the original modification timestamp."""
+    file = File.open(path.0).map_err((error) => str(error))?
+    before = file.metadata().map_err((error) => str(error))?
+    modified = before.modified().map_err((error) => str(error))?
+    available = len(read(path)?) - len(source)
+    assert available >= 2
+    padding = "".join([" " for _index in range(available - 2)])
+    write(path, source + "#" + padding + "\n")?
+    file.set_times(FileTimes.new().set_modified(modified)).map_err((error) => str(error))?
+    after = file.metadata().map_err((error) => str(error))?
+    assert after.modified().map_err((error) => str(error))? == modified and after.len() == before.len()
+    return Ok(None)
+
+
+def check_fault(binary: str, root: Path) -> Result[None, str]:
+    """A fault before pin publication leaves the prior manifest and no partial selected result."""
+    source = write_project(root.joinpath("interrupted"))?
+    store = root.joinpath("interrupted-bakery")
+    initial = snapshot(store).map_err((error) => error.message())?
+    _ = commit(put(begin(initial), "capture-fault-anchor", b"anchor")).map_err((error) => error.message())?
+    before = snapshot(store, VIEW).map_err((error) => error.message())?
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut child = launch_service(binary, store, identity, {"INCAN_STORE_CRASH_AFTER": "pin-acquired"})?
+    mut channel = await_service(store, identity)?
+    channel.transport.wait_at_most(600)
+    result = refused_publication(channel, source)
+    channel.transport.close()?
+    await_exit(child, true)?
+    result?
+    after = snapshot(store, VIEW).map_err((error) => error.message())?
+    assert after.digest == before.digest and after.generation == before.generation
+    assert len(keys_with_prefix(after, HEAD).map_err((error) => error.message())?) == 0
+    println(f"pre-pin refusal preserved generation {after.generation} and wrote no capture head")
+    return Ok(None)
+
+
+def refused_publication(mut channel: Channel, source: Path) -> Result[None, str]:
+    """The fault happens after capture but before a successful selected reply."""
+    request = submitted(channel, source, 1)?
+    mut captured = false
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        channel.acknowledge(frame).map_err(detail)?
+        assert frame.header.request == request
+        match frame.message:
+            Message.Captured(_) => captured = true
+            Message.Refused(value) =>
+                # The injected exit closes the private worker socket. The coordinator relays its typed short read.
+                assert captured and value.code == refusal_code(RefusalKind.ShortRead), value.detail
+                return Ok(None)
+            Message.Complete(_) => return Err("interrupted publication completed")
+            _ => pass
+    return Err("interrupted publication was not refused")

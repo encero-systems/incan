@@ -1,0 +1,14 @@
+# behavior: A result whose tuple holds more than one borrowed element is refused for execution; the one `from` clause names the source of a single view (#2500). A borrow is one type (RFC 164), so a decorator that replaces a callable with a borrowed parameter receives a callable of that type and is checked as any other.
+# expect-diagnostic: INCAN-T0123
+
+def inspect(value: Borrowed[str]) -> tuple[Borrowed[str], Borrowed[str]] from value:
+    return (value, value)
+
+
+def preserve[F]() -> (F) -> F:
+    return (function) => function
+
+
+@preserve()
+def decorated(value: Borrowed[int]) -> int:
+    return value

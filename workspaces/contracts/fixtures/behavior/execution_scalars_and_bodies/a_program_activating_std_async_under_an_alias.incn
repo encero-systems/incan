@@ -1,0 +1,18 @@
+# behavior: from std import async binds the reserved module name through ordinary namespace lookup, and async.sleep runs
+# expect-stdout:
+#   42
+
+"""Call the async library through the module binding named by the reserved word."""
+
+from std import async
+
+
+def program_result() -> int:
+    """Return `42` for this fixture."""
+    return 42
+
+
+async def main() -> None:
+    """Print the fixture values in the expected order."""
+    await async.sleep(0.0)
+    println(program_result())

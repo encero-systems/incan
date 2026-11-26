@@ -1,0 +1,11 @@
+# behavior: a model the checked model metadata does not hold is refused with the models it does hold, as 0.5.1 did (#3142).
+# cli-commands:
+#   tools metadata model . Missing
+# expect-stdout:
+# expect-stderr-contains:
+#   model `Missing` was not found in checked model metadata for . (available: Order)
+# expect-exit: 1
+
+def main() -> None:
+    """The project whose declared model bundle the case searches."""
+    pass

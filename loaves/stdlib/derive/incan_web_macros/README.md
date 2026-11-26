@@ -2,7 +2,7 @@
 
 Procedural macros for the transitional Incan web runtime.
 
-This crate supports compiler-generated Rust that targets `incan_std_web`. It is toolchain-locked to the Incan compiler and stdlib runtime crate; it is not a standalone public web framework API.
+This crate supports the compiler's native declarations that target `incan_std_web`. It is toolchain-locked to the Incan compiler and stdlib runtime crate; it is not a standalone public web framework API.
 
 ## Boundary
 

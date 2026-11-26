@@ -1,0 +1,9 @@
+[project]
+name = "rust_interop_associated_functions"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+uuid = { loaf = "crates-io/uuid", version = "1", features = ["v4"] }

@@ -1,0 +1,24 @@
+# behavior: native optional record fields retain their payload types and vector methods infer their owner without value arguments (#2256)
+# expect-stdout:
+#   impl AsRef<std::path::Path>
+#   impl AsRef<[u8]>
+#   0
+#   2
+
+from rust::incan_lang::interop import metadata_free_function_signature
+
+
+def main() -> None:
+    """Read every native parameter record and wrap its field without a contextual payload annotation."""
+    match metadata_free_function_signature("std::fs::write"):
+        None => println("missing")
+        Some(signature) =>
+            for parameter in signature.params:
+                value = Some(parameter.type_display)
+                match value:
+                    Some(text) => println(text)
+                    None => println("missing parameter")
+            mut copied = signature.clone()
+            copied.params.clear()
+            println(len(copied.params))
+            println(len(signature.params))

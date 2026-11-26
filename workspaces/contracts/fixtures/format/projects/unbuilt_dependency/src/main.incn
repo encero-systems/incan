@@ -1,0 +1,13 @@
+# behavior: Ordinary syntax can be formatted before a local dependency has been compiled.
+# expect-formatted:
+#   from pub::helper import answer
+#
+#
+#   def main() -> None:
+#       """Print the helper's answer."""
+#       println(answer())
+
+from pub::helper import answer
+def main()->None:
+    """Print the helper's answer."""
+    println( answer() )

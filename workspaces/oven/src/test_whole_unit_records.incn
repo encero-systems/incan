@@ -1,0 +1,251 @@
+"""
+Units the records producer cannot give per-declaration records are compiled whole by the engine, keyed by their full
+inputs: one canonical spelling of a request's unit options names one engine unit, and an unchanged rerun does no work.
+"""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from pub::internal_models import NamespaceAtom, NamespaceField, decode_callable_inventory, decode_executable_owner_frame
+from unit_options import parse_options
+from engine_unit_options import decode_unit_options, unit_options_text
+from engine_client import project_view_name
+from files import write
+from lowering_record_fixtures import command_proof, proof_count, stop_example_engine
+from scratch import scratch_directory
+
+
+pub def test_unit_options_name_one_unit_whichever_spelling() -> Result[None, str]:
+    """Features in another order or spelling name the same engine unit and view; an ordinary unit carries none."""
+    scratch = scratch_directory()?
+    entry = scratch.path().joinpath("second.incn")
+    first = parse_options(["src/main.incn", "--features", "b,a", "--program-entry", entry.0], ".")?
+    second = parse_options(["src/main.incn", "--features", "a", "--features", " b", "--program-entry", entry.0], ".")?
+    text = unit_options_text(first)?
+    assert text != ""
+    assert unit_options_text(second)? == text, f"{unit_options_text(second)?} != {text}"
+    assert unit_options_text(parse_options(["src/main.incn"], ".")?)? == ""
+    decoded = decode_unit_options(text)?
+    assert decoded.request.features == ["a", "b"], str(decoded.request.features)
+    assert decoded.program_entries == [entry.0], str(decoded.program_entries)
+    assert decode_unit_options("")?.request.default_features
+    plain = project_view_name("scope", "/project/src/main.incn", "debug", None)?
+    selected = project_view_name("scope", "/project/src/main.incn", "debug", None, text)?
+    assert selected != plain
+    assert project_view_name("scope", "/project/src/main.incn", "debug", None, unit_options_text(second)?)? == selected
+    assert project_view_name("scope", "/project/src/main.incn", "debug", None, "")? == plain
+    return Ok(None)
+
+
+pub def test_an_unchanged_whole_unit_rerun_does_no_work() -> Result[None, str]:
+    """
+    A program built with a second program entry is compiled whole by the records engine, and its report says so;
+    building it again unchanged evaluates and bakes nothing.
+    """
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("entries")
+    source = project.joinpath("src")
+    source.mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"entries\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    # A program entry is one of the program's modules, so the first entry imports it.
+    write(source.joinpath("main.incn"), "from second import main as second_main\n\n\ndef main() -> None:\n    println(\"first\")\n")?
+    write(source.joinpath("second.incn"), "pub def main() -> None:\n    println(\"second\")\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = scratch.path().joinpath("store")
+    cold = whole_unit_build(binary, project, store)?
+    cold_text = cold.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "whole_unit_compiles")? == 1, cold_text
+    assert proof_count(cold, "native_bakes")? == 1, cold_text
+    warm = whole_unit_build(binary, project, store)?
+    warm_text = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(warm, "unit_evaluations")? == 0, warm_text
+    assert proof_count(warm, "native_bakes")? == 0, warm_text
+    return stop_example_engine(binary, store)
+
+
+def whole_unit_build(binary: str, project: Path, store: Path) -> Result[JsonValue, str]:
+    """Build the program with its second entry through the records engine and decode its report."""
+    outcome = Command
+        .new(binary)
+        .current_dir(project.0)
+        .arg("build")
+        .arg("src/main.incn")
+        .args(["--program-entry", "src/second.incn", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(f"whole-unit build: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+pub def test_a_library_build_asked_for_its_graph_publishes_it() -> Result[None, str]:
+    """
+    A library built whole by the records engine with `--codegraph` has its checked graph exported beside its native
+    publication, where the first engine's build puts it.
+    """
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("graphlib")
+    project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(project.joinpath("loaf.toml"), "[project]\nname = \"graphlib\"\nversion = \"0.1.0\"\n")?
+    scalar = "pub def helper() -> int:\n    return 7\n"
+    nominal = "\npub model RetainedInline:\n    pub value: int\n"
+    write(project.joinpath("src/lib.incn"), scalar + nominal)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = scratch.path().joinpath("store")
+    outcome = Command
+        .new(binary)
+        .current_dir(project.0)
+        .args(["build", "src/lib.incn", "--codegraph"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(f"library graph build: status={outcome.status.code()} stdout={output} stderr={errors}")
+    graph = project.joinpath("target/incan/loaves/graphlib/debug/graphlib.incngraph")
+    assert graph.is_file(), f"no graph at {graph.0}; stderr={errors}"
+    stop_example_engine(binary, store)?
+    return verify_typed_callable_owner(project)
+
+
+def verify_typed_callable_owner(project: Path) -> Result[None, str]:
+    """Open the sole callable inventory written by the completed, isolated graphlib build."""
+    root = project.joinpath("target/incan/loaves/graphlib/.products")
+    mut inventories: list[Path] = []
+    for context in root.iterdir().map_err((error) => error.message())?:
+        profile = context.joinpath("incan.checker-free-functions/21")
+        if not profile.is_dir():
+            continue
+        for entry in profile.iterdir().map_err((error) => error.message())?:
+            if entry.is_file() and entry.name().endswith(".incnitems"):
+                inventories.append(entry)
+    if len(inventories) != 1:
+        return Err(f"graphlib build wrote {len(inventories)} callable inventories, expected one")
+    item = inventories.pop()
+    inventory = item.read_bytes().map_err((error) => error.message())?
+    product = decode_callable_inventory(inventory)?
+    fields = callable_fields(product)?
+    match callable_field(fields, 149328980117527u64)?:
+        NamespaceAtom.Items(entries) =>
+            if len(entries) != 1:
+                return Err(f"graphlib inventory contains {len(entries)} callable owners, expected one")
+            for entry in entries:
+                return verify_callable_entry(entry)
+        _ => return Err("invalid callable inventory entries")
+    return Err("graphlib inventory has no callable owner")
+
+
+def verify_callable_entry(entry: NamespaceAtom) -> Result[None, str]:
+    """Join the inner Crumb's exact provenance and canonical Body IR to its authenticated outer header."""
+    fields = callable_fields(entry)?
+    header = callable_fields(callable_field(fields, 33009048903071u64)?)?
+    assert callable_text(callable_field(header, 207027911002224u64)?)? == "graphlib"
+    identity = callable_fields(callable_field(header, 115033893925764u64)?)?
+    assert callable_text(callable_field(identity, 235552561301414u64)?)? == "helper"
+    owner = graphlib_callable_owner(identity)?
+    canonical = callable_field(header, 15318956776891u64)?
+    match callable_field(fields, 38540945185934u64)?:
+        NamespaceAtom.Binary(encoded) =>
+            decoded = decode_executable_owner_frame(encoded).map_err(
+                (reason) => f"graphlib callable owner is not typed executable Crumb: {reason}",
+            )?
+            typed = callable_fields(decoded)?
+            assert callable_text(callable_field(typed, 126922548994917u64)?)? == "src/lib.incn"
+            assert callable_text(callable_field(typed, 121364726243167u64)?)? == "helper"
+            assert callable_text(callable_field(typed, 115879919383647u64)?)? == owner
+            assert callable_text(callable_field(typed, 109270115774047u64)?)? != ""
+            body = callable_fields(callable_field(typed, 108230566570354u64)?)?
+            assert callable_text(callable_field(body, 143637992173787u64)?)? == "helper"
+            assert callable_field(body, 15318956776891u64)? == NamespaceAtom.Present([canonical.clone()])
+            assert callable_field(typed, 126870908593503u64)? == NamespaceAtom.Missing
+            assert callable_field(typed, 109270082024287u64)? == NamespaceAtom.Missing
+            assert callable_field(typed, 123594016516451u64)? == NamespaceAtom.Missing
+            no_coordinates: list[NamespaceAtom] = []
+            assert callable_field(typed, 109330262287475u64)? == NamespaceAtom.Items(no_coordinates)
+            helper_identity = callable_fields(canonical)?
+            origin = callable_field(helper_identity, 26525135469642u64)?
+            verify_inline_nominal(body, origin)?
+        _ => return Err("graphlib callable owner has no nested executable bytes")
+    return Ok(None)
+
+
+def verify_inline_nominal(body: Borrowed[list[NamespaceField]], owner_origin: NamespaceAtom) -> Result[None, str]:
+    """Require the exact source-owned nominal in the selected scalar body itself."""
+    match callable_field(body, 33404922341476u64)?:
+        NamespaceAtom.Mapping(bindings) =>
+            for entry in bindings:
+                if entry.key == NamespaceAtom.Text("RetainedInline"):
+                    identity = callable_fields(entry.value.clone())?
+                    assert callable_field(identity, 26525135469642u64)? == owner_origin
+                    assert callable_text(callable_field(identity, 235552561301414u64)?)? == "RetainedInline"
+                    lexical_fields: list[NamespaceField] = []
+                    lexical = NamespaceAtom.Alternative(52363337397491u64, lexical_fields)
+                    assert callable_field(identity, 162014550503162u64)? == lexical
+                    nominal_fields: list[NamespaceField] = []
+                    nominal_kind = NamespaceAtom.Alternative(103544703951856u64, nominal_fields)
+                    assert callable_field(identity, 12265375465139u64)? == nominal_kind
+                    assert callable_field(identity, 251177442890846u64)? == NamespaceAtom.Missing
+                    span = callable_fields(callable_field(identity, 206641408467676u64)?)?
+                    assert callable_field(span, 179159109532334u64)? == NamespaceAtom.Unsigned(39u64)
+                    assert callable_field(span, 253676589352418u64)? == NamespaceAtom.Unsigned(84u64)
+                    assert callable_field(span, 24735866884595u64)? == NamespaceAtom.Missing
+                    return Ok(None)
+        _ => return Err("callable body did not retain a typed inline nominal map")
+    return Err("callable body did not retain the checked RetainedInline nominal")
+
+
+def graphlib_callable_owner(identity: Borrowed[list[NamespaceField]]) -> Result[str, str]:
+    """Render the one known library fixture's exact checked owner from its path, name and signature."""
+    mut origin = ["pub", "graphlib"]
+    match callable_field(identity, 26525135469642u64)?:
+        NamespaceAtom.Alternative(selected, package) =>
+            assert selected == 98810321547704u64
+            assert callable_text(callable_field(package, 201317753900914u64)?)? == "graphlib"
+            match callable_field(package, 142187385412536u64)?:
+                NamespaceAtom.Items(parts) =>
+                    for part in parts:
+                        origin.append(callable_text(part)?)
+                _ => return Err("graphlib callable owner has no module path")
+        _ => return Err("graphlib callable owner has no checked package provenance")
+    prefix = "function:" + "::".join(origin) + "::helper"
+    match callable_field(identity, 28792427759594u64)?:
+        NamespaceAtom.Missing => return Ok(prefix)
+        NamespaceAtom.Present(parts) =>
+            if len(parts) == 1:
+                for part in parts:
+                    return Ok(prefix + "|" + callable_text(part)?)
+        _ => pass
+    return Err("graphlib callable owner has an invalid checked signature")
+
+
+def callable_fields(value: NamespaceAtom) -> Result[list[NamespaceField], str]:
+    """Open a checked logical record."""
+    match value:
+        NamespaceAtom.Fields(fields) => return Ok(fields)
+        _ => return Err("expected a callable record")
+
+
+def callable_field(fields: Borrowed[list[NamespaceField]], identity: u64) -> Result[NamespaceAtom, str]:
+    """Select one required member from the already closed typed dictionary."""
+    for member in fields:
+        if member.identity == identity:
+            return Ok(member.value.clone())
+    return Err(f"missing callable field {identity}")
+
+
+def callable_text(value: NamespaceAtom) -> Result[str, str]:
+    """Open one checked logical text member."""
+    match value:
+        NamespaceAtom.Text(selected) => return Ok(selected)
+        _ => return Err("expected callable text")

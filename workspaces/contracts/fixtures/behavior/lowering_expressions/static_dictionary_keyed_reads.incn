@@ -1,0 +1,41 @@
+# behavior: a keyed read of a static dictionary reads the stored entry for text and integer keys and for scalar, text, list and model values
+# expect-stdout:
+#   7
+#   seven
+#   3 30
+#   front 2
+#   2
+#   9
+
+model Page:
+    title: str
+    spans: list[int]
+
+
+static COUNTS: Dict[str, int] = {}
+static NAMES: Dict[int, str] = {}
+static ROWS: Dict[str, list[int]] = {}
+static PAGES: Dict[str, Page] = {}
+
+
+def key(name: str) -> str:
+    return f"page-{name}"
+
+
+def title_of(name: str) -> str:
+    return PAGES[name].title
+
+
+def main() -> None:
+    COUNTS["a"] = 7
+    NAMES[7] = "seven"
+    ROWS["r"] = [10, 20, 30]
+    PAGES[key("front")] = Page(title="front", spans=[1, 2])
+    println(COUNTS["a"])
+    println(NAMES[COUNTS["a"]])
+    row = ROWS["r"]
+    println(f"{len(row)} {row[2]}")
+    println(f"{title_of(key("front"))} {len(PAGES[key("front")].spans)}")
+    println(PAGES["page-front"].spans[1])
+    COUNTS["a"] = COUNTS["a"] + 2
+    println(COUNTS["a"])

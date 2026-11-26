@@ -15,7 +15,7 @@ Python equivalent:
 class Animal:
     def __init__(self, name: str):
         self.name=name
-    
+
     def speak(self) -> str:
         return "..."
 
@@ -25,6 +25,7 @@ class Dog(Animal):
 ```
 """
 
+
 class Animal:
     pub name: str
     pub age: int
@@ -32,37 +33,45 @@ class Animal:
     def speak(self) -> str:
         return "..."
 
-    def describe(self) -> str:
+    pub def describe(self) -> str:
         return f"{self.name} is {self.age} years old"
 
 
 class Dog extends Animal:
     breed: str
 
-    def speak(self) -> str:
+    @staticmethod
+    pub def new(name: str, age: int, breed: str) -> Dog:
+        return Dog(name=name, age=age, breed=breed)
+
+    pub def speak(self) -> str:
         return f"{self.name} says: Woof!"
 
-    def fetch(self) -> str:
+    pub def fetch(self) -> str:
         return f"{self.name} fetches the ball!"
 
 
 class Cat extends Animal:
     indoor: bool
 
-    def speak(self) -> str:
+    @staticmethod
+    pub def new(name: str, age: int, indoor: bool) -> Cat:
+        return Cat(name=name, age=age, indoor=indoor)
+
+    pub def speak(self) -> str:
         return f"{self.name} says: Meow!"
 
-    def nap(self) -> str:
+    pub def nap(self) -> str:
         return f"{self.name} is napping..."
 
 
 def main() -> None:
-    dog = Dog(name="Buddy", age=3, breed="Golden Retriever")
+    dog = Dog.new(name="Buddy", age=3, breed="Golden Retriever")
     println(dog.describe())
     println(dog.speak())
     println(dog.fetch())
-    
-    cat = Cat(name="Whiskers", age=5, indoor=true)
+
+    cat = Cat.new(name="Whiskers", age=5, indoor=true)
     println(cat.describe())
     println(cat.speak())
     println(cat.nap())

@@ -1,0 +1,11 @@
+# behavior: a registry identity the package does not define is refused with the package-qualified identities it does define, as 0.5.1 did (#3142).
+# cli-commands:
+#   inspect registry functions
+# expect-stdout:
+# expect-stderr-contains:
+#   checked registry `functions` was not found; available registries: inspect_registry_absent::lib::functions, inspect_registry_absent::lib::targets
+# expect-exit: 1
+
+def main() -> None:
+    """The program beside the library whose registries the case inspects."""
+    pass

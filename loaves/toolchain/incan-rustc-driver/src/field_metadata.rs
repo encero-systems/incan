@@ -1,8 +1,14 @@
 //! Immutable compiler-generated field metadata, constructed from the Incan plan's checked declaration facts.
 
-use crate::ast_build::{block, expression, expression_statement, global_path, ident, local, path_ty};
+use crate::ast_build::{
+    RUST_OPTION_NONE_SYMBOL, RUST_OPTION_SOME_SYMBOL, block, expression, expression_statement, global_path, ident,
+    local,
+};
 use crate::error::PlanError;
-use crate::plan::{CalleeKind, FieldMetadata, ModelDeclaration, Plan, PlanType, TerminatorKind};
+use crate::plan::{
+    CalleeKind, Carrier, FieldLifecycle, FieldMetadata, ModelDeclaration, Plan, PlanType, TerminatorKind,
+};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol};
 use std::collections::BTreeSet;
@@ -13,11 +19,11 @@ pub fn name(owner: i64) -> String {
     format!("__incan_field_metadata_{owner}")
 }
 
-/// Validate the selected source declaration and the native SDK FieldInfo output before generating any accessor.
+/// Validate the source declaration and the checked Incan metadata role before generating any accessor.
 pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError> {
     let refused = || PlanError::Invalid {
         function: name(owner),
-        reason: "unsupported field metadata declaration or SDK result identity".into(),
+        reason: "unsupported field metadata declaration or checked result identity".into(),
     };
     let model = usize::try_from(owner)
         .ok()
@@ -28,9 +34,8 @@ pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError>
         .ok()
         .and_then(|index| plan.models.get(index))
         .ok_or_else(refused)?;
-    if !model.library_item.is_empty()
-        || !model.derives.iter().any(|derive| derive == "FieldInfo")
-        || metadata.library_item != "incan_std_core::reflection::FieldInfo"
+    if (model.library_item.is_empty() && !model.derives.iter().any(|derive| derive == "FieldInfo"))
+        || !metadata.field_metadata_carrier
         || fields
             .iter()
             .any(|field| !model.fields.iter().any(|slot| slot.name == field.name))
@@ -38,7 +43,7 @@ pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError>
         return Err(refused());
     }
     Ok(PlanType::FrozenCollection(
-        "FrozenList".into(),
+        collections::as_str(CollectionTypeId::FrozenList).into(),
         vec![PlanType::Model(info, metadata.name.clone())],
     ))
 }
@@ -59,7 +64,16 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
             continue;
         }
         let index = usize::try_from(*owner).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
-        items.push(storage(*owner, &plan.models[index], span));
+        let info_index = usize::try_from(*info).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
+        let lifecycle = lifecycle_carrier(plan, &plan.models[info_index])?;
+        items.push(storage(
+            *owner,
+            &plan.models[index],
+            *info,
+            &plan.models[info_index],
+            lifecycle,
+            span,
+        ));
         items.push(accessor(*owner, &output, span));
     }
     Ok(items)
@@ -68,7 +82,12 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
 /// Declare a zero-input accessor; the source receiver has already been evaluated by Body IR and is never consumed.
 fn accessor(owner: i64, output: &PlanType, span: Span) -> Box<ast::Item> {
     let value = call(
-        &["incan_std_core", "frozen", "FrozenList", "new"],
+        &[
+            "incan_std_primitives",
+            "frozen",
+            collections::as_str(CollectionTypeId::FrozenList),
+            "new",
+        ],
         thin_vec![local(&storage_name(owner), span)],
         span,
     );
@@ -81,20 +100,27 @@ fn storage_name(owner: i64) -> String {
 }
 
 /// Construct the records in an explicit static initializer; const-function calls do not promote runtime temporaries.
-fn storage(owner: i64, model: &ModelDeclaration, span: Span) -> Box<ast::Item> {
+fn storage(
+    owner: i64,
+    model: &ModelDeclaration,
+    info: i64,
+    metadata: &ModelDeclaration,
+    lifecycle: &str,
+    span: Span,
+) -> Box<ast::Item> {
     let entries = model
         .reflection_metadata
         .as_ref()
         .into_iter()
         .flatten()
-        .map(|field| entry(field, span))
+        .map(|field| entry(field, &metadata.name, lifecycle, span))
         .collect();
     let array = expression(ast::ExprKind::Array(entries), span);
     let slice = expression(
         ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
         span,
     );
-    let element = path_ty(global_path(&["incan_std_core", "reflection", "FieldInfo"], span), span);
+    let element = crate::declarations::ty(&PlanType::Model(info, metadata.name.clone()), span);
     let ty = Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Ref(
@@ -150,32 +176,37 @@ fn accessor_item(owner: i64, output: &PlanType, value: Box<ast::Expr>, span: Spa
     )
 }
 
-/// Reproduce the frozen legacy record exactly; extra metadata is currently an empty frozen dictionary there too.
-fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
+/// Initialize the Incan-declared record; native type checking verifies these facts against its actual field layout.
+fn entry(field: &FieldMetadata, carrier: &str, lifecycle: &str, span: Span) -> Box<ast::Expr> {
     let values = [
         ("name", frozen_text(&field.name, span)),
+        ("identity", frozen_bytes(&field.record_identity, span)),
+        ("canonical", boolean(field.record_canonical, span)),
+        ("renamed_from", frozen_text_list(&field.renamed_from, span)),
+        (
+            "renamed_from_lifecycle",
+            optional_lifecycle(&field.renamed_from_lifecycle, lifecycle, span),
+        ),
+        ("position", integer(field.position, span)),
+        ("default_is_empty", boolean(field.default_is_empty, span)),
+        ("stored_type", optional_text(&field.stored_type, span)),
         ("alias", optional_text(&field.alias, span)),
         ("description", optional_text(&field.description, span)),
         (
             "wire_name",
-            frozen_text(field.alias.as_deref().unwrap_or(&field.name), span),
+            frozen_text(field.alias.as_deref().map_or(field.name.as_str(), |alias| alias), span),
         ),
         ("type_name", frozen_text(&field.type_name, span)),
-        (
-            "has_default",
-            expression(
-                ast::ExprKind::Lit(ast::token::Lit::new(
-                    ast::token::LitKind::Bool,
-                    Symbol::intern(if field.has_default { "true" } else { "false" }),
-                    None,
-                )),
-                span,
-            ),
-        ),
+        ("has_default", boolean(field.has_default, span)),
         (
             "extra",
             call(
-                &["incan_std_core", "frozen", "FrozenDict", "new"],
+                &[
+                    "incan_std_primitives",
+                    "frozen",
+                    collections::as_str(CollectionTypeId::FrozenDict),
+                    "new",
+                ],
                 thin_vec![expression(
                     ast::ExprKind::AddrOf(
                         ast::BorrowKind::Ref,
@@ -188,10 +219,19 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
             ),
         ),
     ];
+    record(carrier, values, span)
+}
+
+/// Initialize a checked Incan model layout by its actual native carrier, with no parallel runtime declaration.
+fn record<const N: usize>(carrier: &str, values: [(&str, Box<ast::Expr>); N], span: Span) -> Box<ast::Expr> {
+    let mut carrier_path = ast::Path::from_ident(ident("crate", span));
+    carrier_path
+        .segments
+        .push(ast::PathSegment::from_ident(ident(carrier, span)));
     expression(
         ast::ExprKind::Struct(Box::new(ast::StructExpr {
             qself: None,
-            path: global_path(&["incan_std_core", "reflection", "FieldInfo"], span),
+            path: carrier_path,
             fields: values
                 .into_iter()
                 .map(|(name, value)| ast::ExprField {
@@ -210,6 +250,127 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
     )
 }
 
+/// Obtain the lifecycle model from the checked FieldInfo field's Option payload, never from a short type name.
+fn lifecycle_carrier<'a>(plan: &'a Plan, metadata: &ModelDeclaration) -> Result<&'a str, PlanError> {
+    let refused = || PlanError::Invalid {
+        function: metadata.name.clone(),
+        reason: "field metadata lifecycle must retain its checked Option model layout".into(),
+    };
+    let field = metadata
+        .fields
+        .iter()
+        .find(|field| field.name == "renamed_from_lifecycle")
+        .ok_or_else(refused)?;
+    let PlanType::Enum(index, _) = &field.ty else {
+        return Err(refused());
+    };
+    let option = usize::try_from(*index)
+        .ok()
+        .and_then(|index| plan.enums.get(index))
+        .ok_or_else(refused)?;
+    if option.carrier != Carrier::Option {
+        return Err(refused());
+    }
+    let payload = option
+        .variants
+        .get(1)
+        .and_then(|variant| variant.fields.first())
+        .ok_or_else(refused)?;
+    let PlanType::Model(index, _) = payload else {
+        return Err(refused());
+    };
+    let model = usize::try_from(*index)
+        .ok()
+        .and_then(|index| plan.models.get(index))
+        .ok_or_else(refused)?;
+    Ok(&model.name)
+}
+
+/// Construct the same optional lifecycle model used by all public reflection carriers.
+fn optional_lifecycle(value: &Option<FieldLifecycle>, carrier: &str, span: Span) -> Box<ast::Expr> {
+    let Some(value) = value else {
+        return optional_text(&None, span);
+    };
+    let labels = record(
+        carrier,
+        [
+            ("since", optional_text(&value.since, span)),
+            ("retire_in", optional_text(&value.retire_in, span)),
+            ("message", optional_text(&value.message, span)),
+            ("by", optional_text(&value.by, span)),
+            ("issue", optional_text(&value.issue, span)),
+        ],
+        span,
+    );
+    call(
+        &["core", "option", "Option", RUST_OPTION_SOME_SYMBOL],
+        thin_vec![labels],
+        span,
+    )
+}
+
+/// Emit a nonnegative source slot as an exact native integer literal.
+fn integer(value: i64, span: Span) -> Box<ast::Expr> {
+    expression(
+        ast::ExprKind::Lit(ast::token::Lit::new(
+            ast::token::LitKind::Integer,
+            Symbol::intern(&value.to_string()),
+            None,
+        )),
+        span,
+    )
+}
+
+/// Construct frozen identity bytes from one exact static byte-string literal.
+fn frozen_bytes(bytes: &[i64], span: Span) -> Box<ast::Expr> {
+    let escaped = bytes.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+    let literal = expression(
+        ast::ExprKind::Lit(ast::token::Lit::new(
+            ast::token::LitKind::ByteStr,
+            Symbol::intern(&escaped),
+            None,
+        )),
+        span,
+    );
+    call(
+        &["incan_std_primitives", "frozen", "FrozenBytes", "new"],
+        thin_vec![literal],
+        span,
+    )
+}
+
+/// Construct an immutable list of frozen earlier-name strings from static storage.
+fn frozen_text_list(values: &[String], span: Span) -> Box<ast::Expr> {
+    let entries = values.iter().map(|value| frozen_text(value, span)).collect();
+    let array = expression(ast::ExprKind::Array(entries), span);
+    let slice = expression(
+        ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
+        span,
+    );
+    call(
+        &[
+            "incan_std_primitives",
+            "frozen",
+            collections::as_str(CollectionTypeId::FrozenList),
+            "new",
+        ],
+        thin_vec![slice],
+        span,
+    )
+}
+
+/// Construct one native boolean literal for a compiler-retained field fact.
+fn boolean(value: bool, span: Span) -> Box<ast::Expr> {
+    expression(
+        ast::ExprKind::Lit(ast::token::Lit::new(
+            ast::token::LitKind::Bool,
+            Symbol::intern(if value { "true" } else { "false" }),
+            None,
+        )),
+        span,
+    )
+}
+
 /// Construct one frozen text value from an escaped native literal, preserving all source bytes.
 fn frozen_text(text: &str, span: Span) -> Box<ast::Expr> {
     let literal = expression(
@@ -221,7 +382,7 @@ fn frozen_text(text: &str, span: Span) -> Box<ast::Expr> {
         span,
     );
     call(
-        &["incan_std_core", "frozen", "FrozenStr", "new"],
+        &["incan_std_primitives", "frozen", "FrozenStr", "new"],
         thin_vec![literal],
         span,
     )
@@ -231,12 +392,15 @@ fn frozen_text(text: &str, span: Span) -> Box<ast::Expr> {
 fn optional_text(value: &Option<String>, span: Span) -> Box<ast::Expr> {
     match value {
         Some(text) => call(
-            &["core", "option", "Option", "Some"],
+            &["core", "option", "Option", RUST_OPTION_SOME_SYMBOL],
             thin_vec![frozen_text(text, span)],
             span,
         ),
         None => expression(
-            ast::ExprKind::Path(None, global_path(&["core", "option", "Option", "None"], span)),
+            ast::ExprKind::Path(
+                None,
+                global_path(&["core", "option", "Option", RUST_OPTION_NONE_SYMBOL], span),
+            ),
             span,
         ),
     }

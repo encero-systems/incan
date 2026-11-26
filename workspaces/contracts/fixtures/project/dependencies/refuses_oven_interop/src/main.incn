@@ -1,0 +1,13 @@
+# behavior: Oven refuses 0.5.1's `[oven.interop]` table and names the table that declares C interop now (#3147).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["oven", "interop"]: unsupported
+#   declare C interop under [interop.c]
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

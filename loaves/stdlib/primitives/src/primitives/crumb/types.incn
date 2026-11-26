@@ -1,0 +1,117 @@
+"""Explicit format descriptions, independent of compiler-generated reflection carriers."""
+
+
+pub enum ContainerKind(str):
+    """Structural constructors whose arities and order are defined by crumb1."""
+
+    List = "list"
+    Set = "set"
+    Option = "option"
+    Map = "map"
+    Tuple = "tuple"
+    Union = "union"
+
+
+pub enum ScalarKind(str):
+    """The complete scalar vocabulary shared by logical, text, row and column representations."""
+
+    Boolean = "boolean"
+    I8 = "i8"
+    I16 = "i16"
+    I32 = "i32"
+    I64 = "i64"
+    I128 = "i128"
+    U8 = "u8"
+    U16 = "u16"
+    U32 = "u32"
+    U64 = "u64"
+    U128 = "u128"
+    Fp32 = "fp32"
+    Fp64 = "fp64"
+    String = "string"
+    Binary = "binary"
+    SecretString = "secret_string"
+    SecretBytes = "secret_bytes"
+    Reference = "reference"
+
+    pub def integer_facts(self) -> Option[tuple[bool, int]]:
+        """Return signedness and bit width for integer scalars only."""
+        match self:
+            ScalarKind.I8 => return Some((true, 8))
+            ScalarKind.I16 => return Some((true, 16))
+            ScalarKind.I32 => return Some((true, 32))
+            ScalarKind.I64 => return Some((true, 64))
+            ScalarKind.I128 => return Some((true, 128))
+            ScalarKind.U8 => return Some((false, 8))
+            ScalarKind.U16 => return Some((false, 16))
+            ScalarKind.U32 => return Some((false, 32))
+            ScalarKind.U64 => return Some((false, 64))
+            ScalarKind.U128 => return Some((false, 128))
+            _ => return None
+
+
+pub enum TypeConstructorKind(str):
+    """Parameterized logical constructors that are neither scalars nor structural containers."""
+
+    Decimal = "decimal"
+    Reference = "ref"
+
+
+pub enum NominalKind(str):
+    """A closed selector distinguishes record and enum bindings without loading either."""
+
+    Record = "record"
+    Enum = "enum"
+
+
+pub enum AbsentPolicy(str):
+    """Only the declared outer absence or empty collection may supply an omitted field."""
+
+    Required = "required"
+    NoneValue = "none"
+    Empty = "empty"
+
+
+pub enum TypeNode:
+    """
+    A finite description graph; Recursive names an active definition, never executable code.
+
+    Nominal carries a display path, an optional externally admitted declaration identity and its concrete arguments.
+    It describes a selector, not the nominal declaration's structural fields. Record and Enum
+    carry those fields explicitly for structural folding. Underlying folds an alias or newtype;
+    its list contains exactly one target, following the standard recursive TypeRef carrier.
+    Bound pairs a closed Nominal selector with one explicit Record or Enum definition.
+    Parameter is deliberately representable so admission can refuse an unresolved binding.
+    """
+
+    Scalar(ScalarKind)
+    Decimal(int, int)
+    Container(ContainerKind, list[TypeNode])
+    Nominal(NominalKind, str, Option[bytes], list[TypeNode])
+    Reference(list[TypeNode])
+    Bound(list[TypeNode])
+    Record(str, list[FieldShape])
+    Enum(str, list[VariantShape])
+    Recursive(str)
+    Underlying(list[TypeNode])
+    Parameter(str)
+
+
+pub model FieldShape:
+    """Storage facts plus the names needed to cross between text and identity-bearing values."""
+
+    pub identity: bytes
+    pub storage_type: TypeNode
+    pub canonical: bool
+    pub absent: AbsentPolicy
+    pub name: str
+    pub renamed_from: list[str]
+
+
+pub model VariantShape:
+    """An enum member, its name history and anonymous payload fields."""
+
+    pub identity: bytes
+    pub fields: list[FieldShape]
+    pub name: str
+    pub renamed_from: list[str]

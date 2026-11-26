@@ -1,0 +1,227 @@
+"""Discover one locked engine per physical store and authenticate startup through incan.engine/1."""
+
+from rust::std::env::consts import OS
+from rust::std::fs import metadata
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
+from std.fs import Path
+from pub::incan_platform.ipc import dial
+from core_process import executable as current_executable, spawn_detached, running, terminate
+from engine_channel import Channel, SendOutcome
+from engine_messages import Message
+from engine_state import Identity
+from engine_wire import Refusal, RefusalKind, zero_id
+from owner_endpoint import bindable, prepare_directory, socket_prefix
+from unit_freshness import fingerprint
+from files import discard_file
+from publication import publish
+
+const STARTUP_POLLS: int = 2500
+# A handshake that has not completed in five seconds is a stuck peer, not engine work to wait for.
+pub const HANDSHAKE_SECONDS: u64 = 5
+
+
+pub model ServiceEndpoint:
+    """Disposable endpoint plus its generation's scheduling and startup locks and the record of its socket."""
+
+    pub socket: str
+    pub lock: str
+    pub startup_lock: str
+    pub record: str
+
+
+pub def endpoint(root: Path, identity: Identity) -> Result[ServiceEndpoint, Refusal]:
+    """
+    Keep discovery short and private; the full identity is checked by the handshake. Every name is keyed by the
+    service and compiler generations, so engines of different generations over one store coexist, each with its own
+    socket, locks and record: a release alternates its seed's and its candidate's toolchains over one home.
+    """
+    directory = root.joinpath("engine")
+    prepare_directory(directory.0).map_err(transport)?
+    name = fingerprint(
+        [identity.store_id, identity.profile, identity.service_generation, identity.compiler_generation],
+    ).map_err(transport)?
+    short = name[:20]
+    path = f"{socket_prefix(directory.0).map_err(transport)?}e-{short}.sock"
+    bindable(path).map_err(transport)?
+    return Ok(
+        ServiceEndpoint(
+            socket=path,
+            lock=directory.joinpath(f"service-{short}.lock").0,
+            startup_lock=directory.joinpath(f"startup-{short}.lock").0,
+            record=directory.joinpath(f"endpoint-{short}").0,
+        ),
+    )
+
+
+pub def owner_uid(root: Path) -> Result[u32, Refusal]:
+    """Read the store owner's effective user identity through the OS metadata wrapper."""
+    return metadata(root.0).map((found) => found.uid()).map_err((error) => transport(str(error)))
+
+
+pub def connect(root: Path, identity: Identity, idle: int = 600) -> Result[Channel, Refusal]:
+    """Serialize startup, launch the same Oven executable and require Welcome before returning."""
+    executable = current_executable().map_err(transport)?
+    return connect_with(root, identity, executable, idle)
+
+
+pub def connect_with(root: Path, identity: Identity, executable: str, idle: int = 600) -> Result[Channel, Refusal]:
+    """
+    Connect using an explicit Oven executable, allowing process-level tests of the installed service entry. An engine
+    that exits idle just as this caller connects closes the connection before Welcome. The caller has sent no request,
+    so once that engine no longer holds its lifetime lock it connects once more, which starts a fresh engine.
+    """
+    match connect_once(root, identity, executable, idle):
+        Ok(channel) => return Ok(channel)
+        Err(refusal) =>
+            mut closed = false
+            match refusal.kind:
+                RefusalKind.Transport => closed = true
+                RefusalKind.ShortRead => closed = true
+                _ => pass
+            if closed and service_available(endpoint(root, identity)?.lock)?:
+                return connect_once(root, identity, executable, idle)
+            return Err(refusal)
+
+
+def connect_once(root: Path, identity: Identity, executable: str, idle: int) -> Result[Channel, Refusal]:
+    """Serialize startup, reach or launch the store's engine and require its Welcome."""
+    selected = endpoint(root, identity)?
+    held = Path(selected.startup_lock).lock_exclusive().map_err((error) => transport(error.message()))?
+    match dial(selected.socket):
+        Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
+        Err(_) => pass
+    # The service holds this lock for its entire lifetime, including its final drain.
+    if not service_available(selected.lock)?:
+        # A service started under another runtime directory listens elsewhere; the store records where. The handshake
+        # still requires this caller's full identity there.
+        if let Some(recorded) = recorded_endpoint(selected.record):
+            if recorded != selected.socket:
+                match dial(recorded):
+                    Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
+                    Err(_) => pass
+        return Err(
+            Refusal(kind=RefusalKind.Identity, detail="this generation's engine holds its lock but answers no socket; drain it first"),
+        )
+    arguments = [
+        "--internal-engine",
+        root.0,
+        identity.store_id,
+        identity.profile,
+        identity.service_generation,
+        identity.compiler_generation,
+        str(idle),
+    ]
+    mut child = spawn_detached(executable, arguments, idle_memory_environment()).map_err(transport)?
+    for _poll in range(STARTUP_POLLS):
+        match dial(selected.socket):
+            Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
+            Err(_) => pass
+        if not running(child).map_err(transport)?:
+            return Err(transport("engine exited before Welcome"))
+        sleep(Duration.from_millis(2))
+    terminate(child).map_err(transport)?
+    return Err(transport("engine did not acknowledge startup"))
+
+
+def idle_memory_environment() -> dict[str, str]:
+    """Ask Apple's allocator to return freed pages and disable its large cache in the resident service only."""
+    if OS == "macos":
+        return {"MallocSpaceEfficient": "1", "MallocAggressiveMadvise": "1", "MallocLargeCache": "0"}
+    return {}
+
+
+pub def handshake(initial: Channel, identity: Identity, lifetime: str = "") -> Result[Channel, Refusal]:
+    """
+    Require OS user, exact negotiated identities and limits; startup errors never select legacy compilation.
+
+    `lifetime` names the engine's lifetime lock. An engine answers Hello between requests, so a caller that connects
+    while another caller's build runs is greeted when that build ends: it waits for its Welcome as long as the engine
+    holds that lock. A peer that holds none, or a caller that names no lock, is refused once the handshake bound passes.
+    """
+    mut channel = initial
+    if channel.transport.peer().map_err(transport)?.uid != identity.uid:
+        return Err(Refusal(kind=RefusalKind.Identity, detail="engine service peer user mismatch"))
+    channel.transport.wait_at_most(HANDSHAKE_SECONDS)
+    channel.transport.write_at_most(HANDSHAKE_SECONDS)
+    sent = channel.send(zero_id(), Message.Hello(identity.hello()))?
+    match sent:
+        SendOutcome.Blocked => return Err(transport("initial Hello has no data credit"))
+        SendOutcome.Sent(_) => pass
+    await_welcome(channel, lifetime)?
+    reply = channel.receive()?
+    match reply.message:
+        Message.Welcome(welcome) =>
+            if welcome.store_id != identity.store_id or welcome.profile != identity.profile:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="engine Welcome store or profile mismatch"))
+            if welcome.service_generation != identity.service_generation:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="engine Welcome service generation mismatch"))
+            if welcome.compiler_generation != identity.compiler_generation or welcome.peer_uid != identity.uid:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="engine Welcome compiler or peer mismatch"))
+            if welcome.credits != 8 or welcome.payload_limit != 65536:
+                return Err(Refusal(kind=RefusalKind.Version, detail="engine Welcome transport limits mismatch"))
+        Message.Refused(reason) => return Err(Refusal(kind=RefusalKind.Identity, detail=reason.detail))
+        _ => return Err(transport("engine did not answer Hello with Welcome"))
+    channel.acknowledge(reply)?
+    # The Hello acknowledgment is consumed here so the first application reply is never stale control state.
+    ack = channel.receive()?
+    match ack.message:
+        Message.Ack(_) => pass
+        _ => return Err(transport("engine did not acknowledge Hello"))
+    return Ok(channel)
+
+
+def await_welcome(channel: Borrowed[Channel], lifetime: str) -> Result[None, Refusal]:
+    """
+    Wait until the engine's answer to Hello is readable: within the handshake bound, or for as long as the engine
+    holding `lifetime` lives. Its whole Welcome is then read within the bound.
+    """
+    started = Instant.now()
+    while not channel.transport.readable().map_err(transport)?:
+        if int(started.elapsed().as_secs()) < int(HANDSHAKE_SECONDS):
+            sleep(Duration.from_millis(2))
+            continue
+        if lifetime == "" or service_available(lifetime)?:
+            return Err(transport("the engine did not answer Hello and holds no lifetime lock"))
+        sleep(Duration.from_millis(20))
+    return Ok(None)
+
+
+pub def transport(detail: str) -> Refusal:
+    """Keep discovery and process failures typed at the engine boundary."""
+    return Refusal(kind=RefusalKind.Transport, detail=detail)
+
+
+def service_available(path: str) -> Result[bool, Refusal]:
+    """Probe and release the lifetime lock before spawning a child that must acquire it itself."""
+    available = Path(path).try_lock_exclusive().map_err((error) => transport(error.message()))?
+    return Ok(available is not None)
+
+
+pub def record_endpoint(record: str, socket: str) -> Result[None, Refusal]:
+    """
+    Record where this generation's service listens, for callers whose runtime directory names another socket path.
+    The socket path depends on the caller's environment; this record depends only on the store and the generation.
+    """
+    return publish(Path(record), socket + "\n").map_err(transport)
+
+
+pub def withdraw_endpoint(record: str, socket: str) -> None:
+    """Withdraw the record when it still names this service's socket."""
+    match recorded_endpoint(record):
+        Some(recorded) =>
+            if recorded == socket:
+                discard_file(Path(record))
+        None => pass
+
+
+pub def recorded_endpoint(record: str) -> Option[str]:
+    """The socket this generation's service recorded, or `None` without a readable record."""
+    match Path(record).read_text("utf-8", "strict"):
+        Ok(text) =>
+            recorded = text.strip()
+            if recorded.startswith("/"):
+                return Some(recorded)
+            return None
+        Err(_) => return None

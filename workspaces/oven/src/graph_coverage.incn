@@ -1,0 +1,138 @@
+"""Read optional coverage evidence from one report for the current graph snapshot."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue, parse
+from std.primitives import decode_utf8
+from graph_queries import nested, text
+from unit_freshness import fingerprint
+
+const REPORT_LIMIT: int = 1_048_576
+const REPORT_SCHEMA: str = "incan.coverage-report/1"
+const COVERAGE_SOURCE: str = "coverage_report"
+
+
+model CoverageCounts:
+    """Covered and instrumented lines supplied by the report for one file."""
+
+    covered: int
+    instrumented: int
+
+
+pub def coverage_facts(
+    root: Path, records: list[JsonValue], snapshot: str, report: Path,
+) -> Result[list[JsonValue], str]:
+    """
+    Project input evidence onto this snapshot without calculating a risk score.
+
+    1. Read and validate a bounded report and all of its rows.
+    2. Match rows to unambiguous file records under the graph's existing anchor.
+    3. Emit raw counts and original-byte evidence in path order.
+    """
+    # 1. A missing, stale or invalid report contributes no coverage observations.
+    if not report.is_file():
+        return Ok([])
+    match read_report(report, snapshot):
+        Ok(facts) =>
+            # 2. The graph supplies the file identity, language and span.
+            measured, digest = facts
+            selected = represented_files(root, records, measured)
+            # 3. A valid report never makes a record for an unmatched or ambiguous path.
+            return project_coverage(measured, digest, selected)
+        Err(_) => return Ok([])
+
+
+def read_report(path: Path, snapshot: str) -> Result[tuple[Dict[str, CoverageCounts], str], str]:
+    """Read one regular file and validate the exact bytes used for its evidence digest."""
+    file = path.open("rb").map_err((error) => error.message())?
+    data = file.read_bytes(REPORT_LIMIT + 1).map_err((error) => error.message())?
+    if len(data) > REPORT_LIMIT:
+        return Err("coverage report exceeds the byte limit")
+    valid, content = decode_utf8(data, false)
+    if not valid:
+        return Err("coverage report must be UTF-8")
+    document = parse(content).map_err((error) => error.message())?
+    if text(document, "schema") != REPORT_SCHEMA or text(document, "snapshot_id") != snapshot:
+        return Err("coverage report schema or snapshot does not match")
+    rows = nested(document, "files").expect_array().map_err((error) => error.message())?
+    measured = coverage_rows(rows)?
+    return Ok((measured, f"sha256:{hexlify(sha256.digest(data))}"))
+
+
+def coverage_rows(rows: list[JsonValue]) -> Result[Dict[str, CoverageCounts], str]:
+    """Validate the entire input before any single file can become an observation."""
+    mut measured: Dict[str, CoverageCounts] = {}
+    for row in rows:
+        path = text(row, "path")
+        components = path.split("/")
+        invalid_component = "" in components or "." in components or ".." in components
+        drive_qualified = (
+            len(path) >= 2 and path[1:2] == ":" and path[0:1].lower() in "abcdefghijklmnopqrstuvwxyz"
+        )
+        if "\\" in path or invalid_component or drive_qualified:
+            return Err("coverage path must be canonical and relative to the graph anchor")
+        if path in measured:
+            return Err("coverage report contains a duplicate file path")
+        covered = nested(row, "covered_lines").expect_int().map_err((error) => error.message())?
+        instrumented = nested(row, "instrumented_lines").expect_int().map_err((error) => error.message())?
+        if covered < 0 or instrumented <= 0 or covered > instrumented:
+            return Err("coverage line counts are outside their valid range")
+        measured[path] = CoverageCounts(covered=covered, instrumented=instrumented)
+    return Ok(measured)
+
+
+def represented_files(
+    root: Path, records: list[JsonValue], measured: Dict[str, CoverageCounts],
+) -> Dict[str, JsonValue]:
+    """Keep selected file records inside the anchor and mark multiply represented paths ambiguous."""
+    mut prefix = root.0
+    if not prefix.endswith("/"):
+        prefix += "/"
+    mut files: Dict[str, JsonValue] = {}
+    for record in records:
+        path = text(record, "path")
+        if text(record, "record") == "file" and path.startswith(prefix):
+            relative = path[len(prefix):]
+            if relative in measured:
+                if relative in files:
+                    files[relative] = JsonValue.null()
+                else:
+                    files[relative] = record
+    return files
+
+
+def project_coverage(
+    measured: Dict[str, CoverageCounts], digest: str, files: Dict[str, JsonValue],
+) -> Result[list[JsonValue], str]:
+    """Emit observations only for paths with exactly one represented source."""
+    mut result: list[JsonValue] = []
+    for path in sorted([key for key in measured.keys()]):
+        if let Some(represented) = files.get(path):
+            if not represented.is_null():
+                result.append(observation(path, measured[path], digest, represented)?)
+    return Ok(result)
+
+
+def observation(path: str, counts: CoverageCounts, digest: str, file: JsonValue) -> Result[JsonValue, str]:
+    """Attach attributable file-level evidence, keeping the measured line counts unchanged."""
+    source = text(file, "id")
+    identity = fingerprint([COVERAGE_SOURCE, source, digest])?
+    return Ok(JsonValue.object({
+        "record": JsonValue.string("risk_signal"),
+        "schema": JsonValue.string("incan.process-risk/1"),
+        "id": JsonValue.string(f"risk:{identity}"),
+        "source": JsonValue.string(COVERAGE_SOURCE),
+        "provenance": JsonValue.string("process_observed"),
+        "degraded": JsonValue.bool(false),
+        "language": nested(file, "language"),
+        "path": JsonValue.string(path),
+        "name": JsonValue.string(path),
+        "target_id": JsonValue.string(source),
+        "covered_lines": JsonValue.int(counts.covered),
+        "instrumented_lines": JsonValue.int(counts.instrumented),
+        "report_digest": JsonValue.string(digest),
+        "evidence": JsonValue.array([JsonValue.string(digest)]),
+        "controls": JsonValue.string("Counts describe only the instrumented lines in this report."),
+        "span": JsonValue.object({"file": JsonValue.string(text(file, "path")), "start_line": JsonValue.int(1)}),
+    }))

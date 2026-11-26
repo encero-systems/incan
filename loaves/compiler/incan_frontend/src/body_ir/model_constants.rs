@@ -35,10 +35,7 @@ pub(super) fn collect(
             let ast::Declaration::Const(item) = &declaration.node else {
                 return None;
             };
-            let canonical = facts
-                .declarations
-                .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?;
+            let canonical = facts.declarations.declaration_identities.get(&declaration.span)?;
             Some((item.name.as_str(), (canonical, item)))
         })
         .collect::<HashMap<_, _>>();

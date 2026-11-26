@@ -1,0 +1,17 @@
+from std.derives.comparison import Ord as Ordered
+
+
+pub enum Level with Ordered:
+    Low
+    High
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()

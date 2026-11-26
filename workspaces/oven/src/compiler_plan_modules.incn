@@ -1,0 +1,533 @@
+"""Fold a module's plan functions into one module-level plan record, and read which modules a compile restored."""
+
+from pub::incan_platform.trace import Operation, enter_producer, finish_producer
+from rust::std::mem import take
+from std.fs import Path
+from std.primitives.hash import sha256
+from std.encoding.hex import hexlify, unhexlify
+from pub::incan_mir_plan import AdmittedFunction, AdmittedModule, LoweringEvent, decode_lowering_event, encode_lowering_event, placed_admission, read_module_admission
+from pub::incan_platform.store import Snapshot, Transaction
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models_bindings import single_row_reference_prefix
+from pub::incan_mir_plan import (
+    ADMITTED_MODULE_NOTE,
+    MAX_PLAN_MODULE_SELECTION_BYTES,
+    PARTIAL_MODULE_NOTE,
+    PLAN_MODULE_FAMILY,
+    WHOLE_ADMISSION_SELECTOR,
+    PlanModuleFunction,
+    PlanModuleValue,
+    WholeModuleAdmission,
+    decode_whole_module_admission,
+    encode_plan_module,
+)
+from pub::internal_models.records import ReadWitness, ReadScope, RecordRequest, RecordKey, encode_record_key
+from compiler_source_projection import positioned_source_key
+from compiler_body_keys import IDENTITY_PROFILE, body_key
+from compiler_lowering_order import LoweringOrder, LoweringOrders
+from compiler_graph_records import (
+    EditCutoff, OutputSlots, family_outputs, matching_plan_evaluation, prepare_evaluation, retire_output,
+)
+from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE, admitted_plan, canonical_digest
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
+from jec import begin as begin_work, record as record_work
+
+pub model StagedPlan:
+    """One plan function a request staged: where its module's record is kept, and what the record says of it."""
+
+    # The project-relative module file, which names the module's record, and the module as lowering names it.
+    pub file: str
+    pub module: str
+    pub function: PlanModuleFunction
+    pub plan: RecordKey
+    pub order: LoweringOrder
+
+
+pub def plan_module_key(origin: str, file: str, value: bytes) -> RecordKey:
+    """Name one module's plan record under its module file; its context is the content it holds."""
+    return body_key(PLAN_MODULE_FAMILY, origin, file, "checked", hexlify(sha256.digest(value)))
+
+
+pub def folded_modules(staged: list[StagedPlan]) -> Dict[str, list[StagedPlan]]:
+    """Group this request's keyed functions by the file that owns their aggregate."""
+    mut modules: Dict[str, list[StagedPlan]] = {}
+    for plan in staged:
+        if plan.file == "" or plan.module == "":
+            continue
+        if plan.file not in modules:
+            modules[plan.file] = []
+        modules[plan.file].append(plan)
+    return modules
+
+
+def ordered_plans(plans: list[StagedPlan]) -> Result[list[StagedPlan], str]:
+    """Give aggregate bytes and read receipts the same order across keyed and restored work."""
+    mut ordered: Dict[str, StagedPlan] = {}
+    for plan in plans:
+        if plan.module != plans[0].module:
+            return Err("one module file holds plan functions of two lowering modules")
+        name = plan.function.identity + "\n" + plan.function.function
+        if name in ordered:
+            return Err("duplicate plan function in module publication")
+        ordered[name] = plan
+    return Ok([ordered[name] for name in sorted([name for name in ordered.keys()])])
+
+
+def module_value(plans: list[StagedPlan]) -> Result[bytes, str]:
+    functions = [plan.function for plan in plans]
+    return encode_plan_module(PlanModuleValue(module=plans[0].module, functions=functions)).map_err(
+        (error) => f"plan-module record refused: {error:?}",
+    )
+
+
+pub def retire_unfolded(
+    mut prepared: Transaction,
+    selected: Option[Snapshot],
+    origin: str,
+    rechecked: list[str],
+    folded: list[str],
+) -> Result[None, str]:
+    """
+    Retire the earlier plan record of every module this request checked again and folded no new record for, such as
+    one whose bodies all lost their products. Its witnesses still validate in the graph, so only this keeps a later
+    request from restoring functions of the module as it was.
+    """
+    prior = match selected:
+        Some(value) => value
+        None => return Ok(None)
+
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=Some(rechecked), excluded=folded)
+    for output in family_outputs(prior, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(slots))?:
+        fields = output.split("\t")
+        if len(fields) != 6:
+            return Err("plan-module output index returned a malformed record key")
+        key = RecordKey(
+            family=fields[0],
+            identity_profile=fields[1],
+            origin=fields[2],
+            identity=fields[3],
+            facet=fields[4],
+            context=fields[5],
+        )
+        retire_output(prepared, LOWERING_PROFILE, key)?
+    return Ok(None)
+
+
+pub model PlanModuleAdmissions:
+    """The actual request's validated scalar and complete positioned module results."""
+
+    pub scalar: Dict[str, AdmittedModule] = {}
+    pub compact: Dict[str, WholeModuleAdmission] = {}
+
+    pub def restored_modules(self, whole_only: bool = false) -> list[str]:
+        """Return canonical module names, optionally counting only complete restoration."""
+        return sorted(
+            [name for name in self.scalar.keys() if not whole_only or self.scalar[name].complete] + [name for name in self.compact.keys()],
+        )
+
+
+pub def restored_modules(report: Path, whole_only: bool = false) -> Result[list[str], str]:
+    """List module pages read by lowering, optionally requiring every ordinary body to have been restored."""
+    notes = read_admission_notes(report, None, [], None, whole_only)?
+    return Ok(notes.restored_modules(whole_only))
+
+
+pub def plan_module_admissions(
+    report: Path,
+    selected: Option[Snapshot],
+    admitted: Borrowed[list[AdmittedPlanModule]],
+    authority: Option[str],
+) -> Result[PlanModuleAdmissions, str]:
+    """Validate one actual compile request's admission directory for its census and graph publication."""
+    return read_admission_notes(report, selected, admitted, authority)
+
+
+def read_admission_notes(
+    report: Path,
+    selected: Option[Snapshot],
+    admitted: Borrowed[list[AdmittedPlanModule]],
+    authority: Option[str],
+    whole_only: bool = false,
+) -> Result[PlanModuleAdmissions, str]:
+    mut modules = PlanModuleAdmissions()
+    mut positions: Dict[str, int] = {}
+    mut snapshot = ""
+    if let Some(digest) = authority:
+        if not canonical_digest(digest):
+            return Err("complete Plan admission has no exact dispatched selection")
+        snapshot = match selected:
+            Some(graph) => graph.digest
+            None => return Err("complete Plan admission has no exact dispatched selection")
+
+        for index in range(len(admitted)):
+            name = admitted[index].plan.module
+            if name in positions:
+                return Err("two selected pages for one admitted module")
+            positions[name] = index
+        if report.is_symlink() or (report.exists() and not report.is_dir()):
+            return Err("plan module admissions are not in their request directory")
+    if not report.is_dir():
+        return Ok(modules)
+    for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
+        name = entry.name()
+        mut suffix = ADMITTED_MODULE_NOTE
+        if not whole_only and name.endswith(PARTIAL_MODULE_NOTE):
+            suffix = PARTIAL_MODULE_NOTE
+        if name.endswith(suffix):
+            if not entry.is_file():
+                if authority is not None:
+                    return Err("module admission is not an ordinary staged file")
+                continue
+            octets = unhexlify(name[:len(name) - len(suffix)]).map_err((error) => error.message())?
+            module = octets.decode().map_err((_) => "plan module note has a malformed name")?
+            if let Some(digest) = authority:
+                if let Some(whole) = positioned_admission_at(entry)?:
+                    if (
+                        suffix != ADMITTED_MODULE_NOTE
+                        or whole.module != module
+                        or whole.selection != digest
+                        or name != hexlify(module.encode("utf-8")) + ADMITTED_MODULE_NOTE
+                    ):
+                        return Err("whole-module note differs from the dispatched selection or filename")
+                    if module in modules.scalar or module in modules.compact:
+                        return Err("module has two admission notes")
+                    if module not in positions:
+                        return Err("whole-module admission has no selected module")
+                    current_positioned_admission(snapshot, admitted[positions[module]], whole)?
+                    modules.compact[module] = whole
+                    continue
+            note = read_module_admission(entry)?
+            if note.module != module or note.complete != (suffix == ADMITTED_MODULE_NOTE):
+                return Err("module admission note disagrees with its filename")
+            if module in modules.scalar or module in modules.compact:
+                return Err("module has two admission notes")
+            modules.scalar[module] = note
+    return Ok(modules)
+
+
+def positioned_admission_at(entry: Path) -> Result[Option[WholeModuleAdmission], str]:
+    """Read only the prefix for an ordinary note and bound the actual compact bytes before decoding."""
+    if entry.is_symlink():
+        return Err("module admission is not an ordinary staged file")
+    file = entry.open("rb").map_err((error) => error.message())?
+    length = file.seek(0, 2).map_err((error) => error.message())?
+    _ = file.seek(0, 0).map_err((error) => error.message())?
+    prefix = file.read_exact(min([length, 32])).map_err((error) => error.message())?
+    if not single_row_reference_prefix(prefix, WHOLE_ADMISSION_SELECTOR.to_vec()):
+        return Ok(None)
+    if length > int(MAX_PLAN_MODULE_SELECTION_BYTES):
+        return Err("whole-module admission exceeds the Plan record byte limit")
+    companion = entry.parent().joinpath(entry.name() + ".placement")
+    if companion.exists() or companion.is_symlink():
+        return Err("whole-module admission has a stale placement companion")
+    _ = file.seek(0, 0).map_err((error) => error.message())?
+    encoded = file.read_exact(length).map_err((error) => error.message())?
+    if encoded[:len(prefix)] != prefix or file.seek(0, 2).map_err((error) => error.message())? != length:
+        return Err("whole-module admission changed while reading its selected bytes")
+    return Ok(Some(decode_whole_module_admission(encoded)?))
+
+
+def current_positioned_admission(
+    snapshot: str,
+    row: Borrowed[AdmittedPlanModule],
+    note: Borrowed[WholeModuleAdmission],
+) -> Result[None, str]:
+    """Resolve the exact output key, current placement, byte digest and count in the already selected graph."""
+    if (
+        row.admitted_snapshot != snapshot
+        or not row.placement_current
+        or note.output != encode_record_key(row.key)?
+        or note.digest != row.value_digest
+        or note.count != len(row.plan.functions)
+    ):
+        return Err("whole-module admission differs from its current positioned graph page")
+    return Ok(None)
+
+
+pub def staged_plan(
+    file: str,
+    event: LoweringEvent,
+    identity: str,
+    symbol: str,
+    function: str,
+    key: str,
+    plan: RecordKey,
+    order: LoweringOrder,
+) -> Result[StagedPlan, str]:
+    """
+    Describe one staged plan function for its module's record. The event names its module as lowering does; a closed
+    generic instance names none and joins no module. The recorded event always says `reused`, so a module's record is
+    the same bytes whether its functions were evaluated or reused by the request that folds it.
+    """
+    mut retained = event
+    retained.reused = true
+    return describe_staged_plan(file, retained, identity, symbol, function, key, plan, order)
+
+
+def describe_staged_plan(
+    file: str,
+    event: Borrowed[LoweringEvent],
+    identity: str,
+    symbol: str,
+    function: str,
+    key: str,
+    plan: RecordKey,
+    order: LoweringOrder,
+) -> Result[StagedPlan, str]:
+    """Encode a normalized event without consuming its product."""
+    recorded = PlanModuleFunction(
+        identity=identity,
+        symbol=symbol,
+        function=function,
+        key=key,
+        event=encode_lowering_event(event)?,
+    )
+    return Ok(StagedPlan(file=file, module=event.module, function=recorded, plan=plan, order=order))
+
+
+def restored_plans(
+    mut source: PreparedBodyRecordSource, mut orders: LoweringOrders, graph: Snapshot,
+    module: Borrowed[AdmittedPlanModule], note: Option[AdmittedModule], keyed: list[StagedPlan], cutoff: EditCutoff = EditCutoff(),
+) -> Result[list[StagedPlan], str]:
+    """
+    Rebind only the functions restored in this compile to their selected scalar products and rank evidence. A
+    function the edit's `cutoff` leaves valid by the snapshot is not validated again.
+    """
+    page = admitted_plan(graph, module)?
+    if page.module != module.plan.module:
+        return Err("admitted module differs from its selected plan page")
+    reported = set([plan.function.function for plan in keyed])
+    mut stored: Dict[str, int] = {}
+    for index in range(len(page.functions)):
+        name = page.functions[index].function
+        if name in stored:
+            return Err("two module functions have the same native name")
+        stored[name] = index
+    compact = note is None
+    mut scalar: list[AdmittedFunction] = []
+    if let Some(value) = note:
+        scalar = value.functions
+    mut members: list[tuple[int, Option[int]]] = []
+    if compact:
+        for index in range(len(page.functions)):
+            if page.functions[index].function not in reported:
+                members.append((index, None))
+    else:
+        for position in range(len(scalar)):
+            name = scalar[position].function
+            if name in reported:
+                continue
+            if name not in stored:
+                return Err("admitted function has no selected module event")
+            members.append((stored[name], Some(position)))
+    owners = [page.functions[index].identity for index, _ in members]
+    slots = OutputSlots(origin=module.key.origin, identity_profile=IDENTITY_PROFILE, included=Some(owners))
+    current = set(family_outputs(graph, "plan-function", LOWERING_PROFILE, Some(slots))?)
+    mut result: list[StagedPlan] = []
+    for index, placement in members:
+        function = page.functions[index]
+        mut event = decode_lowering_event(function.event)?
+        key = body_key("plan-function", module.key.origin, function.identity, "body:" + function.function, function.key)
+        output = encode_record_key(key)?
+        if output not in current or event.key != function.key or event.module != page.module or event.function != function.function:
+            return Err("restored function differs from its current graph slot or selected module event")
+        if event.identity != function.symbol:
+            return Err("restored function changed an uncertified canonical identity")
+        if let Some(position) = placement:
+            admitted = scalar[position]
+            if function.symbol != admitted.identity and (function.identity == function.symbol or admitted.placement is None):
+                return Err("restored function changed an uncertified canonical identity")
+            event = placed_admission(event, page.module, admitted)?
+        evaluation, receipt = match matching_plan_evaluation(graph, key, LOWERING_PROFILE, event.product, cutoff)?:
+            Some(authority) => authority
+            None => return Err("restored function lost its selected evaluation")
+        order = orders.selected_order(graph, module.key.identity, receipt.preparation.output.origin,
+            evaluation.namespace, receipt.preparation.rank_certificate)?
+        event.reused = true
+        symbol = event.identity.clone()
+        plan = describe_staged_plan(
+            module.key.identity, event, function.identity, symbol, function.function, function.key, key, order,
+        )?
+        product = take(event.product)
+        source.add(output, product)
+        result.append(plan)
+    return Ok(result)
+
+
+def bind_source_position(source: PreparedBodyRecordSource, origin: str, file: str, mut requests: list[RecordRequest]) -> Result[None, str]:
+    """A future worker may use the old coordinates directly only while this exact positioned source still validates."""
+    positioned = positioned_source_key(origin, file)
+    if source.holds(encode_record_key(positioned)?):
+        requests.append(prepared_product_request(positioned))
+    return Ok(None)
+
+
+def rebind_complete_module(
+    mut prepared: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope, graph: Snapshot,
+    module: Borrowed[AdmittedPlanModule], note: AdmittedModule, order: LoweringOrder,
+) -> Result[Option[RecordKey], str]:
+    """Publish the current placement of selected immutable functions without reopening their normalized plans."""
+    require_reconciled_graph(prepared, graph, module)?
+    mut changes: Dict[str, AdmittedFunction] = {}
+    for function in note.functions:
+        if function.placement is not None:
+            changes[function.function] = function
+    if len(changes) == 0 and module.placement_current:
+        return Ok(Some(module.key))
+    mut page = admitted_plan(graph, module)?
+    if page.module != note.module:
+        return Err("restored module differs from its selected page")
+    # The plan functions the module's receipt proves, each with the digest it read, as its selection derived them.
+    proofs = module.proofs
+    mut requests: list[RecordRequest] = []
+    mut replaced = 0
+    for index in range(len(page.functions)):
+        function = page.functions[index]
+        key = body_key("plan-function", module.key.origin, function.identity, "body:" + function.function, function.key)
+        written = encode_record_key(key)?
+        if written not in proofs:
+            return Ok(None)
+        requests.append(prepared_product_request(key))
+        if function.function in changes:
+            current = changes[function.function]
+            previous = decode_lowering_event(function.event)?
+            if previous.identity != function.symbol or previous.key != function.key or (function.identity == function.symbol and current.identity != function.symbol):
+                return Err("position change is inconsistent with its admitted plan function")
+            placed = placed_admission(previous, note.module, current)?
+            page.functions[index].symbol = current.identity
+            page.functions[index].event = encode_lowering_event(placed)?
+            replaced += 1
+    if len(changes) != replaced or len(proofs) != len(requests):
+        return Err("admitted placement or scalar set differs from its selected module")
+    attempt = enter_producer("oven", "plan-module", module.key.identity, "reposition")
+    value = encode_plan_module(page).map_err((error) => f"positioned plan module refused: {error:?}")?
+    finish_producer(attempt, "produced")
+    output = plan_module_key(module.key.origin, module.key.identity, value)
+    bind_source_position(source, module.key.origin, module.key.identity, requests)?
+    receipt = source.receipt(scope, output, requests, order.evidence, proofs)?
+    _ = prepare_evaluation(prepared, "plan-module-" + module.key.identity,
+        ProducerRank(namespace=order.rank, stage=ProducerStage.PlanFunction, dependency=1), value, receipt)?
+    source.add(encode_record_key(output)?, value)
+    return Ok(Some(output))
+
+
+def require_reconciled_graph(
+    prepared: Borrowed[Transaction], graph: Borrowed[Snapshot], module: Borrowed[AdmittedPlanModule],
+) -> Result[None, str]:
+    """Require the admitted module, selected graph and prepared transaction to share the same placement."""
+    if (
+        module.admitted_snapshot != graph.digest
+        or prepared.root.value != graph.root.value
+        or prepared.root.placement != graph.root.placement
+        or prepared.base != graph.generation
+        or prepared.view != graph.view
+    ):
+        return Err("admitted module belongs to a different snapshot")
+    return Ok(None)
+
+
+pub def stage_plan_modules(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    mut orders: LoweringOrders,
+    scope: ReadScope,
+    selected: Option[Snapshot],
+    origin: str,
+    rechecked: list[str],
+    staged: list[StagedPlan],
+    admissions: Borrowed[PlanModuleAdmissions],
+    admitted: list[AdmittedPlanModule],
+    cutoff: EditCutoff = EditCutoff(),
+) -> Result[tuple[list[RecordKey], int, Dict[str, str]], str]:
+    """
+    Keep one plan record per module current, and return the records of the modules the compiler restored.
+
+    1. Fold each module's staged plan functions into its record, witnessed by those plan functions.
+    2. Retire the earlier record of a module this request checked again without folding a new one.
+    3. Make each restored module's record readable, so the native interface witnesses the functions it carries.
+    """
+    reconciling = begin_work()
+    mut modules = folded_modules(staged)
+    mut folded: list[str] = []
+    mut carried: list[RecordKey] = []
+    mut carried_digests: Dict[str, str] = {}
+    mut carried_namespace = 0
+    mut rebuilt: set[str] = set()
+    mut seen: set[str] = set()
+    for module in admitted:
+        name = module.plan.module
+        compact = name in admissions.compact
+        if not compact and name not in admissions.scalar:
+            continue
+        if name in seen:
+            return Err("two selected pages for one admitted module")
+        seen.add(name)
+        mut complete = compact
+        mut note: Option[AdmittedModule] = None
+        if name in admissions.scalar:
+            scalar = admissions.scalar[name]
+            if not module.placement_current and not scalar.inspected:
+                return Err("inspected module lacks its placement report")
+            complete = scalar.complete and len(scalar.functions) == len(module.plan.functions)
+            note = Some(scalar)
+        file = module.key.identity
+        graph = match selected:
+            Some(value) => value
+            None => return Err("a restored module has no selected graph")
+        if compact:
+            require_reconciled_graph(prepared, graph, module)?
+            if not module.placement_current:
+                return Err("compact module lost its selected placement")
+        if complete and file not in modules:
+            position = orders.selected_order(graph, file, module.key.origin, module.namespace, module.certificate)?
+            if position.evidence == module.certificate and orders.fresh(file).rank <= position.rank:
+                rebound = match note:
+                    Some(scalar) => rebind_complete_module(prepared, source, scope, graph, module, scalar, position)?
+                    None => Some(module.key)
+                if let Some(carried_key) = rebound:
+                    if carried_key == module.key:
+                        carried_digests[encode_record_key(module.key)?] = module.value_digest
+                    carried.append(carried_key)
+                    carried_namespace = max([carried_namespace, position.rank])
+                    folded.append(file)
+                    continue
+        keyed = modules.get(file, [])
+        retained = restored_plans(source, orders, graph, module, note, keyed, cutoff)?
+        modules[file] = keyed + retained
+        rebuilt.add(file)
+    if len(seen) != len(admissions.scalar) + len(admissions.compact):
+        return Err("module admission note has no selected page")
+    for file in sorted([name for name in modules.keys()]):
+        plans = ordered_plans(modules[file])?
+        if len(plans) == 0:
+            continue
+        attempt = enter_producer("oven", "plan-module", file, "fold")
+        value = module_value(plans)?
+        finish_producer(attempt, "produced")
+        key = plan_module_key(origin, file, value)
+        # A folded module can publish independent order only when every function supplies the same proof.
+        namespace = max([orders.fresh(file).rank] + [plan.order.rank for plan in plans])
+        mut certificate = plans[0].order.evidence
+        for plan in plans:
+            if plan.order.evidence != certificate:
+                certificate = LoweringOrder().evidence
+                break
+        mut requests = [prepared_product_request(plan.plan) for plan in plans]
+        bind_source_position(source, origin, file, requests)?
+        receipt = source.receipt(scope, key, requests, certificate)?
+        _ = prepare_evaluation(
+            prepared,
+            "plan-module-" + file,
+            ProducerRank(namespace=namespace, stage=ProducerStage.PlanFunction, dependency=1),
+            value,
+            receipt,
+        )?
+        folded.append(file)
+        if file in rebuilt:
+            source.add(encode_record_key(key)?, value)
+            carried.append(key)
+            carried_namespace = max([carried_namespace, namespace])
+    # 2. Every other rechecked module's earlier record describes bodies that no longer have those products.
+    retire_unfolded(prepared, selected, origin, rechecked, folded)?
+    record_work(Operation.EngineGraphStaging, "plan-module-reconciliation", reconciling)
+    return Ok((carried, carried_namespace, carried_digests))

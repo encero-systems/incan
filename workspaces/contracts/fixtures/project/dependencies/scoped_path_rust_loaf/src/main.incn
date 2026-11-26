@@ -1,0 +1,13 @@
+# behavior: A scoped path Loaf builds and exports its graph by Rust crate name, with absent and false build-script declarations (#2707).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr:
+# expect-exit: 0
+
+from rust::leafy import value
+
+
+def main() -> None:
+    """Reach the scoped local Rust Loaf so its crate and code graph are built."""
+    println(value())

@@ -1,0 +1,12 @@
+[project]
+name = "workspace_members_inherit_shared_dependencies"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["app"]
+
+[workspace.dependencies]
+shared = { path = "." }

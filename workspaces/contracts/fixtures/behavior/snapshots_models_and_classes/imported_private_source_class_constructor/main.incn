@@ -1,0 +1,12 @@
+# behavior: a public class re-exported through two facades keeps private defaulted fields provider-owned while a public factory can select private state (#886, RFC 122 and RFC 149)
+# expect-stdout:
+#   visible
+#   sealed 9
+
+from crate.public_api import create_exported_vault
+
+
+def main() -> None:
+    vault = create_exported_vault("visible", 9)
+    println(vault.label)
+    println(vault.describe())

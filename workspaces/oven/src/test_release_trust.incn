@@ -1,0 +1,191 @@
+"""A stamped `incan` admits only archives its release signer signed; an unstamped one verifies nothing (DD-0016)."""
+
+from std.encoding.base64 import b64decode, b64encode
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from release_signature_fixtures import (
+    IDENTITY,
+    ISSUER,
+    WORKFLOW,
+    archive,
+    bundle,
+    other_trusted_root,
+    trusted_root,
+)
+from release_trust import (
+    BUNDLE_SUFFIX,
+    CARRIED_TRUST,
+    Carried,
+    admit_release,
+    anchor,
+    carried,
+    record,
+    ship,
+    stamp_of,
+    stamped,
+)
+
+
+def raw(encoded: str) -> Result[bytes, str]:
+    """Decode one fixture."""
+    return b64decode(encoded).map_err((error) => error.message())
+
+
+def text(encoded: str) -> Result[str, str]:
+    """Decode one fixture document."""
+    return raw(encoded)?.decode("utf-8", "strict").map_err((_) => "fixture is not UTF-8")
+
+
+def trust_text(root: str) -> Result[str, str]:
+    """A `release-signer.json` for the release workflow's identity and one trusted root."""
+    signer = "{\"workflow\":\"" + WORKFLOW + "\",\"issuer\":\"" + ISSUER + "\"}"
+    return Ok("{\"signer\":" + signer + ",\"trusted_root\":" + text(root)? + "}")
+
+
+def put(path: Path, content: str) -> Result[None, str]:
+    """Write one text file."""
+    return path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def stamp() -> Result[Carried, str]:
+    """The signer a release build of `incan` is stamped with, here the fixture's."""
+    match stamp_of(b64encode(trust_text(trusted_root())?.encode("utf-8")))?:
+        Some(facts) => return Ok(facts)
+        None => return Err("a stamp read as none")
+
+
+pub def test_a_stamped_binary_refuses_an_unsigned_archive_in_a_fresh_home() -> Result[None, str]:
+    """A fresh home changes nothing: an archive with no signature bundle beside it is refused by name."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())?)?
+    match admit_release(asset, Some(stamp()?)):
+        Ok(_) => return Err("an unsigned archive was admitted")
+        Err(reason) =>
+            assert reason == (
+                f"{asset.0} is not signed: there is no signature bundle {asset.0}{BUNDLE_SUFFIX}, and this incan " +
+                f"installs only releases signed by {WORKFLOW} at a tag"
+            ), reason
+    return Ok(None)
+
+
+pub def test_a_stamped_binary_refuses_a_tampered_archive() -> Result[None, str]:
+    """An archive changed after it was signed is refused by its digest, though its bundle is beside it."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())? + "one more member\n")?
+    put(Path(asset.0 + BUNDLE_SUFFIX), text(bundle())?)?
+    match admit_release(asset, Some(stamp()?)):
+        Ok(_) => return Err("a tampered archive was admitted")
+        Err(reason) =>
+            assert reason.startswith(f"{asset.0} is refused: the signature bundle signs another file"), reason
+    return Ok(None)
+
+
+pub def test_a_verified_archive_records_its_signer_and_an_unverified_one_records_nothing() -> Result[None, str]:
+    """
+    A home comes to carry a signer only from an archive that verified.
+
+    1. An archive that was not verified records nothing, whatever signer file it ships.
+    2. The signed archive is admitted against the stamp, and the verification names the signer.
+    3. Only then does the home carry the signer file the archive ships.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = scratch.path().joinpath("home")
+    stage = scratch.path().joinpath("stage")
+    for directory in [home, stage]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    put(stage.joinpath(CARRIED_TRUST), trust_text(other_trusted_root())?)?
+    # 1. No first archive is trusted for the signer it claims.
+    assert not record(None, stage, home)?
+    assert carried(home)?.is_none()
+    # 2. Verified against what the binary carries.
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())?)?
+    put(Path(asset.0 + BUNDLE_SUFFIX), text(bundle())?)?
+    verified = admit_release(asset, Some(stamp()?))?
+    match verified:
+        None => return Err("a stamped binary verified nothing")
+        Some(proof) => assert proof.identity == IDENTITY
+    # 3. The record is the shipped file, unchanged.
+    assert record(verified, stage, home)?
+    match carried(home)?:
+        None => return Err("the verified archive's signer was not recorded")
+        Some(facts) => assert facts.signer.workflow == WORKFLOW
+    return Ok(None)
+
+
+pub def test_an_unstamped_binary_verifies_nothing_and_a_damaged_stamp_refuses() -> Result[None, str]:
+    """
+    Only an empty stamp means a local build.
+
+    1. A binary with no stamp carries no signer, and admits an archive without verifying it.
+    2. A signer file in the home is a record, never a signer: an unstamped binary still verifies nothing.
+    3. A stamp that cannot be read as a signer refuses, rather than counting as none.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = scratch.path().joinpath("home")
+    home.mkdir(true, true).map_err((error) => error.message())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())?)?
+    # 1. Nothing carried, nothing verified.
+    assert stamp_of("")?.is_none()
+    assert admit_release(asset, None)?.is_none()
+    # 2. The home's record does not stand in for the stamp.
+    put(home.joinpath(CARRIED_TRUST), trust_text(trusted_root())?)?
+    assert stamped()?.is_none()
+    assert anchor(None, home)?.is_none()
+    # 3. Damage is never read as absence.
+    assert stamp_of("not base64!").is_err()
+    assert stamp_of(b64encode("{\"signer\":{}}".encode("utf-8"))).is_err()
+    return Ok(None)
+
+
+pub def test_a_packed_archive_ships_the_signer_its_toolchain_carries() -> Result[None, str]:
+    """
+    The signer file travels inside the archive, from the release's toolchain to the homes that verify it.
+
+    1. Packing an installation that carries a signer stages it; packing one that carries none stages nothing.
+    2. An installation whose signer file is damaged does not pack.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = scratch.path().joinpath("installed")
+    stage = scratch.path().joinpath("stage")
+    for directory in [installed, stage]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    # 1. Only what the installation carries is shipped.
+    assert not ship(installed, stage)?
+    put(installed.joinpath(CARRIED_TRUST), trust_text(trusted_root())?)?
+    assert ship(installed, stage)?
+    assert stage.joinpath(CARRIED_TRUST).is_file()
+    # 2. A signer that cannot be read is never shipped.
+    put(installed.joinpath(CARRIED_TRUST), "{}")?
+    assert ship(installed, stage).is_err()
+    return Ok(None)
+
+
+pub def test_a_stamped_binary_verifies_with_the_signer_its_home_recorded() -> Result[None, str]:
+    """
+    The signer changes only through a signed release that states the new one.
+
+    1. In a fresh home a stamped binary verifies with its stamp.
+    2. Once a verified archive recorded another signer file, the binary verifies with that record.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = scratch.path().joinpath("home")
+    stage = scratch.path().joinpath("stage")
+    for directory in [home, stage]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())?)?
+    put(Path(asset.0 + BUNDLE_SUFFIX), text(bundle())?)?
+    # 1. Nothing recorded: the stamp decides.
+    verified = admit_release(asset, anchor(Some(stamp()?), home)?)?
+    assert verified.is_some()
+    # 2. The verified archive states a signer file with another authority, and the next archive answers to it.
+    put(stage.joinpath(CARRIED_TRUST), trust_text(other_trusted_root())?)?
+    assert record(verified, stage, home)?
+    match admit_release(asset, anchor(Some(stamp()?), home)?):
+        Ok(_) => return Err("the recorded signer was not used")
+        Err(reason) => assert reason.endswith("does not chain to a trusted certificate authority"), reason
+    return Ok(None)

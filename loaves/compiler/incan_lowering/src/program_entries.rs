@@ -1,0 +1,1083 @@
+//! Lower a program's ordinary bodies, entrypoints, async entries, tests, and Loaf exports.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+use incan_mir_plan_native::{
+    AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, EventPosition, ExternalFunction, Function,
+    FunctionSlot, GenericEnumDeclaration, GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport,
+    PlanType, UnitNominals, decode_lowering_event, resolve_nominals, unresolved_nominal,
+};
+use incan_semantics_core::body_ir::{Body, BodyIrModule};
+use incan_semantics_core::{
+    CanonicalSymbolId, CompilerNodeId, IncanType, SymbolOrigin, canonical_module_identity, encode_incan_symbol_identity,
+};
+
+use crate::async_::{async_entry, async_test_name, boxed_future_constructor, evaluator_name};
+use crate::body_positions::indexed_body_positions;
+use crate::checked_values::{indexed_location, line_starts, location};
+use crate::classes::{body_module_identity, function_name, is_program_entry};
+use crate::decorator_caches::DecoratorFrame;
+use crate::frame_instances::{
+    ExternalIndex, FunctionNames, append_synthesized, external_index, function_names, merge_externals, merge_indexed,
+    named_functions,
+};
+use crate::function_frames::{LoweredFrame, lower_function};
+use crate::generators::append_generator_constructor;
+use crate::instance_products::{encode_requests, restore_requests};
+use crate::lowering::Inventories;
+use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
+use crate::plan_modules::{AdmittedProduct, ModulePage, PlanAdmissions, admitted_page, report_admitted};
+use crate::plan_product_inputs::{ProductInputs, linked_crates, ordinary_product_inputs, producer_generation};
+use crate::producer_trace::{enter_producer, finish_producer};
+use crate::program_context::ProgramContext;
+use crate::resident_products::{FinalizedMember, FinalizedSlots, RestoreInputs};
+use crate::runtime_calls::sealed_runtime_path;
+use crate::scalar_store::{
+    AdmittedPayload, ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference,
+    report_evaluated_scalar_refusal, report_scalar, report_scalar_refusal, retained_scalar, scalar_miss,
+};
+use crate::trace_channel::{emit, frame_product, tracing_products};
+use crate::traits::is_lazy_method_body;
+use crate::type_parameters::{Instance, merge_instance_requests, request_instance};
+
+/// Emitted frames in the immutable checked body inventory, indexed without retaining executable snapshots.
+#[derive(Clone, Debug, Default)]
+pub struct EmittedFrames {
+    pub body_positions: Vec<usize>,
+    pub positions: BTreeMap<CanonicalSymbolId, Vec<usize>>,
+}
+
+impl EmittedFrames {
+    /// Reuse an identical canonical frame revisited through module context.
+    pub fn contains(&self, context: &BodyIrModule, candidate: &Body) -> bool {
+        let Some(identity) = &candidate.canonical else {
+            return false;
+        };
+        match self.positions.get(identity) {
+            Some(indices) => indices.iter().any(|index| context.bodies[*index] == *candidate),
+            None => false,
+        }
+    }
+
+    /// Record a checked body position under its canonical identity, preserving emission order for exports.
+    pub fn record(&mut self, body: &Body, position: usize) {
+        if let Some(identity) = &body.canonical {
+            self.positions.entry(identity.clone()).or_default().push(position);
+        }
+        self.body_positions.push(position);
+    }
+}
+
+pub fn no_emitted_frames() -> EmittedFrames {
+    EmittedFrames::default()
+}
+
+/// Lower selected source frames in module order, retaining synthesized callees and checked instance requests.
+///
+/// The reference lowers contiguous module ranges in parallel and merges them in module order, falling back to this
+/// order whenever a worker admitted its own carrier; both produce this serial result.
+#[allow(clippy::too_many_arguments)]
+pub fn lower_ordinary_bodies(
+    context: &BodyIrModule,
+    source_context: &BodyIrModule,
+    source_files: &BTreeMap<String, String>,
+    package_versions: &BTreeMap<String, String>,
+    program: &mut ProgramContext,
+    owners: &[String],
+    sources: &[String],
+    files: &[String],
+    entry: usize,
+    kind: &str,
+    tests: &[String],
+    intrinsics: &mut Vec<EnumDeclaration>,
+    inventories: &mut Inventories,
+    emitted_frames: &mut EmittedFrames,
+    unions: &[IncanType],
+    trace: bool,
+    scalar_products: Option<String>,
+    scalar_bodies: &BTreeMap<CompilerNodeId, String>,
+    overflow_checks: bool,
+    record_report: Option<&str>,
+    admitted_records: &mut PlanAdmissions,
+) -> Result<(), String> {
+    let _ = (source_context, source_files, package_versions, overflow_checks);
+    let directory = scalar_products.as_deref();
+    let mut keyed = KeyedProducts {
+        directory,
+        admitted: scalar_bodies,
+        report: record_report,
+        generation: producer_generation(directory),
+        nominals: product_nominal_table(program, intrinsics, directory),
+        linked: linked_crates(context),
+    };
+    let mut module_bodies: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (position, body) in context.bodies.iter().enumerate() {
+        module_bodies
+            .entry(body_module_identity(body)?)
+            .or_default()
+            .push(position);
+    }
+    let mut names = function_names();
+    let mut signatures = external_index();
+    for (index, owner) in owners.iter().enumerate() {
+        let positions = module_bodies.get(owner).map(Vec::as_slice).unwrap_or_default();
+        // The module's admitted plan record and the functions restored from it; without a page every body takes the
+        // keyed route.
+        let page = admitted_page(keyed.directory, owner, keyed.generation.as_deref());
+        let positioned = kind == "program"
+            && page.positioned_content().is_some_and(|content| {
+                admitted_records
+                    .selection()
+                    .and_then(|selection| selection.module(owner))
+                    .is_some_and(|selected| {
+                        selected.positioned
+                            && selected.digest == hex::encode(content)
+                            && usize::try_from(selected.count).ok() == Some(page.events.len())
+                    })
+            });
+        let placement_lines = if !page.events.is_empty() && page.inspect_placement {
+            line_starts(&sources[index])
+        } else {
+            Vec::new()
+        };
+        let frame = FrameSource {
+            source: &sources[index],
+            file: &files[index],
+        };
+        let retained = if positioned {
+            sync_carriers(&mut keyed.nominals, intrinsics);
+            positioned_slots(&page, positions, context, program, emitted_frames, &frame, &keyed)
+        } else {
+            None
+        };
+        let seeding = positioned && retained.is_none();
+        let mut admission = ModuleAdmission {
+            page: &page,
+            placement_lines: &placement_lines,
+            restored: Vec::new(),
+            products: Vec::new(),
+            seeding,
+            retained,
+            finalized: FinalizedSlots::new(),
+        };
+        let ordinary = lower_ordinary_module_frames(
+            context,
+            program,
+            positions,
+            &frame,
+            owner,
+            kind,
+            index == entry,
+            tests,
+            intrinsics,
+            inventories,
+            emitted_frames,
+            unions,
+            trace,
+            &mut keyed,
+            &mut admission,
+            &mut names,
+            &mut signatures,
+        )?;
+        report_admitted(
+            admitted_records,
+            record_report,
+            owner,
+            admission.restored,
+            admission.products,
+            ordinary,
+            page.inspect_placement,
+            keyed.directory,
+            page.positioned_content(),
+        )?;
+        if positioned && ordinary != 0 && ordinary == admission.finalized.len() && ordinary == page.events.len() {
+            page.keep_finalized(admission.finalized);
+        }
+    }
+    Ok(())
+}
+
+/// Lower and settle each ordinary frame in the module in checked order.
+#[allow(clippy::too_many_arguments)]
+fn lower_ordinary_module_frames(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    positions: &[usize],
+    frame: &FrameSource<'_>,
+    owner: &str,
+    kind: &str,
+    is_entry_module: bool,
+    tests: &[String],
+    intrinsics: &mut Vec<EnumDeclaration>,
+    inventories: &mut Inventories,
+    emitted_frames: &mut EmittedFrames,
+    unions: &[IncanType],
+    trace: bool,
+    keyed: &mut KeyedProducts<'_>,
+    admission: &mut ModuleAdmission<'_>,
+    names: &mut FunctionNames,
+    signatures: &mut ExternalIndex,
+) -> Result<usize, String> {
+    let mut ordinary = 0;
+    for &position in positions {
+        let body = &context.bodies[position];
+        if !ordinary_body(context, body, emitted_frames, kind) {
+            continue;
+        }
+        ordinary += 1;
+        let restored_before = admission.restored.len();
+        let (function, runtime, pending, synthesized) =
+            lower_ordinary_frame(context, program, body, unions, frame, intrinsics, keyed, admission)
+                .map_err(|reason| format!("{reason} in {} at {}", body.name, frame.file))?;
+        // Only a body that took the keyed route was lowered or looked up; a restored body is not traced.
+        if trace && admission.restored.len() == restored_before {
+            emit(
+                "lowering",
+                "INCAN_TRACE_LOWERING",
+                &format!("lowering: body {owner} {} {}", body.name, body.span.start),
+            );
+        }
+        merge_instance_requests(&mut inventories.instances, &pending);
+        if !named_functions(names, &inventories.functions, &function.name).is_empty() {
+            return Err(format!("unsupported Body IR overloaded function {}", body.name));
+        }
+        let function_position = inventories.functions.len();
+        inventories.functions.push(function);
+        if kind == "library" && body.is_async {
+            let function = &inventories.functions[function_position];
+            inventories.functions.push(
+                boxed_future_constructor(
+                    function_name(context, body),
+                    incan_mir_plan_native::CalleeKind::Planned(function.name.clone()),
+                    function
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.ty.clone())
+                        .collect(),
+                    function.return_type.clone(),
+                    function.span.clone(),
+                )?
+                .into(),
+            );
+        }
+        emitted_frames.record(body, position);
+        append_synthesized(&mut inventories.functions, names, synthesized)?;
+        append_async_entry(
+            context,
+            body,
+            function_position,
+            is_entry_module,
+            tests,
+            intrinsics,
+            inventories,
+        )?;
+        append_generator_constructor(
+            &program.constructors,
+            &mut inventories.functions,
+            context,
+            body,
+            frame.source,
+            frame.file,
+            intrinsics,
+        )?;
+        merge_indexed(&mut inventories.externals, signatures, runtime)?;
+    }
+    Ok(ordinary)
+}
+
+/// The keyed-product state one unit's ordinary frames share: the product directory, the checker's witnesses by body,
+/// the records report, the producer profile and the unit's described declaration tables.
+pub struct KeyedProducts<'a> {
+    pub directory: Option<&'a str>,
+    pub admitted: &'a BTreeMap<CompilerNodeId, String>,
+    pub report: Option<&'a str>,
+    pub generation: Option<String>,
+    pub nominals: UnitNominals,
+    /// The crates the unit links; a restored product names functions of no other crate.
+    pub linked: BTreeSet<String>,
+}
+
+/// The source text and file an ordinary frame lowers in.
+pub struct FrameSource<'a> {
+    pub source: &'a str,
+    pub file: &'a str,
+}
+
+/// One module's admitted plan record as its ordinary frames read it: the page, the line index an inspected placement
+/// borrows, and the functions and exact product evidence restored from the page so far.
+pub struct ModuleAdmission<'a> {
+    pub page: &'a ModulePage,
+    pub placement_lines: &'a [i64],
+    pub restored: Vec<AdmittedFunction>,
+    pub(crate) products: Vec<AdmittedProduct>,
+    seeding: bool,
+    retained: Option<BTreeMap<CompilerNodeId, Arc<FinalizedMember>>>,
+    finalized: FinalizedSlots,
+}
+
+impl ModuleAdmission<'_> {
+    /// Record a received product and the helper names emitted with it.
+    fn report_product(&mut self, payload: &AdmittedPayload, frames: &[Function]) {
+        self.products.push(AdmittedProduct {
+            key: payload.event.key.clone(),
+            digest: payload.digest.clone(),
+            helpers: frames.iter().map(|frame| frame.name.clone()).collect(),
+        });
+    }
+}
+
+type OrdinaryFrame = (FunctionSlot, Vec<ExternalFunction>, Vec<Instance>, Vec<Function>);
+
+/// Use a retained positioned inventory only when all current ordinary bodies have their exact checked slots.
+fn positioned_slots(
+    page: &ModulePage,
+    positions: &[usize],
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    emitted: &EmittedFrames,
+    frame: &FrameSource<'_>,
+    keyed: &KeyedProducts<'_>,
+) -> Option<BTreeMap<CompilerNodeId, Arc<FinalizedMember>>> {
+    let slots = page.finalized()?;
+    let mut offered = BTreeSet::new();
+    let mut members = BTreeMap::new();
+    let mut resolved = BTreeMap::new();
+    let allows = |path: &str| sealed_runtime_path(context, path);
+    for &position in positions {
+        let body = &context.bodies[position];
+        if !ordinary_body(context, body, emitted, "program") {
+            continue;
+        }
+        let reads = keyed.admitted.get(&body.direct_call_id)?;
+        let identity = body.canonical.as_ref().map(encode_incan_symbol_identity)?;
+        let span = location(&body.span, frame.source, frame.file);
+        let inputs = RestoreInputs {
+            frame: evaluator_name(context, body),
+            file: span.file.to_string(),
+            line: span.line,
+            overflow: program.overflow_checks,
+            reads: reads.clone(),
+            generation: keyed.generation.clone().unwrap_or_default(),
+            positions: None,
+        };
+        let key = (inputs.digest(), identity, span.column);
+        let (kept_key, member) = slots.get_key_value(&key)?;
+        let placed = &member.product.function;
+        let nominals = placed.nominals();
+        if !member.applicability.applies_to(placed, &keyed.linked, &allows) || nominals.len() != member.references.len()
+        {
+            return None;
+        }
+        for (nominal, reference) in nominals.iter().zip(&member.references) {
+            let key = (nominal.kind.value(), nominal.identity.as_str(), nominal.digest.as_str());
+            let current = resolved.entry(key).or_insert_with(|| {
+                resolve_nominals(std::slice::from_ref(nominal), &keyed.nominals)
+                    .and_then(|mut references| references.pop())
+            });
+            if current.as_ref() != Some(reference) {
+                return None;
+            }
+        }
+        if !offered.insert(kept_key)
+            || members
+                .insert(body.direct_call_id.clone(), Arc::clone(member))
+                .is_some()
+        {
+            return None;
+        }
+    }
+    (members.len() == slots.len() && page.current_positioned_bytes()).then_some(members)
+}
+
+/// Read only producer-admitted products, or lower normally and retain an exact witnessed result.
+///
+/// A body of an admitted module whose final event restores is neither serialized, keyed nor lowered, and reports no
+/// event: `admission.restored` receives it for the module's note. Every other body takes the keyed route. A product
+/// names the unit's models and enums by declaration identity; `keyed.nominals` describes the current tables. A reused
+/// product returns the helper frames and generic instance requests its lowering once made, as lowering would; a request
+/// whose generic is gone makes the product a miss. A fresh product carries the synthesized helper frames and the
+/// generic instance requests this lowering made; a request only a source position names keeps the frame without a
+/// product. A records request reports each keyed frame's event, or why it has none.
+#[allow(clippy::too_many_arguments)]
+fn lower_ordinary_frame(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    body: &Body,
+    unions: &[IncanType],
+    frame: &FrameSource<'_>,
+    intrinsics: &mut Vec<EnumDeclaration>,
+    keyed: &mut KeyedProducts<'_>,
+    admission: &mut ModuleAdmission<'_>,
+) -> Result<OrdinaryFrame, String> {
+    if let Some(member) = admission
+        .retained
+        .as_mut()
+        .and_then(|slots| slots.remove(&body.direct_call_id))
+    {
+        let event = &member.product.event;
+        admission.restored.push(AdmittedFunction {
+            function: member.slot.name.clone(),
+            identity: event.identity.clone(),
+            references: member.references.iter().map(event_reference).collect(),
+            placement: None,
+        });
+        admission.report_product(&member.product, &[]);
+        frame_product("direct", "ordinary", &frame_label(body));
+        return Ok((member.slot.clone(), member.runtime.clone(), Vec::new(), Vec::new()));
+    }
+    match restore_admitted(context, program, body, frame, intrinsics, keyed, admission) {
+        Admission::Restored(restored) => {
+            frame_product("admitted", "ordinary", &frame_label(body));
+            return Ok(restored);
+        }
+        // The module's page holds this body's event, yet the body is lowered: name why, so a reuse proof can tell an
+        // edit's own bodies from bodies an unchanged module should have restored.
+        Admission::Missed(reason) => {
+            frame_product("unadmitted", "ordinary", &format!("{} {reason}", frame_label(body)));
+        }
+        Admission::NoEvent if !admission.page.events.is_empty() => {
+            frame_product("unpaged", "ordinary", &frame_label(body));
+        }
+        Admission::NoEvent => {}
+    }
+    let records = keyed.report.is_some();
+    let inputs = ordinary_product_inputs(
+        context,
+        body,
+        frame.source,
+        frame.file,
+        program.overflow_checks,
+        keyed.directory,
+        keyed.admitted,
+        records,
+        keyed.generation.as_deref(),
+        None,
+    )?;
+    let owner = RecordOwner::of(context, body, keyed.report, inputs.is_some())?;
+    if let (Some(directory), Some((witness, positions))) = (keyed.directory, &inputs) {
+        sync_carriers(&mut keyed.nominals, intrinsics);
+        let current = location(&body.span, frame.source, frame.file);
+        if let Some((function, runtime, references, frames, encoded)) = retained_scalar(
+            directory,
+            witness,
+            &keyed.nominals,
+            &keyed.linked,
+            Some(context),
+            Some(&current),
+            positions,
+        ) && let Some(requests) = restore_requests(&encoded, context, Some(program))
+        {
+            report_scalar(
+                keyed.report,
+                &owner.event(
+                    directory,
+                    witness,
+                    &function.name,
+                    true,
+                    runtime.len(),
+                    &references,
+                    positions,
+                ),
+            )?;
+            frame_product("reused", "ordinary", &frame_label(body));
+            return Ok((function.into(), runtime, requests, frames));
+        }
+        // A witnessed body is lowered again although it may have a kept product: name why the product did not fit.
+        if tracing_products() {
+            let reason = scalar_miss(
+                directory,
+                witness,
+                &keyed.nominals,
+                &keyed.linked,
+                context,
+                Some(&current),
+                positions,
+            );
+            frame_product("unreused", "ordinary", &format!("{} {reason}", frame_label(body)));
+        }
+    }
+    lower_fresh_ordinary_frame(
+        context,
+        program,
+        body,
+        unions,
+        frame,
+        intrinsics,
+        keyed,
+        &owner,
+        inputs.as_ref(),
+    )
+}
+
+/// Lower an ordinary frame and retain its product only after lowering succeeds.
+#[allow(clippy::too_many_arguments)]
+fn lower_fresh_ordinary_frame(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    body: &Body,
+    unions: &[IncanType],
+    frame: &FrameSource<'_>,
+    intrinsics: &mut Vec<EnumDeclaration>,
+    keyed: &mut KeyedProducts<'_>,
+    owner: &RecordOwner,
+    inputs: Option<&ProductInputs>,
+) -> Result<OrdinaryFrame, String> {
+    let attempt = enter_producer(
+        "compiler",
+        "plan-function",
+        &owner.identity,
+        &format!("body:{}", body.name),
+    );
+    let lowered = lower_function(
+        context,
+        program,
+        body,
+        unions,
+        frame.source,
+        frame.file,
+        intrinsics,
+        &[],
+        DecoratorFrame::Normal,
+    )?;
+    finish_producer(attempt, "produced");
+    record_lowered_ordinary(body, &lowered, intrinsics, keyed, owner, inputs, (context, program))?;
+    let (function, runtime, pending, synthesized) = lowered;
+    Ok((function.into(), runtime, pending, synthesized))
+}
+
+/// Retain the keyed product of a fresh ordinary frame and report its disposition.
+fn record_lowered_ordinary(
+    body: &Body,
+    lowered: &LoweredFrame,
+    intrinsics: &[EnumDeclaration],
+    keyed: &mut KeyedProducts<'_>,
+    owner: &RecordOwner,
+    inputs: Option<&ProductInputs>,
+    (context, program): (&BodyIrModule, &ProgramContext),
+) -> Result<(), String> {
+    let (function, runtime, pending, synthesized) = lowered;
+    let mut kept = false;
+    match encode_requests(pending, context, program) {
+        Ok(requests) => {
+            if let (Some(directory), Some((witness, positions))) = (keyed.directory, inputs) {
+                sync_carriers(&mut keyed.nominals, intrinsics);
+                // The ordinary compiler already has its complete lowered function. Record the optional product's
+                // refusal without changing that ordinary verdict.
+                match retain_named_scalar(
+                    directory,
+                    witness,
+                    function,
+                    runtime,
+                    &keyed.nominals,
+                    positions,
+                    synthesized,
+                    &requests,
+                ) {
+                    Ok(references) => {
+                        kept = true;
+                        let event = owner.event(
+                            directory,
+                            witness,
+                            &function.name,
+                            false,
+                            runtime.len(),
+                            &references,
+                            positions,
+                        );
+                        report_scalar(keyed.report, &event)?;
+                    }
+                    Err(reason) => report_evaluated_scalar_refusal(
+                        keyed.report,
+                        &owner.identity,
+                        &function.name,
+                        &reason,
+                        witness,
+                    )?,
+                }
+            }
+        }
+        Err(reason) => {
+            if let Some((witness, _)) = inputs {
+                report_evaluated_scalar_refusal(keyed.report, &owner.identity, &function.name, &reason, witness)?;
+            }
+        }
+    }
+    if inputs.is_some() {
+        frame_product(if kept { "lowered" } else { "unkept" }, "ordinary", &frame_label(body));
+    }
+    Ok(())
+}
+
+/// The owner a records request reports an ordinary frame's event under: its stable declaration identity and declaring
+/// module, so Bakery can fold a module's events into one record. Without a records request both stay empty.
+struct RecordOwner {
+    identity: String,
+    module: String,
+}
+
+impl RecordOwner {
+    /// Name the frame's owner, reporting a body without a stable identity or without a complete checker witness.
+    fn of(context: &BodyIrModule, body: &Body, report: Option<&str>, witnessed: bool) -> Result<Self, String> {
+        let mut owner = RecordOwner {
+            identity: String::new(),
+            module: String::new(),
+        };
+        if report.is_none() {
+            return Ok(owner);
+        }
+        match &body.canonical {
+            None => report_scalar_refusal(
+                report,
+                &owner.identity,
+                &evaluator_name(context, body),
+                "body has no stable declaration identity",
+            )?,
+            Some(identity) => {
+                owner.module = body_module_identity(body)?;
+                owner.identity = encode_incan_symbol_identity(identity);
+            }
+        }
+        if !witnessed {
+            report_scalar_refusal(
+                report,
+                &owner.identity,
+                &evaluator_name(context, body),
+                "checker supplied no complete scalar body witness",
+            )?;
+        }
+        Ok(owner)
+    }
+
+    /// The event of one keyed product of this owner.
+    #[allow(clippy::too_many_arguments)]
+    fn event<'a>(
+        &'a self,
+        products: &'a str,
+        inputs: &'a [String],
+        function: &'a str,
+        reused: bool,
+        runtime: usize,
+        references: &'a [NominalReference],
+        positions: &'a [(i64, i64)],
+    ) -> ProductEvent<'a> {
+        ProductEvent {
+            products,
+            inputs,
+            identity: &self.identity,
+            function,
+            reused,
+            runtime,
+            references,
+            positions,
+            module: &self.module,
+        }
+    }
+}
+
+/// What a body of a module with an admitted page gets from that page.
+enum Admission {
+    /// The page has no event for the body, or the module has no page.
+    NoEvent,
+    /// The page has the body's event, but it does not restore, for the reason named.
+    Missed(&'static str),
+    /// The body's function, runtime demand, generic instance requests and helper frames, restored from the event.
+    Restored(OrdinaryFrame),
+}
+
+/// Restore a body of an admitted module from its final event in the module's plan record.
+///
+/// Its function, helper frames and generic instance requests come from the event, whose product is read once. An event
+/// that does not restore, as when the owner moved, the witness changed or a named declaration is gone, leaves the body
+/// on the keyed route with the reason it missed.
+fn restore_admitted(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    body: &Body,
+    frame: &FrameSource<'_>,
+    intrinsics: &[EnumDeclaration],
+    keyed: &mut KeyedProducts<'_>,
+    admission: &mut ModuleAdmission<'_>,
+) -> Admission {
+    if admission.page.events.is_empty() {
+        return Admission::NoEvent;
+    }
+    let name = evaluator_name(context, body);
+    let Some(selected) = admission.page.event(&name) else {
+        return Admission::NoEvent;
+    };
+    let current_identity = body
+        .canonical
+        .as_ref()
+        .map(encode_incan_symbol_identity)
+        .unwrap_or_default();
+    // A physical-symbol fallback has no independent stable owner to carry across a rename or move.
+    if selected.identity == selected.symbol && selected.symbol != current_identity {
+        return Admission::Missed("its physical symbol changed");
+    }
+    let Some(reads) = keyed.admitted.get(&body.direct_call_id) else {
+        return Admission::Missed("the checker supplied no witness for it");
+    };
+    let lines = admission.placement_lines;
+    let span = if lines.is_empty() {
+        location(&body.span, frame.source, frame.file)
+    } else {
+        indexed_location(lines, &body.span, frame.file)
+    };
+    let current = (!lines.is_empty()).then(|| indexed_body_positions(body, lines, frame.file, &span));
+    sync_carriers(&mut keyed.nominals, intrinsics);
+    let generation = keyed.generation.as_deref().unwrap_or("");
+    let inputs = RestoreInputs {
+        frame: name.clone(),
+        file: span.file.to_string(),
+        line: span.line,
+        overflow: program.overflow_checks,
+        reads: reads.clone(),
+        generation: generation.to_owned(),
+        positions: current.clone(),
+    };
+    let restored = admission.page.restored(&inputs, || {
+        let event = admission.page.event_bytes(&name).ok_or("its page event is gone")?;
+        admitted_payload(
+            event,
+            &span,
+            &name,
+            program.overflow_checks,
+            reads,
+            generation,
+            current.clone(),
+        )
+    });
+    let payload = match restored {
+        Ok(admitted) => admitted,
+        Err(reason) => return Admission::Missed(reason),
+    };
+    let (placed, encoded, previous) = (&payload.function, &payload.requests, &payload.event);
+    if previous.key != selected.key || previous.function != selected.function || previous.identity != selected.symbol {
+        return Admission::Missed("its page entry names another event");
+    }
+    let Some(resolved) = resolve_nominals(placed.nominals(), &keyed.nominals) else {
+        return Admission::Missed(
+            unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
+        );
+    };
+    let Some(restored) = admitted_function(placed, &resolved, &keyed.linked, context) else {
+        return Admission::Missed("its product does not restore at the resolved declarations");
+    };
+    let Some(requests) = restore_requests(encoded, context, Some(program)) else {
+        return Admission::Missed("a generic instance it requests is gone");
+    };
+    let references: Vec<_> = resolved.iter().map(event_reference).collect();
+    let moved =
+        current_identity != previous.identity || references != previous.references || !payload.coordinates_match;
+    // A moved function's note names its nodes: the body's current ones, or those its page event recorded.
+    let placement = if moved {
+        let nodes = match &current {
+            Some(positions) => event_nodes(positions),
+            None => match recorded_nodes(admission.page, &name) {
+                Some(nodes) => nodes,
+                None => return Admission::Missed("its page event does not decode"),
+            },
+        };
+        Some(AdmittedPlacement {
+            key: previous.key.clone(),
+            positions: nodes,
+        })
+    } else {
+        None
+    };
+    admission.report_product(&payload, &restored.frames);
+    let no_deferred_frames = restored.slot.future_callee.is_none() && restored.frames.is_empty();
+    if admission.seeding && !moved && no_deferred_frames && requests.is_empty() {
+        let key = (inputs.digest(), current_identity.clone(), span.column);
+        admission.finalized.insert(
+            key,
+            FinalizedMember::retain(
+                payload,
+                resolved,
+                &restored.slot,
+                &restored.runtime,
+                restored.applicability,
+            ),
+        );
+    }
+    admission.restored.push(AdmittedFunction {
+        function: restored.slot.name.clone(),
+        identity: current_identity,
+        references,
+        placement,
+    });
+    Admission::Restored((restored.slot, restored.runtime, requests, restored.frames))
+}
+
+/// The node positions the page event of `function` recorded, read from this request's page.
+fn recorded_nodes(page: &ModulePage, function: &str) -> Option<Vec<EventPosition>> {
+    let event = decode_lowering_event(page.event_bytes(function)?).ok()?;
+    Some(event.positions)
+}
+
+/// A traced frame's module and source name, as the reuse proof matches bodies across captures.
+pub(crate) fn frame_label(body: &Body) -> String {
+    format!("{}::{}", body_module_identity(body).unwrap_or_default(), body.name)
+}
+
+/// Apply standalone entry naming against the current modules or their already validated retained bodies.
+pub fn validate_program_entry_selection(
+    modules: &[BodyIrModule],
+    entry: usize,
+    retained: &BodyIrModule,
+) -> Result<(), String> {
+    for identity in &modules[entry].program_entrypoints {
+        let Some(owner) = canonical_module_identity(identity) else {
+            return Err("selected program entry has no canonical module".into());
+        };
+        let mut found = false;
+        if let Some(module) = modules.iter().find(|module| module.module_id.path() == owner) {
+            found = validate_selected_entry_body(module, identity)?;
+        }
+        if !found {
+            found = validate_retained_entry_body(retained, identity)?;
+        }
+        if !found {
+            return Err("selected program entry has no owning module body".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_selected_entry_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> Result<bool, String> {
+    for body in &module.bodies {
+        if body.canonical.as_ref() == Some(identity) {
+            if function_name(module, body) != "main" {
+                return Err("selected program entry is not a standalone main".into());
+            }
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn validate_retained_entry_body(context: &BodyIrModule, identity: &CanonicalSymbolId) -> Result<bool, String> {
+    for body in &context.bodies {
+        if body.canonical.as_ref() == Some(identity) {
+            if body.name != "main" {
+                return Err("selected program entry is not a standalone main".into());
+            }
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Keep the unit's checked selector order while resolving canonical entries to their native wrappers.
+pub fn selected_program_entries(context: &BodyIrModule) -> Result<Vec<String>, String> {
+    let mut entries = Vec::new();
+    for identity in &context.program_entrypoints {
+        match context
+            .bodies
+            .iter()
+            .find(|body| body.canonical.as_ref() == Some(identity))
+        {
+            Some(body) => entries.push(function_name(context, body)),
+            None => return Err("selected program entry has no retained body".into()),
+        }
+    }
+    Ok(entries)
+}
+
+/// The native function that runs an async body under the executor: `main`, or a collected test's wrapper.
+fn async_entry_name(context: &BodyIrModule, body: &Body, in_entry: bool, tests: &[String]) -> Option<String> {
+    if !body.is_async {
+        return None;
+    }
+    let native = function_name(context, body);
+    if is_program_entry(context, body) {
+        return Some(native);
+    }
+    if in_entry && tests.contains(&body.name) {
+        return Some(async_test_name(&native));
+    }
+    None
+}
+
+/// Add the native function that runs an async `main` or collected async test, when the body is one.
+fn append_async_entry(
+    context: &BodyIrModule,
+    body: &Body,
+    function_position: usize,
+    in_entry: bool,
+    tests: &[String],
+    intrinsics: &mut Vec<EnumDeclaration>,
+    inventories: &mut Inventories,
+) -> Result<(), String> {
+    if let Some(entry_name) = async_entry_name(context, body, in_entry, tests) {
+        let function = &inventories.functions[function_position];
+        let (entry_function, entry_constructor, entry_runtime) =
+            async_entry(context, function, intrinsics, &entry_name)?;
+        inventories.functions.push(entry_function.into());
+        inventories.functions.push(entry_constructor.into());
+        merge_externals(&mut inventories.externals, vec![entry_runtime])?;
+    }
+    Ok(())
+}
+
+/// Resolve zero-argument tests returning None or Result[None, E]; rustc's test harness reports Err as failure.
+pub fn collected_test_entries(
+    context: &BodyIrModule,
+    entry_owner: &str,
+    tests: &[String],
+    functions: &[FunctionSlot],
+    enums: &[EnumDeclaration],
+) -> Result<Vec<String>, String> {
+    let mut entries = Vec::new();
+    for name in tests {
+        let mut found = false;
+        for body in &context.bodies {
+            if body_module_identity(body)? != entry_owner || body.name != *name {
+                continue;
+            }
+            let native = function_name(context, body);
+            let evaluator = evaluator_name(context, body);
+            for function in functions {
+                if function.name != evaluator {
+                    continue;
+                }
+                if !function.parameters.is_empty() || !test_return_type(&function.return_type, enums) {
+                    return Err(format!(
+                        "unsupported test signature for {name}: requires () -> None or Result[None, E]"
+                    ));
+                }
+                if function.is_async {
+                    entries.push(async_test_name(&native));
+                } else {
+                    entries.push(native.clone());
+                }
+                found = true;
+            }
+        }
+        if !found {
+            return Err(format!("unsupported collected test body {name}"));
+        }
+    }
+    Ok(entries)
+}
+
+/// Admit only unit success values, preserving a standard Result's native failure and Debug contract.
+fn test_return_type(ty: &PlanType, enums: &[EnumDeclaration]) -> bool {
+    if *ty == PlanType::Unit {
+        return true;
+    }
+    let PlanType::Enum(owner, _) = ty else {
+        return false;
+    };
+    if *owner < 0 || *owner as usize >= enums.len() {
+        return false;
+    }
+    let declaration = &enums[*owner as usize];
+    if declaration.carrier != Carrier::Result || declaration.variants.len() != 2 {
+        return false;
+    }
+    declaration.variants[0].fields == [PlanType::Unit] && declaration.variants[1].fields.len() == 1
+}
+
+/// Export every body and type a Loaf compiles at its crate root, under the encoding of its canonical identity.
+///
+/// A body emitted in several frames under one identity has no single item, so none is exported for it. A generic
+/// body emits no item. Generic nominal exports name their retained templates.
+pub fn loaf_exports(
+    context: &BodyIrModule,
+    emitted: &[usize],
+    declarations: &BodyIrModule,
+    templates: &[GenericModelDeclaration],
+    enum_templates: &[GenericEnumDeclaration],
+) -> Vec<PlanExport> {
+    let mut exports: Vec<PlanExport> = Vec::new();
+    let mut ambiguous: Vec<String> = Vec::new();
+    for position in emitted {
+        let body = &context.bodies[*position];
+        if let Some(identity) = &body.canonical
+            && is_package_identity(identity)
+        {
+            let name = encode_incan_symbol_identity(identity);
+            if exports.iter().any(|export| export.name == name) {
+                ambiguous.push(name);
+            } else {
+                exports.push(PlanExport {
+                    name,
+                    path: format!("crate::{}", function_name(context, body)),
+                });
+            }
+        }
+    }
+    for declaration in &declarations.nominal_declarations {
+        if !declaration.type_parameters.is_empty()
+            && !templates.iter().any(|template| template.name == declaration.name)
+        {
+            continue;
+        }
+        if declaration.native_item.is_empty() && is_package_identity(&declaration.canonical) {
+            exports.push(PlanExport {
+                name: encode_incan_symbol_identity(&declaration.canonical),
+                path: format!("crate::{}", declaration.name),
+            });
+        }
+    }
+    for declaration in &declarations.enum_declarations {
+        if !declaration.type_parameters.is_empty()
+            && !enum_templates
+                .iter()
+                .any(|template| template.name == declaration.carrier_name())
+        {
+            continue;
+        }
+        if declaration.native_item.is_empty() && is_package_identity(&declaration.canonical) {
+            exports.push(PlanExport {
+                name: encode_incan_symbol_identity(&declaration.canonical),
+                path: format!("crate::{}", declaration.name),
+            });
+        }
+    }
+    exports
+        .into_iter()
+        .filter(|export| !ambiguous.contains(&export.name))
+        .collect()
+}
+
+/// Whether a package declares `identity`, so a Loaf compiles it.
+fn is_package_identity(identity: &CanonicalSymbolId) -> bool {
+    matches!(identity.origin, SymbolOrigin::Package { .. })
+}
+
+/// Whether a checked module's body lowers as an ordinary function, for compilation and the census alike.
+pub fn ordinary_body(context: &BodyIrModule, body: &Body, emitted_frames: &EmittedFrames, kind: &str) -> bool {
+    if !body.type_parameters.is_empty() || is_lazy_method_body(context, body) || emitted_frames.contains(context, body)
+    {
+        return false;
+    }
+    if kind == "test" && function_name(context, body) == "main" {
+        return false;
+    }
+    context.program_entrypoints.is_empty() || function_name(context, body) != "main"
+}
+
+/// Schedule the lazy method bodies that native comparison bridges call.
+pub fn comparison_bridge_instances(
+    context: &BodyIrModule,
+    models: &[ModelDeclaration],
+    enums: &[EnumDeclaration],
+) -> Vec<Instance> {
+    let mut bridge_bodies: Vec<String> = Vec::new();
+    for declaration in models {
+        bridge_bodies.extend(declaration.comparison_methods.iter().cloned());
+    }
+    for declaration in enums {
+        bridge_bodies.extend(declaration.comparison_methods.iter().cloned());
+    }
+    let mut instances = Vec::new();
+    for body in &context.bodies {
+        if is_lazy_method_body(context, body) && bridge_bodies.contains(&function_name(context, body)) {
+            request_instance(&mut instances, body, Vec::new(), Vec::new(), false);
+        }
+    }
+    instances
+}

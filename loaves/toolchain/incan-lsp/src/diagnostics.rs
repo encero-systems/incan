@@ -10,8 +10,12 @@
 //! Positions are 0-based (line 0, character 0 is the first).
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
-use incan_semantics_core::SymbolOrigin;
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+use incan_syntax::diagnostics::DiagnosticRelatedDeclaration;
+use serde::Deserialize;
+use serde_json::Value;
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Position, Range, Url,
 };
@@ -136,57 +140,204 @@ pub fn compile_error_to_diagnostic_with_phase_and_sources(
 ) -> Diagnostic {
     let stable = stable_diagnostic(uri.as_str(), source, error, phase);
     let range = span_to_range(source, stable.primary_span.start.offset, stable.primary_span.end.offset);
-    let severity = error_kind_to_severity(error.kind);
+    let severity = if error.stable_code() == Some("INCAN-T0134") {
+        DiagnosticSeverity::INFORMATION
+    } else {
+        error_kind_to_severity(error.kind)
+    };
 
-    // Build the message with notes and hints
-    let mut message = stable.message.clone();
-
-    // Add notes
-    for note in &stable.notes {
-        message.push_str("\n\nnote: ");
-        message.push_str(note);
-    }
-
-    // Add hints
-    for hint in &stable.hints {
-        message.push_str("\n\nhint: ");
-        message.push_str(hint);
-    }
-
-    // Create related information for notes/hints (shows in Problems panel)
-    let mut related_information = Vec::new();
-
-    for note in &stable.notes {
-        related_information.push(DiagnosticRelatedInformation {
-            location: Location {
-                uri: uri.clone(),
-                range,
-            },
-            message: format!("note: {}", note),
-        });
-    }
-
-    for hint in &stable.hints {
-        related_information.push(DiagnosticRelatedInformation {
-            location: Location {
-                uri: uri.clone(),
-                range,
-            },
-            message: format!("hint: {}", hint),
-        });
-    }
-
-    for related in &stable.related_spans {
-        related_information.push(DiagnosticRelatedInformation {
+    let related_spans = stable
+        .related_spans
+        .iter()
+        .map(|related| DiagnosticRelatedInformation {
             location: Location {
                 uri: uri.clone(),
                 range: span_to_range(source, related.span.start.offset, related.span.end.offset),
             },
             message: related.label.clone(),
-        });
-    }
+        })
+        .collect();
+    present_stable_diagnostic(
+        StablePresentation {
+            code: stable.code,
+            severity,
+            message: &stable.message,
+            primary: Location {
+                uri: uri.clone(),
+                range,
+            },
+            notes: &stable.notes,
+            hints: &stable.hints,
+            related_spans,
+            related_declarations: &stable.related_declarations,
+            data: serde_json::to_value(&stable).ok(),
+        },
+        related_sources,
+    )
+}
 
-    for related in &stable.related_declarations {
+/// Read only the stable report fields the existing presenter consumes.
+#[derive(Deserialize)]
+struct OverlayPresentation {
+    code: String,
+    message: String,
+    severity: OverlaySeverity,
+    primary_span: OverlaySpan,
+    notes: Vec<String>,
+    hints: Vec<String>,
+    #[serde(default)]
+    related_spans: Vec<OverlayRelatedSpan>,
+    #[serde(default)]
+    related_declarations: Vec<OverlayRelatedDeclaration>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OverlaySeverity {
+    Error,
+    Warning,
+    Hint,
+    Information,
+}
+
+#[derive(Deserialize)]
+struct OverlaySpan {
+    file: PathBuf,
+    start: OverlayPosition,
+    end: OverlayPosition,
+}
+
+#[derive(Deserialize)]
+struct OverlayPosition {
+    offset: usize,
+}
+
+#[derive(Deserialize)]
+struct OverlayRelatedSpan {
+    span: OverlaySpan,
+    label: String,
+}
+
+#[derive(Deserialize)]
+struct OverlayRelatedDeclaration {
+    identity: CanonicalSymbolId,
+    label: String,
+}
+
+impl OverlaySpan {
+    /// Present an offset only against the source bound by this editor request.
+    fn location(&self, path: &Path, uri: &Url, source: &str) -> Result<Location, String> {
+        if self.file.as_path() != path {
+            return Err("stable overlay diagnostic names another document".into());
+        }
+        let start = self.start.offset;
+        let end = self.end.offset;
+        if start > end || !source.is_char_boundary(start) || !source.is_char_boundary(end) {
+            return Err(format!(
+                "overlay diagnostic has invalid offsets for {}",
+                self.file.display()
+            ));
+        }
+        Ok(Location {
+            uri: uri.clone(),
+            range: span_to_range(source, start, end),
+        })
+    }
+}
+
+/// Admit the served compiler record and present it with the matching editor source. See row 14.1's host intake gap.
+pub(crate) fn stable_overlay_diagnostic(
+    data: &Value,
+    path: &Path,
+    uri: &Url,
+    source: &str,
+) -> Result<Diagnostic, String> {
+    let checked = OverlayPresentation::deserialize(data)
+        .map_err(|error| format!("invalid stable overlay diagnostic: {error}"))?;
+    let primary = checked.primary_span.location(path, uri, source)?;
+    let related_spans = checked
+        .related_spans
+        .into_iter()
+        .map(|related| {
+            Ok(DiagnosticRelatedInformation {
+                location: related.span.location(path, uri, source)?,
+                message: related.label,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let related_declarations = checked
+        .related_declarations
+        .into_iter()
+        .map(|related| DiagnosticRelatedDeclaration {
+            identity: related.identity,
+            label: related.label,
+        })
+        .collect::<Vec<_>>();
+
+    let mut data = data.clone();
+    data["primary_span"]["file"] = Value::String(uri.to_string());
+    if let Some(spans) = data.get_mut("related_spans").and_then(Value::as_array_mut) {
+        for entry in spans {
+            entry["span"]["file"] = Value::String(uri.to_string());
+        }
+    }
+    let severity = match checked.severity {
+        OverlaySeverity::Error => DiagnosticSeverity::ERROR,
+        OverlaySeverity::Warning => DiagnosticSeverity::WARNING,
+        OverlaySeverity::Hint => DiagnosticSeverity::HINT,
+        OverlaySeverity::Information => DiagnosticSeverity::INFORMATION,
+    };
+    // The served record does not name a checked source for a declaration's canonical origin.
+    Ok(present_stable_diagnostic(
+        StablePresentation {
+            code: &checked.code,
+            severity,
+            message: &checked.message,
+            primary,
+            notes: &checked.notes,
+            hints: &checked.hints,
+            related_spans,
+            related_declarations: &related_declarations,
+            data: Some(data),
+        },
+        &RelatedDeclarationSources::new(),
+    ))
+}
+
+struct StablePresentation<'a> {
+    code: &'a str,
+    severity: DiagnosticSeverity,
+    message: &'a str,
+    primary: Location,
+    notes: &'a [String],
+    hints: &'a [String],
+    related_spans: Vec<DiagnosticRelatedInformation>,
+    related_declarations: &'a [DiagnosticRelatedDeclaration],
+    data: Option<Value>,
+}
+
+/// Keep compiler notes, hints and checked locations in the same order for both inputs.
+fn present_stable_diagnostic(
+    stable: StablePresentation<'_>,
+    related_sources: &RelatedDeclarationSources,
+) -> Diagnostic {
+    let mut message = stable.message.to_owned();
+    let mut related_information = Vec::new();
+
+    for (kind, details) in [("note", stable.notes), ("hint", stable.hints)] {
+        for detail in details {
+            let detail = format!("{kind}: {detail}");
+            message.push_str("\n\n");
+            message.push_str(&detail);
+            related_information.push(DiagnosticRelatedInformation {
+                location: stable.primary.clone(),
+                message: detail,
+            });
+        }
+    }
+    related_information.extend(stable.related_spans);
+
+    for related in stable.related_declarations {
         if let Some(declaration_source) = related_sources.get(&related.identity.origin) {
             related_information.push(DiagnosticRelatedInformation {
                 location: Location {
@@ -208,8 +359,8 @@ pub fn compile_error_to_diagnostic_with_phase_and_sources(
     }
 
     Diagnostic {
-        range,
-        severity: Some(severity),
+        range: stable.primary.range,
+        severity: Some(stable.severity),
         code: Some(NumberOrString::String(stable.code.to_string())),
         code_description: None,
         source: Some("incan".to_string()),
@@ -220,7 +371,7 @@ pub fn compile_error_to_diagnostic_with_phase_and_sources(
             Some(related_information)
         },
         tags: None,
-        data: serde_json::to_value(&stable).ok(),
+        data: stable.data,
     }
 }
 
@@ -286,6 +437,23 @@ mod tests {
         assert_eq!(offset_to_position(source, "😀x".len()), Position::new(0, 3));
         assert_eq!(position_to_offset(source, Position::new(0, 2)), Some("😀".len()));
         assert_eq!(position_to_offset(source, Position::new(0, 3)), Some("😀x".len()));
+    }
+
+    /// A compile-time trust stop is informational in the editor even though it still prevents a checked expansion.
+    #[test]
+    fn missing_compile_time_trust_is_information() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Url::parse("file:///workspace/main.incn")?;
+        let error = CompileError::new(
+            "vocabulary block is not yet checked".to_string(),
+            incan_frontend::ast::Span::new(0, 5),
+        )
+        .with_stable_code("INCAN-T0134");
+
+        let diagnostic = compile_error_to_diagnostic(&error, "query\n", &uri);
+
+        assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::INFORMATION));
+        assert_eq!(diagnostic.code, Some(NumberOrString::String("INCAN-T0134".to_string())));
+        Ok(())
     }
 
     #[test]

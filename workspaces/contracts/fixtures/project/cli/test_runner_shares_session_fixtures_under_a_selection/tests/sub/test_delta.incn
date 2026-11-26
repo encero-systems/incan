@@ -1,0 +1,6 @@
+from std.testing import assert_eq
+
+
+def test_delta_one(run_wide: int) -> None:
+    println("delta one")
+    assert_eq(run_wide, 10)

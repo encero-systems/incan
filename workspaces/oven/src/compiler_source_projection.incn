@@ -1,0 +1,797 @@
+"""
+Project one source file into independently digestible owner, default-expression and module-header records.
+
+A record holds its slice's semantic text (see `semantic_text`): an edit to comments, blank lines or documentation
+changes no record, so it invalidates no checked body or plan.
+"""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from std.fs import Path
+from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::internal_models import CompiledNamespaceValue
+from pub::internal_models.records import RecordKey, encode_record_key
+from semantic_text import StatementContinuation, comment_free, documentation_free, split_documentation
+from jec import begin as begin_work, record as record_work, text_size
+from pub::incan_platform.trace import Operation
+
+from pub::internal_models.source_value_records import SOURCE_PROFILE, encode_documentation, encode_source_text
+
+pub model SourceProjectionRecord:
+    """One exact source slice, its original coordinates and its digest over only the slice bytes."""
+
+    pub key: RecordKey
+    pub text: str
+    pub start: int
+    pub end: int
+
+    pub def encoded(self) -> Result[bytes, str]:
+        """The Crumb value retained in the store under this record's logical key."""
+        return encode_source_text(self.text)
+
+    pub def digest(self) -> str:
+        """Return the semantic identity of this slice without folding file-wide coordinates into it."""
+        return hexlify(sha256.digest(self.text.encode("utf-8")))
+
+
+pub model SourceProjection:
+    """The module context, declaration surface and independently reusable callable owners projected from one source file."""
+
+    pub header: SourceProjectionRecord
+    pub declarations: SourceProjectionRecord
+    pub census: SourceProjectionRecord
+    pub positioned: SourceProjectionRecord
+    pub owners: list[SourceProjectionRecord]
+    pub documentation: list[tuple[str, str]]
+    pub placements: Dict[str, SourceProjectionRecord] = {}
+    # Each owner's absolute UTF-8 span, without its bytes: a checked reader in another unit names it by this span.
+    pub spans: Dict[str, SourceProjectionRecord] = {}
+    pub bindings: Dict[str, list[str]] = {}
+    # Only guarded project modules depend on the resolved package feature environment.
+    pub feature_inputs: list[SourceProjectionRecord] = []
+
+    pub def documentation_key(self) -> RecordKey:
+        """The latest documentation inventory replaces the previous one even when an owner was removed."""
+        return RecordKey(family="source-documentation", identity_profile="incan.source-documentation/1",
+            origin=self.header.key.origin, identity=self.header.key.identity, facet="module", context="")
+
+    pub def encoded_documentation(self) -> Result[bytes, str]:
+        return encode_documentation(self.documentation)
+
+
+pub model PublishedSourceProjection:
+    """The store generation and canonical record keys published by one source projection."""
+
+    pub snapshot: Snapshot
+    pub keys: list[str]
+
+
+model Boundary:
+    """One top-level source chunk and the callable name it owns, when it is a body owner."""
+
+    start: int
+    owner: str
+
+
+class SourceProjector:
+    """A single-file projector that keeps source slicing state inside its owning operation."""
+
+    origin: str
+    path: str
+    source: str
+    lines: list[str]
+    boundaries: list[Boundary] = []
+    guarded: bool = false
+
+    @staticmethod
+    pub def open(origin: str, path: str, source: str) -> SourceProjector:
+        """Prepare exact newline-preserving lines for one source file."""
+        parts = source.split("\n")
+        mut lines: list[str] = []
+        for index in range(len(parts)):
+            mut suffix = ""
+            if index + 1 < len(parts):
+                suffix = "\n"
+            lines.append(parts[index] + suffix)
+        return SourceProjector(origin=origin, path=path, source=source, lines=lines)
+
+    def discover(mut self) -> None:
+        """
+        Locate owner chunks while attaching consecutive decorators to their following declaration.
+
+        Top-level statements start chunks. Inside a top-level conditional block, statements at the block's member
+        indentation start chunks too. A continued callable signature or decorator keeps its original chunk.
+        """
+        mut offset = 0
+        mut decorated_start = -1
+        mut conditional = false
+        mut member_indent = -1
+        mut statement = StatementContinuation()
+        mut continuing = false
+        for line in self.lines:
+            if continuing:
+                continuing = statement.after_line(line)
+                offset += len(line)
+                continue
+            content = line.strip()
+            indent = leading_whitespace(line)
+            mut chunk = false
+            if content != "" and indent == 0:
+                chunk = true
+                if not content.startswith("#"):
+                    if identifier_prefix(content) == "when":
+                        self.guarded = true
+                    conditional = conditional_block(content)
+                    member_indent = -1
+            elif conditional and content != "" and not content.startswith("#"):
+                if member_indent < 0:
+                    member_indent = indent
+                chunk = indent == member_indent
+            decorator = chunk and content.startswith("@")
+            if decorator or (chunk and callable_declaration(content)):
+                continuing = statement.after_line(line)
+            if decorator:
+                if decorated_start < 0:
+                    decorated_start = offset
+            elif chunk and not content.startswith("#"):
+                mut start = 0
+                if decorated_start >= 0:
+                    start = decorated_start
+                else:
+                    start = offset
+                self.boundaries.append(Boundary(start=start, owner=declaration_owner(content)))
+                decorated_start = -1
+            offset += len(line)
+        if decorated_start >= 0:
+            self.boundaries.append(Boundary(start=decorated_start, owner=""))
+
+    pub def projection(mut self, declared: list[str], active: Option[list[str]]) -> Result[SourceProjection, str]:
+        """Partition source owners and nested defaults while retaining a declaration surface for selector invalidation."""
+        self.discover()
+        mut header = ""
+        mut declarations = ""
+        mut owners: list[SourceProjectionRecord] = []
+        mut docs: list[tuple[str, str]] = []
+        mut placements: Dict[str, SourceProjectionRecord] = {}
+        mut spans: Dict[str, SourceProjectionRecord] = {}
+        mut bindings: Dict[str, list[str]] = {}
+        if len(self.boundaries) == 0:
+            header = self.source
+        else:
+            if self.boundaries[0].start > 0:
+                header += self.source[:self.boundaries[0].start]
+            mut byte_start = len(header.encode("utf-8"))
+            for index in range(len(self.boundaries)):
+                boundary = self.boundaries[index]
+                mut end = len(self.source)
+                if index + 1 < len(self.boundaries):
+                    end = self.boundaries[index + 1].start
+                text = self.source[boundary.start:end]
+                if boundary.owner == "":
+                    header += text
+                else:
+                    first_owner = len(owners)
+                    semantic, documentation = split_documentation(text)
+                    if documentation != "":
+                        docs.append((boundary.owner, documentation))
+                    declarations += boundary.owner + "\n" + declaration_surface(semantic) + "\n"
+                    owners.append(
+                        SourceProjectionRecord(
+                            key=source_key("owner-source", self.origin, self.path, boundary.owner),
+                            text=semantic,
+                            start=boundary.start,
+                            end=end,
+                        ),
+                    )
+                    if boundary.owner.startswith("model:") or boundary.owner.startswith("class:"):
+                        for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                            owners.append(semantic_record(field, documentation_free(field.text)))
+                        for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                            owners.append(semantic_record(default, comment_free(default.text)))
+                    for owner_index in range(first_owner, len(owners)):
+                        record = owners[owner_index]
+                        add_scope_binding(bindings, record.key.facet)
+                        relative = record.start - boundary.start
+                        mut offset = byte_start
+                        if relative != 0:
+                            offset += len(text[:relative].encode("utf-8"))
+                        # The parser's dedent span reaches the next declaration or EOF, including separating newlines.
+                        raw = text[relative:record.end - boundary.start]
+                        mark_placement(placements, record, offset, raw)
+                        mark_span(spans, record, offset, raw)
+                byte_start += len(text.encode("utf-8"))
+        header_semantic, module_docs = split_documentation(header)
+        if module_docs != "":
+            docs.append(("", module_docs))
+        mut feature_inputs: list[SourceProjectionRecord] = []
+        if self.guarded and active is not None:
+            names = ["declared=" + name for name in sorted(declared)] + ["active=" + name for name in sorted(active.unwrap_or([]))]
+            feature_inputs.append(SourceProjectionRecord(
+                key=source_key("module-feature-selection", self.origin, self.path, "module"),
+                text="\n".join(names), start=0, end=0,
+            ))
+        return Ok(
+            SourceProjection(
+                feature_inputs=feature_inputs,
+                positioned=SourceProjectionRecord(
+                    key=positioned_source_key(self.origin, self.path),
+                    text=hexlify(sha256.digest(self.source.encode("utf-8"))), start=0, end=len(self.source),
+                ),
+                header=SourceProjectionRecord(
+                    key=source_key("module-header", self.origin, self.path, "module"),
+                    text=header_semantic,
+                    start=0,
+                    end=len(self.source),
+                ),
+                declarations=SourceProjectionRecord(
+                    key=source_key("declaration-index", self.origin, self.path, "module"),
+                    text=declarations,
+                    start=0,
+                    end=len(self.source),
+                ),
+                census=SourceProjectionRecord(
+                    key=source_key("owner-census", self.origin, self.path, "module"),
+                    text="\n".join([owner.key.facet for owner in owners]) + "\n",
+                    start=0,
+                    end=len(self.source),
+                ),
+                owners=owners,
+                documentation=docs,
+                placements=placements,
+                spans=spans,
+                bindings=bindings,
+            ),
+        )
+
+
+pub def scope_members(census: str) -> Dict[str, list[str]]:
+    """Index the declaration kinds and multiplicity visible at each project spelling."""
+    mut by_name: Dict[str, list[str]] = {}
+    for facet in census.split("\n"):
+        if facet == "":
+            continue
+        add_scope_binding(by_name, facet)
+    return by_name
+
+
+def add_scope_binding(mut bindings: Dict[str, list[str]], facet: str) -> None:
+    name = scope_name(facet)
+    if name not in bindings:
+        bindings[name] = []
+    bindings[name].append(facet)
+
+
+def scope_name(facet: str) -> str:
+    parts = facet.split(":")
+    return parts[len(parts) - 1]
+
+
+pub def scope_key(census: Borrowed[SourceProjectionRecord], name: str) -> RecordKey:
+    """Address one declared name, including all its same-name owners."""
+    return source_key("scope-name", census.key.origin, census.key.identity, name)
+
+
+pub def signature_scope_key(signature: Borrowed[RecordKey]) -> RecordKey:
+    """Observe presence of the exact name whose signature a caller binds."""
+    return source_key("scope-name", signature.origin, signature.identity, scope_name(signature.facet))
+
+
+pub def scope_member(census: Borrowed[SourceProjectionRecord], members: Borrowed[Dict[str, list[str]]], name: str) -> SourceProjectionRecord:
+    """An empty selection proves that no declaration of this name exists in the captured module."""
+    key = scope_key(census, name)
+    mut text = ""
+    if members.contains_key(name):
+        text = "\n".join(sorted(members[name]))
+    return SourceProjectionRecord(key=key, text=text, start=0, end=0)
+
+
+def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: Borrowed[SourceProjectionRecord], offset: int, raw: str) -> None:
+    """Bind an owner's physical source bytes and absolute UTF-8 offset, including every same-named overload."""
+    key = owner_placement_key(owner.key.origin, owner.key.identity, owner.key.facet)
+    content = hexlify(sha256.digest(raw.encode("utf-8")))
+    mut stamp = str(offset) + "|" + content
+    if owner.key.facet in placements:
+        stamp = hexlify(sha256.digest((placements[owner.key.facet].text + "|" + stamp).encode("utf-8")))
+    placements[owner.key.facet] = SourceProjectionRecord(key=key, text=stamp, start=owner.start, end=owner.end)
+
+
+def mark_span(mut spans: Dict[str, SourceProjectionRecord], owner: Borrowed[SourceProjectionRecord], offset: int, raw: str) -> None:
+    """
+    Bind an owner's absolute UTF-8 offset and byte length, the span its canonical identity carries, including every
+    same-named overload. A body edit that keeps the length keeps the span.
+    """
+    key = owner_span_key(owner.key.origin, owner.key.identity, owner.key.facet)
+    mut text = str(offset) + "+" + str(len(raw.encode("utf-8")))
+    if owner.key.facet in spans:
+        text = spans[owner.key.facet].text + "|" + text
+    spans[owner.key.facet] = SourceProjectionRecord(key=key, text=text, start=owner.start, end=owner.end)
+
+
+pub def owner_span_key(origin: str, path: str, name: str) -> RecordKey:
+    """The span a checked reader in another unit names this source declaration by."""
+    return source_key("owner-span", origin, path, name)
+
+
+pub def compiler_generation_record(origin: str, compiler: str) -> SourceProjectionRecord:
+    """
+    The compiler generation every checked record of `origin` is read under. A record another compiler wrote is
+    withdrawn the first time a request names a different generation, and the new compiler's records are reused after.
+    """
+    return SourceProjectionRecord(key=source_key("compiler-generation", origin, "toolchain", "compiler"), text=compiler, start=0, end=0)
+
+
+pub def project_source(
+    origin: str,
+    path: str,
+    source: str,
+    declared: list[str] = [],
+    active: Option[list[str]] = None,
+) -> Result[SourceProjection, str]:
+    """Produce one module header plus exact source records for top-level owners and nested field defaults."""
+    if origin == "" or path == "":
+        return Err("source projection requires an origin and logical path")
+    return SourceProjector.open(origin, path, source).projection(declared, active)
+
+
+pub def project_source_file(
+    origin: str, path: str, file: Path, declared: list[str] = [], active: Option[list[str]] = None,
+    captured: Option[str] = None,
+) -> Result[SourceProjection, str]:
+    """Project one source file and measure the work, using its captured reading when supplied."""
+    projecting = begin_work()
+    source = match captured:
+        Some(text) => text
+        None => file.read_text("utf-8", "strict").map_err((error) => error.message())?
+    projected = project_source(origin, path, source, declared, active)
+    if projecting is not None:
+        record_work(Operation.EngineGraphStaging, f"source-projection\t{origin}\t{path}", projecting, text_size(source, projecting))
+    return projected
+
+
+pub def owner_placement_key(origin: str, path: str, name: str) -> RecordKey:
+    """The mutable coordinate binding owned by this source declaration."""
+    return source_key("owner-placement", origin, path, name)
+
+
+pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
+    """Name one declaration owner's exact source projection for a compiler-witnessed dependency read."""
+    return source_key("owner-source", origin, path, name)
+
+
+pub def signature_key(origin: str, path: str, facet: str) -> RecordKey:
+    """Name one declaration's header without its implementation, as `signature_record` keys it."""
+    return source_key("declaration-signature", origin, path, facet)
+
+
+pub def compiled_owner_source(
+    projection: Borrowed[SourceProjection],
+    module: str,
+    name: str,
+    identity: str = "",
+) -> Result[SourceProjectionRecord, str]:
+    """
+    Map one compiler body name to its exact owner or unambiguous declaration-qualified default expression.
+
+    A stable identity that names a declaration kind selects that kind's owner of the name first, so a field or
+    default that shares a type's name never stands in for the type.
+    """
+    if identity.startswith("member/method:"):
+        enclosing = stable_member_declaration(identity)
+        context = identity.split("#in(")
+        if len(context) == 2 and enclosing != "":
+            kind = context[1].split(":")[0]
+            if nominal_kind(kind):
+                for owner in projection.owners:
+                    if owner.key.facet == kind + ":" + enclosing:
+                        return Ok(owner)
+        return Err(f"compiled method has no enclosing declaration source: {module}:{name}; identity={identity}")
+    kind = identity.split(":")[0]
+    if nominal_kind(kind) or kind in ["type_alias", "const", "static", "capability"]:
+        for owner in projection.owners:
+            if owner.key.facet == kind + ":" + name:
+                return Ok(owner)
+    for owner in projection.owners:
+        if owner.key.facet == name:
+            return Ok(owner)
+    declaration = stable_member_declaration(identity)
+    if declaration != "":
+        for prefix in ["default:", "field:"]:
+            for owner in projection.owners:
+                if owner.key.facet.startswith(prefix) and owner.key.facet.endswith(":" + declaration + ":" + name):
+                    return Ok(owner)
+        for nominal in ["model", "class", "trait", "enum", "newtype", "rusttype"]:
+            for owner in projection.owners:
+                if owner.key.facet == nominal + ":" + declaration:
+                    return Ok(owner)
+    else:
+        for owner in projection.owners:
+            if (
+                (owner.key.facet.startswith("default:") or owner.key.facet.startswith("field:"))
+                and owner.key.facet.endswith(":" + name)
+            ):
+                return Err(f"compiled field body has no stable declaration identity: {module}:{name}")
+    mut default: Option[SourceProjectionRecord] = None
+    for owner in projection.owners:
+        if owner.key.facet.startswith("default:") and owner.key.facet.endswith(":" + name):
+            if default is not None:
+                return Err(f"compiled body output has ambiguous default source: {module}:{name}; identity={identity}")
+            default = Some(owner)
+    match default:
+        Some(owner) => return Ok(owner)
+        None => pass
+    for owner in projection.owners:
+        if owner.key.facet.startswith("field:") and owner.key.facet.endswith(":" + name):
+            return Ok(owner)
+    for owner in projection.owners:
+        if owner.key.facet.endswith(":" + name):
+            return Ok(owner)
+    return Err(f"compiled body output has no matching owner source: {module}:{name}; identity={identity}")
+
+
+def nominal_kind(kind: str) -> bool:
+    """Whether a stable identity's kind names a declaration that can enclose members, as a member's `#in(...)` does."""
+    return kind in ["model", "class", "trait", "enum", "newtype", "rusttype"]
+
+
+def stable_member_declaration(identity: str) -> str:
+    """Recover the enclosing nominal declaration name from one compiler-owned stable identity."""
+    nested = identity.split("#in(")
+    if len(nested) >= 2:
+        owner = nested[len(nested) - 1].split(")")[0]
+        parts = owner.split(":")
+        if len(parts) >= 2 and parts[len(parts) - 1] != "":
+            return parts[len(parts) - 1]
+    compact = identity.split("|")[0].split("::")
+    if len(compact) >= 2:
+        return compact[len(compact) - 2]
+    return ""
+
+
+pub def declaration_index_key(origin: str, path: str) -> RecordKey:
+    """Name the body-independent declaration surface used to invalidate project declaration readers before checking."""
+    return source_key("declaration-index", origin, path, "module")
+
+
+pub def import_declaration_indexes(
+    origin: str,
+    project_root: str,
+    namespaces: list[CompiledNamespaceValue],
+    staged: list[str],
+) -> Result[list[SourceProjectionRecord], str]:
+    """Project the declaration index of each namespace import whose module is not among the `staged` projections."""
+    mut indexes: list[SourceProjectionRecord] = []
+    mut projected: list[str] = []
+    for namespace in namespaces:
+        for path in namespace.dependencies:
+            if path not in staged and path not in projected:
+                file = Path(project_root).joinpath(path)
+                source = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+                projection = project_source(origin, path, source)?
+                indexes.append(projection.declarations)
+                projected.append(path)
+    return Ok(indexes)
+
+
+pub def owner_census_key(origin: str, path: str) -> RecordKey:
+    """Name the signature-independent current-owner membership witness for one source module."""
+    return source_key("owner-census", origin, path, "module")
+
+
+pub def signature_record(owner: Borrowed[SourceProjectionRecord]) -> SourceProjectionRecord:
+    """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
+    mut key = owner.key
+    key.family = "declaration-signature"
+    return SourceProjectionRecord(key=key, text=declaration_surface(owner.text), start=owner.start, end=owner.end)
+
+
+def semantic_record(record: SourceProjectionRecord, text: str) -> SourceProjectionRecord:
+    """Keep one nested record's key and source coordinates with its semantic text."""
+    return SourceProjectionRecord(key=record.key, text=text, start=record.start, end=record.end)
+
+
+pub def publish_source_projection(
+    selected: Snapshot,
+    projection: SourceProjection,
+) -> Result[PublishedSourceProjection, str]:
+    """Publish a complete file projection in one transaction, replacing only equal canonical logical keys."""
+    mut transaction = put(
+        begin(selected),
+        encode_record_key(projection.header.key)?,
+        projection.header.encoded()?,
+    )
+    mut published = [encode_record_key(projection.header.key)?]
+    declaration_key = encode_record_key(projection.declarations.key)?
+    transaction = put(transaction, declaration_key, projection.declarations.encoded()?)
+    published.append(declaration_key)
+    census_key = encode_record_key(projection.census.key)?
+    transaction = put(transaction, census_key, projection.census.encoded()?)
+    published.append(census_key)
+    positioned_key = encode_record_key(projection.positioned.key)?
+    transaction = put(transaction, positioned_key, projection.positioned.encoded()?)
+    published.append(positioned_key)
+    for feature in projection.feature_inputs + [projection.placements[facet] for facet in sorted([name for name in projection.placements.keys()])]:
+        key = encode_record_key(feature.key)?
+        transaction = put(transaction, key, feature.encoded()?)
+        published.append(key)
+    for owner in projection.owners:
+        for record in [owner, signature_record(owner)]:
+            key = encode_record_key(record.key)?
+            transaction = put(transaction, key, record.encoded()?)
+            published.append(key)
+    doc_key = encode_record_key(projection.documentation_key())?
+    transaction = put(transaction, doc_key, projection.encoded_documentation()?)
+    published.append(doc_key)
+    snapshot = commit(transaction).map_err((error) => error.message())?
+    return Ok(PublishedSourceProjection(snapshot=snapshot, keys=published))
+
+
+def declaration_surface(source: str) -> str:
+    """Project a callable header without its body; retain complete non-callable declarations conservatively."""
+    mut callable = false
+    mut statement = StatementContinuation()
+    mut continuing = false
+    mut surface = ""
+    for line in source.split("\n"):
+        content = line.strip()
+        if not callable and not continuing and not content.startswith("@"):
+            callable = callable_declaration(content)
+            if not callable:
+                return source
+        surface += line + "\n"
+        continuing = statement.after_line(line)
+        if callable and not continuing and content.endswith(":"):
+            return surface
+    return source
+
+
+def callable_declaration(line: str) -> bool:
+    """Recognize the callable declaration forms whose indented bodies do not contribute to checked signatures."""
+    mut header = line
+    for prefix in ["pub ", "async "]:
+        if header.startswith(prefix):
+            header = header[len(prefix):]
+    return header.startswith("def ")
+
+
+def conditional_block(line: str) -> bool:
+    """Recognize a top-level conditional-compilation block whose indented members are declarations of the module."""
+    return line.startswith("when ") and line.endswith(":")
+
+
+def declaration_owner(line: str) -> str:
+    """Name an independently owned declaration while imports and other module forms stay in the header."""
+    mut header = f"{line}"
+    for prefix in ["pub ", "async "]:
+        if header.startswith(prefix):
+            header = header[len(prefix):]
+    for kind in ["partial", "alias"]:
+        marker = " = " + kind + " "
+        if marker in header:
+            name = identifier_prefix(header)
+            if name != "":
+                return kind + ":" + name
+    if header.startswith("type "):
+        return type_declaration_owner(header[len("type "):])
+    for kind in ["def", "const", "static", "model", "capability", "class", "trait", "partial", "newtype", "enum"]:
+        prefix = kind + " "
+        if header.startswith(prefix):
+            name = identifier_prefix(header[len(prefix):])
+            if kind == "def":
+                return name
+            if name != "":
+                return kind + ":" + name
+    return ""
+
+
+def type_declaration_owner(declaration: str) -> str:
+    """
+    Name a `type` declaration by the kind its stable identity names: `type X = newtype T` declares a newtype,
+    `type X = rusttype T` a Rust type, and any other `type X = T` an alias.
+    """
+    name = identifier_prefix(declaration)
+    equals = character_index(declaration, "=")
+    if name == "" or equals < 0:
+        return ""
+    target = declaration[equals + 1:].strip()
+    for kind in ["newtype", "rusttype"]:
+        if target.startswith(kind + " "):
+            return kind + ":" + name
+    return "type_alias:" + name
+
+
+def identifier_prefix(candidate: str) -> str:
+    """Read one declaration name without interpreting its following type, generic or parameter syntax."""
+    mut end = 0
+    while end < len(candidate) and candidate[end] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+        end += 1
+    if end == 0:
+        return ""
+    return candidate[:end]
+
+
+def field_default_records(
+    declaration: str,
+    source: str,
+    source_start: int,
+    origin: str,
+    path: str,
+) -> list[SourceProjectionRecord]:
+    """Project each direct model or class field default as its own expression-only source facet."""
+    starts = direct_member_starts(source)
+    mut records: list[SourceProjectionRecord] = []
+    for index in range(len(starts)):
+        start = starts[index]
+        mut end = len(source)
+        if index + 1 < len(starts):
+            end = starts[index + 1]
+        match default_expression(source[start:end]):
+            None => pass
+            Some((field, relative_start, relative_end)) =>
+                records.append(
+                    SourceProjectionRecord(
+                        key=source_key("owner-source", origin, path, "default:" + declaration + ":" + field),
+                        text=source[start + relative_start:start + relative_end],
+                        start=source_start + start + relative_start,
+                        end=source_start + start + relative_end,
+                    ),
+                )
+    return records
+
+
+def field_records(
+    declaration: str,
+    source: str,
+    source_start: int,
+    origin: str,
+    path: str,
+) -> list[SourceProjectionRecord]:
+    """Project each direct nominal field independently, including fields without a default expression."""
+    starts = direct_member_starts(source)
+    mut records: list[SourceProjectionRecord] = []
+    for index in range(len(starts)):
+        start = starts[index]
+        mut end = len(source)
+        if index + 1 < len(starts):
+            end = starts[index + 1]
+        member = source[start:end]
+        match field_name(member):
+            None => pass
+            Some(field) =>
+                records.append(
+                    SourceProjectionRecord(
+                        key=source_key("owner-source", origin, path, "field:" + declaration + ":" + field),
+                        text=member,
+                        start=source_start + start,
+                        end=source_start + end,
+                    ),
+                )
+    return records
+
+
+def field_name(member: str) -> Option[str]:
+    """Return one direct field name without mistaking a method or nested declaration for a field."""
+    first = member.split("\n")[0]
+    mut header = first.strip()
+    if header.startswith("pub "):
+        header = header[4:]
+    colon = character_index(header, ":")
+    if colon <= 0:
+        return None
+    field = identifier_prefix(header[:colon].strip())
+    if field == "" or field != header[:colon].strip():
+        return None
+    return Some(field)
+
+
+def direct_member_starts(source: str) -> list[int]:
+    """
+    Locate direct nominal members after any decorators while bracketed defaults remain one member chunk.
+
+    Members are indented past the declaration's own first line, which is indented itself inside a conditional block.
+    """
+    mut starts: list[int] = []
+    mut offset = 0
+    mut base = -1
+    mut member_indent = -1
+    mut depth = 0
+    for line in source.split("\n"):
+        content = line.strip()
+        indent = leading_whitespace(line)
+        if content != "" and not content.startswith("#") and base < 0:
+            base = indent
+        elif content != "" and not content.startswith("#") and indent > base:
+            if member_indent < 0:
+                member_indent = indent
+            if indent == member_indent and depth == 0:
+                starts.append(offset)
+            depth += delimiter_delta(line)
+            if depth < 0:
+                depth = 0
+        offset += len(line) + 1
+    return starts
+
+
+def default_expression(member: str) -> Option[tuple[str, int, int]]:
+    """Return one direct field name and the trimmed byte range of its declared default expression."""
+    first = member.split("\n")[0]
+    mut header = first.strip()
+    if header.startswith("pub "):
+        header = header[4:]
+    colon = character_index(header, ":")
+    equals = character_index(header, "=")
+    if colon <= 0 or equals <= colon:
+        return None
+    field = identifier_prefix(header[:colon].strip())
+    if field == "" or field != header[:colon].strip():
+        return None
+    raw_equals = character_index(member, "=")
+    if raw_equals < 0:
+        return None
+    mut start = raw_equals + 1
+    while start < len(member) and member[start] in " \t":
+        start += 1
+    mut end = len(member)
+    while end > start and member[end - 1] in " \t\n\r":
+        end -= 1
+    if start == end:
+        return None
+    return Some((field, start, end))
+
+
+def leading_whitespace(line: str) -> int:
+    """Count a line's indentation bytes without assigning a tab-width policy to source coordinates."""
+    mut count = 0
+    while count < len(line) and line[count] in " \t":
+        count += 1
+    return count
+
+
+def character_index(text: str, sought: str) -> int:
+    """Return the first byte position of one ASCII syntax character, or `-1` when absent."""
+    for index in range(len(text)):
+        if text[index:index + 1] == sought:
+            return index
+    return -1
+
+
+def delimiter_delta(line: str) -> int:
+    """Track grouping delimiters well enough to keep ordinary multi-line field defaults in one source facet."""
+    mut delta = 0
+    for character in line:
+        if character in "([{":
+            delta += 1
+        elif character in ")]}":
+            delta -= 1
+    return delta
+
+
+def source_key(family: str, origin: str, path: str, facet: str) -> RecordKey:
+    """Name one source projection independently of the file-wide content revision and physical coordinates."""
+    return RecordKey(
+        family=family,
+        identity_profile=SOURCE_PROFILE,
+        origin=origin,
+        identity=path,
+        facet=facet,
+        context="",
+    )
+
+
+pub def captured_source_key(origin: str, file: str) -> RecordKey:
+    """What one module's selected projection was made from: its captured bytes, features and projecting engine."""
+    return source_key("source-capture", origin, file, "module")
+
+
+pub def raw_source_key(origin: str, file: str) -> RecordKey:
+    """Name the exact authored UTF-8 source selected for this module."""
+    return source_key("source-raw", origin, file, "module")
+
+
+pub def source_comments_key(origin: str, file: str) -> RecordKey:
+    """Name the ordered authored comment lexemes selected for this module."""
+    return source_key("source-comments", origin, file, "module")
+
+
+pub def positioned_source_key(origin: str, file: str) -> RecordKey:
+    """The positioned source projection recorded when an aggregate binds physical source geometry."""
+    return source_key("source-positioned", origin, file, "module")

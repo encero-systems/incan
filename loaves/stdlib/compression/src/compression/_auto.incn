@@ -9,9 +9,10 @@ generic lowering adds bounds that Rust codec adapters do not satisfy, so the sou
 the generic boundary can express owned reader adapters directly.
 """
 
-from rust::std::io import Cursor, Read
-from rust::bzip2::read import BzDecoder
-from rust::flate2::read import GzDecoder, ZlibDecoder
+from rust::std::io import BufReader, Cursor, Read
+from rust::bzip2::read import MultiBzDecoder
+from rust::flate2::bufread import ZlibDecoder
+from rust::flate2::read import MultiGzDecoder
 from rust::snap::read import FrameDecoder
 from rust::xz2::read import XzDecoder
 from rust::zstd::stream::read import Decoder as ZstdReadDecoder
@@ -40,9 +41,7 @@ from std.io import _BytesIO
 
 
 def _matching_codec(candidate: Codec, data: bytes) -> Option[Codec]:
-    """
-    Return `candidate` only when its reliable framing signature matches `data`.
-    """
+    """Return `candidate` only when its reliable framing signature matches `data`."""
     match candidate:
         Codec.Gzip =>
             if _looks_like_gzip(data):
@@ -72,9 +71,7 @@ def _matching_codec(candidate: Codec, data: bytes) -> Option[Codec]:
 
 
 def _detect_codec(data: bytes, allowed: list[Codec], operation: str) -> Result[Option[Codec], CompressionError]:
-    """
-    Return the first allowed codec whose reliable framing signature matches.
-    """
+    """Return the first allowed codec whose reliable framing signature matches."""
     if len(allowed) == 0:
         return Err(
             CompressionError(
@@ -93,9 +90,7 @@ def _detect_codec(data: bytes, allowed: list[Codec], operation: str) -> Result[O
 
 
 def _unsupported_autodetect_error(operation: str) -> CompressionError:
-    """
-    Build the stable no-signature-match autodetection error.
-    """
+    """Build the stable no-signature-match autodetection error."""
     return CompressionError(
         kind="unsupported_codec",
         codec=None,
@@ -104,7 +99,10 @@ def _unsupported_autodetect_error(operation: str) -> CompressionError:
     )
 
 
-pub def decompress_auto(data: bytes, allowed: list[Codec] = Codec.all()) -> Result[tuple[Codec, bytes], CompressionError]:
+pub def decompress_auto(
+    data: bytes,
+    allowed: list[Codec] = Codec.all(),
+) -> Result[tuple[Codec, bytes], CompressionError]:
     """
     Decompress bytes by explicit signature-based autodetection.
 
@@ -176,9 +174,7 @@ pub def decompress_auto_stream(
 
 
 def _read_prefix(source: Union[_BytesIO, File]) -> Result[bytes, CompressionError]:
-    """
-    Read the maximum signature prefix used by autodetection.
-    """
+    """Read the maximum signature prefix used by autodetection."""
     if isinstance(source, _BytesIO):
         match source.read_bytes(10):
             Ok(prefix) => return Ok(prefix)
@@ -195,12 +191,10 @@ def _decompress_gzip_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress an autodetected gzip stream.
-    """
+    """Decompress an autodetected gzip stream."""
     if isinstance(source, _BytesIO):
         mut handle = source.handle.borrow_mut()
-        mut reader = GzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut reader = MultiGzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -210,8 +204,8 @@ def _decompress_gzip_stream(
                     _write_sink_bytes(Some(Codec.Gzip), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Gzip, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
-        mut reader = GzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut handle = source.handle.handle.borrow_mut()
+        mut reader = MultiGzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -228,29 +222,51 @@ def _decompress_zlib_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress an autodetected zlib stream.
-    """
+    """Decompress an autodetected zlib stream."""
     if isinstance(source, _BytesIO):
         mut handle = source.handle.borrow_mut()
-        mut reader = ZlibDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut reader = ZlibDecoder.new(BufReader.new(Cursor.new(prefix).chain(Read.by_ref(handle))))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
-                        return Ok(None)
+                        mut trailing: bytes = b""
+                        match reader.get_mut().read_to_end(trailing):
+                            Ok(_) =>
+                                if len(trailing) != 0:
+                                    return Err(
+                                        _codec_error(
+                                            Codec.Zlib,
+                                            "decompress_auto_stream",
+                                            "invalid trailing bytes after zlib stream",
+                                        ),
+                                    )
+                                return Ok(None)
+                            Err(err) => return Err(_codec_error(Codec.Zlib, "decompress_auto_stream", err.to_string()))
                     _write_sink_bytes(Some(Codec.Zlib), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Zlib, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
-        mut reader = ZlibDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut handle = source.handle.handle.borrow_mut()
+        mut reader = ZlibDecoder.new(BufReader.new(Cursor.new(prefix).chain(Read.by_ref(handle))))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
-                        return Ok(None)
+                        mut trailing: bytes = b""
+                        match reader.get_mut().read_to_end(trailing):
+                            Ok(_) =>
+                                if len(trailing) != 0:
+                                    return Err(
+                                        _codec_error(
+                                            Codec.Zlib,
+                                            "decompress_auto_stream",
+                                            "invalid trailing bytes after zlib stream",
+                                        ),
+                                    )
+                                return Ok(None)
+                            Err(err) => return Err(_codec_error(Codec.Zlib, "decompress_auto_stream", err.to_string()))
                     _write_sink_bytes(Some(Codec.Zlib), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Zlib, "decompress_auto_stream", err.to_string()))
 
@@ -261,9 +277,7 @@ def _decompress_zstd_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress an autodetected zstd stream.
-    """
+    """Decompress an autodetected zstd stream."""
     if isinstance(source, _BytesIO):
         mut handle = source.handle.borrow_mut()
         match ZstdReadDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle))):
@@ -279,7 +293,7 @@ def _decompress_zstd_stream(
                         Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_auto_stream", err.to_string()))
             Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         match ZstdReadDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle))):
             Ok(reader) =>
                 mut adapter = reader
@@ -300,12 +314,10 @@ def _decompress_bz2_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress an autodetected bzip2 stream.
-    """
+    """Decompress an autodetected bzip2 stream."""
     if isinstance(source, _BytesIO):
         mut handle = source.handle.borrow_mut()
-        mut reader = BzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut reader = MultiBzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -315,8 +327,8 @@ def _decompress_bz2_stream(
                     _write_sink_bytes(Some(Codec.Bz2), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Bz2, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
-        mut reader = BzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut handle = source.handle.handle.borrow_mut()
+        mut reader = MultiBzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -333,12 +345,10 @@ def _decompress_lzma_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress an autodetected XZ/LZMA-family stream.
-    """
+    """Decompress an autodetected XZ/LZMA-family stream."""
     if isinstance(source, _BytesIO):
         mut handle = source.handle.borrow_mut()
-        mut reader = XzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut reader = XzDecoder.new_multi_decoder(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -348,8 +358,8 @@ def _decompress_lzma_stream(
                     _write_sink_bytes(Some(Codec.Lzma), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Lzma, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
-        mut reader = XzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
+        mut handle = source.handle.handle.borrow_mut()
+        mut reader = XzDecoder.new_multi_decoder(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
             match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -366,9 +376,7 @@ def _decompress_snappy_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress an autodetected framed Snappy stream.
-    """
+    """Decompress an autodetected framed Snappy stream."""
     if isinstance(source, _BytesIO):
         mut handle = source.handle.borrow_mut()
         mut reader = FrameDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
@@ -381,7 +389,7 @@ def _decompress_snappy_stream(
                     _write_sink_bytes(Some(Codec.Snappy), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Snappy, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         mut reader = FrameDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""

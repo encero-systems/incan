@@ -1,0 +1,10 @@
+# behavior: Callable0, Callable1 and Callable2 bound a generic function without an import, as the standard prelude publishes them and 0.5.1 accepted
+# expect-stdout:
+#   7 42 5
+
+from bounds import call0, call1, call2
+from calls import Double, Seven, Sum2
+
+
+def main() -> None:
+    println(f"{call0(Seven())} {call1(Double(), 21)} {call2(Sum2(), 2, 3)}")

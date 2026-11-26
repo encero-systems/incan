@@ -1,0 +1,19 @@
+# behavior: ordinary integer addition and exact-width addition and negation trap in debug (#2256)
+# cli-commands:
+#   run src/main.incn --profile debug
+#   run src/small.incn --profile debug
+#   run src/negative.incn --profile debug
+# expect-stdout:
+#   before
+# expect-stderr-contains:
+#   overflow
+# expect-exit: 101
+
+"""Observe debug overflow of an ordinary integer after already delivered output."""
+
+
+def main() -> None:
+    """Overflow the largest ordinary integer."""
+    value: int = 9223372036854775807
+    println("before")
+    println(value + 1)

@@ -1,0 +1,13 @@
+[project]
+name = "incan_release_scripts"
+version = "0.6.0-dev.9"
+description = "Incan repository checks, release production and development utilities"
+
+[project.scripts]
+memory_budget = "memory_budget.incn"
+
+[dependencies]
+incan_platform = { path = "../loaves/platform" }
+
+[envs.test.dependencies]
+internal_models = { path = "../loaves/compiler/internal_models" }

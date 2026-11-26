@@ -1,0 +1,13 @@
+# behavior: `incan run` selects the enclosing Loaf's program, including from a nested directory, and ignores an invalid module outside its import reach (#3143).
+# cli-commands:
+#   run
+#   run .
+#   run src
+#   run src/nested
+#   oven run src
+# expect-stdout:
+#   main ran
+# expect-stderr:
+
+def main() -> None:
+    println("main ran")

@@ -32,8 +32,7 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
     - Create a new file under `workspaces/docs-site/docs/RFCs/` named: `NNN_short_slug.md` (example: `017_match_guards.md`)
     - Pick the next available `NNN` from the [RFC index](../../RFCs/index.md).
 
-3. **Fill in the RFC**
-    Keep it focused: one coherent proposal. Make sure you cover the following:
+3. **Fill in the RFC** Keep it focused: one coherent proposal. Make sure you cover the following:
     - motivation + examples
     - precise rules (semantics/type rules/edge cases)
     - alternatives considered
@@ -71,6 +70,6 @@ When an RFC is superseded or rejected, move it into the appropriate `closed/` fo
 
 - Prefer concrete examples over abstract prose.
 - Write the *reference-level rules* as if someone will implement them.
-- Name the inspection surface. A feature should not require reading compiler internals or guessing from generated Rust to understand what happened.
+- Name the inspection surface. A feature should not require reading compiler internals or guessing from native output to understand what happened.
 - Call out non-goals explicitly.
 - If it’s too big: split it into a sequence of smaller RFCs.

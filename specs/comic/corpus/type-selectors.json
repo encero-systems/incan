@@ -1,0 +1,216 @@
+{
+  "operation": "type_selector",
+  "profile": "crumb1",
+  "cases": [
+    {
+      "id": "selector-nongeneric",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5"
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5",
+        "preimage_hex": "070dcdc804d500"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "00"
+        }
+      ]
+    },
+    {
+      "id": "selector-zero-arguments",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5",
+        "arguments": [],
+        "parameter_names": []
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5",
+        "preimage_hex": "070dcdc804d500"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "00"
+        }
+      ]
+    },
+    {
+      "id": "selector-box-i8",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5",
+        "arguments": [
+          "i8"
+        ],
+        "parameter_names": [
+          "T"
+        ]
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5<i8>",
+        "preimage_hex": "070dcdc804d501026938"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "01026938"
+        }
+      ]
+    },
+    {
+      "id": "selector-box-string",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5",
+        "arguments": [
+          "string"
+        ],
+        "parameter_names": [
+          "T"
+        ]
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5<string>",
+        "preimage_hex": "070dcdc804d50106737472696e67"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "0106737472696e67"
+        }
+      ]
+    },
+    {
+      "id": "selector-nested-box",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5",
+        "arguments": [
+          "record@070dcdc804d5<i8>"
+        ],
+        "parameter_names": [
+          "T"
+        ]
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5<record@070dcdc804d5<i8>>",
+        "preimage_hex": "070dcdc804d501177265636f7264403037306463646338303464353c69383e"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "01177265636f7264403037306463646338303464353c69383e"
+        }
+      ]
+    },
+    {
+      "id": "selector-pair-order",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5",
+        "arguments": [
+          "i8",
+          "string"
+        ],
+        "parameter_names": [
+          "A",
+          "B"
+        ]
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5<i8,string>",
+        "preimage_hex": "070dcdc804d50202693806737472696e67"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "0202693806737472696e67"
+        }
+      ]
+    },
+    {
+      "id": "selector-pair-reversed",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5",
+        "arguments": [
+          "string",
+          "i8"
+        ],
+        "parameter_names": [
+          "A",
+          "B"
+        ]
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5<string,i8>",
+        "preimage_hex": "070dcdc804d50206737472696e67026938"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "0206737472696e67026938"
+        }
+      ]
+    },
+    {
+      "id": "selector-renamed-parameter",
+      "input": {
+        "kind": "record",
+        "declaration_hex": "070dcdc804d5",
+        "arguments": [
+          "i8"
+        ],
+        "parameter_names": [
+          "Element"
+        ]
+      },
+      "expected": {
+        "selector": "record@070dcdc804d5<i8>",
+        "preimage_hex": "070dcdc804d501026938"
+      },
+      "derivation": [
+        {
+          "meaning": "six-byte declaration identity",
+          "hex": "070dcdc804d5"
+        },
+        {
+          "meaning": "argument count and framed N arguments",
+          "hex": "01026938"
+        }
+      ]
+    }
+  ]
+}

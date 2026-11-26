@@ -18,21 +18,32 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 | Form | Syntax | Matches | Binds |
 | --- | --- | --- | --- |
 | Wildcard | `_` | Any value | Nothing |
-| Binding | `name` | Any value | `name`, to the value |
+| Binding | `name` | Any value | `name`, read-only, to the value |
+| Writable binding | `mut name` | Any value | `name`, writable, to the value |
 | Literal | `0`, `1.5`, `"a"`, `true`, `None` | The value equal to the literal | Nothing |
 | Tuple | `(p,)`, `(p1, p2, …)` | A tuple with one element per sub-pattern, each matching its sub-pattern | The names its sub-patterns bind |
 | Group | `(p)` | The values `p` matches | The names `p` binds |
 | Variant | `Variant(p1, …)`, `Enum.Variant(p1, …)`, `Enum.Variant` | That variant, each payload value matching its sub-pattern | The names its sub-patterns bind |
+| Named Rust variant | `Enum.Variant(field=p, …)` | That native variant, each named field matching its sub-pattern | The names its sub-patterns bind |
 | Record | `Type(field=p, …)` | A value of the model or class `Type` whose named fields match their sub-patterns | The names its sub-patterns bind |
 | Type | `T(p)` | A union value of member type `T` that matches `p` | The names `p` binds |
 | Alternation | <code>p1 &#124; p2 &#124; …</code> | The values any alternative matches | The names every alternative binds |
 
 ## Binding and tuple patterns
 
-- A binding pattern binds its name to the matched value as an immutable binding.
+- A binding pattern `name` binds its name to the matched value as an immutable binding: the name is not assigned to.
+- A writable binding pattern `mut name` binds a name that is assigned to, changed in place, and passed where a mutable value is required. `mut` is followed by a plain name.
+- A writable binding whose subject is a value of its own (a call result, a literal, a constructed value) owns the matched value.
+- A writable binding whose subject is a place (a binding, or a field or list element of one) borrows the matched part of that place writably: an in-place change, an assignment and a compound assignment through the name change the place. The place permits mutation: a `mut` binding or parameter, `self` in a `mut self` method, or a field or list element of one.
+- A writable binding never copies the matched value.
+- Each alternative of an alternation writes a name they share the same way, `mut` or plain.
 - A tuple pattern has one sub-pattern per element of the subject's tuple type, in order.
 
-Refused (`INCAN-T0001`): a binding pattern named `print` or `println`, and a tuple pattern with more or fewer sub-patterns than the subject's tuple type has elements.
+Refused (`INCAN-T0001`): a binding pattern named `print` or `println`, a tuple pattern with more or fewer sub-patterns than the subject's tuple type has elements, an assignment to a name bound without `mut`, and an alternation whose alternatives write a shared name `mut` in one and plain in another.
+
+Refused (`INCAN-T0126`): a writable binding whose subject is a place that does not permit mutation, and a writable binding whose subject is an element of a binding reached through an index that is not a list's, such as a tuple element spelled `pair[0]` or a dict value, which a pattern reads as a copy.
+
+Refused (`INCAN-P0001`): `mut` followed by anything other than a plain name, such as `mut _` or `mut Some(value)`.
 
 ```incan
 def first(pair: tuple[int, str]) -> str:
@@ -41,6 +52,27 @@ def first(pair: tuple[int, str]) -> str:
         (0, text, _) => return text     # refused: the tuple has two elements
         print => return "other"         # refused: print is a protected builtin name
         _ => return "none"
+```
+
+```incan
+model Cart:
+    items: Option[list[str]]
+
+
+def load() -> Result[list[str], str]:
+    return Ok(["apple"])
+
+
+def fill(mut cart: Cart, fixed: Cart) -> None:
+    match load():
+        Ok(mut items) => items.append("plum")     # accepted: items owns the call result's payload
+        Err(_) => pass
+    match cart.items:
+        Some(mut items) => items.append("plum")   # accepted: changes cart.items in place
+        None => pass
+    match fixed.items:
+        Some(mut items) => pass                   # refused: fixed is not declared mut
+        None => pass
 ```
 
 ## Literal patterns
@@ -76,11 +108,11 @@ def ratio(value: float) -> str:
 
 ## Variant patterns
 
-- The subject is an enum declared in Incan, an `Option` (`Some(p)`; `None` is a literal), or a `Result` (`Ok(p)`, `Err(p)`).
-- `Variant` is a variant of the subject's type or a variant alias. `Enum.Variant` qualifies it with the subject's enum, and a variant without a payload is written `Enum.Variant`.
+- The subject is an Incan enum, a Rust enum with a complete representable native layout, an `Option` (`Some(p)`; `None` is a literal), or a `Result` (`Ok(p)`, `Err(p)`). Named Rust variants follow the additional rules below.
+- `Variant` is a variant of the subject's type or a variant alias. `Enum.Variant` qualifies it with the subject's enum, which may be written through a module path, as in `io.Endian.Little` or `patterns.Decision.Approved(code)`, and a variant without a payload is written `Enum.Variant`.
 - Sub-patterns are positional, one per payload value. `Some(p)`, `Ok(p)` and `Err(p)` have one sub-pattern.
 
-Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, a named sub-pattern, more or fewer sub-patterns than the variant has payload values (`Enum.Variant` without parentheses has none), and a `Some`, `Ok` or `Err` pattern without exactly one sub-pattern.
+Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, a named sub-pattern on an Incan variant or a positional Rust variant, more or fewer sub-patterns than the variant has payload values (`Enum.Variant` without parentheses has none), and a `Some`, `Ok` or `Err` pattern without exactly one sub-pattern.
 
 ```incan
 enum Shape:
@@ -125,6 +157,16 @@ def kind_of(account: Account) -> str:
         _ => return "other"
 ```
 
+## Named Rust variant patterns
+
+- The subject is a Rust enum with a complete representable native layout. The form is `Enum.Variant(field=p, …)` for a Rust variant with named fields.
+- `Enum` resolves to the subject's native owner. Fields use their Rust names, independently of the order written in the pattern; an omitted field matches any value.
+- Each binding has its selected field's type. Reading a named binding as a source value copies or clones its field; a required native Clone implementation must exist. The subject stays alive while its payload is accessed.
+- Matching uses the Rust enum's actual discriminant values and widths, including explicit and negative tags.
+- Positional Rust variants retain their reference-binding types when the subject is borrowed. A native field without a representable type or binding is refused during compilation.
+
+Refused (`INCAN-T0001`): a named field that does not exist, a named field repeated in one pattern, a qualifier naming another native owner, and a use of a binding incompatible with its selected field's type.
+
 ## Type patterns
 
 - The subject is a union (see [Union types](union_types.md)) or an `Option` of one.
@@ -163,6 +205,7 @@ def tag(pair: tuple[int, str]) -> str:
 
 A `match` has one type, which every arm produces.
 
+- A `match` that is the last statement of a function returning a value is the function's result: the selected arm's value is returned.
 - An arm whose body is an expression produces that expression's value. An arm whose body is a block produces no value, and a block whose last statement is `return`, `break` or `continue` takes no part.
 - A literal arm of a `match` written to a place of a declared type (an annotated binding, a `return`, an argument) takes that type. When the type is numeric or an `Option` that holds no union, each arm is assignable to it and the `match` has it. Otherwise the arms unify: an arm assignable to another arm's type takes that type, so `i8` and `int` arms make an `int` match, and `Some(1)` and `None` arms an `Option[int]` one, and the `match` is then assignable to the place as any value is.
 - An `Option` payload or `Result` side that one arm leaves open, as `None`, `Ok(...)` and `Err(...)` do, takes the type another arm gives it, whichever arm comes first: `None` and `Some("a")` arms make an `Option[str]` match, and `Err("x")` and `Ok(1)` arms a `Result[int, str]` one.
@@ -217,7 +260,7 @@ The unguarded arms of a `match` cover its subject. A guarded arm never counts to
 | Subject type | The unguarded arms cover it when |
 | --- | --- |
 | `bool` | They match `true` and `false`. |
-| An enum, `Option[T]`, or `Result[T, E]` | For each variant, the arms that name it cover every value of its payload. A generic enum's payload types are those of the subject's type arguments. |
+| An Incan enum, a Rust enum with a complete representable native layout, `Option[T]`, or `Result[T, E]` | For each variant, the arms that name it cover every value of its payload. A generic enum's payload types are those of the subject's type arguments. |
 | A union | For each member type, the arms that name it cover every value of it. |
 | A tuple | They cover every combination of element values, element by element. |
 | A model or class | They cover every combination of field values, field by field. |

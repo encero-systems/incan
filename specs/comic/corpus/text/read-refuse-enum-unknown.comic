@@ -1,0 +1,5 @@
+example.State = Enum { Pending, Sent(code: i64, note: string? = None) }
+
+example.Value = Record { value: example.State }
+
+example.Value << (value=Missing)

@@ -1,0 +1,11 @@
+[project]
+name = "default_features_are_active"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["fast"]
+fast = []
+slow = []

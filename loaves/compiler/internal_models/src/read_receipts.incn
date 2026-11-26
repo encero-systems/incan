@@ -1,0 +1,8 @@
+"""Typed completed-read Crumb rows shared by compiler workers and the engine graph publisher. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    RECEIPT_SCHEMA,
+    encode_read_receipt,
+    decode_read_receipt,
+    decode_read_receipt_view,
+)

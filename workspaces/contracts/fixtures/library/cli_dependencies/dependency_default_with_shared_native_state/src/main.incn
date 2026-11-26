@@ -1,0 +1,11 @@
+# behavior: a consumer omits a dependency parameter whose default constructs a model with a native `Rc.new(RefCell.new(...))` field default, and constructs that model itself with the field omitted; both evaluate the dependency's defaults
+# expect-stdout:
+#   1
+#   1
+
+from pub::readers.readers import Reader, handles
+
+
+def main() -> None:
+    println(f"{handles()}")
+    println(f"{handles(Reader())}")

@@ -1,0 +1,220 @@
+"""Generate RFC index and reference-link snippets from their Markdown sources."""
+
+from rust::std::env import current_exe, var
+from rust::std::io import Write, stderr
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.regex import Regex
+
+
+model Row:
+    """The identifier, title, status, track and site URL of one RFC."""
+    id: str
+    title: str
+    status: str
+    track: str
+    url: str
+
+
+def main() -> Result[None, str]:
+    """
+    Generate both physical RFC snippets using the configured site prefix.
+
+    1. Read RFC metadata and retain stable identifier order.
+    2. Render the index table and reusable reference links.
+    3. Write the snippets and report the reference-link preview.
+    """
+    prefix: str = var("INCAN_DOCS_BASE_PREFIX").unwrap_or("(unset)")
+    starting = f"RFC Generator starting with INCAN_DOCS_BASE_PREFIX={prefix}"
+    println(f"[gen-files] {starting}")
+    info(starting)
+    site = site_root()?
+    # 1. Read and order all active and closed RFCs.
+    rows = collect_rows(site.joinpath("docs/RFCs"))?
+    # 2. Render the two snippets.
+    content = render_table(rows)
+    refs = render_reference_links(rows)
+    # 3. Write physical snippets for MkDocs and pymdownx.snippets.
+    docs = site.joinpath("docs")
+    docs.joinpath("_snippets/tables").mkdir(True, True).map_err((error) => error.message())?
+    refs_file = docs.joinpath("_snippets/rfcs_refs.md")
+    write(docs.joinpath("_snippets/tables/rfcs_index.md"), content)?
+    write(refs_file, refs)?
+    preview = "\n".join(refs.split("\n")[:5])
+    written = f"Wrote {refs_file.0} with DOCS_BASE_PREFIX={prefix}"
+    println(f"[gen-files] {written}")
+    println("[gen-files] Preview:")
+    println(preview)
+    info(written)
+    info(f"Preview:\n{preview}")
+    return Ok(None)
+
+
+def site_root() -> Result[Path, str]:
+    """Find the docs workspace above this standalone utility's Oven output directory."""
+    binary = current_exe().map_err((error) => error.to_string())?
+    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    while directory.name() != "target" and directory.parent().0 != directory.0:
+        directory = directory.parent()
+    return Ok(directory.parent().parent())
+
+
+def collect_rows(directory: Path) -> Result[list[Row], str]:
+    """Collect active and closed RFCs, inferring closed status from location and sorting stably by identifier."""
+    if not directory.exists():
+        return Ok([])
+    mut rows: list[Row] = []
+    for path in directory.rglob("*.md").map_err((error) => error.message())?:
+        if not path.is_file() or path.name().lower() == "index.md" or path.name() == "TEMPLATE.md":
+            continue
+        relative = path.0[len(directory.0) + 1:]
+        status, track = location_status(relative)
+        title, extracted = metadata(path, status == "")?
+        id = rfc_id(path.name())?
+        mut row = Row(id=id, title=strip_prefix(title, id)?, status=status, track=track,
+            url=with_base_prefix(f"/RFCs/{relative[:-3]}/"))
+        if status == "":
+            row.status = extracted
+        rows.append(row)
+        mut index = len(rows) - 1
+        while index > 0 and rows[index - 1].id > rows[index].id:
+            rows.swap(index - 1, index)
+            index -= 1
+    return Ok(rows)
+
+
+def location_status(relative: str) -> tuple[str, str]:
+    """Determine the closed track and status, leaving active status to the document metadata."""
+    if relative.startswith("closed/implemented/"):
+        return ("Done", "closed / implemented")
+    if relative.startswith("closed/superseded/"):
+        return ("Superseded", "closed / superseded")
+    if relative.startswith("closed/rejected/"):
+        return ("Rejected", "closed / rejected")
+    return ("", "proposed / active")
+
+
+def metadata(path: Path, need_status: bool) -> Result[tuple[str, str], str]:
+    """Read the first H1 and the original bold or list status forms, stopping at the same metadata boundary."""
+    heading = regex("^#\\s+(.+?)\\s*$")?
+    bold = regex("^\\s*(?:-\\s*)?\\*\\*Status(?::)?\\*\\*:?\\s*(.+?)\\s*$")?
+    bullet = regex("^\\s*-\\s*Status:\\s*(.+?)\\s*$")?
+    source = path.read_text("utf-8", "replace").map_err((error) => error.message())?
+    mut title = ""
+    mut status = "Unknown"
+    for line in source.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if title == "":
+            if let Some(capture) = heading.captures(line):
+                title = capture.group(1).unwrap_or("").strip()
+        if need_status:
+            if let Some(capture) = bold.captures(line):
+                status = capture.group(1).unwrap_or("").strip()
+                break
+            if let Some(capture) = bullet.captures(line):
+                status = capture.group(1).unwrap_or("").strip()
+                break
+        if title != "" and (not need_status or status != "Unknown"):
+            break
+    if title == "":
+        title = path.stem()
+    return Ok((title, status))
+
+
+def rfc_id(filename: str) -> Result[str, str]:
+    """Read a leading numeric identifier, retaining the original filename when it has none."""
+    pattern = regex("^(\\d+)")?
+    if let Some(capture) = pattern.captures(filename):
+        return Ok(capture.group(1).unwrap_or(filename))
+    return Ok(filename)
+
+
+def strip_prefix(title: str, id: str) -> Result[str, str]:
+    """Remove only a matching RFC identifier and colon from a title."""
+    pattern = regex("(?i)^RFC\\s+" + escaped(id) + "\\s*:\\s*(.+)$")?
+    if let Some(capture) = pattern.captures(title.strip()):
+        return Ok(capture.group(1).unwrap_or("").strip())
+    return Ok(title.strip())
+
+
+def escaped(text: str) -> str:
+    """Quote regex metacharacters in the filename-derived identifier."""
+    mut result = ""
+    for character in text:
+        if character in "\\.^$*+?{}[]|()":
+            result += "\\"
+        result += character
+    return result
+
+
+def with_base_prefix(path: str) -> str:
+    """Preserve Python Path's deployment prefix normalization, including its removed trailing slash."""
+    raw: str = var("INCAN_DOCS_BASE_PREFIX").unwrap_or("")
+    combined = raw.strip() + "/" + path
+    parts = [part for part in combined.split("/") if part != "" and part != "."]
+    prefix = "/" + raw.strip()
+    if prefix.startswith("//") and not prefix.startswith("///"):
+        return "//" + "/".join(parts)
+    return "/" + "/".join(parts)
+
+
+def render_reference_links(rows: list[Row]) -> str:
+    """Render reusable RFC link definitions in identifier order with their final newline."""
+    mut lines = ["<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->", "",
+        "<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->"]
+    for row in rows:
+        lines.append(f"[RFC {row.id}]: {row.url}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_table(rows: list[Row]) -> str:
+    """Render the original filter controls, Markdown table and lint boundaries."""
+    mut lines = [
+        "<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->", "",
+        "<!-- markdownlint-disable MD013 MD060 MD053 MD033 -->",
+        "<!-- Include RFC reference links (DRY: reuse rfcs_refs.md) -->",
+        "--8<-- \"_snippets/rfcs_refs.md\"", "", "<!-- RFCs index table -->", "",
+        "<!-- RFC index filter UI -->", "", '<div class="rfc-index-filter">', "  <label>",
+        '    Filter RFCs: <input type="search" data-rfc-filter="rfcs-index" '
+        + 'placeholder="e.g. 018, testing, superseded">',
+        "  </label>", "  <p><small>Tip: press <code>Esc</code> to clear.</small></p>", "</div>", "",
+        '<div data-rfc-table="rfcs-index" markdown="1">', "",
+        table_row("RFC", "Status", "Track", "Title"),
+        "| --------: | ----------- | -------------------- | " + repeated("-", 67) + " |",
+    ]
+    for row in rows:
+        lines.append(table_row(f"[RFC {row.id}]", row.status.replace("|", "\\|"),
+            row.track.replace("|", "\\|"), row.title.replace("|", "\\|")))
+    lines.extend(["", "</div>", "<!-- markdownlint-enable MD013 MD060 MD053 MD033 -->"])
+    return "\n".join(lines)
+
+
+def table_row(id: str, status: str, track: str, title: str) -> str:
+    """Pad the four original table columns without truncating long titles."""
+    return f"| {padded(id, 9)} | {padded(status, 11)} | {padded(track, 20)} | {padded(title, 67)} |"
+
+
+def padded(text: str, width: int) -> str:
+    """Pad short cells to their minimum width."""
+    return text + repeated(" ", max([width - len(text), 0]))
+
+
+def repeated(text: str, count: int) -> str:
+    """Repeat a layout character using the language's list and join operations."""
+    return "".join([text for index in range(count)])
+
+
+def regex(pattern: str) -> Result[Regex, str]:
+    """Compile a metadata pattern and retain its diagnostic."""
+    return Regex(pattern).map_err((error) => error.message())
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Write a complete UTF-8 snippet without adding an unrequested newline."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def info(message: str) -> None:
+    """Preserve the standalone generator's informational stderr logging."""
+    mut err = stderr()
+    _ = err.write_all(RustString.from(f"INFO - {message}\n").into_bytes())

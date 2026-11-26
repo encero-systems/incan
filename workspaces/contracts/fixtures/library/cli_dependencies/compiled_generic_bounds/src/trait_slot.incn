@@ -1,0 +1,74 @@
+"""A consumer that bounds its own generic functions by a dependency's trait."""
+
+from pub::bounds import Item, Labeled, NumberSource, Reconstruct, ValueWalker, WalkValue
+
+
+model WalkLeaf with WalkValue:
+    """Return one consumer-owned leaf observation."""
+
+    text: str
+
+    def walk[E, W with ValueWalker[E]](self, mut walker: W) -> Result[str, E]:
+        """Return this leaf's text."""
+        return Ok(self.text)
+
+
+model WalkBranch with WalkValue:
+    """Reach a consumer-owned leaf through the provider default."""
+
+    leaf: WalkLeaf
+
+    def walk[E, W with ValueWalker[E]](self, mut walker: W) -> Result[str, E]:
+        """Delegate the nested field to the provider walker."""
+        return walker.field(self.leaf)
+
+
+model DefaultWalker with ValueWalker[str]:
+    """Adopt the provider's generic default without an override."""
+
+    marker: int
+
+
+model IntSource with NumberSource[str]:
+    """Return one consumer-owned integer."""
+
+    value: int
+
+    def integer(mut self) -> Result[int, str]:
+        """Return the configured value."""
+        return Ok(self.value)
+
+
+model RebuiltNumber with Reconstruct:
+    """Adopt the provider-owned associated default."""
+
+    value: int
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltNumber, E]:
+        """Build a number from a consumer-owned source."""
+        return Ok(RebuiltNumber(value=source.integer()?))
+
+
+def display[T with Labeled](value: T) -> str:
+    """Select the library's default through its checked trait bound."""
+    return value.decorated()
+
+
+def replace[T with Labeled](mut value: T) -> str:
+    """Keep the exclusive receiver through the library's inherited default."""
+    return value.replace("first", "second")
+
+
+pub def run_trait_slot() -> None:
+    """Execute the default with a receiver implemented in the library."""
+    mut item = Item(value="linked")
+    println(display(item))
+    println(replace(item))
+    println(item.value)
+    match WalkBranch(leaf=WalkLeaf(text="provider leaf")).walk(DefaultWalker(marker=0)):
+        Ok(text) => println(text)
+        Err(message) => println(message)
+    match RebuiltNumber.through_default(IntSource(value=19)):
+        Ok(value) => println(f"provider Self {value.value}")
+        Err(message) => println(message)

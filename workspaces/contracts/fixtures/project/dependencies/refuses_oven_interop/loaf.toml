@@ -1,0 +1,9 @@
+[project]
+name = "refuses_oven_interop"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[oven.interop]
+headers = ["native.h"]

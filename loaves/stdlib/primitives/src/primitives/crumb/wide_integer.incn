@@ -1,0 +1,271 @@
+"""Small exact integers for physical column differences that can exceed a native carrier by one bit."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+
+
+pub model WideInteger:
+    """
+    A normalized sign and little-endian magnitude used only by physical integer transforms.
+
+    Logical Crumb values remain i128 or u128. This carrier exists because subtracting the two
+    endpoints of a 128-bit domain, or doubling u128 for Z, can require 129 bits.
+    """
+
+    negative: bool
+    magnitude: bytes
+
+    @staticmethod
+    pub def zero() -> Self:
+        """Create the unique zero representation."""
+        return WideInteger(negative=false, magnitude=b"")
+
+    @staticmethod
+    pub def from_unsigned(value: u128) -> Self:
+        """Widen one native unsigned value without decimal formatting."""
+        mut remaining = value
+        mut octets: list[u8] = []
+        while remaining > 0u128:
+            octets.append((remaining % 256u128).wrapping_resize[u8]())
+            remaining = remaining // 256u128
+        return WideInteger(negative=false, magnitude=octets)
+
+    @staticmethod
+    pub def from_signed(value: i128) -> Self:
+        """Widen one native signed value, including i128 minimum without negating it."""
+        if value >= 0i128:
+            return WideInteger.from_unsigned(value.wrapping_resize[u128]())
+        positive = (0i128 - (value + 1i128)).wrapping_resize[u128]() + 1u128
+        return WideInteger(negative=true, magnitude=WideInteger.from_unsigned(positive).magnitude)
+
+    @staticmethod
+    pub def from_magnitude(magnitude: bytes) -> Self:
+        """Create a nonnegative value from little-endian bytes and remove redundant high zeroes."""
+        return WideInteger._normalized(false, magnitude)
+
+    @staticmethod
+    pub def from_base128(groups: list[int], mut budget: Budget) -> Result[Self, CrumbError]:
+        """Decode little-endian seven-bit groups without a decimal intermediate."""
+        if len(groups) == 0:
+            return Err(CrumbError.invalid_input("empty base-128 integer"))
+        mut magnitude: bytes = b""
+        for index in range(len(groups) - 1, -1, -1):
+            group = groups[index]
+            if group < 0 or group >= 128:
+                return Err(CrumbError.invalid_input("base-128 group"))
+            magnitude = multiply_small(magnitude, 128, budget)?
+            if group != 0:
+                magnitude = add_magnitudes(magnitude, [group.saturating_resize[u8]()], budget)?
+        return Ok(WideInteger._normalized(false, magnitude))
+
+    @staticmethod
+    def _normalized(negative: bool, magnitude: bytes) -> Self:
+        """Own the representation invariant at the only raw construction boundary."""
+        mut end = len(magnitude)
+        while end > 0 and magnitude[end - 1] == 0u8:
+            end -= 1
+        if end == 0:
+            return WideInteger.zero()
+        return WideInteger(negative=negative, magnitude=magnitude[:end])
+
+    pub def is_zero(self) -> bool:
+        """Return whether this is the unique empty-magnitude zero."""
+        return len(self.magnitude) == 0
+
+    pub def is_negative(self) -> bool:
+        """Return the mathematical sign; zero is never negative."""
+        return self.negative
+
+    pub def bytes(self) -> bytes:
+        """Return the normalized little-endian magnitude for bit packing."""
+        return self.magnitude
+
+    pub def compare(self, other: WideInteger) -> int:
+        """Compare two exact signed values without formatting either value."""
+        if self.negative and not other.negative:
+            return -1
+        if not self.negative and other.negative:
+            return 1
+        result = compare_magnitudes(self.magnitude, other.magnitude)
+        if self.negative:
+            return 0 - result
+        return result
+
+    pub def add(self, other: WideInteger, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+        """Add exact values while charging each widened physical byte."""
+        if self.negative == other.negative:
+            return Ok(WideInteger._normalized(self.negative, add_magnitudes(self.magnitude, other.magnitude, budget)?))
+        comparison = compare_magnitudes(self.magnitude, other.magnitude)
+        if comparison == 0:
+            return Ok(WideInteger.zero())
+        if comparison > 0:
+            return Ok(
+                WideInteger._normalized(self.negative, subtract_magnitudes(self.magnitude, other.magnitude, budget)?),
+            )
+        return Ok(WideInteger._normalized(other.negative, subtract_magnitudes(other.magnitude, self.magnitude, budget)?))
+
+    pub def subtract(self, other: WideInteger, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+        """Subtract exact values across the full 128-bit endpoint span."""
+        return self.add(WideInteger._normalized(not other.negative, other.magnitude), budget)
+
+    pub def zigzag(self, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+        """Apply Z without overflowing while doubling the u128 maximum."""
+        doubled = multiply_small(self.magnitude, 2, budget)?
+        if not self.negative:
+            return Ok(WideInteger._normalized(false, doubled))
+        return Ok(WideInteger._normalized(false, subtract_one(doubled, budget)?))
+
+    pub def unzigzag(self, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+        """Invert a nonnegative Z magnitude into an exact signed value."""
+        if self.negative:
+            return Err(CrumbError.invalid_input("negative zigzag magnitude"))
+        odd = len(self.magnitude) > 0 and int(self.magnitude[0]) % 2 == 1
+        magnitude = divide_two(self.magnitude, budget)?
+        if odd:
+            return Ok(WideInteger._normalized(true, add_one(magnitude, budget)?))
+        return Ok(WideInteger._normalized(false, magnitude))
+
+    pub def bit_length(self, mut budget: Budget) -> Result[int, CrumbError]:
+        """Return the exact unsigned width, with zero requiring no packed bits."""
+        if self.negative:
+            return Err(CrumbError.invalid_input("negative packed integer"))
+        if len(self.magnitude) == 0:
+            return Ok(0)
+        mut top = int(self.magnitude[len(self.magnitude) - 1])
+        mut width = (len(self.magnitude) - 1) * 8
+        while top > 0:
+            budget.charge_elements(1)?
+            width += 1
+            top = top >> 1
+        return Ok(width)
+
+    pub def scale_decimal(self, power: int, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+        """Multiply by ten to a nonnegative power for exact decimal comparison."""
+        if power < 0:
+            return Err(CrumbError.invalid_input("negative decimal scale power"))
+        mut magnitude = self.magnitude
+        for _ in range(power):
+            magnitude = multiply_small(magnitude, 10, budget)?
+        return Ok(WideInteger._normalized(self.negative, magnitude))
+
+    pub def to_unsigned(self) -> Option[u128]:
+        """Narrow a nonnegative value only when every magnitude byte fits u128."""
+        if self.negative or len(self.magnitude) > 16:
+            return None
+        mut value: u128 = 0u128
+        for index in range(len(self.magnitude) - 1, -1, -1):
+            # At most sixteen normalized octets are admitted above, so this base-256 step cannot overflow.
+            value = value * 256u128 + int(self.magnitude[index]).wrapping_resize[u128]()
+        return Some(value)
+
+    pub def to_signed(self) -> Option[i128]:
+        """Narrow to i128, accepting its asymmetric minimum exactly."""
+        if not self.negative:
+            match self.to_unsigned():
+                Some(value) => return value.try_resize[i128]()
+                None => return None
+        positive = WideInteger._normalized(false, self.magnitude).to_unsigned()
+        match positive:
+            None => return None
+            Some(magnitude) =>
+                minimum_magnitude: u128 = 170141183460469231731687303715884105728u128
+                if magnitude == minimum_magnitude:
+                    return Some(-170141183460469231731687303715884105727i128 - 1i128)
+                match magnitude.try_resize[i128]():
+                    Some(value) => return Some(0i128 - value)
+                    None => return None
+
+
+def compare_magnitudes(left: bytes, right: bytes) -> int:
+    """Compare normalized unsigned little-endian byte strings."""
+    if len(left) < len(right):
+        return -1
+    if len(left) > len(right):
+        return 1
+    for index in range(len(left) - 1, -1, -1):
+        if left[index] < right[index]:
+            return -1
+        if left[index] > right[index]:
+            return 1
+    return 0
+
+
+def add_magnitudes(left: bytes, right: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Add two unsigned magnitudes with one bounded carry byte."""
+    size = max([len(left), len(right)])
+    budget.charge_bytes(size + 1)?
+    mut output: list[u8] = []
+    mut carry = 0
+    for index in range(size):
+        budget.charge_elements(1)?
+        mut value = carry
+        if index < len(left):
+            value += int(left[index])
+        if index < len(right):
+            value += int(right[index])
+        output.append((value % 256).saturating_resize[u8]())
+        carry = value // 256
+    if carry != 0:
+        output.append(carry.saturating_resize[u8]())
+    return Ok(output)
+
+
+def subtract_magnitudes(left: bytes, right: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Subtract the no-larger right magnitude from left with an explicit borrow."""
+    if compare_magnitudes(left, right) < 0:
+        return Err(CrumbError.invalid_input("wide integer subtraction"))
+    budget.charge_bytes(len(left))?
+    mut output: list[u8] = []
+    mut borrow = 0
+    for index in range(len(left)):
+        budget.charge_elements(1)?
+        mut value = int(left[index]) - borrow
+        if index < len(right):
+            value -= int(right[index])
+        if value < 0:
+            value += 256
+            borrow = 1
+        else:
+            borrow = 0
+        output.append(value.saturating_resize[u8]())
+    return Ok(output)
+
+
+def multiply_small(value: bytes, factor: int, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Multiply a magnitude by a small nonnegative factor with checked byte growth."""
+    if factor < 0 or factor > 255:
+        return Err(CrumbError.invalid_input("wide integer multiplier"))
+    budget.charge_bytes(len(value) + 1)?
+    mut output: list[u8] = []
+    mut carry = 0
+    for byte in value:
+        budget.charge_elements(1)?
+        product = int(byte) * factor + carry
+        output.append((product % 256).saturating_resize[u8]())
+        carry = product // 256
+    if carry != 0:
+        output.append(carry.saturating_resize[u8]())
+    return Ok(output)
+
+
+def add_one(value: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Increment one magnitude without routing through a formatted integer."""
+    return add_magnitudes(value, b"\x01", budget)
+
+
+def subtract_one(value: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Decrement one positive magnitude."""
+    return subtract_magnitudes(value, b"\x01", budget)
+
+
+def divide_two(value: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Divide one unsigned magnitude by two from its most significant byte."""
+    budget.charge_bytes(len(value))?
+    mut output: list[u8] = [0u8 for _ in value]
+    mut carry = 0
+    for index in range(len(value) - 1, -1, -1):
+        budget.charge_elements(1)?
+        combined = carry * 256 + int(value[index])
+        output[index] = (combined // 2).saturating_resize[u8]()
+        carry = combined % 2
+    return Ok(output)

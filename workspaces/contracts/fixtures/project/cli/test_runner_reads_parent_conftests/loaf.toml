@@ -1,0 +1,6 @@
+[project]
+name = "test_runner_reads_parent_conftests"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

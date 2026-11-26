@@ -5,7 +5,7 @@ Shared datetime error type.
 type from `std.datetime`.
 """
 
-from std.traits.error import Error
+pub from std.traits.error import Error
 
 
 pub model DateTimeError with Error:

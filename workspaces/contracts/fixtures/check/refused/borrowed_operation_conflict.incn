@@ -1,0 +1,15 @@
+# behavior: a later operand cannot mutate storage retained by an earlier borrowed operand (#2500).
+# expect-diagnostic: INCAN-T0126
+
+def replace(mut value: BorrowedMut[str]) -> int:
+    value = "changed"
+    return len(value)
+
+
+def invalid(mut value: BorrowedMut[str]) -> None:
+    println(value, replace(value))
+
+
+def main() -> None:
+    mut text = "original"
+    invalid(text)

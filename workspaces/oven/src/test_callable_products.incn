@@ -1,0 +1,135 @@
+"""
+Checked-source selection contracts: a selection resolves each native path it compares once, and a dependency's manifest
+is read for its vocabulary once per generation.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from callable_products import desugared_by_a_dependency, retain_callable_products
+from files import json_text
+from freshness_fixtures import fixture, write
+from scratch import scratch_directory
+from trace_adapter import count_work, finish_counting
+from unit import UnitLoaf
+
+
+pub def test_a_checked_source_selection_resolves_each_native_path_once() -> Result[None, str]:
+    """
+    Loaves whose native closures name one shared archive and search directory resolve each of them once per selection.
+
+    Every standard Loaf's closure names the same native archives, so a unit reaching eleven of them compared about five
+    hundred resolutions of about a hundred paths.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    native = scratch.path().joinpath("native")
+    shared = native.joinpath("libshared.rlib")
+    write(shared, "shared native archive")?
+    mut loaves: list[UnitLoaf] = []
+    for name in ["left", "middle", "right"]:
+        directory = scratch.path().joinpath("loaves").joinpath(name)
+        write(directory.joinpath(f"lib{name}.rlib"), f"{name} archive")?
+        binding = JsonValue.array([JsonValue.string("shared"), JsonValue.string(f"absolute:{shared.0}")])
+        closure = JsonValue.object(
+            {"externs": JsonValue.array([binding]), "macro_externs": JsonValue.array([]), "search": JsonValue.array(
+                [JsonValue.string(f"absolute:{native.0}")],
+            )},
+        )
+        write(directory.joinpath(f"{name}.native.json"), json_text(closure)?)?
+        loaves.append(UnitLoaf(key=name, name=name, dir=directory.0, standard=true))
+    mut unit = setup.unit
+    unit.loaves = loaves
+    count_work(native.0)
+    selected = retain_callable_products(unit, setup.toolchain)?
+    observed = finish_counting()
+    assert selected.checked_context is not None, "the selection named no checked-source context"
+    assert observed.resolutions == 2, f"three closures naming one archive and its directory resolved {observed.resolutions} paths"
+    return Ok(None)
+
+
+pub def test_an_edit_decodes_no_dependency_manifest_the_build_before_decoded() -> Result[None, str]:
+    """
+    Whether a dependency Loaf publishes vocabulary decides if the engine keeps per-declaration records for a unit. It is
+    read from the Loaf's manifest once per manifest generation: the request after the one that read it, an edit's,
+    decodes no manifest. A republished manifest is read again, once.
+
+    A Loaf's manifest can be megabytes of JSON: Oven's edits decoded three of them, about 1.4 s, on every request.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    dependency = Path(setup.unit.loaves[0].dir)
+    manifest = dependency.joinpath("dep.incnlib")
+    # A published manifest has settled by the time a build reads it.
+    sleep(Duration.from_secs(3))
+    count_work(dependency.0)
+    assert not desugared_by_a_dependency(setup.unit)?
+    before = finish_counting()
+    count_work(dependency.0)
+    assert not desugared_by_a_dependency(setup.unit)?
+    edit = finish_counting()
+    assert before.decodes == 1, f"the build before decoded the dependency manifest {before.decodes} times"
+    assert edit.decodes == 0, f"the edit decoded the dependency manifest the build before decoded {edit.decodes} times"
+    # The Loaf republished with vocabulary: another generation, read once and then answered from that reading.
+    identity = "abababababababababababababababababababababababababababababababab"
+    write(manifest, f"{{\"vocab\": {{\"metadata_version\": 1, \"unit_identity\": \"{identity}\"}}}}")?
+    sleep(Duration.from_secs(3))
+    count_work(dependency.0)
+    assert desugared_by_a_dependency(setup.unit)?
+    republished = finish_counting()
+    count_work(dependency.0)
+    assert desugared_by_a_dependency(setup.unit)?
+    again = finish_counting()
+    assert republished.decodes == 1, f"the republished manifest was decoded {republished.decodes} times"
+    assert again.decodes == 0, f"the republished manifest was decoded again {again.decodes} times"
+    return Ok(None)
+
+
+pub def test_checked_context_keeps_features_while_lowering_keys_the_checked_body() -> Result[None, str]:
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    mut unit = setup.unit
+    unit.loaves = []
+    unit.declared_features = ["optional"]
+    unit.active_features = []
+    initial = retain_callable_products(unit, setup.toolchain)?
+    unit.active_features = ["optional"]
+    enabled = retain_callable_products(unit, setup.toolchain)?
+    assert initial.checked_context is not None and enabled.checked_context is not None
+    assert initial.checked_context != enabled.checked_context
+    assert initial.lowering_context is not None and initial.lowering_context == enabled.lowering_context
+    unit.program_checks = true
+    alternate = retain_callable_products(unit, setup.toolchain)?
+    assert alternate.lowering_context != enabled.lowering_context
+    return Ok(None)
+
+
+pub def test_a_changed_loaf_rust_facet_changes_the_lowering_context() -> Result[None, str]:
+    """
+    A plan product stores a Loaf's Rust-facet function by the native path its crate links it at, and is restored only
+    under the lowering context it was keyed by. A Rust facet whose function changes signature or is removed must
+    therefore change that context, so every product of a dependent unit misses.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    directory = scratch.path().joinpath("loaves").joinpath("facet")
+    write(directory.joinpath("facet.incnlib"), json_text(JsonValue.object({"fixture": JsonValue.string("facet")}))?)?
+    write(directory.joinpath("facet.incnbody"), "facet bodies")?
+    abi = directory.joinpath("facet.rustabi")
+    write(abi, "facet_native::encode_key(text: &str) -> Vec<u8>\nfacet_native::decode_key(bytes: &[u8]) -> String\n")?
+    closure = JsonValue.object(
+        {"externs": JsonValue.array([]), "macro_externs": JsonValue.array([]), "search": JsonValue.array([])},
+    )
+    write(directory.joinpath("facet.native.json"), json_text(closure)?)?
+    mut unit = setup.unit
+    unit.loaves = [UnitLoaf(key="facet", name="facet", dir=directory.0, standard=false)]
+    initial = retain_callable_products(unit, setup.toolchain)?
+    write(abi, "facet_native::encode_key(text: &str, limit: usize) -> Vec<u8>\nfacet_native::decode_key(bytes: &[u8]) -> String\n")?
+    resigned = retain_callable_products(unit, setup.toolchain)?
+    write(abi, "facet_native::encode_key(text: &str, limit: usize) -> Vec<u8>\n")?
+    removed = retain_callable_products(unit, setup.toolchain)?
+    assert initial.lowering_context is not None, "the selection named no lowering context"
+    assert resigned.lowering_context != initial.lowering_context, "a Rust-facet signature change kept the lowering context"
+    assert removed.lowering_context != resigned.lowering_context, "a removed Rust-facet function kept the lowering context"
+    return Ok(None)

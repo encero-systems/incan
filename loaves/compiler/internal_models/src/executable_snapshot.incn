@@ -1,0 +1,78 @@
+"""Reopen the exact leased compiler graph for late peer and executable-scope reads."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from std.primitives.views import MappedView
+from pub::incan_platform.store import Lookup, Snapshot, locate_value, read_frame, read_manifest
+from pub::incan_platform.store.disk import root as disk_root
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, number, text
+from records import encode_record_key
+from executable_scope import complete_scope_digest, executable_scope_key
+
+const ROW: bytes = b"reopen\x00"
+pub const REOPEN_SELECTION: str = "reopen-snapshot.crumb"
+
+
+pub model ExecutableSnapshot:
+    """One authenticated immutable graph and its project-scoped origin."""
+
+    pub graph: Snapshot
+    pub origin: str
+
+
+pub model ExecutableScopeSelection:
+    """The exact frame digest selected for a scope, with the authenticated view when opened."""
+
+    pub revision: bytes
+    pub value: Option[MappedView]
+
+
+def description() -> Description:
+    """Keep the existing checked peer snapshot descriptor's exact storage contract."""
+    return model_description(ROW, "incan.oven.reopened-peers/1", [
+        ModelField(identity=b"genera", name="generation", storage="i64"),
+        ModelField(identity=b"manife", name="manifest", storage="string"),
+        ModelField(identity=b"origin", name="origin", storage="string"),
+        ModelField(identity=b"view__", name="view", storage="string"),
+    ])
+
+
+pub def executable_snapshot_descriptor(snapshot: Borrowed[Snapshot], origin: Borrowed[str]) -> Result[bytes, str]:
+    """Publish the pinned store address without selecting any executable owner's value."""
+    return encode_graph_row(ROW, description(), [
+        required_value(b"genera", signed(snapshot.generation)), required_value(b"manife", Value.Text(snapshot.digest)),
+        required_value(b"origin", Value.Text(origin.clone())), required_value(b"view__", Value.Text(snapshot.view)),
+    ])
+
+
+pub def reopen_executable_snapshot(bakery: Borrowed[str], encoded: Borrowed[bytes]) -> Result[ExecutableSnapshot, str]:
+    """Open the named generation and view after admitting the trusted request descriptor."""
+    fields = decode_graph_row(encoded, ROW, description(), 4)?
+    generation = number(fields[0].value)?
+    manifest = text(fields[1].value)?
+    origin = text(fields[2].value)?
+    view = text(fields[3].value)?
+    if generation < 1 or not complete_scope_digest(manifest) or origin == "" or view == "":
+        return Err("invalid pinned graph for reopened peers")
+    graph = read_manifest(disk_root(bakery), generation, manifest, view).map_err((error) => error.message())?
+    return Ok(ExecutableSnapshot(graph=graph, origin=origin))
+
+
+pub def select_executable_scope(selected: Borrowed[ExecutableSnapshot], module: Borrowed[str], digest: Borrowed[str], retained: Option[bytes]) -> Result[ExecutableScopeSelection, str]:
+    """
+    Select the scope's full origin and module key in the pinned snapshot.
+
+    The index binds the full key and frame digest. A matching retained digest supplies an already authenticated
+    immutable value even after compaction relocates it. Otherwise open and authenticate the selected frame.
+    """
+    key = encode_record_key(executable_scope_key(selected.origin, module, digest)?)?
+    location = match locate_value(selected.graph, key).map_err((error) => error.message())?:
+        Some(found) => found
+        None => return Err("selected executable scope is missing")
+    if let Some(revision) = retained:
+        if revision == location.digest:
+            return Ok(ExecutableScopeSelection(revision=location.digest, value=None))
+    match read_frame(selected.graph.root, key, location).map_err((error) => error.message())?:
+        Lookup.Found(value) => return Ok(ExecutableScopeSelection(revision=location.digest, value=Some(value)))
+        _ => return Err("selected executable scope is missing")

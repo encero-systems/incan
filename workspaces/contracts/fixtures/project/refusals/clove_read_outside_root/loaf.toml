@@ -1,0 +1,9 @@
+[project]
+name = "clove_read_outside_root"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+leaky = { path = "deps/leaky" }

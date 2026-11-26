@@ -1,0 +1,8 @@
+# behavior: exclusive returned access cannot be manufactured from a shared receiver (#2500).
+# expect-diagnostic: INCAN-T0124
+
+class Address:
+    pub city: str
+
+    def view(self) -> Reference[Address] from self:
+        return self

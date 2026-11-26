@@ -1,0 +1,8 @@
+"""Use the same native function while explicitly importing its return enum."""
+
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+
+
+pub def recognizes() -> bool:
+    """Recognize the collection without letting a local enum import change native return storage."""
+    return collection_type("List") != None

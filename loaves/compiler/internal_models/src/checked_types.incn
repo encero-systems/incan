@@ -1,0 +1,12 @@
+"""Incan-owned checked type facts, preserving every semantic type component without display-text reconstruction. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedInputAccess,
+    CheckedCallableParamKind,
+    CheckedRuntimeBuiltin,
+    CheckedCallableParam,
+    CheckedType,
+    valid_checked_type,
+)

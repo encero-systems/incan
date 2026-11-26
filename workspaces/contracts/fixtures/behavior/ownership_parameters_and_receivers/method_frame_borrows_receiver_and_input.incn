@@ -1,0 +1,25 @@
+# behavior: a method with an explicit input borrows a stored or fresh receiver and its argument; stored writes reach the caller, and a fresh receiver stays alive for the invocation (#2500).
+# expect-stdout:
+#   3
+#   0
+#   11
+#   0
+
+class Counter:
+    pub value: int
+
+    pub def bump(mut self, mut amount: BorrowedMut[int]) -> int:
+        self.value = self.value + amount
+        amount = 0
+        return self.value
+
+
+def main() -> None:
+    mut counter = Counter(value=1)
+    mut step = 2
+    counter.bump(step)
+    println(counter.value)
+    println(step)
+    step = 4
+    println(Counter(value=7).bump(step))
+    println(step)

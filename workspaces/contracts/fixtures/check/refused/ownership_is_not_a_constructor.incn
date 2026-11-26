@@ -1,0 +1,5 @@
+# behavior: Ownership annotations never act as runtime wrapper constructors.
+# expect-diagnostic: INCAN-T0123
+
+def main() -> None:
+    value = Owned("text")

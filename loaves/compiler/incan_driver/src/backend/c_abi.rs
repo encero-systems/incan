@@ -14,7 +14,9 @@ use std::process::{Command, Stdio};
 
 use incan_frontend::typechecker::{CBindingDescriptor, CBindingEnum, CBindingStruct, CBindingType};
 use incan_lang::lang::c_abi::ScalarTypeId;
-use oven_model::oven_interop::{InteropCTarget, InteropTargetPlatform, IosTargetKind, ios_target_kind};
+
+use super::c_abi_capabilities::{SelectedCapability, require, selected_android_platform, selected_toolchain};
+use crate::unit::UnitCAbiTarget;
 
 type EnumValueProbeRequest = (String, String, String);
 
@@ -71,33 +73,27 @@ impl CAbiTarget {
         None
     }
 
-    /// Translate one checked Oven interop target declaration into Clang's exact ABI target spelling.
-    fn from_interop_target(interop_target: &InteropCTarget) -> Result<Self, String> {
-        match (&interop_target.target[..], interop_target.platform.as_ref()) {
-            ("x86_64-unknown-linux-gnu", None) => Ok(Self::LinuxX86_64),
-            ("aarch64-apple-darwin", None) => Ok(Self::MacosArm64),
-            ("aarch64-linux-android", Some(InteropTargetPlatform::Android { api_level })) => {
-                Ok(Self::AndroidArm64 { api_level: *api_level })
-            }
-            (_, Some(InteropTargetPlatform::Ios { deployment_target })) => {
-                let Some(kind) = ios_target_kind(&interop_target.target) else {
-                    return Err(format!(
-                        "Oven interop target `{}` has iOS platform facts but is not an iOS arm64 target",
-                        interop_target.target
-                    ));
-                };
-                Ok(Self::IosArm64 {
-                    deployment_target: deployment_target.clone(),
-                    simulator: matches!(kind, IosTargetKind::Simulator),
-                })
-            }
-            (_, Some(InteropTargetPlatform::Android { .. })) => Err(format!(
-                "Oven interop target `{}` has Android platform facts but is not an Android arm64 target",
-                interop_target.target
-            )),
+    /// The Clang ABI target of one declared `[[interop.c.targets]]` entry, as 0.5's `--interop-target` verified it.
+    pub fn declared(target: &UnitCAbiTarget) -> Result<Self, String> {
+        match (
+            target.target.as_str(),
+            target.api_level,
+            target.deployment_target.as_deref(),
+        ) {
+            ("x86_64-unknown-linux-gnu", None, None) => Ok(Self::LinuxX86_64),
+            ("aarch64-apple-darwin", None, None) => Ok(Self::MacosArm64),
+            ("aarch64-linux-android", Some(api_level), None) => Ok(Self::AndroidArm64 { api_level }),
+            ("aarch64-apple-ios", None, Some(deployment_target)) => Ok(Self::IosArm64 {
+                deployment_target: deployment_target.to_string(),
+                simulator: false,
+            }),
+            ("aarch64-apple-ios-sim", None, Some(deployment_target)) => Ok(Self::IosArm64 {
+                deployment_target: deployment_target.to_string(),
+                simulator: true,
+            }),
             _ => Err(format!(
-                "Oven interop target `{}` is not supported by checked C ABI verification; declare one of `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `aarch64-linux-android` with Android platform facts, or `aarch64-apple-ios`/`aarch64-apple-ios-sim` with iOS platform facts",
-                interop_target.target
+                "interop target `{}` is not supported by checked C ABI verification; declare one of `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `aarch64-linux-android` with Android platform facts, or `aarch64-apple-ios`/`aarch64-apple-ios-sim` with iOS platform facts",
+                target.target
             )),
         }
     }
@@ -129,7 +125,12 @@ impl CAbiTarget {
 pub struct CAbiVerificationPlan {
     target: CAbiTarget,
     definitions: Vec<String>,
+    /// Include roots of the Clove whose public headers a `c.loaf_library` binding names.
+    include: Vec<PathBuf>,
     toolchain_identity: Option<String>,
+    /// The declared `[[interop.c.targets]]` entry this plan verifies against (`--interop-target`); absent for the
+    /// host.
+    declared: Option<UnitCAbiTarget>,
 }
 
 impl CAbiVerificationPlan {
@@ -138,20 +139,34 @@ impl CAbiVerificationPlan {
         CAbiTarget::host().map(|target| Self {
             target,
             definitions: Vec::new(),
+            include: Vec::new(),
             toolchain_identity: None,
+            declared: None,
         })
     }
 
-    /// Select ABI verification from one manifest interop target whose package requirements have already been validated.
-    pub fn from_interop_target(interop_target: &InteropCTarget) -> Result<Self, String> {
+    /// Verification against one declared interop target: its ABI, its definitions and its toolchain and SDK
+    /// capability requirements, which the selected compiler and SDK must meet.
+    pub fn declared(target: &UnitCAbiTarget) -> Result<Self, String> {
         Ok(Self {
-            target: CAbiTarget::from_interop_target(interop_target)?,
-            definitions: interop_target.definitions.clone(),
-            toolchain_identity: interop_target
+            target: CAbiTarget::declared(target)?,
+            definitions: target.definitions.clone(),
+            include: Vec::new(),
+            toolchain_identity: target
                 .toolchain
                 .as_ref()
                 .map(|requirement| requirement.capability.clone()),
+            declared: Some(target.clone()),
         })
+    }
+
+    /// The same target verified with one Clove configuration's definitions and the Clove's include roots, as the
+    /// archive the binding links was compiled (RFC 159).
+    pub fn with_clove(&self, definitions: &[String], include: &[PathBuf]) -> Self {
+        let mut plan = self.clone();
+        plan.definitions.extend(definitions.iter().cloned());
+        plan.include.extend(include.iter().cloned());
+        plan
     }
 
     /// Return the exact Clang target selected for this verifier pass.
@@ -172,9 +187,9 @@ impl CAbiVerificationPlan {
 
 /// Explicit Clang executable used for one verifier invocation.
 ///
-/// Oven will eventually provide this capability through a selected Loaf target. The first checked-binding slice
-/// keeps that policy out of source declarations while accepting an explicit test/CI override and the platform's
-/// Clang-compatible toolchain.
+/// Oven passes a toolchain's own Clang (`INCAN_C_ABI_CLANG`) when the toolchain carries one, as Linux toolchains do;
+/// it reads the machine's headers, those of the system libraries a binding links. Otherwise the platform's
+/// Clang-compatible toolchain is used: Xcode's on macOS, with the target's SDK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClangToolchain {
     executable: PathBuf,
@@ -182,13 +197,24 @@ pub struct ClangToolchain {
 }
 
 impl ClangToolchain {
-    /// Select the current platform's Clang-compatible compiler without consulting binding names or headers.
+    /// Select the verification's compiler and SDK without consulting binding names or headers, then hold them to a
+    /// declared target's toolchain and SDK capability requirements.
     pub fn discover(plan: &CAbiVerificationPlan) -> Result<Self, CAbiVerificationError> {
+        let (toolchain, sdk) = Self::select(plan)?;
+        if let Some(declared) = &plan.declared {
+            toolchain.require_capabilities(declared, sdk.as_deref())?;
+        }
+        Ok(toolchain)
+    }
+
+    /// The verification's compiler and, when the platform's tool selects one for the target, the SDK's name.
+    fn select(plan: &CAbiVerificationPlan) -> Result<(Self, Option<String>), CAbiVerificationError> {
         if let Some(executable) = env::var_os("INCAN_C_ABI_CLANG").filter(|value| !value.is_empty()) {
-            return Ok(Self {
+            let toolchain = Self {
                 executable: PathBuf::from(executable),
                 arguments: Vec::new(),
-            });
+            };
+            return Ok((toolchain, None));
         }
         if plan.target().is_android() {
             return Err(CAbiVerificationError::toolchain(android_toolchain_message(plan)));
@@ -212,18 +238,50 @@ impl ClangToolchain {
             };
             let sysroot = xcrun_value(Some(sdk), &["--show-sdk-path"], sysroot_description)?;
             let arguments = vec![OsString::from("-isysroot"), OsString::from(sysroot)];
-            Ok(Self {
+            let toolchain = Self {
                 executable: PathBuf::from(executable),
                 arguments,
-            })
+            };
+            Ok((toolchain, Some(sdk.to_string())))
         }
         #[cfg(not(target_os = "macos"))]
         {
-            Ok(Self {
+            let toolchain = Self {
                 executable: PathBuf::from("clang"),
                 arguments: Vec::new(),
-            })
+            };
+            Ok((toolchain, None))
         }
+    }
+
+    /// Refuse, by name, a declared toolchain or SDK capability this selection does not provide. The toolchain is the
+    /// selected compiler; the SDK is the one the platform's tool selected for the target or, for an NDK Clang, the
+    /// newest Android platform its NDK carries.
+    fn require_capabilities(&self, declared: &UnitCAbiTarget, sdk: Option<&str>) -> Result<(), CAbiVerificationError> {
+        if let Some(requirement) = &declared.toolchain {
+            let selected = selected_toolchain(&self.executable);
+            let unknown = format!(
+                "the selected C toolchain `{}` reports no Clang version",
+                self.executable.display()
+            );
+            require(&declared.target, "toolchain", requirement, selected.as_ref(), &unknown)
+                .map_err(CAbiVerificationError::toolchain)?;
+        }
+        if let Some(requirement) = &declared.sdk {
+            let selected = match sdk {
+                Some(name) => selected_platform_sdk(name),
+                None => selected_android_platform(&self.executable),
+            };
+            require(
+                &declared.target,
+                "SDK",
+                requirement,
+                selected.as_ref(),
+                "the selected C toolchain selects no SDK",
+            )
+            .map_err(CAbiVerificationError::toolchain)?;
+        }
+        Ok(())
     }
 
     /// Construct a test-only toolchain with an explicit executable path.
@@ -259,6 +317,22 @@ fn xcrun_value(sdk: Option<&str>, arguments: &[&str], description: &str) -> Resu
     )))
 }
 
+/// The SDK Xcode selected for the target, by its name and the version the SDK reports.
+#[cfg(target_os = "macos")]
+fn selected_platform_sdk(name: &str) -> Option<SelectedCapability> {
+    let version = xcrun_value(Some(name), &["--show-sdk-version"], "SDK version").ok()?;
+    Some(SelectedCapability {
+        capability: name.to_string(),
+        version,
+    })
+}
+
+/// Only Xcode selects a platform SDK for a target.
+#[cfg(not(target_os = "macos"))]
+fn selected_platform_sdk(_name: &str) -> Option<SelectedCapability> {
+    None
+}
+
 /// Explain the current explicit Android toolchain boundary without inventing an ambient NDK discovery policy.
 fn android_toolchain_message(plan: &CAbiVerificationPlan) -> String {
     let identity = plan.toolchain_identity().unwrap_or("Android NDK toolchain");
@@ -278,7 +352,7 @@ pub struct CAbiVerificationError {
 
 /// Target-verified C enum values consumed by the ordinary Incan lowering path.
 ///
-/// The C probe is authoritative: generated Rust receives only the folded scalar after target verification, never a
+/// The C probe is authoritative: native lowering receives only the folded scalar after target verification, never a
 /// guessed header spelling or macro expansion from the binding source.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CAbiVerificationReceipt {
@@ -383,13 +457,20 @@ pub fn verify_checked_c_binding(
 }
 
 /// Start one verifier process with the exact selected ABI target and manifest-owned definitions.
+///
+/// The verifier reads headers in the GNU C11 dialect, the one C libraries are ordinarily compiled against, so it sees
+/// the declarations a header exposes by default. Strict ISO C11 would make glibc hide its POSIX declarations, such as
+/// `gai_strerror` in `netdb.h`, which macOS headers expose either way.
 fn verifier_command(toolchain: &ClangToolchain, plan: &CAbiVerificationPlan) -> Command {
     let mut command = Command::new(&toolchain.executable);
     command.args(&toolchain.arguments);
     for definition in plan.definitions() {
         command.arg(format!("-D{definition}"));
     }
-    command.args(["-std=c11", "-Werror", "-x", "c", "-target"]);
+    for include in &plan.include {
+        command.arg(format!("-I{}", include.display()));
+    }
+    command.args(["-std=gnu11", "-Werror", "-x", "c", "-target"]);
     command.arg(plan.target().triple());
     command
 }
@@ -472,8 +553,8 @@ fn render_enum_value_probe(
     binding: &CBindingDescriptor,
 ) -> Result<(String, Vec<EnumValueProbeRequest>), CAbiVerificationError> {
     let mut probe = format!(
-        "/* Generated by the Incan checked C ABI verifier. */\n#include \"{}\"\n\n",
-        escape_c_include(&binding.header)
+        "/* Generated by the Incan checked C ABI verifier. */\n{}\n\n",
+        include_directive(binding)?
     );
     let mut requested = Vec::new();
     for enumeration in &binding.enums {
@@ -527,8 +608,8 @@ fn ast_constant_value(value: &serde_json::Value) -> Option<&str> {
 /// Render a deterministic, non-executable C probe from one checked descriptor.
 fn render_verification_probe(binding: &CBindingDescriptor) -> Result<String, CAbiVerificationError> {
     let mut probe = format!(
-        "/* Generated by the Incan checked C ABI verifier. */\n#include \"{}\"\n\n",
-        escape_c_include(&binding.header)
+        "/* Generated by the Incan checked C ABI verifier. */\n{}\n\n",
+        include_directive(binding)?
     );
     for symbol in &binding.symbols {
         let native = checked_c_identifier(binding, &symbol.native, "native symbol")?;
@@ -724,6 +805,25 @@ fn escape_c_include(header: &str) -> String {
     header.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// The probe's include directive for a binding's header.
+///
+/// Oven resolves every header a package declares, and every public header of a Clove, to an absolute path, which is
+/// included by that path. Any other header is a system header: it is searched only on the target's system include
+/// path, never relative to the working directory, so an undeclared project file is neither read nor an unrecorded
+/// input of the unit.
+fn include_directive(binding: &CBindingDescriptor) -> Result<String, CAbiVerificationError> {
+    if std::path::Path::new(&binding.header).is_absolute() {
+        return Ok(format!("#include \"{}\"", escape_c_include(&binding.header)));
+    }
+    if binding.header.contains(['>', '\n', '\r']) {
+        return Err(CAbiVerificationError::binding(
+            binding,
+            format!("header `{}` is not a header name", binding.header),
+        ));
+    }
+    Ok(format!("#include <{}>", binding.header))
+}
+
 /// Convert source names into a private generated C identifier component.
 fn c_identifier_component(value: &str) -> String {
     value
@@ -736,338 +836,4 @@ fn c_identifier_component(value: &str) -> String {
             }
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CAbiTarget, CAbiVerificationPlan, ClangToolchain, verify_checked_c_binding};
-    use incan_frontend::typechecker::{
-        CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingParameter, CBindingStruct, CBindingStructField,
-        CBindingSymbol, CBindingType,
-    };
-    use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
-    use oven_model::oven_interop::{InteropCTarget, InteropTargetPlatform, ToolchainRequirement};
-
-    fn fixture_binding(header: String) -> CBindingDescriptor {
-        CBindingDescriptor {
-            span: incan_frontend::ast::Span::default(),
-            class_name: "Fixture".to_string(),
-            header,
-            system_library: "fixture".to_string(),
-            link_capability: LinkCapabilityId::SystemLibrary,
-            resources: Vec::new(),
-            symbols: vec![CBindingSymbol {
-                name: "absolute".to_string(),
-                native: "fixture_abs".to_string(),
-                parameters: vec![CBindingParameter {
-                    name: "value".to_string(),
-                    ty: CBindingType::Scalar(ScalarTypeId::I32),
-                }],
-                return_type: CBindingType::Scalar(ScalarTypeId::I32),
-                buffers: Vec::new(),
-                outcomes: Vec::new(),
-            }],
-            enums: vec![CBindingEnum {
-                name: "Status".to_string(),
-                carrier: ScalarTypeId::I32,
-                variants: vec![CBindingEnumVariant {
-                    name: "OK".to_string(),
-                    native: "FIXTURE_OK".to_string(),
-                }],
-            }],
-            structs: vec![CBindingStruct {
-                name: "Pair".to_string(),
-                native: "fixture_pair".to_string(),
-                fields: vec![
-                    CBindingStructField {
-                        name: "left".to_string(),
-                        ty: CBindingType::Scalar(ScalarTypeId::I32),
-                    },
-                    CBindingStructField {
-                        name: "right".to_string(),
-                        ty: CBindingType::Scalar(ScalarTypeId::I32),
-                    },
-                ],
-            }],
-        }
-    }
-
-    fn host_clang(plan: &CAbiVerificationPlan) -> Option<ClangToolchain> {
-        ClangToolchain::discover(plan).ok()
-    }
-
-    fn declared_interop_target(
-        target: &str,
-        platform: InteropTargetPlatform,
-        definitions: Vec<&str>,
-    ) -> InteropCTarget {
-        InteropCTarget {
-            target: target.to_string(),
-            toolchain: Some(ToolchainRequirement {
-                capability: "fixture-clang".to_string(),
-                version: None,
-            }),
-            sdk: Some(ToolchainRequirement {
-                capability: match (&platform, target) {
-                    (InteropTargetPlatform::Android { .. }, _) => "android",
-                    (InteropTargetPlatform::Ios { .. }, _) => match oven_model::oven_interop::ios_target_kind(target) {
-                        Some(kind) => kind.sdk_capability(),
-                        None => "invalid-ios-target",
-                    },
-                }
-                .to_string(),
-                version: None,
-            }),
-            platform: Some(platform),
-            headers: Vec::new(),
-            definitions: definitions.into_iter().map(str::to_string).collect(),
-            artifacts: Vec::new(),
-            bindings: Vec::new(),
-            shims: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn host_clang_verifies_signature_and_plain_layout() -> Result<(), Box<dyn std::error::Error>> {
-        let Some(plan) = CAbiVerificationPlan::host() else {
-            return Ok(());
-        };
-        let Some(toolchain) = host_clang(&plan) else {
-            return Ok(());
-        };
-        let temporary = tempfile::tempdir()?;
-        let header = temporary.path().join("fixture.h");
-        std::fs::write(
-            &header,
-            "typedef struct fixture_pair { int left; int right; } fixture_pair;\n#define FIXTURE_OK 0\nint fixture_abs(int value);\n",
-        )?;
-        let receipt = verify_checked_c_binding(
-            &toolchain,
-            &plan,
-            &fixture_binding(header.to_string_lossy().into_owned()),
-        )?;
-        assert_eq!(receipt.enum_value("Status", "OK"), Some(0));
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn host_clang_selects_the_macos_sdk_sysroot() -> Result<(), Box<dyn std::error::Error>> {
-        let Some(plan) = CAbiVerificationPlan::host() else {
-            return Ok(());
-        };
-        let toolchain = ClangToolchain::discover(&plan)?;
-        assert!(
-            toolchain
-                .arguments
-                .windows(2)
-                .any(|arguments| arguments[0] == "-isysroot" && !arguments[1].is_empty()),
-            "macOS C ABI verification must provide the Xcode SDK sysroot"
-        );
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn simulator_profile_verifies_with_the_iphone_simulator_sdk() -> Result<(), Box<dyn std::error::Error>> {
-        let plan = CAbiVerificationPlan::from_interop_target(&declared_interop_target(
-            "aarch64-apple-ios-sim",
-            InteropTargetPlatform::Ios {
-                deployment_target: "13.0".to_string(),
-            },
-            Vec::new(),
-        ))?;
-        let toolchain = ClangToolchain::discover(&plan)?;
-        assert!(
-            toolchain.arguments.windows(2).any(|arguments| {
-                arguments[0] == "-isysroot"
-                    && arguments[1].to_string_lossy().contains("iPhoneSimulator")
-                    && arguments[1].to_string_lossy().ends_with(".sdk")
-            }),
-            "simulator C ABI verification must select the iPhoneSimulator SDK"
-        );
-        let temporary = tempfile::tempdir()?;
-        let header = temporary.path().join("fixture.h");
-        std::fs::write(
-            &header,
-            "typedef struct fixture_pair { int left; int right; } fixture_pair;\n#define FIXTURE_OK 0\nint fixture_abs(int value);\n",
-        )?;
-        let receipt = verify_checked_c_binding(
-            &toolchain,
-            &plan,
-            &fixture_binding(header.to_string_lossy().into_owned()),
-        )?;
-        assert_eq!(receipt.enum_value("Status", "OK"), Some(0));
-        Ok(())
-    }
-
-    #[test]
-    fn clang_syntax_verifies_the_foundation_fixture_for_linux_and_macos_targets()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let Some(plan) = CAbiVerificationPlan::host() else {
-            return Ok(());
-        };
-        let Some(toolchain) = host_clang(&plan) else {
-            return Ok(());
-        };
-        let temporary = tempfile::tempdir()?;
-        let header = temporary.path().join("fixture.h");
-        std::fs::write(
-            &header,
-            "typedef struct fixture_pair { int left; int right; } fixture_pair;\n#define FIXTURE_OK 0\nint fixture_abs(int value);\n",
-        )?;
-        let binding = fixture_binding(header.to_string_lossy().into_owned());
-        for target in [CAbiTarget::LinuxX86_64, CAbiTarget::MacosArm64] {
-            let plan = CAbiVerificationPlan {
-                target,
-                definitions: Vec::new(),
-                toolchain_identity: None,
-            };
-            verify_checked_c_binding(&toolchain, &plan, &binding)?;
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn verifier_reports_mismatched_checked_signature() -> Result<(), Box<dyn std::error::Error>> {
-        let Some(plan) = CAbiVerificationPlan::host() else {
-            return Ok(());
-        };
-        let Some(toolchain) = host_clang(&plan) else {
-            return Ok(());
-        };
-        let temporary = tempfile::tempdir()?;
-        let header = temporary.path().join("fixture.h");
-        std::fs::write(
-            &header,
-            "typedef struct fixture_pair { int left; int right; } fixture_pair;\n#define FIXTURE_OK 0\nlong fixture_abs(int value);\n",
-        )?;
-        let error = match verify_checked_c_binding(
-            &toolchain,
-            &plan,
-            &fixture_binding(header.to_string_lossy().into_owned()),
-        ) {
-            Err(error) => error,
-            Ok(_) => panic!("mismatched C return type must be rejected"),
-        };
-        assert!(
-            error.message.contains("Clang rejected"),
-            "unexpected verifier error: {error}"
-        );
-        assert!(
-            error.message.contains("Incan C signature mismatch"),
-            "unexpected verifier error: {error}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn verifier_rejects_an_enum_constant_with_the_wrong_carrier() -> Result<(), Box<dyn std::error::Error>> {
-        let Some(plan) = CAbiVerificationPlan::host() else {
-            return Ok(());
-        };
-        let Some(toolchain) = host_clang(&plan) else {
-            return Ok(());
-        };
-        let temporary = tempfile::tempdir()?;
-        let header = temporary.path().join("fixture.h");
-        std::fs::write(
-            &header,
-            "typedef struct fixture_pair { int left; int right; } fixture_pair;\n#define FIXTURE_OK 0\nint fixture_abs(int value);\n",
-        )?;
-        let mut binding = fixture_binding(header.to_string_lossy().into_owned());
-        binding.enums[0].carrier = ScalarTypeId::U32;
-        let error = match verify_checked_c_binding(&toolchain, &plan, &binding) {
-            Err(error) => error,
-            Ok(_) => panic!("an enum carrier mismatch must be rejected"),
-        };
-        assert!(
-            error.message.contains("Incan C enum carrier mismatch"),
-            "unexpected verifier error: {error}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn declared_mobile_target_profiles_select_exact_clang_abi_triples() -> Result<(), Box<dyn std::error::Error>> {
-        let android = CAbiVerificationPlan::from_interop_target(&declared_interop_target(
-            "aarch64-linux-android",
-            InteropTargetPlatform::Android { api_level: 34 },
-            vec!["FIXTURE=1"],
-        ))?;
-        assert_eq!(android.target().triple(), "aarch64-linux-android34");
-        assert_eq!(android.definitions(), ["FIXTURE=1"]);
-
-        let ios = CAbiVerificationPlan::from_interop_target(&declared_interop_target(
-            "aarch64-apple-ios",
-            InteropTargetPlatform::Ios {
-                deployment_target: "13.0".to_string(),
-            },
-            Vec::new(),
-        ))?;
-        assert_eq!(ios.target().triple(), "arm64-apple-ios13.0");
-
-        let ios_simulator = CAbiVerificationPlan::from_interop_target(&declared_interop_target(
-            "aarch64-apple-ios-sim",
-            InteropTargetPlatform::Ios {
-                deployment_target: "13.0".to_string(),
-            },
-            Vec::new(),
-        ))?;
-        assert_eq!(ios_simulator.target().triple(), "arm64-apple-ios13.0-simulator");
-        Ok(())
-    }
-
-    #[test]
-    fn host_target_is_available_only_for_supported_abi_verifiers() {
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        assert_eq!(CAbiTarget::host(), Some(CAbiTarget::LinuxX86_64));
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        assert_eq!(CAbiTarget::host(), Some(CAbiTarget::MacosArm64));
-        #[cfg(not(any(
-            all(target_os = "linux", target_arch = "x86_64"),
-            all(target_os = "macos", target_arch = "aarch64")
-        )))]
-        assert_eq!(CAbiTarget::host(), None);
-    }
-
-    #[test]
-    fn verifier_applies_declared_target_definitions() -> Result<(), Box<dyn std::error::Error>> {
-        let Some(target) = CAbiTarget::host() else {
-            return Ok(());
-        };
-        let plan = CAbiVerificationPlan {
-            target,
-            definitions: vec!["INCAN_FIXTURE_FEATURE=1".to_string()],
-            toolchain_identity: None,
-        };
-        let Some(toolchain) = host_clang(&plan) else {
-            return Ok(());
-        };
-        let temporary = tempfile::tempdir()?;
-        let header = temporary.path().join("fixture.h");
-        std::fs::write(
-            &header,
-            "#ifndef INCAN_FIXTURE_FEATURE\n#error expected target definition\n#endif\ntypedef struct fixture_pair { int left; int right; } fixture_pair;\n#define FIXTURE_OK 0\nint fixture_abs(int value);\n",
-        )?;
-
-        verify_checked_c_binding(
-            &toolchain,
-            &plan,
-            &fixture_binding(header.to_string_lossy().into_owned()),
-        )?;
-        Ok(())
-    }
-
-    #[test]
-    fn target_catalog_names_linux_and_macos_abi_triples() {
-        assert_eq!(CAbiTarget::LinuxX86_64.triple(), "x86_64-unknown-linux-gnu");
-        assert_eq!(CAbiTarget::MacosArm64.triple(), "arm64-apple-macos11");
-    }
-
-    #[test]
-    fn test_toolchain_constructor_is_explicit() {
-        let toolchain = ClangToolchain::at("/fixture/clang");
-        assert_eq!(toolchain.executable, std::path::PathBuf::from("/fixture/clang"));
-    }
 }

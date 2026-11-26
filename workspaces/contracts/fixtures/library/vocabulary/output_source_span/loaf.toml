@@ -1,0 +1,7 @@
+[project]
+name = "source_span_vocab_consumer"
+version = "0.1.0"
+[project.scripts]
+main = "src/main.incn"
+[dependencies]
+queries = { path = "deps/queries" }

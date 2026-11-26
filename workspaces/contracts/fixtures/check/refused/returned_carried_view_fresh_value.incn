@@ -1,0 +1,8 @@
+# behavior: a carried view's `Ok` payload must be the source place, not a value created in the body (#2500).
+# expect-diagnostic: INCAN-T0124
+
+class Address:
+    pub city: str
+
+    def view(mut self) -> Result[Reference[Address], str] from self:
+        return Ok(Address(city="Utrecht"))

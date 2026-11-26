@@ -6,12 +6,18 @@ use std::f64::consts::PI;
 const SOLAR_MASS: f64 = 4.0 * PI * PI;
 const DAYS_PER_YEAR: f64 = 365.24;
 
+/// Position, velocity and mass of one simulated body.
 struct Body {
-    x: f64, y: f64, z: f64,
-    vx: f64, vy: f64, vz: f64,
+    x: f64,
+    y: f64,
+    z: f64,
+    vx: f64,
+    vy: f64,
+    vz: f64,
     mass: f64,
 }
 
+/// Advance pairwise velocities and then positions in the benchmark's fixed iteration order.
 fn advance(bodies: &mut [Body], dt: f64, steps: i32) {
     for _ in 0..steps {
         // Update velocities
@@ -42,16 +48,15 @@ fn advance(bodies: &mut [Body], dt: f64, steps: i32) {
     }
 }
 
+/// Sum kinetic and pairwise potential energy in the same order as the other language controls.
 fn energy(bodies: &[Body]) -> f64 {
     let mut e = 0.0;
 
     for i in 0..bodies.len() {
         // Kinetic energy
-        e += 0.5 * bodies[i].mass * (
-            bodies[i].vx * bodies[i].vx +
-            bodies[i].vy * bodies[i].vy +
-            bodies[i].vz * bodies[i].vz
-        );
+        e += 0.5
+            * bodies[i].mass
+            * (bodies[i].vx * bodies[i].vx + bodies[i].vy * bodies[i].vy + bodies[i].vz * bodies[i].vz);
 
         // Potential energy
         for j in (i + 1)..bodies.len() {
@@ -66,6 +71,7 @@ fn energy(bodies: &[Body]) -> f64 {
     e
 }
 
+/// Set the sun's velocity to cancel the system's total initial momentum.
 fn offset_momentum(bodies: &mut [Body]) {
     let mut px = 0.0;
     let mut py = 0.0;
@@ -82,10 +88,19 @@ fn offset_momentum(bodies: &mut [Body]) {
     bodies[0].vz = -pz / SOLAR_MASS;
 }
 
+/// Run the fixed simulation and print its full-precision final energy for exact cross-language comparison.
 fn main() {
     let mut bodies = [
         // Sun
-        Body { x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0, mass: SOLAR_MASS },
+        Body {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            vz: 0.0,
+            mass: SOLAR_MASS,
+        },
         // Jupiter
         Body {
             x: 4.84143144246472090,
@@ -133,5 +148,5 @@ fn main() {
     let n = 500_000;
     advance(&mut bodies, 0.01, n);
 
-    println!("Final energy: {:.9}", energy(&bodies));
+    println!("Final energy: {}", energy(&bodies));
 }

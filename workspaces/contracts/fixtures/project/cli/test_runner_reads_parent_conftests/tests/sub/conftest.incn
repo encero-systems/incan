@@ -1,0 +1,8 @@
+"""Fixtures the tests under `tests/sub/` receive, built on the parent conftest's."""
+
+from std.testing import fixture
+
+
+@fixture
+def sub_name(root_name: str) -> str:
+    return f"sub of {root_name}"

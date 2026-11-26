@@ -1,0 +1,100 @@
+"""
+The resident owner process: `incan --internal-owner SOCKET GENERATION READY IDLE`.
+
+It listens on its private socket, tells the command that started it that it is ready, and then serves one request at a
+time, in order, until it is told to stop or retires. A request that cannot be read or understood is refused and the
+next one is served; the owner never runs a user's program, only prepares it.
+
+The owner retires on its own, between requests, whichever comes first:
+
+- it has served nothing for IDLE seconds;
+- nothing can reach it any more: its socket path no longer leads to the socket it bound, or its home's `owners`
+  directory is gone (the platform's `reachable`, which compiler workers apply too).
+
+While no client waits, the owner looks for one every few milliseconds, and checks that it is reachable once a second.
+None of this reaches the owner through its socket, so a removed path cannot keep it alive.
+"""
+
+from rust::std::process import id
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, dial, listen, reachable, socket_file, withdraw
+from home import owners_dir
+from observation import now_seconds, trace
+from owner_protocol import Reply, receive_document, request_of, send_document, send_quietly
+from owner_state import Owner
+
+# The seconds a connected client has to send its request, and to take the reply.
+const READ_SECONDS: u64 = 5
+const WRITE_SECONDS: u64 = 10
+# How long a waiting owner sleeps before it looks for a client again, which bounds the delay a client sees.
+const POLL_MILLIS: u64 = 10
+# How many empty polls pass between checks that the owner is still reachable: about a second.
+const CHECK_POLLS: int = 100
+
+
+pub def serve_owner(arguments: list[str]) -> Result[i32, str]:
+    """
+    Run an owner until it retires. Returns its exit code.
+
+    1. Listen on the owner's socket, remembering which socket file it bound and the home it belongs to.
+    2. Tell the command that started this owner that it is ready.
+    3. Serve one client at a time until a request retires the owner or it retires on its own.
+    4. Remove the socket, unless its path now leads to another owner's.
+    """
+    if len(arguments) != 4:
+        return Err("an owner takes SOCKET GENERATION READY IDLE")
+    idle = int(arguments[3])
+    # 1. The owner's socket is private to the user. It is polled, so the owner can retire while nobody connects.
+    mut listener = listen(arguments[0], false)?
+    socket = socket_file(arguments[0], owners_dir()?.0)?
+    # 2. The command that started this owner learns it is ready.
+    announce(arguments[2], arguments[1])?
+    # 3. One client is served at a time; between clients the owner decides whether it retires.
+    mut owner = Owner(generation=arguments[1], last_served=now_seconds())
+    mut retiring = false
+    mut polls = 0
+    while not retiring:
+        match listener.poll():
+            Ok(Some(connection)) => retiring = serve_connection(owner, connection, idle)
+            Ok(None) =>
+                sleep(Duration.from_millis(POLL_MILLIS))
+                polls += 1
+                retiring = owner.answer_idle(idle).status == "retiring"
+                if polls >= CHECK_POLLS:
+                    polls = 0
+                    retiring = retiring or not reachable(socket)
+            Err(reason) =>
+                trace(f"owner: {reason}")
+                sleep(Duration.from_millis(POLL_MILLIS))
+    # 4. The next command finds no socket and starts a fresh owner; a replacement owner's socket is left alone.
+    withdraw(socket)
+    return Ok(0)
+
+
+def announce(ready: str, generation: str) -> Result[None, str]:
+    """Tell the command that started this owner that it is listening, so it can connect."""
+    mut connection = dial(ready)?
+    send_document(connection, Reply(status="ready", generation=generation, pid=id()).to_json())?
+    return Ok(None)
+
+
+def serve_connection(mut owner: Owner, connection: Connection, idle: int) -> bool:
+    """Read one request and answer it. Whether the owner retires."""
+    mut served = connection
+    served.wait_at_most(READ_SECONDS)
+    served.write_at_most(WRITE_SECONDS)
+    reply = answer(owner, receive_document(served), idle)
+    send_quietly(served, reply.to_json())
+    return reply.status == "retiring"
+
+
+def answer(mut owner: Owner, received: Result[JsonValue, str], idle: int) -> Reply:
+    """The reply to what was read: a refusal when it was not a request, else the owner's answer."""
+    match received:
+        Err(reason) => return Reply(status="refused", generation=owner.generation, reason=reason)
+        Ok(document) =>
+            match request_of(document):
+                Err(reason) => return Reply(status="refused", generation=owner.generation, reason=reason)
+                Ok(request) => return owner.handle(request, idle)

@@ -1,0 +1,10 @@
+# behavior: 0.5.1's `--base-receipt` and `--store` on `interop stage` are refused by name: 0.6 stages what `oven.lock` records from the home's store, so neither is needed (#3132)
+# cli-commands:
+#   oven interop stage --target aarch64-linux-android --base-receipt receipt.json --adapter android --output staged
+#   oven interop stage --target aarch64-linux-android --store store --adapter android --output staged
+# expect-exit: 2
+# expect-stderr-contains:
+#   is not needed: 0.6 stages the bundled files oven.lock records, from this home's store; drop it
+
+def main() -> None:
+    println("not run")

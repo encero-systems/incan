@@ -1,0 +1,116 @@
+# behavior: memory graph pages retain insertion order across budgets and refuse stale, foreign and incompatible tokens (#2524)
+# expect-stdout:
+#   pages 0 1 2 0 1 2 0 1 2 0 1 2
+#   incoming 0 1 2
+#   edge 0 0 1
+#   stale true foreign true incompatible true unknown true
+#   counters 0 3 2 1 96
+
+from std.graph import (
+    GraphPageBudget,
+    GraphPageToken,
+    GraphRead,
+    GraphReadError,
+    MemoryGraphFailure,
+    RelationGraph,
+    ScopedEdgeId,
+    ScopedNodeId,
+)
+
+
+def page_ids(
+    graph: RelationGraph[str, str],
+    source: ScopedNodeId,
+    budget: GraphPageBudget,
+) -> Result[str, GraphReadError[MemoryGraphFailure]]:
+    mut ids: list[str] = []
+    mut cursor: Option[GraphPageToken] = None
+    mut more = true
+    while more:
+        page = graph.out_edges(source, budget, cursor)?
+        for edge in page.values:
+            ids.append(str(edge.id.to_int()))
+        cursor = page.next
+        more = page.next.is_some()
+    return Ok(" ".join(ids))
+
+
+def build_graph() -> Result[Tuple[RelationGraph[str, str], ScopedNodeId, ScopedNodeId, ScopedEdgeId], str]:
+    """Build the page fixture and preserve only the identities needed by the reader checks."""
+    mut graph = RelationGraph[str, str]()
+    source = graph.add_node("source")
+    target = graph.add_node("target")
+    match graph.add_edge(source, target, "first"):
+        Err(error) => return Err(error.detail)
+        Ok(first) =>
+            if graph.add_edge(source, target, "second").is_err():
+                return Err("second edge refused")
+            if graph.add_edge(source, target, "third").is_err():
+                return Err("third edge refused")
+            return Ok((graph, source, target, first))
+
+
+def exercise(
+    mut graph: RelationGraph[str, str],
+    source: ScopedNodeId,
+    target: ScopedNodeId,
+    first: ScopedEdgeId,
+) -> Result[None, GraphReadError[MemoryGraphFailure]]:
+    """Compare page sizes, then exercise token compatibility and structural counters."""
+
+    one = page_ids(graph, source, GraphPageBudget.records(1))?
+    seven = page_ids(graph, source, GraphPageBudget.records(7))?
+    two_fifty_six = page_ids(graph, source, GraphPageBudget.records(256))?
+    all = page_ids(graph, source, GraphPageBudget.unbounded())?
+    println(f"pages {one} {seven} {two_fifty_six} {all}")
+
+    incoming = graph.in_edges(target, GraphPageBudget.records(7), None)?
+    first_in = incoming.values[0].id.to_int()
+    second_in = incoming.values[1].id.to_int()
+    third_in = incoming.values[2].id.to_int()
+    println(f"incoming {first_in} {second_in} {third_in}")
+    edge = graph.edge(first)?
+    println(f"edge {edge.id.to_int()} {edge.source.to_int()} {edge.target.to_int()}")
+    match graph.remove_edge(first):
+        Ok(_) => pass
+        Err(_) => return Err(GraphReadError.Resource("fixture could not remove its edge"))
+
+    first_page = graph.out_edges(source, GraphPageBudget.records(1), None)?
+    graph.add_node("revision")
+    stale = graph.out_edges(source, GraphPageBudget.records(1), first_page.next)
+
+    mut other = RelationGraph[str, str]()
+    other.add_node("other")
+    other.add_node("target")
+    foreign_page = other.nodes(GraphPageBudget.records(1), None)?
+    foreign = graph.out_edges(source, GraphPageBudget.records(1), foreign_page.next)
+
+    out_page = graph.out_edges(source, GraphPageBudget.records(1), None)?
+    incompatible = graph.in_edges(target, GraphPageBudget.records(1), out_page.next)
+    removed = graph.add_node("removed")
+    match graph.remove_node(removed):
+        Ok(_) => pass
+        Err(_) => return Err(GraphReadError.Resource("fixture could not remove its node"))
+    unknown = graph.out_edges(removed, GraphPageBudget.records(1), None)
+    println(
+        f"stale {stale.is_err()} foreign {foreign.is_err()} incompatible {incompatible.is_err()} unknown {unknown.is_err()}",
+    )
+
+    full = graph.out_edges(source, GraphPageBudget.unbounded(), None)?
+    payloads = full.counters.payloads_materialized
+    examined = full.counters.adjacency_entries_examined
+    live = full.counters.live_entries
+    tombstones = full.counters.tombstones_examined
+    copied = full.counters.bytes_copied
+    println(f"counters {payloads} {examined} {live} {tombstones} {copied}")
+    return Ok(None)
+
+
+def main() -> None:
+    match build_graph():
+        Ok((value, source, target, first)) =>
+            mut graph = value
+            match exercise(graph, source, target, first):
+                Ok(_) => pass
+                Err(_) => println("read error")
+        Err(message) => println(message)

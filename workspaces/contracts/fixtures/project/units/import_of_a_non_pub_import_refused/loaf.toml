@@ -1,0 +1,6 @@
+[project]
+name = "import_of_a_non_pub_import_refused"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

@@ -1,0 +1,1226 @@
+"""Verify release argument, baseline, receipt, and byte-comparison contracts without native production."""
+
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Child, Command, Stdio
+from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from pub::incan_platform.probes import ProcessResource, process_table
+from pub::incan_platform.process_lease import held
+from driver_evidence import driver_qualification, retain_driver_evidence
+from native_build import (
+    LOWERING_RESERVATION_BYTES,
+    PROJECT_RESERVATION_BYTES,
+    STANDARD_RESERVATION_BYTES,
+    StandardGeneration,
+    StandardProfile,
+    overlapping_project_capacity,
+    standard_build_waves,
+    standard_profiles,
+)
+from release_support import (
+    FAMILIES,
+    TOOLCHAIN_DIRECTORY,
+    BaselineReport,
+    Counts,
+    ProcessIdentity,
+    ReleaseMember,
+    ReleaseTermination,
+    ReleaseTrace,
+    Step,
+    append_bytes,
+    append_timing_file,
+    check_baseline,
+    cancel_background_step,
+    digest,
+    parse_process_identities,
+    parse_release_options,
+    parse_verification_options,
+    reference_census_jobs,
+    reference_worker_arguments,
+    process_identities,
+    release_process_census,
+    release_process_tree,
+    reclaim_paths,
+    record_tree_sample,
+    release_receipt,
+    release_rust_cache_root,
+    reserved_admitted,
+    require_candidate_census,
+    run_step,
+    same_bytes,
+    seed_toolchain_directory,
+    signal_release_termination,
+    start_background_step,
+    tree_bytes,
+    tree_digest,
+    verification_program,
+)
+from reference_cache import census_inputs
+from release_verifier_teardown import finish_installed_verifier
+from relocated_sysroot import shared_relocated_sysroot
+from verify_installation import (
+    audit_relocation,
+    census_arguments,
+    require_pristine_relocation_inputs,
+    require_shipped_standard_sources,
+)
+from relink_driver import absolute_manifest
+from release import validate_seed_bridge
+from registry_checksums import REGISTRY_CHECKSUMS, checksummed_closure, is_sha256, write_checksummed_registry
+from check_support import repository_root
+
+const SHA: str = "0123456789abcdef0123456789abcdef01234567"
+const COMPLETE_LOG: str = """PASS behavior/a/a
+PASS check/a/a
+PASS library/a/a
+PASS interop/a/a
+PASS testing/a/a
+PASS project/a/a
+PASS format/a/a
+PASS graph/a/a
+total: 8 passed, 0 failed, 0 pending
+"""
+
+
+def test_release_build_admission_uses_declared_lowering_project_and_standard_memory() -> Result[None, str]:
+    """Lowering reserves 6 GiB while project and standard work reserve 2 GiB under one shared budget."""
+    gib = 1073741824
+    assert LOWERING_RESERVATION_BYTES == 6 * gib
+    assert PROJECT_RESERVATION_BYTES == 2 * gib
+    assert STANDARD_RESERVATION_BYTES == 2 * gib
+    reservations = [LOWERING_RESERVATION_BYTES, PROJECT_RESERVATION_BYTES, STANDARD_RESERVATION_BYTES]
+    assert reserved_admitted(reservations, [0, 1, 2], [], 3, 10 * gib) == [0, 1, 2]
+    assert reserved_admitted(reservations, [1, 2], [LOWERING_RESERVATION_BYTES], 3, 8 * gib) == [1]
+    waves = standard_build_waves()
+    assert "vocab" not in waves[0]
+    assert "system" in waves[0]
+    assert waves[1] == ["codecs", "compression", "data"]
+    assert waves[2] == ["vocab"]
+    assert waves[3] == ["interop"]
+    assert overlapping_project_capacity(4, 10 * gib) == Some((3, 8 * gib))
+    assert overlapping_project_capacity(1, 10 * gib) == None
+    assert overlapping_project_capacity(4, 3 * gib) == None
+    return Ok(None)
+
+
+def test_release_census_shares_compilation_without_dropping_a_family() -> Result[None, str]:
+    """The installed census keeps every family while leaving shared compilation enabled across its 1,491 cases."""
+    arguments = census_arguments(Path("oven"), Path("fixtures"), Path("scratch"), 4, 120)
+    assert "--isolated" not in arguments
+    assert arguments[0:8] == ["oven", "fixtures", "--scratch", "scratch", "--jobs", "4", "--timeout", "120"]
+    assert arguments[8] == "--serial-families"
+    assert arguments[9:] == [family for family in FAMILIES]
+    assert reference_census_jobs(1) == 1
+    assert reference_census_jobs(4) == 2
+    worker = reference_worker_arguments(Path("source"), Path("out"), Path("home"), Path("lsp"), 4, 120, Path("cache"))
+    assert worker == [
+        "run",
+        "source/scripts/release.incn",
+        "--",
+        "--reference-census",
+        "source",
+        "out",
+        "home",
+        "lsp",
+        "2",
+        "120",
+        "cache",
+    ]
+    return Ok(None)
+
+
+def test_release_process_tree_follows_complete_parent_chains() -> Result[None, str]:
+    """Cancellation ownership includes grandchildren even when process-table order and group membership differ."""
+    rows = [
+        ProcessResource(pid=30, parent=20, footprint=0, lifetime_peak=0, resident=0, name="grandchild"),
+        ProcessResource(pid=40, parent=1, footprint=0, lifetime_peak=0, resident=0, name="foreign"),
+        ProcessResource(pid=10, parent=1, footprint=0, lifetime_peak=0, resident=0, name="root"),
+        ProcessResource(pid=20, parent=10, footprint=0, lifetime_peak=0, resident=0, name="child"),
+    ]
+    assert release_process_tree(rows, 10) == [10, 20, 30]
+    return Ok(None)
+
+
+def test_failed_process_census_keeps_root_and_group_custody() -> Result[None, str]:
+    """A failed descendant probe still keeps the unreaped root for mandatory process and group termination."""
+    termination = release_process_census(Err("probe refused"), Ok({}), 41)
+    assert termination.root == 41
+    assert len(termination.members) == 0
+    assert termination.census_error == Some("probe refused")
+    return Ok(None)
+
+
+def test_process_identities_name_each_pid_with_its_group_and_start_time() -> Result[None, str]:
+    """The kernel's start time tells a process apart from a later one that reuses its pid."""
+    identities = parse_process_identities("  412   400 Sat Nov 21 06:37:19 2026\n    7     7 Fri Nov 20 23:01:02 2026\nmalformed\n")
+    assert len(identities) == 2
+    assert identities[412].group == 400 and identities[412].started == "Sat Nov 21 06:37:19 2026"
+    assert identities[7].group == 7 and identities[7].started == "Fri Nov 20 23:01:02 2026"
+    return Ok(None)
+
+
+def test_release_census_records_each_member_with_its_start_time() -> Result[None, str]:
+    """A descendant that exited before its identity was read is not recorded, so its pid can never be signaled later."""
+    rows = [
+        ProcessResource(pid=30, parent=20, footprint=0, lifetime_peak=0, resident=0, name="grandchild"),
+        ProcessResource(pid=40, parent=1, footprint=0, lifetime_peak=0, resident=0, name="foreign"),
+        ProcessResource(pid=10, parent=1, footprint=0, lifetime_peak=0, resident=0, name="root"),
+        ProcessResource(pid=20, parent=10, footprint=0, lifetime_peak=0, resident=0, name="child"),
+    ]
+    identities = {
+        10: ProcessIdentity(group=10, started="root start"),
+        20: ProcessIdentity(group=10, started="child start"),
+        40: ProcessIdentity(group=40, started="foreign start"),
+    }
+    termination = release_process_census(Ok(rows), Ok(identities), 10)
+    assert termination.root == 10 and termination.census_error == None
+    assert termination.members == [
+        ReleaseMember(pid=10, started="root start"),
+        ReleaseMember(pid=20, started="child start"),
+    ]
+    return Ok(None)
+
+
+def sleeper(own_group: bool) -> Result[Child, str]:
+    """Start one long sleep this test owns; a group leader also starts a sleeping child in its group."""
+    if not own_group:
+        mut single = Command.new("/bin/sleep")
+        single.arg("60").stdin(Stdio.null())
+        return single.spawn().map_err((error) => f"cannot start a sleeper: {error}")
+    mut command = Command.new("/bin/sh")
+    command.arg("-c").arg("sleep 60 & wait").stdin(Stdio.null()).process_group(0)
+    return command.spawn().map_err((error) => f"cannot start a sleeper: {error}")
+
+
+def started_at(pid: int) -> Result[str, str]:
+    """The kernel's start time of one live process."""
+    identities = process_identities()?
+    if pid not in identities:
+        return Err(f"process {pid} is not live")
+    return Ok(identities[pid].started)
+
+
+def group_members(group: int) -> Result[list[int], str]:
+    """The live processes of one process group, its leader included."""
+    identities = process_identities()?
+    return Ok(sorted([pid for pid in identities.keys() if identities[pid].group == group]))
+
+
+def release_root() -> Result[Child, str]:
+    """A release root: an unreaped child leading its own group, whose pid stays the release's until it is reaped."""
+    return sleeper(true)
+
+
+def test_a_member_whose_pid_now_names_another_process_is_not_signaled() -> Result[None, str]:
+    """A recorded member that exited, its pid since reused by an unrelated process, is left alone at cleanup."""
+    mut root = release_root()?
+    mut unrelated = sleeper(false)?
+    stale = ReleaseMember(pid=int(unrelated.id()), started="Thu Jan  1 00:00:00 1970")
+    signal_release_termination(ReleaseTermination(root=int(root.id()), members=[stale], census_error=None))
+    _ = root.wait()
+    survived = unrelated.try_wait().map_err((error) => str(error))?.is_none()
+    _ = unrelated.kill()
+    _ = unrelated.wait()
+    assert survived, "cleanup signaled a process whose start time differs from the recorded member"
+    return Ok(None)
+
+
+def test_a_member_with_its_recorded_identity_is_signaled_and_stopped() -> Result[None, str]:
+    """A recorded member whose pid still names the same process is stopped, however it was reparented."""
+    mut root = release_root()?
+    mut member = sleeper(false)?
+    pid = int(member.id())
+    recorded = ReleaseMember(pid=pid, started=started_at(pid)?)
+    signal_release_termination(ReleaseTermination(root=int(root.id()), members=[recorded], census_error=None))
+    _ = root.wait()
+    stopped = member.wait().map_err((error) => str(error))?
+    assert not stopped.success(), "the recorded member kept running after cleanup"
+    return Ok(None)
+
+
+def test_a_group_is_signaled_only_through_its_confirmed_leader() -> Result[None, str]:
+    """A group whose recorded leader no longer matches stays untouched; a matching leader's whole group stops."""
+    mut root = release_root()?
+    mut stale_leader = sleeper(true)?
+    mut leader = sleeper(true)?
+    sleep(Duration.from_millis(100))
+    stale_group = int(stale_leader.id())
+    group = int(leader.id())
+    assert len(group_members(stale_group)?) >= 2 and len(group_members(group)?) >= 2, "sleeper groups did not form"
+    stale = ReleaseMember(pid=stale_group, started="Thu Jan  1 00:00:00 1970")
+    matching = ReleaseMember(pid=group, started=started_at(group)?)
+    signal_release_termination(ReleaseTermination(root=int(root.id()), members=[stale, matching], census_error=None))
+    _ = root.wait()
+    _ = leader.wait()
+    sleep(Duration.from_millis(100))
+    stale_left = len(group_members(stale_group)?)
+    group_left = len(group_members(group)?)
+    _ = stale_leader.kill()
+    _ = stale_leader.wait()
+    for pid in group_members(stale_group)?:
+        _ = Command.new("/bin/kill").arg("-KILL").arg(str(pid)).status()
+    assert stale_left >= 2, "cleanup signaled a group whose recorded leader no longer matches"
+    assert group_left == 0, f"a matching leader's group kept {group_left} processes"
+    return Ok(None)
+
+
+def test_cancelled_release_step_reaps_its_spawned_descendant() -> Result[None, str]:
+    """An early release refusal leaves neither its retained command nor the command's child alive."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    step = Step(
+        name="nested-cancellation",
+        executable="/bin/sh",
+        arguments=["-c", "sleep 60 & wait"],
+        environment={},
+        remove_environment=[],
+        directory=Some(temporary.path()),
+        log=temporary.path().joinpath("nested.log"),
+        timeout_seconds=60,
+    )
+    running = start_background_step(step)?
+    root = int(running.child.borrow().id())
+    sleep(Duration.from_millis(100))
+    members = release_process_tree(process_table()?, root)
+    assert len(members) >= 2, f"nested cancellation fixture observed only {members}"
+    cancel_background_step(running)?
+    remaining = [row.pid for row in process_table()? if row.pid in members]
+    assert len(remaining) == 0, f"cancelled release step left {remaining}"
+    return Ok(None)
+
+
+def test_completed_installed_verification_releases_its_engines_and_unit_lease() -> Result[None, str]:
+    """An installed records invocation can finish before a nested Bakery's engine releases the inherited unit."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path().resolve().map_err((error) => error.message())?
+    oven = root.joinpath("private  verification/verification-home/bin/incan")
+    oven.parent().mkdir(true, true).map_err((error) => error.message())?
+    installed = Path(get_or("INCAN", get_or("INCAN_HOME", "") + "/bin/incan"))
+    _ = installed.copy(oven, true, true).map_err((error) => error.message())?
+    outer = verifier_program(root.joinpath("outer/main.incn"), NESTED_VERIFICATION)?
+    inner = verifier_program(root.joinpath("inner/main.incn"), "def main() -> None:\n    println(\"nested\")\n")?
+    warm = start_warm_engine_control(installed, root, inner)?
+    warm_before = verifier_process_count(warm.0)?
+    bakery = root.joinpath("builder-bakery")
+    log = root.joinpath("installed-ci.log")
+    result = run_step(
+        Step(
+            name="installed-ci",
+            executable=oven.0,
+            arguments=["run", outer.0],
+            environment={
+                "INCAN_ENGINE": "records",
+                "INCAN_BAKERY": bakery.0,
+                "PROOF_OVEN": oven.0,
+                "PROOF_INNER": inner.0,
+                "PROOF_INNER_BAKERY": root.joinpath("nested-bakery").0,
+            },
+            remove_environment=[],
+            directory=Some(outer.parent()),
+            log=log,
+            timeout_seconds=90,
+        ),
+    )
+    status = finish_installed_verifier(oven.0, result)?
+    stdout = log.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert status == 0 and stdout.ends_with("nested\nverifier\n"), stdout
+    remaining = verifier_process_count(oven.0)?
+    leases = bakery.joinpath("unit-leases").iterdir().map_err((error) => error.message())?
+    assert len(leases) == 1, "the outer invocation must own one execution lease"
+    blocked = held(leases[0].0)?
+    warm_after = verifier_process_count(warm.0)?
+    finish_installed_verifier(warm.0, Ok(None))?
+    assert warm_before == 2 and warm_after == warm_before, "the independently scoped warm engine did not survive"
+    println(f"installed verifier result: exit={status}, owned processes={remaining}, unit lease held={blocked}")
+    println(f"independent warm engine: {warm_before} processes before, {warm_after} processes after")
+    if blocked:
+        holders = Command.new("/usr/sbin/lsof").args(["-Fpcn", "--", leases[0].0]).output()
+        match holders:
+            Ok(report) => println(RustString.from_utf8_lossy(report.stdout).into_owned())
+            Err(_) => pass
+    assert remaining == 0 and not blocked, f"installed verification left {remaining} processes; unit lease held={blocked}"
+    return Ok(None)
+
+
+const NESTED_VERIFICATION: str = """
+from rust::std::process import Command
+from std.environ import get_or
+
+def main() -> Result[None, str]:
+    mut nested = Command.new(get_or("PROOF_OVEN", ""))
+    nested.arg("run").arg(get_or("PROOF_INNER", ""))
+    nested.env("INCAN_BAKERY", get_or("PROOF_INNER_BAKERY", ""))
+    status = nested.status().map_err((error) => str(error))?
+    if not status.success():
+        return Err(f"nested verifier exited {status}")
+    println("verifier")
+    return Ok(None)
+"""
+
+
+def verifier_program(path: Path, content: str) -> Result[Path, str]:
+    """Write an isolated standalone program for a real verifier invocation."""
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(path)
+
+
+def start_warm_engine_control(installed: Path, root: Path, program: Path) -> Result[Path, str]:
+    """Use the same Oven bytes under a sibling executable path and retain its ordinary idle worker as a control."""
+    executable = root.joinpath("private  verification/verification-home/bin/incan-editor")
+    _ = installed.copy(executable, true, true).map_err((error) => error.message())?
+    status = run_step(Step(
+        name="warm-engine-control",
+        executable=executable.0,
+        arguments=["run", program.0],
+        environment={"INCAN_ENGINE": "records", "INCAN_BAKERY": root.joinpath("editor-bakery").0},
+        remove_environment=[],
+        directory=Some(program.parent()),
+        log=root.joinpath("editor.log"),
+        timeout_seconds=90,
+    ))?
+    assert status == 0, f"warm engine control exited {status}"
+    return Ok(executable)
+
+
+def verifier_process_count(oven: str) -> Result[int, str]:
+    """Count the test's private executable in both engine roles before the test runner can reap anything."""
+    mut command = Command.new("/bin/ps")
+    command.args(["-Aww", "-o", "command="]).env("LC_ALL", "C").stdin(Stdio.null())
+    report = command.output().map_err((error) => str(error))?
+    if not report.status.success():
+        return Err("cannot observe installed verification engines")
+    text = RustString.from_utf8_lossy(report.stdout).into_owned()
+    engines = [line for line in text.split("\n") if
+        line.strip().startswith(oven + " --internal-engine ") or
+        line.strip().startswith(oven + " --internal-engine-settlement ")]
+    return Ok(len(engines))
+
+
+def test_release_profiles_keep_seed_consumption_and_candidate_shipping_distinct() -> Result[None, str]:
+    """The seed generation needs release providers; the candidate ships release and debug providers."""
+    assert standard_profiles(StandardGeneration.SourceClosure) == [StandardProfile.Release]
+    assert standard_profiles(StandardGeneration.Candidate) == [StandardProfile.Release, StandardProfile.Debug]
+    return Ok(None)
+
+
+def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Result[None, str]:
+    """The two operands and optional retention, proof, jobs, and timeout choices parse in any option position."""
+    options = parse_release_options(
+        ["--jobs", "6", SHA, "out", "--keep-trees", "--prove-fixed-point", "--timeout", "900"],
+    )?
+    assert options.source_sha == SHA
+    assert options.output.0 == "out"
+    assert options.keep_trees
+    assert options.prove_fixed_point
+    assert options.jobs == 6
+    assert options.timeout_seconds == 900
+    defaults = parse_release_options([SHA, "out"])?
+    assert not defaults.keep_trees
+    assert defaults.jobs == 4
+    assert defaults.seed_source == ""
+    assert not defaults.stamp_signer
+    assert defaults.signed_bundle == ""
+    return Ok(None)
+
+
+def test_the_release_workflow_packs_and_verifies_in_two_invocations() -> Result[None, str]:
+    """`--stamp-signer` packs a stamped release; `--verify-installed BUNDLE` verifies the signed one; never both."""
+    packing = parse_release_options([SHA, "out", "--stamp-signer"])?
+    assert packing.stamp_signer and packing.signed_bundle == ""
+    verifying = parse_release_options([SHA, "out", "--verify-installed", "signed"])?
+    assert verifying.signed_bundle == "signed" and not verifying.stamp_signer
+    assert refused_release([SHA, "out", "--verify-installed"]) == "--verify-installed needs the directory of the signed bundle"
+    both = refused_release([SHA, "out", "--stamp-signer", "--verify-installed", "signed"])
+    assert both == "--stamp-signer packs a release to sign; --verify-installed verifies the signed one: pass one"
+    return Ok(None)
+
+
+def test_release_seed_source_names_the_full_commit_of_the_seed_generation() -> Result[None, str]:
+    """The seed's own source commit is an explicit full SHA, separate from the qualified source SHA."""
+    seed = "89abcdef0123456789abcdef0123456789abcdef"
+    options = parse_release_options([SHA, "out", "--seed-source", seed])?
+    assert options.source_sha == SHA
+    assert options.seed_source == seed
+    assert options.seed_bridge == ""
+    assert refused_release([SHA, "out", "--seed-source"]) == "--seed-source needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-source", "deadbeef"]) == "--seed-source needs a full lowercase source commit"
+    return Ok(None)
+
+
+def test_release_seed_bridge_is_explicit_and_requires_the_seed_generation() -> Result[None, str]:
+    """A full bridge commit is separate from both source identities and cannot exist without the seed generation."""
+    seed = "89abcdef0123456789abcdef0123456789abcdef"
+    bridge = "fedcba9876543210fedcba9876543210fedcba98"
+    options = parse_release_options([SHA, "out", "--seed-source", seed, "--seed-bridge", bridge])?
+    assert options.seed_source == seed
+    assert options.seed_bridge == bridge
+    assert refused_release([SHA, "out", "--seed-bridge"]) == "--seed-bridge needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-bridge", "deadbeef"]) == "--seed-bridge needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-bridge", bridge]) == "--seed-bridge requires --seed-source"
+    return Ok(None)
+
+
+def test_seed_bridge_is_one_direct_child_with_only_the_authenticated_sources() -> Result[None, str]:
+    """A seed bridge changes only authenticated sources and has the qualified commit as its sole parent."""
+    bridge = "fedcba9876543210fedcba9876543210fedcba98"
+    paths = [
+        "loaves/compiler/internal_models/src/checker_records.incn",
+        "loaves/compiler/internal_models/src/compiled_body_rows.incn",
+    ]
+    validate_seed_bridge(SHA, bridge, [SHA], paths)?
+    readers = paths + [
+        "loaves/compiler/internal_models/src/namespace_rows.incn",
+        "loaves/compiler/internal_models/src/plan_wire_rows.incn",
+    ]
+    blobs = [
+        "a908ce5b343728c59734a0d049f6b6c98209fd24", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+        "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+    ]
+    validate_seed_bridge(SHA, bridge, [SHA], readers, blobs)?
+    with_entry = ["57239d8f2e7e6abd83c3c8ed5b2e7c47c6c8c4ac", blobs[1], blobs[2], blobs[3]]
+    validate_seed_bridge(SHA, bridge, [SHA], readers, with_entry)?
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers, with_entry[:3] + [blobs[0]]).is_err()
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers).is_err()
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers, blobs[1:] + [blobs[0]]).is_err()
+    assert validate_seed_bridge(SHA, bridge, [bridge], readers, blobs).is_err()
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers + ["scripts/release.incn"], blobs).is_err()
+    match validate_seed_bridge(SHA, bridge, [bridge], paths):
+        Ok(_) => return Err("a bridge whose parent differs from the qualified source was accepted")
+        Err(message) =>
+            assert "as its only parent" in message
+    match validate_seed_bridge(SHA, bridge, [SHA, bridge], paths):
+        Ok(_) => return Err("a merge commit was accepted as a direct-child bridge")
+        Err(message) =>
+            assert "as its only parent" in message
+    match validate_seed_bridge(SHA, bridge, [SHA], paths + ["scripts/release.incn"]):
+        Ok(_) => return Err("an over-broad bridge was accepted")
+        Err(message) =>
+            assert "changes unsupported paths" in message
+    return Ok(None)
+
+
+def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
+    """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--seed-bridge SHA] [--jobs N] [--timeout SECONDS] [--reference-cache DIR] [--stamp-signer | --verify-installed BUNDLE]"
+    assert refused_release([SHA, "out", "--reference-cache"]) == "--reference-cache needs the directory of reusable seed censuses"
+    assert parse_release_options([SHA, "out", "--reference-cache", "/cache"])?.reference_cache == "/cache"
+    assert parse_release_options([SHA, "out"])?.reference_cache == ""
+    assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
+    assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
+    assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
+    return Ok(None)
+
+
+def test_verification_arguments_have_independent_defaults() -> Result[None, str]:
+    """Installed verification defaults to two workers and a 120-second command timeout."""
+    defaults = parse_verification_options(["evidence"])?
+    assert defaults.output.0 == "evidence"
+    assert defaults.jobs == 2
+    assert defaults.timeout_seconds == 120
+    selected = parse_verification_options(["--timeout", "300", "evidence", "--jobs", "5"])?
+    assert selected.jobs == 5
+    assert selected.timeout_seconds == 300
+    return Ok(None)
+
+
+def test_baseline_requires_complete_unique_results_and_preserves_every_pass() -> Result[None, str]:
+    """All eight families, one total, unique keys, and every baseline PASS are one indivisible contract."""
+    report = check_baseline("# measured\nbehavior/a/a\ngraph/a/a\n", COMPLETE_LOG)?
+    assert report.counts == Counts(passed=8, failed=0, pending=0), "counts"
+    assert report.baseline_keys == 2, "baseline keys"
+    assert report.lost_passes == [], "lost passes"
+    failed_behavior = COMPLETE_LOG
+        .replace("PASS behavior/a/a", "FAIL behavior/a/a")
+        .replace("total: 8 passed, 0 failed", "total: 7 passed, 1 failed")
+    lost = refused_baseline("behavior/a/a\n", failed_behavior)
+    assert lost == "lost PASS behavior/a/a -> FAIL", lost
+    without_graph = COMPLETE_LOG.replace("PASS graph/a/a\n", "").replace("total: 8 passed", "total: 7 passed")
+    missing = refused_baseline("behavior/a/a\n", without_graph)
+    assert missing == "family absent: graph", missing
+    return Ok(None)
+
+
+def test_one_installed_candidate_census_keeps_seed_inventory_and_passes() -> Result[None, str]:
+    """The installed candidate report supplies receipt counts while retaining the independent seed comparison."""
+    reference = check_baseline("graph/a/a\n", COMPLETE_LOG)?
+    candidate = check_baseline("behavior/a/a\n", COMPLETE_LOG)?
+    require_candidate_census(reference, candidate)?
+    failed = COMPLETE_LOG
+        .replace("PASS behavior/a/a", "FAIL behavior/a/a")
+        .replace("total: 8 passed, 0 failed", "total: 7 passed, 1 failed")
+    regressed = check_baseline("graph/a/a\n", failed)?
+    assert candidate_refusal(reference, regressed) == "candidate lost integration PASS: behavior/a/a"
+    return Ok(None)
+
+
+def test_receipt_keeps_refusal_evidence_distinct_from_success() -> Result[None, str]:
+    """The stable receipt carries exact phase, compiler mode, artifacts, counts, and parity state."""
+    receipt = release_receipt(
+        SHA,
+        "aarch64-apple-darwin",
+        "passed",
+        "complete",
+        0,
+        42,
+        JsonValue.object({"total": JsonValue.int(99)}),
+        {"incan": JsonValue.string("abc")},
+        "native-fixed-point",
+        JsonValue.object({"pass": JsonValue.int(8)}),
+        JsonValue.object({"passed": JsonValue.int(141)}),
+        JsonValue.bool(true),
+    )
+    schema = receipt.require("schema").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert schema == "incan.release-rehearsal/1"
+    assert receipt.require("phase").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "complete"
+    compiler_build = receipt
+        .require("compiler_build")
+        .and_then((value) => value.expect_str())
+        .map_err((error) => error.message())?
+    assert compiler_build == "native-fixed-point"
+    measured = receipt.require("tree_bytes").map_err((error) => error.message())?
+    total = measured.require("total").map_err((error) => error.message())?
+    total_bytes = total.expect_int().map_err((error) => error.message())?
+    assert total_bytes == 99
+    assert receipt.require("baseline_parity").and_then((value) => value.expect_bool()).map_err(
+        (error) => error.message(),
+    )?
+    return Ok(None)
+
+
+def test_byte_comparison_reads_complete_content() -> Result[None, str]:
+    """Fixed-point equality accepts identical bytes and refuses a same-sized differing file."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    left = temporary.path().joinpath("left")
+    right = temporary.path().joinpath("right")
+    left.write_bytes(b"alpha").map_err((error) => error.message())?
+    right.write_bytes(b"alpha").map_err((error) => error.message())?
+    assert same_bytes(left, right)?
+    right.write_bytes(b"alpHa").map_err((error) => error.message())?
+    assert not same_bytes(left, right)?
+    return Ok(None)
+
+
+def test_the_relocated_rust_cache_lives_in_the_seed_home() -> Result[None, str]:
+    """The verified relocated sysroot copy is kept inside the caller-owned seed home."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    assert release_rust_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-rust").0
+    return Ok(None)
+
+
+def test_a_missing_file_is_refused_by_its_path() -> Result[None, str]:
+    """A digest of a file that does not exist names that file, as does every identity built from such digests."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    missing = temporary.path().joinpath("toolchain.json")
+    match digest(missing):
+        Ok(found) => return Err(f"a missing file digested to {found}")
+        Err(reason) =>
+            assert reason.startswith(f"cannot digest {missing.0}: "), reason
+    present = temporary.path().joinpath("incan")
+    present.write_bytes(b"oven-a").map_err((error) => error.message())?
+    match census_inputs(present, present, missing, temporary.path(), 600):
+        Ok(found) => return Err(f"census inputs over a missing seed manifest digested to {found.identity()}")
+        Err(reason) =>
+            assert missing.0 in reason, reason
+    return Ok(None)
+
+
+def test_driver_evidence_retains_qualified_unit_identities_and_dependency_scans() -> Result[None, str]:
+    """Compiler, sysroot and SDK bytes key complete driver library evidence while the binary remains refused."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    compiler = temporary.path().joinpath("compiler/rustc")
+    sysroot = temporary.path().joinpath("sysroot")
+    sdk = temporary.path().joinpath("sdk/SDKSettings.json")
+    compiler.parent().mkdir(true, true).map_err((error) => error.message())?
+    sysroot.joinpath("lib").mkdir(true, true).map_err((error) => error.message())?
+    sdk.parent().mkdir(true, true).map_err((error) => error.message())?
+    compiler.write_bytes(b"compiler-a").map_err((error) => error.message())?
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-a").map_err((error) => error.message())?
+    sdk.write_bytes(b"sdk-a").map_err((error) => error.message())?
+
+    original = driver_qualification(compiler, sysroot, sdk)?
+    compiler.write_bytes(b"compiler-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    compiler.write_bytes(b"compiler-a").map_err((error) => error.message())?
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-a").map_err((error) => error.message())?
+    sdk.write_bytes(b"sdk-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    sdk.write_bytes(b"sdk-a").map_err((error) => error.message())?
+
+    target = temporary.path().joinpath("target")
+    unit = target.joinpath("incan_driver-unit")
+    unit.mkdir(true, true).map_err((error) => error.message())?
+    native = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    unit
+        .joinpath("library.d")
+        .write_text("library: src/lib.rs\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit
+        .joinpath("library.portable-inputs")
+        .write_text(native + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit.joinpath("incan_driver.incngraph").write_bytes(b"graph").map_err((error) => error.message())?
+    publication = JsonValue.object({"unit": JsonValue.string(native)})
+    unit
+        .joinpath("libincan_driver.rlib.oven-unit")
+        .write_text(publication.to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    target.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    target
+        .joinpath("bin/incan-rustc-driver.d")
+        .write_text("driver: src/main.rs\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    retained = retain_driver_evidence(target, temporary.path().joinpath("release"), compiler, sysroot, sdk)?
+    assert retained.identity == original.identity
+    assert retained.units == 1
+    assert retained.bytes > 0
+    assert retained.directory.joinpath("incan_driver/library.d").is_file()
+    assert retained.directory.joinpath("incan_driver/library.portable-inputs").is_file()
+    assert retained.directory.joinpath("binary/incan-rustc-driver.d").is_file()
+    manifest = JsonValue
+        .parse(
+            retained.directory
+                .joinpath("manifest.json")
+                .read_text("utf-8", "strict")
+                .map_err((error) => error.message())?,
+        )
+        .map_err((error) => error.message())?
+    assert manifest.require("schema").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "incan.release-driver-units/1"
+    binary = manifest.require("binary").map_err((error) => error.message())?
+    assert binary.require("unit_identity").map_err((error) => error.message())?.is_null()
+    return Ok(None)
+
+
+def test_reference_timings_join_the_release_timings() -> Result[None, str]:
+    """The reference worker's private timings are appended to the release's, after its own rows."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    timings = temporary.path().joinpath("timings.tsv")
+    worker_timings = temporary.path().joinpath("reference-timings.tsv")
+    timings.write_text("source-closure\t1.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    worker_timings.write_text("reference-contracts\t2.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    append_timing_file(timings, worker_timings)?
+    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == ("source-closure\t1.0\nreference-contracts\t2.0\n")
+    return Ok(None)
+
+
+def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result[None, str]:
+    """Tree evidence measures bytes, hashes content, and reuses only a verified read-only relocated copy."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    rustup = temporary.path().joinpath("rustup")
+    tree = rustup.joinpath("toolchains/tree")
+    tree.joinpath("nested").mkdir(true, true).map_err((error) => error.message())?
+    rustup.joinpath("update-hashes").mkdir(true, true).map_err((error) => error.message())?
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("pinned\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    tree.joinpath("one").write_bytes(b"one").map_err((error) => error.message())?
+    tree.joinpath("nested/two").write_bytes(b"two!!").map_err((error) => error.message())?
+    tree.joinpath("alias").symlink_to(tree.joinpath("nested/two")).map_err((error) => error.message())?
+    assert tree_bytes(tree)? == 8
+
+    timings = temporary.path().joinpath("timings.tsv")
+    append_bytes(timings, "build-home", 8)?
+    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == "bytes/build-home\t8\n"
+
+    identity = tree_digest(tree)?
+    cache = temporary.path().joinpath("cache")
+    home = shared_relocated_sysroot(tree, cache)?
+    cached = home.joinpath("toolchains/tree/nested/two")
+    assert home.name() == identity
+    settings = home.joinpath("settings.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert settings == "version = \"12\"\n\n[overrides]\n"
+    assert home.joinpath("update-hashes/tree").read_text("utf-8", "strict").map_err((error) => error.message())? == "pinned\n"
+    assert cached.read_bytes().map_err((error) => error.message())? == b"two!!"
+    match cached.write_bytes(b"changed"):
+        Ok(_) => return Err("the shared relocated tree remained writable")
+        Err(_) => pass
+    assert shared_relocated_sysroot(tree, cache)?.0 == home.0
+    # Reuse only reads the shared home: a permission write would change what a concurrent release admitted.
+    cached.chmod(false).map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a writable shared relocated tree was reused")
+        Err(message) =>
+            assert message.contains("writable entry"), message
+    cached.chmod(true).map_err((error) => error.message())?
+    assert shared_relocated_sysroot(tree, cache)?.0 == home.0
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("changed\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a stale Rust update hash was reused")
+        Err(message) =>
+            assert message.contains("update hash disagrees"), message
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("pinned\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    make_tree_writable(cache)?
+    cached.write_bytes(b"changed").map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a damaged shared relocated tree was reused")
+        Err(message) =>
+            assert message.contains("cached relocated tree digest disagrees"), message
+    make_tree_writable(cache)?
+    return Ok(None)
+
+
+def test_release_trace_uses_invocation_records_and_phase_parent_links() -> Result[None, str]:
+    """Invocation JSONL preserves both same-process phase parents and a child process's inherited parent."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    directory = temporary.path().joinpath("trace")
+    mut trace = ReleaseTrace.open(directory)?
+    trace.phase("checkout")?
+    installed = trace.begin("installed-ci")?
+    child = ReleaseTrace.linked(directory, installed.id, "scripts/verify_installation.incn")?
+    relocation = child.begin("relocation")?
+    child.finish(relocation)?
+    child.complete()?
+    trace.finish(installed)?
+    trace.complete()?
+    paths = directory.glob("*.jsonl").map_err((error) => error.message())?
+    assert len(paths) == 2
+    mut records: list[JsonValue] = []
+    for path in paths:
+        for line in path.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line != "":
+                records.append(JsonValue.parse(line).map_err((error) => error.message())?)
+    process_records = [record for record in records if json_optional_text(record, "schema") == "incan.invocations/1"]
+    assert len(process_records) == 2
+    checkout_records = [record for record in records if json_optional_text(record, "function") == "checkout"]
+    installed_records = [record for record in records if json_optional_text(record, "function") == "installed-ci"]
+    relocation_records = [record for record in records if json_optional_text(record, "function") == "relocation"]
+    assert len(checkout_records) == 1
+    assert len(installed_records) == 1
+    assert len(relocation_records) == 1
+    phase_id = json_text(checkout_records[0], "id")?
+    installed_id = json_text(installed_records[0], "id")?
+    assert json_text(installed_records[0], "parent")? == phase_id
+    assert json_text(relocation_records[0], "parent")? == installed_id
+    linked_processes = [record for record in process_records if json_optional_text(record, "executable") == "scripts/verify_installation.incn"]
+    assert len(linked_processes) == 1
+    assert json_text(linked_processes[0], "parent")? == installed_id
+    return Ok(None)
+
+
+def test_release_scratch_reclamation_is_exact_and_retains_peak_evidence() -> Result[None, str]:
+    """Reclaim scratch and record only its own bytes, leaving linked targets and retained artifacts in place."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path().joinpath("release")
+    scratch = root.joinpath("scratch")
+    retained = root.joinpath("bundle")
+    scratch.mkdir(true, true).map_err((error) => error.message())?
+    retained.mkdir(true, true).map_err((error) => error.message())?
+    scratch.joinpath("large").write_bytes(b"12345").map_err((error) => error.message())?
+    retained.joinpath("artifact").write_bytes(b"abc").map_err((error) => error.message())?
+    empty = root.joinpath("empty")
+    empty.mkdir(true, true).map_err((error) => error.message())?
+    absent = root.joinpath("absent")
+    linked = scratch.joinpath("linked-bundle")
+    linked.symlink_to(retained).map_err((error) => error.message())?
+    scratch.joinpath("linked-artifact").symlink_to(retained.joinpath("artifact")).map_err((error) => error.message())?
+    scratch.joinpath("dangling").symlink_to(absent).map_err((error) => error.message())?
+    owned = tree_bytes(scratch)?
+    assert owned == 5, f"scratch has 5 owned bytes, counted {owned}"
+    assert tree_bytes(linked)? == 0
+    assert tree_bytes(empty)? == 0
+    assert tree_bytes(absent)? == 0
+    match tree_bytes(scratch.joinpath("large")):
+        Ok(_) => return Err("a regular file was accepted as a release tree")
+        Err(message) => assert "large" in message
+    evidence = root.joinpath("tree-samples.tsv")
+    assert record_tree_sample(root, evidence, "before")? == 8
+    assert reclaim_paths([scratch])? == 5
+    after = record_tree_sample(root, evidence, "after")?
+    assert not scratch.exists()
+    assert retained.joinpath("artifact").read_bytes().map_err((error) => error.message())? == b"abc"
+    peak = int(root.joinpath("tree-peak.txt").read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
+    assert peak >= after
+    assert evidence.read_text("utf-8", "strict").map_err((error) => error.message())?.contains("before\t")
+    return Ok(None)
+
+
+def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, str]:
+    """Verification selects the clean checkout and separates shipped portability from local observation caches."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    launching = temporary.path().joinpath("launching")
+    verification = temporary.path().joinpath("verification-source")
+    for source in [launching, verification]:
+        source.joinpath("scripts").mkdir(true, true).map_err((error) => error.message())?
+        source
+            .joinpath("scripts/verify_installation.incn")
+            .write_text("# verifier\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+        source.joinpath("workspaces/contracts/fixtures").mkdir(true, true).map_err((error) => error.message())?
+    ignored = launching.joinpath("workspaces/contracts/fixtures/project/example/target/ignored")
+    ignored.parent().mkdir(true, true).map_err((error) => error.message())?
+    ignored.write_text("stale\n", "utf-8", "strict", None).map_err((error) => error.message())?
+
+    program = verification_program(verification)?
+    selected_source = program.parent().parent()
+    assert program.0 == verification.joinpath("scripts/verify_installation.incn").0
+    assert ignored.is_file()
+    assert not selected_source.joinpath("workspaces/contracts/fixtures/project/example/target/ignored").exists()
+
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    native = toolchain.joinpath("native/example")
+    native.mkdir(true, true).map_err((error) => error.message())?
+    portable = native.joinpath("portable.json")
+    observations = native.joinpath("observations.json")
+    portable
+        .write_text("{\"path\": \"/builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    observations
+        .write_text("{\"path\": \"/builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    match require_pristine_relocation_inputs(home):
+        Ok(_) => return Err("a shipped observation cache passed relocation intake")
+        Err(message) =>
+            assert message.contains("path-keyed observations"), message
+    observations.unlink().map_err((error) => error.message())?
+    typed = native.joinpath("portable-observations.crumb")
+    typed.write_bytes(b"CRMB").map_err((error) => error.message())?
+    match require_pristine_relocation_inputs(home):
+        Ok(_) => return Err("a shipped Crumb observation cache passed relocation intake")
+        Err(message) => assert message.contains("path-keyed observations"), message
+    typed.unlink().map_err((error) => error.message())?
+    match audit_relocation(home, ["/builder"]):
+        Ok(_) => return Err("a portable release document retained a builder path")
+        Err(message) =>
+            assert message.contains("nonportable toolchain JSON"), message
+    portable
+        .write_text("{\"path\": \"builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    observations
+        .write_text("{\"path\": \"/local/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    audit_relocation(home, ["/builder"])?
+    manifest = JsonValue
+        .parse(
+            "{\"driver\":\"bin/driver\",\"sysroot\":\"sysroot\",\"rust_abi\":[],\"search\":[],\"externs\":[],\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"pin\"}}",
+        )
+        .map_err((error) => error.message())?
+    relocated = JsonValue.parse(absolute_manifest(manifest, verification.0)?).map_err((error) => error.message())?
+    records = relocated.require("compiler_records").map_err((error) => error.message())?
+    assert records.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())? == verification.joinpath(
+        "compiler-records",
+    ).0
+    assert records.require("digest").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "pin"
+    return Ok(None)
+
+
+def refused_release(arguments: list[str]) -> str:
+    """Return a release parser refusal for concise assertions."""
+    match parse_release_options(arguments):
+        Ok(_) => return "accepted"
+        Err(message) => return message
+
+
+def refused_baseline(baseline: str, log: str) -> str:
+    """Return a baseline checker refusal for concise assertions."""
+    match check_baseline(baseline, log):
+        Ok(_) => return "accepted"
+        Err(message) => return message
+
+
+def candidate_refusal(reference: Borrowed[BaselineReport], candidate: Borrowed[BaselineReport]) -> str:
+    """Return one candidate-census refusal for concise assertions."""
+    match require_candidate_census(reference, candidate):
+        Ok(_) => return "accepted"
+        Err(message) => return message
+
+
+def json_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required string field from a trace test record."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => error.message())
+
+
+def json_optional_text(value: JsonValue, key: str) -> str:
+    """Read one optional string field for concise trace-record selection."""
+    match value.get(key):
+        Some(field) => return field.as_str().unwrap_or("")
+        None => return ""
+
+
+def make_tree_writable(root: Path) -> Result[None, str]:
+    """Restore temporary cache permissions so the test can mutate and remove its fixture."""
+    for entry in root.rglob("*").map_err((error) => error.message())?:
+        entry.chmod(false).map_err((error) => error.message())?
+    root.chmod(false).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def test_installed_verification_refuses_a_toolchain_without_standard_sources() -> Result[None, str]:
+    """An installation without shipped standard sources is refused; checkout sources are never substituted."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    primitives = home.joinpath(TOOLCHAIN_DIRECTORY).joinpath("stdlib/primitives")
+    primitives.mkdir(true, true).map_err((error) => error.message())?
+    match require_shipped_standard_sources(home):
+        Ok(_accepted) => return Err("an installation without standard sources was accepted")
+        Err(message) =>
+            assert "ships no standard sources" in message
+    primitives.joinpath("loaf.toml").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    require_shipped_standard_sources(home)?
+    return Ok(None)
+
+
+def test_relocation_audit_reads_anchored_native_references() -> Result[None, str]:
+    """An `absolute:` native-closure reference outside the installation is refused; the home anchors are portable."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    native = toolchain.joinpath("native/example")
+    native.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    closure = native.joinpath("example.native.json")
+    foreign = "{\"externs\": [[\"example\", \"absolute:/elsewhere/libexample.rlib\"]]}\n"
+    closure.write_text(foreign, "utf-8", "strict", None).map_err((error) => error.message())?
+    match audit_relocation(home, []):
+        Ok(_) => return Err("an absolute native reference outside the installation passed the relocation audit")
+        Err(message) =>
+            assert message.contains("nonportable toolchain JSON"), message
+            assert message.contains("/elsewhere/libexample.rlib"), message
+    externs = "[[\"example\", \"sibling:libexample.rlib\"], [\"lang\", \"toolchain:native/lang/liblang.rlib\"]]"
+    macros = "[[\"derive\", \"bakery:carriers/derive/libderive.dylib\"]]"
+    anchored = "{\"externs\": " + externs + ", \"macro_externs\": " + macros + ", \"search\": [\"sibling:.\"]}\n"
+    closure.write_text(anchored, "utf-8", "strict", None).map_err((error) => error.message())?
+    audit_relocation(home, [])?
+    return Ok(None)
+
+
+def test_a_seed_of_an_earlier_version_is_read_by_its_own_toolchain_directory() -> Result[None, str]:
+    """
+    A release reads its seed by the version the seed installed, which may precede the line it builds.
+
+    1. A seed home with one installed version selects that version's directory, not the candidate's.
+    2. A home with no installed toolchain, or two, is refused by name.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed")
+    # 1. The seed installed the line's previous version.
+    seed.joinpath("toolchains/0.6.0-dev.8").mkdir(true, true).map_err((error) => error.message())?
+    seed
+        .joinpath("toolchains/0.6.0-dev.8/toolchain.json")
+        .write_text("{}", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    assert seed_toolchain_directory(seed)? == "toolchains/0.6.0-dev.8"
+    assert seed_toolchain_directory(seed)? != TOOLCHAIN_DIRECTORY
+    # 2. Nothing installed, or more than one generation, names no seed.
+    empty = temporary.path().joinpath("empty")
+    empty.joinpath("toolchains").mkdir(true, true).map_err((error) => error.message())?
+    match seed_toolchain_directory(empty):
+        Ok(found) => return Err(f"an empty seed home selected {found}")
+        Err(reason) =>
+            assert "no installed toolchain" in reason, reason
+    seed.joinpath("toolchains/0.6.0-dev.7").mkdir(true, true).map_err((error) => error.message())?
+    seed
+        .joinpath("toolchains/0.6.0-dev.7/toolchain.json")
+        .write_text("{}", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    match seed_toolchain_directory(seed):
+        Ok(found) => return Err(f"a seed home with two toolchains selected {found}")
+        Err(reason) =>
+            assert "0.6.0-dev.7, 0.6.0-dev.8" in reason, reason
+    return Ok(None)
+
+
+def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() -> Result[None, str]:
+    """
+    A release writes the candidate home's own registry closure, each unit carrying its pinned crates.io checksum.
+
+    1. Each unit of the candidate's closure records the pin for its Loaf version, and the candidate's manifest names
+       that closure. The seed's entries and producer selection are linked, and the seed's closure is unchanged.
+    2. An unpinned Loaf version is refused by name, and so is a recorded checksum that differs from its pin.
+    3. The release's own pin file pins only `sha256:` digests.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed/registry")
+    seed.joinpath("entries/sha256-aa/artifacts").mkdir(true, true).map_err((error) => error.message())?
+    seed
+        .joinpath("selected.json")
+        .write_text("{\"units\": []}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    closure_text = """{"externs": {}, "schema": "incan.oven.closure/1", "units": [
+{"domain": "target", "entry": "sha256:aa", "loaf": "crates-io/serde", "version": "1.0.229"},
+{"domain": "host", "entry": "sha256:bb", "loaf": "crates-io/serde", "version": "1.0.229"},
+{"domain": "target", "entry": "sha256:cc", "loaf": "crates-io/libc", "version": "0.2.190"}]}
+"""
+    seed.joinpath("closure.json").write_text(closure_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    serde = "sha256:4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
+    libc = "sha256:ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+    pins_text = ("{\"checksums\": {\"crates-io/serde\": {\"1.0.229\": \"" + serde + "\"}, \"crates-io/libc\": {\"0.2.190\": \"" + libc + "\"}}}\n")
+    pins = temporary.path().joinpath("registry-checksums.json")
+    pins.write_text(pins_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    candidate = temporary.path().joinpath("candidate")
+    candidate.mkdir(true, true).map_err((error) => error.message())?
+    manifest = "{\"name\": \"0.6.0-dev.9\", \"registry_units\": \"" + seed.joinpath("closure.json").0 + "\"}\n"
+    candidate
+        .joinpath("toolchain.json")
+        .write_text(manifest, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    # 1. The candidate's closure carries each unit's pin; the seed's stays as it was.
+    write_checksummed_registry(candidate, pins)?
+    written = JsonValue
+        .parse(
+            candidate.joinpath("registry/closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
+        )
+        .map_err((error) => error.message())?
+    units: list[JsonValue] = written.require("units").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    mut recorded: list[str] = []
+    for unit in units:
+        match unit.get("checksum"):
+            Some(checksum) => recorded.append(checksum.expect_str().map_err((error) => error.message())?)
+            None => recorded.append("")
+    assert recorded == [serde, serde, libc], f"the candidate closure records {recorded}"
+    named = JsonValue
+        .parse(candidate.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+    registry_units = named
+        .require("registry_units")
+        .and_then((value) => value.expect_str())
+        .map_err((error) => error.message())?
+    assert registry_units == "registry/closure.json", f"the candidate manifest names {registry_units}"
+    assert candidate.joinpath("registry/entries").is_symlink(), "the seed's entries were not linked"
+    assert candidate.joinpath("registry/selected.json").is_symlink(), "the seed's selection was not linked"
+    kept = seed.joinpath("closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert kept == closure_text, "the seed's closure was written"
+    # 2. An unpinned version, and a recorded checksum that is not the pin, are refused.
+    unpinned = JsonValue
+        .parse(
+            "{\"units\": [{\"loaf\": \"crates-io/rand\", \"version\": \"0.9.2\"}, {\"loaf\": \"crates-io/libc\", " + "\"version\": \"0.2.190\"}]}",
+        )
+        .map_err((error) => error.message())?
+    pinned = JsonValue.parse(pins_text).map_err((error) => error.message())?
+    match checksummed_closure(unpinned, pinned):
+        Ok(_) => return Err("a closure with an unpinned Loaf version was accepted")
+        Err(reason) =>
+            assert "pins no checksum for: crates-io/rand 0.9.2" in reason, reason
+            assert REGISTRY_CHECKSUMS in reason, reason
+    other = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    disagreeing = JsonValue
+        .parse(
+            "{\"units\": [{\"loaf\": \"crates-io/libc\", \"version\": \"0.2.190\", \"checksum\": \"" + other + "\"}]}",
+        )
+        .map_err((error) => error.message())?
+    match checksummed_closure(disagreeing, pinned):
+        Ok(_) => return Err("a recorded checksum that differs from its pin was accepted")
+        Err(reason) =>
+            assert other in reason and libc in reason, reason
+    # 3. The checked-in pins are `sha256:` digests.
+    released = JsonValue
+        .parse(
+            repository_root()?.joinpath(REGISTRY_CHECKSUMS).read_text("utf-8", "strict").map_err(
+                (error) => error.message(),
+            )?,
+        )
+        .map_err((error) => error.message())?
+    loaves = released.require("checksums").map_err((error) => error.message())?
+    mut count = 0
+    for loaf in loaves.keys():
+        versions = loaves.require(loaf).map_err((error) => error.message())?
+        for version in versions.keys():
+            value = versions
+                .require(version)
+                .and_then((entry) => entry.expect_str())
+                .map_err((error) => error.message())?
+            assert is_sha256(value), f"{REGISTRY_CHECKSUMS} pins {loaf} {version} to `{value}`"
+            count += 1
+    assert count > 0, f"{REGISTRY_CHECKSUMS} pins nothing"
+    return require_repacked_registry_archive(temporary.path())
+
+
+def require_repacked_registry_archive(root: Path) -> Result[None, str]:
+    """Keep the issued Loaf archive digest and decimal revision separate from its upstream checksum."""
+    upstream = "sha256:7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+    archive = "sha256:8aaf6eed3d6cbe70c2c20d5b5b7ae889dedcd02ae07b00de2bb3e1d988af4181"
+    entry = "sha256:16f4219e30940fa4acc1615b954258d935cfb615db01d82097a7ed3526dd3c05"
+    identity = "\"loaf\":\"crates-io/hex\",\"version\":\"0.4.3\",\"entry\":\"" + entry + "\""
+    provenance = "\"registry\":\"loaves.pub\",\"revision\":\"1\",\"checksum\":\"" + archive + "\""
+    closure_text = "{\"schema\":\"incan.oven.closure/1\",\"externs\":{},\"units\":[{" + identity + "," + provenance + "}]}"
+    pins_text = (
+        "{\"checksums\":{\"crates-io/hex\":{\"0.4.3\":\"" + upstream + "\"}},"
+        + "\"source_archives\":{\"crates-io/hex\":{\"0.4.3\":{" + provenance + "}}}}"
+    )
+    seed_closure = root.joinpath("repacked-seed/registry/closure.json")
+    candidate = root.joinpath("repacked-candidate")
+    seed_closure.parent().mkdir(true, true).map_err((error) => error.message())?
+    candidate.mkdir(true, true).map_err((error) => error.message())?
+    seed_closure.write_text(closure_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    pins = root.joinpath("repacked-pins.json")
+    pins.write_text(pins_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    manifest_text = "{\"registry_units\":\"" + seed_closure.0 + "\"}"
+    candidate
+        .joinpath("toolchain.json")
+        .write_text(manifest_text, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+
+    write_checksummed_registry(candidate, pins)?
+    written = candidate.joinpath("registry/closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    document = JsonValue.parse(written).map_err((error) => error.message())?
+    units = document.require("units").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    assert len(units) == 1
+    for field, expected in [("checksum", archive), ("registry", "loaves.pub"), ("revision", "1"), ("entry", entry)]:
+        actual = units[0].require(field).and_then((value) => value.expect_str()).map_err((error) => error.message())?
+        assert actual == expected, f"the release changed the issued registry {field}: {actual}"
+    assert seed_closure.read_text("utf-8", "strict").map_err((error) => error.message())? == closure_text
+    assert pins.read_text("utf-8", "strict").map_err((error) => error.message())? == pins_text
+    wrong_archive = closure_text.replace(archive, upstream)
+    require_repacked_writer_refusal(root.joinpath("archive-mismatch"), pins, wrong_archive, "checksum")?
+    refusal = "{\"loaf\":\"crates-io/hex\",\"version\":\"0.4.3\",\"reason\":\"producer refused the locked unit\"}"
+    refused = closure_text.replace("\"units\":[", f"\"refused\":[{refusal}],\"units\":[")
+    require_repacked_writer_refusal(root.joinpath("producer-refusal"), pins, refused, "refused")?
+    return require_repacked_registry_refusals(closure_text, pins_text, archive, upstream)
+
+
+def require_repacked_writer_refusal(root: Path, pins: Path, closure: str, reason_text: str) -> Result[None, str]:
+    """Validate source identity and producer outcome before touching a fresh candidate."""
+    seed = root.joinpath("seed/closure.json")
+    candidate = root.joinpath("candidate")
+    seed.parent().mkdir(true, true).map_err((error) => error.message())?
+    candidate.mkdir(true, true).map_err((error) => error.message())?
+    seed.write_text(closure, "utf-8", "strict", None).map_err((error) => error.message())?
+    manifest = candidate.joinpath("toolchain.json")
+    before = "{\"registry_units\":\"" + seed.0 + "\"}"
+    manifest.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    match write_checksummed_registry(candidate, pins):
+        Ok(_) => return Err(f"the release writer accepted the invalid {reason_text} candidate")
+        Err(reason) => assert reason_text in reason, reason
+    assert manifest.read_text("utf-8", "strict").map_err((error) => error.message())? == before
+    registry = candidate.joinpath("registry")
+    assert not registry.exists() and not registry.is_symlink(), "a refused candidate created its registry directory"
+    return Ok(None)
+
+
+def require_repacked_registry_refusals(
+    closure: str, pins: str, archive: str, upstream: str,
+) -> Result[None, str]:
+    """Refuse wrong digest domains, wrong issuer and a numeric instead of decimal-string revision."""
+    policy = JsonValue.parse(pins).map_err((error) => error.message())?
+    issued = JsonValue.parse(closure).map_err((error) => error.message())?
+    for invalid, detail in [
+        (closure.replace(archive, upstream), "checksum"),
+        (closure.replace("loaves.pub", "different-registry"), "registry"),
+        (closure.replace("\"revision\":\"1\"", "\"revision\":1"), "revision"),
+    ]:
+        value = JsonValue.parse(invalid).map_err((error) => error.message())?
+        match checksummed_closure(value, policy):
+            Ok(_) => return Err(f"an issued registry unit with an invalid {detail} was accepted")
+            Err(reason) => assert detail in reason, reason
+    checksums_only = JsonValue.object({"checksums": policy.require("checksums").map_err((error) => error.message())?})
+    match checksummed_closure(issued, checksums_only):
+        Ok(_) => return Err("an issued registry unit without a source-archive pin was accepted")
+        Err(reason) => assert "source archive" in reason, reason
+    return Ok(None)

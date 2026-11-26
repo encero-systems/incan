@@ -1,0 +1,26 @@
+# behavior: a `yield` fixture tears down after a failed assertion in a test that returns `Result`, with its setup locals, as 0.5.1 does (#3149)
+# expect-stdout-contains:
+#   test_result_teardown.incn::test_result_tears_down_after_a_failure FAILED
+# expect-stderr-contains:
+#   result failing with 9
+#   close ledger 9
+# expect-exit: 1
+
+"""Teardown after a failing test that returns `Result`, as 0.5.1 runs it."""
+
+from std.testing import assert_eq, fixture
+
+
+@fixture
+def ledger() -> int:
+    """The statements after `yield` run after the failed test."""
+    entries = 9
+    yield entries
+    println(f"close ledger {entries}")
+
+
+def test_result_tears_down_after_a_failure(ledger: int) -> Result[None, str]:
+    """A failed assertion in a test that returns `Result` tears its fixtures down too."""
+    println(f"result failing with {ledger}")
+    assert_eq(ledger, 10)
+    return Ok(None)

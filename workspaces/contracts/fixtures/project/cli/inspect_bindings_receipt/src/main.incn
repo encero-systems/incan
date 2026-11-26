@@ -1,0 +1,28 @@
+# behavior: `incan inspect bindings --format receipt` prints 0.5.1's binding-use receipt: each checked binding by its descriptor identity, each direct native call with its calling function, and each public facade over a private raw bridge, without locations or paths; this one equals 0.5.1's receipt for the same source (#3132)
+# cli-commands:
+#   incan inspect bindings --format receipt
+# expect-stdout:
+#   {"bindings":[{"identity":"sha256:26a11a9d6a0d96c81476df70127f34e9db346deca62a00a3811b40131ed69e3a","module":["main"],"name":"LibC"}],"calls":[{"binding_identity":"sha256:26a11a9d6a0d96c81476df70127f34e9db346deca62a00a3811b40131ed69e3a","owner":{"name":"raw_absolute","visibility":"private"},"symbol":"absolute"}],"compatibility":{"binding_contract":"exact_descriptor_identity"},"facades":[{"bridge":{"name":"raw_absolute","visibility":"private"},"calls":[{"binding_identity":"sha256:26a11a9d6a0d96c81476df70127f34e9db346deca62a00a3811b40131ed69e3a","symbol":"absolute"}],"facade":{"name":"absolute","visibility":"public"}}],"schema_version":2}
+
+from std.interop import c
+
+
+binding LibC:
+    header = "stdlib.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def raw_absolute(value: i32) -> i32:
+    unsafe:
+        return LibC.absolute(value)
+
+
+pub def absolute(value: i32) -> i32:
+    return raw_absolute(value)
+
+
+def main() -> None:
+    println(absolute(-5))

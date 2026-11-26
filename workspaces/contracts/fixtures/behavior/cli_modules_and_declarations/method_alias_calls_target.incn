@@ -1,0 +1,17 @@
+# behavior: a method alias declared in a model body (`mean = avg`) calls the method it aliases
+# expect-stdout:
+#   10
+#   10
+
+model Stats:
+    value: int
+    mean = avg
+
+    def avg(self) -> int:
+        return self.value
+
+
+def main() -> None:
+    stats = Stats(value=10)
+    println(stats.mean())
+    println(stats.avg())

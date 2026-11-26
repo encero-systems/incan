@@ -1,0 +1,10 @@
+[project]
+name = "child-package"
+version = "1.0.0"
+
+[rust]
+name = "child_alias"
+type = "lib"
+
+[rust.source]
+root = "rust"

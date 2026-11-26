@@ -1,0 +1,23 @@
+"""Register an owned fragment without any native lowering hook."""
+
+from std.vocab import (
+    DeclarationSurface,
+    DslSurface,
+    EmbeddedFragmentDescriptor,
+    EmbeddedFragmentSubmode,
+    VocabRegistration,
+)
+
+
+pub def marker() -> int:
+    """Keep the fragment's hole as an ordinary typed Incan call."""
+    return 7
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Publish a descriptor whose fragment must retain the explicit emission refusal."""
+    declaration = DeclarationSurface.named("markup").with_statement_body()
+    fragment = EmbeddedFragmentDescriptor.new("markup.fragment", EmbeddedFragmentSubmode.Markup, "markup.tree")
+    mut surface = DslSurface.on_import("words").with_declaration(declaration)
+    surface = surface.with_embedded_fragment(fragment.in_declaration_body("markup"))
+    return VocabRegistration.new().with_surface(surface)

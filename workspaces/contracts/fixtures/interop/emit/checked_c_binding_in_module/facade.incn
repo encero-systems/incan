@@ -1,0 +1,21 @@
+"""Keep a checked C binding and its raw call private behind an ordinary public function."""
+
+from std.interop import c
+
+binding LibC:
+    header = "stdlib.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def absolute_bridge(value: int) -> int:
+    """Call the checked native symbol at one private boundary."""
+    unsafe:
+        return LibC.absolute(value)
+
+
+pub def magnitude(value: int) -> int:
+    """Return the native absolute value."""
+    return absolute_bridge(value)

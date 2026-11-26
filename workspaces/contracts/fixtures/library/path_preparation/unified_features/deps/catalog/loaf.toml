@@ -1,0 +1,10 @@
+[project]
+name = "catalog"
+version = "0.1.0"
+
+[project.features]
+default = []
+extra = ["dep:units"]
+
+[dependencies]
+units = { path = "../units", optional = true }

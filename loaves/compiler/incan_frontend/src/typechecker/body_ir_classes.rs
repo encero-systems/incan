@@ -6,6 +6,7 @@ use super::TypeChecker;
 use super::type_info::BodyIrClassInheritance;
 use crate::ast::{Declaration, ParamKind, Program};
 use crate::symbols::{ClassInfo, ResolvedType, TypeInfo};
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::body_ir::{ClassInheritance, ClassMethodImplementation};
 
 impl TypeChecker {
@@ -70,6 +71,9 @@ impl TypeChecker {
                 return None;
             }
             for (slot, method) in &ancestor.methods {
+                if method.receiver.is_none() {
+                    continue;
+                }
                 let method = method.identity.as_ref()?;
                 let implementation = info.methods.get(slot)?.identity.as_ref()?;
                 if self
@@ -102,9 +106,12 @@ impl TypeChecker {
 }
 
 /// Bound inheritance to concrete ordinary instance methods and fields whose executable frames are proven here.
+///
+/// Associated methods have no receiver and therefore contribute neither a parent dispatch slot nor an inherited
+/// implementation identity. Their independent callable admission is checked by the class direct-replacement gate.
+/// Checked trait adoptions remain independent of the parent layout and nearest implementation identities.
 fn plain_class(info: &ClassInfo) -> bool {
     info.type_params.is_empty()
-        && info.traits.is_empty()
         && info.properties.is_empty()
         && info.method_aliases.is_empty()
         && info.field_defaults.is_empty()
@@ -112,26 +119,29 @@ fn plain_class(info: &ClassInfo) -> bool {
         && info
             .derives
             .iter()
-            .all(|derive| matches!(derive.as_str(), "Debug" | "Clone"))
+            .all(|derive| matches!(derives::from_str(derive), Some(DeriveId::Debug | DeriveId::Clone)))
         && info
             .fields
             .values()
             .all(|field| field.alias.is_none() && field.identity.is_some())
         && info.method_overloads.values().all(|methods| methods.len() == 1)
-        && info.methods.values().all(|method| {
-            method.has_body
-                && !method.is_async
-                && method.receiver.is_some()
-                && method.type_params.is_empty()
-                && method.alias_of.is_none()
-                && scalar_type(&method.return_type)
-                && method.params.iter().all(|param| {
-                    param.name.is_some()
-                        && param.kind == ParamKind::Normal
-                        && !param.has_default
-                        && scalar_type(&param.ty)
-                })
-        })
+        && info
+            .methods
+            .values()
+            .filter(|method| method.receiver.is_some())
+            .all(|method| {
+                method.has_body
+                    && !method.is_async
+                    && method.type_params.is_empty()
+                    && method.alias_of.is_none()
+                    && scalar_type(&method.return_type)
+                    && method.params.iter().all(|param| {
+                        param.name.is_some()
+                            && param.kind == ParamKind::Normal
+                            && !param.has_default
+                            && scalar_type(&param.ty)
+                    })
+            })
 }
 
 /// Primitive ordinary inputs and results need no inherited nominal substitution beyond the explicit receiver.

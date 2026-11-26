@@ -1,0 +1,13 @@
+# behavior: Oven refuses 0.5.1's `requires-sdk-components` feature field and says there is no SDK selection (#3144).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["project", "features", "web", "requires-sdk-components"]: unsupported
+#   there is no SDK selection: standard packages are ambient
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

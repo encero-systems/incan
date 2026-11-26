@@ -1,0 +1,17 @@
+# behavior: after binding a whole tuple that carries a view, editing the source while the tuple is still used is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Address:
+    pub city: str
+    pub visits: int
+
+    pub def edit_city(mut self) -> Tuple[Reference[str], int] from self.city:
+        return (self.city, self.visits)
+
+
+def overlap(mut address: BorrowedMut[Address]) -> int:
+    pair = address.edit_city()
+    address.city = "Rotterdam"
+    if pair == pair:
+        return 1
+    return 0

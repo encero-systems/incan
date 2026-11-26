@@ -1,0 +1,135 @@
+"""Fixed UTC offsets for `std.datetime.civil`, with offset text parsing and formatting."""
+
+from std.datetime.error import DateTimeError
+from crate.datetime.civil.naive._calendar import (
+    _HOURS_PER_DAY,
+    _MINUTES_PER_HOUR,
+    _SECONDS_PER_MINUTE,
+    _SECONDS_PER_HOUR,
+    _SECONDS_PER_DAY,
+)
+from crate.datetime.civil.naive._format_text import _parse_number, _pad2
+
+
+pub model FixedOffset:
+    """
+    Fixed UTC offset measured in whole minutes.
+
+    Fixed offsets are deterministic values, so they belong in `std.datetime`. Named timezones are rule databases that
+    resolve to different offsets across instants and belong in separately versioned packages such as `pub.timezones`.
+    """
+
+    pub seconds: int
+
+    @staticmethod
+    pub def seconds(value: int) -> Result[FixedOffset, DateTimeError]:
+        """
+        Construct a checked fixed offset from seconds.
+
+        Args:
+            value: Signed offset seconds. The value must be within one day and divisible by one minute.
+
+        Returns:
+            `Ok(FixedOffset)` for valid whole-minute offsets, otherwise `Err(DateTimeError)`.
+        """
+        if value <= 0 - _SECONDS_PER_DAY or value >= _SECONDS_PER_DAY:
+            return Err(DateTimeError(detail="fixed offset must be within one day"))
+        if value % _SECONDS_PER_MINUTE != 0:
+            return Err(DateTimeError(detail="fixed offset must be representable as whole minutes"))
+        return Ok(FixedOffset(seconds=value))
+
+    @staticmethod
+    pub def minutes(value: int) -> Result[FixedOffset, DateTimeError]:
+        """
+        Construct a checked fixed offset from minutes.
+
+        Args:
+            value: Signed offset minutes.
+
+        Returns:
+            `Ok(FixedOffset)` when the offset is within one day, otherwise `Err(DateTimeError)`.
+        """
+        return FixedOffset.seconds(value * _SECONDS_PER_MINUTE)
+
+    @staticmethod
+    pub def hours(value: int) -> Result[FixedOffset, DateTimeError]:
+        """
+        Construct a checked fixed offset from hours.
+
+        Args:
+            value: Signed offset hours.
+
+        Returns:
+            `Ok(FixedOffset)` when the offset is within one day, otherwise `Err(DateTimeError)`.
+        """
+        return FixedOffset.seconds(value * _SECONDS_PER_HOUR)
+
+    @staticmethod
+    pub def utc() -> FixedOffset:
+        """
+        Return the zero UTC offset.
+
+        Returns:
+            `FixedOffset(seconds=0)`.
+        """
+        return FixedOffset(seconds=0)
+
+    pub def isoformat(self) -> str:
+        """
+        Format this offset as ISO offset text.
+
+        Returns:
+            `Z` for UTC, otherwise `+HH:MM` or `-HH:MM`.
+        """
+        if self.seconds == 0:
+            return "Z"
+        return _format_offset(self, true, true)
+
+
+pub def utc() -> FixedOffset:
+    """
+    Return the zero UTC offset.
+
+    Returns:
+        `FixedOffset(seconds=0)`.
+    """
+    return FixedOffset.utc()
+
+
+pub model _ParsedOffset:
+    pub offset: FixedOffset
+    pub next: int
+
+
+pub def _parse_offset(value: str, start: int) -> Result[_ParsedOffset, DateTimeError]:
+    if value[start:start + 1] == "Z":
+        return Ok(_ParsedOffset(offset=FixedOffset.utc(), next=start + 1))
+    sign = value[start:start + 1]
+    if sign != "+" and sign != "-":
+        return Err(DateTimeError(detail="expected fixed offset sign"))
+    hour = _parse_number(value, start + 1, 2, 2)?
+    mut index = hour.next
+    if value[index:index + 1] == ":":
+        index += 1
+    minute = _parse_number(value, index, 2, 2)?
+    if hour.value >= _HOURS_PER_DAY or minute.value >= _MINUTES_PER_HOUR:
+        return Err(DateTimeError(detail="fixed offset is out of range"))
+    mut seconds = hour.value * _SECONDS_PER_HOUR + minute.value * _SECONDS_PER_MINUTE
+    if sign == "-":
+        seconds = 0 - seconds
+    return Ok(_ParsedOffset(offset=FixedOffset.seconds(seconds)?, next=minute.next))
+
+
+pub def _format_offset(offset: FixedOffset, colon: bool, use_z: bool) -> str:
+    if offset.seconds == 0 and use_z:
+        return "Z"
+    mut value = offset.seconds
+    mut sign = "+"
+    if value < 0:
+        sign = "-".to_string()
+        value = 0 - value
+    hour = _pad2(value // _SECONDS_PER_HOUR)
+    minute = _pad2((value % _SECONDS_PER_HOUR) // _SECONDS_PER_MINUTE)
+    if colon:
+        return sign + hour + ":" + minute
+    return sign + hour + minute

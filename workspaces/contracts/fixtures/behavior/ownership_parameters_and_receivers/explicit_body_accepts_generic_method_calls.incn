@@ -1,0 +1,39 @@
+# behavior: an explicit input body accepts an ordinary generic method call before a returned view (#2500)
+# expect-stdout:
+#   2
+#   true
+
+class Graph[T]:
+    pub values: list[T]
+
+    pub def add(mut self, value: T) -> None:
+        """Store one value in this graph."""
+        self.values.append(value)
+
+    pub def read_view(self) -> Borrowed[Graph[T]] from self:
+        """Borrow this generic graph."""
+        return self
+
+
+class Cursor[T]:
+    pub values: list[T]
+
+    pub def next(mut self) -> Option[T]:
+        """Remove and return the next value when one remains."""
+        if len(self.values) == 0:
+            return None
+        return Some(self.values.pop())
+
+
+def has_next(mut cursor: BorrowedMut[Cursor[int]]) -> bool:
+    """Read a builtin observer from an ordinary generic method result."""
+    return cursor.next().is_some()
+
+
+def main() -> None:
+    mut graph = Graph[int](values=[1])
+    graph.add(2)
+    reader = graph.read_view()
+    println(len(reader.values))
+    mut cursor = Cursor[int](values=[1])
+    println(has_next(cursor))

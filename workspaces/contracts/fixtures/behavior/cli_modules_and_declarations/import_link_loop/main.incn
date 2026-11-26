@@ -1,0 +1,25 @@
+# behavior: a three-link loop between imported names is refused with its stable code and every authored declaration site instead of hanging or becoming an unknown name (#2675)
+# expect-stderr-contains:
+#   error[INCAN-I0104]
+#   `X` is imported in a loop: a.X -> b.X -> c.X -> a.X
+#   src/a.incn:1:1
+#   pub from b import X
+#   `a.X` is `b.X`
+#   src/b.incn:1:1
+#   pub from c import X
+#   `b.X` is `c.X`
+#   src/c.incn:1:1
+#   pub from a import X
+#   `c.X` is `a.X`, which closes the loop
+#   src/main.incn:25:13
+#   println(X)
+#   used here
+#   one of these must declare `X` instead of re-exporting it
+# expect-exit: 1
+
+from a import X
+
+
+def main() -> None:
+    """Demand the imported name so its links must be followed."""
+    println(X)

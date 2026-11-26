@@ -1,0 +1,14 @@
+[project]
+name = "inspect_clove_bindings"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[c]
+library = "probe"
+public-headers = ["include/probe.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/probe.c"]

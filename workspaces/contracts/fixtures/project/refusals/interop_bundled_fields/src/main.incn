@@ -1,0 +1,9 @@
+# behavior: a `bundled` artifact declares its package path, `runtime-name`, `placement` and `minimum-platform`, as in 0.5 (#3134)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   a bundled artifact requires runtime-name
+
+def main() -> None:
+    println("not run")

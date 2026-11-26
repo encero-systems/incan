@@ -1,0 +1,1266 @@
+"""Build, verify, pack, and optionally prove one source toolchain generation without publishing it."""
+
+from rust::std::process import exit
+from rust::std::time import Instant
+from std.environ import args, get_or
+from std.fs import Path
+from std.json import JsonValue
+from check_support import repository_root, write_stderr
+from driver_evidence import retain_driver_evidence
+from native_build import (
+    NativeContext,
+    StandardGeneration,
+    StandardProfile,
+    beside_project,
+    build_shipped_tools,
+    finish_tool_build,
+    overlapping_project_capacity,
+    refused_after,
+    build_source_tools,
+    build_support_tool,
+    build_standard_packages,
+    publish_support,
+    readmit_build_home,
+    require_unique_runtime_root,
+    share_seed_generations,
+    start_conductor,
+    standard_profiles,
+)
+from oven_tests import host_memory, shared_memory
+from release_support import (
+    FAMILIES,
+    TOOLCHAIN_DIRECTORY,
+    BackgroundStep,
+    BaselineReport,
+    Counts,
+    ReleaseOptions,
+    ReleaseTrace,
+    Step,
+    append_bytes,
+    append_timing,
+    append_timing_file,
+    installed_builder_bakery,
+    cancel_background_step,
+    check_baseline,
+    counts_json,
+    digest,
+    parse_release_options,
+    reference_worker_arguments,
+    reclaim_paths,
+    record_tree_sample,
+    seed_toolchain_directory,
+    require_candidate_census,
+    release_receipt,
+    release_rust_cache_root,
+    start_background_step,
+    finish_background_step,
+    tree_bytes,
+    verification_program,
+    write_json,
+)
+from reference_cache import CensusInputs, CensusOrigin, census_inputs, reference_cache_root, store_census, stored_census
+from relocated_sysroot import shared_relocated_sysroot
+from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
+from release_helpers import (
+    command_text,
+    host_target,
+    manifest_string,
+    optional_string,
+    read_json,
+    record_release_tree_bytes,
+    release_tree_bytes_json,
+    replace_json,
+    set_manifest_string,
+    write_difference,
+    ReleaseTreeBytes,
+)
+from release_run import (
+    Candidate,
+    ReleasePaths,
+    ReleaseRun,
+    release_paths,
+    release_step,
+    require_installed_verifier,
+    require_release_step,
+    require_release_step_at,
+    timed_release_step_at,
+)
+from release_signer import adopt_signed_bundle, stamp_release_signer
+from relink_driver import Relink, absolute_manifest, run as relink
+from verify_fixed_point import prove_fixed_point
+
+# Sources of the native crates the seed installs and its built tools reach by path. The seed links an installed crate
+# only into builds of the sources it was built from, so its tools take these from the seed's own commit.
+const SEED_GENERATION_SOURCES: FrozenList[str] = ["loaves/kernel/incan_lang"]
+const SEED_BRIDGE_SOURCES: FrozenList[str] = [
+    "loaves/compiler/internal_models/src/checker_records.incn",
+    "loaves/compiler/internal_models/src/compiled_body_rows.incn",
+]
+# The dev.8 seed exposes the checked RowSet interface. Its two compiler readers have a bootstrap spelling using that
+# interface; the plan-function records are Rust in incan_mir_plan_native and have no Incan reader to bridge.
+# Authenticate both ends so that a change to a qualified reader cannot silently compile through a stale seed
+# implementation.
+const SEED_ROW_READERS: FrozenList[str] = [
+    "loaves/compiler/internal_models/src/namespace_rows.incn",
+    "loaves/compiler/internal_models/src/plan_wire_rows.incn",
+]
+const SEED_ROW_BLOBS: FrozenList[str] = [
+    "a908ce5b343728c59734a0d049f6b6c98209fd24", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+    "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+]
+const SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION: FrozenList[str] = [
+    "57239d8f2e7e6abd83c3c8ed5b2e7c47c6c8c4ac", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+    "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+]
+const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
+# The origin of a reused reference census, kept beside the release evidence and named in the receipt.
+const REFERENCE_ORIGIN: str = "reference-origin.json"
+const SEED_TOOL_SOURCE: str = "seed-tool-source"
+
+
+def main() -> None:
+    """Run release qualification, reporting argument refusals as status 2 and release refusals as status 1."""
+    arguments = args().unwrap_or([])
+    if len(arguments) > 1 and arguments[1] == "--reference-census":
+        match run_reference_worker(arguments[2:]):
+            Ok(_) => exit(0)
+            Err(message) =>
+                write_stderr(message + "\n")
+                exit(1)
+    match parse_release_options(arguments[1:]):
+        Ok(options) =>
+            match release(options):
+                Ok(receipt) =>
+                    println(f"release receipt: {receipt.0}")
+                    exit(0)
+                Err(message) =>
+                    write_stderr(message + "\n")
+                    exit(1)
+        Err(message) =>
+            write_stderr(message + "\n")
+            exit(2)
+
+
+pub def release(options: ReleaseOptions) -> Result[Path, str]:
+    """
+    Produce one host release in seven directed phases.
+
+    1. Materialize the selected committed source and a seed-bound candidate home.
+    2. Build the source support closure without an installed runtime provider.
+    3. Build and select the candidate compiler, runtime, and standard Loaves.
+    4. Build and pack the shipped Oven and language server.
+    5. Join the seed census that defines the integration inventory and passing outcomes.
+    6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
+    7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
+
+    The release workflow signs between phases 4 and 6, in a job that runs nothing built here, so it invokes this twice:
+    `--stamp-signer` stamps and leaves out phase 6; `--verify-installed BUNDLE` runs phases 1, 5 and 6 on the bundle
+    it signed. A local qualification runs all seven, unstamped.
+    """
+    mut run = prepare_release(options)?
+    signed = run.options.signed_bundle != ""
+
+    # 1. A release builds a full committed tree while its orchestration remains this compiled Incan program.
+    phase(run, "checkout")?
+    materialize_source(run)?
+    if not signed:
+        phase(run, "seed-home")?
+        prepare_candidate_home(run)?
+
+    # 2. The seed census starts once its only inputs exist, yielding workers while candidate production proceeds.
+    reference = match start_reference_census(run):
+        Ok(started) => started
+        Err(message) =>
+            phase(run, "reference-verification")?
+            return Err(message)
+
+    # 3. The candidate is built here, or is the bundle the workflow signed; a refusal stops the overlapping census.
+    candidate = match produce_candidate(run):
+        Ok(built) => built
+        Err(message) => refuse_candidate_after_cancellation(reference, message)?
+
+    # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
+    phase(run, "reference-verification")?
+    reference_log = finish_reference_census(run, reference)?
+
+    # 6. The installed verifier prepares and runs its tests with the selected Bakery. A packing invocation leaves it out.
+    mut installation: Option[PreparedInstallation] = None
+    if not run.options.stamp_signer:
+        installation = Some(prepare_installation(run, candidate)?)
+    if not run.options.prove_fixed_point and not signed:
+        reclaim(run, "build-lane", [run.paths.lane])?
+    reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
+    if not run.options.prove_fixed_point and not signed:
+        reclaim(run, "source-targets", generated_source_targets(run))?
+    mut counts: Option[Counts] = None
+    if let Some(prepared) = installation:
+        installed = installed_verification(run, prepared)?
+        candidate_report = candidate_census(run, installed)?
+        store_installed_census(run, prepared.inputs, installed)?
+        compare_reference(run, reference_log, candidate_report)?
+        counts = Some(candidate_report.counts)
+
+    # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
+    if signed:
+        reclaim(run, "verified-source", [run.paths.source])?
+    elif run.options.prove_fixed_point:
+        phase(run, "fixed-point")?
+        prove_fixed_point(candidate.context)?
+        reclaim(
+            run,
+            "fixed-point-work",
+            [
+                run.paths.lane,
+                run.paths.home,
+                run.paths.source,
+                run.paths.output.joinpath(SEED_BRIDGE_SOURCE),
+                run.paths.output.joinpath(SEED_TOOL_SOURCE),
+            ],
+        )?
+    else:
+        reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
+    complete_receipt(run, counts)?
+    return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def refuse_candidate_after_cancellation(reference: BackgroundStep, message: str) -> Result[Candidate, str]:
+    """Preserve both the candidate refusal and any failure to stop its overlapping reference census."""
+    match cancel_background_step(reference):
+        Ok(_) => return Err(message)
+        Err(cancel_message) => return Err(f"{message}; release cancellation failed: {cancel_message}")
+
+
+def produce_candidate(run: ReleaseRun) -> Result[Candidate, str]:
+    """Phases 2 to 4: build and pack the candidate, or take the bundle the workflow signed without building anything."""
+    if run.options.signed_bundle != "":
+        phase(run, "bundle")?
+        _ = adopt_signed_bundle(Path(run.options.signed_bundle), run.paths.bundle)?
+        oven = run.paths.bundle.joinpath("incan")
+        lsp = run.paths.bundle.joinpath("incan-lsp")
+        return Ok(Candidate(context=native_context(run, oven, run.paths.home), oven=oven, lsp=lsp))
+    # 2. Source closure, then 3. the compiler that produces the runtime and standard Loaves, then 4. the shipped tools.
+    phase(run, "source-closure")?
+    mut candidate = build_source_closure(run)?
+    phase(run, "candidate-compiler")?
+    candidate = build_candidate_compiler(run, candidate)?
+    phase(run, "bundle")?
+    return build_bundle(run, candidate)
+
+
+def start_reference_census(run: ReleaseRun) -> Result[BackgroundStep, str]:
+    """Start the seed census worker with bounded case concurrency and phase-private timing output."""
+    run.paths.output
+        .joinpath("reference-timings.tsv")
+        .write_text("", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    worker = release_step(
+        run,
+        "reference-worker",
+        run.seed_oven.0,
+        reference_worker_arguments(
+            run.paths.source,
+            run.paths.output,
+            run.seed_home,
+            run.seed_lsp,
+            run.options.jobs,
+            run.options.timeout_seconds,
+            reference_cache(run),
+        ),
+        run.paths.source,
+        build_environment(run, run.seed_home, run.seed_oven),
+        20,
+    )
+    return start_background_step(worker)
+
+
+def reference_cache(run: ReleaseRun) -> Path:
+    """The directory of reusable censuses: the one `--reference-cache` names, else the seed home's own cache."""
+    if run.options.reference_cache != "":
+        return Path(run.options.reference_cache)
+    return reference_cache_root(run.seed_home)
+
+
+def finish_reference_census(run: ReleaseRun, worker: BackgroundStep) -> Result[Path, str]:
+    """Join the seed census, merge its complete timings and preserve its original refusal text."""
+    outcome = finish_background_step(worker, run.options.timeout_seconds * 20)
+    append_timing_file(run.paths.output.joinpath("timings.tsv"), run.paths.output.joinpath("reference-timings.tsv"))?
+    status, elapsed = outcome?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "reference-overlap", elapsed)?
+    if status != 0:
+        log = run.paths.output.joinpath("reference-worker.log")
+        message = log.read_text("utf-8", "replace").map_err((error) => error.message())?.strip()
+        if message != "":
+            return Err(message)
+        return Err(f"reference worker failed with status {status}; log: {log.0}")
+    return Ok(run.paths.output.joinpath("reference-contracts.log"))
+
+
+def run_reference_worker(arguments: list[str]) -> Result[None, str]:
+    """Reconstruct the immutable seed census context in a child that can overlap candidate production."""
+    if len(arguments) != 7:
+        return Err("internal reference census needs SOURCE OUTPUT SEED_HOME SEED_LSP JOBS TIMEOUT CACHE")
+    source = Path(arguments[0]).resolve().map_err((error) => error.message())?
+    output = Path(arguments[1]).resolve().map_err((error) => error.message())?
+    seed_home = Path(arguments[2]).resolve().map_err((error) => error.message())?
+    jobs = positive_worker_value(arguments[4], "jobs")?
+    timeout_seconds = positive_worker_value(arguments[5], "timeout")?
+    paths = ReleasePaths(
+        output=output,
+        source=source,
+        lane=output.joinpath("lane"),
+        home=output.joinpath("build-home"),
+        toolchain=output.joinpath("build-home").joinpath(TOOLCHAIN_DIRECTORY),
+        bundle=output.joinpath("bundle"),
+    )
+    mut run = ReleaseRun(
+        root=source,
+        options=ReleaseOptions(
+            source_sha="0000000000000000000000000000000000000000",
+            output=output,
+            keep_trees=false,
+            prove_fixed_point=false,
+            jobs=jobs,
+            timeout_seconds=timeout_seconds,
+            reference_cache=arguments[6],
+        ),
+        paths=paths,
+        seed_home=seed_home,
+        seed_oven=seed_home.joinpath("bin/incan"),
+        seed_lsp=Path(arguments[3]),
+        target="",
+        started=Instant.now(),
+        trace=ReleaseTrace.open(output.joinpath("trace"))?,
+    )
+    run.trace.phase("reference-verification")?
+    _ = reference_census(run, output.joinpath("reference-timings.tsv"))?
+    run.trace.complete()?
+    return Ok(None)
+
+
+def positive_worker_value(text: str, name: str) -> Result[int, str]:
+    """Parse one positive internal worker value without accepting signs or whitespace."""
+    if text == "":
+        return Err(f"reference census {name} must be positive")
+    for character in text:
+        if character not in "0123456789":
+            return Err(f"reference census {name} must be positive")
+    value = int(text)
+    if value < 1:
+        return Err(f"reference census {name} must be positive")
+    return Ok(value)
+
+
+def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
+    """Validate host and seed inputs, create the output layout, and publish an initial refused receipt."""
+    root = repository_root()?
+    if options.output.exists():
+        return Err(f"output already exists: {options.output.0}")
+    seed_text = get_or("INCAN_HOME", "")
+    if seed_text == "":
+        return Err("INCAN_HOME must select the installed seed toolchain")
+    seed_home = Path(seed_text).resolve().map_err((error) => error.message())?
+    seed_oven = seed_home.joinpath("bin/incan")
+    seed_lsp = Path(get_or("INCAN_LSP", seed_home.joinpath("bin/incan-lsp").0))
+    if not seed_oven.is_file():
+        return Err(f"missing seed Oven: {seed_oven.0}")
+    if not seed_lsp.is_file():
+        return Err(f"missing seed language server: {seed_lsp.0}")
+    target = host_target()?
+    options.output.mkdir(true, false).map_err((error) => error.message())?
+    output = options.output.resolve().map_err((error) => error.message())?
+    paths = release_paths(output)
+    paths.bundle.mkdir(true, true).map_err((error) => error.message())?
+    paths.lane.joinpath("out").mkdir(true, true).map_err((error) => error.message())?
+    paths.output.joinpath("timings.tsv").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    trace = ReleaseTrace.open(paths.output.joinpath("trace"))?
+    run = ReleaseRun(
+        root=root,
+        options=options,
+        paths=paths,
+        seed_home=seed_home,
+        seed_oven=seed_oven,
+        seed_lsp=seed_lsp,
+        target=target,
+        started=Instant.now(),
+        trace=trace,
+    )
+    phase(run, "initializing")?
+    return Ok(run)
+
+
+def materialize_source(run: ReleaseRun) -> Result[None, str]:
+    """Clone and detach the exact committed source, refusing a SHA absent from this repository."""
+    resolved = command_text("git", ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.source_sha}^{{commit}}"])?
+    if resolved.strip() != run.options.source_sha:
+        return Err("SHA does not identify the requested full source commit")
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "clone",
+            "git",
+            ["clone", "--shared", "--no-checkout", run.root.0, run.paths.source.0],
+            run.root,
+            {},
+        ),
+    )?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "source-checkout",
+            "git",
+            ["-C", run.paths.source.0, "checkout", "--detach", run.options.source_sha],
+            run.root,
+            {},
+        ),
+    )?
+    if command_text("git", ["-C", run.paths.source.0, "status", "--porcelain"])?.strip() != "":
+        return Err("source checkout is dirty")
+    run.paths.lane.joinpath("incan").symlink_to(run.paths.source).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
+    """Select immutable seed artifacts by absolute identity inside a fresh writable candidate home."""
+    seed_directory = seed_toolchain_directory(run.seed_home)?
+    seed = run.seed_home.joinpath(seed_directory)
+    run.paths.toolchain.mkdir(true, true).map_err((error) => error.message())?
+    # A seed of the previous version reads the candidate home through its own version's directory name.
+    if seed_directory != TOOLCHAIN_DIRECTORY:
+        alias = run.paths.home.joinpath(seed_directory)
+        alias.symlink_to(Path(run.paths.toolchain.name())).map_err((error) => error.message())?
+    mut manifest = JsonValue
+        .parse(seed.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+    # The seed's admitted compiler records describe the seed's Loaves; the candidate builds its own from source.
+    _ = manifest.remove("compiler_records").map_err((error) => error.message())?
+    run.paths.toolchain
+        .joinpath("toolchain.json")
+        .write_text(absolute_manifest(manifest, seed.0)?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    apply_release_trust(run.paths.source, run.paths.toolchain)?
+    share_seed_tree(seed, run.paths.toolchain, "loaves")?
+    share_seed_generations(seed, run.paths.toolchain, "native")?
+    # The candidate ships its own registry closure, each unit with the source checksum the release pins.
+    write_checksummed_registry(run.paths.toolchain, run.paths.source.joinpath(REGISTRY_CHECKSUMS))?
+    sysroot = manifest_string(read_json(run.paths.toolchain.joinpath("toolchain.json"))?, "sysroot")?
+    run.paths.toolchain.joinpath("sysroot").symlink_to(Path(sysroot)).map_err((error) => error.message())?
+    preserve_registry_lock(run.paths.toolchain)?
+    retain_seed_digests(run, seed)?
+    if run.target == "x86_64-unknown-linux-gnu":
+        clang_started = Instant.now()
+        clang = fetch_c_toolchain(run)?
+        append_timing(run.paths.output.joinpath("timings.tsv"), "c-toolchain", clang_started.elapsed().as_secs_f64())?
+        set_manifest_string(run.paths.toolchain.joinpath("toolchain.json"), "c_compiler", clang.0)?
+    rust_step = release_step(
+        run,
+        "rust",
+        "rustup",
+        ["run", "1.98.0", "rustc", "-vV"],
+        run.paths.source,
+        {"RUSTUP_TOOLCHAIN": "1.98.0"},
+    )
+    require_release_step(run, rust_step)?
+    return Ok(None)
+
+
+def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
+    """Carry the release-configured ordinary publisher defaults in the installed toolchain description."""
+    policy = read_json(source.joinpath("scripts/release-trust.json"))?
+    publishers = policy.require("default_publishers").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    path = toolchain.joinpath("toolchain.json")
+    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
+    fields["default_trusted_publishers"] = JsonValue.array(publishers)
+    return replace_json(path, JsonValue.object(fields))
+
+
+def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
+    """
+    Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed.
+
+    Only the driver build after this needs the conductor: the support helper, the support closure and the standard
+    providers run the helper and the seed's driver. So when a second child fits, the conductor builds in the background
+    from the start, they proceed beside it in the remaining capacity, and the conductor is joined last.
+    """
+    seed_context = seed_tool_context(run)?
+    if overlapping_project_capacity(seed_context.jobs, seed_context.memory) is None:
+        conductor, helper = build_source_tools(seed_context, run.seed_home)?
+        context = native_context(run, conductor, run.paths.home)
+        source_providers(run, context, helper)?
+        return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
+    pending = start_conductor(seed_context)?
+    beside = beside_project(seed_context)
+    match source_providers_beside(run, beside, pending.plan.destination):
+        Ok(_) =>
+            conductor = finish_tool_build(seed_context, pending)?
+            return Ok(Candidate(context=native_context(run, conductor, run.paths.home), oven=conductor, lsp=Path("")))
+        Err(message) => return Err(refused_after(Some(pending.worker), message))
+
+
+def source_providers_beside(run: ReleaseRun, seed_context: NativeContext, conductor: Path) -> Result[None, str]:
+    """Build the support helper, then the source providers, in the capacity a running conductor build leaves."""
+    helper = build_support_tool(seed_context, run.seed_home)?
+    context = beside_project(native_context(run, conductor, run.paths.home))
+    return source_providers(run, context, helper)
+
+
+def source_providers(run: ReleaseRun, context: NativeContext, helper: Path) -> Result[None, str]:
+    """Replace the seed's providers in the candidate home with the support closure and the standard Loaves."""
+    withdraw_seed_providers(run)?
+    readmit_build_home(context, helper, "source-home-readmit")?
+    publish_support(context, helper)?
+    require_unique_runtime_root(context)?
+    return build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))
+
+
+def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
+    """Select the source tree from which the released seed builds the conductor and the support helper."""
+    context = native_context(run, run.seed_oven, run.seed_home)
+    if run.options.seed_source == "":
+        return Ok(context)
+    return Ok(
+        NativeContext(
+            repo=seed_tool_source(run)?,
+            lane=context.lane,
+            home=context.home,
+            builder=context.builder,
+            stdlib=context.stdlib,
+            evidence=context.evidence,
+            timings=context.timings,
+            jobs=context.jobs,
+            memory=context.memory,
+            timeout_seconds=context.timeout_seconds,
+            trace=context.trace,
+        ),
+    )
+
+
+def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
+    """
+    Check out the qualified source with the seed generation's own sources for the native crates the seed installs.
+
+    A seed-built tool links the seed's installed native crates, and the seed refuses a build whose selected sources for
+    such a crate differ from those it was built from. The conductor and support helper therefore take exactly those
+    crates' sources from the seed's commit and every other source from the qualified commit. Every later producer,
+    and so every shipped artifact, builds the qualified sources alone.
+    """
+    verify = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_source}^{{commit}}"]
+    if command_text("git", verify).unwrap_or("").strip() != run.options.seed_source:
+        return Err(f"--seed-source does not identify a commit in this repository: {run.options.seed_source}")
+    mut selected_source = run.options.source_sha
+    if run.options.seed_bridge != "":
+        verify_bridge = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_bridge}^{{commit}}"]
+        if command_text("git", verify_bridge)?.strip() != run.options.seed_bridge:
+            return Err(f"--seed-bridge does not identify a commit in this repository: {run.options.seed_bridge}")
+        parent_text = command_text("git", ["-C", run.root.0, "show", "-s", "--format=%P", run.options.seed_bridge])?.strip()
+        parents = [parent for parent in parent_text.split(" ") if parent != ""]
+        changed = command_text(
+            "git",
+            [
+                "-C",
+                run.root.0,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                run.options.source_sha,
+                run.options.seed_bridge,
+            ],
+        )?
+        paths = [line for line in changed.split("\n") if line != ""]
+        mut row_blobs: list[str] = []
+        if len(paths) == len(SEED_BRIDGE_SOURCES) + len(SEED_ROW_READERS):
+            mut refs = ["-C", run.root.0, "rev-parse"]
+            for path in SEED_ROW_READERS:
+                refs.append(run.options.source_sha + ":" + path)
+                refs.append(run.options.seed_bridge + ":" + path)
+            row_blobs = command_text("git", refs)?.strip().split("\n")
+        validate_seed_bridge(run.options.source_sha, run.options.seed_bridge, parents, paths, row_blobs)?
+        selected_source = run.options.seed_bridge
+    root = run.paths.output.joinpath(SEED_TOOL_SOURCE)
+    clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
+    require_release_step(run, release_step(run, "seed-tool-clone", "git", clone, run.root, {}))?
+    checkout = ["-C", root.0, "checkout", "--detach", selected_source]
+    require_release_step(run, release_step(run, "seed-tool-checkout", "git", checkout, run.root, {}))?
+    mut restore = ["-C", root.0, "restore", f"--source={run.options.seed_source}", "--staged", "--worktree", "--"]
+    for path in SEED_GENERATION_SOURCES:
+        restore.append(path)
+    require_release_step(run, release_step(run, "seed-tool-generation", "git", restore, run.root, {}))?
+    return Ok(root)
+
+
+def exact_seed_bridge_source(run: ReleaseRun) -> Result[Path, str]:
+    """Materialize the authenticated bridge without seed-generation source restoration for its intermediate compiler."""
+    root = run.paths.output.joinpath(SEED_BRIDGE_SOURCE)
+    clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
+    require_release_step(run, release_step(run, "bridge-source-clone", "git", clone, run.root, {}))?
+    checkout = ["-C", root.0, "checkout", "--detach", run.options.seed_bridge]
+    require_release_step(run, release_step(run, "bridge-source-checkout", "git", checkout, run.root, {}))?
+    return Ok(root)
+
+
+pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths: list[str], row_blobs: list[str] = []) -> Result[None, str]:
+    """Require one direct-child seed bridge whose complete diff is the authenticated compatibility surface."""
+    if parents != [source]:
+        return Err(f"--seed-bridge {bridge} must have qualified source {source} as its only parent")
+    signatures = [path for path in SEED_BRIDGE_SOURCES]
+    if sorted(paths) == sorted(signatures) and len(row_blobs) == 0:
+        return Ok(None)
+    if sorted(paths) == sorted(signatures + [path for path in SEED_ROW_READERS]):
+        if row_blobs == [blob for blob in SEED_ROW_BLOBS] or row_blobs == [blob for blob in SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION]:
+            return Ok(None)
+        return Err("--seed-bridge contains an unrecognized bootstrap row reader")
+    return Err(f"--seed-bridge changes unsupported paths: {", ".join(sorted(paths))}")
+
+
+def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
+    """Bootstrap through an authenticated bridge when needed, then build and select only the qualified compiler."""
+    if run.options.seed_bridge != "":
+        build_bridge_compiler(run, candidate)?
+    driver_started = Instant.now()
+    driver_span = run.trace.begin("driver-build")?
+    driver_result = relink(
+        Relink(
+            repo=run.paths.source,
+            bootstrap=run.paths.lane.joinpath("bootstrap"),
+            toolchain_home=run.paths.home,
+            builder=candidate.oven.0,
+            stdlib=run.paths.source.joinpath("loaves/stdlib").0,
+            profile="release",
+            log=run.paths.output.joinpath("driver-build.log"),
+        ),
+    )
+    run.trace.finish(driver_span)?
+    driver_result?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "driver-build", driver_started.elapsed().as_secs_f64())?
+    retain_driver_build_evidence(run)?
+    context = native_context(run, candidate.oven, run.paths.home)
+    helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    build_candidate_providers(context, helper)?
+    # The language server's and Oven's Rust closures import the release providers, so they are published first.
+    build_standard_packages(context, helper, "candidate-", [StandardProfile.Release])?
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=Path("")))
+
+
+def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
+    """Relink one exact bridge compiler and its providers before compiling the byte-exact qualified source generation."""
+    bridge = exact_seed_bridge_source(run)?
+    started = Instant.now()
+    span = run.trace.begin("bridge-driver-build")?
+    result = relink(
+        Relink(
+            repo=bridge,
+            bootstrap=run.paths.lane.joinpath("bridge-bootstrap"),
+            toolchain_home=run.paths.home,
+            builder=candidate.oven.0,
+            stdlib=bridge.joinpath("loaves/stdlib").0,
+            profile="release",
+            log=run.paths.output.joinpath("bridge-driver-build.log"),
+            readmit=true,
+            standard=true,
+            helper_home=run.paths.home.0,
+        ),
+    )
+    run.trace.finish(span)?
+    result?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "bridge-driver-build", started.elapsed().as_secs_f64())?
+    return Ok(None)
+
+
+def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
+    """Readmit the relinked compiler for the candidate providers; the Rust runtime they link is native support."""
+    readmit_build_home(context, helper, "candidate-driver-readmit")?
+    require_unique_runtime_root(context)?
+    return Ok(None)
+
+
+def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
+    """Retain compiler-qualified unit identities and dependency scans before release scratch is reclaimed."""
+    manifest = read_json(run.paths.toolchain.joinpath("toolchain.json"))?
+    mut sysroot_text = manifest_string(manifest, "sysroot")?
+    if not sysroot_text.startswith("/"):
+        sysroot_text = run.paths.toolchain.joinpath(sysroot_text).0
+    sysroot = Path(sysroot_text)
+    mut sdk_settings = Path("")
+    sdk = get_or("SDKROOT", "")
+    if sdk != "":
+        sdk_settings = Path(sdk).joinpath("SDKSettings.json")
+    target = run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target/incan/rust/release")
+    retained = retain_driver_evidence(target, run.paths.output, sysroot.joinpath("bin/rustc"), sysroot, sdk_settings)?
+    return append_bytes(run.paths.output.joinpath("timings.tsv"), "driver-unit-evidence", retained.bytes)
+
+
+def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
+    """Build the shipped tools, stamped for the workflow, copy the bundle tools, and pack the candidate toolchain."""
+    _ = stamp_release_signer(run.paths.source, run.paths.toolchain, run.options.stamp_signer)?
+    helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    tools = build_shipped_tools(candidate.context, helper, "candidate-")?
+    bundle_oven, bundle_lsp = pack_bundle(run, tools.oven, tools.lsp)?
+    context = native_context(run, bundle_oven, run.paths.home)
+    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp))
+
+
+def pack_bundle(run: ReleaseRun, oven: Path, lsp: Path) -> Result[tuple[Path, Path], str]:
+    """Copy the shipped tools into the bundle and pack the candidate toolchain beside them."""
+    bundle_oven = run.paths.bundle.joinpath("incan")
+    _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
+    bundle_lsp = run.paths.bundle.joinpath("incan-lsp")
+    _ = lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "pack",
+            bundle_oven.0,
+            ["toolchain", "pack", run.paths.bundle.joinpath("toolchain.tar.zst").0],
+            run.paths.source,
+            build_environment(run, run.paths.home, bundle_oven),
+        ),
+    )?
+    return Ok((bundle_oven, bundle_lsp))
+
+
+def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
+    """
+    Reuse or measure the released seed over the committed fixtures, runner and standard sources.
+
+    1. A finished census of this seed with the same outcome inputs, from this release's reference run or the installed
+       census of the release that built the seed, is read back, and its origin is named in the timings and the receipt.
+    2. Otherwise the seed census runs, and once it has finished it is stored for the releases after this one.
+    """
+    project = run.paths.source.joinpath("workspaces/contracts")
+    log = run.paths.output.joinpath("reference-contracts.log")
+    seed_manifest = run.seed_home.joinpath(seed_toolchain_directory(run.seed_home)?).joinpath("toolchain.json")
+    inputs = census_inputs(run.seed_oven, run.seed_lsp, seed_manifest, run.paths.source, run.options.timeout_seconds)?
+    # 1. A stored census of the same inputs is the same measurement.
+    cache_started = Instant.now()
+    if let Some((cached, origin)) = stored_census(reference_cache(run), inputs)?:
+        _ = cached.copy(log, true, true).map_err((error) => error.message())?
+        retain_reference_origin(run, origin)?
+        append_timing(timings, origin.hit_row(), cache_started.elapsed().as_secs_f64())?
+        return Ok(log)
+    # 2. Measure, then store the finished census.
+    require_release_step_at(
+        run,
+        timings,
+        release_step(
+            run,
+            "reference-runner-build",
+            run.seed_oven.0,
+            ["build", project.0, "--profile", "release"],
+            run.paths.source,
+            build_environment(run, run.seed_home, run.seed_oven),
+        ),
+    )?
+    runner = project.joinpath("target/incan/release/bin/contracts")
+    mut environment = build_environment(run, run.seed_home, run.seed_oven)
+    environment["INCAN_LSP"] = run.seed_lsp.0
+    code = timed_release_step_at(
+        run,
+        timings,
+        census_step(run, "reference-contracts", runner, run.seed_oven, environment, log, false),
+    )?
+    if code > 1:
+        return Err(f"reference runner exited {code}")
+    _ = census_results(log)?
+    store_started = Instant.now()
+    source_sha = command_text("git", ["-C", run.paths.source.0, "rev-parse", "HEAD"])?.strip()
+    origin = CensusOrigin(release=run.paths.output.name(), source_sha=source_sha, census="reference")
+    _ = store_census(reference_cache(run), inputs, log, origin)?
+    append_timing(timings, "reference-cache-store", store_started.elapsed().as_secs_f64())?
+    return Ok(log)
+
+
+def retain_reference_origin(run: ReleaseRun, origin: CensusOrigin) -> Result[None, str]:
+    """Keep the origin of a reused reference census beside the release's evidence, where the receipt reads it."""
+    return run.paths.output
+        .joinpath(REFERENCE_ORIGIN)
+        .write_text(origin.json().to_pretty_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def store_installed_census(run: ReleaseRun, inputs: CensusInputs, log: Path) -> Result[None, str]:
+    """
+    Store the installed candidate's finished census under the candidate toolchain's inputs. The next integration
+    release takes this bundle as its seed, and reads this census back as its reference instead of running it again.
+    """
+    started = Instant.now()
+    origin = CensusOrigin(release=run.paths.output.name(), source_sha=run.options.source_sha, census="installed")
+    _ = store_census(reference_cache(run), inputs, log, origin)?
+    return append_timing(run.paths.output.joinpath("timings.tsv"), "installed-census-store", started.elapsed().as_secs_f64())
+
+
+def candidate_census(run: ReleaseRun, log: Path) -> Result[BaselineReport, str]:
+    """Read the installed candidate's complete census, enforce the committed baseline, and retain receipt counts."""
+    report = check_baseline(
+        release_baseline(run)?.read_text("utf-8", "strict").map_err((error) => error.message())?,
+        log.read_text("utf-8", "strict").map_err((error) => error.message())?,
+    )?
+    write_json(run.paths.output.joinpath("counts.json"), counts_json(report.counts))?
+    return Ok(report)
+
+
+def release_baseline(run: ReleaseRun) -> Result[Path, str]:
+    """Select the qualified tree's baseline, with the current tree only for an uncommitted rename proof."""
+    relative = "workspaces/contracts/pass-baseline.txt"
+    qualified = run.paths.source.joinpath(relative)
+    if qualified.is_file():
+        return Ok(qualified)
+    current = run.root.joinpath(relative)
+    current_head = command_text("git", ["-C", run.root.0, "rev-parse", "HEAD"])?.strip()
+    if current_head == run.options.source_sha and current.is_file():
+        return Ok(current)
+    return Err(f"release PASS baseline is absent: {qualified.0}")
+
+
+pub model PreparedInstallation:
+    """The packed candidate installed in a second home, the checkout that verifies it, and its census inputs."""
+
+    pub verification: Path
+    pub home: Path
+    pub environment: Dict[str, str]
+    pub inputs: CensusInputs
+
+
+def prepare_installation(run: ReleaseRun, candidate: Candidate) -> Result[PreparedInstallation, str]:
+    """
+    Install the packed candidate into a second home beside a fresh checkout, and read the inputs that decide its
+    census before verification reclaims the installation.
+    """
+    phase(run, "installed-verification")?
+    verification = run.paths.output.joinpath("verification-source")
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "verification-clone",
+            "git",
+            ["clone", "--shared", "--no-checkout", run.root.0, verification.0],
+            run.root,
+            {},
+        ),
+    )?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "verification-checkout",
+            "git",
+            ["-C", verification.0, "checkout", "--detach", run.options.source_sha],
+            run.root,
+            {},
+        ),
+    )?
+    rust_started = Instant.now()
+    rustup_home = relocate_rust(run)?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "relocated-rust", rust_started.elapsed().as_secs_f64())?
+    home = run.paths.output.joinpath("verification-home")
+    home.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    _ = candidate.oven.copy(home.joinpath("bin/incan"), true, true).map_err((error) => error.message())?
+    _ = candidate.lsp.copy(home.joinpath("bin/incan-lsp"), true, true).map_err((error) => error.message())?
+    mut environment = build_environment(run, home, home.joinpath("bin/incan"))
+    environment["RUSTUP_HOME"] = rustup_home.0
+    environment["INCAN_LSP"] = home.joinpath("bin/incan-lsp").0
+    environment["INCAN_BAKERY"] = home.joinpath("bakery").0
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "installed-toolchain",
+            home.joinpath("bin/incan").0,
+            ["toolchain", "install", run.paths.bundle.joinpath("toolchain.tar.zst").0],
+            verification,
+            environment,
+        ),
+    )?
+    installed_manifest = home.joinpath(TOOLCHAIN_DIRECTORY).joinpath("toolchain.json")
+    inputs = census_inputs(
+        home.joinpath("bin/incan"),
+        home.joinpath("bin/incan-lsp"),
+        installed_manifest,
+        verification,
+        run.options.timeout_seconds,
+    )?
+    environment["INCAN_RELEASE_ARCHIVE"] = run.paths.bundle.joinpath("toolchain.tar.zst").0
+    environment["INCAN_BUILDER_HOME"] = run.paths.home.0
+    # The installed tests reuse the release units from the bakery the builds above compiled into, while the
+    # installation carries the native generations those units link.
+    reuse = installed_builder_bakery(get_or("INCAN_BAKERY", ""), run.paths.home, home)?
+    if reuse == home.joinpath("bakery").0:
+        println("installed verification: the build links natives the installation lacks; it reuses no build unit")
+    environment["INCAN_BUILDER_BAKERY"] = reuse
+    environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
+    return Ok(PreparedInstallation(verification=verification, home=home, environment=environment, inputs=inputs))
+
+
+def installed_verification(run: ReleaseRun, installation: PreparedInstallation) -> Result[Path, str]:
+    """Run the Incan installed-verification program in the prepared installation and return its census."""
+    verification = installation.verification
+    home = installation.home
+    environment = installation.environment
+    require_installed_verifier(
+        run,
+        release_step(
+            run,
+            "installed-ci",
+            home.joinpath("bin/incan").0,
+            [
+                "run",
+                verification_program(verification)?.0,
+                "--",
+                run.paths.output.joinpath("ci").0,
+                "--jobs",
+                str(run.options.jobs),
+                "--timeout",
+                str(run.options.timeout_seconds),
+            ],
+            verification,
+            environment,
+            20,
+        ),
+    )?
+    runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
+    if len(runs) != 1 or not runs[0].joinpath("contracts.log").is_file():
+        return Err("expected one installed census")
+    log = runs[0].joinpath("contracts.log")
+    _ = record_tree_sample(
+        run.paths.output,
+        run.paths.output.joinpath("tree-samples.tsv"),
+        "installed-verification-complete",
+    )?
+    reclaim(
+        run,
+        "installed-verification-scratch",
+        [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch")],
+    )?
+    return Ok(log)
+
+
+def compare_reference(run: ReleaseRun, reference: Path, candidate: Borrowed[BaselineReport]) -> Result[None, str]:
+    """Require candidate case keys to equal the seed census and every seed PASS key to remain passing."""
+    reference_report = census_results(reference)?
+    match require_candidate_census(reference_report, candidate):
+        Ok(_) => return Ok(None)
+        Err(message) =>
+            write_difference(run.paths.output.joinpath("integration-parity.diff"), reference_report, candidate)?
+            return Err(message)
+
+
+def census_results(log: Path) -> Result[BaselineReport, str]:
+    """Parse a complete census with its own PASS keys as a temporary baseline."""
+    text = log.read_text("utf-8", "strict").map_err((error) => error.message())?
+    mut baseline: list[str] = []
+    for line in text.split("\n"):
+        fields = line.split(" ")
+        if len(fields) >= 2 and fields[0] == "PASS":
+            baseline.append(fields[1])
+    return check_baseline("\n".join(baseline) + "\n", text)
+
+
+def census_step(
+    run: ReleaseRun,
+    name: str,
+    runner: Path,
+    oven: Path,
+    environment: Dict[str, str],
+    log: Path,
+    isolated: bool,
+) -> Step:
+    """Create one complete eight-family contract invocation."""
+    mut arguments = [
+        oven.0,
+        run.paths.source.joinpath("workspaces/contracts/fixtures").0,
+        "--scratch",
+        run.paths.output.joinpath(f"{name}-scratch").0,
+        "--jobs",
+        str(run.options.jobs),
+        "--timeout",
+        str(run.options.timeout_seconds),
+    ]
+    if isolated:
+        arguments.append("--isolated")
+    arguments += [family for family in FAMILIES]
+    return Step(
+        name=name,
+        executable=runner.0,
+        arguments=arguments,
+        environment=environment,
+        remove_environment=["RUSTC_BOOTSTRAP"],
+        directory=Some(run.paths.source),
+        log=log,
+        timeout_seconds=run.options.timeout_seconds * 20,
+        trace=Some(run.trace),
+    )
+
+
+def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
+    """Create the explicit native-production context for one selected Oven and home."""
+    return NativeContext(
+        repo=run.paths.source,
+        lane=run.paths.lane,
+        home=home,
+        builder=builder.0,
+        stdlib=run.paths.source.joinpath("loaves/stdlib").0,
+        evidence=run.paths.output,
+        timings=run.paths.output.joinpath("timings.tsv"),
+        jobs=run.options.jobs,
+        memory=shared_memory(host_memory()),
+        timeout_seconds=run.options.timeout_seconds,
+        trace=Some(run.trace),
+    )
+
+
+def build_environment(run: ReleaseRun, home: Path, oven: Path) -> Dict[str, str]:
+    """Return the release-owned environment supplied independently to one child process."""
+    return {"INCAN_HOME": home.0, "INCAN_STDLIB": run.paths.source.joinpath("loaves/stdlib").0, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": run.paths.lane.0, "SELFBUILD_HOME": home.0, "SELFBUILD_OVEN": oven.0, "SELFBUILD_STDLIB": run.paths.source.joinpath(
+        "loaves/stdlib",
+    ).0}
+
+
+def withdraw_seed_providers(run: ReleaseRun) -> Result[None, str]:
+    """Remove the borrowed Loaf selection before publishing candidate support, runtime, and standard providers."""
+    loaves = run.paths.toolchain.joinpath("loaves")
+    if not loaves.is_symlink():
+        return Err("expected the disposable seed Loaf link")
+    loaves.unlink().map_err((error) => error.message())?
+    path = run.paths.toolchain.joinpath("toolchain.json")
+    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
+    fields["externs"] = JsonValue.array([])
+    fields["search"] = JsonValue.array([])
+    return replace_json(path, JsonValue.object(fields))
+
+
+def share_seed_tree(seed: Path, destination: Path, name: str) -> Result[None, str]:
+    """Link one immutable seed tree into the candidate home when the seed publishes it."""
+    source = seed.joinpath(name)
+    if source.exists():
+        destination.joinpath(name).symlink_to(source).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def preserve_registry_lock(toolchain: Path) -> Result[None, str]:
+    """Keep a relative registry-lock path meaningful after the seed manifest becomes candidate-owned."""
+    path = toolchain.joinpath("toolchain.json")
+    value = read_json(path)?
+    lock = optional_string(value, "registry_lock")?
+    if lock == "":
+        return Ok(None)
+    record = Path(lock)
+    if not record.is_file():
+        return Err(f"seed registry producer record is absent: {lock}")
+    linked = toolchain.joinpath("registry-producer")
+    linked.symlink_to(record.parent()).map_err((error) => error.message())?
+    return set_manifest_string(path, "registry_lock", f"registry-producer/{record.name()}")
+
+
+def retain_seed_digests(run: ReleaseRun, seed: Path) -> Result[None, str]:
+    """Retain the selected seed command and manifest digests."""
+    mut text = f"{digest(run.seed_oven)?}  {run.seed_oven.0}\n"
+    text += f"{digest(seed.joinpath("toolchain.json"))?}  {seed.0}/toolchain.json\n"
+    return run.paths.output
+        .joinpath("seed.sha256")
+        .write_text(text, "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def relocate_rust(run: ReleaseRun) -> Result[Path, str]:
+    """Select a verified shared copy of the pinned sysroot at a second path with different file identities."""
+    sysroot = Path(command_text("rustup", ["run", "1.98.0", "rustc", "--print", "sysroot"])?.strip())
+    cache = release_rust_cache_root(run.seed_home)
+    return shared_relocated_sysroot(sysroot, cache)
+
+
+def fetch_c_toolchain(run: ReleaseRun) -> Result[Path, str]:
+    """Pull the pinned Linux Clang artifact with oras and unpack its sole gzip-compressed tar layer in Incan."""
+    pins = read_json(run.paths.source.joinpath("scripts/c-toolchain.json"))?
+    registry = manifest_string(pins, "registry")?
+    clang = pins.require("clang").and_then((value) => value.require(run.target)).map_err((error) => error.message())?
+    repository = manifest_string(clang, "repository")?
+    digest_value = manifest_string(clang, "digest")?
+    download = run.paths.output.joinpath("c-toolchain-download")
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "c-toolchain-pull",
+            "oras",
+            ["pull", f"{registry}/{repository}@{digest_value}", "--output", download.0],
+            run.paths.source,
+            {},
+        ),
+    )?
+    archives = download.rglob("*.tar.gz").map_err((error) => error.message())?
+    if len(archives) != 1:
+        return Err("pinned Clang artifact must contain one .tar.gz layer")
+    unpacked = run.paths.output.joinpath("c-toolchain-unpacked")
+    unpacked.mkdir(true, true).map_err((error) => error.message())?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "c-toolchain-unpack",
+            run.seed_oven.0,
+            [
+                "run",
+                run.paths.source.joinpath("scripts/archive_unpack/src/main.incn").0,
+                "--",
+                archives[0].0,
+                unpacked.0,
+            ],
+            run.paths.source,
+            build_environment(run, run.seed_home, run.seed_oven),
+        ),
+    )?
+    roots = [path for path in unpacked.iterdir().map_err((error) => error.message())? if path.is_dir()]
+    if len(roots) != 1 or not roots[0].joinpath("bin/clang").is_file():
+        return Err("pinned Clang archive has an unexpected root")
+    destination = run.paths.toolchain.joinpath("c-toolchain/clang")
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = roots[0].move(destination).map_err((error) => error.message())?
+    download.remove_tree().map_err((error) => error.message())?
+    unpacked.remove_tree().map_err((error) => error.message())?
+    return Ok(destination.joinpath("bin/clang"))
+
+
+def phase(run: ReleaseRun, name: str) -> Result[None, str]:
+    """Publish a refused receipt naming the phase before any of its work starts."""
+    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"before-{name}")?
+    run.trace.phase(name)?
+    return write_receipt(run, name, "refused", 1, None, JsonValue.null(), JsonValue.null())
+
+
+def generated_source_targets(run: ReleaseRun) -> list[Path]:
+    """Name release-produced source and target roots whose binaries have already moved to the lane, home, or bundle."""
+    return [
+        run.paths.output.joinpath(SEED_BRIDGE_SOURCE),
+        run.paths.output.joinpath(SEED_TOOL_SOURCE),
+        run.paths.source.joinpath("workspaces/oven/target"),
+        run.paths.source.joinpath("workspaces/contracts/target"),
+        run.paths.source.joinpath("loaves/toolchain/incan-lsp/target"),
+        run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target"),
+        run.paths.source.joinpath("loaves/compiler/incan_native_runtime/target"),
+    ]
+
+
+def reclaim(run: ReleaseRun, label: str, paths: list[Path]) -> Result[None, str]:
+    """Reclaim one completed phase's exact scratch roots and retain the measured byte reduction."""
+    reclaimed = reclaim_paths(paths)?
+    append_bytes(run.paths.output.joinpath("timings.tsv"), f"reclaimed/{label}", reclaimed)?
+    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"after-{label}")?
+    return Ok(None)
+
+
+def complete_receipt(run: ReleaseRun, counts: Option[Counts]) -> Result[None, str]:
+    """Measure the full run, remove passing-only work trees unless retained, and publish final evidence."""
+    mut oven_tests = JsonValue.null()
+    runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
+    if len(runs) == 1 and runs[0].joinpath("oven-tests.json").is_file():
+        oven_tests = read_json(runs[0].joinpath("oven-tests.json"))?
+        _ = runs[0]
+            .joinpath("oven-tests.json")
+            .copy(run.paths.output.joinpath("oven-tests.json"), true, true)
+            .map_err((error) => error.message())?
+    before_cleanup = measure_release_tree_bytes(run)?
+    record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "before-cleanup/", before_cleanup)?
+    phase(run, "cleanup")?
+    if not run.options.keep_trees:
+        remove_passing_work_trees(run)?
+    retained = measure_release_tree_bytes(run)?
+    record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "", retained)?
+    run.trace.complete()?
+    mut reached = "complete"
+    if counts.is_none():
+        reached = "packed"
+    return write_receipt(run, reached, "passed", 0, counts, oven_tests, release_tree_bytes_json(retained))
+
+
+def remove_passing_work_trees(run: ReleaseRun) -> Result[None, str]:
+    """Remove only reproducible work and scratch trees after every release gate has passed."""
+    disposable = [
+        run.paths.home,
+        run.paths.lane,
+        run.paths.source,
+        run.paths.output.joinpath("verification-source"),
+        run.paths.output.joinpath("verification-home"),
+        run.paths.output.joinpath("baseline-contracts-scratch"),
+        run.paths.output.joinpath("reference-contracts-scratch"),
+    ]
+    for path in disposable:
+        if path.exists() or path.is_symlink():
+            path.remove_tree().map_err((error) => f"cannot remove passing work tree {path.0}: {error.message()}")?
+    return Ok(None)
+
+
+def write_receipt(
+    run: ReleaseRun,
+    phase_name: str,
+    outcome: str,
+    code: int,
+    counts: Option[Counts],
+    oven_tests: JsonValue,
+    measured_bytes: JsonValue,
+) -> Result[None, str]:
+    """Write the stable release rehearsal receipt, retaining partial artifact evidence on refusal."""
+    mut artifacts: Dict[str, JsonValue] = {}
+    for name in ["toolchain.tar.zst", "incan", "incan-lsp"]:
+        path = run.paths.bundle.joinpath(name)
+        if path.is_file():
+            artifacts[name] = JsonValue.string(digest(path)?)
+    mut contracts = JsonValue.null()
+    if let Some(observed) = counts:
+        contracts = counts_json(observed)
+    mut compiler_build = "native"
+    if run.options.prove_fixed_point:
+        compiler_build = "native-fixed-point"
+    mut parity = JsonValue.null()
+    if outcome == "passed":
+        parity = JsonValue.bool(true)
+    mut reference = JsonValue.null()
+    origin = run.paths.output.joinpath(REFERENCE_ORIGIN)
+    if origin.is_file():
+        reference = JsonValue.object({"reused_from": read_json(origin)?})
+    value = release_receipt(
+        run.options.source_sha,
+        run.target,
+        outcome,
+        phase_name,
+        code,
+        run.started.elapsed().as_secs().saturating_resize[int](),
+        measured_bytes,
+        artifacts,
+        compiler_build,
+        contracts,
+        oven_tests,
+        parity,
+        reference,
+    )
+    return write_json(run.paths.output.joinpath("receipt.json"), value)
+
+
+def measure_release_tree_bytes(run: ReleaseRun) -> Result[ReleaseTreeBytes, str]:
+    """Walk each release-owned output tree once and return its logical regular-file bytes."""
+    build_home = tree_bytes(run.paths.home)?
+    source = tree_bytes(run.paths.source)?
+    verification_source = tree_bytes(run.paths.output.joinpath("verification-source"))?
+    verification_home = tree_bytes(run.paths.output.joinpath("verification-home"))?
+    relocated_rust = tree_bytes(run.paths.output.joinpath("rustup"))?
+    lane = tree_bytes(run.paths.lane)?
+    bundle = tree_bytes(run.paths.bundle)?
+    ci = tree_bytes(run.paths.output.joinpath("ci"))?
+    total = build_home + source + verification_source + verification_home + relocated_rust + lane + bundle + ci
+    return Ok(
+        ReleaseTreeBytes(
+            build_home=build_home,
+            source=source,
+            verification_source=verification_source,
+            verification_home=verification_home,
+            relocated_rust=relocated_rust,
+            lane=lane,
+            bundle=bundle,
+            ci=ci,
+            total=total,
+        ),
+    )

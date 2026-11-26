@@ -1,0 +1,17 @@
+# behavior: a `members` glob that matches no Loaf directory names no member, and `oven workspace inspect --format json` reports it as an `unmatched_glob` warning with its pattern, as 0.5.1 did (#3141).
+# cli-commands:
+#   oven workspace inspect --workspace --format json
+# expect-stdout-contains:
+#   {
+#     "warnings": [
+#       {
+#         "kind": "unmatched_glob",
+#         "pattern": "plugins/*"
+#       }
+#     ],
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program."""
+    pass

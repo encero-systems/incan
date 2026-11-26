@@ -1,0 +1,68 @@
+"""Register routekit's scoped verbs and handler mapping and summarize them through a native Incan worker."""
+
+from std.vocab import ClauseSurface, DeclarationSurface, DesugarError, DesugarRequest, DesugarResponse, DslSurface
+from std.vocab import IncanExpr, IncanExprKind, ScopedSurfaceDescriptor, VocabDeclaration, VocabRegistration
+from std.vocab import VocabScopedSurfaceKind, VocabSyntaxNode
+from pub::vocab_tools import declaration_expressions, expression_tree, format_expression, print_summary
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register the route block, optional middleware, composed verbs and handler mapping on import."""
+    # Routes accept a header and optional middleware items.
+    declaration = DeclarationSurface
+        .named("route")
+        .with_header_args()
+        .with_mixed_body()
+        .with_clause(ClauseSurface.nested_items("middleware").optional())
+    # Verb composition is local to route bodies.
+    verb = ScopedSurfaceDescriptor.operator("route.verb", "+").in_declaration_body("route").pairwise_chain()
+    # Handler mappings are local to route bodies.
+    mapping = ScopedSurfaceDescriptor.operator("route.map", "->").in_declaration_body("route")
+    surface = DslSurface.on_import("routekit").with_declaration(declaration).with_scoped_surfaces([verb, mapping])
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Report a route's accepted verbs and target as one ordinary print statement."""
+    match request.node:
+        VocabSyntaxNode.Declaration(declaration) =>
+            return Ok(print_summary(route_summary(declaration)?, declaration.span))
+        _ => return Err(DesugarError.at(request.node.span(), "routekit expects a declaration"))
+
+
+def route_summary(declaration: VocabDeclaration) -> Result[str, DesugarError]:
+    """Preserve the example's sorted verb summary and last structured handler mapping."""
+    mut verbs: list[str] = []
+    mut target: Option[str] = None
+    for expression in declaration_expressions(declaration):
+        verbs = verbs + route_verbs(expression)
+        for node in expression_tree(expression):
+            match node.kind:
+                IncanExprKind.Scoped(surface) =>
+                    if surface.descriptor_key == "route.map":
+                        match surface.kind:
+                            VocabScopedSurfaceKind.Glyph(_, values) => target = Some(format_expression(values[1])?)
+                            _ => pass
+                _ => pass
+    if len(verbs) == 0:
+        return Ok(declaration.keyword + " block desugared")
+    summary = declaration.keyword + " block desugared for " + " + ".join(sorted(list(set(verbs))))
+    if let Some(handler) = target:
+        return Ok(summary + " -> " + handler)
+    return Ok(summary)
+
+
+def route_verbs(expression: IncanExpr) -> list[str]:
+    """Read verb names only through the registered verb and map descriptors."""
+    match expression.kind:
+        IncanExprKind.Path(path) => return [".".join(path)]
+        IncanExprKind.Scoped(surface) =>
+            match surface.kind:
+                VocabScopedSurfaceKind.Glyph(_, values) =>
+                    if surface.descriptor_key == "route.map":
+                        return route_verbs(values[0])
+                    if surface.descriptor_key == "route.verb":
+                        return route_verbs(values[0]) + route_verbs(values[1])
+                _ => pass
+        _ => pass
+    return []

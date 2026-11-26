@@ -33,7 +33,7 @@ pub model TimeDelta:
     pub nanoseconds: int
 
     @staticmethod
-    def nanoseconds(value: int) -> TimeDelta:
+    pub def nanoseconds(value: int) -> TimeDelta:
         """
         Construct a day/time interval from nanoseconds.
 
@@ -46,7 +46,7 @@ pub model TimeDelta:
         return _timedelta_from_nanos(value)
 
     @staticmethod
-    def microseconds(value: int) -> TimeDelta:
+    pub def microseconds(value: int) -> TimeDelta:
         """
         Construct a day/time interval from microseconds.
 
@@ -59,7 +59,7 @@ pub model TimeDelta:
         return _timedelta_from_nanos(value * _NANOS_PER_MICROSECOND)
 
     @staticmethod
-    def milliseconds(value: int) -> TimeDelta:
+    pub def milliseconds(value: int) -> TimeDelta:
         """
         Construct a day/time interval from milliseconds.
 
@@ -72,7 +72,7 @@ pub model TimeDelta:
         return _timedelta_from_nanos(value * _NANOS_PER_MILLISECOND)
 
     @staticmethod
-    def seconds(value: int) -> TimeDelta:
+    pub def seconds(value: int) -> TimeDelta:
         """
         Construct a day/time interval from seconds.
 
@@ -85,7 +85,7 @@ pub model TimeDelta:
         return _timedelta_from_nanos(value * _NANOS_PER_SECOND)
 
     @staticmethod
-    def minutes(value: int) -> TimeDelta:
+    pub def minutes(value: int) -> TimeDelta:
         """
         Construct a day/time interval from minutes.
 
@@ -98,7 +98,7 @@ pub model TimeDelta:
         return TimeDelta.seconds(value * _SECONDS_PER_MINUTE)
 
     @staticmethod
-    def hours(value: int) -> TimeDelta:
+    pub def hours(value: int) -> TimeDelta:
         """
         Construct a day/time interval from hours.
 
@@ -111,7 +111,7 @@ pub model TimeDelta:
         return TimeDelta.seconds(value * _SECONDS_PER_HOUR)
 
     @staticmethod
-    def days(value: int) -> TimeDelta:
+    pub def days(value: int) -> TimeDelta:
         """
         Construct a day/time interval from days.
 
@@ -124,7 +124,7 @@ pub model TimeDelta:
         return TimeDelta(days=value, seconds=0, nanoseconds=0)
 
     @staticmethod
-    def weeks(value: int) -> TimeDelta:
+    pub def weeks(value: int) -> TimeDelta:
         """
         Construct a day/time interval from weeks.
 
@@ -136,7 +136,7 @@ pub model TimeDelta:
         """
         return TimeDelta.days(value * _DAYS_PER_WEEK)
 
-    def total_nanoseconds(self) -> int:
+    pub def total_nanoseconds(self) -> int:
         """
         Return this interval as total nanoseconds.
 
@@ -195,7 +195,7 @@ pub model YearMonthInterval:
     pub months: int
 
     @staticmethod
-    def years(value: int) -> YearMonthInterval:
+    pub def years(value: int) -> YearMonthInterval:
         """
         Construct a year/month interval from years.
 
@@ -208,7 +208,7 @@ pub model YearMonthInterval:
         return _year_month_from_months(value * _MONTHS_PER_YEAR)
 
     @staticmethod
-    def months(value: int) -> YearMonthInterval:
+    pub def months(value: int) -> YearMonthInterval:
         """
         Construct a year/month interval from months.
 
@@ -220,7 +220,7 @@ pub model YearMonthInterval:
         """
         return _year_month_from_months(value)
 
-    def total_months(self) -> int:
+    pub def total_months(self) -> int:
         """
         Return this interval as total months.
 
@@ -284,7 +284,7 @@ pub model DateTimeInterval:
     pub nanoseconds: int
 
     @staticmethod
-    def new(
+    pub def new(
         years: int = 0,
         months: int = 0,
         days: int = 0,
@@ -329,7 +329,7 @@ pub model DateTimeInterval:
             nanoseconds=dt.nanoseconds,
         )
 
-    def year_month(self) -> YearMonthInterval:
+    pub def year_month(self) -> YearMonthInterval:
         """
         Return the year/month portion.
 
@@ -338,7 +338,7 @@ pub model DateTimeInterval:
         """
         return YearMonthInterval(years=self.years, months=self.months)
 
-    def day_time(self) -> TimeDelta:
+    pub def day_time(self) -> TimeDelta:
         """
         Return the day/time portion.
 

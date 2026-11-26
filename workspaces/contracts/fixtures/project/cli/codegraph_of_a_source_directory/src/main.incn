@@ -1,0 +1,15 @@
+# behavior: `incan inspect codegraph src`, the form 0.5.1 documents, inspects the Loaf that holds the directory and answers as `incan inspect codegraph .` does.
+# cli-commands:
+#   inspect codegraph src --query defs graphed_marker
+#   inspect codegraph . --query defs graphed_marker
+# expect-stdout:
+#   declaration main::graphed_marker src/main.incn:9
+# expect-exit: 0
+
+def graphed_marker() -> int:
+    """A declaration the query finds only when the Loaf's own source is inspected."""
+    return 1
+
+
+def main() -> None:
+    println(graphed_marker())

@@ -1,0 +1,118 @@
+"""Read one manifest field: refusals, typed values, key policy and the version requirement a field declares."""
+
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+from std.toml import TomlValue
+from manifest_errors import IntakeError, IntakeErrorKind
+from semver_req import parse_requirement
+
+
+pub def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+    """Create an unlocated refusal before a source-bearing caller attaches its span."""
+    return IntakeError(kind=kind, manifest=manifest, field=field, detail=detail, location=None)
+
+
+pub def table(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, TomlValue], IntakeError]:
+    """Require a TOML table while preserving the caller's literal field path."""
+    return value.as_table().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
+
+
+pub def text(value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Require a TOML string without coercing another value kind."""
+    return value.as_str().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
+
+
+pub def allowed(
+    values: Dict[str, TomlValue],
+    keys: list[str],
+    manifest: str,
+    field: list[str],
+) -> Result[None, IntakeError]:
+    """Reject the first unsupported literal key in deterministic order."""
+    # TODO: sort the iterator directly once #1461 and #1464 are fixed. Sorting `values.keys()` emits an
+    # unsortable Rust iterator, and a list of keys emits an undefined function, so the keys are materialized.
+    for key in sorted([key for key in values.keys()]):
+        if key not in keys:
+            return Err(refusal(manifest, field + [key], IntakeErrorKind.Unsupported, "intent is outside local intake"))
+    return Ok(None)
+
+
+pub def required(values: Dict[str, TomlValue], key: str, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Read a required nonempty string, distinguishing missing fields from invalid values."""
+    if key not in values:
+        return Err(refusal(manifest, field, IntakeErrorKind.Missing, f"required field {key}"))
+    value = text(values[key], manifest, field)?
+    if value == "":
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "empty value"))
+    return Ok(value)
+
+
+pub def requirement(value: TomlValue, manifest: str, field: list[str]) -> Result[None, IntakeError]:
+    """A `requires-incan` is a version requirement (RFC 073); anything else makes the manifest invalid."""
+    declared = text(value, manifest, field)?
+    parse_requirement(declared).map_err(
+        (reason) => refusal(
+            manifest,
+            field,
+            IntakeErrorKind.Invalid,
+            f"`{declared}` is not a version requirement: {reason}",
+        ),
+    )?
+    return Ok(None)
+
+
+pub def unique_strings(values: list[str]) -> list[str]:
+    """Return sorted distinct strings for normalized overlay feature requests."""
+    mut result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return sorted(result)
+
+
+pub def first_key(values: Dict[str, TomlValue]) -> str:
+    """Return the first deterministic key of a dependency table already known to be nonempty."""
+    keys = sorted([key for key in values.keys()])
+    if len(keys) == 0:
+        return "dependency"
+    return keys[0]
+
+
+pub def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """A TOML array of strings."""
+    entries = value.as_array().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+    mut items: list[str] = []
+    for index in range(len(entries)):
+        items.append(text(entries[index], manifest, field + [str(index)])?)
+    return Ok(items)
+
+
+pub def flag(
+    values: Dict[str, TomlValue],
+    key: str,
+    fallback: bool,
+    manifest: str,
+    field: list[str],
+) -> Result[bool, IntakeError]:
+    """An optional boolean field, `fallback` when absent."""
+    if key not in values:
+        return Ok(fallback)
+    return values[key]
+        .as_bool()
+        .map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))
+
+
+pub def requested_features(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """The features a requirement asks for, each once, sorted."""
+    entries = value.as_array().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+    mut features: list[str] = []
+    for item in entries:
+        feature = text(item, manifest, field + ["features"])?
+        if feature not in features:
+            features.append(feature)
+    return Ok(sorted(features))
+
+
+pub def request_flag(value: TomlValue, manifest: str, field: list[str]) -> Result[bool, IntakeError]:
+    """Require a TOML boolean in a requirement, without coercing another kind; a refusal names the requirement."""
+    return value.as_bool().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))

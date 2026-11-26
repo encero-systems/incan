@@ -1,0 +1,9 @@
+[project]
+name = "rooted_root_selects_its_root_project"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["alpha", "beta"]

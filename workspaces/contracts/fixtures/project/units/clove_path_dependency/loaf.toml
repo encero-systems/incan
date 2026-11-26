@@ -1,0 +1,9 @@
+[project]
+name = "clove_path_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+counter = { path = "deps/counter" }

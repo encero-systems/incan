@@ -47,6 +47,8 @@ An equality check on bytes stops at the first difference. How long it takes ther
 
 This is why a keyed comparison is an API rather than an idiom: the correct version is not the one that reads most naturally.
 
+Password hashing, signatures, authenticated encryption and compatibility checksums require separate APIs because their security and compatibility contracts differ from ordinary byte hashing. The [`std.hash` reference](../reference/stdlib/hash.md) lists the supported operations and their boundaries.
+
 ## See also
 
 - [Hashing data](../how-to/hashing_data.md)

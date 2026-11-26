@@ -18,7 +18,7 @@ Incan contributors are expected to follow these principles and patterns when wri
 - [Project Scaffolding](#project-scaffolding)
     - [lib.rs and main.rs](#librs-and-mainrs)
     - [`rustfmt.toml`](#rustfmttoml)
-    - [`Cargo.toml`](#cargotoml)
+    - [`loaf.toml`](#loaftoml)
     - [Typical CI Steps](#typical-ci-steps)
 - [Common Pitfalls & Anti-Patterns](#common-pitfalls-anti-patterns)
 - [Simple Heuristic](#simple-heuristic)
@@ -49,7 +49,7 @@ Readable Rust is code that a competent Rustacean can **scan and understand quick
 
 5. **Consistent naming & layout**
    - Follow conventions: `snake_case` (functions/vars), `CamelCase` (types/traits), `SCREAMING_SNAKE_CASE` (consts).
-   - Spell in US English everywhere -- identifiers, comments, rustdoc and docs (`color`, `behavior`, `initialize`, `catalog`); `make us-english-check` enforces it, and `scripts/check_us_english.allow` lists the upstream names and quoted text that keep their own spelling.
+   - Spell in US English everywhere -- identifiers, comments, rustdoc and docs (`color`, `behavior`, `initialize`, `catalog`); `incan run scripts/check_us_english.incn` enforces it, and `scripts/check_us_english.allow` lists the upstream names and quoted text that keep their own spelling.
    - Module/file sizes are reasonable; split by responsibility, not arbitrary layers.
 
 6. **Local reasoning**
@@ -73,8 +73,7 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
 3. **Error taxonomy**
    - Categorize errors (user, infra, programming) and indicate recoverability.
    - Prefer stable, typed public errors (e.g., via `thiserror`) and keep error messages actionable and consistent.
-   - In this repo: compiler diagnostics are typically built with `miette`, and shared runtime/semantic errors should
-        stay aligned (see [Layering Rules](../explanation/layering.md)).
+   - In this repo: compiler diagnostics are typically built with `miette`, and shared runtime/semantic errors should stay aligned (see [Layering Rules](../explanation/layering.md)).
 
 4. **Concurrency discipline**
    - Make `Send + Sync` requirements explicit; guard shared state predictably.
@@ -82,8 +81,8 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
    - Prefer channels/async streams for coordination when appropriate.
 
 5. **Tooling baked in**
-   - `rustfmt` and `clippy` are non-negotiable in CI; tune lints to project needs.
-   - Dependency hygiene: `cargo-audit`, `cargo-deny`, `cargo-udeps`; pin the supported Rust release.
+   - Use the repository's formatting and rustdoc gates; tune lints to project needs.
+   - Review dependency changes against the installed native closure and pin the supported Rust release.
    - Tests include unit, integration, **doctests**, property-based (`proptest`) for parsers.
 
 6. **Safety & invariants**
@@ -100,13 +99,13 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
 
 **If these are true, your Rust is both readable and maintainable:**
 
-- ✅ **Formatting & lints**: `cargo +nightly fmt --all -- --check` and `cargo clippy --deny warnings` pass; lint level tuned to project.
+- ✅ **Formatting & lints**: `make pre-commit` passes; compiler lint levels match the package's requirements.
 - ✅ **Boundaries**: Modules align with responsibilities; public surface area small and documented.
 - ✅ **Errors**: Clear `Result<T, E>` with actionable messages; categorized `E`.
 - ✅ **Ownership**: Minimal clones; predictable lifetimes; borrowing favored.
 - ✅ **Tests**: Unit + integration + doctests exist; critical logic property-tested.
 - ✅ **Docs**: `rustdoc` examples compile; `README` shows usage; `SAFETY:` annotations present where needed.
-- ✅ **CI**: Audit, deny, and udeps checks run on the pinned Rust release; semantic versioning for releases.
+- ✅ **CI**: Repository gates and affected contract families pass with the pinned Rust release.
 - ✅ **Async/concurrency**: Structured, cancellable; no hidden global mutable state.
 
 ---
@@ -220,32 +219,29 @@ edition = "2024"
 max_width = 120
 ```
 
-### `Cargo.toml`
+### `loaf.toml`
 
 ```toml
-[package]
+[project]
+name = "example"
+version = "0.1.0"
+
+[rust]
+type = "lib"
 edition = "2024"
-rust-version = "1.98" # Keep the workspace declaration aligned with pinned Rust 1.98.0 CI.
 
 [dependencies]
-thiserror = "1"
-
-[features]
-default = []
+thiserror = { loaf = "crates-io/thiserror", version = "1" }
 ```
 
 ### Typical CI Steps
 
 ```bash
-cargo +nightly fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --all --verbose
-cargo audit
-cargo deny check
-cargo +nightly udeps --all-targets
+make pre-commit
+make docs
 ```
 
-Note: Incan supports Rust 1.98.0 for compiler builds. CI pins that exact release; Cargo's `rust-version` field records the matching `1.98` language/toolchain floor because Cargo models a minimum rather than an exact-only version.
+Incan uses pinned Rust 1.98.0 for native compilation. Oven builds the compiler; contract families prove observable behavior. The repository has no Cargo project.
 
 ---
 
@@ -270,7 +266,7 @@ Note: Incan supports Rust 1.98.0 for compiler builds. CI pins that exact release
 
 #### Panics on recoverable paths
 
-In this repository, do **not** use `.unwrap()` or `.expect()` in compiler code, tests, or examples. Even when an invariant feels obvious, prefer `?`, an explicit `match`, or a helper that turns the failure into a typed error with context. The only accepted exception is emitting `.unwrap()` / `.expect()` as literal strings in generated Rust when that is the intended runtime contract of the compiled program.
+In this repository, do **not** use `.unwrap()` or `.expect()` in compiler code, tests, or examples. Even when an invariant feels obvious, prefer `?`, an explicit `match`, or a helper that turns the failure into a typed error with context.
 
 ```rust
 // Bad — panics with no context if the file is missing
@@ -371,7 +367,7 @@ If a function returns a value that callers should never silently discard (valida
 
 ### Clippy
 
-`cargo clippy` is mandatory in CI. Common catches worth internalizing:
+Clippy's lint vocabulary provides useful review checks even when the repository is built through Oven. Common catches worth internalizing:
 
 - `if let Some(_) = x` — use `x.is_some()` instead
 - Manual `Default` impl when `#[derive(Default)]` works

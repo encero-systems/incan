@@ -1,0 +1,22 @@
+"""Write an unsolicited protocol frame ahead of one reply, so the next request finds a stale frame queued."""
+
+from std.vocab import (
+    ClauseSurface, DeclarationSurface, DesugarError, DesugarRequest, DesugarResponse, DslSurface, VocabRegistration,
+)
+
+const UNSOLICITED: str = '{"responses": [{"Err": {"message": "unsolicited frame"}}]}'
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register a query whose every expansion the provider refuses by module name."""
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    surface = DslSurface.on_import("words").with_declaration(query.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Refuse the node naming its module; the entry module's request first gets an extra frame on the protocol."""
+    if request.module_path.ends_with("main.incn"):
+        println(UNSOLICITED)
+        return Err(DesugarError.at(request.node.span(), "answered main"))
+    return Err(DesugarError.at(request.node.span(), "answered other"))

@@ -1,0 +1,9 @@
+# behavior: the element of a returned tuple that carries a view must be the source place, not a value created in the body (#2500).
+# expect-diagnostic: INCAN-T0124
+
+class Tag:
+    pub name: str
+    pub hits: int
+
+    def label(self) -> Tuple[int, Borrowed[str]] from self.name:
+        return (self.hits, "fresh")

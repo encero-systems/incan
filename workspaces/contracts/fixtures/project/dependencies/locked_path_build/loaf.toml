@@ -1,0 +1,9 @@
+[project]
+name = "locked_path_build"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+helper = { path = "deps/helper" }

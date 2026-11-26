@@ -1,0 +1,9 @@
+# behavior: a declared interop artifact of a kind other than `static`, `bundled` and `system` is refused rather than ignored (#3136, #3134)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   artifact kind `dynamic` is not supported; an artifact is `static`, `bundled` or `system`
+
+def main() -> None:
+    println("unreachable")

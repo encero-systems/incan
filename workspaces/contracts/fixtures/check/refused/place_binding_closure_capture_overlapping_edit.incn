@@ -1,0 +1,17 @@
+# behavior: a closure that captures a read-only place binding keeps the place borrowed until the closure's last call; changing the field before that call is refused (RFC 129, #1846).
+# expect-diagnostic: INCAN-T0126
+
+class Cart:
+    pub items: list[str]
+
+
+def overlap(mut cart: Cart) -> int:
+    items = cart.items
+    size: () -> int = () => len(items)
+    cart.items.append("plum")
+    return size()
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    println(overlap(cart))

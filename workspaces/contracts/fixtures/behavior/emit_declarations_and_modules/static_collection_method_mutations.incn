@@ -1,0 +1,100 @@
+# behavior: collection mutations reach shared statics; list reservation preserves elements and length before appending, including empty and nested storage (#2256)
+# expect-stdout:
+#   3
+#   9 5 1
+#   1
+#   1
+#   5
+#   a=2
+#   b=1
+#   c missing
+#   2
+#   2
+#   true
+#   false
+
+static items: list[int] = [1]
+static counts: dict[str, int] = {}
+static seen: set[int] = Set()
+
+
+def render() -> str:
+    return f"{items[0]} {items[1]} {items[2]}"
+
+
+def grow() -> None:
+    """Reserve shared storage without changing its value before extending it."""
+    items.reserve(8)
+    items.reserve_exact(0)
+    assert len(items) == 1
+    items.extend([5, 9])
+
+
+def reservations() -> None:
+    """Reserve empty text and nested integer lists, then observe their ordinary appends."""
+    mut texts: list[str] = []
+    texts.reserve(4)
+    texts.reserve_exact(0)
+    assert len(texts) == 0
+    texts.append("kept")
+    assert texts[0] == "kept"
+    mut nested: list[list[int]] = [[3]]
+    nested.reserve(3)
+    nested.append([5])
+    assert nested[0][0] == 3 and nested[1][0] == 5
+
+
+def flip() -> None:
+    items.swap(0, 2)
+
+
+def shrink() -> int:
+    return items.pop()
+
+
+def drop_first() -> None:
+    items.remove(0)
+
+
+def record(name: str, value: int) -> None:
+    counts.insert(name, value)
+
+
+def lookup(name: str) -> Option[int]:
+    return counts.get(name)
+
+
+def describe(name: str) -> str:
+    match lookup(name):
+        Some(value) => return f"{name}={value}"
+        None => return f"{name} missing"
+
+
+def mark(value: int) -> None:
+    seen.add(value)
+
+
+def main() -> None:
+    """Observe capacity-preserving list operations and shared collection mutations."""
+    reservations()
+    grow()
+    println(len(items))
+    flip()
+    println(render())
+    println(shrink())
+    drop_first()
+    println(len(items))
+    println(items[0])
+    record("a", 1)
+    record("a", 2)
+    record("b", 1)
+    println(describe("a"))
+    println(describe("b"))
+    println(describe("c"))
+    println(len(counts))
+    mark(4)
+    mark(4)
+    mark(6)
+    println(len(seen))
+    println(seen.contains(4))
+    println(seen.contains(5))

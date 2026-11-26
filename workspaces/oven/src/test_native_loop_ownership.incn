@@ -1,0 +1,77 @@
+"""Check the ownership of a native Body IR frame while inspecting and returning loop items."""
+
+from rust::std::collections import BTreeMap
+from rust::std::sync import Arc
+from rust::incan_semantics_core import CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanPrimitiveType, IncanType
+from rust::incan_semantics_core::body_ir import Block, Body, BodyIrModule, ScopeId
+
+type Identities = Arc[BTreeMap[str, CanonicalSymbolId]]
+
+
+def frame(name: str, is_async: bool, identities: Borrowed[Identities]) -> Body:
+    """Give each frame one shared reference to the same identity map for the ownership count."""
+    identity = CompilerNodeId.declaration("fixture", name)
+    return Body(
+        nominal_instantiation=[],
+        trait_default_instantiation=None,
+        type_parameters=[],
+        decl_id=identity.clone(),
+        direct_call_id=identity,
+        canonical=None,
+        name=name,
+        span=HirSourceSpan.new(0, 0),
+        return_type=IncanType.Primitive(IncanPrimitiveType.Unit),
+        callable_representation=None,
+        checked_input_profile=None,
+        explicit_input_bindings=[],
+        returned_view=None,
+        named_type_identities=identities.clone(),
+        locals=[],
+        params=[],
+        param_locals=[],
+        scopes=[],
+        block=Block(scope=ScopeId(0u32), stmts=[]),
+        runtime_requirements=[],
+        panic_facts=[],
+        is_async=is_async,
+        retired_rust_facade_wire=None,
+        native_attributes=[],
+    )
+
+
+def find_async(bodies: Borrowed[list[Body]], identities: Borrowed[Identities], baseline: usize) -> int:
+    """Read each native frame without acquiring another reference to its map."""
+    mut position = 0
+    for body in bodies:
+        assert Arc.strong_count(identities) == baseline
+        if body.is_async:
+            return position
+        position += 1
+    return -1
+
+
+def first_async(module: Borrowed[BodyIrModule], identities: Borrowed[Identities], baseline: usize) -> Option[Body]:
+    """Borrow frame fields until an owned return needs the selected frame."""
+    for body in module.bodies:
+        assert Arc.strong_count(identities) == baseline
+        if body.is_async:
+            assert Arc.strong_count(identities) == baseline
+            return Some(body)
+    return None
+
+
+pub def test_foreign_loop_items_borrow_on_reads_and_own_an_escaping_body() -> None:
+    """Inspect native list items without copies and acquire only the frame that leaves the loop."""
+    identities: Identities = Arc.new(BTreeMap.new())
+    bodies = [frame("skip", false, identities), frame("take", true, identities)]
+    baseline = Arc.strong_count(identities)
+    assert baseline == 3usize
+    assert find_async(bodies, identities, baseline) == 1
+    mut module = BodyIrModule.declarations_only("fixture")
+    module.bodies = bodies
+    selected = first_async(module, identities, baseline)
+    assert Arc.strong_count(identities) == baseline + 1usize
+    assert len(module.bodies) == 2 and module.bodies[1].is_async
+    match selected:
+        Some(body) => assert body.is_async
+        None => assert false, "the selected native frame did not escape"

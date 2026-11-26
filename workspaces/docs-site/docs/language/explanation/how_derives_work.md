@@ -15,7 +15,7 @@ Incan’s derive system exists to give you **out-of-the-box behavior** (Debug, D
 At a high level:
 
 - you write `@derive(...)` on a `model`/`class`/`enum`/`newtype`
-- the compiler generates the corresponding implementations in generated Rust (or compiler-injected impls)
+- the compiler selects the corresponding native implementations
 
 ---
 
@@ -23,12 +23,7 @@ At a high level:
 
 Incan’s stdlib contains trait definitions that act as **documentation vocabulary** for derive names and dunder hooks.
 
-You may see `@rust.extern` in stdlib sources:
-
-- it marks functions whose body is provided by Rust (via `rust.module()`)
-- it marks “compiler-provided implementation” stubs in the stdlib
-
-The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature registry.
+Rust-backed derive macros enter through inspected `rust::` imports. The import names the concrete macro authority; the stdlib remains the stable vocabulary and signature registry for source-owned derive traits.
 
 A module derive follows the same pattern. `@derive(json)` adopts each trait the `std.serde.json` module lists in its `__derives__`, `json.Serialize` and `json.Deserialize`, and those traits carry the Rust derives (`serde::Serialize`, `serde::Deserialize`) the compiled type needs. The adopted traits then work like any `with` adoption: `to_json()` is found on the type, and the type satisfies a `T with json.Serialize` bound.
 

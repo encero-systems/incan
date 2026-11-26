@@ -1,0 +1,11 @@
+# behavior: with `INCAN_ENGINE_TRACE` naming a trace directory, `incan run` prints the same bytes and exits the same as without it, and the directory holds Oven's reasoning and the compiler's invocation records (12.4)
+# trace-invariant:
+# cli-commands:
+#   run src/main.incn
+# expect-stdout:
+#   hello traced
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    println("hello traced")

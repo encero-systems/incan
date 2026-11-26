@@ -1,0 +1,14 @@
+# behavior: `run` and `version` act on one project: a selection of several members, explicit or a virtual workspace's implicit one, is refused before anything runs, as in 0.5.1 (#3141).
+# cli-commands:
+#   oven run
+#   oven run --workspace
+#   incan run --workspace
+#   oven version patch --dry-run
+# expect-stdout:
+# expect-stderr-contains:
+#   requires exactly one workspace member; select one with --member NAME_OR_PATH
+# expect-exit: 1
+
+def main() -> None:
+    """No project owns this program; the virtual workspace root only lists its members."""
+    pass

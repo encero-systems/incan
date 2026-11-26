@@ -1,0 +1,1 @@
+"""A Loaf whose modules list derivable traits by their own spellings: declared traits, private import aliases of a standard trait and of a sibling trait, and aliases of a sibling's re-exports."""

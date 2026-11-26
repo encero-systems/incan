@@ -1,0 +1,14 @@
+# behavior: Oven reports and records a root and path dependency graph in format 1.
+# cli-commands:
+#   oven lock .
+# expect-stdout-contains:
+#   locked locked_path_graph 0.1.0 (lowest)
+# expect-stderr:
+# expect-exit: 0
+
+from pub::helper import helper_value
+
+
+def main() -> None:
+    """Run the program whose path dependency is recorded by `oven lock`."""
+    println(helper_value())

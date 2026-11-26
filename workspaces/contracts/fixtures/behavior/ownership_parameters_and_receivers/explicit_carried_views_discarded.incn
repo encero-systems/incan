@@ -1,0 +1,33 @@
+# behavior: a call that carries a view can be discarded as a statement: it runs for its effects, its carrier is dropped with its view and its error, and the source is usable right after it (#2500).
+# expect-stdout:
+#   3
+#   13
+#   13
+
+"""Discard calls that carry a view, then edit their source."""
+
+
+class Counter:
+    pub value: int
+    pub open: bool
+
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
+        if not self.open:
+            return Err("closed")
+        self.value += 1
+        return Ok(self)
+
+
+def bump_twice(mut counter: BorrowedMut[Counter]) -> int:
+    counter.bump()
+    counter.bump()
+    return counter.value
+
+
+def main() -> None:
+    mut counter = Counter(value=1, open=true)
+    println(bump_twice(counter))
+    counter.value += 10
+    println(counter.value)
+    counter.open = false
+    println(bump_twice(counter))

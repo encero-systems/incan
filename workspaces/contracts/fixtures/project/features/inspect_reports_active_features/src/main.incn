@@ -1,0 +1,13 @@
+# behavior: `oven inspect features` reports each reached package's active features, as 0.5.1's `incan inspect features` did (#3142).
+# cli-commands:
+#   oven inspect features
+#   oven inspect features .
+#   oven inspect features src/main.incn
+# expect-stdout:
+#   Package inspect_reports_active_features: default, fast
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose features the case inspects."""
+    pass

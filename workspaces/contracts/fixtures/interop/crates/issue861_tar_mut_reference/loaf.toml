@@ -1,0 +1,7 @@
+[project]
+name = "issue861_tar_mut_reference"
+version = "0.1.0"
+[project.scripts]
+main = "src/main.incn"
+[dependencies]
+tar = { loaf = "crates-io/tar", version = "0.4" }

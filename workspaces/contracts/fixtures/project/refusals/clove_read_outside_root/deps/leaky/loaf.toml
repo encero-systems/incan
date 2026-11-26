@@ -1,0 +1,11 @@
+[project]
+name = "leaky"
+version = "0.1.0"
+
+[c]
+library = "leaky"
+public-headers = ["include/leaky.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/leaky.c"]

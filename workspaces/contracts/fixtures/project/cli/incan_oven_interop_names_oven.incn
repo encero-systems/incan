@@ -1,0 +1,11 @@
+# behavior: 0.5.1's `incan oven interop stage` and `incan oven interop bake` refuse by naming what runs them in 0.6: `oven interop stage`, and an ordinary `oven build`, which compiles `[c]` Cloves and links declared static archives (#3132)
+# cli-commands:
+#   incan oven interop stage --project . --target aarch64-linux-android --base-receipt receipt.json --adapter android --output staged
+# expect-stdout:
+# expect-stderr-contains:
+#   incan: `incan oven interop stage` is an Oven command: run `oven interop stage`
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

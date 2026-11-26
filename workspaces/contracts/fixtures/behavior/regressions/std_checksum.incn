@@ -1,0 +1,60 @@
+# behavior: grouped and legacy CRC-32 preserve byte order, incremental snapshots and explicit damaged-frame refusal (RFC 168)
+# expect-stdout:
+#   checksum-ok
+
+"""Checksum mechanism controls independent of a database or serialization format."""
+
+from std.primitives.checksum import crc32
+from std.checksum import crc32 as legacy_crc32
+
+
+pub enum FrameError:
+    """A consumer-owned checksum failure; no storage format is selected."""
+
+    Damaged
+
+
+def verify_frame(data: bytes, expected: u32) -> Result[bytes, FrameError]:
+    """Check supplied bytes before a consumer interprets them; this is not an equality or authenticity proof."""
+    if crc32.value(data) != expected:
+        return Err(FrameError.Damaged)
+    return Ok(data)
+
+
+def main() -> None:
+    """Preserve vectors, continued updates after snapshotting and rejection of damaged bytes."""
+    assert crc32.value(b"") == 0u32
+    assert crc32.digest(b"") == b"\x00\x00\x00\x00"
+    assert crc32.value(b"abc") == 891568578u32
+    assert crc32.digest(b"abc") == b"5$A\xc2"
+    assert crc32.value(b"123456789") == 3421780262u32
+    assert crc32.digest(b"123456789") == b"\xcb\xf49&"
+    assert crc32.value(b"abc") == legacy_crc32.value(b"abc")
+
+    mut hasher = crc32.new()
+    hasher.update(b"ab")
+    before = hasher.finalize_u32()
+    assert before == crc32.value(b"ab")
+    assert before == hasher.finalize_u32()
+    assert hasher.finalize_bytes() == crc32.digest(b"ab")
+    hasher.update(b"")
+    hasher.update(b"c")
+    assert hasher.finalize_u32() == crc32.value(b"abc")
+    assert hasher.finalize_bytes() == crc32.digest(b"abc")
+
+    mut binary = crc32.new()
+    binary.update(b"\x00\x80")
+    binary.update(b"")
+    binary.update(b"\xff\x00")
+    assert binary.finalize_u32() == crc32.value(b"\x00\x80\xff\x00")
+
+    match verify_frame(b"abc", crc32.value(b"abc")):
+        Ok(data) =>
+            assert data == b"abc"
+        Err(_) =>
+            assert false
+    match verify_frame(b"abd", crc32.value(b"abc")):
+        Err(FrameError.Damaged) => pass
+        Ok(_) =>
+            assert false
+    println("checksum-ok")

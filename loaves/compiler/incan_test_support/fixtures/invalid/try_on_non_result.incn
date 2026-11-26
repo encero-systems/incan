@@ -1,4 +1,0 @@
-def foo() -> Result[int, str]:
-    x = 42
-    y = x?
-    return Ok(y)

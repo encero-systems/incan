@@ -1,0 +1,14 @@
+# behavior: a member's `[envs.ci] extends = ["workspace:ci"]` takes the workspace root's `[workspace.envs.ci]` fragment before its own layer, as 0.5.1's members extended `workspace:NAME` (RFC 077, #3141).
+# cli-commands:
+#   oven env show ci --project app
+# expect-stdout-contains:
+#   ci
+#     overlay chain: project -> dev -> workspace:ci -> ci
+#     ROOT=1
+#     SHARED=member
+#     show             sh -c "echo SHARED=$SHARED ROOT=$ROOT"
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program, which this case does not run."""
+    pass

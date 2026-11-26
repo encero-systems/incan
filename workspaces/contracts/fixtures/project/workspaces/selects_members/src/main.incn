@@ -1,0 +1,16 @@
+# behavior: A rooted workspace's `[workspace]` table is accepted, and `--workspace`, `--member` and `-p` select its members by name or path for a project command, as in 0.5.1 (#3141).
+# cli-commands:
+#   oven check --workspace
+#   check --workspace
+#   oven check --member alpha --member beta
+#   oven check -p alpha -p ./beta/
+#   oven check --workspace --exclude selects_members
+# expect-stdout-contains:
+#   workspace member alpha: alpha
+#   workspace member beta: beta
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program, a member of its rooted workspace."""
+    pass

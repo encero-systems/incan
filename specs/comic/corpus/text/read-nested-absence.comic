@@ -1,0 +1,3 @@
+example.Value = Record { value: option<string?> }
+
+example.Value << (value=Some(None))

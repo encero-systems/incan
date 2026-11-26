@@ -1,0 +1,10 @@
+# behavior: 0.5.1's `[[oven.interop.targets.shims]]` is a Clove now; a `shims` table is refused with the `[c]` facet that compiles it (#3132)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   a shim is a Clove now: declare its sources in a [c] facet
+#   and link it with c.loaf_library
+
+def main() -> None:
+    println("unreachable")

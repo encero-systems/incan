@@ -1,0 +1,26 @@
+# behavior: a frozen collection of descriptor models survives a function return and remains readable
+# expect-stdout:
+#   1
+
+"""Return static model elements through their declared frozen collection type."""
+
+
+@derive(Descriptor)
+model Link:
+    """A descriptor with one static string field."""
+
+    pub label: FrozenStr
+
+
+const LINKS: FrozenList[Link] = [Link(label="leaf")]
+
+
+def links() -> FrozenList[Link]:
+    """Return the declared collection without replacing its model element type."""
+    return LINKS
+
+
+def main() -> None:
+    """Read the returned collection's length."""
+    values = links()
+    println(len(values))

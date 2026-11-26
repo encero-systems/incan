@@ -1,0 +1,61 @@
+"""Check the compiler unit's closed field layout, nested C/Loaf inputs and strict option decoding."""
+
+from std.json import JsonValue, parse
+from unit_document import decode_unit_document, encode_unit_document
+
+
+pub def test_unit_document() -> Result[None, str]:
+    document = parse("""{
+        "active_features": [],
+        "c_abi_target": {"api_level": 34, "definitions": [], "deployment_target": "17", "sdk": {"capability": "sdk", "version": "latest"}, "target": "android", "toolchain": {"capability": "clang", "version": "9"}},
+        "c_headers": [],
+        "checked_context": "context",
+        "checked_products": "/checked",
+        "cloves": [{"compiler": "clang++", "configurations": [{"archive": "libc.a", "definitions": ["F=1"], "identity": "c-abi", "name": "release"}], "cplusplus": true, "include": ["include"], "library": "clang", "name": "c", "public_headers": ["c.h"], "root": "/c"}],
+        "contract_models": [],
+        "covered_by": {"a": "early", "z": "late"},
+        "declared_features": [],
+        "excluded_sources": ["src/other.incn"],
+        "externs": [{"name": "e", "path": "/e"}],
+        "kind": "test",
+        "loaves": [{"dir": "/loaves/l", "key": "key", "name": "l", "source_root": "/l/src", "standard": false, "toolchain_provided": true}],
+        "not_prepared_loaves": [],
+        "package": "unit-fixture",
+        "profile": "",
+        "program_checks": true,
+        "program_entries": [],
+        "project_library": "fixture",
+        "project_root": "",
+        "registry_id": "test",
+        "rust_abi": [],
+        "rust_crates": [],
+        "schema": "incan.unit/1",
+        "search": [],
+        "search_index": null,
+        "source": "",
+        "source_root": "",
+        "test_batch": ["src/case.incn"],
+        "toolchain_access": {"sysroot_dependencies": ["core"], "toolchain_components": ["rustc"], "unstable_features": ["f"]},
+        "trust_stop": "",
+        "version": "",
+        "vocab": null,
+        "vocab_admissions": [],
+        "vocab_desugarer": false,
+        "vocab_entry": null,
+        "vocab_policy": "",
+        "vocabulary": false
+    }""").map_err((error) => error.message())?
+    encoded = encode_unit_document(document)?
+    assert encoded[:4] == b"CRMB"
+    decoded = decode_unit_document(encoded)?
+    assert decoded.dumps().map_err((error) => error.message())? == document.dumps().map_err((error) => error.message())?
+    assert encode_unit_document(decoded)? == encoded
+    assert decode_unit_document(encoded[:19]).is_err()
+    assert decode_unit_document(b"{}").is_err()
+    mut fields = document.expect_object().map_err((error) => error.message())?
+    fields["program_checks"] = JsonValue.string("false")
+    assert encode_unit_document(JsonValue.object(fields)).is_err()
+    fields["program_checks"] = JsonValue.bool(false)
+    fields["unrecognized"] = JsonValue.string("field")
+    assert encode_unit_document(JsonValue.object(fields)).is_err()
+    return Ok(None)

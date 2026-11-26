@@ -1,0 +1,8 @@
+"""Publish a plain read-only native owner parameter across a source-module boundary."""
+
+from rust::std::sync import Mutex
+
+
+pub def poisoned(lock: Mutex[int]) -> bool:
+    """Observe a non-Clone lock without taking its ownership."""
+    return lock.is_poisoned()

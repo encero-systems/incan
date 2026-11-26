@@ -1,0 +1,170 @@
+"""Project and render the selected Body and keyed lowering work of an engine request."""
+
+from std.json import JsonValue
+from std.primitives.crumb.values import Value
+from pub::internal_models.graph_crumb_fields import items, text, tuple_items
+
+pub const BODY_ROWS: str = "list<tuple<string,string,string,string>>"
+pub const FUNCTION_ROWS: str = "list<tuple<string,string,string,string>>"
+
+
+pub enum LoweringDisposition(str):
+    """The completed lowering producer's outcome for one keyed function."""
+
+    Evaluated = "evaluated"
+    Admitted = "admitted"
+    Reused = "reused"
+
+
+pub enum LoweringKind(str):
+    """The producer route that owns one keyed function in a completed activation."""
+
+    Ordinary = "ordinary"
+    Entry = "entry"
+    Synthesized = "synthesized"
+    Recovery = "recovery"
+    Finalization = "finalization"
+
+
+pub enum BodyRootAuthority(str):
+    """The exact checked source of a selected semantic Body root."""
+
+    CompilerPublished = "compiler-published"
+    CompilerRestored = "compiler-restored"
+    GraphRetained = "graph-retained"
+    WholeModule = "whole-module"
+
+
+pub model EvaluatedLoweringRefusal:
+    """A witnessed scalar evaluation whose optional retained product was refused."""
+
+    pub key: str
+    pub symbol: str
+    pub function: str
+
+
+pub model PlanRefusalReport:
+    """Refusals decoded in the census of one complete request."""
+
+    pub present: bool = false
+    pub evaluated: list[EvaluatedLoweringRefusal] = []
+
+
+pub model SelectedBodyRoot:
+    """The selected semantic Body identity of one ordinary declaration owner."""
+
+    pub owner: str
+    pub function: str
+    pub root: str
+    pub authority: BodyRootAuthority
+
+
+pub model LoweredFunction:
+    """The outcome of one keyed lowering product before the retention decision."""
+
+    pub key: str
+    pub kind: LoweringKind
+    pub disposition: LoweringDisposition
+    pub owner: str = ""
+
+
+pub model LoweringWork:
+    """Evidence captured during the compiler activation for a single engine proof."""
+
+    # The trace label correlates observations within their measured window. The proof key identifies the request.
+    pub trace_request: str
+    pub body_roots: list[SelectedBodyRoot]
+    pub functions: list[LoweredFunction] = []
+
+    pub def complete(self) -> bool:
+        """Only an authenticated native cohort may be published alongside the selected roots."""
+        if self.trace_request == "" or len(self.body_roots) == 0 or len(self.functions) == 0:
+            return false
+        owners = set([root.owner for root in self.body_roots])
+        ordinary = [function.owner for function in self.functions if function.kind == LoweringKind.Ordinary]
+        keys = set([function.key for function in self.functions])
+        return (len(owners) == len(self.body_roots) and len(keys) == len(self.functions) and "" not in keys
+            and len(ordinary) == len(owners) and len(set(ordinary)) == len(ordinary)
+            and len([owner for owner in ordinary if owner not in owners]) == 0)
+
+
+pub model ProofSelection:
+    """The live completion and submitted view that give retained work its committed snapshot."""
+
+    pub snapshot: str
+    pub view: str
+
+
+pub def body_values(rows: Borrowed[list[SelectedBodyRoot]]) -> list[Value]:
+    """Encode the stable checker owner beside its function name and semantic root."""
+    return [Value.Tuple([Value.Text(body.owner), Value.Text(body.function), Value.Text(body.root), Value.Text(body.authority.value())]) for body in rows]
+
+
+pub def function_values(rows: Borrowed[list[LoweredFunction]]) -> list[Value]:
+    """Encode the producer's disposition and route for each authoritative product key."""
+    return [Value.Tuple(
+        [Value.Text(row.key), Value.Text(row.kind.value()), Value.Text(row.disposition.value()), Value.Text(row.owner)],
+    ) for row in rows]
+
+
+pub model LoweringEvidence:
+    """Authenticated Body and function observations assembled from the retained pages."""
+
+    pub bodies: list[JsonValue] = []
+    pub functions: list[JsonValue] = []
+    owners: set[str] = set()
+    keys: set[str] = set()
+    ordinary: set[str] = set()
+
+    pub def append(mut self, bodies: Value, functions: Value) -> Result[None, str]:
+        """Decode each lane and reject duplicate owner identities or product keys across pages."""
+        for row in items(bodies)?:
+            body = tuple_items(row, 4)?
+            owner = text(body[0])?
+            function = text(body[1])?
+            root = text(body[2])?
+            authority = text(body[3])?
+            if authority not in ["compiler-published", "compiler-restored", "graph-retained", "whole-module"]:
+                return Err("engine proof has no recognized Body authority")
+            if owner == "" or function == "" or root == "" or owner in self.owners:
+                return Err("engine proof has an invalid or repeated Body owner")
+            self.owners.add(owner)
+            self.bodies.append(JsonValue.object({
+                "owner": JsonValue.string(owner), "function": JsonValue.string(function), "root": JsonValue.string(root),
+                "authority": JsonValue.string(authority),
+            }))
+        for row in items(functions)?:
+            function = tuple_items(row, 4)?
+            key = text(function[0])?
+            kind = text(function[1])?
+            disposition = text(function[2])?
+            owner = text(function[3])?
+            if key == "" or key in self.keys or kind not in ["ordinary", "entry", "synthesized", "recovery", "finalization"]:
+                return Err("engine proof has an invalid or repeated lowering product")
+            if disposition not in ["evaluated", "admitted", "reused"] or (kind == "ordinary" and owner == ""):
+                return Err("engine proof has an invalid lowering disposition or owner")
+            if kind == "ordinary":
+                if owner in self.ordinary:
+                    return Err("engine proof repeats an ordinary lowering owner")
+                self.ordinary.add(owner)
+            self.keys.add(key)
+            self.functions.append(JsonValue.object({
+                "key": JsonValue.string(key), "kind": JsonValue.string(kind), "disposition": JsonValue.string(disposition),
+                "owner": JsonValue.string(owner),
+            }))
+        return Ok(None)
+
+    pub def check_owners(self) -> Result[None, str]:
+        """Refuse an ordinary product whose Body authority never arrived in the other lane."""
+        for owner in self.ordinary:
+            if owner not in self.owners:
+                return Err("engine proof ordinary lowering has no selected Body authority")
+        return Ok(None)
+
+    pub def render(self, request: str, selection: Borrowed[ProofSelection]) -> JsonValue:
+        """Show the facts in the exact view and generation returned by this live request."""
+        return JsonValue.object({
+            "snapshot": JsonValue.string(selection.snapshot), "view": JsonValue.string(selection.view),
+            "request": JsonValue.string(request), "body_roots": JsonValue.array(self.bodies),
+            "functions": JsonValue.array(self.functions),
+        })

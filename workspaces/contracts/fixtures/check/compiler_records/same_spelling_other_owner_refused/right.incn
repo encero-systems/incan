@@ -1,0 +1,4 @@
+pub model Invoice:
+    """The equal-spelled declaration that must remain a distinct owner."""
+
+    pub name: str

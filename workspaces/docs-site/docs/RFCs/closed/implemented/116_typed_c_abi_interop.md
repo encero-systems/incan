@@ -793,11 +793,7 @@ Project checked binding declarations and explicit unsafe calls through diagnosti
 
 ### Phase 5: Native-plan and virtual-device proof (#944, v0.5)
 
-v0.5 completes the explicit native-plan baker and fixed Android/iOS staging handoff without reopening this RFC's
-declaration, ownership, or source-configuration contract. It covers locked artifact/header/shim inputs, selected
-compiler and SDK evidence, direct-`rustc` archive consumption, and virtual Android/iOS consumers. Physical-device
-execution, application signing, publication admission, and a general mobile application toolchain remain outside the
-release criterion.
+v0.5 completes the explicit native-plan baker and fixed Android/iOS staging handoff without reopening this RFC's declaration, ownership, or source-configuration contract. It covers locked artifact/header/shim inputs, selected compiler and SDK evidence, direct-`rustc` archive consumption, and virtual Android/iOS consumers. Physical-device execution, application signing, publication admission, and a general mobile application toolchain remain outside the release criterion.
 
 ## Implementation log
 

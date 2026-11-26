@@ -1,0 +1,10 @@
+"""Encoding-neutral logical records shared by row and column physical layouts."""
+
+from crate.primitives.crumb.values import Value
+
+
+pub model RowRecord:
+    """A logical record or enum selected by complete closed K, never by display name or shape hash."""
+
+    pub key: bytes
+    pub value: Value

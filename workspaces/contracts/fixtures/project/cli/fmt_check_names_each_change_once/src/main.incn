@@ -1,0 +1,16 @@
+# behavior: `incan fmt --check` names each file formatting would change and reports the count once for the whole invocation, as 0.5.1 did, not a summary per file, whether it is given no path, a directory or files.
+# cli-commands:
+#   fmt --check
+#   fmt --check src
+#   fmt --check src/util.incn src/main.incn
+# expect-stdout:
+#   Would reformat: src/util.incn
+# expect-stderr-contains:
+#   1 file(s) would be reformatted
+# expect-stderr-once:
+#   file(s) would be reformatted
+# expect-exit: 1
+
+def main() -> None:
+    """A formatted program beside one module that is not."""
+    pass

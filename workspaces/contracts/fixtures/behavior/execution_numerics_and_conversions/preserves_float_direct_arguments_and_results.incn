@@ -1,0 +1,34 @@
+# behavior: float arguments and conversions preserve output; square roots retain their declared float result, zeros and NaN (#2256)
+# expect-stdout:
+#   argument ran
+#   1.5
+#   before float result
+#   10.0
+
+
+"""Preserves float direct arguments and results."""
+def show(value: float) -> str:
+    """Print the call marker and render the float argument."""
+    println("argument ran")
+    return str(value)
+
+
+def program_result() -> float:
+    """Print before returning the converted float."""
+    println("before float result")
+    return float(10)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(show(1.5))
+    println(program_result())
+    square: float = 9.0
+    narrow: f32 = 16.0
+    negative: float = -1.0
+    zero: float = 0.0
+    assert square.sqrt() == 3.0
+    widened_root: float = narrow.sqrt()
+    assert widened_root == 4.0
+    assert negative.sqrt().is_nan()
+    assert zero.sqrt() == 0.0

@@ -1,0 +1,201 @@
+"""Verify the installed-verification gate plan and the checks the census carries for the other gates."""
+
+from std.tempfile import TemporaryDirectory
+from oven_tests import PROJECT_RESERVATION_BYTES, selected_builder_bakery
+from release_support import TOOLCHAIN_DIRECTORY, builder_bakery, check_baseline, installed_builder_bakery
+from std.fs import Path
+from verify_installation import (
+    CENSUS_WORKER_RESERVATION_BYTES,
+    Installation,
+    LSP_CONTRACT_CASE,
+    audit_relocation,
+    builder_environment,
+    census_jobs,
+    oven_jobs,
+    oven_test_arguments,
+    require_lsp_contract,
+    verification_gate_width,
+    verification_phase_arguments,
+    verification_phase_names,
+    verification_phase_plans,
+)
+
+const BASELINE: str = "behavior/a/a\n"
+
+
+def census(graph_verdict: str) -> str:
+    """A complete eight-family census whose language-server case has the given verdict."""
+    mut log = "PASS behavior/a/a\nPASS check/a/a\nPASS library/a/a\nPASS interop/a/a\n"
+    log += "PASS testing/a/a\nPASS project/a/a\nPASS format/a/a\n"
+    log += f"{graph_verdict} {LSP_CONTRACT_CASE}\n"
+    mut passed = 7
+    mut failed = 0
+    mut pending = 0
+    if graph_verdict == "PASS":
+        passed += 1
+    elif graph_verdict == "FAIL":
+        failed += 1
+    else:
+        pending += 1
+    log += f"total: {passed} passed, {failed} failed, {pending} pending\n"
+    return log
+
+
+def test_the_language_server_contract_runs_once_inside_the_installed_census() -> Result[None, str]:
+    """No gate repeats the census's live language-server case; the census, which runs it with the server, remains."""
+    names = verification_phase_names(2)
+    assert "lsp" not in names
+    assert "census" in names
+    assert names == ["relocation", "oven", "rust-facets", "driver-integration", "census", "memory"]
+    return Ok(None)
+
+
+def test_the_installed_census_must_pass_the_language_server_contract() -> Result[None, str]:
+    """A census that does not pass the live language-server case fails verification even when the baseline lacks it."""
+    assert LSP_CONTRACT_CASE == "graph/incan/relationships"
+    require_lsp_contract(check_baseline(BASELINE, census("PASS"))?)?
+    for verdict in ["FAIL", "PEND"]:
+        match require_lsp_contract(check_baseline(BASELINE, census(verdict))?):
+            Ok(_) => return Err(f"a census with {verdict} {LSP_CONTRACT_CASE} passed the language-server gate")
+            Err(message) =>
+                assert LSP_CONTRACT_CASE in message
+                assert verdict in message
+    return Ok(None)
+
+
+def test_installed_tests_reuse_build_units_only_while_the_installation_has_their_natives() -> Result[None, str]:
+    """
+    A unit the build compiled names the native generations of the build home it linked. Installed verification asks
+    the builder's bakery only while the installed toolchain carries every native generation the build home holds;
+    otherwise it asks the installation's own bakery, so no unit naming a generation the installation lacks is reused.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    build = root.joinpath("build-home")
+    installed = root.joinpath("verification-home")
+    built = build.joinpath(TOOLCHAIN_DIRECTORY).joinpath("native")
+    carried = installed.joinpath(TOOLCHAIN_DIRECTORY).joinpath("native")
+    for generation in ["runtime-a", "std-b"]:
+        built.joinpath(generation).mkdir(true, true).map_err((error) => error.message())?
+    for generation in ["runtime-a", "std-b", "std-c"]:
+        carried.joinpath(generation).mkdir(true, true).map_err((error) => error.message())?
+    selected = root.joinpath("release-bakery")
+    assert installed_builder_bakery(selected.0, build, installed)? == selected.0
+    built.joinpath("seed-runtime").mkdir(true, true).map_err((error) => error.message())?
+    assert installed_builder_bakery(selected.0, build, installed)? == installed.joinpath("bakery").0
+    return Ok(None)
+
+
+def test_installed_release_tests_reuse_the_bakery_the_builder_compiled_into() -> Result[None, str]:
+    """
+    The release names the bakery its builds used: the one `INCAN_BAKERY` selected, else the build home's own. The
+    installed Loaf and Rust-facet tests ask that bakery, and the build home's only when the release named none.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    selected = root.joinpath("selected-bakery")
+    home = root.joinpath("build-home")
+    assert builder_bakery(selected.0, home) == selected.0
+    assert builder_bakery("", home) == home.joinpath("bakery").0
+    assert selected_builder_bakery("", "") == ""
+    assert selected_builder_bakery(selected.0, home.0) == ""
+    selected.mkdir(true, true).map_err((error) => error.message())?
+    assert selected_builder_bakery(selected.0, home.0) == selected.0
+    assert selected_builder_bakery("", home.0) == ""
+    home.joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
+    assert selected_builder_bakery("", home.0) == home.joinpath("bakery").0
+    assert selected_builder_bakery(selected.0, home.0) == selected.0
+    return Ok(None)
+
+
+def test_every_installed_gate_starts_at_once_and_bounds_its_own_children() -> Result[None, str]:
+    """
+    The gates are independent, so the pool admits all of them together and only their memory reservations bound it;
+    each gate is passed the release's jobs and bounds its own children by them.
+    """
+    for jobs in [1, 2, 6]:
+        assert verification_gate_width(jobs) == len(verification_phase_names(jobs))
+    assert verification_phase_arguments("census", Path("/run"), Path("/runner"), 2, 900)[4] == "2"
+    return Ok(None)
+
+
+def test_the_census_runs_twice_the_jobs_and_one_for_graph_and_reserves_its_measured_share() -> Result[None, str]:
+    """
+    The census runs its families in turn at twice the release's jobs, and its graph family beside them at one more;
+    each of its workers reserves 2 GiB, more than twice the 0.87 GB a worker took at the measured 1.73 GB peak of a
+    whole census at two jobs.
+    """
+    gib = 1073741824
+    assert census_jobs(1) == 3
+    assert census_jobs(2) == 5
+    assert CENSUS_WORKER_RESERVATION_BYTES == 2 * gib
+    reservations = [plan.reservation for plan in verification_phase_plans(2)]
+    assert verification_phase_names(2)[4] == "census"
+    assert reservations[4] == 5 * CENSUS_WORKER_RESERVATION_BYTES
+    return Ok(None)
+
+
+def test_the_oven_step_runs_twice_the_release_jobs_and_reserves_a_project_share_for_each() -> Result[None, str]:
+    """
+    The Oven step outlasts every other gate, the census included, and runs on alone after them, so like the census it
+    runs twice the release's jobs; the gate reserves one Oven project share for each invocation it may run.
+    """
+    assert oven_jobs(1) == 2
+    assert oven_jobs(2) == 4
+    assert oven_jobs(0) == 2
+    reservations = [plan.reservation for plan in verification_phase_plans(2)]
+    assert verification_phase_names(2)[1] == "oven"
+    assert reservations[1] == 4 * PROJECT_RESERVATION_BYTES
+    arguments = oven_test_arguments(Path("/oven"), Path("/checkout"), Path("/run"), 2)
+    assert arguments[5] == "--jobs"
+    assert arguments[6] == "4"
+    return Ok(None)
+
+
+def test_the_relocation_audit_refuses_text_naming_any_builder_path() -> Result[None, str]:
+    """
+    Installed text naming the build home or the build source below it is refused, by whichever path it names; content
+    that is not UTF-8 text is not read as records, so it is not refused.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    notes = toolchain.joinpath("share")
+    notes.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    builders = ["/build/home", "/build/source"]
+    audit_relocation(home, builders)?
+    note = notes.joinpath("note.txt")
+    for builder in builders:
+        note.write_text(f"made in {builder}/loaves/x\n", "utf-8", "strict", None).map_err((error) => error.message())?
+        match audit_relocation(home, builders):
+            Ok(_) => return Err(f"installed text naming {builder} passed the relocation audit")
+            Err(message) => assert message == f"installed records name the builder: {builder}", message
+    note.write_bytes(b"\xff\xfe/build/home/x").map_err((error) => error.message())?
+    audit_relocation(home, builders)?
+    return Ok(None)
+
+
+def test_release_unit_builds_in_installed_verification_ask_the_builder_bakery() -> Result[None, str]:
+    """
+    The Rust-facet suites and driver integration's helper build compile release units the release already built, so
+    they ask the builder's bakery when the release names one, and the installation's own otherwise; nothing else of the
+    installed environment changes.
+    """
+    installation = Installation(
+        root=Path("/checkout"),
+        home=Path("/installed"),
+        oven=Path("/installed/bin/incan"),
+        lsp=Path("/installed/bin/incan-lsp"),
+        run=Path("/evidence/run.x"),
+        jobs=2,
+        timeout_seconds=600,
+    )
+    shared = builder_environment(installation, "/builder/bakery")
+    assert shared["INCAN_BAKERY"] == "/builder/bakery"
+    assert shared["INCAN_HOME"] == "/installed"
+    assert shared["OVEN_ENGINE_BINARY"] == "/installed/bin/incan"
+    own = builder_environment(installation, "")
+    assert "INCAN_BAKERY" not in own
+    assert len(shared) == len(own) + 1
+    return Ok(None)

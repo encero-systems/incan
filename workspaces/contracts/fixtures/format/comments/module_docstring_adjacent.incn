@@ -1,0 +1,9 @@
+# behavior: An ordinary leading comment block stays immediately before a module docstring.
+# expect-formatted:
+#   # A leading comment.
+#   # Another comment.
+#   """Module documentation."""
+
+# A leading comment.
+# Another comment.
+"""Module documentation."""

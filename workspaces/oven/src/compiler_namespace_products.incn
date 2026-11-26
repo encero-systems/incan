@@ -1,0 +1,238 @@
+"""Checked semantic namespace products independent of the positioned frame used to restore a module."""
+
+from std.fs import Path
+from std.primitives.crumb.values import Value
+from std.primitives.hash import sha256
+from pub::internal_models import CompiledNamespaceValue, ProducerRank, ProducerStage, encode_record_key
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import KEY_TYPE, REQUEST_TYPE, encode_graph_row, key_value, request_value
+from pub::internal_models.records import ReadReceipt, ReadScope, ReadWitness, RecordKey, RecordRequest
+from pub::incan_platform.store import Snapshot, Transaction, stage_put
+from pub::incan_mir_plan import CHECKED_MEMBER_INSTANCE, LoweringEvent, decode_plan_function_record
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from compiler_body_keys import body_key, namespace_key
+from compiler_body_fallbacks import member_event, member_namespace
+from compiler_graph_records import EditCutoff, ReusableEvaluation, prepare_evaluation, reusable_evaluation
+from compiler_lowering_order import LoweringOrder, LoweringOrders
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
+from unit import UnitDescription
+
+const PROJECTION: bytes = b"nsprod\x00"
+const INPUTS: bytes = b"nsinpt\x00"
+
+
+pub def interface_key(origin: str, module: str) -> RecordKey:
+    """The checked declarations importers can observe regardless of where they were written."""
+    return body_key("namespace-interface", origin, module, "checked", "semantic/1")
+
+
+pub def member_key(origin: str, identity: str) -> RecordKey:
+    """The compiler's checked lowering witness for one stable member of a nominal declaration."""
+    return body_key("namespace-member", origin, identity, "lowering", "semantic/1")
+
+
+pub def member_plan_inputs(origin: str, module: str, event: str, members: Borrowed[Dict[str, tuple[str, str]]]) -> Result[list[RecordRequest], str]:
+    """Join the current native event to a checked stable owner, or retain the complete namespace as its witness."""
+    if not members.contains_key(event):
+        return Ok([prepared_product_request(namespace_key(origin, module))])
+    recorded = members[event]
+    if recorded[0] != module:
+        return Err("member lowering event was attributed to a different checked namespace")
+    return Ok([prepared_product_request(member_key(origin, recorded[1])), prepared_product_request(interface_key(origin, module))])
+
+
+pub def retained_member_product(
+    mut source: PreparedBodyRecordSource, mut orders: LoweringOrders, selected: Option[Snapshot], cutoff: EditCutoff,
+    unit: UnitDescription, origin: str, event: Borrowed[LoweringEvent],
+) -> Result[Option[tuple[str, list[RecordRequest], LoweringOrder]], str]:
+    """
+    Bind a retained closed member event to the current checked namespace.
+
+    Ordinary retained methods do not make this claim. A closed generic product carries its checker-qualified
+    owner and the body witness that selected the native product.
+    """
+    if event.module != "" or not member_event(event.identity)?:
+        return Ok(None)
+    inputs = decode_plan_function_record(event.product)?.inputs
+    last = inputs[len(inputs) - 1]
+    if not last.startswith(CHECKED_MEMBER_INSTANCE):
+        return Ok(None)
+    if len(inputs) < 7:
+        return Err("closed member product is missing its checked scalar inputs")
+    marker: str = CHECKED_MEMBER_INSTANCE
+    owner = last[len(marker):]
+    # The existing scalar inputs carry the body source path and its checked witness.
+    root = Path(unit.project_root).resolve().map_err((error) => error.message())?.0 + "/"
+    file = Path(inputs[3]).resolve().map_err((error) => error.message())?.0
+    if not file.startswith(root):
+        return Err("closed member product names a source outside the selected project")
+    module = file[len(root):]
+    if member_namespace(unit, [module], event.identity)? != Some(module):
+        return Err("closed member product names a different checked module")
+    graph = match selected:
+        Some(value) => value
+        None => return Err("retained closed member product has no selected graph")
+    return admit_retained_member(source, orders, graph, cutoff, origin, module, owner, inputs[5])
+
+def admit_retained_member(
+    mut source: PreparedBodyRecordSource, mut orders: LoweringOrders, graph: Snapshot, cutoff: EditCutoff,
+    origin: str, module: str, owner: str, witness: str,
+) -> Result[Option[tuple[str, list[RecordRequest], LoweringOrder]], str]:
+    """Authenticate the exact member and interface producers against one current checked namespace basis."""
+    basis = body_key("namespace-inputs", origin, module, "checked", "semantic/1")
+    current = checked_member_input(graph, cutoff, basis)?
+    order = orders.retained(graph, module, current)?
+    certificate = current.receipt.preparation.rank_certificate
+    if order.evidence != certificate:
+        return Err("closed member product has no current checked namespace certificate")
+    member = member_key(origin, owner)
+    interface = interface_key(origin, module)
+    for key in [member, interface]:
+        supplier = checked_member_input(graph, cutoff, key)?
+        if supplier.namespace != current.namespace or supplier.receipt.preparation.rank_certificate != certificate:
+            return Err("closed member supplier has a different checked namespace certificate")
+        if member_basis_digests(supplier.receipt, prepared_product_request(basis)) != [current.value_digest]:
+            return Err("closed member supplier read a different checked namespace basis")
+        if key == member and supplier.value != projection_value(member, witness.encode("utf-8"))?:
+            return Err("closed member product read a different checked body")
+        encoded = encode_record_key(key)?
+        if source.holds(encoded) and not source.matches(encoded, supplier.value):
+            return Err("retained member supplier conflicts with a prepared checked value")
+        source.add(encoded, supplier.value)
+    return Ok(Some((module, [prepared_product_request(member), prepared_product_request(interface)], order)))
+
+def checked_member_input(graph: Snapshot, cutoff: EditCutoff, key: RecordKey) -> Result[ReusableEvaluation, str]:
+    """Require one current checked evaluation supplying the exact selected record address."""
+    match reusable_evaluation(graph, key, CHECKER_PROFILE, cutoff=cutoff)?:
+        Some(value) => return Ok(value)
+        None => return Err("closed member product lost its selected checked supplier")
+
+def member_basis_digests(receipt: ReadReceipt, request: RecordRequest) -> list[str]:
+    """Read digests from positive witnesses of precisely this namespace basis."""
+    mut digests: list[str] = []
+    for witness in receipt.witnesses:
+        if let ReadWitness.Found(evidence, _) = witness:
+            if evidence.request == request:
+                digests.append(evidence.semantic_digest)
+    return digests
+
+
+pub def prepare_namespace_products(mut transaction: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope,
+    namespace: CompiledNamespaceValue, origin: str, reads: list[RecordRequest], rank: ProducerRank, certificate: str) -> Result[None, str]:
+    """Stage each compiler-proven semantic output. The complete position-bearing restoration row is stored separately."""
+    if len(namespace.semantic_interface) == 0:
+        if len(namespace.member_witnesses) != 0:
+            return Err("namespace member proofs require a checked namespace interface")
+        return Ok(None)
+    if len(namespace.semantic_interface) != 32:
+        return Err("invalid checked namespace interface digest")
+    # Every projection uses the same source discovery. Sign it once and let each projection name that small value.
+    basis = body_key("namespace-inputs", origin, namespace.module, "checked", "semantic/1")
+    discovery = source.receipt(scope, basis, reads, certificate)?
+    basis_rank = ProducerRank(namespace=rank.namespace, stage=ProducerStage.Discover, dependency=0)
+    stage_product(transaction, source, basis, input_digest(discovery)?, discovery, basis_rank)?
+    shared = [prepared_product_request(basis)]
+    interface = interface_key(origin, namespace.module)
+    interface_receipt = source.receipt(scope, interface, shared, certificate)?
+    stage_product(transaction, source, interface, namespace.semantic_interface, interface_receipt, rank)?
+    member_rank = ProducerRank(namespace=rank.namespace, stage=ProducerStage.CheckBody, dependency=0)
+    mut seen: set[str] = set()
+    mut events: set[str] = set()
+    for pair in namespace.member_witnesses:
+        if len(pair) != 3 or "" in pair or pair[1] in seen or pair[0] in events:
+            return Err("invalid or duplicate checked namespace member identity")
+        seen.add(pair[1])
+        events.add(pair[0])
+        member = member_key(origin, pair[1])
+        receipt = source.receipt(scope, member, shared, certificate)?
+        stage_product(transaction, source, member, pair[2].encode("utf-8"), receipt, member_rank)?
+    return Ok(None)
+
+
+def input_digest(receipt: ReadReceipt) -> Result[bytes, str]:
+    """Fingerprint exact selected inputs while keeping the snapshot-bound evidence in its original signed receipt."""
+    mut inputs: list[Value] = []
+    for witness in receipt.witnesses:
+        match witness:
+            ReadWitness.Found(evidence, selection) =>
+                inputs.append(Value.Tuple([request_value(evidence.request), Value.Text(evidence.semantic_digest), Value.Text(selection)]))
+            _ => return Err("compiled namespace inputs include an unproved discovery")
+    description = model_description(INPUTS, "incan.compiler.namespace-inputs/1", [
+        ModelField(identity=b"reads_", name="reads", storage="list<tuple<" + REQUEST_TYPE + ",string,string>>"),
+    ])
+    encoded = encode_graph_row(INPUTS, description, [required_value(b"reads_", Value.List(inputs))])?
+    return Ok(sha256.digest(encoded))
+
+
+def stage_product(mut transaction: Transaction, mut source: PreparedBodyRecordSource, key: RecordKey,
+    semantic: bytes, receipt: ReadReceipt, rank: ProducerRank) -> Result[None, str]:
+    """Bind an opaque compiler-authored semantic value to its own canonical store address and read receipt."""
+    encoded = projection_value(key, semantic)?
+    _ = prepare_evaluation(transaction, key.family + "-" + key.identity, rank, encoded, receipt)?
+    source.add(encode_record_key(key)?, encoded)
+    return Ok(None)
+
+
+def projection_value(key: RecordKey, semantic: bytes) -> Result[bytes, str]:
+    description = model_description(PROJECTION, "incan.compiler.namespace-product/1", [
+        ModelField(identity=b"key___", name="key", storage=KEY_TYPE),
+        ModelField(identity=b"value_", name="value", storage="binary"),
+    ])
+    return encode_graph_row(PROJECTION, description, [
+        required_value(b"key___", key_value(key)), required_value(b"value_", Value.Binary(semantic)),
+    ])
+
+
+pub model ExecutableCallInputs:
+    """The exact settled targets read by an owner or by a complete restorable namespace."""
+    pub owners: Dict[str, list[RecordKey]] = {}
+    pub modules: Dict[str, list[RecordKey]] = {}
+
+
+pub def stage_call_contracts(mut transaction: Transaction, mut source: PreparedBodyRecordSource,
+    origin: str, namespaces: Borrowed[list[CompiledNamespaceValue]]) -> Result[ExecutableCallInputs, str]:
+    """Capture the native settlement boundary before authenticating executable consumers from its results."""
+    mut result = ExecutableCallInputs()
+    mut supplied: Dict[str, str] = {}
+    for namespace in namespaces:
+        contracts = match namespace.call_contracts:
+            Some(found) => found
+            None => continue
+        mut readers: Dict[str, str] = {}
+        mut current: Dict[str, str] = {}
+        for contract in contracts:
+            current[contract.target] = contract.digest
+            if contract.owner != "":
+                if contract.reader in readers and readers[contract.reader] != contract.owner:
+                    return Err("conflicting executable reader identities")
+                readers[contract.reader] = contract.owner
+            if contract.target in supplied:
+                if supplied[contract.target] != contract.digest:
+                    return Err("conflicting settled call suppliers: " + contract.target)
+                continue
+            key = contract_key(origin, contract.target)
+            slot = encode_record_key(key)?
+            encoded = projection_value(key, contract.digest.encode("utf-8"))?
+            stage_put(transaction, slot, encoded)
+            source.add(slot, encoded)
+            supplied[contract.target] = contract.digest
+        mut targets: set[str] = set()
+        mut module_reads: list[RecordKey] = []
+        for read in namespace.call_reads:
+            if read.target not in current or current[read.target] != read.digest:
+                return Err("executable call read differs from independently supplied contract: " + read.target)
+            key = contract_key(origin, read.target)
+            if read.target not in targets:
+                targets.add(read.target)
+                module_reads.append(key)
+            if read.reader in readers:
+                owner = readers[read.reader]
+                if owner not in result.owners:
+                    result.owners[owner] = []
+                result.owners[owner].append(key)
+        result.modules[namespace.module] = module_reads
+    return Ok(result)
+
+
+pub def contract_key(origin: str, target: str) -> RecordKey:
+    return body_key("settled-call-contract", origin, target, "parameters", "access/1")

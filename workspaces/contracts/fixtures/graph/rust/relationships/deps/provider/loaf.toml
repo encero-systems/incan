@@ -1,0 +1,7 @@
+[project]
+name = "graph_provider"
+version = "0.1.0"
+
+[rust]
+type = "lib"
+edition = "2024"

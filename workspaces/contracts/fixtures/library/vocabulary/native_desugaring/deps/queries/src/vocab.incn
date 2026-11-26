@@ -1,0 +1,174 @@
+"""Expand query expressions through the published structured syntax contract."""
+
+from std.vocab import (
+    ClauseSurface,
+    DeclarationSurface,
+    DesugarError,
+    DesugarOutput,
+    DesugarRequest,
+    DesugarResponse,
+    DslSurface,
+    EmbeddedFragmentDescriptor,
+    EmbeddedFragmentSubmode,
+    IncanExpr,
+    IncanExprKind,
+    IncanDeclaration,
+    IncanDeclarationKind,
+    IncanStatement,
+    IncanStatementKind,
+    ScopedSurfaceDescriptor,
+    ScopedSurfaceReceiver,
+    Span,
+    VocabBodyItem,
+    VocabDeclaration,
+    VocabScopedSurface,
+    VocabScopedSurfaceKind,
+    VocabFragment,
+    VocabFragmentNodeKind,
+    VocabRegistration,
+    VocabSyntaxNode,
+    VocabFieldSpec,
+    VocabTypeExpr,
+)
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register an expression whose custom expansion is the FROM value."""
+    mut query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    query = query.with_clause(ClauseSurface.expr("FROM").required())
+    markup = DeclarationSurface.named("markup").with_statement_body().desugars_to_statements()
+    declarations = DeclarationSurface.named("synthesize").with_header_args().with_statement_body()
+    mut surface = DslSurface
+        .on_import("queries")
+        .with_declarations([query, markup, declarations.desugars_to_declarations()])
+    surface = surface
+        .with_declaration(DeclarationSurface.named("chain").with_statement_body())
+        .with_declaration(DeclarationSurface.named("wrap").with_statement_body())
+        .with_scoped_surfaces(
+            [
+                ScopedSurfaceDescriptor.operator("chain.pipe", "|>").in_declaration_body("chain").pairwise_chain(),
+                ScopedSurfaceDescriptor
+                    .leading_dot_path("chain.field")
+                    .in_declaration_body("chain")
+                    .with_receiver(ScopedSurfaceReceiver.OwningDeclaration),
+            ],
+        )
+    fragment = EmbeddedFragmentDescriptor.new("markup.fragment", EmbeddedFragmentSubmode.Markup, "markup.tree")
+    surface = surface.with_embedded_fragment(fragment.in_declaration_body("markup"))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Return the structured clause expression, retaining its original source span."""
+    match request.node:
+        VocabSyntaxNode.Declaration(declaration) =>
+            if declaration.keyword == "wrap":
+                return lower_shared_calls(declaration.span)
+            if declaration.keyword == "chain":
+                return lower_chain(declaration)
+            if declaration.keyword == "synthesize":
+                return lower_declarations(declaration.head.header_args, declaration.span)
+            if declaration.keyword == "markup":
+                return lower_fragment(declaration.fragment()?)
+            clause = declaration.clause("FROM")?
+            expression = clause.expression()?
+            return Ok(DesugarResponse(output=DesugarOutput.Expression(expression)))
+        _ => return Err(DesugarError.at(request.node.span(), "query requires a declaration"))
+
+
+def lower_shared_calls(span: Span) -> Result[DesugarResponse, DesugarError]:
+    """Generate both the two-call reduction and three nested calls returning int, str and None at one range."""
+    inner = IncanExpr.call(IncanExpr.path("marker", span), [])
+    pair = IncanExpr.call(IncanExpr.path("println", span), [inner])
+    text = IncanExpr.call(IncanExpr.path("as_text", span), [inner])
+    triple = IncanExpr.call(IncanExpr.path("println", span), [text])
+    statements = [
+        IncanStatement(span=span, kind=IncanStatementKind.Expr(pair)),
+        IncanStatement(span=span, kind=IncanStatementKind.Expr(triple)),
+    ]
+    return Ok(DesugarResponse(output=DesugarOutput.Statements(statements)))
+
+
+def lower_fragment(fragment: VocabFragment) -> Result[DesugarResponse, DesugarError]:
+    """Print the owned markup's expression hole as ordinary typed Incan output."""
+    assert fragment.descriptor_key == "markup.fragment"
+    match fragment.nodes[0].kind:
+        VocabFragmentNodeKind.Element(element) =>
+            assert element.name == "p"
+            match element.children[0].kind:
+                VocabFragmentNodeKind.Hole(expression) =>
+                    call = IncanExpr.call(IncanExpr.path("println", fragment.span), [expression])
+                    statement = IncanStatement(span=fragment.span, kind=IncanStatementKind.Expr(call))
+                    return Ok(DesugarResponse(output=DesugarOutput.Statements([statement])))
+                _ => pass
+        _ => pass
+    return Err(DesugarError.at(fragment.span, "expected an owned markup hole"))
+
+
+def lower_declarations(values: list[IncanExpr], span: Span) -> Result[DesugarResponse, DesugarError]:
+    """Share the genuine declaration range while retaining finer annotation, field and value locations."""
+    first = values[0]
+    result_type = VocabTypeExpr(span=first.span, name="int")
+    body = [IncanStatement(span=first.span, kind=IncanStatementKind.Return(Some(first)))]
+    function = IncanDeclaration(span=span, name="generated", kind=IncanDeclarationKind.Function([], result_type, body))
+    second = values[1]
+    field = VocabFieldSpec(
+        span=second.span,
+        name="value",
+        field_type=Some(VocabTypeExpr(span=second.span, name="int")),
+        default_value=Some(second),
+    )
+    record = IncanDeclaration(span=span, name="Generated", kind=IncanDeclarationKind.Model([field]))
+    third = values[2]
+    constant = IncanDeclaration(span=span, name="GENERATED", kind=IncanDeclarationKind.Const(None, third))
+    return Ok(DesugarResponse(output=DesugarOutput.Declarations([function, record, constant])))
+
+
+def lower_chain(declaration: VocabDeclaration) -> Result[DesugarResponse, DesugarError]:
+    """Assert scoped descriptors, ownership, receiver context and independent genuine operand source ranges."""
+    expression = owned_expression(declaration.body[0], declaration.span)?
+    pipe = scoped_expression(expression)?
+    assert pipe.descriptor_key == "chain.pipe"
+    assert pipe.owner.declaration == "chain"
+    values = pipe_operands(pipe, expression.span)?
+    assert values[0].span.start < values[1].span.start
+    field = scoped_expression(values[0])?
+    assert field.descriptor_key == "chain.field"
+    match field.kind:
+        VocabScopedSurfaceKind.LeadingDotPath(segments, receiver) =>
+            assert segments == ["amount"]
+            match receiver:
+                ScopedSurfaceReceiver.OwningDeclaration => pass
+                _ => return Err(DesugarError.at(declaration.span, "expected declaration receiver"))
+        _ => return Err(DesugarError.at(declaration.span, "expected field"))
+    text = IncanExpr(span=declaration.span, kind=IncanExprKind.Str("linked"))
+    call = IncanExpr.call(IncanExpr.path("println", declaration.span), [text])
+    statement = IncanStatement(span=declaration.span, kind=IncanStatementKind.Expr(call))
+    return Ok(DesugarResponse(output=DesugarOutput.Statements([statement])))
+
+
+def owned_expression(item: VocabBodyItem, span: Span) -> Result[IncanExpr, DesugarError]:
+    """Extract an expression only through its explicit statement ownership boundary."""
+    match item:
+        VocabBodyItem.Statement(statement) =>
+            match statement.kind:
+                IncanStatementKind.Expr(expression) => return Ok(expression)
+                _ => pass
+        _ => pass
+    return Err(DesugarError.at(span, "expected expression statement"))
+
+
+def scoped_expression(expression: IncanExpr) -> Result[VocabScopedSurface, DesugarError]:
+    """Require a parser-accepted scoped expression with retained descriptor ownership."""
+    match expression.kind:
+        IncanExprKind.Scoped(surface) => return Ok(surface)
+        _ => return Err(DesugarError.at(expression.span, "expected scoped expression"))
+
+
+def pipe_operands(surface: VocabScopedSurface, span: Span) -> Result[list[IncanExpr], DesugarError]:
+    """Verify the registered pipe's glyph before reading its structured operands."""
+    match surface.kind:
+        VocabScopedSurfaceKind.Glyph(glyph, values) =>
+            assert glyph == "|>"
+            return Ok(values)
+        _ => return Err(DesugarError.at(span, "expected glyph"))

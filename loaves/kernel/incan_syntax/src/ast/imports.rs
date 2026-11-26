@@ -8,7 +8,7 @@ use super::{Ident, Spanned, Type, Visibility};
 // Const bindings (module-level)
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ConstDecl {
     pub visibility: Visibility,
     pub name: Ident,
@@ -16,7 +16,7 @@ pub struct ConstDecl {
     pub value: Spanned<super::Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct StaticDecl {
     pub visibility: Visibility,
     pub name: Ident,
@@ -28,14 +28,14 @@ pub struct StaticDecl {
 // Imports
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImportDecl {
     pub visibility: Visibility,
     pub kind: ImportKind,
     pub alias: Option<Ident>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ImportKind {
     /// `import foo::bar::baz` or `import crate::config` - Rust-style module path
     Module(ImportPath),
@@ -85,7 +85,7 @@ pub enum ImportKind {
 /// - Simple paths: `models`, `utils::helpers`
 /// - Relative paths: `..common`, `super::utils`
 /// - Absolute paths: `crate::config`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImportPath {
     /// How many parent levels to go up (0 = current/absolute, 1 = parent, 2 = grandparent, etc.)
     pub parent_levels: usize,
@@ -144,7 +144,7 @@ impl fmt::Display for ImportPath {
 }
 
 /// An item in a `from ... import` statement
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImportItem {
     pub name: Ident,
     pub alias: Option<Ident>,

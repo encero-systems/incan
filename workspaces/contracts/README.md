@@ -1,0 +1,108 @@
+# Contracts
+
+The contract families say what `incan` must do, each case as a program that carries its own expectations. A table runner, written in Incan, runs every case against an `incan` and reports each one. Nothing in a case names a route, a backend or a build step: a case states what a user observes.
+
+## Budget
+
+The whole test suite stays under about 3,000 tests (#2255).
+- **New cases:** add one only when no existing case in the same area can carry the behavior. Otherwise, extend that case's program and expectations.
+- **Bugs:** a guarded bug is named in the case's `# behavior:` line. It never gets a case of its own when an area case can hold it.
+- **Library cases:** one producer Loaf per case, carrying every declaration the case needs.
+- **Folding:** passing cases in one area can be folded together without losing an expectation; failing and pending cases stay separate until they pass.
+
+## Families
+
+| Family | Runs | Compares |
+| --- | --- | --- |
+| `behavior` | `incan run src/main.incn`, or `incan check src/main.incn --format json` when the header declares diagnostics | stdout, stderr, exit code; or the refusal's diagnostic codes |
+| `check` | `incan check src/main.incn --format json`, repeated unchanged and after each `check-edits:` entry | acceptance (`expect-accepted:`, warnings allowed) or the refusal's codes; an unchanged repeat's exact replay; a fresh check after each edit |
+| `library` | as `behavior`, for a project with path dependencies; Oven bakes them | as `behavior` |
+| `interop` | as `behavior`, for programs that import through `rust::` | as `behavior` |
+| `testing` | `incan test tests/<name>.incn` | the per-test outcome lines, stderr, exit code |
+| `project` | `oven describe-unit src/main.incn`, or each `cli-commands:` entry | the unit description's dependencies, standard packages and active features, or each CLI invocation's stdout, stderr and exit code |
+| `format` | `incan fmt [--check] src/main.incn` | exact formatted text, check exit codes, check immutability and repeated-format stability |
+| `graph` | `incan inspect codegraph` for each `graph-commands:` entry | query output, repeated-query equality, JSON/JSONL agreement, edit-stable declaration identities and invalidation after source changes |
+
+## Layout
+
+```text
+workspaces/contracts/
+  src/                       the table runner
+  fixtures/<family>/<area>/
+    <name>.incn              single-file case: the whole program, header first
+    <name>/main.incn         module case: main.incn carries the header, sibling .incn files are importable modules
+    <name>/loaf.toml         project case: a complete project; the header is in src/main.incn
+```
+
+Every entry in an area is one of those shapes, and an empty area is refused. A family directory may hold a `README.md`; nothing else but areas. Hidden entries are skipped. Names are lowercase letters, digits and `_`, starting with a letter or `_`. A testing case is one file named `test_<subject>.incn`; it runs from the project's `tests/` directory. A library case is a project.
+
+Each case gets its own working directory in scratch: a single-file or module case gets a minimal `loaf.toml` (`[project.scripts] main = "src/main.incn"`), and a project case is copied as it is. Compatible programs in `behavior` and `interop` share compilation in a generated project, with each program in its own module. The unit explicitly selects those modules' checked main identities. Canonical entry lowering handles synchronous, async, integer and Result entries, and rustc's standard `Termination` implementation reports the selected result. Each selected case still runs in a fresh process in its own working directory. The dispatcher emits nothing, and its selector does not appear in the program's arguments. A refused compilation, or one that emits output needing individual attribution, is split recursively; singleton cases use their original compilation path.
+
+Computed statics, decorators, entry setup effects, executable/source-path observations, diagnostic and acceptance checks, and project, library, testing, format and graph cases retain their original commands. So does a module case one of whose imports only its own source root resolves, a `crate.` path or a nested file's import of a module beside its `main.incn`: in a group its sources sit in a subdirectory, where that import names no module. `--isolated` disables shared compilation. A scratch file named `batch-<family>-refusals.tsv` lists each case kept isolated and its reason; `BATCH-SPLIT` lines identify refused combinations without assigning a failure to any individual case. Projects and shared binaries stay under scratch for Oven reuse; only changed inputs are rewritten, and every case executes afresh. Child invocations use one worker budget, defaulting to twelve; `--jobs N` sets it explicitly. Each child has a separate process group. `--timeout SECONDS` sets a deadline; zero, the default, disables it. A timeout kills the group, retains partial output and preserves a signal as distinct from an exit code. Case commands run with the tracing channel (`INCAN_ENGINE_TRACE`) off, except in the cases that read Oven's trace: every `check` case, and those that declare `expect-trace-contains:` or `expect-trace-at-most-once:`. Those trace into their case's `target/incan/trace`, and the runner reports their per-unit compiled, reused and replayed reasons. The runner's own work records go where its own `INCAN_ENGINE_TRACE` names, from family workers too.
+
+`batch-<family>-groups.tsv` retains compilation boundaries after splitting. It contains case names, never test outcomes or compiler acceptance. Discovery first tries balanced combined compilations: at least one group per worker and none above 17 cases, since a group's build costs more per case the more cases it holds. Reported source paths advise which programs to isolate while the remainder is compiled again; a refusal without usable paths splits its group at once into one part per worker, at least two. Successful groups execute without a second repacking build. A repeat tries the retained groups with their current sources; Oven validates their current compilation inputs once, and every selected case starts the verified program again directly, under its own program name and with the environment, arguments and exit status `incan run` gives a program. Changed or newly selected cases are admitted again, and a group that stops compiling is split again. This avoids rediscovering unchanged incompatible combinations on every run.
+
+Compilation attempts, individual commands and selected-entry executions use the same worker pool. Known isolated commands join the first shared-build wave, including during discovery; each executes once through its original command while shared builds occupy the remaining slots. A settled build's retries, including the original commands of the cases it isolates, join the queue at once, ahead of the requests still waiting. A changed group that refuses still splits and falls back normally. The pool owns native child handles in a queue, polls every active child, reaps completed children and immediately refills their slots. A successful group build releases its selected entries into that queue while remaining commands continue compiling. When its output names some of its cases, the others run from it, each named case runs its original command, and the output is printed under a `BATCH-KEEP` line. A refused or timed-out build releases no selected entry. Outcomes retain request order, and each child's deadline starts when that child launches.
+
+Combined compilations have no deadline of their own: `--timeout` bounds them as it bounds individual case commands, with no deadline by default. An expired attempt kills its process group and splits its cases for another attempt; it assigns no case verdict.
+
+Previous durations of original case commands and shared builds order longer invocations first within the worker pool. Bounded high-water marks preserve compilation costs across cheaper unchanged repeats. Full-family runs share these optional durations beside their corpus-scoped partition hints, so a fresh scratch directory can schedule long commands immediately. Selected-entry executions do not contribute timing hints. Hints never retain outcomes or authorize reuse; unavailable or malformed hints have zero weight. Selected entries still execute in fresh processes, and outcomes retain request order regardless of launch order.
+
+When multiple families or graph cases are selected with at least two jobs, the runner supervises up to three workers. Each receives `floor(jobs / worker limit)` command slots, keeping their combined command budget at or below `--jobs`. Graph cases own independent scratch projects and are scheduled separately, including when graph is the only selected family. Workers start every graph case first, then the other families longest first (project, behavior, interop, library, check, testing, format), so no long worker starts behind the short ones. Commands within each graph case retain their sequential edit, snapshot and query dependencies. Reports retain family and case order with one summary per area. Each process enters one pool at a time, so callback state is never shared concurrently or recursively. A family process has no family-wide deadline: it applies `--timeout` separately to each original command. A missing completion marker, abnormal exit or inconsistent report refuses that family. `--serial-families` runs the families in turn, so they share compilation; with at least two jobs and graph selected beside another family, the graph family, which compiles nothing the others build, runs in a family worker of its own at one of the jobs while the others run in turn at the rest, and its report follows theirs. Single-family selections outside graph keep their existing worker budget and commands. Independently launched runner processes each have their own budget.
+
+A protocol case compares by running its own commands one after another: a `cli-commands:` case, a `check-edits:` case and a graph case. With at least two jobs and two such cases selected in one family, each runs in a runner process of its own (`--family-worker`, one job, that one case, in its own scratch `protocol-<case>`), as many at once as the family has jobs, before the family's other cases. Its report is printed where the case belongs, and a runner that does not complete its report fails its case. One job, or one protocol case, compares in place.
+
+Full-family runs retain case-name partition hints under an explicit absolute `INCAN_HOME/cache/contract-groups-v2`, scoped to the canonical fixture root. A new scratch directory can use those partitions immediately. Oven validates each group's current compilation inputs, and every selected case executes. Partial-family selections retain only their local scratch plan. Missing or unusable hints trigger partition discovery; optional hint-storage errors preserve ordinary planning. `--no-group-hints` disables shared hints; combine it with fresh scratch to measure discovery. First discovery and fresh compilation with an existing hint are separate timing conditions.
+
+Oven retains compiler-certified deterministic refusals under the same complete input identity as successful builds. An unchanged refusal replays the exact stdout, stderr and normal exit status; editing a source or changing the compiler, features or linked artifacts requires another compilation. Crashes, signals, uncertified failures and missing linked artifacts always retry. The runner reports replayed refusals separately from compiled and reused units; every successful case still executes afresh. A check is retained the same way: an unchanged `incan check` replays the report and status of its last compiler-certified check, for each report format.
+
+## Header
+
+The header is the unbroken run of `#` comment lines at the top of the program.
+
+| Directive | Meaning |
+| --- | --- |
+| `# behavior: <one line>` | What the case proves. Required, once. |
+| `# retires: <path>.rs::<fn>` | The retired test the case replaces. Repeatable. |
+| `# expect-stdout:` | The whole stdout, one indented line per line. Exact; an empty block means nothing is printed. A line may hold one `<duration>`, which matches a printed number of seconds such as `0.00s`. |
+| `# expect-stdout-contains:` | Lines that must each appear as a whole stdout line. Not with `expect-stdout`. |
+| `# expect-stderr:` | The whole stderr, one indented line per line. Exact; an empty block means nothing is printed. |
+| `# expect-stderr-contains:` | Substrings that must each appear in stderr. |
+| `# expect-stderr-once:` | Substrings that must each appear in stderr exactly once, such as a failure that must be reported once. |
+| `# expect-exit: <n>` | The exit code, `0` to `255`. Default `0`. |
+| `# expect-diagnostic: <CODE>` | The program is refused at check time with this code. Repeatable. Never with a run expectation. |
+| `# expect-accepted:` | The program checks without errors and is never run. |
+| `# expect-dependencies:` | Exactly these dependencies, one `<key> <package>` per line; an empty block means none. |
+| `# expect-std-packages:` | Standard packages the unit must reach. |
+| `# expect-active-features:` | Exactly these active features; an empty block means none. |
+| `# expect-formatted:` | Exact formatted source, indented as a block. Required for a `format` file or project case. The header and its separating blank line are removed from the entry source before formatting; the expected text has one final newline. |
+| `# pending: <reason>` | The case does not hold yet, and why. A pending case that holds fails: its line is stale. |
+| `# hosts: <host>[, <host>]` | The operating systems the case runs on: `linux`, `macos`. Any family admits it. On another host the case is not run; it is reported `SKIP <case> (runs on …; this host is …)` and counted as skipped in its area and the total (`…, N skipped`), never as passed. |
+| `# graph-commands:` | Inspection arguments, one invocation per indented line, without `incan inspect codegraph`. Only the `graph` family admits this directive. Paths are relative to the fixture project. |
+| `# cli-commands:` | Complete CLI arguments, one whitespace-separated invocation per indented line, without `incan`. A line that starts with `oven` starts the same `incan` under the name `oven`, its project surface. Only the `project` family admits this directive. Every invocation independently meets the same stream and exit expectations; unit-description expectations are refused. In an invocation's stdout the case's own project directory, absolute or resolved, reads `<project>`, so an expected line can name a path the command prints: `  - alpha (<project>/alpha)`. |
+| `# environment:` | `NAME=value` settings, one per indented line, added to the inherited environment of every `cli-commands:` invocation. Only a case with `cli-commands:` admits this directive. |
+| `# expect-trace-contains:` | Substrings that must each appear in the Oven trace lines every `cli-commands:` invocation adds. Only a case with `cli-commands:` admits this directive. |
+| `# cli-concurrent:` | Complete CLI arguments, one invocation per indented line, launched together after the `cli-commands:` entries, selecting `oven` the same way. Only a case with `cli-commands:` admits this directive. Every invocation meets the same stream and exit expectations. |
+| `# expect-trace-at-most-once:` | Substrings that may each appear at most once in all the Oven trace lines the case's `cli-commands:` and `cli-concurrent:` invocations add. Only a case with `cli-commands:` admits this directive. |
+| `# trace-invariant:` | Each `cli-commands:` invocation also runs first with `INCAN_ENGINE_TRACE` naming a fresh directory under the case's `target/trace-invariant/`; its stdout, stderr and exit status must equal those of the run with tracing off (`INCAN_ENGINE_TRACE` empty), the directory must hold a `reason` record, and each compiler file in it (`engine-compiler-*`, `engine-worker-*`) an `invocation` record. Takes no value. Only a case with `cli-commands:` admits this directive. |
+| `# check-edits:` | Files of the case project, one relative path per indented line. Only the `check` family admits this directive. The check runs again unchanged: it must show the same stdout, stderr and exit code, and Oven must trace it as replayed. A copy of the case project in a new directory is checked next: Oven must trace it as replayed, and it must show the same stdout, stderr and exit code as a fresh check of the copy with a bakery of its own, so a replay names the copy's paths. Then a comment unique to this run is appended to each file in turn: its first check must show the same output and be traced as checked; its unchanged repeat must replay. The new content identity makes this independent of earlier bakery contents. Each file's original text is restored. |
+
+A directive is `#`, one space, the key, a colon. Block lines follow their directive, each `#` and at least two spaces; the first line sets the indentation. A bare `#` inside a block is an empty line. A blank line or any other non-comment line ends the header, and a directive after it is refused. Every case declares at least one expectation its family compares; a family refuses the expectations it does not compare.
+
+Output is compared as lines: `\n` ends a line, a trailing `\r` is dropped, a final newline adds no empty line. An expected line that ends with whitespace is refused, because a report could not show the difference.
+
+## Running
+
+For `format`, the initial `--check` must exit 1 when the input differs from the expected text, otherwise 0; `expect-exit:` can state that initial code explicitly. Check mode must leave the file unchanged. Formatting must exit 0 and produce the exact expected text. Checking that output must exit 0, and formatting it again must succeed without changing it.
+
+```bash
+incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures [--scratch DIR] [--isolated] [--serial-families] [--jobs N] [--timeout SECONDS] [SELECTOR...]
+```
+
+`INCAN` names an installed `incan`; the `project` family and `oven` command lines start it under the name `oven`. A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.
+
+Graph exports are captured to scratch files and decoded one record at a time. The runner retains the declaration identities, generated helper sites, Rust call links, files and optional process observations that its assertions use. A streaming canonical digest covers every record, including discarded payloads, so JSON/JSONL parity and source-edit checks still compare complete exports. The graph cases also reject copied dependency records and exercise chunk boundaries, split UTF-8, escaped delimiters and malformed framing.
+
+For installed verification, pinned release bundles, and the committed PASS-key regression gate, see [Verify an installed release toolchain](release-ci.md).
+
+Set `CONTRACT_TIMINGS=1` to print elapsed milliseconds for each child invocation, each case comparison and each family. Family timings include discovery, execution and comparison, with the units Oven reported compiling or reusing. A batched case's comparison excludes its earlier execution; invocation timings name the case project or shared compilation project. These observations leave commands, expectations and verdicts unchanged.

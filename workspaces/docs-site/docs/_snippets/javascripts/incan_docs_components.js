@@ -118,100 +118,6 @@
     });
   }
 
-  function setupV06RoadmapRows() {
-    const rows = Array.from(document.querySelectorAll(".inc-v06-roadmap-table tbody tr[data-v06-slice-target]"));
-    if (rows.length === 0) return;
-
-    const slices = [];
-    rows.forEach((row) => {
-      const targetId = row.dataset.v06SliceTarget;
-      const target = targetId ? document.getElementById(targetId) : null;
-      const link = target ? row.querySelector(".inc-v06-slice-toggle") : null;
-      if (target?.tagName !== "DETAILS" || link?.tagName !== "BUTTON") return;
-
-      let detailRow = document.querySelector(`tr[data-v06-slice-detail="${target.id}"]`);
-      if (!detailRow) {
-        detailRow = document.createElement("tr");
-        detailRow.className = "inc-v06-roadmap-detail";
-        detailRow.dataset.v06SliceDetail = target.id;
-
-        const detailCell = document.createElement("td");
-        detailCell.colSpan = row.cells.length;
-        detailRow.append(detailCell);
-        detailCell.append(target);
-        row.insertAdjacentElement("afterend", detailRow);
-      }
-
-      detailRow.hidden = !target.open;
-      link.setAttribute("aria-controls", target.id);
-      link.setAttribute("aria-expanded", String(target.open));
-      slices.push({ row, detailRow, target, link });
-    });
-
-    if (slices.length === 0) return;
-    document.documentElement.classList.add("inc-v06-roadmap-enhanced");
-
-    const setSliceOpen = (current, { updateHash = false, scroll = false } = {}) => {
-      slices.forEach((slice) => {
-        const isCurrent = slice === current;
-        if (!isCurrent) {
-          slice.target.open = false;
-          slice.detailRow.hidden = true;
-        }
-      });
-
-      current.detailRow.hidden = false;
-      current.target.open = true;
-      current.link.setAttribute("aria-expanded", "true");
-
-      if (updateHash) window.history.replaceState(null, "", `#${current.target.id}`);
-      if (scroll) {
-        requestAnimationFrame(() => {
-          current.target.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-      }
-    };
-
-    slices.forEach((slice) => {
-      const { row, detailRow, target, link } = slice;
-      row.dataset.incanRoadmapBound = "true";
-
-      const navigate = () => {
-        const viewport = { left: window.scrollX, top: window.scrollY };
-        setSliceOpen(slice, { updateHash: true });
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => window.scrollTo(viewport));
-        });
-      };
-
-      link.addEventListener("click", (event) => {
-        event.stopPropagation();
-        navigate();
-      });
-      link.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        navigate();
-      });
-      row.addEventListener("click", (event) => {
-        if (event.target instanceof Element && event.target.closest(".inc-v06-slice-toggle")) return;
-        navigate();
-      });
-      target.addEventListener("toggle", () => {
-        link.setAttribute("aria-expanded", String(target.open));
-        if (target.open) {
-          setSliceOpen(slice, { updateHash: true });
-        } else {
-          detailRow.hidden = true;
-        }
-      });
-    });
-
-    const fragment = decodeURIComponent(window.location.hash.slice(1));
-    const targetedSlice = slices.find((slice) => slice.target.id === fragment);
-    if (targetedSlice) setSliceOpen(targetedSlice, { scroll: true });
-  }
-
   function init() {
     setupNavigation();
     setupVersionIdentity();
@@ -219,7 +125,6 @@
       "inc-reference-page",
       window.location.pathname.includes("/language/reference/"),
     );
-    setupV06RoadmapRows();
     setupIncus();
   }
 

@@ -1,0 +1,19 @@
+# behavior: `oven env show --format json` without ENV reports one object per environment, as 0.5.1 did, instead of the text table (#3140).
+# cli-commands:
+#   oven env show --format json
+# expect-stdout-contains:
+#   [
+#     {
+#       "cwd": ".",
+#       "dependencies": 0,
+#       "env_vars": 0,
+#       "name": "dev",
+#       "requires_incan": "*",
+#       "scripts": 0,
+#       "toolchain_status": "satisfied"
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """A project with only the standard environments."""
+    pass

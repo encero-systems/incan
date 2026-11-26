@@ -1,0 +1,265 @@
+# behavior: trait defaults dispatch through static and instance receivers, Self satisfies its own matching generic trait bound (#2774), Self is an associated call head in trait and nominal methods (RFC 173), and nested generic static calls retain their checked error type through two enclosing models (#2808)
+# expect-stdout:
+#   42
+#   point 1
+#   point 2
+#   point 3
+#   point 4
+#   point 5!
+#   tagged
+#   /b/
+#   /c/
+#   /d/
+#   leaf
+#   trait Self 17
+#   owner Self 18
+#   6
+#   7
+#   8
+
+from std.traits.convert import From
+
+
+trait Answer:
+    """Supply a receiver-free default."""
+
+    @staticmethod
+    def answer() -> int:
+        """Return the default answer."""
+        return 42
+
+
+trait Describe:
+    """Supply receiver defaults, one of which calls the other."""
+
+    def describe(self) -> str:
+        """Return the default description."""
+        return "default"
+
+    def shout(self) -> str:
+        """Describe the receiver through its own override."""
+        return self.describe() + "!"
+
+
+trait Restore:
+    """Restore one adopter through a bounded static method."""
+
+    def tag(self) -> str:
+        """Tag an adopted value through ordinary bound dispatch."""
+        return "tagged"
+    @staticmethod
+    def restore(text: str) -> Result[Self, str]
+    @classmethod
+    def restore_class(text: str) -> Result[Self, str]
+
+
+trait WalkValue:
+    """Walk one value through a generic walker."""
+
+    def walk[E, W with ValueWalker[E]](self, mut walker: W) -> Result[str, E]
+
+
+trait ValueWalker[E]:
+    """Forward a field through this same walker by default."""
+
+    def field[V with WalkValue](mut self, value: V) -> Result[str, E]:
+        """Walk a nested value without requiring an override."""
+        return value.walk(self)
+
+
+trait NumberSource[E]:
+    """Supply one integer for reconstruction."""
+
+    def integer(mut self) -> Result[int, E]
+
+
+trait Reconstruct:
+    """Reconstruct an adopter through its associated implementation."""
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[Self, E]
+
+    @staticmethod
+    def through_default[E, S with NumberSource[E]](mut source: S) -> Result[Self, E]:
+        """Dispatch through expression-form Self inside this trait default."""
+        return Self.__reconstruct__(source)
+
+
+model Item with Answer:
+    """Adopt the default without an override."""
+
+    value: int
+
+
+model Point with Describe:
+    """Override the receiver default."""
+
+    x: int
+
+    def describe(self) -> str:
+        """Describe the point."""
+        return f"point {self.x}"
+
+
+model Holder:
+    """Hold a point in a field."""
+
+    point: Point
+
+
+model Page with Restore, From[str]:
+    """Implement the bounded static method."""
+
+    route: str
+
+    @staticmethod
+    def restore(text: str) -> Result[Page, str]:
+        """Restore a page from its route."""
+        return Ok(Page(route=text))
+
+    @classmethod
+    def restore_class(text: str) -> Result[Page, str]:
+        """Restore a page through its class receiver."""
+        return Ok(Page(route=text))
+
+    @classmethod
+    def from(text: str) -> Page:
+        """Convert a route through the standard generic conversion trait."""
+        return Page(route=text)
+
+
+model WalkLeaf with WalkValue:
+    """Return one leaf observation."""
+
+    text: str
+
+    def walk[E, W with ValueWalker[E]](self, mut walker: W) -> Result[str, E]:
+        """Return this leaf's text."""
+        return Ok(self.text)
+
+
+model WalkBranch with WalkValue:
+    """Reach a leaf through the walker's generic default."""
+
+    leaf: WalkLeaf
+
+    def walk[E, W with ValueWalker[E]](self, mut walker: W) -> Result[str, E]:
+        """Delegate the nested field to the walker."""
+        return walker.field(self.leaf)
+
+
+model DefaultWalker with ValueWalker[str]:
+    """Adopt every walker default without overrides."""
+
+    marker: int
+
+
+model IntSource with NumberSource[str]:
+    """Return one configured integer."""
+
+    value: int
+
+    def integer(mut self) -> Result[int, str]:
+        """Return the configured value."""
+        return Ok(self.value)
+
+
+model RebuiltNumber with Reconstruct:
+    """Exercise Self as a local associated-call head."""
+
+    value: int
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltNumber, E]:
+        """Build a number from the source."""
+        return Ok(RebuiltNumber(value=source.integer()?))
+
+    @staticmethod
+    def through_owner[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltNumber, E]:
+        """Dispatch through Self inside the owning model."""
+        return Self.__reconstruct__(source)
+
+
+model RebuiltOuter with Reconstruct:
+    """Hold a number reconstructed through a nested generic static call."""
+
+    number: RebuiltNumber
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltOuter, E]:
+        """Reconstruct the nested number with this call's checked error type."""
+        return Ok(RebuiltOuter(number=RebuiltNumber.__reconstruct__(source)?))
+
+
+model RebuiltEnvelope with Reconstruct:
+    """Hold two levels of nested generic static reconstruction."""
+
+    outer: RebuiltOuter
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltEnvelope, E]:
+        """Reconstruct the nested outer model with this call's checked error type."""
+        return Ok(RebuiltEnvelope(outer=RebuiltOuter.__reconstruct__(source)?))
+
+
+def make(x: int) -> Point:
+    """Return a point as a call result."""
+    return Point(x=x)
+
+
+def tag_of[T with Restore](value: T) -> str:
+    """Call the ordinary instance slot through the same bound."""
+    return value.tag()
+
+
+def restore_as[T with Restore](text: str) -> Result[T, str]:
+    """Call the static slot through a closed bounded type parameter."""
+    return T.restore(text)
+
+
+def restore_class_as[T with Restore](text: str) -> Result[T, str]:
+    """Call the classmethod slot through a closed bounded type parameter."""
+    return T.restore_class(text)
+
+
+def from_as[T with From[str]](text: str) -> T:
+    """Call a standard generic trait's classmethod through a closed bounded type parameter."""
+    return T.from(text)
+
+
+def main() -> None:
+    """Call the adopted receiver-free default, then the override through each receiver shape."""
+    println(Item.answer())
+    println(Point(x=1).describe())
+    println(make(2).describe())
+    points = [Point(x=3)]
+    println(points[0].describe())
+    holder = Holder(point=Point(x=4))
+    println(holder.point.describe())
+    println(make(5).shout())
+    println(tag_of(Page(route="/a/")))
+    match restore_as[Page]("/b/"):
+        Ok(page) => println(page.route)
+        Err(message) => println(message)
+    match restore_class_as[Page]("/c/"):
+        Ok(page) => println(page.route)
+        Err(message) => println(message)
+    println(from_as[Page]("/d/").route)
+    match WalkBranch(leaf=WalkLeaf(text="leaf")).walk(DefaultWalker(marker=0)):
+        Ok(text) => println(text)
+        Err(message) => println(message)
+    match RebuiltNumber.through_default(IntSource(value=17)):
+        Ok(value) => println(f"trait Self {value.value}")
+        Err(message) => println(message)
+    match RebuiltNumber.through_owner(IntSource(value=18)):
+        Ok(value) => println(f"owner Self {value.value}")
+        Err(message) => println(message)
+    match RebuiltNumber.__reconstruct__(IntSource(value=6)):
+        Ok(value) => println(value.value)
+        Err(message) => println(message)
+    match RebuiltOuter.__reconstruct__(IntSource(value=7)):
+        Ok(value) => println(value.number.value)
+        Err(message) => println(message)
+    match RebuiltEnvelope.__reconstruct__(IntSource(value=8)):
+        Ok(value) => println(value.outer.number.value)
+        Err(message) => println(message)

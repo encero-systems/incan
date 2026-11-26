@@ -1,0 +1,10 @@
+"""A second program of the project, which reads the same module as the first."""
+
+from shapes import Square, sides
+
+
+def main() -> None:
+    """Read the provider's computed property, which uses a private field."""
+    square = Square(side=2)
+    println(str(sides(square)))
+    println(str(square.perimeter))

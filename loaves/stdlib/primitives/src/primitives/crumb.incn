@@ -1,0 +1,16 @@
+"""Bounded foundations for experimental Crumb profiles; no complete codec is exposed yet."""
+
+pub from crate.primitives.crumb.budget import Budget
+pub from crate.primitives.crumb.errors import CrumbError, CrumbFailure
+pub from crate.primitives.crumb.framing import Reader, encode_native_signed, encode_native_unsigned, frame
+pub from crate.primitives.crumb.text_printer import print_comic
+pub from crate.primitives.crumb.text_reader import read_comic, read_comic_text
+pub from crate.primitives.crumb.text_types import (
+    TextContext,
+    TextDescription,
+    TextDocument,
+    TextError,
+    TextFailure,
+    TextPosition,
+    TextRootValue,
+)

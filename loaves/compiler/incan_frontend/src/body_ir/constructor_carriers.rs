@@ -9,7 +9,7 @@ use super::{
 use incan_semantics_core::body_ir::nominal_carrier_key;
 
 /// Previous per-expression projections restored after the constructor's supplied operands have been lowered.
-type PreviousTypes = BTreeMap<(usize, usize), Option<IncanType>>;
+type PreviousTypes = BTreeMap<crate::ast::Span, Option<IncanType>>;
 
 impl BodyBuilder<'_, '_> {
     /// Give an empty comparison literal the exact type of its checked field operand; nonempty values never gain an
@@ -166,15 +166,25 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// Emit the original checked bindings and the canonical leaves actually consumed from selected field contexts.
+    /// Emit the module's checked bindings and the canonical leaves actually consumed from selected field contexts. A
+    /// body that consumed no binding the module map lacks shares the module map; only a body that adds one gets its
+    /// own extended copy.
     pub(super) fn finish_type_identities(
         &self,
-        mut identities: BTreeMap<String, CanonicalSymbolId>,
-    ) -> BTreeMap<String, CanonicalSymbolId> {
+        base: &incan_semantics_core::body_ir::SharedIdentities,
+    ) -> incan_semantics_core::body_ir::SharedIdentities {
+        if self
+            .contextual_type_identities
+            .keys()
+            .all(|name| base.contains_key(name))
+        {
+            return std::sync::Arc::clone(base);
+        }
+        let mut identities: BTreeMap<String, CanonicalSymbolId> = base.as_ref().clone();
         for (name, identity) in &self.contextual_type_identities {
             identities.entry(name.clone()).or_insert_with(|| identity.clone());
         }
-        identities
+        std::sync::Arc::new(identities)
     }
 }
 
@@ -196,10 +206,10 @@ fn retain_context(
     expected: &IncanType,
     facts: &TypeCheckInfo,
     identities: &BTreeMap<String, CanonicalSymbolId>,
-    overrides: &mut std::collections::HashMap<(usize, usize), IncanType>,
+    overrides: &mut std::collections::HashMap<crate::ast::Span, IncanType>,
     previous: &mut PreviousTypes,
 ) {
-    let span = (expression.span.start, expression.span.end);
+    let span = expression.span;
     let recorded = overrides
         .get(&span)
         .cloned()

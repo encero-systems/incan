@@ -65,6 +65,8 @@ Unchecked lookup remains available because it is useful after validation. A plan
 
 `OrdinalKey` is the boundary for key types. A key type must provide canonical bytes for each value and a stable type-level encoding identifier for serialized maps.
 
+Keep the encoding identifier stable while stored bytes remain compatible. Assign a different identifier to an incompatible layout so existing payloads fail with an encoding mismatch. Builtin keys override the default hash and byte comparison to avoid allocating a fresh byte vector during lookup. The pointer-sized integer types are excluded because their width depends on the target.
+
 The supported surface is deterministic scalar data: text, bytes, booleans, integers, fixed-precision decimals, UUIDs, civil dates and times, stable scalar value enums, and user-defined types that implement `OrdinalKey`.
 
 Decimals are accepted because `decimal[p, s]` is precise and compiler-checked. The key bytes use the `Decimal128` runtime representation: the signed coefficient in little-endian bytes followed by the stored scale byte.
@@ -97,4 +99,3 @@ The Incan contract is deliberately different from a string-only `uint64` map. It
 
 - [Choosing collection types](../how-to/choosing_collections.md)
 - [`std.collections` reference](../reference/stdlib/collections.md)
-- [RFC 101: `std.collections.OrdinalMap`](../../RFCs/closed/implemented/101_std_collections_ordinal_map.md)

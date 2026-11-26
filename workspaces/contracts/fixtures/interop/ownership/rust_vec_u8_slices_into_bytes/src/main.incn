@@ -1,0 +1,14 @@
+# behavior: slicing a Rust Vec<u8> gives bytes, copied out of the vector
+# expect-stdout:
+#   true
+#   6
+
+from rust::byte_views import owned
+
+
+def main() -> None:
+    """Retain byte storage when slicing an inspected native vector."""
+    data = owned()
+    part: bytes = data[6:12]
+    println(part == b"bakery")
+    println(len(part))

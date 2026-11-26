@@ -1,0 +1,9 @@
+[project]
+name = "run_project_with_registry_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }

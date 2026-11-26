@@ -1,0 +1,26 @@
+# behavior: an explicit borrowed body accepts a match over unit enum variants (#2500)
+# expect-stdout:
+#   2
+
+@derive(Clone, Copy)
+enum Direction:
+    Forward
+    Reverse
+
+
+class Graph:
+    pub values: list[int]
+
+
+def selected_count(graph: Borrowed[Graph], direction: Direction) -> int:
+    """Read the graph after selecting a unit-variant branch."""
+    mut offset = 0
+    match direction:
+        Direction.Forward => offset = 1
+        Direction.Reverse => offset = 0
+    return len(graph.values) + offset
+
+
+def main() -> None:
+    graph = Graph(values=[1])
+    println(selected_count(graph, Direction.Forward))

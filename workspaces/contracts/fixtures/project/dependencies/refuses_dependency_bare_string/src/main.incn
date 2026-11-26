@@ -1,0 +1,13 @@
+# behavior: Oven refuses a bare dependency version and shows the Loaf dependency form.
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["dependencies", "regex"]: invalid
+#   use regex = { loaf = "crates-io/regex", version = "1" }
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

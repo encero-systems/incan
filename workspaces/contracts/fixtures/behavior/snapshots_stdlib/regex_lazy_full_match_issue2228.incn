@@ -1,0 +1,50 @@
+# behavior: full_match extends a lazy quantifier to cover the entire input and keeps its captures (#2228)
+# expect-stdout:
+#   abc +
+
+from std.regex import Regex
+
+
+def require_full(pattern: str, text: str, ignore_case: bool = false, dotall: bool = false, verbose: bool = false) -> None:
+    """Require the engine to cover the input while preserving construction flags and capture zero."""
+    match Regex(pattern, ignore_case=ignore_case, dotall=dotall, verbose=verbose):
+        Err(error) => assert false, error.message()
+        Ok(regex) =>
+            match regex.full_match(text):
+                None => assert false, "missing full match"
+                Some(captures) => assert captures.group(0) == Some(text)
+
+
+def require_partial() -> None:
+    """A line boundary must not turn a proper prefix into a full input match."""
+    match Regex("a", multiline=true):
+        Err(error) => assert false, error.message()
+        Ok(regex) =>
+            match regex.full_match("a\n"):
+                None => pass
+                Some(_) => assert false, "accepted a proper prefix"
+
+
+def main() -> None:
+    """Observe the captures of an unanchored lazy pattern."""
+    match Regex("(?P<value>(.*?))(?P<children>(\\+))?"):
+        Err(error) => println(error.message())
+        Ok(regex) =>
+            match regex.full_match("abc+"):
+                None => println("no full match")
+                Some(captures) =>
+                    value = captures.group("value").unwrap_or("missing")
+                    children = captures.group("children").unwrap_or("missing")
+                    println(f"{value} {children}")
+                    named = captures.groupdict()
+                    assert named["value"] == Some("abc")
+                    assert named["children"] == Some("+")
+    require_full("a|ab", "ab")
+    require_full(".*?", "")
+    require_full(".*?", "éclair")
+    require_full("a+", "AAA", ignore_case=true)
+    require_full("a.*?b", "a\nb", dotall=true)
+    require_full("a+ # tail", "aaa", verbose=true)
+    require_full("(?x)a+ # tail", "aaa")
+    require_full("a#b", "a#b")
+    require_partial()

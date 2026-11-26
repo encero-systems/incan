@@ -1,0 +1,3 @@
+"""A class whose public fields default to constructed values."""
+
+import channels

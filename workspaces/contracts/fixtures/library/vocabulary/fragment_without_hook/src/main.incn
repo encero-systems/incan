@@ -1,0 +1,12 @@
+# behavior: an owned fragment without a lowering hook keeps its explicit emission refusal
+# expect-exit: 1
+# expect-stderr-contains:
+#   unsupported source construct: embedded DSL fragment expression
+
+from pub::words import marker
+
+
+def main() -> None:
+    """Do not turn an unlowered owned fragment into a missing-desugarer failure."""
+    markup:
+        <p>{marker()}</p>

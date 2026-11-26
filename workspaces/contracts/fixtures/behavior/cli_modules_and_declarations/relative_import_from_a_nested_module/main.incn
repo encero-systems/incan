@@ -1,0 +1,16 @@
+# behavior: a relative import in a nested module climbs from the importing file's directory, in the `..`, `...` and `super` spellings alike (#1766)
+# expect-stdout:
+#   relative:7
+#   rust-style:7
+#   nested:7
+
+from app.store.nested import touch_nested
+from db.schema import Database
+from store.relative import touch
+from store.rust_style import touch_rust_style
+
+
+def main() -> None:
+    println(touch(Database(id=7)))
+    println(touch_rust_style(Database(id=7)))
+    println(touch_nested(Database(id=7)))
