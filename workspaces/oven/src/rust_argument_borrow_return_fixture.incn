@@ -64,19 +64,19 @@ def verify_borrow_transitions(binary: str, root: Path, store: Path) -> Result[No
     trace = attempt_trace(trace_root, "trace")?
 
     write(native, BORROWED_RUST)?
-    _, seed = run_fanout_probe(binary, app, store, trace, "seed", "9\n5\n7\n")?
-    seed_handle, _ = selected_fanout_program(store, settlement_window(trace, seed)?)?
+    _seed_report, seed = run_fanout_probe(binary, app, store, trace, "seed", "9\n5\n7\n")?
+    seed_handle, _seed_unit = selected_fanout_program(store, settlement_window(trace, seed)?)?
     control = control_namespace(store)?
 
     borrowed_body = BORROWED_RUST.replace("as i64 + 0", "as i64 + 10")
     write(native, borrowed_body)?
-    _, earlier = run_fanout_probe(binary, app, store, trace, "borrowed edit", "19\n15\n7\n")?
+    _edited_report, earlier = run_fanout_probe(binary, app, store, trace, "borrowed edit", "19\n15\n7\n")?
     earlier_handle, earlier_unit = selected_fanout_program(store, settlement_window(trace, earlier)?)?
     if earlier_handle == seed_handle:
         return Err("10.3 Rust body edit did not advance the application capture")
 
     write(native, borrowed_body.replace("text: &str", "text: String"))?
-    _, owned = run_fanout_probe(binary, app, store, trace, "owned", "19\n15\n7\n")?
+    _owned_report, owned = run_fanout_probe(binary, app, store, trace, "owned", "19\n15\n7\n")?
     owned_window = settlement_window(trace, owned)?
     owned_handle, owned_unit = selected_fanout_program(store, owned_window)?
     if owned_handle == earlier_handle or owned_unit.identity == earlier_unit.identity:
