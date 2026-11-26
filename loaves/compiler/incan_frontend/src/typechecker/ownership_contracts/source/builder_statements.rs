@@ -46,81 +46,16 @@ impl Builder<'_> {
                 return Ok(incoming);
             }
         }
-        let source = self.optional_place(&assignment.value)?;
+        let mut source = self.optional_place(&assignment.value)?;
         if let Some(mode) = mode {
-            if root.kind != SemanticSourceTargetKind::Local || mode.owner != self.owner {
-                return Err(Unavailable {
-                    span: mode.annotation,
-                    reason: "local ownership annotation does not belong to its checked declaration".into(),
-                });
-            }
-            if mode.mode == OwnershipMode::Reference {
-                return Err(Unavailable {
-                    span: mode.annotation,
-                    reason: "returned-reference local dependency".into(),
-                });
-            }
-            if self.checker.type_info.assignment_binding_type(span) != Some(&mode.value_type) {
-                return Err(Unavailable {
-                    span: mode.annotation,
-                    reason: "local mode and checked value type disagree".into(),
-                });
-            }
-            if mode.mode != OwnershipMode::Owned {
-                let source = source.ok_or(Unavailable {
-                    span: assignment.value.span,
-                    reason: "local borrow requires a checked owner place".into(),
-                })?;
-                let incoming = self.evaluate_place(&assignment.value, incoming)?;
-                let loan = LoanId(self.graph.loans.len());
-                self.graph.loans.push(Loan {
-                    source: source.place.clone(),
-                    kind: if mode.mode == OwnershipMode::Borrowed {
-                        LoanKind::Shared
-                    } else {
-                        LoanKind::Exclusive
-                    },
-                    writable: mode.writable,
-                    parent: source.through,
-                    span: assignment.value.span,
-                });
-                if self.graph.local_loans.insert(root.clone(), loan).is_some() {
-                    return Err(Unavailable {
-                        span: mode.annotation,
-                        reason: "local declaration has more than one ownership destination".into(),
-                    });
-                }
-                self.aliases.insert(
-                    root,
-                    Path {
-                        place: source.place,
-                        through: Some(loan),
-                    },
-                );
-                return Ok(self.event(incoming, Event::Borrow(loan), assignment.value.span));
-            }
-            if let Some(source) = &source {
-                self.constrained.insert(source.place.root.clone());
+            let (next, bound) = self.annotated_local(assignment, span, &root, mode, &mut source, incoming)?;
+            incoming = next;
+            if bound {
+                return Ok(incoming);
             }
         }
         let value_use = if mode.is_none() && root.declaration_span == assignment.name_span {
-            if let Expr::Match(_, arms) = &assignment.value.node {
-                self.classify_value_use(
-                    &assignment.value,
-                    super::value_uses::ValueUseContext::MatchAssignment(arms),
-                )?
-            } else if let Some(source) = &source {
-                self.classify_value_use(
-                    &assignment.value,
-                    super::value_uses::ValueUseContext::LocalInitializer {
-                        assignment,
-                        destination: &root,
-                        source,
-                    },
-                )?
-            } else {
-                None
-            }
+            self.classify_local_initializer(assignment, &root, source.as_ref())?
         } else {
             None
         };
@@ -168,6 +103,102 @@ impl Builder<'_> {
         ))
     }
 
+    /// Check an annotated local declaration against its checked mode. A borrowed or mutably borrowed local takes a
+    /// loan of its exact source place and aliases it, completing the binding; an owned local constrains its source and
+    /// continues as an ordinary assignment. The boolean says whether the binding completed.
+    fn annotated_local(
+        &mut self,
+        assignment: &AssignmentStmt,
+        span: Span,
+        root: &CanonicalSymbolId,
+        mode: &super::super::LocalMode,
+        source: &mut Option<Path>,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, bool), Unavailable> {
+        if root.kind != SemanticSourceTargetKind::Local || mode.owner != self.owner {
+            return Err(Unavailable {
+                span: mode.annotation,
+                reason: "local ownership annotation does not belong to its checked declaration".into(),
+            });
+        }
+        if mode.mode == OwnershipMode::Reference {
+            return Err(Unavailable {
+                span: mode.annotation,
+                reason: "returned-reference local dependency".into(),
+            });
+        }
+        if self.checker.type_info.assignment_binding_type(span) != Some(&mode.value_type) {
+            return Err(Unavailable {
+                span: mode.annotation,
+                reason: "local mode and checked value type disagree".into(),
+            });
+        }
+        if mode.mode == OwnershipMode::Owned {
+            if let Some(source) = source.as_ref() {
+                self.constrained.insert(source.place.root.clone());
+            }
+            return Ok((incoming, false));
+        }
+        let source = source.take().ok_or(Unavailable {
+            span: assignment.value.span,
+            reason: "local borrow requires a checked owner place".into(),
+        })?;
+        let incoming = self.evaluate_place(&assignment.value, incoming)?;
+        let loan = LoanId(self.graph.loans.len());
+        self.graph.loans.push(Loan {
+            source: source.place.clone(),
+            kind: if mode.mode == OwnershipMode::Borrowed {
+                LoanKind::Shared
+            } else {
+                LoanKind::Exclusive
+            },
+            writable: mode.writable,
+            parent: source.through,
+            span: assignment.value.span,
+        });
+        if self.graph.local_loans.insert(root.clone(), loan).is_some() {
+            return Err(Unavailable {
+                span: mode.annotation,
+                reason: "local declaration has more than one ownership destination".into(),
+            });
+        }
+        self.aliases.insert(
+            root.clone(),
+            Path {
+                place: source.place,
+                through: Some(loan),
+            },
+        );
+        Ok((self.event(incoming, Event::Borrow(loan), assignment.value.span), true))
+    }
+
+    /// Classify how a fresh unannotated local's initializer is used: a match assignment, or a local initialized from
+    /// a checked source place. Any other initializer has no value-use plan.
+    fn classify_local_initializer(
+        &mut self,
+        assignment: &AssignmentStmt,
+        root: &CanonicalSymbolId,
+        source: Option<&Path>,
+    ) -> Result<Option<super::value_uses::ValueUsePlan>, Unavailable> {
+        if let Expr::Match(_, arms) = &assignment.value.node {
+            self.classify_value_use(
+                &assignment.value,
+                super::value_uses::ValueUseContext::MatchAssignment(arms),
+            )
+        } else if let Some(source) = source {
+            self.classify_value_use(
+                &assignment.value,
+                super::value_uses::ValueUseContext::LocalInitializer {
+                    assignment,
+                    destination: root,
+                    source,
+                },
+            )
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Bind a closure capture, direct returned view or carried view to a fresh unannotated local. The boolean
     /// distinguishes a completed binding from an ordinary assignment while returning the source-flow frontier
     /// without cloning it.
@@ -196,24 +227,14 @@ impl Builder<'_> {
             if result.loans.is_empty() {
                 return Ok((result.incoming, false));
             }
-            if self.graph.dependent_locals.insert(root.clone(), result.loans).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "lazy result has more than one dependency destination".into(),
-                });
-            }
+            self.retain_dependent_local(assignment, root, result.loans, "lazy result")?;
             return Ok((result.incoming, true));
         }
         if let Some(result) = self.retained_carrier(&assignment.value, incoming.clone(), false)? {
             if result.loans.is_empty() {
                 return Ok((result.incoming, false));
             }
-            if self.graph.dependent_locals.insert(root.clone(), result.loans).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "lazy carrier has more than one dependency destination".into(),
-                });
-            }
+            self.retain_dependent_local(assignment, root, result.loans, "lazy carrier")?;
             self.graph.dependent_values.insert(assignment.value.span);
             return Ok((result.incoming, true));
         }
@@ -224,12 +245,7 @@ impl Builder<'_> {
             .filter(|relation| !relation.component.is_empty() && relation.carried.is_none())
         {
             let (incoming, loans) = self.evaluate_aggregate_view_call(&assignment.value, relation, incoming)?;
-            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "aggregate view has more than one dependency destination".into(),
-                });
-            }
+            self.retain_dependent_local(assignment, root, loans, "aggregate view")?;
             return Ok((incoming, true));
         }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
@@ -248,12 +264,7 @@ impl Builder<'_> {
             && !relation.sources.is_empty()
         {
             let (incoming, loans) = self.evaluate_native_result(&assignment.value, &relation, incoming)?;
-            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "native borrowed result local has more than one dependency destination".into(),
-                });
-            }
+            self.retain_dependent_local(assignment, root, loans, "native borrowed result local")?;
             return Ok((incoming, true));
         }
         // A top-level owned result keeps its declared source dependency while remaining independent value storage.
@@ -263,23 +274,13 @@ impl Builder<'_> {
                 span: assignment.value.span,
                 reason: "owned result has no retained source loan".into(),
             })?;
-            if self.graph.dependent_locals.insert(root.clone(), vec![loan]).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "owned result local has more than one dependency destination".into(),
-                });
-            }
+            self.retain_dependent_local(assignment, root, vec![loan], "owned result local")?;
             return Ok((incoming, true));
         }
         if let Expr::List(entries) = &assignment.value.node
             && let Some((incoming, loans)) = self.dependent_list(entries, &incoming)?
         {
-            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "reference-carrying list has more than one dependency destination".into(),
-                });
-            }
+            self.retain_dependent_local(assignment, root, loans, "reference-carrying list")?;
             self.graph.dependent_values.insert(assignment.value.span);
             return Ok((incoming, true));
         }
@@ -304,6 +305,24 @@ impl Builder<'_> {
                 .insert(root.clone(), matches::BoundCarrier { payload, loop_depth });
         }
         Ok((incoming, true))
+    }
+
+    /// Record the loans a fresh local's value depends on. A local has one dependency destination; `subject` names
+    /// the initializer in the refusal of a second.
+    fn retain_dependent_local(
+        &mut self,
+        assignment: &AssignmentStmt,
+        root: &CanonicalSymbolId,
+        loans: Vec<LoanId>,
+        subject: &str,
+    ) -> Result<(), Unavailable> {
+        if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
+            return Err(Unavailable {
+                span: assignment.name_span,
+                reason: format!("{subject} has more than one dependency destination"),
+            });
+        }
+        Ok(())
     }
 
     /// Retain one result loan and its substituted source alias for a fresh unannotated local.
@@ -713,116 +732,15 @@ impl Builder<'_> {
                     None => self.expression(value, incoming, false),
                 },
             },
-            Statement::Assert(assertion) => {
-                let crate::ast::AssertKind::Condition(condition) = &assertion.kind else {
-                    return Err(Unavailable {
-                        span: statement.span,
-                        reason: "pattern assertion needs checked binding access".into(),
-                    });
-                };
-                if self.checker.type_info.expr_type(condition.span) != Some(&ResolvedType::Bool) {
-                    return Err(Unavailable {
-                        span: condition.span,
-                        reason: "assertion truthiness needs checked callable access".into(),
-                    });
-                }
-                let incoming = self.expression(condition, incoming, false)?;
-                if let Some(message) = &assertion.message {
-                    if !matches!(
-                        self.checker.type_info.expr_type(message.span),
-                        Some(ResolvedType::Str | ResolvedType::FrozenStr)
-                    ) {
-                        return Err(Unavailable {
-                            span: message.span,
-                            reason: "assertion message needs checked display access".into(),
-                        });
-                    }
-                    // The failure message is evaluated only on the terminating failure path. Its reads remain in
-                    // the graph, but its transfers do not flow into statements on the successful path.
-                    self.expression(message, incoming.clone(), false)?;
-                }
-                Ok(incoming)
-            }
-            Statement::Return(value) => {
-                match (value, self.view.clone(), self.owned_source.clone()) {
-                    (Some(value), Some((exclusive, source)), None)
-                        if !self.view_component.is_empty() && self.view_carried.is_none() =>
-                    {
-                        self.aggregate_return(value, &self.view_component.clone(), exclusive, &source, incoming)?;
-                    }
-                    (Some(value), Some((exclusive, source)), None) => match self.view_carried {
-                        Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
-                        None => {
-                            self.view_return(value, exclusive, &source, incoming)?;
-                        }
-                    },
-                    (None, Some(_), None) => self.view_errors.push(view_error(
-                        "A returned view must return its declared source place",
-                        statement.span,
-                    )),
-                    (Some(value), None, Some(source)) => {
-                        self.owned_return(value, &source, incoming)?;
-                    }
-                    (None, None, Some(_)) => {
-                        return Err(Unavailable {
-                            span: statement.span,
-                            reason: "owned result dependency requires a returned value".into(),
-                        });
-                    }
-                    (Some(value), None, None) => {
-                        if let Some(result) = self.retained_result(value, incoming.clone(), true)? {
-                            self.escape_retained_result(result, value.span)?;
-                        } else if let Some(result) = self.retained_carrier(value, incoming.clone(), true)? {
-                            self.escape_retained_result(result, value.span)?;
-                        } else if let Some(result) = self.stored_result(value, incoming.clone())? {
-                            self.escape_retained_result(result, value.span)?;
-                        } else {
-                            self.expression(value, incoming, true)?;
-                        }
-                    }
-                    (None, None, None) => {}
-                    (_, Some(_), Some(_)) => {
-                        return Err(Unavailable {
-                            span: statement.span,
-                            reason: "result cannot be both a returned view and owned dependency".into(),
-                        });
-                    }
-                }
-                Ok(Vec::new())
-            }
+            Statement::Assert(assertion) => self.assert_statement(statement.span, assertion, incoming),
+            Statement::Return(value) => self.return_statement(statement.span, value.as_ref(), incoming),
             Statement::Assignment(assignment) => self.assignment(assignment, statement.span, incoming),
             Statement::TupleUnpack(unpack) => self.tuple_unpack(unpack, incoming),
             Statement::FieldAssignment(assignment) => self.field_assignment(assignment, incoming),
             Statement::IndexAssignment(assignment) => self.index_assignment(assignment, statement.span, incoming),
             Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment, statement.span, incoming),
             Statement::If(branch) => self.if_statement(branch, incoming),
-            Statement::While(loop_) => {
-                let header = self.event(incoming, Event::Nothing, statement.span)[0];
-                let (condition, exit, dictionary_bindings) = match &loop_.condition {
-                    Condition::Let { pattern, value } => {
-                        match self.dictionary_condition(pattern, value, vec![header])? {
-                            Some((matched, unmatched, bindings)) => (matched, unmatched, bindings),
-                            None => (self.condition(&loop_.condition, vec![header])?, Vec::new(), Vec::new()),
-                        }
-                    }
-                    Condition::Expr(_) => {
-                        let evaluated = self.condition(&loop_.condition, vec![header])?;
-                        (evaluated.clone(), evaluated, Vec::new())
-                    }
-                };
-                self.loops.push(LoopEdges {
-                    header,
-                    breaks: Vec::new(),
-                });
-                let body = self.block(&loop_.body, condition.clone())?;
-                self.leave_dictionary_bindings(&dictionary_bindings);
-                self.connect(&body, header);
-                let loop_ = self.loops.pop().ok_or(Unavailable {
-                    span: statement.span,
-                    reason: "missing loop owner".into(),
-                })?;
-                Ok(exit.into_iter().chain(loop_.breaks).collect())
-            }
+            Statement::While(loop_) => self.while_statement(statement.span, loop_, incoming),
             Statement::Loop(loop_) => {
                 let header = self.event(incoming, Event::Nothing, statement.span)[0];
                 self.loops.push(LoopEdges {
@@ -881,5 +799,132 @@ impl Builder<'_> {
                 reason: "statement needs additional checked dependency facts".into(),
             }),
         }
+    }
+
+    /// Evaluate a checked boolean assertion. Its text message is read only on the terminating failure path, so the
+    /// message's transfers never reach the statements that follow.
+    fn assert_statement(
+        &mut self,
+        span: Span,
+        assertion: &crate::ast::AssertStmt,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let crate::ast::AssertKind::Condition(condition) = &assertion.kind else {
+            return Err(Unavailable {
+                span,
+                reason: "pattern assertion needs checked binding access".into(),
+            });
+        };
+        if self.checker.type_info.expr_type(condition.span) != Some(&ResolvedType::Bool) {
+            return Err(Unavailable {
+                span: condition.span,
+                reason: "assertion truthiness needs checked callable access".into(),
+            });
+        }
+        let incoming = self.expression(condition, incoming, false)?;
+        if let Some(message) = &assertion.message {
+            if !matches!(
+                self.checker.type_info.expr_type(message.span),
+                Some(ResolvedType::Str | ResolvedType::FrozenStr)
+            ) {
+                return Err(Unavailable {
+                    span: message.span,
+                    reason: "assertion message needs checked display access".into(),
+                });
+            }
+            // The failure message is evaluated only on the terminating failure path. Its reads remain in
+            // the graph, but its transfers do not flow into statements on the successful path.
+            self.expression(message, incoming.clone(), false)?;
+        }
+        Ok(incoming)
+    }
+
+    /// Evaluate a return against the body's declared result relation: a returned view, carried view or aggregate view
+    /// must return its declared source, an owned dependency must return a value, and any other returned value escapes
+    /// with its retained result loans. A return has no successors.
+    fn return_statement(
+        &mut self,
+        span: Span,
+        value: Option<&Spanned<Expr>>,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        match (value, self.view.clone(), self.owned_source.clone()) {
+            (Some(value), Some((exclusive, source)), None)
+                if !self.view_component.is_empty() && self.view_carried.is_none() =>
+            {
+                self.aggregate_return(value, &self.view_component.clone(), exclusive, &source, incoming)?;
+            }
+            (Some(value), Some((exclusive, source)), None) => match self.view_carried {
+                Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
+                None => {
+                    self.view_return(value, exclusive, &source, incoming)?;
+                }
+            },
+            (None, Some(_), None) => self.view_errors.push(view_error(
+                "A returned view must return its declared source place",
+                span,
+            )),
+            (Some(value), None, Some(source)) => {
+                self.owned_return(value, &source, incoming)?;
+            }
+            (None, None, Some(_)) => {
+                return Err(Unavailable {
+                    span,
+                    reason: "owned result dependency requires a returned value".into(),
+                });
+            }
+            (Some(value), None, None) => {
+                if let Some(result) = self.retained_result(value, incoming.clone(), true)? {
+                    self.escape_retained_result(result, value.span)?;
+                } else if let Some(result) = self.retained_carrier(value, incoming.clone(), true)? {
+                    self.escape_retained_result(result, value.span)?;
+                } else if let Some(result) = self.stored_result(value, incoming.clone())? {
+                    self.escape_retained_result(result, value.span)?;
+                } else {
+                    self.expression(value, incoming, true)?;
+                }
+            }
+            (None, None, None) => {}
+            (_, Some(_), Some(_)) => {
+                return Err(Unavailable {
+                    span,
+                    reason: "result cannot be both a returned view and owned dependency".into(),
+                });
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Project a while loop: its condition, or its dictionary lookup binding, guards the body, the body loops back to
+    /// the header, and the loop exits when the condition fails or through a break.
+    fn while_statement(
+        &mut self,
+        span: Span,
+        loop_: &crate::ast::WhileStmt,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let header = self.event(incoming, Event::Nothing, span)[0];
+        let (condition, exit, dictionary_bindings) = match &loop_.condition {
+            Condition::Let { pattern, value } => match self.dictionary_condition(pattern, value, vec![header])? {
+                Some((matched, unmatched, bindings)) => (matched, unmatched, bindings),
+                None => (self.condition(&loop_.condition, vec![header])?, Vec::new(), Vec::new()),
+            },
+            Condition::Expr(_) => {
+                let evaluated = self.condition(&loop_.condition, vec![header])?;
+                (evaluated.clone(), evaluated, Vec::new())
+            }
+        };
+        self.loops.push(LoopEdges {
+            header,
+            breaks: Vec::new(),
+        });
+        let body = self.block(&loop_.body, condition.clone())?;
+        self.leave_dictionary_bindings(&dictionary_bindings);
+        self.connect(&body, header);
+        let loop_ = self.loops.pop().ok_or(Unavailable {
+            span,
+            reason: "missing loop owner".into(),
+        })?;
+        Ok(exit.into_iter().chain(loop_.breaks).collect())
     }
 }
