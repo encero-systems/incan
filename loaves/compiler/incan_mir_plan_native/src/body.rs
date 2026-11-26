@@ -250,6 +250,8 @@ pub enum CalleeKind {
     CallClosureOnce(Vec<PlanType>),
     /// Invoke the shared view of a callable object that holds borrowed captures, with one packed argument tuple.
     CallBorrowingClosure(Vec<PlanType>),
+    /// Reborrow an exclusive callable for one invocation with its packed argument tuple.
+    CallExclusiveClosure(Vec<PlanType>),
     /// Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
     StaticLoad(i64),
     /// Replace the value of computed static storage slot `n`.

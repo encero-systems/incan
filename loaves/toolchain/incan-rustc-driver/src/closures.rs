@@ -1,7 +1,7 @@
 //! Boxed native environments for planned capturing closures.
 //!
-//! A closure constructor's AST boxes one `move` closure. Its placeholder borrows captures for a reusable `Fn`
-//! environment, or consumes them for a proven `FnOnce` environment, matching the planned object type.
+//! A closure constructor's AST boxes one `move` closure. The placeholder borrows its captures with the access
+//! of the planned `Fn` or `FnMut` receiver, or consumes them for a proven `FnOnce` environment.
 //! The constructor keeps rustc's own MIR; only the closure's executable body is replaced, with a call that forwards
 //! the captures and then the closure's inputs to the Incan-planned lifted function.
 
@@ -20,7 +20,7 @@ use thin_vec::{ThinVec, thin_vec};
 /// Whether this synthesized function constructs an environment whose references bound the returned callable.
 fn borrowing_constructor(function: &Function) -> Option<&[PlanType]> {
     match &function.return_type {
-        PlanType::BorrowingClosure(signature) => Some(signature),
+        PlanType::BorrowingClosure(signature) | PlanType::ExclusiveClosure(signature) => Some(signature),
         _ => None,
     }
 }
@@ -57,7 +57,9 @@ pub(crate) fn constructor_parameter_type(function: &Function, index: usize, span
 
 /// Bind a borrowing closure result to the common lifetime all of its capture loans outlive.
 pub(crate) fn constructor_return_type(function: &Function, span: Span) -> Option<Box<ast::Ty>> {
-    borrowing_constructor(function).map(|signature| declarations::borrowing_closure_ast(signature, "'closure", span))
+    let exclusive = matches!(&function.return_type, PlanType::ExclusiveClosure(_));
+    borrowing_constructor(function)
+        .map(|signature| declarations::borrowing_closure_ast(signature, exclusive, "'closure", span))
 }
 
 /// Build one named lifetime use for a generated signature.
@@ -119,18 +121,20 @@ fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
 /// Declare `::std::boxed::Box::new(move |_: A, ...| -> R { let _ = (&capture, ...); loop {} })` as the constructor's
 /// tail, spelled from the crate root so a source declaration named `Box` cannot shadow it.
 ///
-/// The placeholder borrows captures for `Fn` or consumes them for `FnOnce`; it never runs because [`callback`]
-/// replaces its MIR. Preflight proves the constructor's object kind and exact capture parameters.
+/// The placeholder selects closure access from the captures. It never runs because [`callback`] replaces its MIR.
+/// Preflight proves the constructor's object kind and exact capture parameters.
 pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Block>> {
     constructor(function)?;
     let (PlanType::Closure(signature)
     | PlanType::ClosureOnce(signature)
     | PlanType::NativeClosure(signature, _, _)
-    | PlanType::BorrowingClosure(signature)) = &function.return_type
+    | PlanType::BorrowingClosure(signature)
+    | PlanType::ExclusiveClosure(signature)) = &function.return_type
     else {
         return None;
     };
     let consumes_environment = matches!(function.return_type, PlanType::ClosureOnce(_));
+    let exclusive = matches!(function.return_type, PlanType::ExclusiveClosure(_));
     let (result, inputs) = signature.split_last()?;
     let borrows = function
         .parameters
@@ -143,10 +147,16 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
             if consumes_environment {
                 return capture;
             }
-            expression(
-                ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, capture),
-                span,
-            )
+            let mutable_capture = exclusive && crate::plan::exclusive_capture(&parameter.ty);
+            let (mode, place) = if mutable_capture {
+                (
+                    ast::Mutability::Mut,
+                    expression(ast::ExprKind::Unary(ast::UnOp::Deref, capture), span),
+                )
+            } else {
+                (ast::Mutability::Not, capture)
+            };
+            expression(ast::ExprKind::AddrOf(ast::BorrowKind::Ref, mode, place), span)
         })
         .collect();
     let capture_use = expression(ast::ExprKind::Tup(borrows), span);
@@ -242,11 +252,32 @@ fn consume_captures(captures: Box<ast::Expr>, span: Span) -> Box<ast::Expr> {
     expression(ast::ExprKind::Call(callee, thin_vec![captures]), span)
 }
 
+/// How a native callback supplies one environment field to its lifted function.
+pub(crate) enum CaptureTransfer {
+    Move,
+    Reborrow,
+    Clone,
+    Copy,
+}
+
+/// Select capture transfer once for both the callback and its native trait check.
+pub(crate) fn capture_transfer(function: &Function, capture: &PlanType) -> CaptureTransfer {
+    if matches!(function.return_type, PlanType::ClosureOnce(_)) {
+        CaptureTransfer::Move
+    } else if crate::plan::exclusive_capture(capture) {
+        CaptureTransfer::Reborrow
+    } else if crate::plan::owned_capture(capture.clone()) {
+        CaptureTransfer::Clone
+    } else {
+        CaptureTransfer::Copy
+    }
+}
+
 /// Replace the inferred closure's placeholder blocks with a call to the lifted function.
 ///
 /// rustc retains the closure's inferred ABI and by-value capture layout. Each call forwards captures followed by
-/// inputs, preserving the lifted result. Reusable environments copy scalars and clone owned text, lists, and models;
-/// consuming environments move their fields exactly once.
+/// inputs, preserving the lifted result. Reusable environments copy scalars, clone owned snapshots, and reborrow
+/// exclusive captures. Consuming environments move their fields exactly once.
 pub fn callback<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: LocalDefId,
@@ -260,22 +291,38 @@ pub fn callback<'tcx>(
     let span = body.span;
     let environment = body.local_decls[mir::Local::from_usize(1)].ty;
     let consumes_environment = matches!(constructor_function.return_type, PlanType::ClosureOnce(_));
+    let has_exclusive_capture = constructor_function
+        .parameters
+        .iter()
+        .any(|parameter| crate::plan::exclusive_capture(&parameter.ty));
     let closure = if consumes_environment {
         environment
     } else {
-        let ty::Ref(_, closure, _) = environment.kind() else {
+        let ty::Ref(_, closure, mutability) = environment.kind() else {
             return Err(PlanError::Invalid {
                 function: constructor_function.name.clone(),
-                reason: "closure environment is not a shared Fn borrow".into(),
+                reason: "reusable closure environment is not borrowed".into(),
             });
         };
+        // The FnMut carrier can lend a shared callable. Only an exclusive capture requires a mutable receiver.
+        let accepts_receiver = if mutability.is_mut() {
+            matches!(constructor_function.return_type, PlanType::ExclusiveClosure(_))
+        } else {
+            !has_exclusive_capture
+        };
+        if !accepts_receiver {
+            return Err(PlanError::Invalid {
+                function: constructor_function.name.clone(),
+                reason: "closure receiver disagrees with its planned access".into(),
+            });
+        }
         *closure
     };
     let ty::Closure(_, arguments) = closure.kind() else {
         return Err(PlanError::UnknownCallee(lifted.into()));
     };
     let captures = arguments.as_closure().upvar_tys();
-    if i64::try_from(captures.len()).ok() != Some(count) {
+    if i64::try_from(captures.len()).ok() != Some(count) || captures.len() != constructor_function.parameters.len() {
         return Err(PlanError::Invalid {
             function: constructor_function.name.clone(),
             reason: "closure environment differs from the planned capture count".into(),
@@ -288,23 +335,26 @@ pub fn callback<'tcx>(
     };
     let mut blocks = Vec::new();
     let mut operands = Vec::new();
+    let mut loans = Vec::new();
     for (index, ty) in captures.iter().enumerate() {
         let field = environment_place.project_deeper(
             &[mir::ProjectionElem::Field(rustc_abi::FieldIdx::from_usize(index), ty)],
             tcx,
         );
-        let owned = constructor_function
-            .parameters
-            .get(index)
-            .is_some_and(|parameter| crate::plan::owned_capture(parameter.ty.clone()));
-        let node = if consumes_environment {
-            mir::Operand::Move(field)
-        } else if owned {
-            let (block, clone) = clone_capture(tcx, &mut body, field, ty, blocks.len() + 1, span)?;
-            blocks.push(block);
-            mir::Operand::Move(clone.into())
-        } else {
-            mir::Operand::Copy(field)
+        let capture_type = &constructor_function.parameters[index].ty;
+        let node = match capture_transfer(constructor_function, capture_type) {
+            CaptureTransfer::Move => mir::Operand::Move(field),
+            CaptureTransfer::Reborrow => {
+                let (loan, reference) = reborrow_capture(tcx, &mut body, field, ty, span);
+                loans.push(loan);
+                mir::Operand::Move(reference.into())
+            }
+            CaptureTransfer::Clone => {
+                let (block, clone) = clone_capture(tcx, &mut body, field, ty, blocks.len() + 1, span)?;
+                blocks.push(block);
+                mir::Operand::Move(clone.into())
+            }
+            CaptureTransfer::Copy => mir::Operand::Copy(field),
         };
         operands.push(Spanned { node, span });
     }
@@ -327,10 +377,33 @@ pub fn callback<'tcx>(
         call_source: mir::CallSource::Normal,
         fn_span: span,
     };
-    blocks.push(terminated(vec![], call, span));
+    blocks.push(terminated(loans, call, span));
     blocks.push(terminated(vec![], mir::TerminatorKind::Return, span));
     *body.basic_blocks_mut() = IndexVec::from_raw(blocks);
     Ok(body)
+}
+
+/// Reborrow the referent for this call without moving its capture loan out of the exclusive receiver.
+fn reborrow_capture<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &mut mir::Body<'tcx>,
+    field: mir::Place<'tcx>,
+    ty: ty::Ty<'tcx>,
+    span: Span,
+) -> (mir::Statement<'tcx>, mir::Local) {
+    let local = body.local_decls.push(mir::LocalDecl::new(ty, span));
+    let value = mir::Rvalue::Ref(
+        tcx.lifetimes.re_erased,
+        mir::BorrowKind::Mut {
+            kind: mir::MutBorrowKind::Default,
+        },
+        field.project_deeper(&[mir::ProjectionElem::Deref], tcx),
+    );
+    let loan = mir::Statement::new(
+        mir::SourceInfo::outermost(span),
+        mir::StatementKind::Assign(Box::new((local.into(), value))),
+    );
+    (loan, local)
 }
 
 /// Clone one owned capture out of the shared environment into a fresh local, continuing at block `next`.

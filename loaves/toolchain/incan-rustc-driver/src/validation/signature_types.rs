@@ -23,6 +23,7 @@ pub(super) fn shared_reference(ty: &Scalar) -> bool {
             | Scalar::GeneratorYieldRef(_, _)
             | Scalar::ClosureRef(_)
             | Scalar::BorrowingClosureRef(_)
+            | Scalar::ExclusiveClosureRef(_)
     )
 }
 
@@ -87,6 +88,8 @@ pub(super) fn source_signature_type(ty: &Scalar) -> bool {
     | Scalar::ClosureRef(signature)
     | Scalar::BorrowingClosure(signature)
     | Scalar::BorrowingClosureRef(signature)
+    | Scalar::ExclusiveClosure(signature)
+    | Scalar::ExclusiveClosureRef(signature)
     | Scalar::NativeClosure(signature, _, _) = ty
     {
         return callable_object_signature(signature);

@@ -538,7 +538,7 @@ impl TypeChecker {
         let previous_spans = std::mem::take(&mut self.c_abi_span_bindings);
         let previous_consumed_spans = std::mem::take(&mut self.consumed_c_abi_span_bindings);
 
-        if !is_async && matches!(self.current_yield_context, YieldContext::Disallowed) {
+        if matches!(self.current_yield_context, YieldContext::Disallowed) {
             self.begin_inferred_parameter_fields();
         }
         self.check_statement_block(body);

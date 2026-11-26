@@ -375,11 +375,7 @@ pub fn rvalue<'tcx>(
         }
         RvalueKind::NumericCast(value, source, target) => numeric_cast_rvalue(tcx, sources, value, source, target)?,
         RvalueKind::FunctionItem(callee) => function_item_rvalue(tcx, sources, callee)?,
-        RvalueKind::ClosureObject(value) => mir::Rvalue::Ref(
-            tcx.lifetimes.re_erased,
-            mir::BorrowKind::Shared,
-            place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
-        ),
+        RvalueKind::ClosureObject(value) => closure_receiver(tcx, value, destination_type)?,
         RvalueKind::ReifyFunction(value) => reify_function_rvalue(tcx, sources, value, destination_type)?,
         RvalueKind::FunctionAddress(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerExposeProvenance,
@@ -454,6 +450,25 @@ pub fn rvalue<'tcx>(
             native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// Borrow the boxed callable's referent for the shared or exclusive receiver required by its call.
+fn closure_receiver<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    value: &crate::plan::Place,
+    destination_type: &PlanType,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    Ok(mir::Rvalue::Ref(
+        tcx.lifetimes.re_erased,
+        if matches!(destination_type, PlanType::ExclusiveClosureRef(_)) {
+            mir::BorrowKind::Mut {
+                kind: mir::MutBorrowKind::Default,
+            }
+        } else {
+            mir::BorrowKind::Shared
+        },
+        place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
+    ))
 }
 
 /// The function handle of a resolved callee, as a value.

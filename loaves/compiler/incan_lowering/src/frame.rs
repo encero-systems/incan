@@ -54,6 +54,8 @@ pub struct Builder {
     pub partial_callables: Vec<(i64, Vec<bool>)>,
     pub scalar_closures: Vec<i64>,
     pub unproven_closures: Vec<i64>,
+    /// Whether each locally constructed or moved closure slot holds only storage-releasing environments.
+    pub closure_drop: Vec<(i64, bool)>,
     pub program: ProgramContext,
     pub unions: Vec<IncanType>,
     pub local_offset: i64,
@@ -126,6 +128,23 @@ impl Builder {
             unions: &self.unions,
             intrinsics: &self.intrinsics,
         }
+    }
+
+    /// Retain the proof only if every observed assignment to this slot releases only storage.
+    pub fn record_closure_drop(&mut self, local: i64, releases_only_storage: bool) {
+        if let Some((_, proven)) = self.closure_drop.iter_mut().find(|(slot, _)| *slot == local) {
+            *proven &= releases_only_storage;
+        } else {
+            self.closure_drop.push((local, releases_only_storage));
+        }
+    }
+
+    /// Admit an early drop only for a local whose concrete environment construction proves it.
+    pub fn closure_releases_only_storage(&self, local: i64) -> bool {
+        matches!(
+            &self.locals[local as usize].ty,
+            PlanType::BorrowingClosure(_) | PlanType::ExclusiveClosure(_)
+        ) && self.closure_drop.iter().any(|&(slot, proven)| slot == local && proven)
     }
 
     /// Allocate a block before connecting edges, preserving index stability.
@@ -368,9 +387,14 @@ pub fn terminate_call(
 /// Own storage materialized for one call, and pair it with the reference that call receives.
 pub fn lend_invocation_storage(builder: &mut Builder, storage: &Place, lent: &Operand) {
     builder.owned.push(storage.local);
+    retain_invocation_loan(builder, storage.local, lent);
+}
+
+/// Schedule the existing owner to drop after the invocation that receives its loan.
+pub fn retain_invocation_loan(builder: &mut Builder, storage: i64, lent: &Operand) {
     match &lent.kind {
         OperandKind::Copy(reference) | OperandKind::Move(reference) => {
-            builder.invocation_storage.push((reference.local, storage.local))
+            builder.invocation_storage.push((reference.local, storage))
         }
         _ => {}
     }

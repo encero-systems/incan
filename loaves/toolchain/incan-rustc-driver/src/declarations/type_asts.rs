@@ -211,6 +211,12 @@ pub(super) fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind
             ty(&PlanType::NativeSlice(elements.clone()), span),
             matches!(kind, PlanType::SliceMutRef(_)),
         ),
+        PlanType::ExclusiveClosure(signature) => {
+            boxed_object_ast(borrowing_callable_object_ast(signature, true, span), span)
+        }
+        PlanType::ExclusiveClosureRef(signature) => {
+            reference_ast(borrowing_callable_object_ast(signature, true, span), true)
+        }
         PlanType::CallableArguments(inputs) => ast::TyKind::Tup(inputs.iter().map(|input| ty(input, span)).collect()),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
@@ -264,13 +270,15 @@ pub(super) fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind
             span,
         ),
         PlanType::NativeClosure(signature, send, sync) => {
-            boxed_object_ast(native_callable_object_ast(signature, span, false, *send, *sync), span)
+            boxed_object_ast(native_callable_object_ast(signature, span, "Fn", *send, *sync), span)
         }
         PlanType::NativeTraitObject(path, send, sync) => native_object_ast(path, *send, *sync, span),
         PlanType::ClosureRef(signature) => reference_ast(callable_object_ast(signature, span, false), false),
-        PlanType::BorrowingClosure(signature) => boxed_object_ast(borrowing_callable_object_ast(signature, span), span),
+        PlanType::BorrowingClosure(signature) => {
+            boxed_object_ast(borrowing_callable_object_ast(signature, false, span), span)
+        }
         PlanType::BorrowingClosureRef(signature) => {
-            reference_ast(borrowing_callable_object_ast(signature, span), false)
+            reference_ast(borrowing_callable_object_ast(signature, false, span), false)
         }
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => primitive_or_nominal_ty(other, span),
@@ -551,14 +559,20 @@ pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_e
         });
     }
 
-    native_callable_object_ast(signature, span, consumes_environment, false, false)
+    native_callable_object_ast(
+        signature,
+        span,
+        if consumes_environment { "FnOnce" } else { "Fn" },
+        false,
+        false,
+    )
 }
 
 /// Construct the native Fn-family object and the auto traits proven for its owned captures, without a clone alias.
 pub(super) fn native_callable_object_ast(
     signature: &[PlanType],
     span: Span,
-    consumes_environment: bool,
+    callable_trait: &str,
     send: bool,
     sync: bool,
 ) -> Box<ast::Ty> {
@@ -569,7 +583,7 @@ pub(super) fn native_callable_object_ast(
         ),
         None => (ThinVec::new(), ty(&PlanType::Unit, span)),
     };
-    let mut path = ast::Path::from_ident(ident(if consumes_environment { "FnOnce" } else { "Fn" }, span));
+    let mut path = ast::Path::from_ident(ident(callable_trait, span));
     path.segments[0].args = Some(Box::new(ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
         span,
         inputs,
@@ -606,18 +620,19 @@ pub(super) fn native_callable_object_ast(
     })
 }
 
-/// The Fn object of an environment holding borrowed references, outliving their inferred common bound.
-pub(super) fn borrowing_callable_object_ast(signature: &[PlanType], span: Span) -> Box<ast::Ty> {
-    borrowing_callable_object_ast_with_lifetime(signature, None, span)
+/// The shared or exclusive callable object with the common bound of its capture loans.
+pub(super) fn borrowing_callable_object_ast(signature: &[PlanType], exclusive: bool, span: Span) -> Box<ast::Ty> {
+    borrowing_callable_object_ast_with_lifetime(signature, exclusive, None, span)
 }
 
 /// Build a borrowing callable object whose common bound is inferred or named by its constructor.
 fn borrowing_callable_object_ast_with_lifetime(
     signature: &[PlanType],
+    exclusive: bool,
     lifetime: Option<&str>,
     span: Span,
 ) -> Box<ast::Ty> {
-    let mut object = native_callable_object_ast(signature, span, false, false, false);
+    let mut object = native_callable_object_ast(signature, span, if exclusive { "FnMut" } else { "Fn" }, false, false);
     if let ast::TyKind::TraitObject(bounds, _) = &mut object.kind {
         bounds.push(ast::GenericBound::Outlives(ast::Lifetime {
             id: ast::DUMMY_NODE_ID,
@@ -631,11 +646,16 @@ fn borrowing_callable_object_ast_with_lifetime(
 }
 
 /// Build the boxed borrowing closure result of a constructor with one explicit common capture lifetime.
-pub(crate) fn borrowing_closure_ast(signature: &[PlanType], lifetime: &str, span: Span) -> Box<ast::Ty> {
+pub(crate) fn borrowing_closure_ast(
+    signature: &[PlanType],
+    exclusive: bool,
+    lifetime: &str,
+    span: Span,
+) -> Box<ast::Ty> {
     Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: boxed_object_ast(
-            borrowing_callable_object_ast_with_lifetime(signature, Some(lifetime), span),
+            borrowing_callable_object_ast_with_lifetime(signature, exclusive, Some(lifetime), span),
             span,
         ),
         span,

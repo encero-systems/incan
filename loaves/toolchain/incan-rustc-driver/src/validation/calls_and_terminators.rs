@@ -34,22 +34,14 @@ pub(super) fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Re
             vec![Scalar::Generator(Leaf::of(leaf), *depth)],
             Scalar::List(Leaf::of(leaf), depth + 1),
         )),
-        CalleeKind::CallClosure(signature) => closure_call_signature(function, signature, false),
-        CalleeKind::CallClosureOnce(signature) => closure_call_signature(function, signature, true),
-        CalleeKind::CallBorrowingClosure(signature) => {
-            // The same call through the shared view of an environment that holds a borrowed reference.
-            let (mut inputs, result) = closure_call_signature(function, signature, false)?;
-            inputs[0] = Scalar::BorrowingClosureRef(signature.iter().map(scalar).collect());
-            Ok((inputs, result))
-        }
-        CalleeKind::CloneClosure(signature) => closure_clone_signature(function, signature),
-        CalleeKind::ClosureBody(name, count) | CalleeKind::ClosureBodyOnce(name, count) => {
-            lifted_closure_signature(plan, function, callee, name, *count)
-        }
-        CalleeKind::SharedCallableBody(signature) => Ok((
-            vec![Scalar::Closure(signature.iter().map(scalar).collect())],
-            Scalar::SharedCallable(signature.iter().map(scalar).collect()),
-        )),
+        CalleeKind::CallClosure(_)
+        | CalleeKind::CallClosureOnce(_)
+        | CalleeKind::CallBorrowingClosure(_)
+        | CalleeKind::CallExclusiveClosure(_)
+        | CalleeKind::CloneClosure(_)
+        | CalleeKind::ClosureBody(..)
+        | CalleeKind::ClosureBodyOnce(..)
+        | CalleeKind::SharedCallableBody(_) => callable_signature(plan, function, callee),
         CalleeKind::Value(value) => {
             let mut signature = match operand(plan, function, value)? {
                 Scalar::FunctionPointer(signature) | Scalar::FunctionItem(_, signature) => signature,
@@ -138,6 +130,33 @@ fn static_callee_signature(
             ))
         }
         _ => Err(invalid(function, "callee is not a static cell operation")),
+    }
+}
+
+/// Require the exact callable receiver and its packed argument tuple, or the constructor's capture parameters.
+fn callable_signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    match &callee.kind {
+        CalleeKind::CallClosure(signature) => closure_call_signature(function, signature, false),
+        CalleeKind::CallClosureOnce(signature) => closure_call_signature(function, signature, true),
+        CalleeKind::CallBorrowingClosure(signature) | CalleeKind::CallExclusiveClosure(signature) => {
+            let (mut inputs, result) = closure_call_signature(function, signature, false)?;
+            let receiver = signature.iter().map(scalar).collect();
+            inputs[0] = if matches!(&callee.kind, CalleeKind::CallExclusiveClosure(_)) {
+                Scalar::ExclusiveClosureRef(receiver)
+            } else {
+                Scalar::BorrowingClosureRef(receiver)
+            };
+            Ok((inputs, result))
+        }
+        CalleeKind::CloneClosure(signature) => closure_clone_signature(function, signature),
+        CalleeKind::ClosureBody(name, count) | CalleeKind::ClosureBodyOnce(name, count) => {
+            lifted_closure_signature(plan, function, callee, name, *count)
+        }
+        CalleeKind::SharedCallableBody(signature) => Ok((
+            vec![Scalar::Closure(signature.iter().map(scalar).collect())],
+            Scalar::SharedCallable(signature.iter().map(scalar).collect()),
+        )),
+        _ => Err(invalid(function, "expected a closure callee")),
     }
 }
 
@@ -309,6 +328,8 @@ pub(super) fn lifted_closure_signature(
         Scalar::NativeClosure(object, *send, *sync)
     } else if let PlanType::BorrowingClosure(_) = &function.return_type {
         Scalar::BorrowingClosure(object)
+    } else if matches!(&function.return_type, PlanType::ExclusiveClosure(_)) {
+        Scalar::ExclusiveClosure(object)
     } else {
         Scalar::Closure(object)
     };

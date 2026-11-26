@@ -1004,6 +1004,9 @@ fn store_closure_target(target: &CalleeKind, remap: &mut NominalRemap) -> Result
         CalleeKind::CallBorrowingClosure(signature) => {
             StoredTarget::CallBorrowingClosure(store_types(signature, remap)?)
         }
+        CalleeKind::CallExclusiveClosure(signature) => {
+            StoredTarget::CallExclusiveClosure(store_types(signature, remap)?)
+        }
         CalleeKind::SharedCallableBody(signature) => StoredTarget::SharedCallableBody(store_types(signature, remap)?),
         CalleeKind::CloneClosure(signature) => StoredTarget::CloneClosure(store_types(signature, remap)?),
         CalleeKind::Value(operand) => StoredTarget::Value(store_operand(operand, remap)?),
@@ -1034,6 +1037,9 @@ fn restore_target(target: &StoredTarget, remap: &mut NominalRemap) -> Result<Cal
         StoredTarget::CallClosureOnce(signature) => CalleeKind::CallClosureOnce(restore_types(signature, remap)?),
         StoredTarget::CallBorrowingClosure(signature) => {
             CalleeKind::CallBorrowingClosure(restore_types(signature, remap)?)
+        }
+        StoredTarget::CallExclusiveClosure(signature) => {
+            CalleeKind::CallExclusiveClosure(restore_types(signature, remap)?)
         }
         StoredTarget::SharedCallableBody(signature) => CalleeKind::SharedCallableBody(restore_types(signature, remap)?),
         StoredTarget::CloneClosure(signature) => CalleeKind::CloneClosure(restore_types(signature, remap)?),
