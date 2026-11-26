@@ -451,7 +451,8 @@ def reuse_executable(
     """Settle this request's checking and diagnostics before exposing its selected executable."""
     mut prepared: Option[PreparedWarnings] = None
     mut checked_output: Option[Path] = None
-    if recheck_provider_callers and warnings != "":
+    mut selected_warnings = warnings
+    if recheck_provider_callers:
         match (graph_body_records, records_directory):
             (Some(records), Some(directory)) =>
                 checked, warning_report = check_executable_records(unit, toolchain, store, key, records,
@@ -459,10 +460,13 @@ def reuse_executable(
                 checked_output = Some(checked)
                 prepared = warning_report
             _ => return Err("invalidated owners require the selected checker inputs and product directory")
+        # Explicit diagnostics do not retain a receipt. A later ordinary restore must still check for one.
+        if selected_warnings == "":
+            selected_warnings = warning_identity(key)?
     elif warnings != "":
         prepared = executable_warnings(unit, toolchain, store, key, warnings, defer_publication)?
     mut result = viewed(store, fact, output, unit.kind, shared)?
-    result.warnings = warnings
+    result.warnings = selected_warnings
     result.prepared_warnings = prepared
     result.checked_output = checked_output
     return Ok(result)

@@ -131,14 +131,16 @@ pub def check_for_warnings(
     """
     Admit the diagnostics of an authored input that can reuse its native unit.
 
-    1. Claim the diagnostic identity and replay its result when the caller only needs warnings.
+    1. In ordinary mode, claim the warning identity and replay it when the caller only needs warnings.
     2. Produce requested checker values in this activation and admit warnings only for certified inputs.
     """
-    # 1. The claim belongs to the raw-source result, independent of any native producer's claim.
+    # 1. Explicit diagnostics do not read or retain the raw-source warning result.
     identity = warning_identity(key)?
-    held = claim(store, identity)?
-    if len(product_options) == 0 and replay_checked_warnings(store, identity, unit.project_root, toolchain.console)?:
-        return Ok(None)
+    mut held: Option[LockGuard] = None
+    if ordinary_compilation():
+        held = Some(claim(store, identity)?)
+        if len(product_options) == 0 and replay_checked_warnings(store, identity, unit.project_root, toolchain.console)?:
+            return Ok(None)
     # 2. The certificate covers the check's actual stderr. Its success message stays private to the check.
     certificate = fresh_certificate(store, identity)?
     arguments = ["--check", description.0, toolchain.sysroot, "--certify", certificate.0]
@@ -150,8 +152,9 @@ pub def check_for_warnings(
         _ = show(warnings, toolchain.console)?
         return Err("cannot certify diagnostics for the selected executable's source")
     mut prepared: Option[PreparedWarnings] = None
-    if let Some(relative) = relative_outcome(warnings, unit.project_root):
-        prepared = retain_warning_outcome(store, identity, unit, relative, held, defer_publication)?
+    if let Some(warning_claim) = held:
+        if let Some(relative) = relative_outcome(warnings, unit.project_root):
+            prepared = retain_warning_outcome(store, identity, unit, relative, warning_claim, defer_publication)?
     _ = show(warnings, toolchain.console)?
     return Ok(prepared)
 
