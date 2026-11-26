@@ -252,6 +252,27 @@ fn consume_captures(captures: Box<ast::Expr>, span: Span) -> Box<ast::Expr> {
     expression(ast::ExprKind::Call(callee, thin_vec![captures]), span)
 }
 
+/// How a native callback supplies one environment field to its lifted function.
+pub(crate) enum CaptureTransfer {
+    Move,
+    Reborrow,
+    Clone,
+    Copy,
+}
+
+/// Select capture transfer once for both the callback and its native trait check.
+pub(crate) fn capture_transfer(function: &Function, capture: &PlanType) -> CaptureTransfer {
+    if matches!(function.return_type, PlanType::ClosureOnce(_)) {
+        CaptureTransfer::Move
+    } else if crate::plan::exclusive_capture(capture) {
+        CaptureTransfer::Reborrow
+    } else if crate::plan::owned_capture(capture.clone()) {
+        CaptureTransfer::Clone
+    } else {
+        CaptureTransfer::Copy
+    }
+}
+
 /// Replace the inferred closure's placeholder blocks with a call to the lifted function.
 ///
 /// rustc retains the closure's inferred ABI and by-value capture layout. Each call forwards captures followed by
@@ -321,18 +342,19 @@ pub fn callback<'tcx>(
             tcx,
         );
         let capture_type = &constructor_function.parameters[index].ty;
-        let node = if consumes_environment {
-            mir::Operand::Move(field)
-        } else if crate::plan::exclusive_capture(capture_type) {
-            let (loan, reference) = reborrow_capture(tcx, &mut body, field, ty, span);
-            loans.push(loan);
-            mir::Operand::Move(reference.into())
-        } else if crate::plan::owned_capture(capture_type.clone()) {
-            let (block, clone) = clone_capture(tcx, &mut body, field, ty, blocks.len() + 1, span)?;
-            blocks.push(block);
-            mir::Operand::Move(clone.into())
-        } else {
-            mir::Operand::Copy(field)
+        let node = match capture_transfer(constructor_function, capture_type) {
+            CaptureTransfer::Move => mir::Operand::Move(field),
+            CaptureTransfer::Reborrow => {
+                let (loan, reference) = reborrow_capture(tcx, &mut body, field, ty, span);
+                loans.push(loan);
+                mir::Operand::Move(reference.into())
+            }
+            CaptureTransfer::Clone => {
+                let (block, clone) = clone_capture(tcx, &mut body, field, ty, blocks.len() + 1, span)?;
+                blocks.push(block);
+                mir::Operand::Move(clone.into())
+            }
+            CaptureTransfer::Copy => mir::Operand::Copy(field),
         };
         operands.push(Spanned { node, span });
     }
