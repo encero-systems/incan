@@ -135,8 +135,7 @@ def stop_fanout_engine(binary: str, store: Path) -> Result[None, str]:
     identity.service_generation = service_generation(binary)?
     selected = endpoint(store, identity).map_err((refusal) => refusal.detail)?
     stop_example_engine(binary, store)?
-    lifetime = Path(selected.lock).lock_exclusive().map_err((error) => error.message())?
-    drop(lifetime)
+    _lifetime = Path(selected.lock).lock_exclusive().map_err((error) => error.message())?
     return Ok(None)
 
 
