@@ -271,6 +271,23 @@ pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Resul
         .iter()
         .find(|body| body.name == "consume")
         .ok_or("missing package consumer body")?;
+    assert_result_requirement_owners(consume, &package_result_owners)?;
+
+    assert_conflicting_carrier_owner_is_kept(
+        &provider_program,
+        &provider_path,
+        &provider_facts,
+        &provider_context,
+        &key,
+    )?;
+    Ok(())
+}
+
+/// The consumer body's checked `Result` requirement names each nominal leaf by its provider's canonical carrier.
+fn assert_result_requirement_owners(
+    consume: &bir::Body,
+    package_result_owners: &std::collections::BTreeMap<String, incan_semantics_core::CanonicalSymbolId>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let requirement = consume
         .checked_input_profile
         .as_ref()
@@ -301,8 +318,18 @@ pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Resul
             "package result requirement retained a source alias instead of its canonical carrier"
         );
     }
+    Ok(())
+}
 
-    let mut conflict = super::build_module_seed(&provider_program, &provider_path, &provider_facts, &provider_context);
+/// A provider seed whose carrier key names a foreign owner keeps that owner and no longer takes the key as its carrier.
+fn assert_conflicting_carrier_owner_is_kept(
+    provider_program: &crate::ast::Program,
+    provider_path: &[String],
+    provider_facts: &TypeCheckInfo,
+    provider_context: &BodyIrContext<'_>,
+    key: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conflict = super::build_module_seed(provider_program, provider_path, provider_facts, provider_context);
     let declaration = conflict
         .nominal_declarations
         .iter_mut()
@@ -310,10 +337,10 @@ pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Resul
         .ok_or("missing conflict provider")?;
     let mut foreign = declaration.canonical.clone();
     foreign.declaration_name = "ForeignValue".to_owned();
-    std::sync::Arc::make_mut(&mut declaration.named_type_identities).insert(key.clone(), foreign.clone());
+    std::sync::Arc::make_mut(&mut declaration.named_type_identities).insert(key.to_owned(), foreign.clone());
     super::nominal_carriers::retain(
         &mut conflict,
-        &provider_facts,
+        provider_facts,
         crate::body_ir::ContextModules::default(),
         &std::collections::HashSet::new(),
     );
@@ -322,7 +349,7 @@ pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Resul
         .iter()
         .find(|declaration| declaration.canonical.declaration_name == "CarrierValue")
         .ok_or("missing retained conflict provider")?;
-    assert_eq!(refused.named_type_identities.get(&key), Some(&foreign));
+    assert_eq!(refused.named_type_identities.get(key), Some(&foreign));
     assert_ne!(refused.carrier_name(), key);
     Ok(())
 }

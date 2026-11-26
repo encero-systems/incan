@@ -52,10 +52,8 @@ def take(node: Node, dictionary: Dictionary) -> str:
     Ok(())
 }
 
-/// An immediate error callback borrows the input it only observes, without turning a stored closure into an alias.
-#[test]
-fn immediate_error_callbacks_borrow_read_only_captures() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"
+/// Closures that observe, store, consume or overlap their captured inputs, passed to error callbacks and calls.
+const ERROR_CALLBACK_SOURCE: &str = r#"
 class Cursor:
     items: list[int]
     index: int = 0
@@ -125,6 +123,11 @@ def overlap(mut cursor: Cursor) -> int:
     return advance(cursor, () => cursor.peek())
 
 "#;
+
+/// An immediate error callback borrows the input it only observes, without turning a stored closure into an alias.
+#[test]
+fn immediate_error_callbacks_borrow_read_only_captures() -> Result<(), Box<dyn std::error::Error>> {
+    let source = ERROR_CALLBACK_SOURCE;
     let (_, _, mut module) = checked_seed(source)?;
     super::shared_reads::retain_modules(
         std::slice::from_mut(&mut module),
