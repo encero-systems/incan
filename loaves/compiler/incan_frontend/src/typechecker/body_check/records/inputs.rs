@@ -135,12 +135,10 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
         Some("1") => 1,
         Some("2") => 2,
         Some("5") => 5,
+        Some("6") => 6,
         _ => return Err(NodeBindingError::Unsupported("input record schema")),
     };
-    let mut reader = Reader {
-        positions,
-        values: row[4..].iter(),
-    };
+    let mut reader = Reader::new(positions, &row[4..]);
     match (row[0].as_str(), row[2].as_str()) {
         ("input-copy", "types") => {
             if schema != 2 {
@@ -247,7 +245,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
             }
         }
         ("input-flow", "graph") => {
-            if schema != 5 {
+            if !matches!(schema, 5 | 6) {
                 return Err(NodeBindingError::Unsupported("input-flow record schema"));
             }
             let (owner, flow) = match reader.token()? {

@@ -351,10 +351,7 @@ fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<d
         .ok_or("missing projected input-flow row")?;
     assert_eq!(checked.get(4).map(String::as_str), Some("checked"));
 
-    let mut reader = Reader {
-        positions: &positions,
-        values: checked[5..].iter(),
-    };
+    let mut reader = Reader::new(&positions, &checked[5..]);
     let graph = reader.graph(5)?;
     reader.finish()?;
     let invalid_entry = graph.nodes.len();
@@ -409,10 +406,7 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
         .find(|row| row.first().is_some_and(|family| family == "input-flow"))
         .ok_or("missing owned initializer graph")?;
     assert_eq!(checked.get(4).map(String::as_str), Some("checked"));
-    let mut reader = Reader {
-        positions: &positions,
-        values: checked[5..].iter(),
-    };
+    let mut reader = Reader::new(&positions, &checked[5..]);
     let graph = reader.graph(5)?;
     reader.finish()?;
     let initializer = graph.owned_locals.values().next().ok_or("missing owned initializer")?;
@@ -467,10 +461,7 @@ fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<()
         .into_iter()
         .find(|row| row.first().is_some_and(|family| family == "input-flow"))
         .ok_or("missing observed operation graph")?;
-    let mut reader = Reader {
-        positions: &positions,
-        values: checked[5..].iter(),
-    };
+    let mut reader = Reader::new(&positions, &checked[5..]);
     let graph = reader.graph(5)?;
     reader.finish()?;
     assert_eq!(graph.operations.len(), 1);
@@ -531,10 +522,7 @@ fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(
         .into_iter()
         .find(|row| row.first().is_some_and(|family| family == "input-flow"))
         .ok_or("missing invocation graph")?;
-    let mut reader = Reader {
-        positions: &positions,
-        values: checked[5..].iter(),
-    };
+    let mut reader = Reader::new(&positions, &checked[5..]);
     let graph = reader.graph(5)?;
     reader.finish()?;
     assert_eq!(graph.invocations.len(), 1);
