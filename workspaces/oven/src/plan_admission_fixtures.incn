@@ -97,7 +97,8 @@ pub def verify_report_only_owner_reads(
     file = "src/main.incn"
     key = body_key("plan-module", body.origin, file, "checked", "report-fixture")
     symbol = "function:main::member"
-    member = PlanModuleFunction(identity=owner, symbol=symbol, function="main_member", key="product", event=b"")
+    member = PlanModuleFunction(identity=owner, symbol=symbol, function="main_member",
+        key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", event=b"")
     module = AdmittedPlanModule(key=key, plan=PlanModuleValue(module="main", functions=[member]), value_digest="plan",
         namespace=0, certificate="rank", admitted_snapshot=graph.digest, placement_current=true)
     note = WholeModuleAdmission(module="main", output=encode_record_key(key)?, digest="plan", count=1, selection="pin")
@@ -113,6 +114,7 @@ pub def verify_report_only_owner_reads(
     demanded: list[str] = []
     retained: list[SelectedBodyRecord] = []
     fresh: set[str] = set()
+    verify_incomplete_report_reads_no_bodies(graph, body, module, note, covered)?
     begin_graph_demands(true)
     result = selection.select_rescued(
         Some(graph), body.origin, demanded, covered, [module], admissions, retained, fresh, true,
@@ -123,4 +125,42 @@ pub def verify_report_only_owner_reads(
     assert len(checker_values) == 0, f"report-only owner opened {len(checker_values)} Local and Final values"
     assert result.is_err(), "the report accepted an invalid Body IR owner header"
     assert selection.selected() is None
+    return Ok(None)
+
+
+def verify_incomplete_report_reads_no_bodies(
+    graph: Snapshot, body: RecordKey, module: AdmittedPlanModule, note: WholeModuleAdmission,
+    covered: Borrowed[CoveredBodyOwners],
+) -> Result[None, str]:
+    """An admitted method without a checked Body root makes the optional proof incomplete before member reads."""
+    symbol = "member/method:main::Record::read"
+    method = PlanModuleFunction(identity=symbol, symbol=symbol, function="read",
+        key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", event=b"")
+    mut expanded = module.clone()
+    expanded.plan = PlanModuleValue(module=module.plan.module, functions=module.plan.functions + [method])
+    expanded_note = WholeModuleAdmission(module=note.module, output=note.output, digest=note.digest, count=2,
+        selection=note.selection)
+    admissions = PlanModuleAdmissions(compact={"main": expanded_note})
+    mut selection = BodyRootSelection(enabled=true)
+    retained: list[SelectedBodyRecord] = []
+    fresh: set[str] = set()
+    begin_graph_demands(true)
+    result = selection.select_rescued(
+        Some(graph), body.origin, [], covered, [expanded], admissions, retained, fresh, true
+    )
+    demands = finish_graph_demands()
+    body_slots = [item for item in demands if item.role == "output-slot" and "\tbody-ir\t" in item.key]
+    assert len(body_slots) == 0, f"incomplete lowering proof opened {len(body_slots)} executable Body slots"
+    assert result.is_ok(), "an incomplete optional report refused the request"
+    assert selection.selected() is None
+
+    begin_graph_demands(true)
+    rescue = selection.select_rescued(
+        Some(graph), body.origin, [body.identity], covered, [expanded], admissions, retained, fresh, true
+    )
+    rescued_demands = finish_graph_demands()
+    rescued = rescue?
+    assert len(rescued) == 1 and rescued[0].identity == body.identity and rescued[0].semantic_root == body.context
+    body_key_text = encode_record_key(body)?
+    assert len([item for item in rescued_demands if item.role == "evaluation-value" and item.key == body_key_text]) == 1
     return Ok(None)
