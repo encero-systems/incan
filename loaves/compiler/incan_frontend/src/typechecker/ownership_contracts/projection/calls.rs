@@ -209,6 +209,7 @@ pub(super) fn project_source(source: &flow::Place) -> Result<CheckedInputSource,
                 match projection {
                     flow::Projection::Field(field) => fields.push(field.clone()),
                     flow::Projection::Element(_) => elements.push(position),
+                    flow::Projection::TupleSlot(_) => return Err("tuple-slot input projection needs checked lowering"),
                 }
             }
             Ok(CheckedInputSource::Place {
