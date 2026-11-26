@@ -387,40 +387,7 @@ impl Builder<'_> {
                 reason: "construction needs a checked source model or class declaration".into(),
             });
         }
-        let binding = self
-            .checker
-            .type_info
-            .constructor_field_binding(span)
-            .ok_or(Unavailable {
-                span,
-                reason: "construction has no checked field binding".into(),
-            })?;
-        let mut selected = BTreeSet::new();
-        if binding.field_count != arguments.len() + binding.defaulted_slots.len()
-            || binding.argument_slots.len() != arguments.len()
-            || binding
-                .argument_slots
-                .iter()
-                .chain(&binding.defaulted_slots)
-                .any(|slot| *slot >= binding.field_count || !selected.insert(*slot))
-        {
-            return Err(Unavailable {
-                span,
-                reason: "construction needs complete distinct field slots".into(),
-            });
-        }
-        if !binding.defaulted_slots.is_empty()
-            && !owner.is_some_and(|owner| {
-                self.checker
-                    .constructor_defaults
-                    .proves(owner, binding.field_count, &binding.defaulted_slots)
-            })
-        {
-            return Err(Unavailable {
-                span,
-                reason: "construction needs declaration-owned fresh defaults for all omitted fields".into(),
-            });
-        }
+        self.require_complete_field_binding(owner, arguments.len(), span)?;
         let view_arguments = self.constructor_view_fields(span);
         let argument_types = self.constructor_argument_types(span);
         for (index, argument) in arguments.iter().enumerate() {
@@ -485,6 +452,51 @@ impl Builder<'_> {
             incoming = self.expression(value, incoming, false)?;
         }
         Ok(incoming)
+    }
+
+    /// Require the construction at `span` to bind every field once, from its supplied arguments and from omitted
+    /// fields whose declaration-owned defaults are proven fresh.
+    fn require_complete_field_binding(
+        &self,
+        owner: Option<&incan_semantics_core::CanonicalSymbolId>,
+        argument_count: usize,
+        span: Span,
+    ) -> Result<(), Unavailable> {
+        let binding = self
+            .checker
+            .type_info
+            .constructor_field_binding(span)
+            .ok_or(Unavailable {
+                span,
+                reason: "construction has no checked field binding".into(),
+            })?;
+        let mut selected = BTreeSet::new();
+        if binding.field_count != argument_count + binding.defaulted_slots.len()
+            || binding.argument_slots.len() != argument_count
+            || binding
+                .argument_slots
+                .iter()
+                .chain(&binding.defaulted_slots)
+                .any(|slot| *slot >= binding.field_count || !selected.insert(*slot))
+        {
+            return Err(Unavailable {
+                span,
+                reason: "construction needs complete distinct field slots".into(),
+            });
+        }
+        if !binding.defaulted_slots.is_empty()
+            && !owner.is_some_and(|owner| {
+                self.checker
+                    .constructor_defaults
+                    .proves(owner, binding.field_count, &binding.defaulted_slots)
+            })
+        {
+            return Err(Unavailable {
+                span,
+                reason: "construction needs declaration-owned fresh defaults for all omitted fields".into(),
+            });
+        }
+        Ok(())
     }
 
     fn fresh_loop_index_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
