@@ -550,6 +550,8 @@ def prepare_optional_lowering_records(
             if let Some(owner) = fallback.identity:
                 fresh.add(owner)
         demanded = covered.lowering_demands(events, fresh, complete)
+        if refusals is None:
+            body_roots.enabled = false
         rescued = body_roots.select_rescued(
             selected, origin, demanded, covered, plan_modules, admissions, retained, fresh, scopes.typed, cutoff=cutoff,
         )?
@@ -562,7 +564,7 @@ def prepare_optional_lowering_records(
         selected_roots = body_roots.selected()
         functions: list[LoweredFunction] = match (selected_roots, refusals):
             (Some(roots), Some(observed)) => settle_reported_lowering(
-                roots, witnesses, events, observed, selected, origin, plan_modules, admissions,
+                roots, witnesses, events, observed, body_roots.admissions,
             )
             _ => []
         work = prepare_lowering_records(

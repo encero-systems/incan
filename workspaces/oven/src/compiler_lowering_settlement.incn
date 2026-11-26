@@ -13,8 +13,7 @@ from engine_lowering_evidence import (
 
 pub def settle_reported_lowering(
     roots: Borrowed[list[SelectedBodyRoot]], witnesses: Borrowed[list[LoweringBody]], events: Borrowed[list[LoweringEvent]],
-    refusals: Borrowed[PlanRefusalReport], selected: Option[Snapshot], origin: str,
-    modules: Borrowed[list[AdmittedPlanModule]], admissions: Borrowed[PlanModuleAdmissions],
+    refusals: Borrowed[PlanRefusalReport], admitted: Borrowed[list[AdmittedOutcome]],
 ) -> list[LoweredFunction]:
     """Return evidence only when every reported ordinary outcome has one selected Body authority."""
     owners = set([root.owner for root in roots])
@@ -25,9 +24,6 @@ pub def settle_reported_lowering(
         if witness.symbol == "" or witness.symbol in symbols:
             return []
         symbols[witness.symbol] = witness.identity
-    admitted = match selected_admissions(selected, origin, modules, admissions):
-        Ok(value) => value
-        Err(_) => return []
     for row in admitted:
         if row.owner not in owners or symbols.get(row.symbol, row.owner) != row.owner:
             return []
@@ -112,15 +108,15 @@ model LoweringOutcomes:
                 return []
         return [self.rows[key] for key in sorted([key for key in self.rows.keys()])]
 
-model AdmittedOutcome:
+pub model AdmittedOutcome:
     """One product proven by the actual admission and its selected Plan page."""
 
-    key: str
-    owner: str
-    symbol: str
+    pub key: str
+    pub owner: str
+    pub symbol: str
 
 
-def selected_admissions(
+pub def selected_admissions(
     selected: Option[Snapshot], origin: str, modules: Borrowed[list[AdmittedPlanModule]],
     admissions: Borrowed[PlanModuleAdmissions],
 ) -> Result[list[AdmittedOutcome], str]:
