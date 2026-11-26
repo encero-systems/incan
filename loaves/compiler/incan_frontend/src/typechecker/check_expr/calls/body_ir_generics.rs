@@ -114,14 +114,7 @@ impl TypeChecker {
         identity: Option<&CanonicalSymbolId>,
         written_type_arguments: bool,
     ) {
-        let names = crate::body_ir_parameter_names::parameter_names(info.type_params.iter().map(|name| {
-            let bounds = info.type_param_bound_details.get(name);
-            (
-                name.as_str(),
-                bounds.is_some_and(|bounds| !bounds.is_empty()),
-                bounds.is_some_and(|bounds| bounds.iter().any(|bound| is_rust_capability_bound(&bound.name))),
-            )
-        }));
+        let names = body_ir_type_parameter_names(info);
         if names.is_empty()
             || args
                 .iter()
@@ -162,18 +155,7 @@ impl TypeChecker {
             };
             let testing_argument = self.body_ir_testing_argument_type(identity, expression);
             let testing_channel = testing_argument.is_some();
-            let key = expression.span;
-            let Some(actual) = self
-                .type_info
-                .expressions
-                .body_ir_expr_types
-                .get(&key)
-                .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&key))
-                .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&key))
-                .or_else(|| self.type_info.calls.inferred_constructor_types.get(&key))
-                .or_else(|| self.type_info.calls.inferred_call_result_types.get(&key))
-                .or_else(|| self.type_info.expr_type(expression.span))
-            else {
+            let Some(actual) = self.checked_argument_type(expression) else {
                 return;
             };
             let expected = normalized(&parameter.ty, &names, self);
@@ -186,7 +168,7 @@ impl TypeChecker {
                 self.type_info
                     .expressions
                     .body_ir_expr_types
-                    .insert(key, actual.clone());
+                    .insert(expression.span, actual.clone());
             }
             let actual = normalized(actual, &[], self);
             let actual = self.body_ir_adopted_trait_type(&expected, &actual).unwrap_or(actual);
@@ -235,6 +217,21 @@ impl TypeChecker {
         } else {
             self.retain_open_source_call(info, &names, &bindings, span, identity);
         }
+    }
+
+    /// An argument's checked type, preferring the Body IR expression fact, then its constructor or call-result facts,
+    /// then the inferred ones, then the ordinary expression type.
+    fn checked_argument_type(&self, expression: &Spanned<Expr>) -> Option<&ResolvedType> {
+        let key = expression.span;
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .get(&key)
+            .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&key))
+            .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&key))
+            .or_else(|| self.type_info.calls.inferred_constructor_types.get(&key))
+            .or_else(|| self.type_info.calls.inferred_call_result_types.get(&key))
+            .or_else(|| self.type_info.expr_type(expression.span))
     }
 
     /// Enrich legacy seeds only with the actual argument's already checked nominal owners before unification.
@@ -533,6 +530,18 @@ impl TypeChecker {
             .and_then(|path| path.strip_prefix(&["rust".to_owned()]))
             .is_some_and(|path| path.join("::") == owner)
     }
+}
+
+/// The Body IR names of a function's type parameters, distinguishing bounded and Rust-capability-bounded binders.
+fn body_ir_type_parameter_names(info: &FunctionInfo) -> Vec<String> {
+    crate::body_ir_parameter_names::parameter_names(info.type_params.iter().map(|name| {
+        let bounds = info.type_param_bound_details.get(name);
+        (
+            name.as_str(),
+            bounds.is_some_and(|bounds| !bounds.is_empty()),
+            bounds.is_some_and(|bounds| bounds.iter().any(|bound| is_rust_capability_bound(&bound.name))),
+        )
+    }))
 }
 
 /// Normalize checked aliases and declared binders in the accepting checker; SDK projection keeps its lexical scope.
