@@ -798,9 +798,7 @@ fn admit_root_request(
     name: &str,
 ) -> Result<(AdmittedRow, Vec<i64>), String> {
     let mut budget = Budget::graph();
-    for description in schema.descriptions() {
-        request.supply(description.clone());
-    }
+    schema.supply(&mut request);
     request.allow(budget.bytes, budget.elements, budget.depth);
     let admission = request.admit();
     budget
