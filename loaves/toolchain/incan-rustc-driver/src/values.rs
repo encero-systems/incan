@@ -374,28 +374,13 @@ pub fn rvalue<'tcx>(
             native_alias(tcx, sources, value, source, target, destination_type)?
         }
         RvalueKind::NumericCast(value, source, target) => numeric_cast_rvalue(tcx, sources, value, source, target)?,
-        RvalueKind::FunctionItem(callee) => mir::Rvalue::Use(
-            mir::Operand::function_handle(
-                tcx,
-                crate::callees::resolve(tcx, callee)?,
-                [],
-                sources.span(&callee.span)?,
-            ),
-            mir::WithRetag::Yes,
-        ),
+        RvalueKind::FunctionItem(callee) => function_item_rvalue(tcx, sources, callee)?,
         RvalueKind::ClosureObject(value) => mir::Rvalue::Ref(
             tcx.lifetimes.re_erased,
             mir::BorrowKind::Shared,
             place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
         ),
-        RvalueKind::ReifyFunction(value) => mir::Rvalue::Cast(
-            mir::CastKind::PointerCoercion(
-                rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
-                mir::CoercionSource::Implicit,
-            ),
-            operand(tcx, sources, value)?,
-            native_type(tcx, destination_type)?,
-        ),
+        RvalueKind::ReifyFunction(value) => reify_function_rvalue(tcx, sources, value, destination_type)?,
         RvalueKind::FunctionAddress(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerExposeProvenance,
             operand(tcx, sources, value)?,
@@ -469,6 +454,40 @@ pub fn rvalue<'tcx>(
             native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// The function handle of a resolved callee, as a value.
+fn function_item_rvalue<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    callee: &crate::plan::Callee,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    Ok(mir::Rvalue::Use(
+        mir::Operand::function_handle(
+            tcx,
+            crate::callees::resolve(tcx, callee)?,
+            [],
+            sources.span(&callee.span)?,
+        ),
+        mir::WithRetag::Yes,
+    ))
+}
+
+/// Coerce a safe function item to the function pointer its destination declares.
+fn reify_function_rvalue<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    value: &Operand,
+    destination_type: &PlanType,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    Ok(mir::Rvalue::Cast(
+        mir::CastKind::PointerCoercion(
+            rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
+            mir::CoercionSource::Implicit,
+        ),
+        operand(tcx, sources, value)?,
+        native_type(tcx, destination_type)?,
+    ))
 }
 
 /// Convert a reference to a concrete value into a reference to the Rust trait object its destination holds. rustc's

@@ -67,6 +67,7 @@ from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
+from command_options import require_command_options
 from unit_options import Options, parse_options, program_arguments
 from surfaces import INSPECT_OVEN_MOVED, INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
 from trust_commands import trust_command
@@ -195,70 +196,9 @@ def dispatch(command: str, rest: list[str]) -> None:
         match selected_home_view():
             Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
             Ok(_) => pass
-    # An editor's overlay request: one unsaved buffer, answered by the records engine in the editor view (14.1).
-    if command == "check" and "--overlay-serve" in rest:
-        match parse_serve(rest):
-            Err(reason) => syntax_error(command, reason)
-            Ok(profile) =>
-                match serve_overlays(profile):
-                    Err(reason) => fail(f"{invoked()} check: {reason}", 1)
-                    Ok(_) => return
+    if dispatch_internal_command(command, rest):
         return
-    if command == "check" and "--overlay" in rest:
-        match parse_overlay(rest):
-            Err(reason) => syntax_error(command, reason)
-            Ok(request) =>
-                match execute_overlay(request):
-                    Err(reason) => fail(f"{invoked()} check: {reason}", 1)
-                    Ok(document) =>
-                        println(document)
-                        return
-        return
-    if command == "--internal-reopened-peers":
-        match supply_reopened_peers(rest):
-            Err(reason) => fail("reopened peer selection: " + reason, 1)
-            Ok(_) => return
-        return
-    if command == "--internal-readmit":
-        # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
-        # compiler workers still hold the earlier installation, so they stop first. The arguments are the compiler files
-        # the relink removed, whose admission records retire.
-        begin_installation_command()
-        match stop_owners():
-            Err(reason) => fail(f"{invoked()}: cannot stop the home's owners before re-admission: {reason}", 1)
-            Ok(_) => pass
-        match readmit_relinked_installation(rest):
-            Err(reason) => fail(f"{invoked()}: cannot re-admit the relinked installation: {reason}", 1)
-            Ok(retired) =>
-                println(f"re-admitted the relinked installation; retired {retired} compiler fact records")
-                return
-        return
-    if command == "--internal-engine":
-        match serve_engine(rest):
-            Ok(_) => return
-            Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
-        return
-    if command == "--internal-engine-settlement":
-        match serve_settlement(rest):
-            Ok(_) => return
-            Err(reason) => fail(f"incan engine settlement: {reason.detail}", 1)
-        return
-    if command == "tools" and len(rest) > 0 and rest[0] == "metadata":
-        begin_installation_command()
-        match parse_metadata(rest[1:]):
-            Err(reason) => argument_error("tools", reason)
-            Ok(request) => finish("tools", checked_metadata(request))
-        return
-    if command == "tools":
-        match parse_tools(rest):
-            Err(reason) => argument_error("tools", reason)
-            Ok(format) => finish("tools", doctor(format))
-        return
-    if command == "explain":
-        explain(rest)
-        return
-    if command in ["lock", "add", "dependency", "update"]:
-        lock(command, rest)
+    if dispatch_tool_command(command, rest):
         return
     if command == "run":
         own, _passed = program_arguments(rest)
@@ -322,26 +262,110 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "owner":
         owner(rest)
         return
+    if dispatch_inspection_or_maintenance(command, rest):
+        return
+    if command.startswith("-"):
+        fail(f"{invoked()}: unknown option `{command}`", 2)
+    fail(f"{invoked()}: unknown command `{command}`", 2)
+
+
+def dispatch_internal_command(command: str, rest: list[str]) -> bool:
+    """Serve an overlay check or an internal engine, settlement, re-admission or peer command; return whether it was."""
+    # An editor's overlay request: one unsaved buffer, answered by the records engine in the editor view (14.1).
+    if command == "check" and "--overlay-serve" in rest:
+        match parse_serve(rest):
+            Err(reason) => syntax_error(command, reason)
+            Ok(profile) =>
+                match serve_overlays(profile):
+                    Err(reason) => fail(f"{invoked()} check: {reason}", 1)
+                    Ok(_) => return true
+        return true
+    if command == "check" and "--overlay" in rest:
+        match parse_overlay(rest):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) =>
+                match execute_overlay(request):
+                    Err(reason) => fail(f"{invoked()} check: {reason}", 1)
+                    Ok(document) =>
+                        println(document)
+                        return true
+        return true
+    if command == "--internal-reopened-peers":
+        match supply_reopened_peers(rest):
+            Err(reason) => fail("reopened peer selection: " + reason, 1)
+            Ok(_) => return true
+        return true
+    if command == "--internal-readmit":
+        # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
+        # compiler workers still hold the earlier installation, so they stop first. The arguments are the compiler files
+        # the relink removed, whose admission records retire.
+        begin_installation_command()
+        match stop_owners():
+            Err(reason) => fail(f"{invoked()}: cannot stop the home's owners before re-admission: {reason}", 1)
+            Ok(_) => pass
+        match readmit_relinked_installation(rest):
+            Err(reason) => fail(f"{invoked()}: cannot re-admit the relinked installation: {reason}", 1)
+            Ok(retired) =>
+                println(f"re-admitted the relinked installation; retired {retired} compiler fact records")
+                return true
+        return true
+    if command == "--internal-engine":
+        match serve_engine(rest):
+            Ok(_) => return true
+            Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return true
+    if command == "--internal-engine-settlement":
+        match serve_settlement(rest):
+            Ok(_) => return true
+            Err(reason) => fail(f"incan engine settlement: {reason.detail}", 1)
+        return true
+    return false
+
+
+def dispatch_tool_command(command: str, rest: list[str]) -> bool:
+    """Run a tools, explain or lock-family command; return whether the command was one of them."""
+    if command == "tools" and len(rest) > 0 and rest[0] == "metadata":
+        begin_installation_command()
+        match parse_metadata(rest[1:]):
+            Err(reason) => argument_error("tools", reason)
+            Ok(request) => finish("tools", checked_metadata(request))
+        return true
+    if command == "tools":
+        match parse_tools(rest):
+            Err(reason) => argument_error("tools", reason)
+            Ok(format) => finish("tools", doctor(format))
+        return true
+    if command == "explain":
+        explain(rest)
+        return true
+    if command in ["lock", "add", "dependency", "update"]:
+        lock(command, rest)
+        return true
+    return false
+
+
+def dispatch_inspection_or_maintenance(command: str, rest: list[str]) -> bool:
+    """Run an inspect, mcp, toolchain or bakery command; return whether the command was one of them."""
     if command == "inspect" and len(rest) > 0 and rest[0] == "registry":
         match parse_registry(rest[1:]):
             Err(reason) => argument_error("inspect", reason)
             Ok(request) => finish("inspect", checked_metadata(request))
-        return
+        return true
     if command == "inspect" and len(rest) > 0 and rest[0] == "features":
         match parse_features(rest[1:]):
             Err(reason) => argument_error("inspect", reason)
             Ok(selected) => finish("inspect", inspect_features(selected))
-        return
+        return true
     if command == "inspect" and len(rest) > 0 and rest[0] == "dependencies":
         match parse_options(rest[1:]):
             Err(reason) => syntax_error("inspect", reason)
             Ok(options) => finish("inspect", inspected_dependencies(validated("inspect", options)))
-        return
+        return true
     if command == "inspect" and len(rest) > 0 and rest[0] == "interop-plan":
         match plan_options(rest[1:]):
             Err(reason) => syntax_error("inspect", reason)
             Ok(options) => finish("inspect", inspect_interop_plan(options))
-        return
+        return true
     if command == "inspect" and invoked() == OVEN:
         if len(rest) > 0 and rest[0] == "oven":
             syntax_error("inspect", f"`{OVEN} {INSPECT_OVEN_MOVED}")
@@ -355,38 +379,36 @@ def dispatch(command: str, rest: list[str]) -> None:
         match binding_options(rest[1:]):
             Err(reason) => argument_error("inspect", reason)
             Ok(options) => finish("inspect", inspect_bindings(options))
-        return
+        return true
     if command == "inspect":
         match graph_options(rest):
             Err(reason) => argument_error("inspect", reason)
             Ok(options) => finish("inspect", inspect_codegraph(options))
-        return
+        return true
     if command == "mcp":
         match mcp_options(rest):
             Err(reason) => argument_error("mcp", reason)
             Ok(options) => finish("mcp", serve_graph(options))
-        return
+        return true
     if command == "toolchain":
         match archive_options(rest):
             Err(reason) => argument_error("toolchain", reason)
             Ok(options) => finish("toolchain", toolchain_command(options))
-        return
+        return true
     if command == "bakery":
         if len(rest) > 0 and rest[0] == "status":
             match parse_status(rest[1:]):
                 Err(reason) => argument_error("bakery", reason)
                 Ok(format) => finish("bakery", status_command(format), format)
-            return
+            return true
         if len(rest) > 0 and rest[0] == "repair-payload":
             finish("bakery", repair_payload_command(rest))
-            return
+            return true
         match parse_bakery(rest):
             Err(reason) => argument_error("bakery", reason)
             Ok(keep_days) => finish("bakery", bakery_command(keep_days))
-        return
-    if command.startswith("-"):
-        fail(f"{invoked()}: unknown option `{command}`", 2)
-    fail(f"{invoked()}: unknown command `{command}`", 2)
+        return true
+    return false
 
 
 def require_no_arguments(command: str, arguments: list[str]) -> None:
@@ -1047,61 +1069,6 @@ def validated(command: str, options: Options) -> Options:
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 2)
         Ok(_) => pass
     return options
-
-
-def require_command_options(command: str, options: Options) -> Result[None, str]:
-    """Each command admits only options it applies, and feature selection requires an owning project."""
-    if options.codegraph:
-        if command != "build":
-            return Err("--codegraph requires an Incan library build")
-        match entry_source(Path(options.path), options.manifests)?:
-            None => return Err("--codegraph requires an Incan library build")
-            Some(entry) =>
-                if entry.name() != "lib.incn":
-                    return Err("--codegraph requires an Incan library build")
-    if options.direct:
-        if invoked() == OVEN or command != "run":
-            return Err("--direct requires incan run")
-        if options.engine_report:
-            return Err("--direct does not produce an Oven engine report")
-        if options.locked:
-            return Err("--direct does not use an Oven lock")
-        if options.feature_options or len(options.program_entries) > 0 or len(options.substitutes) > 0:
-            return Err("--direct does not accept project features, substitutions or additional program entries")
-        if options.interop_target != "":
-            return Err("--direct does not verify against a declared interop target; it describes no project")
-        return Ok(None)
-    if options.engine_report:
-        return Err("--engine-report requires INCAN_ENGINE=records run or build")
-    if options.locked and command not in ["run", "build", "test"]:
-        return Err("--locked requires run, build or test")
-    if options.interop_target != "" and command not in ["run", "build", "test", "check"]:
-        return Err("--interop-target requires check, build, test or run")
-    if options.unattended and command != "describe-unit":
-        return Err("--unattended requires oven describe-unit")
-    if options.argv0 != None and command != "run":
-        return Err("--argv0 requires run")
-    if len(options.program_entries) > 0 and command not in ["run", "build"]:
-        return Err("--program-entry requires run/build")
-    if len(options.substitutes) > 0 and command != "build":
-        return Err("--substitute requires a Rust-project build")
-    source = Path(options.path)
-    mut project = project_root_of(source)
-    if source.is_dir() and source.joinpath("loaf.toml").is_file():
-        project = Some(source)
-    if options.feature_options and project is None:
-        return Err("feature selection requires a project")
-    if command == "build" and (len(options.substitutes) > 0 or len(options.program_entries) > 0):
-        selected = entry_source(source, options.manifests)?
-        if len(options.substitutes) > 0 and selected != None:
-            return Err("--substitute requires a Rust-project build")
-        if len(options.program_entries) > 0:
-            match selected:
-                None => return Err("--program-entry requires an Incan program build")
-                Some(entry) =>
-                    if entry.name() == "lib.incn":
-                        return Err("--program-entry requires an Incan program build")
-    return Ok(None)
 
 
 def describe_unit(arguments: list[str]) -> None:

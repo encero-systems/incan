@@ -88,22 +88,7 @@ impl BodyIrModule {
             return false;
         }
         if declaration.canonical.kind == SemanticSourceTargetKind::Newtype {
-            return self.declaration_id_for_canonical(
-                &declaration.canonical,
-                SymbolNamespace::OrdinaryLexical,
-                SemanticSourceTargetKind::Newtype,
-            ) == Some(declaration.direct_declaration_id.clone())
-                && declaration.canonical.declaration_name == declaration.name
-                && declaration.fields == ["0"]
-                && declaration.field_identities == [declaration.canonical.clone()]
-                && declaration.field_types.len() == 1
-                && declaration.field_public == [true]
-                && declaration.field_aliases.iter().all(Option::is_none)
-                && !declaration.has_field_defaults
-                && declaration.class_inheritance.is_none()
-                && declaration.method_partial_defaults.is_empty()
-                && Self::has_well_formed_newtype_string_conversion(declaration)
-                && self.has_well_formed_newtype_deserialize(declaration);
+            return self.is_well_formed_newtype_layout(declaration);
         }
         if declaration.newtype_deserialize != crate::body_ir::NewtypeDeserialize::Unselected
             || declaration.newtype_string_conversion != crate::body_ir::NewtypeStringConversion::Unselected
@@ -150,6 +135,27 @@ impl BodyIrModule {
                             || self.inherited_field_matches(declaration, index))
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Whether a newtype's layout is its one public `0` field of its own canonical identity, with no aliases, defaults,
+    /// inheritance or partial defaults, and well-formed string conversion and deserialization selections.
+    fn is_well_formed_newtype_layout(&self, declaration: &NominalDeclaration) -> bool {
+        self.declaration_id_for_canonical(
+            &declaration.canonical,
+            SymbolNamespace::OrdinaryLexical,
+            SemanticSourceTargetKind::Newtype,
+        ) == Some(declaration.direct_declaration_id.clone())
+            && declaration.canonical.declaration_name == declaration.name
+            && declaration.fields == ["0"]
+            && declaration.field_identities == [declaration.canonical.clone()]
+            && declaration.field_types.len() == 1
+            && declaration.field_public == [true]
+            && declaration.field_aliases.iter().all(Option::is_none)
+            && !declaration.has_field_defaults
+            && declaration.class_inheritance.is_none()
+            && declaration.method_partial_defaults.is_empty()
+            && Self::has_well_formed_newtype_string_conversion(declaration)
+            && self.has_well_formed_newtype_deserialize(declaration)
     }
 
     /// Require a validated constructor to belong to this model, select one enclosed validator, and name each required

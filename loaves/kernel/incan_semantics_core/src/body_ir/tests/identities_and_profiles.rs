@@ -198,6 +198,43 @@ fn body_snapshot_is_deterministic() {
     assert_eq!(body.render_snapshot(), body.render_snapshot());
 }
 
+/// A persisted profile without its owned initializers or its result requirements does not decode.
+fn assert_profile_fields_are_required(profile: &super::CheckedInputProfile) -> Result<(), Box<dyn std::error::Error>> {
+    let mut old_profile = serde_json::to_value(profile)?;
+    old_profile
+        .as_object_mut()
+        .ok_or("profile is not an object")?
+        .remove("owned_initializers");
+    assert!(serde_json::from_value::<super::CheckedInputProfile>(old_profile).is_err());
+    let mut missing_requirements = serde_json::to_value(profile)?;
+    missing_requirements
+        .as_object_mut()
+        .ok_or("profile is not an object")?
+        .remove("result_requirements");
+    assert!(serde_json::from_value::<super::CheckedInputProfile>(missing_requirements).is_err());
+    Ok(())
+}
+
+/// One owned initializer transfer from a parameter into a local within an expanded assignment.
+fn sample_owned_initializer() -> super::CheckedOwnedInitializer {
+    let assignment = HirSourceSpan::new(10, 30).with_expansion(Some([7; 32]));
+    super::CheckedOwnedInitializer {
+        source: CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "source",
+            SemanticSourceTargetKind::Parameter,
+            HirSourceSpan::new(1, 8),
+        ),
+        destination: CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "destination",
+            SemanticSourceTargetKind::Local,
+            HirSourceSpan::new(14, 25),
+        ),
+        assignment,
+    }
+}
+
 /// A parameter mode cannot grant execution by itself; owner, version and complete slot inventory are required.
 #[test]
 fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::error::Error>> {
@@ -231,34 +268,8 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
     let decoded: Body = postcard::from_bytes(&encoded)?;
     assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
     assert!(decoded.first_representation_gap().is_none());
-    let mut old_profile = serde_json::to_value(&profile)?;
-    old_profile
-        .as_object_mut()
-        .ok_or("profile is not an object")?
-        .remove("owned_initializers");
-    assert!(serde_json::from_value::<super::CheckedInputProfile>(old_profile).is_err());
-    let mut missing_requirements = serde_json::to_value(&profile)?;
-    missing_requirements
-        .as_object_mut()
-        .ok_or("profile is not an object")?
-        .remove("result_requirements");
-    assert!(serde_json::from_value::<super::CheckedInputProfile>(missing_requirements).is_err());
-    let assignment = HirSourceSpan::new(10, 30).with_expansion(Some([7; 32]));
-    let initializer = super::CheckedOwnedInitializer {
-        source: CanonicalSymbolId::module_declaration(
-            vec!["main".into()],
-            "source",
-            SemanticSourceTargetKind::Parameter,
-            HirSourceSpan::new(1, 8),
-        ),
-        destination: CanonicalSymbolId::module_declaration(
-            vec!["main".into()],
-            "destination",
-            SemanticSourceTargetKind::Local,
-            HirSourceSpan::new(14, 25),
-        ),
-        assignment,
-    };
+    assert_profile_fields_are_required(&profile)?;
+    let initializer = sample_owned_initializer();
     // Initializer transfers travel with both profiles; only the conditional profile may execute them.
     for version in [1, 2, 3, 4] {
         body.checked_input_profile = Some(super::CheckedInputProfile {

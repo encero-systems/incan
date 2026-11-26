@@ -160,28 +160,13 @@ impl<'a> Parser<'a> {
                     self.current_span(),
                 ));
             }
-            if !decorators.is_empty() {
-                return Err(CompileError::syntax(
-                    "`__derives__` cannot have decorators".to_string(),
-                    decorators[0].span,
-                ));
-            }
+            Self::refuse_decorators(&decorators, "`__derives__`")?;
             Declaration::Const(self.implicit_derives_decl()?)
         } else if self.starts_partial_decl() {
-            if !decorators.is_empty() {
-                return Err(CompileError::syntax(
-                    "Partial declarations cannot have decorators".to_string(),
-                    decorators[0].span,
-                ));
-            }
+            Self::refuse_decorators(&decorators, "Partial declarations")?;
             Declaration::Partial(self.partial_decl(visibility)?)
         } else if self.starts_alias_decl() {
-            if !decorators.is_empty() {
-                return Err(CompileError::syntax(
-                    "Alias declarations cannot have decorators".to_string(),
-                    decorators[0].span,
-                ));
-            }
+            Self::refuse_decorators(&decorators, "Alias declarations")?;
             Declaration::Alias(self.alias_decl(visibility)?)
         } else if self.is_module_tests_header() {
             if visibility == Visibility::Public {
@@ -190,12 +175,7 @@ impl<'a> Parser<'a> {
                     self.current_span(),
                 ));
             }
-            if !decorators.is_empty() {
-                return Err(CompileError::syntax(
-                    "`module tests:` cannot have decorators".to_string(),
-                    decorators[0].span,
-                ));
-            }
+            Self::refuse_decorators(&decorators, "`module tests:`")?;
             Declaration::TestModule(self.test_module_decl()?)
         } else if let Some(vocab_block) = self.try_vocab_block(decorators)? {
             if visibility == Visibility::Public {
@@ -224,6 +204,17 @@ impl<'a> Parser<'a> {
 
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;
         Ok(Spanned::new(decl, Span::new(start, end)))
+    }
+
+    /// Refuse decorators on a declaration form that takes none, at the first decorator.
+    fn refuse_decorators(decorators: &[Spanned<Decorator>], declaration: &str) -> Result<(), CompileError> {
+        match decorators.first() {
+            Some(decorator) => Err(CompileError::syntax(
+                format!("{declaration} cannot have decorators"),
+                decorator.span,
+            )),
+            None => Ok(()),
+        }
     }
 
     /// Return whether the cursor is at an RFC 024 module-level `__derives__ = ...` declaration.
