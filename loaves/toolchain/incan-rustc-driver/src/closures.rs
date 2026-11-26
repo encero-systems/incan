@@ -270,7 +270,7 @@ pub fn callback<'tcx>(
     let span = body.span;
     let environment = body.local_decls[mir::Local::from_usize(1)].ty;
     let consumes_environment = matches!(constructor_function.return_type, PlanType::ClosureOnce(_));
-    let mutable_receiver = constructor_function
+    let has_exclusive_capture = constructor_function
         .parameters
         .iter()
         .any(|parameter| crate::plan::exclusive_capture(&parameter.ty));
@@ -283,7 +283,13 @@ pub fn callback<'tcx>(
                 reason: "reusable closure environment is not borrowed".into(),
             });
         };
-        if mutability.is_mut() != mutable_receiver {
+        // The FnMut carrier can lend a shared callable. Only an exclusive capture requires a mutable receiver.
+        let accepts_receiver = if mutability.is_mut() {
+            matches!(constructor_function.return_type, PlanType::ExclusiveClosure(_))
+        } else {
+            !has_exclusive_capture
+        };
+        if !accepts_receiver {
             return Err(PlanError::Invalid {
                 function: constructor_function.name.clone(),
                 reason: "closure receiver disagrees with its planned access".into(),
