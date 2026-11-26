@@ -617,6 +617,137 @@ mod tests {
     use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
     use std::path::Path;
 
+    /// Compile a shared callable lent to a call-only helper, then a helper lending its own received callable.
+    #[test]
+    fn callable_lending_preserves_native_capture_access() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::plan::PlanType;
+        use incan_frontend::body_ir::{BodyIrContext, ContextModules, ProviderOperationCatalog, build_body_ir_module};
+        use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+        use incan_lowering::{PlanAdmissions, SourceInputs, UnitPlanning, unit_plan};
+
+        let source = "\
+def twice(callback: (int) -> bool) -> bool:
+    if callback(3):
+        return callback(5)
+    return false
+
+pub def forward(callback: (int) -> bool) -> bool:
+    return twice(callback)
+
+pub def read(value: Borrowed[int]) -> bool:
+    show: (int) -> bool = (item) => value < item
+    if show(1):
+        return true
+    return twice(show)
+";
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("lib.incn");
+        std::fs::write(&file, source)?;
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let providers = ProviderOperationCatalog::new();
+        let module = build_body_ir_module(
+            &program,
+            &[],
+            checker.type_info(),
+            &BodyIrContext {
+                modules: ContextModules::default(),
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+                include_inline_tests: false,
+            },
+        );
+        let inputs = SourceInputs {
+            sources: vec![source.to_owned()],
+            files: vec![file.to_string_lossy().into_owned()],
+            ..Default::default()
+        };
+        let UnitPlanning::Complete(Some(plan)) = unit_plan(
+            &[module],
+            &inputs,
+            0,
+            "library",
+            &mut Vec::new(),
+            &mut PlanAdmissions::default(),
+        )?
+        else {
+            return Err("missing native callable plan".into());
+        };
+        let helper = plan
+            .functions
+            .iter()
+            .find(|function| function.name == "twice")
+            .ok_or("missing call-only helper")?;
+        assert!(
+            matches!(helper.parameters.as_slice(), [parameter] if matches!(parameter.ty, PlanType::ExclusiveClosure(_)))
+        );
+        for owner in ["read", "forward"] {
+            let constructor_prefix = format!("__incan_borrowed_callable_{owner}_");
+            let envelope = plan
+                .functions
+                .iter()
+                .find(|function| function.name.starts_with(&constructor_prefix) && function.name.ends_with("_new"))
+                .ok_or_else(|| {
+                    let names: Vec<_> = plan
+                        .functions
+                        .iter()
+                        .filter_map(|function| {
+                            function
+                                .name
+                                .starts_with("__incan_borrowed_callable_")
+                                .then_some(&function.name)
+                        })
+                        .collect();
+                    format!("missing {owner} lending envelope among {names:?}")
+                })?;
+            assert!(
+                matches!(envelope.return_type, PlanType::ExclusiveClosure(_)),
+                "{} has lending carrier {:?}",
+                envelope.name,
+                envelope.return_type
+            );
+            let [capture] = envelope.parameters.as_slice() else {
+                return Err(format!("{} has {} captures", envelope.name, envelope.parameters.len()).into());
+            };
+            assert!(
+                matches!(capture.ty, PlanType::ClosureRef(_) | PlanType::BorrowingClosureRef(_)),
+                "{} capture is {:?}",
+                envelope.name,
+                capture.ty
+            );
+        }
+        let roots = crate::native_crates::native_roots(&plan);
+        assert!(
+            roots.iter().all(|root| matches!(*root, "std" | "crate")),
+            "unexpected native roots {roots:?}"
+        );
+        let output = directory.path().join("libcallable_lending.rlib");
+        super::compile(
+            plan,
+            "callable_lending",
+            &output,
+            &crate::identity::verify_loaded_test_sysroot()?,
+            &[],
+            &[],
+            &[],
+            &Default::default(),
+            None,
+            UnitKind::Library,
+            false,
+            Vec::new(),
+            None,
+            Vec::new(),
+            None,
+        )?;
+        assert!(output.is_file());
+        Ok(())
+    }
+
     /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
     /// output filenames, an input of every codegen unit, are the same between edits; one compilation holds it at a
     /// time.
