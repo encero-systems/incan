@@ -36,229 +36,230 @@ const fn f(
     }
 }
 
+/// The `unit_descriptor` record's fields in selector order.
+const UNIT_DESCRIPTOR_FIELDS: &[UnitField] = &[
+    f("active_features", b"f00000", "text", "list<string>", true, "required"),
+    f(
+        "c_abi_target",
+        b"f00001",
+        "unit_target",
+        "option<record@756e69747467>",
+        false,
+        "omitted",
+    ),
+    f("c_headers", b"f00002", "text", "list<string>", true, "required"),
+    f("checked_context", b"f00003", "text", "option<string>", false, "omitted"),
+    f(
+        "checked_products",
+        b"f00004",
+        "text",
+        "option<string>",
+        false,
+        "omitted",
+    ),
+    f(
+        "cloves",
+        b"f00005",
+        "unit_clove",
+        "option<list<record@756e6974636c>>",
+        true,
+        "omitted",
+    ),
+    f("contract_models", b"f00006", "text", "list<string>", true, "required"),
+    f(
+        "covered_by",
+        b"f00007",
+        "bindings",
+        "list<tuple<string,string>>",
+        false,
+        "required",
+    ),
+    f("declared_features", b"f00008", "text", "list<string>", true, "required"),
+    f(
+        "excluded_sources",
+        b"f00009",
+        "text",
+        "option<list<string>>",
+        true,
+        "omitted",
+    ),
+    f(
+        "externs",
+        b"f00010",
+        "native_crate",
+        "list<record@756e69746578>",
+        true,
+        "required",
+    ),
+    f("kind", b"f00011", "text", "string", false, "required"),
+    f(
+        "loaves",
+        b"f00012",
+        "unit_loaf",
+        "list<record@756e69746c66>",
+        true,
+        "required",
+    ),
+    f(
+        "not_prepared_loaves",
+        b"f00013",
+        "text",
+        "list<string>",
+        true,
+        "required",
+    ),
+    f("package", b"f00014", "text", "string", false, "required"),
+    f("profile", b"f00015", "text", "string", false, "required"),
+    f(
+        "program_checks",
+        b"f00016",
+        "boolean",
+        "option<boolean>",
+        false,
+        "omitted",
+    ),
+    f("program_entries", b"f00017", "text", "list<string>", true, "required"),
+    f("project_library", b"f00018", "text", "option<string>", false, "omitted"),
+    f("project_root", b"f00019", "text", "string", false, "required"),
+    f("registry_id", b"f00020", "text", "option<string>", false, "omitted"),
+    f("rust_abi", b"f00021", "text", "list<string>", true, "required"),
+    f("rust_crates", b"f00022", "text", "list<string>", true, "required"),
+    f("schema", b"f00023", "text", "string", false, "required"),
+    f("search", b"f00024", "text", "list<string>", true, "required"),
+    f("search_index", b"f00025", "text", "option<string>", false, "nullable"),
+    f("source", b"f00026", "text", "string", false, "required"),
+    f("source_root", b"f00027", "text", "string", false, "required"),
+    f("test_batch", b"f00028", "text", "option<list<string>>", true, "omitted"),
+    f(
+        "toolchain_access",
+        b"f00029",
+        "unit_access",
+        "option<record@756e69746163>",
+        false,
+        "omitted",
+    ),
+    f("trust_stop", b"f00030", "text", "string", false, "required"),
+    f("version", b"f00031", "text", "string", false, "required"),
+    f("vocab", b"f00032", "text", "option<string>", false, "nullable"),
+    f("vocab_admissions", b"f00033", "text", "list<string>", true, "required"),
+    f("vocab_desugarer", b"f00034", "boolean", "boolean", false, "required"),
+    f("vocab_entry", b"f00035", "text", "option<string>", false, "nullable"),
+    f("vocab_policy", b"f00036", "text", "string", false, "required"),
+    f("vocabulary", b"f00037", "boolean", "boolean", false, "required"),
+];
+
+/// The `unit_loaf` record's fields in selector order.
+const UNIT_LOAF_FIELDS: &[UnitField] = &[
+    f("dir", b"f00000", "text", "string", false, "required"),
+    f("key", b"f00001", "text", "string", false, "required"),
+    f("name", b"f00002", "text", "string", false, "required"),
+    f("source_root", b"f00003", "text", "option<string>", false, "omitted"),
+    f("standard", b"f00004", "boolean", "boolean", false, "required"),
+    f("toolchain_provided", b"f00005", "boolean", "boolean", false, "required"),
+];
+
+/// The `native_crate` record's fields in selector order.
+const NATIVE_CRATE_FIELDS: &[UnitField] = &[
+    f("name", b"f00000", "text", "string", false, "required"),
+    f("path", b"f00001", "text", "string", false, "required"),
+];
+
+/// The `unit_clove` record's fields in selector order.
+const UNIT_CLOVE_FIELDS: &[UnitField] = &[
+    f("compiler", b"f00000", "text", "string", false, "required"),
+    f(
+        "configurations",
+        b"f00001",
+        "clove_configuration",
+        "list<record@756e69746366>",
+        true,
+        "required",
+    ),
+    f("cplusplus", b"f00002", "boolean", "boolean", false, "required"),
+    f("include", b"f00003", "text", "list<string>", true, "required"),
+    f("library", b"f00004", "text", "string", false, "required"),
+    f("name", b"f00005", "text", "string", false, "required"),
+    f("public_headers", b"f00006", "text", "list<string>", true, "required"),
+    f("root", b"f00007", "text", "string", false, "required"),
+];
+
+/// The `clove_configuration` record's fields in selector order.
+const CLOVE_CONFIGURATION_FIELDS: &[UnitField] = &[
+    f("archive", b"f00000", "text", "string", false, "required"),
+    f("definitions", b"f00001", "text", "list<string>", true, "required"),
+    f("identity", b"f00002", "text", "string", false, "required"),
+    f("name", b"f00003", "text", "string", false, "required"),
+];
+
+/// The `unit_target` record's fields in selector order.
+const UNIT_TARGET_FIELDS: &[UnitField] = &[
+    f("api_level", b"f00000", "u32", "option<i64>", false, "omitted"),
+    f("definitions", b"f00001", "text", "list<string>", true, "required"),
+    f(
+        "deployment_target",
+        b"f00002",
+        "text",
+        "option<string>",
+        false,
+        "omitted",
+    ),
+    f(
+        "sdk",
+        b"f00003",
+        "unit_capability",
+        "option<record@756e69746370>",
+        false,
+        "omitted",
+    ),
+    f("target", b"f00004", "text", "string", false, "required"),
+    f(
+        "toolchain",
+        b"f00005",
+        "unit_capability",
+        "option<record@756e69746370>",
+        false,
+        "omitted",
+    ),
+];
+
+/// The `unit_capability` record's fields in selector order.
+const UNIT_CAPABILITY_FIELDS: &[UnitField] = &[
+    f("capability", b"f00000", "text", "string", false, "required"),
+    f("version", b"f00001", "text", "string", false, "required"),
+];
+
+/// The `unit_access` record's fields in selector order.
+const UNIT_ACCESS_FIELDS: &[UnitField] = &[
+    f(
+        "sysroot_dependencies",
+        b"f00000",
+        "text",
+        "list<string>",
+        true,
+        "required",
+    ),
+    f(
+        "toolchain_components",
+        b"f00001",
+        "text",
+        "list<string>",
+        true,
+        "required",
+    ),
+    f("unstable_features", b"f00002", "text", "list<string>", true, "required"),
+];
+
+/// The closed field schema of one compiler unit record kind.
 fn fields(kind: &str) -> Result<&'static [UnitField], String> {
     Ok(match kind {
-        "unit_descriptor" => {
-            const FIELDS: &[UnitField] = &[
-                f("active_features", b"f00000", "text", "list<string>", true, "required"),
-                f(
-                    "c_abi_target",
-                    b"f00001",
-                    "unit_target",
-                    "option<record@756e69747467>",
-                    false,
-                    "omitted",
-                ),
-                f("c_headers", b"f00002", "text", "list<string>", true, "required"),
-                f("checked_context", b"f00003", "text", "option<string>", false, "omitted"),
-                f(
-                    "checked_products",
-                    b"f00004",
-                    "text",
-                    "option<string>",
-                    false,
-                    "omitted",
-                ),
-                f(
-                    "cloves",
-                    b"f00005",
-                    "unit_clove",
-                    "option<list<record@756e6974636c>>",
-                    true,
-                    "omitted",
-                ),
-                f("contract_models", b"f00006", "text", "list<string>", true, "required"),
-                f(
-                    "covered_by",
-                    b"f00007",
-                    "bindings",
-                    "list<tuple<string,string>>",
-                    false,
-                    "required",
-                ),
-                f("declared_features", b"f00008", "text", "list<string>", true, "required"),
-                f(
-                    "excluded_sources",
-                    b"f00009",
-                    "text",
-                    "option<list<string>>",
-                    true,
-                    "omitted",
-                ),
-                f(
-                    "externs",
-                    b"f00010",
-                    "native_crate",
-                    "list<record@756e69746578>",
-                    true,
-                    "required",
-                ),
-                f("kind", b"f00011", "text", "string", false, "required"),
-                f(
-                    "loaves",
-                    b"f00012",
-                    "unit_loaf",
-                    "list<record@756e69746c66>",
-                    true,
-                    "required",
-                ),
-                f(
-                    "not_prepared_loaves",
-                    b"f00013",
-                    "text",
-                    "list<string>",
-                    true,
-                    "required",
-                ),
-                f("package", b"f00014", "text", "string", false, "required"),
-                f("profile", b"f00015", "text", "string", false, "required"),
-                f(
-                    "program_checks",
-                    b"f00016",
-                    "boolean",
-                    "option<boolean>",
-                    false,
-                    "omitted",
-                ),
-                f("program_entries", b"f00017", "text", "list<string>", true, "required"),
-                f("project_library", b"f00018", "text", "option<string>", false, "omitted"),
-                f("project_root", b"f00019", "text", "string", false, "required"),
-                f("registry_id", b"f00020", "text", "option<string>", false, "omitted"),
-                f("rust_abi", b"f00021", "text", "list<string>", true, "required"),
-                f("rust_crates", b"f00022", "text", "list<string>", true, "required"),
-                f("schema", b"f00023", "text", "string", false, "required"),
-                f("search", b"f00024", "text", "list<string>", true, "required"),
-                f("search_index", b"f00025", "text", "option<string>", false, "nullable"),
-                f("source", b"f00026", "text", "string", false, "required"),
-                f("source_root", b"f00027", "text", "string", false, "required"),
-                f("test_batch", b"f00028", "text", "option<list<string>>", true, "omitted"),
-                f(
-                    "toolchain_access",
-                    b"f00029",
-                    "unit_access",
-                    "option<record@756e69746163>",
-                    false,
-                    "omitted",
-                ),
-                f("trust_stop", b"f00030", "text", "string", false, "required"),
-                f("version", b"f00031", "text", "string", false, "required"),
-                f("vocab", b"f00032", "text", "option<string>", false, "nullable"),
-                f("vocab_admissions", b"f00033", "text", "list<string>", true, "required"),
-                f("vocab_desugarer", b"f00034", "boolean", "boolean", false, "required"),
-                f("vocab_entry", b"f00035", "text", "option<string>", false, "nullable"),
-                f("vocab_policy", b"f00036", "text", "string", false, "required"),
-                f("vocabulary", b"f00037", "boolean", "boolean", false, "required"),
-            ];
-            FIELDS
-        }
-        "unit_loaf" => {
-            const FIELDS: &[UnitField] = &[
-                f("dir", b"f00000", "text", "string", false, "required"),
-                f("key", b"f00001", "text", "string", false, "required"),
-                f("name", b"f00002", "text", "string", false, "required"),
-                f("source_root", b"f00003", "text", "option<string>", false, "omitted"),
-                f("standard", b"f00004", "boolean", "boolean", false, "required"),
-                f("toolchain_provided", b"f00005", "boolean", "boolean", false, "required"),
-            ];
-            FIELDS
-        }
-        "native_crate" => {
-            const FIELDS: &[UnitField] = &[
-                f("name", b"f00000", "text", "string", false, "required"),
-                f("path", b"f00001", "text", "string", false, "required"),
-            ];
-            FIELDS
-        }
-        "unit_clove" => {
-            const FIELDS: &[UnitField] = &[
-                f("compiler", b"f00000", "text", "string", false, "required"),
-                f(
-                    "configurations",
-                    b"f00001",
-                    "clove_configuration",
-                    "list<record@756e69746366>",
-                    true,
-                    "required",
-                ),
-                f("cplusplus", b"f00002", "boolean", "boolean", false, "required"),
-                f("include", b"f00003", "text", "list<string>", true, "required"),
-                f("library", b"f00004", "text", "string", false, "required"),
-                f("name", b"f00005", "text", "string", false, "required"),
-                f("public_headers", b"f00006", "text", "list<string>", true, "required"),
-                f("root", b"f00007", "text", "string", false, "required"),
-            ];
-            FIELDS
-        }
-        "clove_configuration" => {
-            const FIELDS: &[UnitField] = &[
-                f("archive", b"f00000", "text", "string", false, "required"),
-                f("definitions", b"f00001", "text", "list<string>", true, "required"),
-                f("identity", b"f00002", "text", "string", false, "required"),
-                f("name", b"f00003", "text", "string", false, "required"),
-            ];
-            FIELDS
-        }
-        "unit_target" => {
-            const FIELDS: &[UnitField] = &[
-                f("api_level", b"f00000", "u32", "option<i64>", false, "omitted"),
-                f("definitions", b"f00001", "text", "list<string>", true, "required"),
-                f(
-                    "deployment_target",
-                    b"f00002",
-                    "text",
-                    "option<string>",
-                    false,
-                    "omitted",
-                ),
-                f(
-                    "sdk",
-                    b"f00003",
-                    "unit_capability",
-                    "option<record@756e69746370>",
-                    false,
-                    "omitted",
-                ),
-                f("target", b"f00004", "text", "string", false, "required"),
-                f(
-                    "toolchain",
-                    b"f00005",
-                    "unit_capability",
-                    "option<record@756e69746370>",
-                    false,
-                    "omitted",
-                ),
-            ];
-            FIELDS
-        }
-        "unit_capability" => {
-            const FIELDS: &[UnitField] = &[
-                f("capability", b"f00000", "text", "string", false, "required"),
-                f("version", b"f00001", "text", "string", false, "required"),
-            ];
-            FIELDS
-        }
-        "unit_access" => {
-            const FIELDS: &[UnitField] = &[
-                f(
-                    "sysroot_dependencies",
-                    b"f00000",
-                    "text",
-                    "list<string>",
-                    true,
-                    "required",
-                ),
-                f(
-                    "toolchain_components",
-                    b"f00001",
-                    "text",
-                    "list<string>",
-                    true,
-                    "required",
-                ),
-                f("unstable_features", b"f00002", "text", "list<string>", true, "required"),
-            ];
-            FIELDS
-        }
+        "unit_descriptor" => UNIT_DESCRIPTOR_FIELDS,
+        "unit_loaf" => UNIT_LOAF_FIELDS,
+        "native_crate" => NATIVE_CRATE_FIELDS,
+        "unit_clove" => UNIT_CLOVE_FIELDS,
+        "clove_configuration" => CLOVE_CONFIGURATION_FIELDS,
+        "unit_target" => UNIT_TARGET_FIELDS,
+        "unit_capability" => UNIT_CAPABILITY_FIELDS,
+        "unit_access" => UNIT_ACCESS_FIELDS,
         _ => return Err("unknown compiler unit record kind".into()),
     })
 }
