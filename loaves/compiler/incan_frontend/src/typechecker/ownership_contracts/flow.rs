@@ -18,6 +18,8 @@ pub(in crate::typechecker) use operations::{OperandDependency, OperationInputs};
 pub(in crate::typechecker) enum Projection {
     /// A checked stored field's declaration, independent of its public spelling.
     Field(CanonicalSymbolId),
+    /// A checked tuple field by structural ordinal.
+    TupleSlot(usize),
     /// An element without a checked disjointness proof. The evaluated index identity distinguishes containment;
     /// unknown indices overlap, but a loan of one evaluation cannot authorize access through a different one.
     Element(HirSourceSpan),
@@ -45,19 +47,23 @@ pub(in crate::typechecker) struct Place {
 }
 
 impl Place {
-    /// A prefix owns its descendants; differing canonical stored fields are proven disjoint.
+    /// A prefix owns all of its descendants.
     pub(super) fn contains(&self, other: &Self) -> bool {
         self.root == other.root && other.projection.starts_with(&self.projection)
     }
 
-    /// Conservatively overlap roots and dynamic elements, distinguishing only proven sibling fields.
+    /// Conservatively overlap dynamic elements while distinguishing disjoint static fields and tuple slots.
     pub(super) fn overlaps(&self, other: &Self) -> bool {
         self.root == other.root
             && self
                 .projection
                 .iter()
                 .zip(&other.projection)
-                .all(|(left, right)| !matches!((left, right), (Projection::Field(a), Projection::Field(b)) if a != b))
+                .all(|(left, right)| match (left, right) {
+                    (Projection::Field(a), Projection::Field(b)) => a == b,
+                    (Projection::TupleSlot(a), Projection::TupleSlot(b)) => a == b,
+                    _ => true,
+                })
     }
 }
 

@@ -354,18 +354,13 @@ struct CollectedFile {
     surface: SourceFileSurface,
 }
 
-/// Read, parse and project one source file, respell its project-library imports and resolve each import, adding every
-/// absent path a lookup probed to `reads` once. A file that cannot be read or parsed, a self-import and an import of a
-/// module no file defines are refused.
-fn collect_file(
+/// One source file's text: the editor's open buffer, else the unit's captured source, else the file on disk. A unit
+/// with captured sources records which origin each file came from.
+fn collected_source(
     file_path: &str,
-    module_name: String,
-    path_segments: Vec<String>,
     session: &CompilationSession,
-    base_dir: &Path,
     open_sources: &HashMap<PathBuf, String>,
-    reads: &mut SourceGraphReads,
-) -> Result<CollectedFile, CliDiagnosticFailure> {
+) -> Result<String, CliDiagnosticFailure> {
     let (source, from_capture) = match open_sources.get(Path::new(&file_path)) {
         Some(source) => (source.clone(), false),
         None => {
@@ -385,6 +380,22 @@ fn collect_file(
     if session.unit().captured_sources.is_some() {
         session.record_source_origin(file_path, from_capture)?;
     }
+    Ok(source)
+}
+
+/// Read, parse and project one source file, respell its project-library imports and resolve each import, adding every
+/// absent path a lookup probed to `reads` once. A file that cannot be read or parsed, a self-import and an import of a
+/// module no file defines are refused.
+fn collect_file(
+    file_path: &str,
+    module_name: String,
+    path_segments: Vec<String>,
+    session: &CompilationSession,
+    base_dir: &Path,
+    open_sources: &HashMap<PathBuf, String>,
+    reads: &mut SourceGraphReads,
+) -> Result<CollectedFile, CliDiagnosticFailure> {
+    let source = collected_source(file_path, session, open_sources)?;
     let file_path_obj = Path::new(&file_path);
     let (mut ast, gated_exports) =
         match session

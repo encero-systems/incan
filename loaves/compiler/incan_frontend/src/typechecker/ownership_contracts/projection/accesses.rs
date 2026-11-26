@@ -859,24 +859,7 @@ impl SourceAccesses<'_, '_> {
             .flatten();
         // A closure binding reads or borrows its captures where it is built; those events are its retained record's.
         if let Expr::Closure(params, body) = &assignment.value.node {
-            let closure = self
-                .proof
-                .graph
-                .closures
-                .get(&assignment.value.span)
-                .ok_or("source closure binding has no checked captures")?;
-            if closure.local != root {
-                return Err("source closure binding differs from its checked local");
-            }
-            let free = crate::body_ir::free_vars::free_vars_in_closure_body(params, body);
-            if closure
-                .captures
-                .iter()
-                .any(|capture| !free.contains(&capture.declaration_name))
-            {
-                return Err("source closure capture is not read by its closure");
-            }
-            return Ok(());
+            return self.closure_binding(&root, &assignment.value, params, body);
         }
         // A new unannotated local whose loan is its initializer call's result aliases a returned view: the call is
         // evaluated, and the binding takes a borrow rather than a value. `?` takes a carried view out of its call.
@@ -974,6 +957,35 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
+    /// A closure binding reads or borrows its captures where it is built, so its graph events are its retained
+    /// record's; the binding must be that record's local, and each capture must be a name the closure reads.
+    fn closure_binding(
+        &self,
+        root: &incan_semantics_core::CanonicalSymbolId,
+        value: &Spanned<Expr>,
+        params: &[Spanned<crate::ast::Param>],
+        body: &Spanned<Expr>,
+    ) -> Result<(), &'static str> {
+        let closure = self
+            .proof
+            .graph
+            .closures
+            .get(&value.span)
+            .ok_or("source closure binding has no checked captures")?;
+        if closure.local != *root {
+            return Err("source closure binding differs from its checked local");
+        }
+        let free = crate::body_ir::free_vars::free_vars_in_closure_body(params, body);
+        if closure
+            .captures
+            .iter()
+            .any(|capture| !free.contains(&capture.declaration_name))
+        {
+            return Err("source closure capture is not read by its closure");
+        }
+        Ok(())
+    }
+
     /// Traverse reachable source regions, retaining failure-message termination and continuing branch arms.
     fn block(&mut self, statements: &[Spanned<Statement>]) -> Result<bool, &'static str> {
         for statement in statements {
@@ -984,94 +996,19 @@ impl SourceAccesses<'_, '_> {
                     node: Expr::Match(scrutinee, arms),
                     ..
                 }) => {
-                    let consumes_stored_value =
-                        !fresh_match_scrutinee(scrutinee) && self.proof.carrier_loan(scrutinee).is_none();
-                    self.expression(scrutinee, consumes_stored_value)?;
-                    let mut reaches = false;
-                    for arm in arms {
-                        if let Some(guard) = &arm.node.guard {
-                            self.expression(guard, false)?;
-                        }
-                        reaches |= match &arm.node.body {
-                            MatchBody::Expr(value) => {
-                                self.expression(value, false)?;
-                                true
-                            }
-                            MatchBody::Block(body) => self.block(body)?,
-                        };
-                    }
-                    if !reaches {
+                    if !self.match_statement(scrutinee, arms)? {
                         return Ok(false);
                     }
                 }
                 Statement::Expr(value) => self.expression(value, false)?,
                 Statement::Return(value) => {
-                    let view = crate::ownership_metadata::returned_view(
-                        self.proof
-                            .facts
-                            .declarations
-                            .ownership_contracts
-                            .get(self.proof.canonical_owner()),
-                    )?;
-                    match (value, view) {
-                        (Some(value), Some(view)) => match view.carried {
-                            Some(payload) => self.carried_return(value, payload)?,
-                            None if !view.component.is_empty() => self.expression(value, true)?,
-                            // A returned view borrows its source place: the graph holds a borrow, not a value access.
-                            None => self.view_return(value)?,
-                        },
-                        (Some(value), None) => self.expression(value, true)?,
-                        (None, _) => {}
-                    }
+                    self.return_statement(value.as_ref())?;
                     return Ok(false);
                 }
                 Statement::Assignment(assignment) => self.assignment(assignment)?,
                 Statement::TupleUnpack(unpack) => self.tuple_unpack(unpack)?,
-                Statement::CompoundAssignment(assignment) => {
-                    let identity = self
-                        .proof
-                        .facts
-                        .resolved_write_identity(assignment.name_span, &assignment.name)
-                        .ok_or("compound target has no canonical identity")?;
-                    let (place, through) = if let Some(id) = self.proof.graph.local_loans.get(identity) {
-                        let loan = self.proof.graph.loans.get(id.0).ok_or("compound target has no loan")?;
-                        (loan.source.clone(), Some(*id))
-                    } else {
-                        (
-                            flow::Place {
-                                root: flow::Root::Binding(identity.clone()),
-                                projection: Vec::new(),
-                            },
-                            None,
-                        )
-                    };
-                    self.known.insert(place.root.clone());
-                    self.access(assignment.name_span, &place, through, flow::Access::Read)?;
-                    self.expression(&assignment.value, false)?;
-                    self.access(assignment.name_span, &place, through, flow::Access::Write)?;
-                }
-                Statement::FieldAssignment(assignment) => {
-                    let (mut place, through) = self
-                        .place(&assignment.object)?
-                        .ok_or("field write has no source owner")?;
-                    let field = self
-                        .proof
-                        .facts
-                        .resolved_identity(assignment.target_span)
-                        .ok_or("field write has no canonical field")?;
-                    place.projection.push(flow::Projection::Field(field.clone()));
-                    self.expression(&assignment.value, true)?;
-                    self.access(
-                        assignment.target_span,
-                        &place,
-                        through,
-                        if through.is_some() {
-                            flow::Access::Write
-                        } else {
-                            flow::Access::Replace
-                        },
-                    )?;
-                }
+                Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment)?,
+                Statement::FieldAssignment(assignment) => self.field_assignment(assignment)?,
                 Statement::IndexAssignment(assignment) => {
                     let (mut place, through) = self
                         .place(&assignment.object)?
@@ -1092,20 +1029,7 @@ impl SourceAccesses<'_, '_> {
                     }
                 }
                 Statement::If(branch) => {
-                    let Condition::Expr(condition) = &branch.condition else {
-                        return Err("source access requires expression conditions");
-                    };
-                    self.expression(condition, false)?;
-                    let mut reaches = self.block(&branch.then_body)?;
-                    for (condition, body) in &branch.elif_branches {
-                        self.expression(condition, false)?;
-                        reaches |= self.block(body)?;
-                    }
-                    reaches |= match &branch.else_body {
-                        Some(body) => self.block(body)?,
-                        None => true,
-                    };
-                    if !reaches {
+                    if !self.if_statement(branch)? {
                         return Ok(false);
                     }
                 }
@@ -1126,6 +1050,131 @@ impl SourceAccesses<'_, '_> {
                 Statement::Break(None) | Statement::Continue => return Ok(false),
                 _ => return Err("source access coverage requires the supported statement profile"),
             }
+        }
+        Ok(true)
+    }
+
+    /// Traverse a match statement: a stored scrutinee is consumed unless it is fresh or a carrier loan holds it, each
+    /// guard is read before its arm, and the match reaches its end when any arm does.
+    fn match_statement(
+        &mut self,
+        scrutinee: &Spanned<Expr>,
+        arms: &[Spanned<crate::ast::MatchArm>],
+    ) -> Result<bool, &'static str> {
+        let consumes_stored_value = !fresh_match_scrutinee(scrutinee) && self.proof.carrier_loan(scrutinee).is_none();
+        self.expression(scrutinee, consumes_stored_value)?;
+        let mut reaches = false;
+        for arm in arms {
+            if let Some(guard) = &arm.node.guard {
+                self.expression(guard, false)?;
+            }
+            reaches |= match &arm.node.body {
+                MatchBody::Expr(value) => {
+                    self.expression(value, false)?;
+                    true
+                }
+                MatchBody::Block(body) => self.block(body)?,
+            };
+        }
+        if !reaches {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// Traverse a return: a returned view borrows its source, a carried view returns its payload, and any other
+    /// returned value is consumed.
+    fn return_statement(&mut self, value: Option<&Spanned<Expr>>) -> Result<(), &'static str> {
+        let view = crate::ownership_metadata::returned_view(
+            self.proof
+                .facts
+                .declarations
+                .ownership_contracts
+                .get(self.proof.canonical_owner()),
+        )?;
+        match (value, view) {
+            (Some(value), Some(view)) => match view.carried {
+                Some(payload) => self.carried_return(value, payload)?,
+                None if !view.component.is_empty() => self.expression(value, true)?,
+                // A returned view borrows its source place: the graph holds a borrow, not a value access.
+                None => self.view_return(value)?,
+            },
+            (Some(value), None) => self.expression(value, true)?,
+            (None, _) => {}
+        }
+        Ok(())
+    }
+
+    /// Traverse a compound assignment: its target, or the source its local loan names, is read, the value is
+    /// evaluated, and the target is written.
+    fn compound_assignment(&mut self, assignment: &crate::ast::CompoundAssignmentStmt) -> Result<(), &'static str> {
+        let identity = self
+            .proof
+            .facts
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+            .ok_or("compound target has no canonical identity")?;
+        let (place, through) = if let Some(id) = self.proof.graph.local_loans.get(identity) {
+            let loan = self.proof.graph.loans.get(id.0).ok_or("compound target has no loan")?;
+            (loan.source.clone(), Some(*id))
+        } else {
+            (
+                flow::Place {
+                    root: flow::Root::Binding(identity.clone()),
+                    projection: Vec::new(),
+                },
+                None,
+            )
+        };
+        self.known.insert(place.root.clone());
+        self.access(assignment.name_span, &place, through, flow::Access::Read)?;
+        self.expression(&assignment.value, false)?;
+        self.access(assignment.name_span, &place, through, flow::Access::Write)?;
+        Ok(())
+    }
+
+    /// Traverse a field write: the value is consumed, then the field of its source owner is written through a loan or
+    /// replaced in owned storage.
+    fn field_assignment(&mut self, assignment: &crate::ast::FieldAssignmentStmt) -> Result<(), &'static str> {
+        let (mut place, through) = self
+            .place(&assignment.object)?
+            .ok_or("field write has no source owner")?;
+        let field = self
+            .proof
+            .facts
+            .resolved_identity(assignment.target_span)
+            .ok_or("field write has no canonical field")?;
+        place.projection.push(flow::Projection::Field(field.clone()));
+        self.expression(&assignment.value, true)?;
+        self.access(
+            assignment.target_span,
+            &place,
+            through,
+            if through.is_some() {
+                flow::Access::Write
+            } else {
+                flow::Access::Replace
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Traverse an if statement's conditions and branches; it reaches its end when any branch, or a missing else, does.
+    fn if_statement(&mut self, branch: &crate::ast::IfStmt) -> Result<bool, &'static str> {
+        let Condition::Expr(condition) = &branch.condition else {
+            return Err("source access requires expression conditions");
+        };
+        self.expression(condition, false)?;
+        let mut reaches = self.block(&branch.then_body)?;
+        for (condition, body) in &branch.elif_branches {
+            self.expression(condition, false)?;
+            reaches |= self.block(body)?;
+        }
+        reaches |= match &branch.else_body {
+            Some(body) => self.block(body)?,
+            None => true,
+        };
+        if !reaches {
+            return Ok(false);
         }
         Ok(true)
     }

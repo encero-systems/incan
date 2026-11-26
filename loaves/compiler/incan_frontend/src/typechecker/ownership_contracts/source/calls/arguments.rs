@@ -41,15 +41,7 @@ impl Builder<'_> {
             // `Result.map_err` invokes its one checked callback without retaining it. A capture-free closure literal
             // therefore evaluates no caller-owned storage; capturing callbacks still need the ordinary local-closure
             // route so their loans remain live through invocation.
-            None if selected_result_map_err
-                && !parameter.is_mut
-                && matches!(expression.node, Expr::Closure(..))
-                && self.checker.type_info.expr_type(expression.span) == Some(&parameter.ty)
-                && self
-                    .checker
-                    .closure_captures(expression.span)
-                    .is_some_and(|captures| captures.is_empty()) =>
-            {
+            None if selected_result_map_err && self.capture_free_callback(expression, parameter) => {
                 Ok((self.event(incoming, Event::Nothing, expression.span), None))
             }
             // One exact canonical field may be taken from a selected dependency-free direct call result. This must
@@ -65,39 +57,16 @@ impl Builder<'_> {
             // A fresh closed value has no caller-owned source to conflict with. Explicit boundaries and an ordinary
             // model constructor argument retain that checked independence without inventing a copy or loan.
             None if accepts_fresh_inferred
-                && !parameter.is_mut
-                && self.optional_place(expression)?.is_none()
-                && (self
-                    .checker
-                    .type_info
-                    .expr_type(expression.span)
-                    .is_some_and(plain_result)
-                    || (ordinary_callee
-                        && self
-                            .checker
-                            .type_info
-                            .constructor_field_binding(expression.span)
-                            .is_some())) =>
+                && self.fresh_inferred_argument(expression, parameter, ordinary_callee)? =>
             {
                 self.expression(expression, incoming, true)
                     .map(|outgoing| (outgoing, None))
             }
             // A private helper's ordinary slot may receive a fresh value whose checked type cannot hold a borrow.
             // Its expression still proves every nested element; stored and reference-carrying values stay refused.
-            None if ordinary_callee
-                && !parameter.is_mut
-                && self.optional_place(expression)?.is_none()
-                && matches!(
-                    expression.node,
-                    Expr::List(_) | Expr::Tuple(_) | Expr::Set(_) | Expr::Dict(_)
-                )
-                && self.checker.type_info.expr_type(expression.span).is_some_and(|ty| {
-                    !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty)
-                }) =>
-            {
-                self.expression(expression, incoming, true)
-                    .map(|outgoing| (outgoing, None))
-            }
+            None if ordinary_callee && !parameter.is_mut && self.fresh_borrow_free_display(expression)? => self
+                .expression(expression, incoming, true)
+                .map(|outgoing| (outgoing, None)),
             // One exact whole mutable Local may be read into an ordinary mutable slot when its cloneable checked
             // value has no alias, loan, dependency or prior constraint. Mutation settlement remains authoritative;
             // this route invents neither an ownership transfer nor an input loan.
@@ -130,29 +99,78 @@ impl Builder<'_> {
             }
             // A checked local or parameter, including a field-only path, may be observed by an immutable ordinary
             // helper while its body retains storage. Indexes and borrowed aliases still need separate access facts.
-            None if ordinary_callee
-                && !parameter.is_mut
-                && self.optional_place(expression)?.is_some_and(|path| {
-                    path.through.is_none()
-                        && path
-                            .place
-                            .projection
-                            .iter()
-                            .all(|projection| matches!(projection, Projection::Field(_)))
-                        && matches!(&path.place.root, Root::Binding(identity)
-                            if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
-                                || (identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter
-                                    && !path.place.projection.is_empty()))
-                }) =>
-            {
-                self.expression(expression, incoming, false)
-                    .map(|outgoing| (outgoing, None))
-            }
+            None if ordinary_callee && !parameter.is_mut && self.observed_stored_binding(expression)? => self
+                .expression(expression, incoming, false)
+                .map(|outgoing| (outgoing, None)),
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
+    }
+
+    /// Whether an immutable slot receives a capture-free closure literal of exactly the parameter's checked type.
+    fn capture_free_callback(&self, expression: &Spanned<Expr>, parameter: &CallableParam) -> bool {
+        !parameter.is_mut
+            && matches!(expression.node, Expr::Closure(..))
+            && self.checker.type_info.expr_type(expression.span) == Some(&parameter.ty)
+            && self
+                .checker
+                .closure_captures(expression.span)
+                .is_some_and(|captures| captures.is_empty())
+    }
+
+    /// Whether an immutable slot receives a fresh value with no caller-owned source: a plain result, or an ordinary
+    /// model constructor argument.
+    fn fresh_inferred_argument(
+        &mut self,
+        expression: &Spanned<Expr>,
+        parameter: &CallableParam,
+        ordinary_callee: bool,
+    ) -> Result<bool, Unavailable> {
+        Ok(!parameter.is_mut
+            && self.optional_place(expression)?.is_none()
+            && (self
+                .checker
+                .type_info
+                .expr_type(expression.span)
+                .is_some_and(plain_result)
+                || (ordinary_callee
+                    && self
+                        .checker
+                        .type_info
+                        .constructor_field_binding(expression.span)
+                        .is_some())))
+    }
+
+    /// Whether an argument is a fresh list, tuple, set or dict display whose checked type cannot hold a borrow.
+    fn fresh_borrow_free_display(&mut self, expression: &Spanned<Expr>) -> Result<bool, Unavailable> {
+        Ok(self.optional_place(expression)?.is_none()
+            && matches!(
+                expression.node,
+                Expr::List(_) | Expr::Tuple(_) | Expr::Set(_) | Expr::Dict(_)
+            )
+            && self
+                .checker
+                .type_info
+                .expr_type(expression.span)
+                .is_some_and(|ty| !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty)))
+    }
+
+    /// Whether an argument names a checked local, or a field path of a checked parameter, through no loan.
+    fn observed_stored_binding(&mut self, expression: &Spanned<Expr>) -> Result<bool, Unavailable> {
+        Ok(self.optional_place(expression)?.is_some_and(|path| {
+            path.through.is_none()
+                && path
+                    .place
+                    .projection
+                    .iter()
+                    .all(|projection| matches!(projection, Projection::Field(_)))
+                && matches!(&path.place.root, Root::Binding(identity)
+                    if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+                        || (identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter
+                            && !path.place.projection.is_empty()))
+        }))
     }
 
     /// Whether one ordinary mutable slot reads an exact whole cloneable mutable Local without taking ownership.

@@ -52,6 +52,42 @@ pub(super) fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Re
                 .ok_or_else(|| invalid(function, "local callable has no result type"))?;
             Ok((signature, result))
         }
+        CalleeKind::FieldMetadata(owner, info) => {
+            Ok((Vec::new(), scalar(&crate::field_metadata::result(plan, *owner, *info)?)))
+        }
+        CalleeKind::StaticLoad(_)
+        | CalleeKind::StaticStore(_)
+        | CalleeKind::StaticForce(_)
+        | CalleeKind::ModuleInitialized(_)
+        | CalleeKind::ModuleComplete(_)
+        | CalleeKind::StaticMethod(..)
+        | CalleeKind::LinkedStaticMethod(..) => static_callee_signature(plan, function, callee),
+        CalleeKind::Planned(name) => planned_function_signature(plan, name),
+        CalleeKind::CloneEnum(index, name) => clone_enum_signature(plan, *index, name),
+        CalleeKind::CloneModel(index, name) => {
+            let declaration = model(plan, *index).ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            if declaration.name != *name {
+                return Err(PlanError::UnknownCallee(name.clone()));
+            }
+            Ok((vec![Scalar::ModelRef(*index)], Scalar::Model(*index)))
+        }
+        CalleeKind::FutureMethod(..) => Err(invalid(
+            function,
+            "unsupported SDK method future outside its boxing shim",
+        )),
+        CalleeKind::Foreign(declaration) => foreign_callee_signature(function, declaration),
+        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => external_callee_signature(plan, callee, path),
+    }
+}
+
+/// A static cell's load, store or forcing, its module's completion markers, and a computed or linked static's method:
+/// each takes the cell's or method's declared types, and a module marker requires the module's first computed cell.
+fn static_callee_signature(
+    plan: &Plan,
+    function: &Function,
+    callee: &Callee,
+) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    match &callee.kind {
         CalleeKind::StaticLoad(slot) => Ok((Vec::new(), scalar(&crate::statics::cell(plan, *slot)?.ty))),
         CalleeKind::StaticStore(slot) => Ok((vec![scalar(&crate::statics::cell(plan, *slot)?.ty)], Scalar::Unit)),
         CalleeKind::StaticForce(slot) => {
@@ -68,9 +104,6 @@ pub(super) fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Re
                 Scalar::Unit
             };
             Ok((Vec::new(), result))
-        }
-        CalleeKind::FieldMetadata(owner, info) => {
-            Ok((Vec::new(), scalar(&crate::field_metadata::result(plan, *owner, *info)?)))
         }
         CalleeKind::StaticMethod(slot, name) => {
             let method = crate::statics::method_target(plan, *slot, name)?;
@@ -96,34 +129,7 @@ pub(super) fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Re
                 scalar(&method.return_type),
             ))
         }
-        CalleeKind::Planned(name) => planned_function_signature(plan, name),
-        CalleeKind::CloneEnum(index, name) => clone_enum_signature(plan, *index, name),
-        CalleeKind::CloneModel(index, name) => {
-            let declaration = model(plan, *index).ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
-            if declaration.name != *name {
-                return Err(PlanError::UnknownCallee(name.clone()));
-            }
-            Ok((vec![Scalar::ModelRef(*index)], Scalar::Model(*index)))
-        }
-        CalleeKind::FutureMethod(..) => Err(invalid(
-            function,
-            "unsupported SDK method future outside its boxing shim",
-        )),
-        CalleeKind::Foreign(declaration) => {
-            if !identifier(&declaration.name)
-                || declaration.symbol.is_empty()
-                || declaration.library.is_empty()
-                || declaration.symbol.contains('\0')
-                || declaration.library.contains('\0')
-            {
-                return Err(invalid(function, "invalid verified foreign declaration"));
-            }
-            Ok((
-                declaration.parameters.iter().map(scalar).collect(),
-                scalar(&declaration.return_type),
-            ))
-        }
-        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => external_callee_signature(plan, callee, path),
+        _ => Err(invalid(function, "callee is not a static cell operation")),
     }
 }
 
@@ -152,6 +158,26 @@ fn callable_signature(plan: &Plan, function: &Function, callee: &Callee) -> Resu
         )),
         _ => Err(invalid(function, "expected a closure callee")),
     }
+}
+
+/// A verified foreign declaration names an identifier, a nonempty symbol and library without interior NUL bytes, and
+/// takes its declared native types.
+fn foreign_callee_signature(
+    function: &Function,
+    declaration: &crate::plan::ForeignFunction,
+) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    if !identifier(&declaration.name)
+        || declaration.symbol.is_empty()
+        || declaration.library.is_empty()
+        || declaration.symbol.contains('\0')
+        || declaration.library.contains('\0')
+    {
+        return Err(invalid(function, "invalid verified foreign declaration"));
+    }
+    Ok((
+        declaration.parameters.iter().map(scalar).collect(),
+        scalar(&declaration.return_type),
+    ))
 }
 
 /// Require the exact enum declaration and its checked Clone derive before admitting the borrowed clone call.

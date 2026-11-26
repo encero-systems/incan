@@ -77,17 +77,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
 
-        // A resolved operator hook makes this a method call, not a primitive combination. Checked before the
-        // operand is lowered, matching the "never partially lower an operator we will refuse" rule the binary
-        // path holds to.
-        if let Some(dispatch) = self.type_info.resolved_operator_call(source_span)
-            && dispatch.kind == ResolvedOperatorKind::Binary
-        {
-            self.push_unsupported_stmt(
-                format!("compound assignment through operator hook `{}`", dispatch.method),
-                span,
-                out,
-            );
+        // Checked before the operand is lowered, matching the "never partially lower an operator we will refuse" rule
+        // the binary path holds to.
+        if self.refuse_compound_operator_hook(source_span, span, out) {
             return;
         }
 
@@ -144,6 +136,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
+    }
+
+    /// Refuse a compound assignment whose checker-resolved binary operator hook makes it a method call rather than a
+    /// primitive combination. Returns whether it was refused.
+    fn refuse_compound_operator_hook(
+        &mut self,
+        source_span: ast::Span,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bool {
+        let Some(dispatch) = self.type_info.resolved_operator_call(source_span) else {
+            return false;
+        };
+        if dispatch.kind != ResolvedOperatorKind::Binary {
+            return false;
+        }
+        self.push_unsupported_stmt(
+            format!("compound assignment through operator hook `{}`", dispatch.method),
+            span,
+            out,
+        );
+        true
     }
 
     /// Resolve or declare the local for one name bound by a multi-target assignment (tuple unpack or chained

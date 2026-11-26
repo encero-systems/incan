@@ -147,21 +147,7 @@ pub(crate) fn exported_contracts(
             }
         }
     }
-    let mut unique_contracts: Vec<(incan_semantics_core::CanonicalSymbolId, CheckedOwnershipContract)> =
-        Vec::with_capacity(contracts.len());
-    for (identity, contract) in contracts {
-        if let Some((_, published)) = unique_contracts
-            .iter()
-            .find(|(published_identity, _)| published_identity == &identity)
-        {
-            if published != &contract {
-                return Err(invalid("one published ownership identity has conflicting contracts"));
-            }
-        } else {
-            unique_contracts.push((identity, contract));
-        }
-    }
-    let contracts = unique_contracts;
+    let contracts = unique_contracts(contracts)?;
     // A projection rewrites the callable's public name and anchor to the alias declaration while retaining the
     // terminal declaration path. Resolve that path through the authenticated identity graph, then require the exact
     // target to publish the same checked contract. A missing, ambiguous or tampered projection therefore stays
@@ -190,6 +176,27 @@ pub(crate) fn exported_contracts(
         ));
     }
     Ok(contracts)
+}
+
+/// Collapse contracts published more than once under one identity, refusing an identity whose contracts differ.
+fn unique_contracts(
+    contracts: Vec<(incan_semantics_core::CanonicalSymbolId, CheckedOwnershipContract)>,
+) -> Result<Vec<(incan_semantics_core::CanonicalSymbolId, CheckedOwnershipContract)>, LibraryManifestError> {
+    let mut unique_contracts: Vec<(incan_semantics_core::CanonicalSymbolId, CheckedOwnershipContract)> =
+        Vec::with_capacity(contracts.len());
+    for (identity, contract) in contracts {
+        if let Some((_, published)) = unique_contracts
+            .iter()
+            .find(|(published_identity, _)| published_identity == &identity)
+        {
+            if published != &contract {
+                return Err(invalid("one published ownership identity has conflicting contracts"));
+            }
+        } else {
+            unique_contracts.push((identity, contract));
+        }
+    }
+    Ok(unique_contracts)
 }
 
 /// Root exports: functions paired with their published identities, and the methods of every exported type.
@@ -611,9 +618,41 @@ mod tests {
     /// to publish the same contract.
     #[test]
     fn callable_reexport_uses_its_terminal_ownership_declaration() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = reexported_view_manifest()?;
+
+        let contracts = exported_contracts(&manifest)?;
+        assert_eq!(
+            contracts.len(),
+            1,
+            "one terminal declaration owns the re-exported contract"
+        );
+        assert_eq!(contracts[0].0.declaration_name, "view");
+
+        let restored = LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
+        assert_eq!(exported_contracts(&restored)?, contracts);
+        let directory = tempfile::tempdir()?;
+        std::fs::write(directory.path().join("provider.incnlib"), restored.to_json_string()?)?;
+        let entry = crate::loaf_index::LoafIndex::dependency("provider", "provider", directory.path())?;
+        let mut consumer = TypeChecker::new();
+        consumer.set_loaves(std::sync::Arc::new(crate::loaf_index::LoafIndex::new([entry])?));
+        let consumer_source = "from pub::provider import Notice, forwarded_view\ndef read(text: str) -> int:\n    borrowed = forwarded_view(text)\n    return len(borrowed)\ndef inspect(value: Notice) -> int:\n    return match value:\n        Notice.Empty => 0\n        Notice.One(number) => number\n        Notice.Three(first, second, third) => first + second + third\n";
+        let consumer_tokens = lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
+        let consumer_program = parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
+        consumer
+            .check_program(&consumer_program)
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        assert_duplicate_and_missing_targets_are_refused(&manifest)?;
+        assert_inconsistent_targets_are_refused(manifest)?;
+        Ok(())
+    }
+
+    /// A provider whose root facade re-exports `views.view` as `forwarded_view`, with its checked API metadata and
+    /// identity graph.
+    fn reexported_view_manifest() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
         use crate::api_metadata::{
-            ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
-            collect_checked_api_metadata, materialize_api_alias_projections, materialize_checked_api_public_namespaces,
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+            materialize_api_alias_projections, materialize_checked_api_public_namespaces,
         };
 
         const TARGET: &str = "pub enum Notice:\n    Empty\n    One(int)\n    Three(int, int, int)\npub def view(value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\n";
@@ -660,28 +699,15 @@ mod tests {
             &[(target_path, target_exports), (facade_path, facade_exports)],
         )?;
         manifest.contract_metadata.api = Some(api);
+        Ok(manifest)
+    }
 
-        let contracts = exported_contracts(&manifest)?;
-        assert_eq!(
-            contracts.len(),
-            1,
-            "one terminal declaration owns the re-exported contract"
-        );
-        assert_eq!(contracts[0].0.declaration_name, "view");
-
-        let restored = LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
-        assert_eq!(exported_contracts(&restored)?, contracts);
-        let directory = tempfile::tempdir()?;
-        std::fs::write(directory.path().join("provider.incnlib"), restored.to_json_string()?)?;
-        let entry = crate::loaf_index::LoafIndex::dependency("provider", "provider", directory.path())?;
-        let mut consumer = TypeChecker::new();
-        consumer.set_loaves(std::sync::Arc::new(crate::loaf_index::LoafIndex::new([entry])?));
-        let consumer_source = "from pub::provider import Notice, forwarded_view\ndef read(text: str) -> int:\n    borrowed = forwarded_view(text)\n    return len(borrowed)\ndef inspect(value: Notice) -> int:\n    return match value:\n        Notice.Empty => 0\n        Notice.One(number) => number\n        Notice.Three(first, second, third) => first + second + third\n";
-        let consumer_tokens = lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
-        let consumer_program = parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
-        consumer
-            .check_program(&consumer_program)
-            .map_err(|errors| format!("{errors:?}"))?;
+    /// A second root identity for the same contract is returned once, but refused once its contract differs; a facade
+    /// projection whose source path names no target is refused.
+    fn assert_duplicate_and_missing_targets_are_refused(
+        manifest: &LibraryManifest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::api_metadata::ApiDeclaration;
 
         let mut duplicate_contract = manifest.clone();
         let target_function = duplicate_contract
@@ -746,6 +772,14 @@ mod tests {
             .ok_or("missing facade projection")?;
         projected.source_path = vec!["missing".into(), "view".into()];
         assert!(exported_contracts(&missing_target).is_err());
+
+        Ok(())
+    }
+
+    /// A target without its contract, an identity graph with two targets for one source path, and a facade projection
+    /// whose contract differs from its target's are refused.
+    fn assert_inconsistent_targets_are_refused(manifest: LibraryManifest) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::api_metadata::ApiDeclaration;
 
         let mut missing_contract = manifest.clone();
         let target = missing_contract

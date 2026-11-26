@@ -322,17 +322,7 @@ impl TypeChecker {
         if let Some(proven) = self.source_capture_has_native_auto_trait(ty, marker, depth) {
             return proven;
         }
-        let native = match ty {
-            ResolvedType::Int => ResolvedType::RustPath("i64".into()),
-            ResolvedType::Float => ResolvedType::RustPath("f64".into()),
-            ResolvedType::Bool => ResolvedType::RustPath("bool".into()),
-            ResolvedType::Str => ResolvedType::RustPath("std::string::String".into()),
-            ResolvedType::Bytes => ResolvedType::RustPath("std::vec::Vec<u8>".into()),
-            ResolvedType::Numeric(kind) => {
-                ResolvedType::RustPath(incan_lang::lang::types::numerics::rust_name(*kind).into())
-            }
-            _ => self.rusttype_native_target(ty).unwrap_or_else(|| ty.clone()),
-        };
+        let native = self.auto_trait_native_type(ty);
         if matches!(marker, "Send" | "Sync")
             && let Some((base, definition, arguments, _)) = self.rust_identity_for_type(&native)
         {
@@ -405,6 +395,22 @@ impl TypeChecker {
                 self.capture_has_native_auto_trait(&subject, required, depth + 1)
             })
         })
+    }
+
+    /// The native Rust type whose auto-trait implementations decide a capture of `ty`: a scalar's Rust primitive or
+    /// owned buffer, else the type's `rusttype` target, else the type itself.
+    fn auto_trait_native_type(&self, ty: &ResolvedType) -> ResolvedType {
+        match ty {
+            ResolvedType::Int => ResolvedType::RustPath("i64".into()),
+            ResolvedType::Float => ResolvedType::RustPath("f64".into()),
+            ResolvedType::Bool => ResolvedType::RustPath("bool".into()),
+            ResolvedType::Str => ResolvedType::RustPath("std::string::String".into()),
+            ResolvedType::Bytes => ResolvedType::RustPath("std::vec::Vec<u8>".into()),
+            ResolvedType::Numeric(kind) => {
+                ResolvedType::RustPath(incan_lang::lang::types::numerics::rust_name(*kind).into())
+            }
+            _ => self.rusttype_native_target(ty).unwrap_or_else(|| ty.clone()),
+        }
     }
 
     /// Prove one closed source nominal structurally, including transparent newtype storage.

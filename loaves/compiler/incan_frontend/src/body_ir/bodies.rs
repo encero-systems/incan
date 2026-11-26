@@ -218,13 +218,7 @@ pub(super) fn finish_static_initializer_body(
     span: HirSourceSpan,
     stmts: Vec<bir::Statement>,
 ) -> bir::Body {
-    if builder
-        .locals
-        .iter()
-        .any(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
-    {
-        builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
-    }
+    record_allocator_requirement(&mut builder);
     let named_type_identities =
         builder.finish_type_identities(parameter_types::shared_retained_type_identities(builder.type_info));
     let direct_call_id = CompilerNodeId::declaration_at(builder.module_identity, span);
@@ -282,12 +276,7 @@ pub(super) fn lower_function_body(
         .function_bindings_by_span
         .get(&decl_span);
     let type_parameters = crate::body_ir_parameter_names::source_parameter_names(&function.type_params);
-    let shared_method_chain = lowering_facts
-        .type_info
-        .declarations
-        .method_decorator_receiver_slots
-        .get(&decl_span)
-        .is_some_and(|slot| !slot.mutable);
+    let shared_method_chain = shared_method_chain(lowering_facts, decl_span);
     let owner_return_type = function_return_type(binding, &type_parameters, shared_method_chain, lowering_facts);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
@@ -310,8 +299,7 @@ pub(super) fn lower_function_body(
         &mut params,
     );
     retain_parameter_ownership(&mut builder, &params, false);
-    builder.prepare_returned_view(binding.and_then(|binding| binding.identity.as_ref()), &params, false);
-    builder.prepare_retained_result_source(binding.and_then(|binding| binding.identity.as_ref()), &params, false);
+    prepare_result_relations(&mut builder, binding, &params, false);
     let rebound = lowering_facts
         .type_info
         .declarations
@@ -335,13 +323,7 @@ pub(super) fn lower_function_body(
         builder.checked_function_input_profile(owner, function, &params, hir_span(decl_span), &mut stmts)
     });
 
-    if builder
-        .locals
-        .iter()
-        .any(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
-    {
-        builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
-    }
+    record_allocator_requirement(&mut builder);
 
     let named_type_identities = builder.finish_type_identities(parameter_types::shared_retained_type_identities(
         lowering_facts.type_info,
@@ -387,13 +369,7 @@ pub(super) fn lower_function_body(
         panic_facts: builder.panic_facts,
         is_async: function.is_async(),
         retired_rust_facade_wire: None,
-        native_attributes: lowering_facts
-            .type_info
-            .declarations
-            .native_attribute_applications
-            .get(&decl_span)
-            .cloned()
-            .unwrap_or_default(),
+        native_attributes: native_attributes(lowering_facts, decl_span),
     }
 }
 /// Lower one method declaration's body into Body IR v0, or `None` for an abstract method (`body: None` — a trait
@@ -466,22 +442,8 @@ pub(super) fn lower_method_body(
         root_scope,
     );
     retain_parameter_ownership(&mut builder, &params, true);
-    builder.prepare_returned_view(
-        binding.and_then(|binding| binding.identity.as_ref()),
-        &params,
-        method.receiver.is_some(),
-    );
-    builder.prepare_retained_result_source(
-        binding.and_then(|binding| binding.identity.as_ref()),
-        &params,
-        method.receiver.is_some(),
-    );
-    let rebound = lowering_facts
-        .type_info
-        .declarations
-        .decorated_method_bindings
-        .contains_key(&(owner_name.to_string(), method.name.clone()))
-        && !decorated_bindings::supports_method(method, owner_name, lowering_facts.type_info);
+    prepare_result_relations(&mut builder, binding, &params, method.receiver.is_some());
+    let rebound = method_is_rebound(method, owner_name, lowering_facts);
     let mut stmts = lower_declaration_statements(
         &mut builder,
         decorator_rebinding(rebound, &method.name),
@@ -497,13 +459,7 @@ pub(super) fn lower_method_body(
         builder.checked_method_input_profile(owner, method, &params, hir_span(decl_span), &mut stmts)
     });
 
-    if builder
-        .locals
-        .iter()
-        .any(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
-    {
-        builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
-    }
+    record_allocator_requirement(&mut builder);
 
     let named_type_identities = builder.finish_type_identities(parameter_types::shared_retained_type_identities(
         lowering_facts.type_info,
@@ -512,17 +468,7 @@ pub(super) fn lower_method_body(
     Some(bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),
-        // Nominal receiver frames close their owner through layout specialization. Trait defaults instead retain
-        // their owner binders until the checked adoption specializes them; publication must know the exact scope.
-        type_parameters: if method.receiver.is_none() || *receiver_ty == IncanType::SelfType {
-            builder.type_parameters.clone()
-        } else {
-            method
-                .type_params
-                .iter()
-                .map(|parameter| parameter.name.clone())
-                .collect()
-        },
+        type_parameters: published_method_type_parameters(method, receiver_ty, &builder.type_parameters),
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
@@ -562,6 +508,79 @@ pub(super) fn lower_method_body(
         native_attributes: Vec::new(),
     })
 }
+/// Record that a body needs the allocator when any of its locals is not trivially Copy.
+fn record_allocator_requirement(builder: &mut BodyBuilder<'_, '_>) {
+    if builder
+        .locals
+        .iter()
+        .any(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
+    {
+        builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+    }
+}
+
+/// Prepare the returned view and retained result source the checked binding's ownership contract declares.
+fn prepare_result_relations(
+    builder: &mut BodyBuilder<'_, '_>,
+    binding: Option<&FunctionBindingInfo>,
+    params: &[bir::CallableParam],
+    has_receiver: bool,
+) {
+    let owner = binding.and_then(|binding| binding.identity.as_ref());
+    builder.prepare_returned_view(owner, params, has_receiver);
+    builder.prepare_retained_result_source(owner, params, has_receiver);
+}
+
+/// The native attributes the checker applied to the function declared at `decl_span`.
+fn native_attributes(lowering_facts: &BodyIrLoweringFacts<'_, '_>, decl_span: ast::Span) -> Vec<bir::NativeAttribute> {
+    lowering_facts
+        .type_info
+        .declarations
+        .native_attribute_applications
+        .get(&decl_span)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Whether the function declared at `decl_span` is a method decorator whose receiver slot is shared.
+fn shared_method_chain(lowering_facts: &BodyIrLoweringFacts<'_, '_>, decl_span: ast::Span) -> bool {
+    lowering_facts
+        .type_info
+        .declarations
+        .method_decorator_receiver_slots
+        .get(&decl_span)
+        .is_some_and(|slot| !slot.mutable)
+}
+
+/// Whether a decorator rebinds `owner_name.method` in a shape the direct method lowering does not support.
+fn method_is_rebound(method: &ast::MethodDecl, owner_name: &str, lowering_facts: &BodyIrLoweringFacts<'_, '_>) -> bool {
+    lowering_facts
+        .type_info
+        .declarations
+        .decorated_method_bindings
+        .contains_key(&(owner_name.to_string(), method.name.clone()))
+        && !decorated_bindings::supports_method(method, owner_name, lowering_facts.type_info)
+}
+
+/// The type parameters a method body publishes. Nominal receiver frames close their owner through layout
+/// specialization, so they publish only the method's own; static methods and trait defaults keep their owner binders
+/// until the checked adoption specializes them.
+fn published_method_type_parameters(
+    method: &ast::MethodDecl,
+    receiver_ty: &IncanType,
+    type_parameters: &[String],
+) -> Vec<String> {
+    if method.receiver.is_none() || *receiver_ty == IncanType::SelfType {
+        type_parameters.to_vec()
+    } else {
+        method
+            .type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect()
+    }
+}
+
 /// Resolve the checked return contract in a free function's binder context, applying a shared method decorator's
 /// planned carrier only when the checker retained a binding. Missing facts keep the existing unknown fallback.
 fn function_return_type(

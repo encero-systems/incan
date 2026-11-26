@@ -56,30 +56,10 @@ impl SourcePaths<'_> {
             }
             incoming = match &statement.node {
                 Statement::Pass => incoming,
-                // Each arm starts from the evaluated scrutinee. A guard's false edge reaches the next arm, while its
-                // true edge enters that arm's body; continuing bodies join after the exhaustive match.
                 Statement::Expr(Spanned {
                     node: Expr::Match(scrutinee, arms),
                     ..
-                }) => {
-                    let evaluated = self.expression(scrutinee, incoming)?;
-                    let mut outgoing = Vec::new();
-                    let mut remaining = evaluated;
-                    for arm in arms {
-                        let arm_input = if let Some(guard) = &arm.node.guard {
-                            let guarded = self.expression(guard, remaining)?;
-                            remaining = guarded.clone();
-                            guarded
-                        } else {
-                            remaining.clone()
-                        };
-                        outgoing.extend(match &arm.node.body {
-                            MatchBody::Expr(value) => self.expression(value, arm_input)?,
-                            MatchBody::Block(body) => self.block(body, arm_input)?,
-                        });
-                    }
-                    outgoing
-                }
+                }) => self.match_paths(scrutinee, arms, incoming)?,
                 Statement::Assignment(value) => {
                     let incoming = self.expression(&value.value, incoming)?;
                     self.region(statement.span, incoming)
@@ -124,22 +104,7 @@ impl SourcePaths<'_> {
                     }
                     success
                 }
-                Statement::If(branch) => {
-                    let Condition::Expr(condition) = &branch.condition else {
-                        return Err("operation paths require a checked expression condition");
-                    };
-                    let mut remaining = self.expression(condition, incoming)?;
-                    let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
-                    for (condition, body) in &branch.elif_branches {
-                        remaining = self.expression(condition, remaining)?;
-                        outgoing.extend(self.block(body, remaining.clone())?);
-                    }
-                    outgoing.extend(match &branch.else_body {
-                        Some(body) => self.block(body, remaining)?,
-                        None => remaining,
-                    });
-                    outgoing
-                }
+                Statement::If(branch) => self.if_paths(branch, incoming)?,
                 // Loops follow the source graph's own shape: a header, the condition or the iterable's poll, the
                 // body with its back edge to the header, and exits from the condition or poll and each `break`.
                 Statement::While(loop_) => {
@@ -182,6 +147,52 @@ impl SourcePaths<'_> {
             };
         }
         Ok(incoming)
+    }
+
+    /// Each arm starts from the evaluated scrutinee. A guard's false edge reaches the next arm, while its true edge
+    /// enters that arm's body; continuing bodies join after the exhaustive match.
+    fn match_paths(
+        &mut self,
+        scrutinee: &Spanned<Expr>,
+        arms: &[Spanned<crate::ast::MatchArm>],
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, &'static str> {
+        let evaluated = self.expression(scrutinee, incoming)?;
+        let mut outgoing = Vec::new();
+        let mut remaining = evaluated;
+        for arm in arms {
+            let arm_input = if let Some(guard) = &arm.node.guard {
+                let guarded = self.expression(guard, remaining)?;
+                remaining = guarded.clone();
+                guarded
+            } else {
+                remaining.clone()
+            };
+            outgoing.extend(match &arm.node.body {
+                MatchBody::Expr(value) => self.expression(value, arm_input)?,
+                MatchBody::Block(body) => self.block(body, arm_input)?,
+            });
+        }
+        Ok(outgoing)
+    }
+
+    /// Each branch starts from its condition's true edge, each later condition from the previous false edge, and the
+    /// branches and a missing else join after the statement.
+    fn if_paths(&mut self, branch: &crate::ast::IfStmt, incoming: Vec<usize>) -> Result<Vec<usize>, &'static str> {
+        let Condition::Expr(condition) = &branch.condition else {
+            return Err("operation paths require a checked expression condition");
+        };
+        let mut remaining = self.expression(condition, incoming)?;
+        let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
+        for (condition, body) in &branch.elif_branches {
+            remaining = self.expression(condition, remaining)?;
+            outgoing.extend(self.block(body, remaining.clone())?);
+        }
+        outgoing.extend(match &branch.else_body {
+            Some(body) => self.block(body, remaining)?,
+            None => remaining,
+        });
+        Ok(outgoing)
     }
 
     /// Run a loop body from its entry paths, linking every completed iteration back to the header. The loop leaves
