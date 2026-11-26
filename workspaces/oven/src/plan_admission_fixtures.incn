@@ -129,21 +129,23 @@ pub def verify_report_only_owner_reads(
 
 
 def verify_incomplete_report_reads_no_bodies(
-    graph: Snapshot, body: RecordKey, mut module: AdmittedPlanModule, mut note: WholeModuleAdmission,
+    graph: Snapshot, body: RecordKey, module: AdmittedPlanModule, note: WholeModuleAdmission,
     covered: Borrowed[CoveredBodyOwners],
 ) -> Result[None, str]:
     """An admitted method without a checked Body root makes the optional proof incomplete before member reads."""
     symbol = "member/method:main::Record::read"
     method = PlanModuleFunction(identity=symbol, symbol=symbol, function="read",
         key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", event=b"")
-    module.plan = PlanModuleValue(module=module.plan.module, functions=module.plan.functions + [method])
-    note.count = 2
-    admissions = PlanModuleAdmissions(compact={"main": note})
+    mut expanded = module.clone()
+    expanded.plan = PlanModuleValue(module=module.plan.module, functions=module.plan.functions + [method])
+    expanded_note = WholeModuleAdmission(module=note.module, output=note.output, digest=note.digest, count=2,
+        selection=note.selection)
+    admissions = PlanModuleAdmissions(compact={"main": expanded_note})
     mut selection = BodyRootSelection(enabled=true)
     retained: list[SelectedBodyRecord] = []
     fresh: set[str] = set()
     begin_graph_demands(true)
-    result = selection.select_rescued(Some(graph), body.origin, [], covered, [module], admissions, retained, fresh, true)
+    result = selection.select_rescued(Some(graph), body.origin, [], covered, [expanded], admissions, retained, fresh, true)
     demands = finish_graph_demands()
     body_slots = [item for item in demands if item.role == "output-slot" and "\tbody-ir\t" in item.key]
     assert len(body_slots) == 0, f"incomplete lowering proof opened {len(body_slots)} executable Body slots"
@@ -151,7 +153,7 @@ def verify_incomplete_report_reads_no_bodies(
     assert selection.selected() is None
 
     begin_graph_demands(true)
-    rescue = selection.select_rescued(Some(graph), body.origin, [body.identity], covered, [module], admissions, retained, fresh, true)
+    rescue = selection.select_rescued(Some(graph), body.origin, [body.identity], covered, [expanded], admissions, retained, fresh, true)
     rescued_demands = finish_graph_demands()
     rescued = rescue?
     assert len(rescued) == 1 and rescued[0].identity == body.identity and rescued[0].semantic_root == body.context
