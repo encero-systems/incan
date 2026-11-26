@@ -86,6 +86,7 @@ from compiler_body_values import (
     select_body_inventory,
     select_body_values,
 )
+from plan_admission_fixtures import verify_report_only_owner_reads
 from compiler_body_projection import dependency_owner, retained_owner_record
 from compiler_body_publication import prepared_product_request
 from pub::incan_mir_plan import LoweringEvent
@@ -434,7 +435,7 @@ pub def test_selected_checker_products_supply_later_witnesses_once() -> Result[N
     first_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
     final_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1)
     body_rank = ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0)
-    scope = ReadScope(snapshot=graph.digest, profile="profile")
+    scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
     mut source = PreparedBodyRecordSource.open(scope)
     local_value = b"local bytes"
     final_value = b"final bytes"
@@ -442,18 +443,18 @@ pub def test_selected_checker_products_supply_later_witnesses_once() -> Result[N
     source.add(encode_record_key(final)?, final_value)
     graph = publish_evaluation(graph, "local", first_rank, local_value, source.receipt(scope, local, [])?)?.snapshot
     graph = publish_evaluation(graph, "final", final_rank, final_value, source.receipt(scope, final, [prepared_product_request(local)])?)?.snapshot
-    frame = encode_body_frame(body, "profile", b"native bytes")?
+    frame = encode_body_frame(body, CHECKER_PROFILE, b"native bytes")?
     graph = publish_evaluation(graph, "body", body_rank, frame, source.receipt(scope, body, [prepared_product_request(final)])?)?.snapshot
 
     measure_frame_reads(true)
-    selected = select_body_inventory_except(graph, "profile", local.origin, [])?
+    selected = select_body_inventory_except(graph, CHECKER_PROFILE, local.origin, [])?
     opened = finish_frame_reads()
     assert len(selected) == 1 and selected[0].body_ir == b"native bytes"
     for key in [local, final, body]:
         encoded = encode_record_key(key)?
         physical = sum([read.reads for read in opened if read.key == encoded])
         assert physical == 1, f"{key.family} opened {physical} times"
-    return Ok(None)
+    return verify_report_only_owner_reads(graph, local, final, body)
 
 
 pub def test_shared_family_witness_opens_each_selection_once() -> Result[None, str]:
