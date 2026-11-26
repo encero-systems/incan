@@ -133,17 +133,9 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
         callee_identity: Option<CanonicalSymbolId>,
     ) -> ResolvedType {
-        let projected = match (
-            self.ownership_call_value_parameters(callee_identity.as_ref(), &info.params, None, call_span),
-            self.ownership_call_value_result(callee_identity.as_ref(), &info.return_type, call_span),
-        ) {
-            (Ok(None), Ok(None)) => None,
-            (Ok(params), Ok(return_type)) => Some(FunctionInfo {
-                params: params.unwrap_or_else(|| info.params.clone()),
-                return_type: return_type.unwrap_or_else(|| info.return_type.clone()),
-                ..info.clone()
-            }),
-            (Err(error), _) | (_, Err(error)) => {
+        let projected = match self.ownership_value_function_info(info, callee_identity.as_ref(), call_span) {
+            Ok(projected) => projected,
+            Err(error) => {
                 self.errors.push(error);
                 return ResolvedType::Unknown;
             }
@@ -246,6 +238,26 @@ impl TypeChecker {
             type_bindings,
             instantiation,
             arguments,
+        })
+    }
+
+    /// The function's signature with any ownership contract's value types in place of its declared modes, or `None`
+    /// when the contract changes neither its parameters nor its result.
+    fn ownership_value_function_info(
+        &self,
+        info: &FunctionInfo,
+        callee_identity: Option<&CanonicalSymbolId>,
+        call_span: Span,
+    ) -> Result<Option<FunctionInfo>, CompileError> {
+        let params = self.ownership_call_value_parameters(callee_identity, &info.params, None, call_span);
+        let return_type = self.ownership_call_value_result(callee_identity, &info.return_type, call_span);
+        Ok(match (params?, return_type?) {
+            (None, None) => None,
+            (params, return_type) => Some(FunctionInfo {
+                params: params.unwrap_or_else(|| info.params.clone()),
+                return_type: return_type.unwrap_or_else(|| info.return_type.clone()),
+                ..info.clone()
+            }),
         })
     }
 

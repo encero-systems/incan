@@ -615,36 +615,8 @@ impl TypeChecker {
                 .with_stable_code("INCAN-T0123")
             })?
         {
-            let source_type = match dependency.slot {
-                SourceSlot::Receiver => signature
-                    .receiver
-                    .map(|(_, receiver)| receiver.clone())
-                    .ok_or_else(|| {
-                        Self::ownership_source_error("Result source receiver is absent", source.node.binding.span)
-                    })?,
-                SourceSlot::Parameter(slot) => {
-                    let input = contract
-                        .modes
-                        .iter()
-                        .find(|mode| mode.component.parameter == Some(slot) && mode.component.children.is_empty());
-                    match input.map(|mode| mode.mode) {
-                        Some(ownership::OwnershipMode::Borrowed | ownership::OwnershipMode::BorrowedMut) => {
-                            input.map(|mode| mode.underlying.clone()).ok_or_else(|| {
-                                Self::ownership_source_error(
-                                    "An owned result's source must be a borrowed input",
-                                    source.node.binding.span,
-                                )
-                            })?
-                        }
-                        _ => {
-                            return Err(Self::ownership_source_error(
-                                "An owned result's source must be a Borrowed[T] or BorrowedMut[T] input",
-                                source.node.binding.span,
-                            ));
-                        }
-                    }
-                }
-            };
+            let source_type =
+                Self::owned_result_source_type(contract, signature, &dependency.slot, source.node.binding.span)?;
             self.resolve_ownership_source_fields(&source_type, source)?;
             return Ok(());
         }
@@ -679,15 +651,83 @@ impl TypeChecker {
             ));
         }
         let exclusive = view.access == IncanInputAccess::Exclusive;
-        let source_type = match view.source.slot {
+        let source_type = Self::view_source_type(
+            contract,
+            signature,
+            &view.source.slot,
+            exclusive,
+            source.node.binding.span,
+        )?;
+        let (_, held) = self.resolve_ownership_source_fields(&source_type, source)?;
+        let returned = match signature.receiver {
+            Some((_, receiver)) => self.substitute_self_in_resolved_type(view.mode.underlying.clone(), receiver),
+            None => view.mode.underlying.clone(),
+        };
+        if !self.types_compatible(&returned, &held) || !self.types_compatible(&held, &returned) {
+            return Err(Self::ownership_source_error(
+                &format!("Returned view type '{returned}' differs from its source's type '{held}'"),
+                signature.result.span,
+            ));
+        }
+        Ok(())
+    }
+
+    /// The type an owned result's declared source holds: the receiver's, or a `Borrowed[T]` or `BorrowedMut[T]`
+    /// input's underlying type.
+    fn owned_result_source_type(
+        contract: &CheckedOwnershipContract,
+        signature: &Signature<'_>,
+        slot: &SourceSlot,
+        source_span: Span,
+    ) -> Result<ResolvedType, CompileError> {
+        Ok(match slot {
+            SourceSlot::Receiver => signature
+                .receiver
+                .map(|(_, receiver)| receiver.clone())
+                .ok_or_else(|| Self::ownership_source_error("Result source receiver is absent", source_span))?,
+            SourceSlot::Parameter(slot) => {
+                let input = contract
+                    .modes
+                    .iter()
+                    .find(|mode| mode.component.parameter == Some(*slot) && mode.component.children.is_empty());
+                match input.map(|mode| mode.mode) {
+                    Some(ownership::OwnershipMode::Borrowed | ownership::OwnershipMode::BorrowedMut) => {
+                        input.map(|mode| mode.underlying.clone()).ok_or_else(|| {
+                            Self::ownership_source_error(
+                                "An owned result's source must be a borrowed input",
+                                source_span,
+                            )
+                        })?
+                    }
+                    _ => {
+                        return Err(Self::ownership_source_error(
+                            "An owned result's source must be a Borrowed[T] or BorrowedMut[T] input",
+                            source_span,
+                        ));
+                    }
+                }
+            }
+        })
+    }
+
+    /// The type a returned view's declared source holds. The source must grant the view's access: an exclusive view
+    /// needs a `mut self` receiver or a `BorrowedMut[T]` input, and an owned or ordinary input cannot back a view.
+    fn view_source_type(
+        contract: &CheckedOwnershipContract,
+        signature: &Signature<'_>,
+        slot: &SourceSlot,
+        exclusive: bool,
+        source_span: Span,
+    ) -> Result<ResolvedType, CompileError> {
+        Ok(match slot {
             SourceSlot::Receiver => {
-                let (_, receiver) = signature.receiver.ok_or_else(|| {
-                    Self::ownership_source_error("Result source receiver is absent", source.node.binding.span)
-                })?;
+                let (_, receiver) = signature
+                    .receiver
+                    .ok_or_else(|| Self::ownership_source_error("Result source receiver is absent", source_span))?;
                 if exclusive && signature.receiver_mode != Some(Receiver::Mutable) {
                     return Err(Self::ownership_source_error(
                         "Reference[T] requires exclusive access to its source; declare the receiver `mut self`",
-                        source.node.binding.span,
+                        source_span,
                     ));
                 }
                 receiver.clone()
@@ -696,7 +736,7 @@ impl TypeChecker {
                 let input = contract
                     .modes
                     .iter()
-                    .find(|mode| mode.component.parameter == Some(slot) && mode.component.children.is_empty());
+                    .find(|mode| mode.component.parameter == Some(*slot) && mode.component.children.is_empty());
                 let refusal = match input.map(|mode| mode.mode) {
                     Some(ownership::OwnershipMode::BorrowedMut) => None,
                     Some(ownership::OwnershipMode::Borrowed) if !exclusive => None,
@@ -713,24 +753,12 @@ impl TypeChecker {
                     (refusal, _) => {
                         return Err(Self::ownership_source_error(
                             refusal.unwrap_or("A returned view's source must be a borrowed input"),
-                            source.node.binding.span,
+                            source_span,
                         ));
                     }
                 }
             }
-        };
-        let (_, held) = self.resolve_ownership_source_fields(&source_type, source)?;
-        let returned = match signature.receiver {
-            Some((_, receiver)) => self.substitute_self_in_resolved_type(view.mode.underlying.clone(), receiver),
-            None => view.mode.underlying.clone(),
-        };
-        if !self.types_compatible(&returned, &held) || !self.types_compatible(&held, &returned) {
-            return Err(Self::ownership_source_error(
-                &format!("Returned view type '{returned}' differs from its source's type '{held}'"),
-                signature.result.span,
-            ));
-        }
-        Ok(())
+        })
     }
 
     /// The value a body returns when its declaration's result is a direct returned view; otherwise the result.
