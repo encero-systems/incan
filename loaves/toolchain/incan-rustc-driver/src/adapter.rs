@@ -615,7 +615,7 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 #[cfg(test)]
 mod tests {
     use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     /// Compile direct writable, lent shared, and cloneable erased callable environments.
     #[test]
@@ -728,11 +728,30 @@ pub def owned(limit: int) -> bool:
     fn describe_callable_fixture(
         source: &Path,
     ) -> Result<incan_driver::unit::UnitDescription, Box<dyn std::error::Error>> {
-        let output = std::process::Command::new("oven")
+        let selected_path = |variable| {
+            std::env::var_os(variable)
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+        };
+        let oven = if let Some(engine) = selected_path("OVEN_ENGINE_BINARY") {
+            engine.with_file_name("oven")
+        } else {
+            let home = selected_path("INCAN_HOME")
+                .or_else(|| {
+                    ["HOME", "USERPROFILE"]
+                        .into_iter()
+                        .find_map(selected_path)
+                        .map(|home| home.join(".incan"))
+                })
+                .ok_or("no Incan home for the callable fixture")?;
+            home.join("bin").join("oven")
+        };
+        let output = std::process::Command::new(&oven)
             .arg("describe-unit")
             .arg(source)
             .args(["--unattended", "--profile", "release"])
-            .output()?;
+            .output()
+            .map_err(|error| format!("cannot run {} for the callable fixture: {error}", oven.display()))?;
         if !output.status.success() {
             return Err(format!(
                 "could not describe callable fixture: {}",
