@@ -1,4 +1,4 @@
-"""Check the ordinary installed borrow-shape return with two callers and one independent owner."""
+"""Check that ordinary and diagnostic borrow-shape returns refresh both affected callers before selection."""
 
 from rust::std::process import Command, Stdio
 from rust::std::str import from_utf8
@@ -7,8 +7,11 @@ from std.fs import Path
 from std.json import JsonValue, parse
 from pub::incan_platform.store import get
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from bakery import find
 from compiler_body_keys import namespace_key
 from compiler_graph_records import reusable_evaluation
+from engine_client import service_generation, service_identity
+from engine_endpoint import endpoint
 from engine_program_records import NativeUnit, SELECTION_KEY, decode_selection
 from engine_programs import selected_program
 from engine_protocol_fixtures import json_text_is
@@ -75,7 +78,8 @@ def verify_borrow_transitions(binary: str, root: Path, store: Path) -> Result[No
     if earlier_handle == seed_handle:
         return Err("10.3 Rust body edit did not advance the application capture")
 
-    write(native, borrowed_body.replace("text: &str", "text: String"))?
+    owned_body = borrowed_body.replace("text: &str", "text: String")
+    write(native, owned_body)?
     _owned_report, owned = run_fanout_probe(binary, app, store, trace, "owned", "19\n15\n7\n")?
     owned_window = settlement_window(trace, owned)?
     owned_handle, owned_unit = selected_fanout_program(store, owned_window)?
@@ -92,6 +96,47 @@ def verify_borrow_transitions(binary: str, root: Path, store: Path) -> Result[No
     _ = require_returned_app_checks(app, owned_window, compiler_activations(trace, owned)?)?
     if control_namespace(store)? != control:
         return Err("10.3 independent control no longer has its original checked namespace")
+    write(native, owned_body)?
+    return verify_diagnostic_return(binary, app, store, trace, owned_unit)
+
+
+def verify_diagnostic_return(
+    binary: str, app: Path, store: Path, trace: Path, owned: NativeUnit,
+) -> Result[None, str]:
+    """Return to the sealed owned payload in diagnostic mode, then require the ordinary warning receipt."""
+    # This comment changes the warning identity without moving any code in the native input.
+    write(app.joinpath("src/main.incn"), FANOUT_APP_MAIN + "\n# Diagnostic return.\n")?
+    stop_fanout_engine(binary, store)?
+    report, request = run_fanout_probe(
+        binary, app, store, trace, "diagnostic return", "19\n15\n7\n", trace.joinpath("semantic-report.json").0,
+    )?
+    window = settlement_window(trace, request)?
+    _diagnostic_handle, diagnostic = selected_fanout_program(store, window)?
+    if (
+        diagnostic.identity != owned.identity or diagnostic.payload != owned.payload or diagnostic.binary != owned.binary
+        or proof_count(report, "native_bakes")? != 0
+    ):
+        return Err("10.3 diagnostic return did not reuse the sealed owned payload")
+    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?)?
+    if diagnostic.warnings == "" or diagnostic.warnings == owned.warnings:
+        return Err("10.3 diagnostic return did not bind the new source warning identity")
+    if find(store, diagnostic.warnings)? is not None:
+        return Err("10.3 diagnostic return did not leave a new warning receipt for ordinary compilation")
+    stop_fanout_engine(binary, store)?
+    _ordinary, _request = run_fanout_probe(binary, app, store, trace, "ordinary after diagnosis", "19\n15\n7\n")?
+    if find(store, diagnostic.warnings)? is None:
+        return Err("10.3 ordinary return did not admit its missing warning receipt")
+    return Ok(None)
+
+
+def stop_fanout_engine(binary: str, store: Path) -> Result[None, str]:
+    """Wait for this private engine to exit so its replacement inherits the next command's mode."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    selected = endpoint(store, identity).map_err((refusal) => refusal.detail)?
+    stop_example_engine(binary, store)?
+    lifetime = Path(selected.lock).lock_exclusive().map_err((error) => error.message())?
+    drop(lifetime)
     return Ok(None)
 
 
@@ -394,22 +439,17 @@ def selected_fanout_program(store: Path, window: list[JsonValue]) -> Result[tupl
 
 
 def run_fanout_probe(
-    binary: str, app: Path, store: Path, trace: Path, stage: str, expected: str,
+    binary: str, app: Path, store: Path, trace: Path, stage: str, expected: str, semantic_report: str = "",
 ) -> Result[tuple[JsonValue, JsonValue], str]:
-    """Wait one ordinary run, keeping its report and exact request boundary."""
-    child = Command
-        .new(binary)
-        .arg("run")
-        .arg("--engine-report")
-        .current_dir(app.0)
-        .env("INCAN_ENGINE", "records")
-        .env("INCAN_BAKERY", store.0)
-        .env("INCAN_ENGINE_TRACE", trace.0)
-        .stdin(Stdio.null())
-        .stdout(Stdio.piped())
-        .stderr(Stdio.piped())
-        .spawn()
-        .map_err((error) => str(error))?
+    """Wait one Records run, keeping its report and exact request boundary."""
+    mut command = Command.new(binary)
+    command.arg("run").arg("--engine-report").current_dir(app.0)
+    command.env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).env("INCAN_ENGINE_TRACE", trace.0)
+    command.stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
+    command.env_remove("INCAN_DIRECT_REFUSAL_REPORT").env_remove("INCAN_DIRECT_SEMANTIC_REPORT")
+    if semantic_report != "":
+        command.env("INCAN_DIRECT_SEMANTIC_REPORT", semantic_report)
+    child = command.spawn().map_err((error) => str(error))?
     pid = int(child.id())
     result = child.wait_with_output().map_err((error) => str(error))?
     output = from_utf8(result.stdout).map_err((error) => str(error))?
