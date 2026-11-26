@@ -665,7 +665,7 @@ fn checked_copy_restore_retains_exact_type_decisions() -> Result<(), Box<dyn std
 /// Only the current ownership schemas can restore authority; legacy rows remain a safe fresh-check fallback.
 #[test]
 fn legacy_input_schemas_are_not_restored() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def keep(value: Owned[int]) -> int:\n    return value\n";
+    let source = "def keep(value: Owned[tuple[int, int]]) -> tuple[int, int]:\n    return value\n";
     let (program, checker, owner) = fixture(source, "keep")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
     let view = checker.checked_body(owner).ok_or("missing input owner body")?;
@@ -698,6 +698,39 @@ fn legacy_input_schemas_are_not_restored() -> Result<(), Box<dyn std::error::Err
     };
     assert!(restore(&positions, &mut restored, &legacy_copy).is_err());
     assert!(restored.protocols.explicit_input_copy.is_empty());
+    restore(&positions, &mut restored, flow)?;
+    let mut projected = Vec::new();
+    super::project(&positions, &restored, &mut projected)?;
+    assert_eq!(projected, vec![flow.clone()]);
+    check_tuple_projection_schema(&positions, owner, flow)?;
+    Ok(())
+}
+
+/// A retained tuple slot belongs to the new graph grammar; changing only the version cannot admit it under v5.
+fn check_tuple_projection_schema(
+    positions: &Positions,
+    owner: crate::ast::Span,
+    row: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start = row
+        .windows(4)
+        .position(|tokens| tokens[0] == "access" && tokens[1] == "binding" && tokens[3] == "0")
+        .ok_or("missing unprojected tuple access")?;
+    let mut tuple = row.to_vec();
+    tuple.splice(start + 3..start + 4, ["1".into(), "tuple-slot".into(), "0".into()]);
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    assert!(restore(positions, &mut restored, &tuple).is_err());
+    assert!(restored.protocols.explicit_input_flow.is_empty());
+    tuple[3] = "6".into();
+    tuple[start + 5] = "00".into();
+    assert!(restore(positions, &mut restored, &tuple).is_err());
+    assert!(restored.protocols.explicit_input_flow.is_empty());
+    tuple[start + 5] = "0".into();
+    restore(positions, &mut restored, &tuple)?;
+    assert_eq!(restored.protocols.explicit_input_flow.len(), 1);
     Ok(())
 }
 
