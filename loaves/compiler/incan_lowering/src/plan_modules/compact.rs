@@ -308,17 +308,9 @@ mod tests {
         ))
     }
 
-    /// Require the current staged positioned bytes and independent note, preserving an old scalar in the same scan.
-    #[test]
-    fn compact_notes_resolve_one_exact_positioned_page() -> Result<(), String> {
-        let root = directory("compact-positioned");
-        let admissions = root.join("admissions");
-        fs::create_dir_all(&admissions).map_err(|error| error.to_string())?;
-        let (encoded, definition) = positioned_fixture()?;
-        let page_digest = hex::encode(Sha256::digest(&encoded));
-        let pin = [0x6cu8; 32];
-        let output = format!("plan-module\tincan.stable-declaration/1\tprobe\tprobe.incn\tchecked\t{page_digest}");
-        let selected = PlanModuleSelection {
+    /// A pinned compact selection of the one positioned `probe` module page with `page_digest` at `output`.
+    fn positioned_selection(pin: [u8; 32], output: &str, page_digest: &str) -> PlanModuleSelection {
+        PlanModuleSelection {
             digest: pin,
             record: PlanModuleSelectionRecord {
                 scope: PlanSelectionScope {
@@ -333,15 +325,110 @@ mod tests {
                 },
                 modules: vec![PlanSelectedModule {
                     module: "probe".into(),
-                    output: output.clone(),
-                    digest: page_digest.clone(),
+                    output: output.to_owned(),
+                    digest: page_digest.to_owned(),
                     count: 1,
                     positioned: true,
                     rank: 1,
                     certificate: "probe-order".into(),
                 }],
             },
-        };
+        }
+    }
+
+    /// An incomplete inspected scalar note for `legacy` whose one function keeps a placement.
+    fn legacy_scalar_note() -> AdmittedModule {
+        AdmittedModule {
+            module: "legacy".into(),
+            complete: false,
+            inspected: true,
+            functions: vec![AdmittedFunction {
+                function: "legacy_run".into(),
+                identity: "pub::legacy::run".into(),
+                references: Vec::new(),
+                placement: Some(AdmittedPlacement {
+                    key: "2d".repeat(32),
+                    positions: vec![EventPosition { line: 4, column: 3 }],
+                }),
+            }],
+        }
+    }
+
+    /// A complete uninspected note for `ordinary` whose one function has no placement.
+    fn ordinary_complete_note() -> AdmittedModule {
+        AdmittedModule {
+            module: "ordinary".into(),
+            complete: true,
+            inspected: false,
+            functions: vec![AdmittedFunction {
+                function: "ordinary_run".into(),
+                identity: "pub::ordinary::run".into(),
+                references: Vec::new(),
+                placement: None,
+            }],
+        }
+    }
+
+    /// An unpinned request decodes no scalar note and reads only note prefixes, but still refuses a whole-module note,
+    /// including one with a damaged body or description digest.
+    fn assert_unpinned_requests_skip_scalar_notes(
+        root: &Path,
+        admissions: &Path,
+        note: &Path,
+        whole_bytes: Vec<u8>,
+    ) -> Result<(), String> {
+        let write = |path: &Path, value: &[u8]| fs::write(path, value).map_err(|error| error.to_string());
+        let ordinary = admissions.join(format!("{}{ADMITTED_MODULE_NOTE}", hex::encode("ordinary")));
+        let ordinary_note = ordinary_complete_note();
+        write(&ordinary, &encode_module_note(&ordinary_note)?)?;
+        let malformed_scalar = admissions.join(format!("{}{ADMITTED_MODULE_NOTE}", hex::encode("old")));
+        let malformed = b"malformed legacy diagnostic";
+        write(&malformed_scalar, malformed)?;
+        DECODED_NOTES.with(|read| read.set((0, 0)));
+        PREFIX_BYTES.with(|read| read.set(0));
+        assert!(read_plan_module_admissions(root, None)?.is_empty());
+        assert_eq!(
+            DECODED_NOTES.with(std::cell::Cell::get),
+            (0, 0),
+            "an unpinned native request replayed legacy scalar diagnostics"
+        );
+        assert_eq!(
+            PREFIX_BYTES.with(std::cell::Cell::get),
+            2 * NOTE_PREFIX_BYTES + malformed.len()
+        );
+        write(note, &whole_bytes)?;
+        assert!(read_plan_module_admissions(root, None).is_err());
+        write(note, &whole_bytes[..whole_bytes.len() - 1])?;
+        assert!(
+            read_plan_module_admissions(root, None).is_err(),
+            "an unpinned whole-module note with a damaged body was ignored"
+        );
+        let dictionary = whole_bytes
+            .windows(WHOLE_ADMISSION_SELECTOR.len())
+            .position(|window| window == WHOLE_ADMISSION_SELECTOR)
+            .ok_or("whole module note omitted its reference selector")?;
+        let mut damaged_digest = whole_bytes;
+        damaged_digest[dictionary + WHOLE_ADMISSION_SELECTOR.len()] ^= 1;
+        write(note, &damaged_digest)?;
+        assert!(
+            read_plan_module_admissions(root, None).is_err(),
+            "an unpinned whole-module note with a damaged description digest was ignored"
+        );
+        assert_eq!(DECODED_NOTES.with(std::cell::Cell::get), (0, 0));
+        Ok(())
+    }
+
+    /// Require the current staged positioned bytes and independent note, preserving an old scalar in the same scan.
+    #[test]
+    fn compact_notes_resolve_one_exact_positioned_page() -> Result<(), String> {
+        let root = directory("compact-positioned");
+        let admissions = root.join("admissions");
+        fs::create_dir_all(&admissions).map_err(|error| error.to_string())?;
+        let (encoded, definition) = positioned_fixture()?;
+        let page_digest = hex::encode(Sha256::digest(&encoded));
+        let pin = [0x6cu8; 32];
+        let output = format!("plan-module\tincan.stable-declaration/1\tprobe\tprobe.incn\tchecked\t{page_digest}");
+        let selected = positioned_selection(pin, &output, &page_digest);
         let compact = WholeModuleAdmission {
             module: "probe".into(),
             output,
@@ -358,20 +445,7 @@ mod tests {
         write(&note, &whole_bytes)?;
         write(&page, &encoded)?;
         write(&companion, page_digest.as_bytes())?;
-        let scalar = AdmittedModule {
-            module: "legacy".into(),
-            complete: false,
-            inspected: true,
-            functions: vec![AdmittedFunction {
-                function: "legacy_run".into(),
-                identity: "pub::legacy::run".into(),
-                references: Vec::new(),
-                placement: Some(AdmittedPlacement {
-                    key: "2d".repeat(32),
-                    positions: vec![EventPosition { line: 4, column: 3 }],
-                }),
-            }],
-        };
+        let scalar = legacy_scalar_note();
         let scalar_path = admissions.join(format!("{}{PARTIAL_MODULE_NOTE}", hex::encode("legacy")));
         write(&scalar_path, &encode_module_note(&scalar)?)?;
         write_module_placement(&format!("{}.placement", scalar_path.display()), &scalar)?;
@@ -429,53 +503,7 @@ mod tests {
         fs::remove_file(&stale).map_err(|error| error.to_string())?;
         fs::remove_file(&note).map_err(|error| error.to_string())?;
 
-        let ordinary = admissions.join(format!("{}{ADMITTED_MODULE_NOTE}", hex::encode("ordinary")));
-        let ordinary_note = AdmittedModule {
-            module: "ordinary".into(),
-            complete: true,
-            inspected: false,
-            functions: vec![AdmittedFunction {
-                function: "ordinary_run".into(),
-                identity: "pub::ordinary::run".into(),
-                references: Vec::new(),
-                placement: None,
-            }],
-        };
-        write(&ordinary, &encode_module_note(&ordinary_note)?)?;
-        let malformed_scalar = admissions.join(format!("{}{ADMITTED_MODULE_NOTE}", hex::encode("old")));
-        let malformed = b"malformed legacy diagnostic";
-        write(&malformed_scalar, malformed)?;
-        DECODED_NOTES.with(|read| read.set((0, 0)));
-        PREFIX_BYTES.with(|read| read.set(0));
-        assert!(read_plan_module_admissions(&root, None)?.is_empty());
-        assert_eq!(
-            DECODED_NOTES.with(std::cell::Cell::get),
-            (0, 0),
-            "an unpinned native request replayed legacy scalar diagnostics"
-        );
-        assert_eq!(
-            PREFIX_BYTES.with(std::cell::Cell::get),
-            2 * NOTE_PREFIX_BYTES + malformed.len()
-        );
-        write(&note, &whole_bytes)?;
-        assert!(read_plan_module_admissions(&root, None).is_err());
-        write(&note, &whole_bytes[..whole_bytes.len() - 1])?;
-        assert!(
-            read_plan_module_admissions(&root, None).is_err(),
-            "an unpinned whole-module note with a damaged body was ignored"
-        );
-        let dictionary = whole_bytes
-            .windows(WHOLE_ADMISSION_SELECTOR.len())
-            .position(|window| window == WHOLE_ADMISSION_SELECTOR)
-            .ok_or("whole module note omitted its reference selector")?;
-        let mut damaged_digest = whole_bytes;
-        damaged_digest[dictionary + WHOLE_ADMISSION_SELECTOR.len()] ^= 1;
-        write(&note, &damaged_digest)?;
-        assert!(
-            read_plan_module_admissions(&root, None).is_err(),
-            "an unpinned whole-module note with a damaged description digest was ignored"
-        );
-        assert_eq!(DECODED_NOTES.with(std::cell::Cell::get), (0, 0));
+        assert_unpinned_requests_skip_scalar_notes(&root, &admissions, &note, whole_bytes)?;
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
