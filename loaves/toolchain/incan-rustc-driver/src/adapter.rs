@@ -617,14 +617,7 @@ mod tests {
     use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
     use std::path::{Path, PathBuf};
 
-    /// Compile direct writable, lent shared, and cloneable erased callable environments.
-    #[test]
-    fn callable_lending_preserves_native_capture_access() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_frontend::body_ir::{BodyIrContext, ContextModules, ProviderOperationCatalog, build_body_ir_module};
-        use incan_frontend::{lexer, parser, typechecker::TypeChecker};
-        use incan_lowering::{PlanAdmissions, SourceInputs, UnitPlanning, unit_plan};
-
-        let source = r#"def twice(callback: (int) -> bool) -> bool:
+    const CALLABLE_LENDING_SOURCE: &str = r#"def twice(callback: (int) -> bool) -> bool:
     if callback(3):
         return callback(5)
     return false
@@ -664,11 +657,29 @@ pub def forward_twice(mut cart: Cart) -> None:
     call_twice(add)
     println(cart.items)
 
+pub def forward_in_one_arm(mut cart: Cart, flag: bool) -> None:
+    """Read the owner after forwarding on one continuing arm."""
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    if flag:
+        call_twice(add)
+        println(cart.items)
+    println(cart.items)
+
 pub def owned(limit: int) -> bool:
     """Call an erased closure that captures an owned scalar."""
     permits: (int) -> bool = (item) => limit < item
     return permits(5)
 "#;
+
+    /// Compile direct writable, lent shared, and cloneable erased callable environments.
+    #[test]
+    fn callable_lending_preserves_native_capture_access() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::body_ir::{BodyIrContext, ContextModules, ProviderOperationCatalog, build_body_ir_module};
+        use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+        use incan_lowering::{PlanAdmissions, SourceInputs, UnitPlanning, unit_plan};
+
+        let source = CALLABLE_LENDING_SOURCE;
         let directory = tempfile::tempdir()?;
         let file = directory.path().join("lib.incn");
         std::fs::write(&file, source)?;
