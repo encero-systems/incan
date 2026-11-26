@@ -388,6 +388,10 @@ pub(super) fn display_place(place: &super::flow::Place) -> String {
                 value.push_str(&identity.declaration_name);
             }
             super::flow::Projection::Element(_) => value.push_str("[item]"),
+            super::flow::Projection::TupleSlot(ordinal) => {
+                value.push('.');
+                value.push_str(&ordinal.to_string());
+            }
         }
     }
     value

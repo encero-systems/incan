@@ -1080,6 +1080,31 @@ def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
         (_) => "invalid graph refusal decode",
     )?
     assert decoded == refusal
+    prefix = graph[:12] + ["access", "binding", "source", "1"]
+    cases = [("5", "field", "member", true), ("5", "tuple-slot", "0", false), ("6", "tuple-slot", "00", false), ("6", "tuple-slot", "100000", false), ("6", "tuple-slot", "1", true)]
+    for version, projection, value, accepted in cases:
+        projection_field = CanonicalField(
+            family="input-flow",
+            node="owner-node",
+            selector="graph",
+            values=[version, "checked"] + prefix + [projection, value, "read", "none", "0", "node"],
+        )
+        projection_record = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[projection_field],
+        )
+        match encoded_record(projection_record):
+            Ok(wire) =>
+                assert accepted
+                restored = decode_record(wire, CHECKER_PROFILE, record.owner, record.root).map_err(
+                    (_) => "input graph projection decode",
+                )?
+                assert restored == projection_record
+            Err(CodecFault.Malformed) => assert not accepted, f"graph {version} refused {projection} {value}"
+            Err(_) => return Err("wrong input graph projection fault")
     return Ok(None)
 
 
