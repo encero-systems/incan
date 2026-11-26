@@ -103,17 +103,7 @@ pub fn lower_function(
     };
     let declared_type = return_representation(body, declared_carrier)?;
     let return_type = producer_return_type(constructors, module, body, declared_type.clone(), intrinsics)?;
-    if is_program_entry(module, body) && return_type != PlanType::Unit {
-        if (body.is_async || return_type != PlanType::Int) && !entry_result(module, &return_type, intrinsics) {
-            return Err("unsupported Body IR non-unit native main".into());
-        }
-        if !body.params.is_empty() {
-            return Err("unsupported Body IR non-unit native main parameters".into());
-        }
-    }
-    if body.is_async && is_program_entry(module, body) && !body.params.is_empty() {
-        return Err("unsupported Body IR async entry signature".into());
-    }
+    validate_entry_signature(module, body, &return_type, intrinsics)?;
     let parameters = frame_parameters(constructors, module, body, source, file, intrinsics)?;
     // 2. Initialize storage and lower the checked executable body.
     let start = FrameStart {
@@ -190,6 +180,28 @@ pub fn lower_function(
         builder.synthesized.push(entry);
     }
     Ok((function, builder.externals, builder.instances, builder.synthesized))
+}
+
+/// A program entry returns unit, an integer exit status or a supported entry result, and an entry with a result or an
+/// async entry takes no parameters.
+fn validate_entry_signature(
+    module: &BodyIrModule,
+    body: &Body,
+    return_type: &PlanType,
+    intrinsics: &[EnumDeclaration],
+) -> Result<(), String> {
+    if is_program_entry(module, body) && *return_type != PlanType::Unit {
+        if (body.is_async || *return_type != PlanType::Int) && !entry_result(module, return_type, intrinsics) {
+            return Err("unsupported Body IR non-unit native main".into());
+        }
+        if !body.params.is_empty() {
+            return Err("unsupported Body IR non-unit native main parameters".into());
+        }
+    }
+    if body.is_async && is_program_entry(module, body) && !body.params.is_empty() {
+        return Err("unsupported Body IR async entry signature".into());
+    }
+    Ok(())
 }
 
 /// Retain the checked parameter slot for an owned or aggregate result whose native storage carries its loan.

@@ -258,22 +258,7 @@ impl PublicationFacts {
         } else {
             &self.api_modules[..]
         };
-        let docstring_errors = validate_checked_api_docstrings(documented)
-            .into_iter()
-            .map(|diagnostic| {
-                match modules
-                    .iter()
-                    .find(|module| module.path_segments == diagnostic.module_path)
-                {
-                    Some(module) => diagnostics::format_error(
-                        module.file_path.to_string_lossy().as_ref(),
-                        &module.source,
-                        &diagnostic.error,
-                    ),
-                    None => format!("{}\n", diagnostic.error.message),
-                }
-            })
-            .collect::<String>();
+        let docstring_errors = rendered_docstring_errors(documented, modules);
         if !docstring_errors.is_empty() {
             return Err(CliError::failure(docstring_errors.trim_end()));
         }
@@ -568,4 +553,25 @@ fn native_union_member(ty: &IncanType) -> CliResult<TypeRef> {
         },
         _ => return Err(CliError::failure(format!("cannot publish native union payload {ty}"))),
     })
+}
+
+/// Render each checked API docstring refusal against the source of the module it names, or as its bare message when
+/// that module is not among the unit's checked modules.
+fn rendered_docstring_errors(documented: &[CheckedApiMetadata], modules: &[ParsedModule]) -> String {
+    validate_checked_api_docstrings(documented)
+        .into_iter()
+        .map(|diagnostic| {
+            match modules
+                .iter()
+                .find(|module| module.path_segments == diagnostic.module_path)
+            {
+                Some(module) => diagnostics::format_error(
+                    module.file_path.to_string_lossy().as_ref(),
+                    &module.source,
+                    &diagnostic.error,
+                ),
+                None => format!("{}\n", diagnostic.error.message),
+            }
+        })
+        .collect::<String>()
 }

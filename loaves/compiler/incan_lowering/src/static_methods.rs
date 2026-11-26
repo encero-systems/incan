@@ -68,34 +68,7 @@ pub fn lower_static_sdk_method(
         arguments,
         destination,
     } = *call;
-    if let Some(frame) = delegation.declaration_frame()
-        && frame
-            .params
-            .iter()
-            .any(|parameter| parameter.input_access != IncanInputAccess::Inferred)
-    {
-        return Err("unsupported Body IR explicit input through a computed static SDK method".into());
-    }
-    if !read.place.projection.is_empty() || arguments.is_empty() {
-        return Err("standard library static method argument count or projected receiver is unsupported".into());
-    }
-    if target.loaf_trait.is_some() || !target.type_args.is_empty() || !delegation.native_type_arguments.is_empty() {
-        return Err("standard library static methods cannot supply explicit trait or method type parameters".into());
-    }
-    match &target.binding {
-        ArgumentBinding::Resolved {
-            arguments: bound,
-            defaulted_slots,
-            ..
-        } => {
-            if bound.len() + 1 != arguments.len()
-                || bound.len() + defaulted_slots.len() + 1 != delegation.parameters.len()
-            {
-                return Err("standard library static method argument binding is unsupported".into());
-            }
-        }
-        _ => return Err("standard library static method arguments have no checked binding".into()),
-    }
+    require_supported_static_sdk_call(delegation, call)?;
     let slot = static_slot(&builder.program.statics, global)?;
     if !is_computed_static(&builder.program.statics[slot]) {
         return Err("this standard library static method requires a computed static receiver".into());
@@ -178,6 +151,46 @@ pub fn lower_static_sdk_method(
     let output = call_destination(builder, destination, result.clone(), span)?;
     let callee = guarded_static_call(builder, slot, name, read.fact == OwnershipFact::MutBorrow)?;
     lower_callable_result(builder, callee, operands, output, result, span)
+}
+
+/// A computed static's SDK method call passes only inferred inputs to an unprojected receiver, with no explicit trait
+/// or type arguments, and its checked binding covers every argument and declared parameter.
+fn require_supported_static_sdk_call(delegation: &LoafCallable, call: &StaticCall<'_>) -> Result<(), String> {
+    let StaticCall {
+        target,
+        read,
+        arguments,
+        ..
+    } = *call;
+    if let Some(frame) = delegation.declaration_frame()
+        && frame
+            .params
+            .iter()
+            .any(|parameter| parameter.input_access != IncanInputAccess::Inferred)
+    {
+        return Err("unsupported Body IR explicit input through a computed static SDK method".into());
+    }
+    if !read.place.projection.is_empty() || arguments.is_empty() {
+        return Err("standard library static method argument count or projected receiver is unsupported".into());
+    }
+    if target.loaf_trait.is_some() || !target.type_args.is_empty() || !delegation.native_type_arguments.is_empty() {
+        return Err("standard library static methods cannot supply explicit trait or method type parameters".into());
+    }
+    match &target.binding {
+        ArgumentBinding::Resolved {
+            arguments: bound,
+            defaulted_slots,
+            ..
+        } => {
+            if bound.len() + 1 != arguments.len()
+                || bound.len() + defaulted_slots.len() + 1 != delegation.parameters.len()
+            {
+                return Err("standard library static method argument binding is unsupported".into());
+            }
+        }
+        _ => return Err("standard library static method arguments have no checked binding".into()),
+    }
+    Ok(())
 }
 
 /// Close ordinary static-method parameters and retain the declaration frame's passing representation.
