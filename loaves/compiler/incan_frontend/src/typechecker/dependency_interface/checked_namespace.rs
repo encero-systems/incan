@@ -443,44 +443,8 @@ impl CheckedNamespaceInterface {
                 Some(identity),
             ));
         }
-        // Every member of an overload set exports the one spelling, which its first member exports.
-        let first_overload = format!("{OVERLOAD_KEY_SEPARATOR}0");
-        let exports = self
-            .api
-            .declarations
-            .iter()
-            .zip(&keys)
-            .filter(|(declaration, key)| key.as_str() == declaration.name() || key.ends_with(&first_overload))
-            .flat_map(|(declaration, _)| namespace_exports(declaration))
-            .collect::<Vec<_>>();
-        // An overload set has no single declaration identity; each member keeps its own inside the set.
-        let identities = self
-            .api
-            .declarations
-            .iter()
-            .zip(&keys)
-            .filter(|(declaration, key)| declaration.name() == key.as_str())
-            .filter_map(|(_, key)| self.identities.get(key).map(|identity| (key.clone(), identity.clone())))
-            .collect::<HashMap<_, _>>();
-        let nominal_scope = &self.nominal_scope;
-        let mut retained_scope = false;
-        for (name, kind) in &symbols {
-            if let Some(identity) = identities.get(name) {
-                retained_scope |= converter.retain_declaration_nominal_scope(identity, kind, nominal_scope);
-            }
-        }
-        if let Some(keys) = &self.provider_carriers {
-            converter
-                .retained_nominal_carriers
-                .extend(keys.iter().map(|key| (nominal_scope[key].clone(), key.clone())));
-        } else if retained_scope {
-            // Direct in-memory projections use the provider's own admitted declarations.
-            converter.retain_nominal_scope_carriers(
-                nominal_scope
-                    .values()
-                    .filter(|identity| identity_owned_by(identity, &self.module_path)),
-            );
-        }
+        let (exports, identities) = self.exports_and_identities(&keys);
+        self.retain_interface_nominal_scope(&mut converter, &symbols, &identities);
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
         let identities = Arc::new(identities);
@@ -517,6 +481,57 @@ impl CheckedNamespaceInterface {
             snapshot: std::sync::OnceLock::new(),
         };
         Ok(Arc::new(interface))
+    }
+
+    /// The names the interface exports and the identity of each single declaration. Every member of an overload set
+    /// exports the one spelling its first member exports, and an overload set has no single declaration identity.
+    fn exports_and_identities(&self, keys: &[String]) -> (Vec<ExportedSymbol>, HashMap<String, CanonicalSymbolId>) {
+        let first_overload = format!("{OVERLOAD_KEY_SEPARATOR}0");
+        let exports = self
+            .api
+            .declarations
+            .iter()
+            .zip(keys)
+            .filter(|(declaration, key)| key.as_str() == declaration.name() || key.ends_with(&first_overload))
+            .flat_map(|(declaration, _)| namespace_exports(declaration))
+            .collect::<Vec<_>>();
+        let identities = self
+            .api
+            .declarations
+            .iter()
+            .zip(keys)
+            .filter(|(declaration, key)| declaration.name() == key.as_str())
+            .filter_map(|(_, key)| self.identities.get(key).map(|identity| (key.clone(), identity.clone())))
+            .collect::<HashMap<_, _>>();
+        (exports, identities)
+    }
+
+    /// Retain the nominal scopes of the installed declarations, and the provider's carriers: its recorded carrier
+    /// keys, or, for a direct in-memory projection, the provider's own admitted declarations.
+    fn retain_interface_nominal_scope(
+        &self,
+        converter: &mut TypeChecker,
+        symbols: &HashMap<String, SymbolKind>,
+        identities: &HashMap<String, CanonicalSymbolId>,
+    ) {
+        let nominal_scope = &self.nominal_scope;
+        let mut retained_scope = false;
+        for (name, kind) in symbols {
+            if let Some(identity) = identities.get(name) {
+                retained_scope |= converter.retain_declaration_nominal_scope(identity, kind, nominal_scope);
+            }
+        }
+        if let Some(keys) = &self.provider_carriers {
+            converter
+                .retained_nominal_carriers
+                .extend(keys.iter().map(|key| (nominal_scope[key].clone(), key.clone())));
+        } else if retained_scope {
+            converter.retain_nominal_scope_carriers(
+                nominal_scope
+                    .values()
+                    .filter(|identity| identity_owned_by(identity, &self.module_path)),
+            );
+        }
     }
 
     /// Rebuild each overload set the checker declared, by name: every member with its own identity, its declared

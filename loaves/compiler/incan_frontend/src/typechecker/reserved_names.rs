@@ -111,24 +111,9 @@ impl ReservedNameWalk {
                 self.check(&model.name, "model", span);
                 self.enter_scope();
                 self.type_params(&model.type_params);
-                for field in &model.fields {
-                    self.check(&field.node.name, "field", field.span);
-                    if let Some(default) = &field.node.default {
-                        self.expr(default);
-                    }
-                }
-                for alias in &model.method_aliases {
-                    self.check(&alias.node.name, "method alias", alias.span);
-                }
-                for partial in &model.method_partials {
-                    self.check(&partial.node.name, "method partial", partial.span);
-                }
-                for property in &model.properties {
-                    self.check(&property.node.name, "property", property.span);
-                    if let Some(body) = &property.node.body {
-                        self.property_body(body);
-                    }
-                }
+                self.fields(&model.fields);
+                self.method_aliases_and_partials(&model.method_aliases, &model.method_partials);
+                self.properties(&model.properties);
                 self.methods(&model.methods);
                 self.leave_scope();
             }
@@ -136,24 +121,9 @@ impl ReservedNameWalk {
                 self.check(&class.name, "class", span);
                 self.enter_scope();
                 self.type_params(&class.type_params);
-                for field in &class.fields {
-                    self.check(&field.node.name, "field", field.span);
-                    if let Some(default) = &field.node.default {
-                        self.expr(default);
-                    }
-                }
-                for alias in &class.method_aliases {
-                    self.check(&alias.node.name, "method alias", alias.span);
-                }
-                for partial in &class.method_partials {
-                    self.check(&partial.node.name, "method partial", partial.span);
-                }
-                for property in &class.properties {
-                    self.check(&property.node.name, "property", property.span);
-                    if let Some(body) = &property.node.body {
-                        self.property_body(body);
-                    }
-                }
+                self.fields(&class.fields);
+                self.method_aliases_and_partials(&class.method_aliases, &class.method_partials);
+                self.properties(&class.properties);
                 self.methods(&class.methods);
                 self.leave_scope();
             }
@@ -161,18 +131,8 @@ impl ReservedNameWalk {
                 self.check(&trait_decl.name, "trait", span);
                 self.enter_scope();
                 self.type_params(&trait_decl.type_params);
-                for alias in &trait_decl.method_aliases {
-                    self.check(&alias.node.name, "method alias", alias.span);
-                }
-                for partial in &trait_decl.method_partials {
-                    self.check(&partial.node.name, "method partial", partial.span);
-                }
-                for property in &trait_decl.properties {
-                    self.check(&property.node.name, "property", property.span);
-                    if let Some(body) = &property.node.body {
-                        self.property_body(body);
-                    }
-                }
+                self.method_aliases_and_partials(&trait_decl.method_aliases, &trait_decl.method_partials);
+                self.properties(&trait_decl.properties);
                 self.methods(&trait_decl.methods);
                 self.leave_scope();
             }
@@ -196,12 +156,7 @@ impl ReservedNameWalk {
                 self.check(&newtype.name, "type", span);
                 self.enter_scope();
                 self.type_params(&newtype.type_params);
-                for alias in &newtype.method_aliases {
-                    self.check(&alias.node.name, "method alias", alias.span);
-                }
-                for partial in &newtype.method_partials {
-                    self.check(&partial.node.name, "method partial", partial.span);
-                }
+                self.method_aliases_and_partials(&newtype.method_aliases, &newtype.method_partials);
                 self.methods(&newtype.methods);
                 self.leave_scope();
             }
@@ -235,6 +190,40 @@ impl ReservedNameWalk {
             }
             // A vocabulary block is desugared before the checker runs, and a docstring binds nothing.
             Declaration::VocabBlock(_) | Declaration::Docstring(_) => {}
+        }
+    }
+
+    /// Walk each field name of a model or class and its default value.
+    fn fields(&mut self, fields: &[Spanned<crate::ast::FieldDecl>]) {
+        for field in fields {
+            self.check(&field.node.name, "field", field.span);
+            if let Some(default) = &field.node.default {
+                self.expr(default);
+            }
+        }
+    }
+
+    /// Walk the method alias and method partial names an owner declares.
+    fn method_aliases_and_partials(
+        &mut self,
+        aliases: &[Spanned<crate::ast::MethodAliasDecl>],
+        partials: &[Spanned<crate::ast::MethodPartialDecl>],
+    ) {
+        for alias in aliases {
+            self.check(&alias.node.name, "method alias", alias.span);
+        }
+        for partial in partials {
+            self.check(&partial.node.name, "method partial", partial.span);
+        }
+    }
+
+    /// Walk each property name an owner declares and its body.
+    fn properties(&mut self, properties: &[Spanned<crate::ast::PropertyDecl>]) {
+        for property in properties {
+            self.check(&property.node.name, "property", property.span);
+            if let Some(body) = &property.node.body {
+                self.property_body(body);
+            }
         }
     }
 
@@ -482,16 +471,7 @@ impl ReservedNameWalk {
             }
             Expr::Match(subject, arms) => {
                 self.expr(subject);
-                for arm in arms {
-                    self.pattern(&arm.node.pattern);
-                    if let Some(guard) = &arm.node.guard {
-                        self.expr(guard);
-                    }
-                    match &arm.node.body {
-                        MatchBody::Expr(body) => self.expr(body),
-                        MatchBody::Block(body) => self.block(body),
-                    }
-                }
+                self.match_arms(arms);
             }
             Expr::ListComp(comp) => {
                 self.enter_scope();
@@ -595,6 +575,20 @@ impl ReservedNameWalk {
             Expr::Embedded(fragment) => self.embedded(fragment),
             // Leaves bind nothing, and a vocabulary block is desugared before the checker runs.
             Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::VocabBlock(_) => {}
+        }
+    }
+
+    /// Walk each match arm's pattern bindings, guard and body.
+    fn match_arms(&mut self, arms: &[Spanned<crate::ast::MatchArm>]) {
+        for arm in arms {
+            self.pattern(&arm.node.pattern);
+            if let Some(guard) = &arm.node.guard {
+                self.expr(guard);
+            }
+            match &arm.node.body {
+                MatchBody::Expr(body) => self.expr(body),
+                MatchBody::Block(body) => self.block(body),
+            }
         }
     }
 

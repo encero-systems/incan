@@ -742,114 +742,117 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// Branch, loop and local-loan programs, each with whether its source flow has a conflict.
+const BRANCH_AND_LOOP_CASES: &[(&str, bool)] = &[
+    (
+        "def add(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value + 1\n",
+        false,
+    ),
+    ("def transfer(value: Owned[str]) -> str:\n    return value\n", false),
+    (
+        "def copy(value: Borrowed[str], proof: Owned[int] = 0) -> str:\n    return value\n",
+        true,
+    ),
+    (
+        "def branch(value: Owned[str], flag: bool) -> str:\n    if flag:\n        taken = value\n    return value\n",
+        true,
+    ),
+    (
+        "def repeat(value: Owned[str]) -> None:\n    loop:\n        taken = value\n        continue\n",
+        true,
+    ),
+    (
+        "def restore(mut value: Owned[str]) -> str:\n    taken = value\n    value = \"new\"\n    return value\n",
+        false,
+    ),
+    (
+        "def local(mut value: Owned[int]) -> int:\n    mut view: BorrowedMut[int] = value\n    view = view + 1\n    return value\n",
+        false,
+    ),
+    (
+        "def local_only(proof: Owned[int] = 0) -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\n",
+        false,
+    ),
+    (
+        "def conflict(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    value = 2\n    return view\n",
+        true,
+    ),
+    (
+        "def readonly(mut value: Owned[int]) -> int:\n    mut view: Borrowed[int] = value\n    view = 2\n    return value\n",
+        true,
+    ),
+    (
+        "def reborrow(mut value: Owned[int]) -> int:\n    mut parent: BorrowedMut[int] = value\n    mut child: BorrowedMut[int] = parent\n    parent = 2\n    return child\n",
+        true,
+    ),
+    (
+        "def branch_release(mut value: Owned[int], flag: bool) -> int:\n    let view: Borrowed[int] = value\n    if flag:\n        return view\n    value = 2\n    return value\n",
+        false,
+    ),
+    (
+        "def shadow(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    Borrowed = 2\n    value = 3\n    return view\n",
+        true,
+    ),
+    (
+        "def nested(mut value: BorrowedMut[Customer], proof: Owned[int] = 0) -> int:\n    mut view: BorrowedMut[int] = value.address.count\n    view = 2\n    return value.address.count\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
+        false,
+    ),
+    (
+        "def parent(value: Owned[Customer]) -> int:\n    let view: Borrowed[int] = value.address.count\n    let taken: Owned[Address] = value.address\n    return view\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
+        true,
+    ),
+    (
+        "def sibling(mut value: BorrowedMut[Pair], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value.left\n    value.right = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
+        false,
+    ),
+    (
+        "def overlapping(mut value: BorrowedMut[Pair], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value.left\n    value.left = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
+        true,
+    ),
+    (
+        "def compound(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> int:\n    value += 1\n    return value\n",
+        false,
+    ),
+    (
+        "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+        false,
+    ),
+    (
+        "def branch(flag: bool) -> None:\n    let value: Owned[str] = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+        false,
+    ),
+    (
+        "def branch(value: Owned[str], flag: bool) -> None:\n    if flag:\n        consume(value)\n    else:\n        return\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+        false,
+    ),
+    (
+        "def branch(flag: bool) -> None:\n    mut value = \"owned\"\n    if flag:\n        consume(value)\n    value = \"new\"\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+        false,
+    ),
+    (
+        "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+        true,
+    ),
+    // A loop shares its stored iterable for every poll: items are read freely, the iterable is not edited
+    // until the loop ends.
+    (
+        "def total(values: Borrowed[list[int]], proof: Owned[int] = 0) -> int:\n    mut sum = 0\n    for value in values:\n        sum += value\n    return sum\n",
+        false,
+    ),
+    (
+        "def reset(mut values: BorrowedMut[list[int]], proof: Owned[int] = 0) -> None:\n    for value in values:\n        values = [value]\n",
+        true,
+    ),
+    (
+        "def after(mut values: BorrowedMut[list[int]], proof: Owned[int] = 0) -> None:\n    mut sum = 0\n    for value in values:\n        sum += value\n    values = [sum]\n",
+        false,
+    ),
+];
+
 /// Source branch and back-edge projections preserve consuming uses and distinguish Copy reads from transfers.
 #[test]
 fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn std::error::Error>> {
-    for (source, conflict) in [
-        (
-            "def add(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value + 1\n",
-            false,
-        ),
-        ("def transfer(value: Owned[str]) -> str:\n    return value\n", false),
-        (
-            "def copy(value: Borrowed[str], proof: Owned[int] = 0) -> str:\n    return value\n",
-            true,
-        ),
-        (
-            "def branch(value: Owned[str], flag: bool) -> str:\n    if flag:\n        taken = value\n    return value\n",
-            true,
-        ),
-        (
-            "def repeat(value: Owned[str]) -> None:\n    loop:\n        taken = value\n        continue\n",
-            true,
-        ),
-        (
-            "def restore(mut value: Owned[str]) -> str:\n    taken = value\n    value = \"new\"\n    return value\n",
-            false,
-        ),
-        (
-            "def local(mut value: Owned[int]) -> int:\n    mut view: BorrowedMut[int] = value\n    view = view + 1\n    return value\n",
-            false,
-        ),
-        (
-            "def local_only(proof: Owned[int] = 0) -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\n",
-            false,
-        ),
-        (
-            "def conflict(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    value = 2\n    return view\n",
-            true,
-        ),
-        (
-            "def readonly(mut value: Owned[int]) -> int:\n    mut view: Borrowed[int] = value\n    view = 2\n    return value\n",
-            true,
-        ),
-        (
-            "def reborrow(mut value: Owned[int]) -> int:\n    mut parent: BorrowedMut[int] = value\n    mut child: BorrowedMut[int] = parent\n    parent = 2\n    return child\n",
-            true,
-        ),
-        (
-            "def branch_release(mut value: Owned[int], flag: bool) -> int:\n    let view: Borrowed[int] = value\n    if flag:\n        return view\n    value = 2\n    return value\n",
-            false,
-        ),
-        (
-            "def shadow(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    Borrowed = 2\n    value = 3\n    return view\n",
-            true,
-        ),
-        (
-            "def nested(mut value: BorrowedMut[Customer], proof: Owned[int] = 0) -> int:\n    mut view: BorrowedMut[int] = value.address.count\n    view = 2\n    return value.address.count\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
-            false,
-        ),
-        (
-            "def parent(value: Owned[Customer]) -> int:\n    let view: Borrowed[int] = value.address.count\n    let taken: Owned[Address] = value.address\n    return view\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
-            true,
-        ),
-        (
-            "def sibling(mut value: BorrowedMut[Pair], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value.left\n    value.right = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
-            false,
-        ),
-        (
-            "def overlapping(mut value: BorrowedMut[Pair], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value.left\n    value.left = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
-            true,
-        ),
-        (
-            "def compound(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> int:\n    value += 1\n    return value\n",
-            false,
-        ),
-        (
-            "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
-            false,
-        ),
-        (
-            "def branch(flag: bool) -> None:\n    let value: Owned[str] = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
-            false,
-        ),
-        (
-            "def branch(value: Owned[str], flag: bool) -> None:\n    if flag:\n        consume(value)\n    else:\n        return\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
-            false,
-        ),
-        (
-            "def branch(flag: bool) -> None:\n    mut value = \"owned\"\n    if flag:\n        consume(value)\n    value = \"new\"\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
-            false,
-        ),
-        (
-            "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
-            true,
-        ),
-        // A loop shares its stored iterable for every poll: items are read freely, the iterable is not edited
-        // until the loop ends.
-        (
-            "def total(values: Borrowed[list[int]], proof: Owned[int] = 0) -> int:\n    mut sum = 0\n    for value in values:\n        sum += value\n    return sum\n",
-            false,
-        ),
-        (
-            "def reset(mut values: BorrowedMut[list[int]], proof: Owned[int] = 0) -> None:\n    for value in values:\n        values = [value]\n",
-            true,
-        ),
-        (
-            "def after(mut values: BorrowedMut[list[int]], proof: Owned[int] = 0) -> None:\n    mut sum = 0\n    for value in values:\n        sum += value\n    values = [sum]\n",
-            false,
-        ),
-    ] {
+    for &(source, conflict) in BRANCH_AND_LOOP_CASES {
         let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
         let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
         assert_eq!(
