@@ -72,6 +72,7 @@ pub(super) fn export_identity_from_checked(package_name: &str, export: &CheckedN
         source_path: export.identity.source_path.clone(),
         kind: export_identity_kind_from_checked(&export.kind),
         projection: export_identity_projection_from_checked(&export.identity),
+        source_signature: export.identity.source_signature.clone(),
         canonical: export
             .identity
             .canonical

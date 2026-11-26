@@ -210,6 +210,7 @@ mod tests {
             kind: ExportIdentityKind::Function,
             projection: ExportIdentityProjection::Direct,
             canonical: None,
+            source_signature: None,
         };
         manifest.contract_metadata.identity_graph.exports.push(export.clone());
         assert!(public_executable_identities(&manifest).is_empty());
@@ -248,6 +249,7 @@ mod tests {
             kind: ExportIdentityKind::Model,
             projection: ExportIdentityProjection::Direct,
             canonical: Some(owner),
+            source_signature: None,
         });
         manifest.exports.models.push(ModelExport {
             name: "Value".into(),

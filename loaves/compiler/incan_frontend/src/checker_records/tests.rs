@@ -57,6 +57,21 @@ fn program(source: &str) -> Result<crate::ast::Program, Box<dyn std::error::Erro
 
 /// Build one checked provider artifact so the consumer reads a real package declaration identity.
 fn provider_index(source: &str) -> Result<(Arc<LoafIndex>, tempfile::TempDir), Box<dyn std::error::Error>> {
+    let (loaves, directory, _) = provider_index_with_identities(source)?;
+    Ok((loaves, directory))
+}
+
+/// Capture checked provider identities before serializing the public exports for import.
+fn provider_index_with_identities(
+    source: &str,
+) -> Result<
+    (
+        Arc<LoafIndex>,
+        tempfile::TempDir,
+        Vec<incan_semantics_core::stable_identity::StableDeclarationId>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let provider = program(source)?;
     let mut checker = TypeChecker::new();
     checker.set_current_package_identity(Some("provider".into()));
@@ -65,17 +80,29 @@ fn provider_index(source: &str) -> Result<(Arc<LoafIndex>, tempfile::TempDir), B
         .check_program(&provider)
         .map_err(|errors| format!("{errors:?}"))?;
     let exports = collect_checked_public_exports(&provider, &checker);
+    let identities = exports
+        .iter()
+        .filter_map(|export| {
+            checker
+                .type_info()
+                .declarations
+                .source_identities
+                .get(export.identity.canonical.as_ref()?)
+                .cloned()
+        })
+        .collect();
     let manifest = LibraryManifest::from_checked_exports("provider", "0.1.0", &exports);
     let directory = tempfile::tempdir()?;
     std::fs::write(directory.path().join("provider.incnlib"), manifest.to_json_string()?)?;
     let entry = LoafIndex::dependency("provider", "provider", directory.path())?;
-    Ok((Arc::new(LoafIndex::new([entry])?), directory))
+    Ok((Arc::new(LoafIndex::new([entry])?), directory, identities))
 }
 
 /// A program owner that calls an editable dependency publishes itself and the exact declaration record it read.
 #[test]
 fn program_owner_publishes_exact_package_declaration_read() -> Result<(), Box<dyn std::error::Error>> {
-    let (loaves, _directory) = provider_index("pub def value() -> int:\n    return 41\n")?;
+    let (loaves, _directory, provider_identities) =
+        provider_index_with_identities("pub def value() -> int:\n    return 41\n")?;
     let source = "from pub::provider import value\n\ndef main() -> int:\n    return value()\n";
     let consumer = program(source)?;
     let mut checker = TypeChecker::new();
@@ -127,7 +154,14 @@ fn program_owner_publishes_exact_package_declaration_read() -> Result<(), Box<dy
     assert_eq!(read.package, Some("provider".into()));
     assert_eq!(read.module_path, vec!["lib".to_string()]);
     assert_eq!(read.declaration_name, "value");
-    assert_eq!(read.declaration_identity, "function:pub::provider::lib::value");
+    let [provider_identity] = provider_identities.as_slice() else {
+        return Err("expected one checked provider identity".into());
+    };
+    assert!(
+        provider_identity.signature.is_some(),
+        "provider callable lacks a checked signature"
+    );
+    assert_eq!(read.declaration_identity, provider_identity.render_compact());
     assert!(read.reference_subject.starts_with("expr:main#"));
     for source in [
         "def main() -> None:\n    println(\"hello\")\n",

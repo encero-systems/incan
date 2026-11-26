@@ -116,7 +116,7 @@ fn run(
                 UnitCompiled::HandedOff(path) => ActivationOutcome::HandedOff(path.to_string_lossy().into_owned()),
             });
         }
-        WorkerCommand::Check => crate::check(arguments)?,
+        WorkerCommand::Check => crate::check(arguments, true)?,
         WorkerCommand::Format => crate::format(arguments)?,
         WorkerCommand::SourceFiles => crate::source_files(arguments)?,
         WorkerCommand::RustImports => crate::rust_imports::export(arguments).map(|()| 0)?,

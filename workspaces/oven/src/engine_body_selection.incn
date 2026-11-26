@@ -1,0 +1,106 @@
+"""Select captured source changes and exact provider witnesses against one engine graph."""
+
+from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, begin
+from pub::incan_platform.trace import Operation
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from compiler_body_values import reached_body_owners, select_body_inventory_except
+from compiler_captured_sources import PreparedSourceInputs, prepare_captured_source_inputs, source_origin
+from compiler_graph_records import EditReaders, select_edit_readers
+from compiler_plan_values import LOWERING_PROFILE
+from engine_capture import CapturedInput
+from engine_overlay import is_editor_view
+from jec import begin as begin_work, record as record_work
+from selected_provider_call_shapes import (
+    ProviderCallShapeSelection,
+    selected_provider_call_shapes,
+    stage_provider_call_shapes,
+)
+from unit import UnitDescription
+from unit_freshness import fingerprint
+
+
+pub model BodyReading:
+    """A request view's graph and the source projections this request staged against it."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+
+
+pub model BodySelection:
+    """A request view's checked-body records for one prepared unit, selected before the compiler checks it."""
+
+    pub reading: BodyReading
+    pub invalid: list[str]
+    pub reached: EditReaders
+    pub provider_shapes: ProviderCallShapeSelection = ProviderCallShapeSelection()
+    pub recheck_provider_callers: bool = false
+
+
+pub def body_reading(
+    mut admission: SnapshotAdmission,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    record_writer: str,
+    retain_projections: bool = false,
+) -> Result[BodyReading, str]:
+    """
+    Stage source changes against the graph that owns this request's checked bodies. An editor reads its own view.
+    A linked build has a separate view because its bodies name the compiled provider's declarations. The shared
+    graph supplies ordinary source builds and checks. The writer generation is one input to the projections.
+    """
+    mut graph_view = str(HOME_VIEW)
+    if is_editor_view(view):
+        graph_view = view
+    else:
+        if let Some(library) = ready.project_library:
+            graph_view = f"linked-{fingerprint([view, library])?}"
+    reading = begin_work()
+    graph = admission.open(graph_view).map_err((error) => error.message())?
+    record_work(Operation.EngineSelect, "graph-snapshot", reading)
+    projecting = begin_work()
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer, retain_projections)?
+    record_work(Operation.EngineSelect, "captured-sources", projecting)
+    return Ok(BodyReading(graph=graph, projected=projected))
+
+
+pub def select_bodies(
+    mut admission: SnapshotAdmission,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    listing_refusals: bool,
+    record_writer: str,
+) -> Result[BodySelection, str]:
+    """
+    Select the checked bodies a build reuses from the request's captured source and selected library shapes.
+    Shape entries supply one exact current value or an admitted removal per provider owner. Listing refusals
+    check every owner afresh.
+    """
+    mut reading = body_reading(admission, view, ready, inputs, record_writer, retain_projections=true)?
+    origin = source_origin(ready)
+    selecting = begin_work()
+    mut provider_shapes = selected_provider_call_shapes(ready, reading.projected.dependency_modules)?
+    changed_shapes = stage_provider_call_shapes(
+        reading.graph, reading.projected.transaction, ready, reading.projected.dependency_modules, provider_shapes,
+    )?
+    reading.projected.keys.extend(changed_shapes)
+    # A partial capture cannot reuse readers of a shape it cannot witness or retire the shared value.
+    unavailable = [key for key in provider_shapes.uncaptured.values()]
+    reached = select_edit_readers(
+        reading.graph,
+        reading.projected.keys + unavailable,
+        [CHECKER_PROFILE, LOWERING_PROFILE],
+        not listing_refusals,
+    )?
+    mut invalid: list[str] = []
+    if listing_refusals:
+        invalid = [record.identity for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?]
+    else:
+        invalid = reached_body_owners(reached.direct, CHECKER_PROFILE)
+    recheck_provider_callers = not listing_refusals and len(changed_shapes) > 0 and len(reached_body_owners(
+        [input for input in reached.direct if input.input in changed_shapes], CHECKER_PROFILE,
+    )) > 0
+    record_work(Operation.EngineSelect, "edit-readers", selecting)
+    return Ok(BodySelection(reading=reading, invalid=invalid, reached=reached, provider_shapes=provider_shapes,
+        recheck_provider_callers=recheck_provider_callers))

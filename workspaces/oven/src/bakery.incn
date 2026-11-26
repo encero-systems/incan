@@ -534,12 +534,19 @@ def staged_files(directory: Path, prefix: str) -> Result[list[str], str]:
     return Ok(sorted(files))
 
 
-pub def fact_file(store: Path, fact: Fact, relative: str) -> Option[Path]:
-    """The stored payload of one file of a unit, for readers that read it in place."""
+pub def fact_member(fact: Fact, relative: str) -> Option[FactFile]:
+    """Select the exact relative member from a Fact the caller has already admitted."""
     for file in fact.files:
         if file.path == relative:
-            return Some(payload_path(store, file.digest))
+            return Some(file)
     return None
+
+
+pub def fact_file(store: Path, fact: Fact, relative: str) -> Option[Path]:
+    """The stored payload of one file of a unit, for readers that read it in place."""
+    match fact_member(fact, relative):
+        Some(file) => return Some(payload_path(store, file.digest))
+        None => return None
 
 
 pub def has_files_under(fact: Fact, prefix: str) -> bool:
@@ -760,8 +767,14 @@ pub def reached(store: Path, directories: list[str]) -> Result[list[str], str]:
 
 
 pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
+    """Use the bound artifact directory for a consumer that needs only the library's filenames."""
+    bound, _ = library_binding(store, directory)?
+    return Ok(bound)
+
+
+pub def library_binding(store: Path, directory: Path) -> Result[tuple[Path, Option[Fact]], str]:
     """
-    Name a baked library through store-owned filename bindings, independently of any project's disposable views.
+    Select a library's store-owned filenames and the exact admitted Fact that bound them.
 
     Native libraries require their original filenames and sibling metadata. Each layout names the exact payload set,
     so a later fact repair cannot retarget an existing native closure. Data bindings link canonical payloads;
@@ -775,12 +788,14 @@ pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
     # 1. A view selects an exact fact; the name index never substitutes another revision.
     marker = match read_view(directory)?:
         Some(existing) => existing
-        None => return Ok(directory)
+        None => return Ok((directory, None))
     canonical = store.resolve().map_err((error) => f"cannot {error.message()}")?
     fact = library_fact(canonical, marker)?
-    if marker.layout != "":
-        return bind_library(canonical, fact, marker.layout, marker.legacy)
-    return bind_library(canonical, fact, layout_identity(fact, false)?)
+    layout, legacy = match marker.layout:
+        "" => (layout_identity(fact, false)?, false)
+        _ => (marker.layout, marker.legacy)
+    bound = bind_library(canonical, fact, layout, legacy)?
+    return Ok((bound, Some(fact)))
 
 
 def library_fact(store: Path, marker: ViewSelection) -> Result[Fact, str]:

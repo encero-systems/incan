@@ -47,6 +47,8 @@ pub model PreparedSourceInputs:
     pub carried: set[str] = set()
     # Local modules projected from this request's sources for the same feature selection as publication.
     pub projections: Dict[str, SourceProjection] = {}
+    # Captured provider paths and the package/module identities already selected for them.
+    pub dependency_modules: Dict[str, tuple[str, str]] = {}
 
 
 model CapturedDependencyRoots:
@@ -91,6 +93,7 @@ pub def prepare_captured_source_inputs(
         changed.append(generation.key)
     engine = observe(Path(executable()?))?.stamp
     mut dependency_roots = CapturedDependencyRoots()
+    mut dependency_modules: Dict[str, tuple[str, str]] = {}
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [
             InputRole.Root, InputRole.Member, InputRole.ProjectMember, InputRole.Resolved,
@@ -100,6 +103,8 @@ pub def prepare_captured_source_inputs(
                 mut declared: list[str] = []
                 mut active: Option[list[str]] = None
                 local = identity[0] == origin
+                if retain_projections and not local:
+                    dependency_modules[input.path] = identity
                 if local:
                     declared = unit.declared_features
                     active = Some(unit.active_features)
@@ -158,7 +163,8 @@ pub def prepare_captured_source_inputs(
                             changed.append(record.key)
                 if retain_projections and local:
                     projections[identity[1]] = projection
-    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried, projections=projections))
+    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried,
+        projections=projections, dependency_modules=dependency_modules))
 
 
 def stage_source_input(

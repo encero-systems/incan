@@ -9,7 +9,8 @@ from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from rust::std::mem import drop, take
-from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
+from engine_body_selection import body_reading, select_bodies
+from engine_capture import BuildEpoch, InputRole, SelectedHome
 from bakery import fact_file, find_executable_payload, find_launch_executable_payload
 from bakery_records import Fact
 from bakery_roots import register_root
@@ -18,7 +19,6 @@ from compiler_body_publication import (
     LoweringDemandWork,
     PreparedCompiledBodies,
     PreparedSourceInputs,
-    prepare_captured_source_inputs,
     prepare_compiled_bodies,
     source_origin,
 )
@@ -28,7 +28,6 @@ from compiler_body_values import (
     SelectedBodyRecord,
     body_owners_reading,
     encode_body_inventory,
-    reached_body_owners,
     reached_namespaces,
     select_body_inventory_except,
     select_namespace_inventory_except,
@@ -37,18 +36,20 @@ from compiler_plan_values import (
     AdmittedPlanModule, LOWERING_PROFILE, RetainedPlanInputs, SelectedPlanModule, encode_plan_selection,
     plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules,
 )
-from compiler_plan_modules import plan_module_admissions
+from compiler_plan_modules import PlanModuleAdmissions, plan_module_admissions
 from compiler_source_projection import SourceProjection
 from compiler_refusals import PreparedWarnings, replay_checked_warnings
 from compiler_graph_records import (
     EditCutoff, EditReaders, PlanImportReach, ReceiptProjectionCache,
-    retire_compiler_versions, retire_executable_predecessors, select_edit_readers, supersede_outputs,
+    retire_compiler_versions, retire_executable_predecessors, supersede_outputs,
 )
 from compiler_body_fallbacks import plan_module_origins
 from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import load_epoch
 pub from engine_program_records import NativeUnit
-from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection, program_view
+from engine_program_records import (
+    RestoredProgramSelection, SELECTION_KEY, decode_program, encode_selection, program_view, selected_program_handle,
+)
 from features import FeatureRequest
 from home import StandardPackage, dependency_artifact_dir
 from owner_endpoint import prepare_directory
@@ -57,6 +58,7 @@ from incan_units import (
     program_binary, view_executable,
 )
 from project_library import planned_program
+from selected_provider_call_shapes import ProviderCallShapeSelection
 from pub::incan_platform.store import (
     EXPECT_REPAIR, HOME_VIEW, PreparedPayload, Snapshot, SnapshotAdmission, Transaction, begin, commit, get, put,
 )
@@ -158,6 +160,7 @@ pub model ProgramOutcome:
     pub whole_unit: str = ""
     # A library build, which succeeds with no native descriptor to select.
     pub library: bool = false
+    pub restored_selection: Option[RestoredProgramSelection] = None
 
 
 pub model CheckOutcome:
@@ -173,21 +176,6 @@ pub model CheckOutcome:
     # Pages the check wrote for its view, and restored pages the compiler decoded itself.
     pub body_page_writes: int = 0
     pub body_page_decodes: int = 0
-
-
-pub model BodyReading:
-    """A request view's graph and the source projections this request staged against it."""
-
-    pub graph: Snapshot
-    pub projected: PreparedSourceInputs
-
-
-pub model BodySelection:
-    """A request view's checked-body records for one prepared unit, selected before the compiler checks it."""
-
-    pub reading: BodyReading
-    pub invalid: list[str]
-    pub reached: EditReaders
 
 
 model ProgramHome:
@@ -286,62 +274,6 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
     return prepare_native(described, toolchain, is_editor_view(view))
 
 
-def body_reading(
-    mut admission: SnapshotAdmission,
-    view: str,
-    ready: UnitDescription,
-    inputs: list[CapturedInput],
-    record_writer: str,
-    retain_projections: bool = false,
-) -> Result[BodyReading, str]:
-    """
-    Stage source changes against the graph that owns this request's checked bodies. An editor reads its own view.
-    A linked build has a separate view because its bodies name the compiled provider's declarations. The shared
-    graph supplies ordinary source builds and checks. The writer generation is one input to the projections.
-    """
-    mut graph_view = str(HOME_VIEW)
-    if is_editor_view(view):
-        graph_view = view
-    else:
-        if let Some(library) = ready.project_library:
-            graph_view = f"linked-{fingerprint([view, library])?}"
-    reading = begin_work()
-    graph = admission.open(graph_view).map_err((error) => error.message())?
-    record_work(Operation.EngineSelect, "graph-snapshot", reading)
-    projecting = begin_work()
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer, retain_projections)?
-    record_work(Operation.EngineSelect, "captured-sources", projecting)
-    return Ok(BodyReading(graph=graph, projected=projected))
-
-
-def select_bodies(
-    mut admission: SnapshotAdmission,
-    view: str,
-    ready: UnitDescription,
-    inputs: list[CapturedInput],
-    listing_refusals: bool,
-    record_writer: str,
-) -> Result[BodySelection, str]:
-    """
-    Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
-    refusals checks every owner afresh.
-    """
-    reading = body_reading(admission, view, ready, inputs, record_writer, retain_projections=true)?
-    origin = source_origin(ready)
-    selecting = begin_work()
-    reached = select_edit_readers(reading.graph, reading.projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE], not listing_refusals)?
-    mut invalid: list[str] = []
-    if listing_refusals:
-        invalid = [
-            record.identity
-            for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
-        ]
-    else:
-        invalid = reached_body_owners(reached.direct, CHECKER_PROFILE)
-    record_work(Operation.EngineSelect, "edit-readers", selecting)
-    return Ok(BodySelection(reading=reading, invalid=invalid, reached=reached))
-
-
 model RecordProgramRequest:
     """The inputs already bound to this program before the records producer runs."""
 
@@ -365,6 +297,7 @@ model SelectedProgramRecords:
     origin: str
     bodies: list[SelectedBodyRecord]
     pages: list[SelectedBodyPage]
+    checker_page_count: int
     ranked: Option[RankedBuildInputs]
     covered: CoveredBodyOwners
     plan_records: list[AdmittedPlanModule]
@@ -395,7 +328,7 @@ pub def obtain(
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
 
-    1. Read a previously finalized native descriptor without preparing frozen inputs again.
+    1. Restore an already settled native selection without preparing frozen inputs again.
     2. Otherwise read the captured epoch, bind the program's shared provider and finalize its RFC 124 identity.
     3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
     4. Return the descriptor after checking capture; caller selection publishes it in the caller's view.
@@ -404,7 +337,6 @@ pub def obtain(
     listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
     request_view = program_view(handle)?
     # The project descriptor, standalone index and checked graph select their own current view in this request.
-    # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
     # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
     # A unit with options is described and keyed afresh on every request: its inputs reach beyond the captured
     # sources, as a Clove's C sources do, and its bakery key, not the capture, proves it unchanged.
@@ -414,8 +346,14 @@ pub def obtain(
         selected = admission.open(request_view).map_err((error) => error.message())?
         match selected_program(selected, handle)?:
             Some(unit) =>
-                if restore_program(store, unit, console)?:
-                    return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console))
+                standalone = manifest_free_capture(captured)
+                current = not standalone and selected_program_handle(selected)? == Some(handle)
+                if (standalone or current) and restore_program(store, unit, console)?:
+                    mut restored: Option[RestoredProgramSelection] = None
+                    if current:
+                        restored = Some(RestoredProgramSelection(snapshot=selected, handle=handle, unit=unit))
+                    return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console, restored_selection=restored))
+                # Only the native payload may be reused while the managed graph advances.
                 view_retry = Some(unit)
             None => pass
         previous_view = Some(selected)
@@ -436,7 +374,7 @@ pub def obtain(
     if not listing_refusals:
         if let Some(unit) = indexed_program(store, epoch, selector, admission)?:
             # A miss in the held request view cannot be replaced by another variant of that same Unit.
-            if view_retry is None and restore_program(store, unit, console)?:
+            if len(epoch.declarations) == 0 and view_retry is None and restore_program(store, unit, console)?:
                 return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console, epoch_reads=epoch_reads))
             indexed_retry = Some(unit)
     preparation = match prepared:
@@ -457,6 +395,13 @@ pub def obtain(
         listing_refusals=listing_refusals, report_lowering=report_lowering,
     )
     return obtain_record_program(request, admission, previous_view, view_retry, indexed_retry, receipts)
+
+
+def manifest_free_capture(captured: Borrowed[Option[BuildEpoch]]) -> bool:
+    """A manifest-free capture has no managed provider records to advance."""
+    match captured:
+        Some(epoch) => return len(epoch.declarations) == 0
+        None => return false
 
 
 def obtain_record_program(
@@ -486,17 +431,20 @@ def obtain_record_program(
     mut selection = select_bodies(
         admission, request.view, ready, request.epoch.inputs, request.listing_refusals, request.record_writer,
     )?
+    recheck_provider_callers = selection.recheck_provider_callers
     graph = selection.reading.graph
     mut captured_sources = take(selection.reading.projected.projections)
     mut projected = selection.reading.projected
     carried = take(projected.carried)
     invalid = selection.invalid
+    provider_shapes = selection.provider_shapes
     invalid_count = len(invalid)
     mut source_modules: Option[list[str]] = None
     if not request.listing_refusals and not is_editor_view(request.view):
         source_modules = request.compiled_key.source_modules
     mut selected = select_program_records(
         request, graph, projected, invalid, selection.reached, carried, source_modules, held_view, shared_link, receipts,
+        provider_shapes,
     )?
     # Keep both request-owned directories alive through publication, beside the stable native session.
     report_parent.mkdir(true, true).map_err((error) => error.message())?
@@ -519,6 +467,8 @@ def obtain_record_program(
         ready, toolchain, binary, native_key, true, Some(request.store), true, Some(selected_bodies), checking, Some(records),
         report_directory=Some(plan_report),
         retry=program_retry(view_retry, indexed_retry, key.digest),
+        checker_page_count=selected.checker_page_count,
+        recheck_provider_callers=recheck_provider_callers,
     )?
     plan_counts, completed_plan_events = read_completed_plan_report(produced, plan_report, request.report_lowering)?
     if produced.code != 0:
@@ -538,7 +488,7 @@ def obtain_record_program(
     drop(held_view)
     return settle_record_program(
         request, graph, projected, captured_sources, selection.reached.cutoff, selected,
-        produced, key, binary, body_output, records, plan_report, plan_counts, completed_plan_events,
+        produced, key, binary, body_output, records, plan_report, plan_counts, completed_plan_events, provider_shapes,
     )
 
 
@@ -546,7 +496,7 @@ def select_program_records(
     request: Borrowed[RecordProgramRequest], graph: Borrowed[Snapshot], projected: Borrowed[PreparedSourceInputs],
     invalid: list[str], mut reached: BorrowedMut[EditReaders], carried: set[str], source_modules: Option[list[str]],
     previous_view: Borrowed[Option[Snapshot]], shared_link: bool,
-    mut receipts: BorrowedMut[ReceiptProjectionCache],
+    mut receipts: BorrowedMut[ReceiptProjectionCache], provider_shapes: Borrowed[ProviderCallShapeSelection],
 ) -> Result[SelectedProgramRecords, str]:
     """Select checked bodies, plans and native witnesses from the same view before starting the worker."""
     let ready: Borrowed[UnitDescription] = request.unit
@@ -604,11 +554,12 @@ def select_program_records(
     if not listing_refusals and len(invalid) > 0:
         checking = Some(RankedBuildInputs(
             graph=graph, projected=projected.transaction, origin=origin, invalid=invalid,
-            changes=projected.keys, covered=covered, plan_reads=plan_reads,
+            changes=projected.keys + [key for key in provider_shapes.uncaptured.values()], covered=covered, plan_reads=plan_reads,
         ))
     if graph.generation > 0:
         selected_bodies.append(reopen_selection(graph, origin)?)
     selected_bodies.extend(namespaces.pages)
+    checker_page_count = len(selected_bodies)
     selecting = begin_work()
     scalar_plans = select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs, cutoff=cutoff,
         plan_reach=plan_reach)?
@@ -624,7 +575,7 @@ def select_program_records(
         if let Some(requirements) = get(graph, runtime_key).map_err((error) => error.message())?:
             selected_bodies.append(SelectedBodyPage(key=RUNTIME_REQUIREMENTS, value=requirements))
     return Ok(SelectedProgramRecords(
-        origin=origin, bodies=retained_bodies, pages=selected_bodies, ranked=checking,
+        origin=origin, bodies=retained_bodies, pages=selected_bodies, checker_page_count=checker_page_count, ranked=checking,
         covered=covered, plan_records=plan_modules.records, kept_plans=plan_modules.kept,
         plan_selection=expected_plan_selection, retained_plans=scalar_plans.retained,
         runtime_key=runtime_key, previous_link=previous_link,
@@ -635,7 +586,7 @@ def read_completed_plan_report(
     produced: Borrowed[Made], plan_report: Path, report_lowering: bool,
 ) -> Result[tuple[PlanRecordCounts, Option[CompletedPlanEvents]], str]:
     """Read only this execution's report and retain events only for a successful native bake."""
-    # A bakery hit plans nothing and never reads an earlier report.
+    # A bakery hit does not plan, even when it checked invalidated owners before returning the executable.
     mut plan_counts = PlanRecordCounts()
     mut completed_plan_events: Option[CompletedPlanEvents] = None
     if produced.evaluations > 0:
@@ -653,7 +604,7 @@ def settle_record_program(
     request: RecordProgramRequest, graph: Snapshot, projected: PreparedSourceInputs,
     mut captured_sources: Dict[str, SourceProjection], cutoff: EditCutoff, selected: SelectedProgramRecords,
     produced: Made, key: Key, binary: Path, body_output: Path, records: Path, plan_report: Path, plan_counts: PlanRecordCounts,
-    completed_plan_events: Option[CompletedPlanEvents],
+    completed_plan_events: Option[CompletedPlanEvents], provider_shapes: ProviderCallShapeSelection,
 ) -> Result[ProgramOutcome, str]:
     """Stage one successful unit, its compiler records and its index under their existing publication rules."""
     let epoch: Borrowed[BuildEpoch] = request.epoch
@@ -680,10 +631,10 @@ def settle_record_program(
     mut checker_counts = CheckerRecordCounts()
     mut demand_work = LoweringDemandWork()
     mut lowering_work: Option[LoweringWork] = None
-    if produced.native_bakes == 1:
+    if produced.native_bakes == 1 or produced.checked_output is not None:
         bodies, counts, module_reuses = stage_program_bodies(
             request, produced, request_transaction, graph, projected, captured_sources, cutoff,
-            selected, body_output, records, plan_report, completed_plan_events,
+            selected, body_output, records, plan_report, completed_plan_events, provider_shapes,
         )?
         checker_counts = counts
         plan_module_reuses = module_reuses
@@ -755,38 +706,43 @@ def stage_program_bodies(
     request: Borrowed[RecordProgramRequest], produced: Borrowed[Made], transaction: Transaction, graph: Borrowed[Snapshot],
     projected: Borrowed[PreparedSourceInputs], mut captured_sources: Dict[str, SourceProjection], cutoff: EditCutoff,
     selected: Borrowed[SelectedProgramRecords], body_output: Path, records: Path, plan_report: Path,
-    completed_plan_events: Option[CompletedPlanEvents],
+    completed_plan_events: Option[CompletedPlanEvents], provider_shapes: ProviderCallShapeSelection,
 ) -> Result[tuple[PreparedCompiledBodies, CheckerRecordCounts, int], str]:
-    """Authenticate this bake's sidecars and stage its compiler records in the request transaction."""
+    """Stage this activation's checked products and any Plan products in the request transaction."""
     let ready: Borrowed[UnitDescription] = request.unit
-    let toolchain: Borrowed[Toolchain] = request.toolchain
     mut request_transaction = transaction
-    admission_report = records.joinpath("admissions")
-    reading_admissions = begin_work()
-    if produced.plan_module_selection_digest is not None and produced.plan_module_selection_digest != selected.plan_selection:
-        return Err("successful Plan dispatch differs from the selected module authority")
-    admissions = match produced.plan_module_selection_digest:
-        Some(digest) => plan_module_admissions(admission_report, Some(graph), selected.plan_records, Some(digest))?
-        None => plan_module_admissions(admission_report, None, [], None)?
-    plan_module_reuses = len(admissions.restored_modules(whole_only=true))
-    record_work(Operation.EngineSidecarAuthentication, admission_report.0, reading_admissions)
-    runtime_report = records.joinpath(RUNTIME_REQUIREMENTS_REPORT)
-    if runtime_report.is_file():
-        requirements = runtime_report.read_bytes().map_err((error) => error.message())?
-        stage_runtime_recipe(request_transaction, graph, selected.runtime_key, requirements)?
+    mut plan_output: Option[Path] = None
+    mut notes: Option[Path] = None
+    mut admissions: Option[PlanModuleAdmissions] = None
+    mut plan_module_reuses = 0
+    if produced.native_bakes == 1:
+        admission_report = records.joinpath("admissions")
+        accepted = admit_program_plans(produced, graph, selected, admission_report)?
+        plan_module_reuses = len(accepted.restored_modules(whole_only=true))
+        admissions = Some(accepted)
+        notes = Some(admission_report)
+        plan_output = Some(plan_report)
+        runtime_report = records.joinpath(RUNTIME_REQUIREMENTS_REPORT)
+        if runtime_report.is_file():
+            requirements = runtime_report.read_bytes().map_err((error) => error.message())?
+            stage_runtime_recipe(request_transaction, graph, selected.runtime_key, requirements)?
     # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
+    let checked: Borrowed[Option[Path]] = produced.checked_output
+    output = match checked:
+        Some(current) => Path(current.0)
+        None => body_output
     reading_checker_sidecar = begin_work()
-    checker_counts = checker_record_counts(ready, request.compiled_key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)?
+    checker_counts = checker_record_counts(output)?
     record_work(
         Operation.EngineSidecarAuthentication,
-        checker_record_report_path(body_output).0,
+        checker_record_report_path(output).0,
         reading_checker_sidecar,
     )
     bodies = prepare_compiled_bodies(
         request_transaction,
         ready,
-        body_output,
-        Some(plan_report),
+        output,
+        plan_output,
         Some(graph),
         selected.bodies,
         checker_counts.restored,
@@ -795,15 +751,32 @@ def stage_program_bodies(
         selected.covered,
         projected.keys,
         projected.positioned,
-        Some(admission_report),
+        notes,
         selected.retained_plans,
         cutoff,
         request.record_writer,
         captured_sources,
-        plan_admissions=Some(admissions),
-        completed_plan_events=completed_plan_events, report_roots=request.report_lowering,
+        plan_admissions=admissions,
+        completed_plan_events=completed_plan_events,
+        report_roots=produced.native_bakes == 1 and request.report_lowering, provider_shapes=provider_shapes,
     )?
     return Ok((bodies, checker_counts, plan_module_reuses))
+
+
+def admit_program_plans(
+    produced: Borrowed[Made], graph: Borrowed[Snapshot], selected: Borrowed[SelectedProgramRecords],
+    admission_report: Path,
+) -> Result[PlanModuleAdmissions, str]:
+    """Bind the bake's Plan admissions to the authority offered to that dispatch."""
+    reading = begin_work()
+    dispatched = produced.plan_module_selection_digest
+    if dispatched is not None and dispatched != selected.plan_selection:
+        return Err("successful Plan dispatch differs from the selected module authority")
+    admissions = match dispatched:
+        Some(digest) => plan_module_admissions(admission_report, Some(graph), selected.plan_records, Some(digest))?
+        None => plan_module_admissions(admission_report, None, [], None)?
+    record_work(Operation.EngineSidecarAuthentication, admission_report.0, reading)
+    return Ok(admissions)
 
 
 pub def prepare_program(
@@ -1048,14 +1021,16 @@ pub def select_program(store: Path, view: str, unit: NativeUnit, handle: str) ->
 
 pub def prepare_selection(
     mut admission: SnapshotAdmission, view: str, unit: NativeUnit, handle: str,
+    restored: Option[RestoredProgramSelection] = None,
 ) -> Result[NativeSelection, str]:
-    """Stage the descriptor and its caller selection; an equal selection encodes and publishes nothing."""
+    """Stage the descriptor and its caller selection, reusing a validated restore in the same immutable view."""
     if program_view(handle)? != view:
         return Err("native descriptor belongs to a different project view")
     selected = admission.open(view).map_err((error) => error.message())?
-    mut current = false
-    if let Some(pointer) = get(selected, SELECTION_KEY).map_err((error) => error.message())?:
-        current = decode_selection(view, pointer)? == handle
+    if let Some(prior) = restored:
+        if prior.matches(selected, handle, unit):
+            return Ok(NativeSelection(snapshot=selected, encodings=0, commits=0))
+    current = selected_program_handle(selected)? == Some(handle)
     key = program_key(handle)
     prior = stored_program(selected, key)?
     if current and prior is None:
@@ -1098,9 +1073,7 @@ model PreviousLinkMember:
 
 def previous_link_member(store: Path, selected: Snapshot) -> Result[Option[PreviousLinkMember], str]:
     """Find the authenticated regular-object member of the previous program selected in this exact view."""
-    pointer = get(selected, SELECTION_KEY).map_err((error) => error.message())?
-    if let Some(value) = pointer:
-        handle = decode_selection(selected.view, value)?
+    if let Some(handle) = selected_program_handle(selected)?:
         unit = match selected_program(selected, handle)?:
             Some(found) => found
             None => return Err("selected native descriptor is missing")

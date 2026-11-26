@@ -8,7 +8,7 @@ from page_codec import Reader, put_number, put_text, put_texts
 from toolchain_types import NativeCrate, InstalledCompiler
 from compiler_record_admission import CompilerRecordPin
 from frozen_inputs import Document
-from installation_capability import plan_selection_capability
+from installation_capability import driver_profiles
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
@@ -100,7 +100,9 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
         return Err("installation page has inconsistent observations or trailing bytes")
     if len(set(paths)) != len(paths):
         return Err("installation page has duplicate observation paths")
-    toolchain.supports_plan_module_selection_digest = plan_selection_capability(toolchain, documents)?
+    profiles = driver_profiles(toolchain, documents)?
+    toolchain.supports_plan_module_selection_digest = profiles.plan_selection
+    toolchain.supports_library_checked_local = profiles.library_local
     if toolchain.supports_plan_module_selection_digest and profile != PROFILE:
         return Err("driver capability requires installation page profile /33")
     return Ok(
