@@ -250,10 +250,7 @@ impl TypeChecker {
             && !retains_lazy_result
             && !may_conflict_through_borrows
         {
-            self.type_info
-                .protocols
-                .explicit_input_calls
-                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
+            self.drop_ordinary_input_calls(&identity);
             return;
         }
         // RFC 164: a body that needs no proof but lends a place to an exclusive borrow, or binds a local borrow of a
@@ -280,7 +277,72 @@ impl TypeChecker {
         self.native_borrow_pass = false;
         let view_refused = !view_errors.is_empty();
         self.errors.extend(view_errors);
-        let output = match graph {
+        let output = self.settled_input_flow(graph, view_refused, borrow_conflicts_only, span);
+        let has_source_conflicts =
+            matches!(&output, InputFlow::Checked { analysis, .. } if !analysis.conflicts.is_empty());
+        self.type_info
+            .protocols
+            .explicit_input_flow
+            .insert(identity.clone(), output);
+        // Iteration-only activation reports graph conflicts but does not turn an unrelated unsupported construct or
+        // an otherwise ordinary body into an explicit-input admission requirement.
+        if (may_replace_borrowed_iteration || may_take_loop_items || borrow_conflicts_only) && !requires_declared_flow {
+            self.type_info.protocols.explicit_input_flow.remove(&identity);
+            self.drop_ordinary_input_calls(&identity);
+            return;
+        }
+        if may_classify_dictionary_lookup
+            && !requires_explicit_flow
+            && !may_replace_borrowed_iteration
+            && !retains_lazy_result
+        {
+            self.type_info.protocols.explicit_input_flow.remove(&identity);
+            self.drop_ordinary_input_calls(&identity);
+            return;
+        }
+        // A validated conflict already produced its operation-owned diagnostic. The executable-body gate must still
+        // reject that graph if lowering asks for it, but repeating the rejection here exposes an internal proof
+        // consequence as a second source error.
+        if has_source_conflicts {
+            return;
+        }
+        if let Some(InputFlow::Unavailable(unavailable)) = self.type_info.protocols.explicit_input_flow.get(&identity)
+            && unavailable.reason == source::BORROWED_VALUE_IN_OWNED_FIELD
+        {
+            self.refused_ownership_authorities.insert(identity.clone());
+            self.errors.push(
+                CompileError::type_error(
+                    "A plain owned field cannot store a borrowed value".to_string(),
+                    unavailable.span,
+                )
+                    .with_stable_code("INCAN-T0123")
+                    .with_note("The field's declared type owns its value; the borrowed source is not copied or cloned into it")
+                    .with_hint("Declare the carrying field as a type parameter and instantiate the carrier as Carrier[Borrowed[T]]"),
+            );
+            return;
+        }
+        self.report_unproved_contract(callable, &identity, span, view_refused);
+    }
+
+    /// Drop the ordinary input calls `identity` recorded, keeping its explicit ones, when its body records no flow.
+    fn drop_ordinary_input_calls(&mut self, identity: &CanonicalSymbolId) {
+        self.type_info
+            .protocols
+            .explicit_input_calls
+            .retain(|_, call| call.owner.as_ref() != Some(identity) || call.kind == InputCallKind::Explicit);
+    }
+
+    /// Settle a built source graph into its recorded flow. A graph whose returned view was refused has no proof; an
+    /// analyzed graph records its read-only dictionary lookups and reports its conflicts, only its active-loan
+    /// conflicts when the body is checked for borrow conflicts alone.
+    fn settled_input_flow(
+        &mut self,
+        graph: Result<flow::Graph, Unavailable>,
+        view_refused: bool,
+        borrow_conflicts_only: bool,
+        span: Span,
+    ) -> InputFlow {
+        match graph {
             // A return that does not borrow the declared view source leaves the body without a proof.
             Ok(_) if view_refused => InputFlow::Unavailable(Unavailable {
                 span,
@@ -309,71 +371,33 @@ impl TypeChecker {
                 }
             }
             Err(reason) => InputFlow::Unavailable(reason),
-        };
-        let has_source_conflicts =
-            matches!(&output, InputFlow::Checked { analysis, .. } if !analysis.conflicts.is_empty());
-        self.type_info
-            .protocols
-            .explicit_input_flow
-            .insert(identity.clone(), output);
-        // Iteration-only activation reports graph conflicts but does not turn an unrelated unsupported construct or
-        // an otherwise ordinary body into an explicit-input admission requirement.
-        if (may_replace_borrowed_iteration || may_take_loop_items || borrow_conflicts_only) && !requires_declared_flow {
-            self.type_info.protocols.explicit_input_flow.remove(&identity);
-            self.type_info
-                .protocols
-                .explicit_input_calls
-                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
-            return;
         }
-        if may_classify_dictionary_lookup
-            && !requires_explicit_flow
-            && !may_replace_borrowed_iteration
-            && !retains_lazy_result
-        {
-            self.type_info.protocols.explicit_input_flow.remove(&identity);
-            self.type_info
-                .protocols
-                .explicit_input_calls
-                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
-            return;
-        }
-        // A validated conflict already produced its operation-owned diagnostic. The executable-body gate must still
-        // reject that graph if lowering asks for it, but repeating the rejection here exposes an internal proof
-        // consequence as a second source error.
-        if has_source_conflicts {
-            return;
-        }
-        if let Some(InputFlow::Unavailable(unavailable)) = self.type_info.protocols.explicit_input_flow.get(&identity)
-            && unavailable.reason == source::BORROWED_VALUE_IN_OWNED_FIELD
-        {
-            self.refused_ownership_authorities.insert(identity.clone());
-            self.errors.push(
-                CompileError::type_error(
-                    "A plain owned field cannot store a borrowed value".to_string(),
-                    unavailable.span,
-                )
-                    .with_stable_code("INCAN-T0123")
-                    .with_note("The field's declared type owns its value; the borrowed source is not copied or cloned into it")
-                    .with_hint("Declare the carrying field as a type parameter and instantiate the carrier as Carrier[Borrowed[T]]"),
-            );
-            return;
-        }
+    }
+
+    /// Report an owning body whose ownership contract its executable input cannot prove, naming where source analysis
+    /// stopped or the graph fault it found. A refused returned view already named the offending return.
+    fn report_unproved_contract(
+        &mut self,
+        callable: CallableSource<'_>,
+        identity: &CanonicalSymbolId,
+        span: Span,
+        view_refused: bool,
+    ) {
         let admission = match callable {
-            CallableSource::Function(function) => self.type_info.executable_function_input(&identity, function),
-            CallableSource::Method(method) => self.type_info.executable_method_input(&identity, method),
+            CallableSource::Function(function) => self.type_info.executable_function_input(identity, function),
+            CallableSource::Method(method) => self.type_info.executable_method_input(identity, method),
         };
         // A refused returned view already names the offending return; admission would only repeat it.
         if let Err(reason) = admission
             && !view_refused
         {
             let mut error = CompileError::type_error(
-                format!("Ownership contract cannot be proved: {reason}"), span,
-            ).with_stable_code("INCAN-T0123")
-                .with_note("The entire owning body must retain supported access, storage and cleanup facts; a valid annotation alone is insufficient");
+            format!("Ownership contract cannot be proved: {reason}"), span,
+        ).with_stable_code("INCAN-T0123")
+            .with_note("The entire owning body must retain supported access, storage and cleanup facts; a valid annotation alone is insufficient");
             // Name the construct source analysis stopped at, or the graph fault it found, so the refusal points at
             // what to change.
-            match self.type_info.protocols.explicit_input_flow.get(&identity) {
+            match self.type_info.protocols.explicit_input_flow.get(identity) {
                 Some(InputFlow::Unavailable(unavailable)) => {
                     error = error.with_note(format!("source analysis stops: {}", unavailable.reason));
                     if unavailable.span != span {
