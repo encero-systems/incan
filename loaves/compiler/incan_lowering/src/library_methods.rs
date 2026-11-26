@@ -60,23 +60,7 @@ pub fn lower_library_method(
     let reference = library_receiver(module, builder, &delegation.parameters[0], &arguments[0], span)?;
     let closed = library_method_arguments(builder, delegation, target, &reference, &names)?;
     let mut parameters = vec![place_type(&builder.locals, &reference)];
-    let mut ordinary_types: Vec<PlanType> = Vec::new();
-    for index in 1..delegation.parameters.len() {
-        let parameter = substitute(&delegation.parameters[index], &names, &closed)?;
-        require_native_union_signature(&parameter, &builder.intrinsics, native_delegation(delegation))?;
-        match delegation.declaration_frame() {
-            Some(frame) => ordinary_types.push(call_parameter_type(builder, frame, &frame.params[index])?),
-            None => ordinary_types.push(native_source_type(
-                builder.constructors(),
-                builder.nominals(),
-                builder.enums(),
-                &builder.unions,
-                &parameter,
-                &builder.intrinsics,
-                "",
-            )?),
-        }
-    }
+    let mut ordinary_types = library_ordinary_parameter_types(builder, delegation, &names, &closed)?;
     let owned = sdk_owned_callable_bindings(builder, delegation, &target.binding, arguments, &ordinary_types)?;
     if delegation.declaration_frame().is_none() {
         for (index, ty) in ordinary_types.iter_mut().enumerate() {
@@ -84,14 +68,7 @@ pub fn lower_library_method(
         }
     }
     parameters.extend(ordinary_types.iter().cloned());
-    // A cloneable SDK callable is evaluated as the ordinary boxed closure, then transferred into its shared carrier.
-    let argument_types: Vec<PlanType> = ordinary_types
-        .iter()
-        .map(|ty| match ty {
-            PlanType::SharedCallable(signature) => PlanType::Closure(signature.clone()),
-            other => other.clone(),
-        })
-        .collect();
+    let argument_types = boxed_closure_argument_types(&ordinary_types);
     let result = library_method_result(builder, delegation, target, destination, &names, &closed, span)?;
     // A member partial of a linked class binds its presets from the frame its owner retains for that name, as a unit of
     // the class's own package may call it (DD-0007); every other call binds the callee's own defaults.
@@ -180,6 +157,46 @@ pub fn lower_library_method(
         output,
         span,
     )
+}
+
+/// The plan types of a stdlib method's parameters after its receiver: the declaring frame's checked parameter types,
+/// or the native types of the delegation's substituted parameters, each a supported native union.
+fn library_ordinary_parameter_types(
+    builder: &Builder,
+    delegation: &LoafCallable,
+    names: &[String],
+    closed: &[IncanType],
+) -> Result<Vec<PlanType>, String> {
+    let mut ordinary_types: Vec<PlanType> = Vec::new();
+    for index in 1..delegation.parameters.len() {
+        let parameter = substitute(&delegation.parameters[index], names, closed)?;
+        require_native_union_signature(&parameter, &builder.intrinsics, native_delegation(delegation))?;
+        match delegation.declaration_frame() {
+            Some(frame) => ordinary_types.push(call_parameter_type(builder, frame, &frame.params[index])?),
+            None => ordinary_types.push(native_source_type(
+                builder.constructors(),
+                builder.nominals(),
+                builder.enums(),
+                &builder.unions,
+                &parameter,
+                &builder.intrinsics,
+                "",
+            )?),
+        }
+    }
+    Ok(ordinary_types)
+}
+
+/// The types the arguments are evaluated at: a cloneable SDK callable is evaluated as the ordinary boxed closure, then
+/// transferred into its shared carrier.
+fn boxed_closure_argument_types(ordinary_types: &[PlanType]) -> Vec<PlanType> {
+    ordinary_types
+        .iter()
+        .map(|ty| match ty {
+            PlanType::SharedCallable(signature) => PlanType::Closure(signature.clone()),
+            other => other.clone(),
+        })
+        .collect()
 }
 
 /// Close native Self from the concrete nominal frame or checked scalar receiver, then checked trait and method binders.

@@ -4,7 +4,7 @@ use incan_mir_plan_native::{
     BasicBlock, Callee, CalleeKind, ExternalFunction, Function, Local, Operand, Parameter, Place, PlanType, RvalueKind,
     SourceSpan, Statement, TerminatorKind, Unwind, assign as plan_assign, block as plan_block, place as plan_place,
 };
-use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
 
 use crate::frame::read_place;
 use crate::layout_types::{native_alias_boundary, shared_receiver_type};
@@ -70,30 +70,15 @@ pub fn runtime_frame_adapter(
             operands.push(read_place(alias, true, span));
             continue;
         }
-        let borrowed = shared_receiver_type(actual.clone())?;
-        if borrowed != *expected && !native_alias_boundary(nominals, &borrowed, expected) {
-            return Err(format!(
-                "unsupported governed runtime frame argument {actual:?} to {expected:?} for {}",
-                external.path
-            ));
-        }
-        let reference = plan_place(locals.len() as i64, span);
-        locals.push(Local {
-            ty: borrowed.clone(),
-            span: span.clone(),
-        });
-        statements.push(plan_assign(reference.clone(), RvalueKind::Borrow(source.clone()), span));
-        let mut argument = reference.clone();
-        if borrowed != *expected {
-            argument = plan_place(locals.len() as i64, span);
-            locals.push(Local {
-                ty: expected.clone(),
-                span: span.clone(),
-            });
-            let aliased = RvalueKind::NativeAlias(read_place(reference, false, span), borrowed, expected.clone());
-            statements.push(plan_assign(argument.clone(), aliased, span));
-        }
-        operands.push(read_place(argument, false, span));
+        operands.push(lend_runtime_argument(
+            nominals,
+            external,
+            actual,
+            expected,
+            &source,
+            &mut locals,
+            &mut statements,
+        )?);
         owners.push(source);
     }
     // 3. Both completion paths release only owners whose views were lent to the target frame.
@@ -145,6 +130,44 @@ pub fn runtime_frame_adapter(
         blocks,
         span.clone(),
     )))
+}
+
+/// Lend an owned runtime input to a declared shared-view slot: borrow it, then alias the borrow to the exact native
+/// type the slot declares when it differs. Returns the operand the target frame reads; the owner stays alive.
+fn lend_runtime_argument(
+    nominals: &[NominalDeclaration],
+    external: &ExternalFunction,
+    actual: &PlanType,
+    expected: &PlanType,
+    source: &Place,
+    locals: &mut Vec<Local>,
+    statements: &mut Vec<Statement>,
+) -> Result<Operand, String> {
+    let span = &external.span;
+    let borrowed = shared_receiver_type(actual.clone())?;
+    if borrowed != *expected && !native_alias_boundary(nominals, &borrowed, expected) {
+        return Err(format!(
+            "unsupported governed runtime frame argument {actual:?} to {expected:?} for {}",
+            external.path
+        ));
+    }
+    let reference = plan_place(locals.len() as i64, span);
+    locals.push(Local {
+        ty: borrowed.clone(),
+        span: span.clone(),
+    });
+    statements.push(plan_assign(reference.clone(), RvalueKind::Borrow(source.clone()), span));
+    let mut argument = reference.clone();
+    if borrowed != *expected {
+        argument = plan_place(locals.len() as i64, span);
+        locals.push(Local {
+            ty: expected.clone(),
+            span: span.clone(),
+        });
+        let aliased = RvalueKind::NativeAlias(read_place(reference, false, span), borrowed, expected.clone());
+        statements.push(plan_assign(argument.clone(), aliased, span));
+    }
+    Ok(read_place(argument, false, span))
 }
 
 /// Release only the owners borrowed by the forwarder; transferred arguments belong to the target frame.
