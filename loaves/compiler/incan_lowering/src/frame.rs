@@ -368,9 +368,14 @@ pub fn terminate_call(
 /// Own storage materialized for one call, and pair it with the reference that call receives.
 pub fn lend_invocation_storage(builder: &mut Builder, storage: &Place, lent: &Operand) {
     builder.owned.push(storage.local);
+    retain_invocation_loan(builder, storage.local, lent);
+}
+
+/// Schedule the existing owner to drop after the invocation that receives its loan.
+pub fn retain_invocation_loan(builder: &mut Builder, storage: i64, lent: &Operand) {
     match &lent.kind {
         OperandKind::Copy(reference) | OperandKind::Move(reference) => {
-            builder.invocation_storage.push((reference.local, storage.local))
+            builder.invocation_storage.push((reference.local, storage))
         }
         _ => {}
     }

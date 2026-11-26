@@ -15,8 +15,8 @@ use crate::closures::{
     pointer_forwarder,
 };
 use crate::frame::{
-    Builder, drop_owned, external_call, forget_owned, place_type, read_place, temporary, terminate_call,
-    track_rvalue_moves, value_type,
+    Builder, drop_owned, external_call, forget_owned, place_type, read_place, retain_invocation_loan, temporary,
+    terminate_call, track_rvalue_moves, value_type,
 };
 use crate::list_methods::call_destination;
 use crate::list_values::value_operand;
@@ -310,6 +310,10 @@ pub fn callable_argument(
     if callable_signature(&source)? != signature {
         return Err("invalid Body IR callable argument signature".into());
     }
+    let drop_after_call = read.last_use
+        && read.place.projection.is_empty()
+        && place.local > builder.parameter_count
+        && matches!(&source, PlanType::BorrowingClosure(_) | PlanType::ExclusiveClosure(_));
     let owner = match source {
         PlanType::FunctionItem(..) => {
             let pointer = temporary(builder, PlanType::FunctionPointer(signature.to_vec()), span);
@@ -324,7 +328,12 @@ pub fn callable_argument(
         _ => place,
     };
     if borrowing {
-        return borrowed_callable_argument(builder, owner, signature, span);
+        let local = owner.local;
+        let envelope = borrowed_callable_argument(builder, owner, signature, span)?;
+        if drop_after_call {
+            retain_invocation_loan(builder, local, &envelope);
+        }
+        return Ok(envelope);
     }
     callable_object(builder, owner, signature, span)
 }
