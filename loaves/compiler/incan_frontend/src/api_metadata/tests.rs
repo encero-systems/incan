@@ -661,6 +661,12 @@ pub class Writer:
         vec!["value", "_endian"]
     );
 
+    assert_conflicting_method_overloads_refused()?;
+    Ok(())
+}
+
+/// Two method overloads whose parameter lists overlap are refused as a declaration conflict (RFC 174).
+fn assert_conflicting_method_overloads_refused() -> Result<(), String> {
     let conflicting = r#"
 class ConflictingWriter:
     def write(self, value: int) -> int:

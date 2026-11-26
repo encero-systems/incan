@@ -187,152 +187,7 @@ impl TypeCheckInfo {
                 }
                 Ok(Some(contract))
             }
-            InputCallKind::Ordinary => {
-                let selected_clone = call.callee
-                    == crate::symbols::canonical_builtin_member_identity(
-                        incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Clone),
-                        incan_lang::lang::trait_bounds::rust::CLONE_METHOD,
-                    )
-                    && self.resolved_builtin_method_call(call.site)
-                        == Some(incan_lang::lang::builtins::BuiltinMethodId::Clone(
-                            incan_lang::lang::surface::clone_methods::CloneMethodId::Clone,
-                        ));
-                if selected_clone {
-                    let selected_identity = self.resolved_identity(call.site) == Some(&call.callee)
-                        || self.traits.inferred_method_identities.get(&call.site) == Some(&call.callee);
-                    if contract.is_some()
-                        || call.owner.is_none()
-                        || call.callee.kind != SemanticSourceTargetKind::Method
-                        || call.receiver != Some(crate::ast::Receiver::Immutable)
-                        || !call.parameters.is_empty()
-                        || !selected_identity
-                        || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
-                    {
-                        return Err("builtin Clone invocation differs from its selected checked surface");
-                    }
-                    return Ok(None);
-                }
-                let selected_result_map_err = call.callee
-                    == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
-                    && self.resolved_builtin_method_call(call.site)
-                        == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
-                            incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
-                        ));
-                if selected_result_map_err {
-                    let callback_is_checked = matches!(call.parameters.as_slice(), [parameter]
-                        if matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
-                            if parameters.len() == 1));
-                    let result_is_checked = matches!(self.expr_type(call.site),
-                        Some(crate::symbols::ResolvedType::Generic(name, sides))
-                            if crate::typechecker::helpers::collection_type_id(name)
-                                == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
-                                && sides.len() == 2);
-                    if contract.is_some()
-                        || call.owner.is_none()
-                        || call.callee.kind != SemanticSourceTargetKind::Method
-                        || call.receiver != Some(crate::ast::Receiver::Immutable)
-                        || self.resolved_identity(call.site) != Some(&call.callee)
-                        || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
-                        || !callback_is_checked
-                        || !result_is_checked
-                    {
-                        return Err("builtin Result.map_err invocation differs from its selected checked surface");
-                    }
-                    return Ok(None);
-                }
-                if !matches!(
-                    call.callee.origin,
-                    SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
-                ) {
-                    return Err("ordinary invocation requires a canonical source declaration");
-                }
-                if contract.is_some() || call.owner.is_none() {
-                    return Err("ordinary invocation cannot replace an explicit contract");
-                }
-                if self.call_site_callable_params(call.site) != Some(call.parameters.as_slice()) {
-                    return Err("ordinary invocation differs from its selected call-site header");
-                }
-                let binding = match call.callee.kind {
-                    SemanticSourceTargetKind::Function if call.receiver.is_none() => {
-                        let mut binding = None;
-                        for candidate in self
-                            .declarations
-                            .function_bindings_by_span
-                            .values()
-                            .chain(self.declarations.function_bindings.values())
-                            .filter(|candidate| candidate.identity.as_ref() == Some(&call.callee))
-                        {
-                            if binding.is_some_and(|previous| previous != candidate) {
-                                return Err("ordinary invocation has conflicting canonical headers");
-                            }
-                            binding = Some(candidate);
-                        }
-                        if let Some(binding) = binding {
-                            binding
-                        } else if matches!(call.callee.origin, SymbolOrigin::Package { .. })
-                            && !self.calls.body_ir_async_call_targets.contains_key(&call.site)
-                        {
-                            return Ok(None);
-                        } else {
-                            return Err("ordinary invocation has no canonical source header");
-                        }
-                    }
-                    SemanticSourceTargetKind::Method => {
-                        let local = self
-                            .declarations
-                            .method_bindings_by_span
-                            .get(&call.callee.declaration_span)
-                            .filter(|binding| binding.identity.as_ref() == Some(&call.callee));
-                        if let Some(binding) = local {
-                            binding
-                        } else {
-                            if self.resolved_identity(call.site) != Some(&call.callee)
-                                || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
-                                || self.calls.body_ir_async_call_targets.contains_key(&call.site)
-                            {
-                                return Err("ordinary method invocation has no canonical selected header");
-                            }
-                            return Ok(None);
-                        }
-                    }
-                    _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
-                };
-                // A native borrow slot takes its access from its mode, whatever instantiates its referent (RFC 164).
-                let free_parameter_types_changed = call.callee.kind == SemanticSourceTargetKind::Function
-                    && binding.params.iter().zip(&call.parameters).any(|(declared, selected)| {
-                        declared.ty != selected.ty
-                            && !matches!(
-                                (&declared.ty, &selected.ty),
-                                (
-                                    crate::symbols::ResolvedType::Ref(_),
-                                    crate::symbols::ResolvedType::Ref(_)
-                                ) | (
-                                    crate::symbols::ResolvedType::RefMut(_),
-                                    crate::symbols::ResolvedType::RefMut(_)
-                                )
-                            )
-                    });
-                // An async callee whose inputs are all native borrows or Copy scalars passes each by its mode, as its
-                // explicit spelling did (RFC 164); its loans last until the call is awaited.
-                let async_by_modes = binding.params.iter().all(|parameter| {
-                    matches!(
-                        parameter.ty,
-                        crate::symbols::ResolvedType::Ref(_)
-                            | crate::symbols::ResolvedType::RefMut(_)
-                            | crate::symbols::ResolvedType::Int
-                            | crate::symbols::ResolvedType::Float
-                            | crate::symbols::ResolvedType::Bool
-                            | crate::symbols::ResolvedType::Numeric(_)
-                    )
-                });
-                if (binding.is_async && !async_by_modes)
-                    || !ordinary_header_matches(&binding.params, &call.parameters)
-                    || free_parameter_types_changed
-                {
-                    return Err("ordinary invocation differs from its synchronous concrete header");
-                }
-                Ok(None)
-            }
+            InputCallKind::Ordinary => self.ordinary_input_contract(call, contract),
             InputCallKind::Indirect => {
                 if call.callee.kind != SemanticSourceTargetKind::Parameter
                     || contract.is_some()
@@ -344,6 +199,193 @@ impl TypeCheckInfo {
                 Ok(None)
             }
         }
+    }
+
+    /// Authenticate an ordinary invocation: the compiler-selected `Clone.clone` and `Result.map_err` surfaces have no
+    /// contract, and any other ordinary callee must be a canonical source declaration whose checked header the call
+    /// keeps unchanged.
+    fn ordinary_input_contract(
+        &self,
+        call: &InputCall,
+        contract: Option<&crate::ownership_metadata::CheckedOwnershipContract>,
+    ) -> Result<Option<&crate::ownership_metadata::CheckedOwnershipContract>, &'static str> {
+        let selected_clone = call.callee
+            == crate::symbols::canonical_builtin_member_identity(
+                incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Clone),
+                incan_lang::lang::trait_bounds::rust::CLONE_METHOD,
+            )
+            && self.resolved_builtin_method_call(call.site)
+                == Some(incan_lang::lang::builtins::BuiltinMethodId::Clone(
+                    incan_lang::lang::surface::clone_methods::CloneMethodId::Clone,
+                ));
+        if selected_clone {
+            self.require_builtin_clone_surface(call, contract)?;
+            return Ok(None);
+        }
+        let selected_result_map_err = call.callee
+            == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            && self.resolved_builtin_method_call(call.site)
+                == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
+                    incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                ));
+        if selected_result_map_err {
+            self.require_builtin_map_err_surface(call, contract)?;
+            return Ok(None);
+        }
+        if !matches!(
+            call.callee.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        ) {
+            return Err("ordinary invocation requires a canonical source declaration");
+        }
+        if contract.is_some() || call.owner.is_none() {
+            return Err("ordinary invocation cannot replace an explicit contract");
+        }
+        if self.call_site_callable_params(call.site) != Some(call.parameters.as_slice()) {
+            return Err("ordinary invocation differs from its selected call-site header");
+        }
+        let Some(binding) = self.ordinary_header_binding(call)? else {
+            return Ok(None);
+        };
+        // A native borrow slot takes its access from its mode, whatever instantiates its referent (RFC 164).
+        let free_parameter_types_changed = call.callee.kind == SemanticSourceTargetKind::Function
+            && binding.params.iter().zip(&call.parameters).any(|(declared, selected)| {
+                declared.ty != selected.ty
+                    && !matches!(
+                        (&declared.ty, &selected.ty),
+                        (
+                            crate::symbols::ResolvedType::Ref(_),
+                            crate::symbols::ResolvedType::Ref(_)
+                        ) | (
+                            crate::symbols::ResolvedType::RefMut(_),
+                            crate::symbols::ResolvedType::RefMut(_)
+                        )
+                    )
+            });
+        // An async callee whose inputs are all native borrows or Copy scalars passes each by its mode, as its
+        // explicit spelling did (RFC 164); its loans last until the call is awaited.
+        let async_by_modes = binding.params.iter().all(|parameter| {
+            matches!(
+                parameter.ty,
+                crate::symbols::ResolvedType::Ref(_)
+                    | crate::symbols::ResolvedType::RefMut(_)
+                    | crate::symbols::ResolvedType::Int
+                    | crate::symbols::ResolvedType::Float
+                    | crate::symbols::ResolvedType::Bool
+                    | crate::symbols::ResolvedType::Numeric(_)
+            )
+        });
+        if (binding.is_async && !async_by_modes)
+            || !ordinary_header_matches(&binding.params, &call.parameters)
+            || free_parameter_types_changed
+        {
+            return Err("ordinary invocation differs from its synchronous concrete header");
+        }
+        Ok(None)
+    }
+
+    /// Require a builtin `Clone.clone` call to be the selected immutable-receiver method with no parameters, at the
+    /// identity and header its call site recorded.
+    fn require_builtin_clone_surface(
+        &self,
+        call: &InputCall,
+        contract: Option<&crate::ownership_metadata::CheckedOwnershipContract>,
+    ) -> Result<(), &'static str> {
+        let selected_identity = self.resolved_identity(call.site) == Some(&call.callee)
+            || self.traits.inferred_method_identities.get(&call.site) == Some(&call.callee);
+        if contract.is_some()
+            || call.owner.is_none()
+            || call.callee.kind != SemanticSourceTargetKind::Method
+            || call.receiver != Some(crate::ast::Receiver::Immutable)
+            || !call.parameters.is_empty()
+            || !selected_identity
+            || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
+        {
+            return Err("builtin Clone invocation differs from its selected checked surface");
+        }
+        Ok(())
+    }
+
+    /// Require a builtin `Result.map_err` call to be the selected immutable-receiver method with one one-argument
+    /// callback and a checked two-sided `Result`.
+    fn require_builtin_map_err_surface(
+        &self,
+        call: &InputCall,
+        contract: Option<&crate::ownership_metadata::CheckedOwnershipContract>,
+    ) -> Result<(), &'static str> {
+        let callback_is_checked = matches!(call.parameters.as_slice(), [parameter]
+            if matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
+                if parameters.len() == 1));
+        let result_is_checked = matches!(self.expr_type(call.site),
+            Some(crate::symbols::ResolvedType::Generic(name, sides))
+                if crate::typechecker::helpers::collection_type_id(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
+                    && sides.len() == 2);
+        if contract.is_some()
+            || call.owner.is_none()
+            || call.callee.kind != SemanticSourceTargetKind::Method
+            || call.receiver != Some(crate::ast::Receiver::Immutable)
+            || self.resolved_identity(call.site) != Some(&call.callee)
+            || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
+            || !callback_is_checked
+            || !result_is_checked
+        {
+            return Err("builtin Result.map_err invocation differs from its selected checked surface");
+        }
+        Ok(())
+    }
+
+    /// The canonical checked header an ordinary call selects: the one function binding with its identity, or the
+    /// method's own binding. A package function or a method read through its selected call site has none.
+    fn ordinary_header_binding(
+        &self,
+        call: &InputCall,
+    ) -> Result<Option<&crate::typechecker::FunctionBindingInfo>, &'static str> {
+        Ok(Some(match call.callee.kind {
+            SemanticSourceTargetKind::Function if call.receiver.is_none() => {
+                let mut binding = None;
+                for candidate in self
+                    .declarations
+                    .function_bindings_by_span
+                    .values()
+                    .chain(self.declarations.function_bindings.values())
+                    .filter(|candidate| candidate.identity.as_ref() == Some(&call.callee))
+                {
+                    if binding.is_some_and(|previous| previous != candidate) {
+                        return Err("ordinary invocation has conflicting canonical headers");
+                    }
+                    binding = Some(candidate);
+                }
+                if let Some(binding) = binding {
+                    binding
+                } else if matches!(call.callee.origin, SymbolOrigin::Package { .. })
+                    && !self.calls.body_ir_async_call_targets.contains_key(&call.site)
+                {
+                    return Ok(None);
+                } else {
+                    return Err("ordinary invocation has no canonical source header");
+                }
+            }
+            SemanticSourceTargetKind::Method => {
+                let local = self
+                    .declarations
+                    .method_bindings_by_span
+                    .get(&call.callee.declaration_span)
+                    .filter(|binding| binding.identity.as_ref() == Some(&call.callee));
+                if let Some(binding) = local {
+                    binding
+                } else {
+                    if self.resolved_identity(call.site) != Some(&call.callee)
+                        || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
+                        || self.calls.body_ir_async_call_targets.contains_key(&call.site)
+                    {
+                        return Err("ordinary method invocation has no canonical selected header");
+                    }
+                    return Ok(None);
+                }
+            }
+            _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
+        }))
     }
 
     /// A local without an ownership annotation may alias only a returned-view call's result: its loan is that call's
@@ -431,84 +473,9 @@ impl TypeCheckInfo {
             }
         }
 
-        // ---- Loan destinations and their source annotations ----
-        for (local, loan) in &graph.local_loans {
-            let Some(mode) = self.protocols.explicit_local_modes.get(local) else {
-                self.validate_view_local(graph, local, *loan)?;
-                continue;
-            };
-            if &mode.owner != owner || local.kind != SemanticSourceTargetKind::Local {
-                return Err("local loan annotation belongs to another declaration");
-            }
-            let loan = graph
-                .loans
-                .get(loan.0)
-                .ok_or("local loan destination has no source loan")?;
-            let expected = match mode.mode {
-                OwnershipMode::Borrowed => flow::LoanKind::Shared,
-                OwnershipMode::BorrowedMut => flow::LoanKind::Exclusive,
-                _ => return Err("local loan destination does not declare a borrow"),
-            };
-            if loan.kind != expected || loan.writable != mode.writable {
-                return Err("local loan permissions disagree with its checked annotation");
-            }
-            if !matches!(loan.source.root, flow::Root::Binding(_)) {
-                return Err("local loan cannot retain a bounded invocation temporary");
-            }
-        }
-
-        // ---- Exact owned initializer relationships ----
-        for (local, initializer) in &graph.owned_locals {
-            let mode = self
-                .protocols
-                .explicit_local_modes
-                .get(local)
-                .ok_or("owned initializer has no checked annotation")?;
-            if &mode.owner != owner
-                || mode.mode != OwnershipMode::Owned
-                || self.expr_type(initializer.initializer) != Some(&mode.value_type)
-            {
-                return Err("owned initializer differs from its checked owner or value type");
-            }
-            if let Some(index) = initializer.access_node {
-                let node = graph
-                    .nodes
-                    .get(index)
-                    .ok_or("owned initializer has no checked source event")?;
-                let flow::Event::Access { access, .. } = node.event else {
-                    return Err("owned initializer has no read or transfer event");
-                };
-                let copy = self.checked_input_copy_value(owner, &mode.value_type)?;
-                if (copy && access != flow::Access::Read) || (!copy && access != flow::Access::Move) {
-                    return Err("owned initializer access differs from its checked Copy or transfer contract");
-                }
-            }
-        }
-
-        // ---- Canonical value declarations and complete borrow coverage ----
-        for (local, mode) in self
-            .protocols
-            .explicit_local_modes
-            .iter()
-            .filter(|(_, mode)| &mode.owner == owner)
-        {
-            if local.kind != SemanticSourceTargetKind::Local
-                || self.resolved_write_identity(local.declaration_span, &local.declaration_name) != Some(local)
-                || self.resolved_write_type(local.declaration_span, &local.declaration_name) != Some(&mode.value_type)
-            {
-                return Err("local ownership annotation has no matching checked value declaration");
-            }
-            match mode.mode {
-                OwnershipMode::Borrowed | OwnershipMode::BorrowedMut if !graph.local_loans.contains_key(local) => {
-                    return Err("local borrow annotation has no source loan destination");
-                }
-                OwnershipMode::Owned if !graph.owned_locals.contains_key(local) => {
-                    return Err("owned local annotation has no retained initializer");
-                }
-                OwnershipMode::Reference => return Err("returned local dependencies require a later ownership stage"),
-                _ => {}
-            }
-        }
+        self.validate_local_loans(owner, graph)?;
+        self.validate_owned_initializers(owner, graph)?;
+        self.validate_local_modes(owner, graph)?;
         Ok(Some(CheckedInputBody {
             owner: owner.clone(),
             facts: self,
@@ -599,57 +566,175 @@ impl TypeCheckInfo {
                 &call.parameters,
                 call.kind != InputCallKind::Indirect && call.receiver.is_none(),
             )?;
-            for argument in &invocation.arguments {
-                let parameter_type = &call
-                    .parameters
-                    .get(argument.slot)
-                    .ok_or("invocation parameter is absent")?
-                    .ty;
-                let access = crate::ownership_metadata::slot_input_access(contract, argument.slot, parameter_type)?;
-                let classified_move = graph
-                    .value_uses
-                    .get(&argument.span)
-                    .is_some_and(|value_use| value_use.kind == flow::ValueUseKind::Move);
-                if argument.access != access
-                    && !(access == incan_semantics_core::IncanInputAccess::Inferred
-                        && argument.access == incan_semantics_core::IncanInputAccess::Owned
-                        && classified_move)
-                {
-                    return Err("invocation argument access differs from the selected parameter");
-                }
-                if let Some(id) = argument.loan {
-                    let parameter = call
-                        .parameters
-                        .get(argument.slot)
-                        .ok_or("invocation parameter is absent")?;
-                    let loan = graph.loans.get(id.0).ok_or("invocation argument loan is absent")?;
-                    let writable = access == incan_semantics_core::IncanInputAccess::Exclusive && parameter.is_mut;
-                    if writable != loan.writable {
-                        return Err("invocation argument write permission differs from the selected parameter");
-                    }
+            validate_argument_accesses(call, contract, graph, invocation)?;
+            self.validate_receiver_access(call, *span, invocation, graph)?;
+        }
+        Ok(())
+    }
+
+    /// Each local loan destination is a returned-view local, or a borrow annotation of this body whose loan has the
+    /// annotation's kind and write permission over a stored binding.
+    fn validate_local_loans(&self, owner: &CanonicalSymbolId, graph: &flow::Graph) -> Result<(), &'static str> {
+        for (local, loan) in &graph.local_loans {
+            let Some(mode) = self.protocols.explicit_local_modes.get(local) else {
+                self.validate_view_local(graph, local, *loan)?;
+                continue;
+            };
+            if &mode.owner != owner || local.kind != SemanticSourceTargetKind::Local {
+                return Err("local loan annotation belongs to another declaration");
+            }
+            let loan = graph
+                .loans
+                .get(loan.0)
+                .ok_or("local loan destination has no source loan")?;
+            let expected = match mode.mode {
+                OwnershipMode::Borrowed => flow::LoanKind::Shared,
+                OwnershipMode::BorrowedMut => flow::LoanKind::Exclusive,
+                _ => return Err("local loan destination does not declare a borrow"),
+            };
+            if loan.kind != expected || loan.writable != mode.writable {
+                return Err("local loan permissions disagree with its checked annotation");
+            }
+            if !matches!(loan.source.root, flow::Root::Binding(_)) {
+                return Err("local loan cannot retain a bounded invocation temporary");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Each owned initializer belongs to an `Owned` annotation of this body with its checked value type, and reads a
+    /// Copy source or moves any other.
+    fn validate_owned_initializers(&self, owner: &CanonicalSymbolId, graph: &flow::Graph) -> Result<(), &'static str> {
+        for (local, initializer) in &graph.owned_locals {
+            let mode = self
+                .protocols
+                .explicit_local_modes
+                .get(local)
+                .ok_or("owned initializer has no checked annotation")?;
+            if &mode.owner != owner
+                || mode.mode != OwnershipMode::Owned
+                || self.expr_type(initializer.initializer) != Some(&mode.value_type)
+            {
+                return Err("owned initializer differs from its checked owner or value type");
+            }
+            if let Some(index) = initializer.access_node {
+                let node = graph
+                    .nodes
+                    .get(index)
+                    .ok_or("owned initializer has no checked source event")?;
+                let flow::Event::Access { access, .. } = node.event else {
+                    return Err("owned initializer has no read or transfer event");
+                };
+                let copy = self.checked_input_copy_value(owner, &mode.value_type)?;
+                if (copy && access != flow::Access::Read) || (!copy && access != flow::Access::Move) {
+                    return Err("owned initializer access differs from its checked Copy or transfer contract");
                 }
             }
-            if let Some(id) = invocation.receiver {
-                let loan = graph.loans.get(id.0).ok_or("invocation receiver loan is absent")?;
-                let mutable = call.receiver == Some(crate::ast::Receiver::Mutable);
-                let expected = if mutable {
-                    flow::LoanKind::Exclusive
-                } else {
-                    flow::LoanKind::Shared
-                };
-                if loan.kind != expected || loan.writable != mutable {
-                    return Err("invocation receiver access differs from the selected method");
+        }
+
+        Ok(())
+    }
+
+    /// Each local ownership annotation of this body names its checked value declaration, and its borrow or owned
+    /// mode has the loan destination or retained initializer it requires.
+    fn validate_local_modes(&self, owner: &CanonicalSymbolId, graph: &flow::Graph) -> Result<(), &'static str> {
+        for (local, mode) in self
+            .protocols
+            .explicit_local_modes
+            .iter()
+            .filter(|(_, mode)| &mode.owner == owner)
+        {
+            if local.kind != SemanticSourceTargetKind::Local
+                || self.resolved_write_identity(local.declaration_span, &local.declaration_name) != Some(local)
+                || self.resolved_write_type(local.declaration_span, &local.declaration_name) != Some(&mode.value_type)
+            {
+                return Err("local ownership annotation has no matching checked value declaration");
+            }
+            match mode.mode {
+                OwnershipMode::Borrowed | OwnershipMode::BorrowedMut if !graph.local_loans.contains_key(local) => {
+                    return Err("local borrow annotation has no source loan destination");
                 }
-            } else if invocation.receiver_owned {
-                if !self.native_value_receiver(*span) {
-                    return Err("owned receiver is not selected by a native value signature");
+                OwnershipMode::Owned if !graph.owned_locals.contains_key(local) => {
+                    return Err("owned local annotation has no retained initializer");
                 }
-            } else if call.receiver.is_some() {
-                return Err("invocation receiver has no access proof");
+                OwnershipMode::Reference => return Err("returned local dependencies require a later ownership stage"),
+                _ => {}
             }
         }
         Ok(())
     }
+
+    /// The receiver of a checked invocation holds the loan its selected method's receiver mode grants, or is owned by
+    /// a native value signature.
+    fn validate_receiver_access(
+        &self,
+        call: &InputCall,
+        span: crate::ast::Span,
+        invocation: &flow::Invocation,
+        graph: &flow::Graph,
+    ) -> Result<(), &'static str> {
+        if let Some(id) = invocation.receiver {
+            let loan = graph.loans.get(id.0).ok_or("invocation receiver loan is absent")?;
+            let mutable = call.receiver == Some(crate::ast::Receiver::Mutable);
+            let expected = if mutable {
+                flow::LoanKind::Exclusive
+            } else {
+                flow::LoanKind::Shared
+            };
+            if loan.kind != expected || loan.writable != mutable {
+                return Err("invocation receiver access differs from the selected method");
+            }
+        } else if invocation.receiver_owned {
+            if !self.native_value_receiver(span) {
+                return Err("owned receiver is not selected by a native value signature");
+            }
+        } else if call.receiver.is_some() {
+            return Err("invocation receiver has no access proof");
+        }
+        Ok(())
+    }
+}
+
+/// Each argument of a checked invocation has the access its selected parameter grants, or is an inferred slot the
+/// checker classified as a move, and a loan writes only through an exclusive mutable parameter.
+fn validate_argument_accesses(
+    call: &InputCall,
+    contract: Option<&crate::ownership_metadata::CheckedOwnershipContract>,
+    graph: &flow::Graph,
+    invocation: &flow::Invocation,
+) -> Result<(), &'static str> {
+    for argument in &invocation.arguments {
+        let parameter_type = &call
+            .parameters
+            .get(argument.slot)
+            .ok_or("invocation parameter is absent")?
+            .ty;
+        let access = crate::ownership_metadata::slot_input_access(contract, argument.slot, parameter_type)?;
+        let classified_move = graph
+            .value_uses
+            .get(&argument.span)
+            .is_some_and(|value_use| value_use.kind == flow::ValueUseKind::Move);
+        if argument.access != access
+            && !(access == incan_semantics_core::IncanInputAccess::Inferred
+                && argument.access == incan_semantics_core::IncanInputAccess::Owned
+                && classified_move)
+        {
+            return Err("invocation argument access differs from the selected parameter");
+        }
+        if let Some(id) = argument.loan {
+            let parameter = call
+                .parameters
+                .get(argument.slot)
+                .ok_or("invocation parameter is absent")?;
+            let loan = graph.loans.get(id.0).ok_or("invocation argument loan is absent")?;
+            let writable = access == incan_semantics_core::IncanInputAccess::Exclusive && parameter.is_mut;
+            if writable != loan.writable {
+                return Err("invocation argument write permission differs from the selected parameter");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Authenticate an instantiated ordinary call against its selected declaration without comparing open type

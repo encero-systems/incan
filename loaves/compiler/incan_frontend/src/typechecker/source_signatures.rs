@@ -39,6 +39,25 @@ impl TypeChecker {
         )
     }
 
+    /// The type binders of a function declaration, or of the checked function a partial declaration names. Other
+    /// declarations have no callable binders.
+    fn callable_binders(&self, declaration: &Declaration) -> Option<Vec<String>> {
+        match declaration {
+            Declaration::Function(function) => Some(binder_names(&function.type_params)),
+            Declaration::Partial(partial) => Some(
+                self.symbols
+                    .lookup(&partial.name)
+                    .and_then(|id| self.symbols.get(id))
+                    .and_then(|symbol| match &symbol.kind {
+                        SymbolKind::Function(function) => Some(function.type_params.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
+            ),
+            _ => None,
+        }
+    }
+
     /// Freeze source identities using settled collected signatures, before defaults, bodies or decorator rebinding.
     pub(super) fn record_source_declaration_identities(&mut self, program: &Program) {
         let nominals = self.checked_nominal_type_identities();
@@ -51,18 +70,8 @@ impl TypeChecker {
                 .get(&declaration.span)
             {
                 let Some(canonical) = &binding.identity else { continue };
-                let binders = match &declaration.node {
-                    Declaration::Function(function) => binder_names(&function.type_params),
-                    Declaration::Partial(partial) => self
-                        .symbols
-                        .lookup(&partial.name)
-                        .and_then(|id| self.symbols.get(id))
-                        .and_then(|symbol| match &symbol.kind {
-                            SymbolKind::Function(function) => Some(function.type_params.clone()),
-                            _ => None,
-                        })
-                        .unwrap_or_default(),
-                    _ => continue,
+                let Some(binders) = self.callable_binders(&declaration.node) else {
+                    continue;
                 };
                 if let Some(identity) = source_callable_identity(
                     canonical,

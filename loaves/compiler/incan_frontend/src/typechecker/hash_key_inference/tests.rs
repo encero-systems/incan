@@ -107,31 +107,7 @@ fn assert_checkers(
         legacy.type_info.declarations.type_alias_targets
     );
     assert_eq!(candidate.type_info.import_bindings, legacy.type_info.import_bindings);
-    let mut comparable_work = candidate.check_work();
-    eprintln!(
-        "mutation-producer\tcomponents={}\tmembers={}\tchecks={}",
-        comparable_work.mutation_components, comparable_work.mutation_member_visits, comparable_work.body_local_checks
-    );
-    comparable_work.final_record_evaluations = 0;
-    comparable_work.body_finalizations = 0;
-    comparable_work.local_record_evaluations = 0;
-    comparable_work.declaration_local_checks = 0;
-    comparable_work.declaration_finalizations = 0;
-    comparable_work.declaration_view_reuses = 0;
-    comparable_work.body_view_reuses = 0;
-    comparable_work.mutation_components = 0;
-    comparable_work.mutation_member_visits = 0;
-    assert_eq!(
-        comparable_work.detached_anchors, 0,
-        "every stored diagnostic range is anchored to syntax"
-    );
-    eprintln!(
-        "stored-diagnostics\tvalues={}\tnode_relative={}\tdetached={}",
-        comparable_work.stored_diagnostics, comparable_work.node_relative_anchors, comparable_work.detached_anchors
-    );
-    comparable_work.stored_diagnostics = 0;
-    comparable_work.node_relative_anchors = 0;
-    assert_eq!(comparable_work, legacy.check_work(), "{source}");
+    assert_comparable_check_work(candidate, legacy, source);
 
     assert_eq!(
         candidate.type_info.calls.closure_holding_params, legacy.type_info.calls.closure_holding_params,
@@ -211,6 +187,36 @@ fn assert_checkers(
     );
     compare_environment(candidate, legacy)?;
     Ok(candidate_result.is_ok())
+}
+
+/// The candidate's checker work equals the legacy checker's once the counters only the candidate keeps are cleared,
+/// and every stored diagnostic range is anchored to syntax.
+fn assert_comparable_check_work(candidate: &TypeChecker, legacy: &TypeChecker, source: &str) {
+    let mut comparable_work = candidate.check_work();
+    eprintln!(
+        "mutation-producer\tcomponents={}\tmembers={}\tchecks={}",
+        comparable_work.mutation_components, comparable_work.mutation_member_visits, comparable_work.body_local_checks
+    );
+    comparable_work.final_record_evaluations = 0;
+    comparable_work.body_finalizations = 0;
+    comparable_work.local_record_evaluations = 0;
+    comparable_work.declaration_local_checks = 0;
+    comparable_work.declaration_finalizations = 0;
+    comparable_work.declaration_view_reuses = 0;
+    comparable_work.body_view_reuses = 0;
+    comparable_work.mutation_components = 0;
+    comparable_work.mutation_member_visits = 0;
+    assert_eq!(
+        comparable_work.detached_anchors, 0,
+        "every stored diagnostic range is anchored to syntax"
+    );
+    eprintln!(
+        "stored-diagnostics\tvalues={}\tnode_relative={}\tdetached={}",
+        comparable_work.stored_diagnostics, comparable_work.node_relative_anchors, comparable_work.detached_anchors
+    );
+    comparable_work.stored_diagnostics = 0;
+    comparable_work.node_relative_anchors = 0;
+    assert_eq!(comparable_work, legacy.check_work(), "{source}");
 }
 
 /// Measure source scanning separately from fact propagation on a reverse-ordered forwarding chain. These samples are
