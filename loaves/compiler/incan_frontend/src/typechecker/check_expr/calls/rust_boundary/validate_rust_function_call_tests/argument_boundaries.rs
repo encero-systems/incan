@@ -114,6 +114,27 @@ fn rust_array_inference_retains_only_exact_literal_lengths() {
     assert_eq!(nested.get("T"), Some(&ResolvedType::RustPath("[u8;8]".to_string())));
     assert_eq!(nested.get("N"), Some(&ResolvedType::RustPath("4".to_string())));
 
+    assert_fixed_array_expectations(&checker);
+
+    assert_callback_array_bindings(&mut checker);
+    let retained_span = Span::new(2, 3);
+    checker.retain_checked_rust_function("std::array::from_fn", &signature, &inferred, retained_span);
+    assert_eq!(
+        checker
+            .type_info
+            .rust
+            .checked_calls
+            .get(&retained_span)
+            .map(|call| &call.return_type),
+        Some(&ResolvedType::RustPath("[u8;32]".to_string()))
+    );
+
+    assert_unfixed_const_parameter_is_refused(&signature);
+}
+
+/// A fixed array inside an `Option` target is an owner expectation with a projected fixed-array expectation; a
+/// nested map is not.
+fn assert_fixed_array_expectations(checker: &TypeChecker) {
     let option_target = checker.rust_inference_type(
         &ResolvedType::RustPath("std::option::Option<[u8; 32]>".to_string()),
         &[],
@@ -149,7 +170,10 @@ fn rust_array_inference_retains_only_exact_literal_lengths() {
         &nested_map,
         &nested_map
     ));
+}
 
+/// A callback whose `FnMut` output is the array element binds the element and length from a nested array target.
+fn assert_callback_array_bindings(checker: &mut TypeChecker) {
     let callback_signature = RustFunctionSig {
         receiver_contract: None,
         bounds: vec![RustTraitBound {
@@ -195,29 +219,21 @@ fn rust_array_inference_retains_only_exact_literal_lengths() {
         callback_inferred.get("N"),
         Some(&ResolvedType::RustPath("4".to_string()))
     );
-    let retained_span = Span::new(2, 3);
-    checker.retain_checked_rust_function("std::array::from_fn", &signature, &inferred, retained_span);
-    assert_eq!(
-        checker
-            .type_info
-            .rust
-            .checked_calls
-            .get(&retained_span)
-            .map(|call| &call.return_type),
-        Some(&ResolvedType::RustPath("[u8;32]".to_string()))
-    );
+}
 
+/// An unbound const parameter is provisional inside a call argument and refused once the call completes.
+fn assert_unfixed_const_parameter_is_refused(signature: &RustFunctionSig) {
     let mut provisional = TypeChecker::new();
     provisional.call_argument_depth = 1;
-    provisional.record_inferred_rust_arguments("std::array::from_fn", &signature, &HashMap::new(), Span::new(0, 1));
+    provisional.record_inferred_rust_arguments("std::array::from_fn", signature, &HashMap::new(), Span::new(0, 1));
     assert!(provisional.errors.is_empty());
     assert!(!TypeChecker::rust_signature_const_parameters_are_bound(
-        &signature,
+        signature,
         &HashMap::new()
     ));
 
     provisional.call_argument_depth = 0;
-    provisional.record_inferred_rust_arguments("std::array::from_fn", &signature, &HashMap::new(), Span::new(0, 1));
+    provisional.record_inferred_rust_arguments("std::array::from_fn", signature, &HashMap::new(), Span::new(0, 1));
     assert!(
         provisional
             .errors
