@@ -4,6 +4,7 @@ use super::support::{assign_at, block, copy_at, empty_function, literal, local, 
 use crate::body::{Callee, CalleeKind, Operand, Projection, RvalueKind, Terminator, TerminatorKind, Unwind};
 use crate::plan::Function;
 use crate::records::function::{decode_frames, decode_product, encode_product, product_frame_names, product_nominals};
+use crate::records::plan_function::LoweringDemands;
 use crate::types::{PlanType, SourceSpan, source_span};
 
 /// A caller, its lifted closure frame and the closure-object calls between them round-trip as one product.
@@ -70,6 +71,8 @@ fn product_carries_lifted_closure_frames() -> Result<(), String> {
     let references = product_nominals(&caller, &[], &frames)?;
     assert!(references.is_empty());
     let product = encode_product(&caller, &[], &[], &frames)?;
+    let mut demands = LoweringDemands::new();
+    let shared_demand = demands.encode(&[], &product)?;
     assert!(product_frame_names(&product)? == ["__incan_closure_apply_0"]);
     let (restored, _runtime) = decode_product(&product, &references)?;
     assert!(
@@ -85,6 +88,8 @@ fn product_carries_lifted_closure_frames() -> Result<(), String> {
     let callable = vec![PlanType::Int, PlanType::Int];
     exclusive.locals[1].ty = PlanType::ExclusiveClosure(callable.clone());
     exclusive.locals[2].ty = PlanType::ExclusiveClosureRef(callable.clone());
+    let exclusive_layout = encode_product(&exclusive, &[], &[], &frames)?;
+    assert_eq!(demands.encode(&[], &exclusive_layout)?, shared_demand);
     let TerminatorKind::Call(callee, _, _, _, _) = &mut exclusive.blocks[0].terminator.kind else {
         return Err("missing closure receiver call".to_owned());
     };
@@ -92,6 +97,7 @@ fn product_carries_lifted_closure_frames() -> Result<(), String> {
     let encoded = encode_product(&exclusive, &[], &[], &frames)?;
     assert_ne!(encoded, product);
     assert_eq!(decode_product(&encoded, &references)?.0, exclusive);
+    assert_eq!(demands.encode(&[], &encoded)?, shared_demand);
     Ok(())
 }
 
