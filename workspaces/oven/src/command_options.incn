@@ -1,0 +1,62 @@
+"""Admit only the options each command applies, before a command reads its project or toolchain."""
+
+from std.fs import Path
+from intake import entry_source
+from surfaces import OVEN, invoked
+from unit import project_root_of
+from unit_options import Options
+
+
+pub def require_command_options(command: str, options: Options) -> Result[None, str]:
+    """Each command admits only options it applies, and feature selection requires an owning project."""
+    if options.codegraph:
+        if command != "build":
+            return Err("--codegraph requires an Incan library build")
+        match entry_source(Path(options.path), options.manifests)?:
+            None => return Err("--codegraph requires an Incan library build")
+            Some(entry) =>
+                if entry.name() != "lib.incn":
+                    return Err("--codegraph requires an Incan library build")
+    if options.direct:
+        if invoked() == OVEN or command != "run":
+            return Err("--direct requires incan run")
+        if options.engine_report:
+            return Err("--direct does not produce an Oven engine report")
+        if options.locked:
+            return Err("--direct does not use an Oven lock")
+        if options.feature_options or len(options.program_entries) > 0 or len(options.substitutes) > 0:
+            return Err("--direct does not accept project features, substitutions or additional program entries")
+        if options.interop_target != "":
+            return Err("--direct does not verify against a declared interop target; it describes no project")
+        return Ok(None)
+    if options.engine_report:
+        return Err("--engine-report requires INCAN_ENGINE=records run or build")
+    if options.locked and command not in ["run", "build", "test"]:
+        return Err("--locked requires run, build or test")
+    if options.interop_target != "" and command not in ["run", "build", "test", "check"]:
+        return Err("--interop-target requires check, build, test or run")
+    if options.unattended and command != "describe-unit":
+        return Err("--unattended requires oven describe-unit")
+    if options.argv0 != None and command != "run":
+        return Err("--argv0 requires run")
+    if len(options.program_entries) > 0 and command not in ["run", "build"]:
+        return Err("--program-entry requires run/build")
+    if len(options.substitutes) > 0 and command != "build":
+        return Err("--substitute requires a Rust-project build")
+    source = Path(options.path)
+    mut project = project_root_of(source)
+    if source.is_dir() and source.joinpath("loaf.toml").is_file():
+        project = Some(source)
+    if options.feature_options and project is None:
+        return Err("feature selection requires a project")
+    if command == "build" and (len(options.substitutes) > 0 or len(options.program_entries) > 0):
+        selected = entry_source(source, options.manifests)?
+        if len(options.substitutes) > 0 and selected != None:
+            return Err("--substitute requires a Rust-project build")
+        if len(options.program_entries) > 0:
+            match selected:
+                None => return Err("--program-entry requires an Incan program build")
+                Some(entry) =>
+                    if entry.name() == "lib.incn":
+                        return Err("--program-entry requires an Incan program build")
+    return Ok(None)

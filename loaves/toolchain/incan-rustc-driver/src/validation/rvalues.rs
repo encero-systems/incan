@@ -13,25 +13,10 @@ pub(super) fn rvalue(
         RvalueKind::UnitFunction(name) => unit_function_result(plan, function, name),
         RvalueKind::Use(value) => operand(plan, function, value),
         RvalueKind::NativeAlias(value, source, target) => {
-            require(
-                function,
-                operand(plan, function, value)?,
-                scalar(source),
-                "native alias input",
-            )?;
-            require(function, scalar(target), expected.clone(), "native alias destination")?;
-            Ok(expected)
+            native_alias_result(plan, function, value, source, target, expected)
         }
         RvalueKind::FrozenText(value) => frozen_text_result(plan, function, value),
-        RvalueKind::FrozenBytes(values) => {
-            if values.iter().any(|value| u8::try_from(*value).is_err()) {
-                return Err(invalid(
-                    function,
-                    "FrozenBytes construction requires unsigned literal bytes",
-                ));
-            }
-            Ok(Scalar::FrozenBytes)
-        }
+        RvalueKind::FrozenBytes(values) => frozen_bytes_result(function, values),
         RvalueKind::FrozenCollection(ty, values) => {
             validate_frozen_values(plan, function, ty, values)?;
             Ok(scalar(ty))
@@ -99,16 +84,7 @@ pub(super) fn rvalue(
             Ok(Scalar::RawPointer(*mutable, vec![place(plan, function, value)?]))
         }
         RvalueKind::PointerCast(value, target) => pointer_cast_result(plan, function, value, target),
-        RvalueKind::PointerOffset(pointer, offset) => {
-            let pointer = operand(plan, function, pointer)?;
-            if !matches!(pointer, Scalar::RawPointer(_, _)) || operand(plan, function, offset)? != Scalar::ISize {
-                return Err(invalid(
-                    function,
-                    "pointer offset requires a pointer and native signed offset",
-                ));
-            }
-            Ok(pointer)
-        }
+        RvalueKind::PointerOffset(pointer, offset) => pointer_offset_result(plan, function, pointer, offset),
         RvalueKind::PointerAddress(pointer) => pointer_address_result(plan, function, pointer),
         RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
         RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
@@ -124,6 +100,53 @@ pub(super) fn rvalue(
             )),
         },
     }
+}
+
+/// A native alias reads its declared source type and writes exactly its declared target type.
+fn native_alias_result(
+    plan: &Plan,
+    function: &Function,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+    expected: Scalar,
+) -> Result<Scalar, PlanError> {
+    require(
+        function,
+        operand(plan, function, value)?,
+        scalar(source),
+        "native alias input",
+    )?;
+    require(function, scalar(target), expected.clone(), "native alias destination")?;
+    Ok(expected)
+}
+
+/// A frozen byte string is built only from literal values that fit an unsigned byte.
+fn frozen_bytes_result(function: &Function, values: &[i64]) -> Result<Scalar, PlanError> {
+    if values.iter().any(|value| u8::try_from(*value).is_err()) {
+        return Err(invalid(
+            function,
+            "FrozenBytes construction requires unsigned literal bytes",
+        ));
+    }
+    Ok(Scalar::FrozenBytes)
+}
+
+/// A pointer offset moves a raw pointer by a native signed offset and keeps the pointer's type.
+fn pointer_offset_result(
+    plan: &Plan,
+    function: &Function,
+    pointer: &Operand,
+    offset: &Operand,
+) -> Result<Scalar, PlanError> {
+    let pointer = operand(plan, function, pointer)?;
+    if !matches!(pointer, Scalar::RawPointer(_, _)) || operand(plan, function, offset)? != Scalar::ISize {
+        return Err(invalid(
+            function,
+            "pointer offset requires a pointer and native signed offset",
+        ));
+    }
+    Ok(pointer)
 }
 
 /// Require a static text literal before checking its string-reference carrier; dynamic text remains a refusal.
