@@ -617,16 +617,14 @@ mod tests {
     use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, native_incremental, optimization_level};
     use std::path::Path;
 
-    /// Compile a shared callable lent to a call-only helper, then a helper lending its own received callable.
+    /// Compile direct writable, lent shared, and cloneable erased callable environments.
     #[test]
     fn callable_lending_preserves_native_capture_access() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::plan::PlanType;
         use incan_frontend::body_ir::{BodyIrContext, ContextModules, ProviderOperationCatalog, build_body_ir_module};
         use incan_frontend::{lexer, parser, typechecker::TypeChecker};
         use incan_lowering::{PlanAdmissions, SourceInputs, UnitPlanning, unit_plan};
 
-        let source = "\
-def twice(callback: (int) -> bool) -> bool:
+        let source = r#"def twice(callback: (int) -> bool) -> bool:
     if callback(3):
         return callback(5)
     return false
@@ -639,7 +637,24 @@ pub def read(value: Borrowed[int]) -> bool:
     if show(1):
         return true
     return twice(show)
-";
+
+class Cart:
+    """Own the list the closure updates."""
+
+    pub items: list[str]
+
+pub def add_twice(mut cart: Cart) -> None:
+    """Call the same writable closure twice."""
+    mut items = cart.items
+    add: (str) -> None = (item) => items.append(item)
+    add("plum")
+    add("fig")
+
+pub def owned(limit: int) -> bool:
+    """Call an erased closure that captures an owned scalar."""
+    permits: (int) -> bool = (item) => limit < item
+    return permits(5)
+"#;
         let directory = tempfile::tempdir()?;
         let file = directory.path().join("lib.incn");
         std::fs::write(&file, source)?;
@@ -678,6 +693,60 @@ pub def read(value: Borrowed[int]) -> bool:
         else {
             return Err("missing native callable plan".into());
         };
+        assert_callable_environments(&plan)?;
+        assert!(
+            plan.externals
+                .iter()
+                .any(|external| external.path == "incan_native_runtime::append_list"),
+            "missing the native list append"
+        );
+        let unit = describe_callable_fixture(&file)?;
+        let dependencies = crate::frontend::dependencies(&unit, &[])?;
+        let output = directory.path().join("libcallable_lending.rlib");
+        super::compile(
+            plan,
+            "callable_lending",
+            &output,
+            &crate::identity::verify_loaded_test_sysroot()?,
+            &dependencies.externs,
+            &dependencies.directories,
+            &[],
+            &unit.toolchain_access,
+            None,
+            UnitKind::Library,
+            false,
+            Vec::new(),
+            None,
+            Vec::new(),
+            None,
+        )?;
+        assert!(output.is_file());
+        Ok(())
+    }
+
+    /// Use the ordinary unit description to admit derives and runtime libraries for the fixture.
+    fn describe_callable_fixture(
+        source: &Path,
+    ) -> Result<incan_driver::unit::UnitDescription, Box<dyn std::error::Error>> {
+        let output = std::process::Command::new("oven")
+            .arg("describe-unit")
+            .arg(source)
+            .args(["--unattended", "--profile", "release"])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "could not describe callable fixture: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(incan_driver::unit::UnitDescription::parse(&output.stdout, source)?)
+    }
+
+    /// Check the actual native carriers and captures before compiling the fixture.
+    fn assert_callable_environments(plan: &crate::plan::Plan) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::plan::PlanType;
+
         let helper = plan
             .functions
             .iter()
@@ -721,30 +790,22 @@ pub def read(value: Borrowed[int]) -> bool:
                 capture.ty
             );
         }
-        let roots = crate::native_crates::native_roots(&plan);
+        let write = plan
+            .functions
+            .iter()
+            .find(|function| function.name.starts_with("__incan_closure_add_twice_") && function.name.ends_with("_new"))
+            .ok_or("missing direct writable constructor")?;
+        assert!(matches!(write.return_type, PlanType::ExclusiveClosure(_)));
         assert!(
-            roots.iter().all(|root| matches!(*root, "std" | "crate")),
-            "unexpected native roots {roots:?}"
+            matches!(write.parameters.as_slice(), [capture] if crate::plan::exclusive_capture(&capture.ty)),
+            "direct writable constructor must retain an exclusive capture"
         );
-        let output = directory.path().join("libcallable_lending.rlib");
-        super::compile(
-            plan,
-            "callable_lending",
-            &output,
-            &crate::identity::verify_loaded_test_sysroot()?,
-            &[],
-            &[],
-            &[],
-            &Default::default(),
-            None,
-            UnitKind::Library,
-            false,
-            Vec::new(),
-            None,
-            Vec::new(),
-            None,
-        )?;
-        assert!(output.is_file());
+        assert!(plan.functions.iter().any(|function| {
+            function.name.starts_with("__incan_closure_owned_")
+                && function.name.ends_with("_new")
+                && matches!(function.return_type, PlanType::Closure(_))
+                && matches!(function.parameters.as_slice(), [capture] if capture.ty == PlanType::Int)
+        }));
         Ok(())
     }
 
