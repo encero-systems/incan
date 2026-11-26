@@ -4,7 +4,10 @@ from pub::incan_platform.store import Snapshot
 from pub::incan_mir_plan import AdmittedFunction
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import RecordKey
+from compiler_body_keys import EXECUTABLE_BODY_PROFILE
 from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord, select_body_inventory_of
+from compiler_graph_records import EditCutoff, OutputSlots, reusable_family_records
+from compiler_owner_records import read_body_frame
 from compiler_executable_metadata import predecessor_owner_metadata, selected_owner_metadata_reader, typed_owner_metadata
 from compiler_plan_modules import PlanModuleAdmissions
 from compiler_plan_values import AdmittedPlanModule
@@ -71,8 +74,15 @@ pub model BodyRootSelection:
         mut self, selected: Option[Snapshot], origin: str, demanded: list[str], covered: Borrowed[CoveredBodyOwners],
         admitted: Borrowed[list[AdmittedPlanModule]], admissions: Borrowed[PlanModuleAdmissions],
         retained: Borrowed[list[SelectedBodyRecord]], fresh: Borrowed[set[str]], typed: bool,
+        cutoff: EditCutoff = EditCutoff(),
     ) -> Result[list[SelectedBodyRecord], str]:
-        """Use the existing exact owner selection for rescued demands and proven whole-module coverage."""
+        """Restore individually demanded checked values and report admitted whole-module roots.
+
+        1. Select the graph for this request.
+        2. Read whole-module Body roots that only reporting needs.
+        3. Restore complete checked values only for actual lowering demands.
+        """
+        # 1. Keep every selection on the request's graph.
         if not self.enabled and len(demanded) == 0:
             return Ok([])
         graph = match selected:
@@ -83,9 +93,9 @@ pub model BodyRootSelection:
                 self.refused = true
                 return Ok([])
         demand_ids = set(demanded)
-        mut wanted = set(demanded)
-        mut proof_owners: Dict[str, CoveredRoot] = {}
+        # 2. Let real lowering demands supply their own proofs when their values are restored.
         if self.enabled:
+            mut proof_owners: Dict[str, CoveredRoot] = {}
             match whole_body_owners(graph, origin, covered, admitted, admissions, retained, fresh):
                 Ok(owners) =>
                     # Defer an individually demanded Body to the same checked witness that serves lowering.
@@ -94,33 +104,37 @@ pub model BodyRootSelection:
                             self.demanded_whole[owner] = owners[owner]
                         else:
                             proof_owners[owner] = owners[owner]
-                            wanted.add(owner)
                 Err(_) => self.refused = true
-        if len(wanted) == 0:
+            self.add_whole_roots(graph, origin, proof_owners, typed, cutoff)?
+        # 3. Keep the full checked inventory on the route that uses it.
+        if len(demand_ids) == 0:
             return Ok([])
-        rescued = select_body_inventory_of(graph, CHECKER_PROFILE, origin, sorted([owner for owner in wanted]))?
-        if len(proof_owners) > 0:
-            self.add_whole_roots(rescued, proof_owners, typed)?
-        return Ok([record for record in rescued if record.identity in demand_ids])
+        return select_body_inventory_of(graph, CHECKER_PROFILE, origin, sorted([owner for owner in demand_ids]))
 
     def add_whole_roots(
-        mut self, records: Borrowed[list[SelectedBodyRecord]], owners: Borrowed[Dict[str, CoveredRoot]], typed: bool,
+        mut self, graph: Snapshot, origin: str, owners: Borrowed[Dict[str, CoveredRoot]],
+        typed: bool, cutoff: EditCutoff,
     ) -> Result[None, str]:
-        """Bind authenticated Body keys to the modules actually restored, without restaging them."""
+        """Report a whole-module member from its current executable Body and its checked owner header."""
+        if len(owners) == 0:
+            return Ok(None)
         reader = selected_owner_metadata_reader(typed)?
+        identities = [owner for owner in owners.keys()]
+        slots = OutputSlots(origin=origin, identity_profile=EXECUTABLE_BODY_PROFILE, included=Some(identities))
         mut present: set[str] = set()
-        for record in records:
-            if record.identity not in owners:
-                continue
+        for record in reusable_family_records(graph, "body-ir", CHECKER_PROFILE, Some(slots), cutoff=cutoff)?:
+            identity = record.key.identity
+            root = record.key.context
+            frame = read_body_frame(record.key, CHECKER_PROFILE, record.value)?
             header = match reader:
-                Some(prepared) => typed_owner_metadata(prepared, record.body_ir)?
-                None => predecessor_owner_metadata(record.body_ir)?
-            owner = owners[record.identity]
-            if header.identity != record.identity or header.source != owner.source or header.symbol != owner.symbol:
+                Some(prepared) => typed_owner_metadata(prepared, frame)?
+                None => predecessor_owner_metadata(frame)?
+            owner = owners[identity]
+            if header.identity != identity or header.source != owner.source or header.symbol != owner.symbol:
                 self.refused = true
                 continue
-            self.add(record.identity, header.name, record.semantic_root, BodyRootAuthority.WholeModule)
-            present.add(record.identity)
+            self.add(identity, header.name, root, BodyRootAuthority.WholeModule)
+            present.add(identity)
         if len(present) != len(owners):
             self.refused = true
         return Ok(None)

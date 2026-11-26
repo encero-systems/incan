@@ -550,7 +550,9 @@ def prepare_optional_lowering_records(
             if let Some(owner) = fallback.identity:
                 fresh.add(owner)
         demanded = covered.lowering_demands(events, fresh, complete)
-        rescued = body_roots.select_rescued(selected, origin, demanded, covered, plan_modules, admissions, retained, fresh, scopes.typed)?
+        rescued = body_roots.select_rescued(
+            selected, origin, demanded, covered, plan_modules, admissions, retained, fresh, scopes.typed, cutoff=cutoff,
+        )?
         if len(rescued) != len(demanded):
             return Err("partially restored plan did not retain its demanded checked owner")
         witnesses = lowering_witnesses(

@@ -335,11 +335,17 @@ fn selected_graph_body_requires_current_physical_inputs() -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// Rebinding source positions must reproduce the exact fresh native body for both the edited owner and its caller.
+/// Rebinding source positions must reproduce fresh bodies and reject invalid physical and parameter evidence.
 #[test]
 fn selected_scalar_frames_rebind_comments_and_documentation() -> Result<(), Box<dyn std::error::Error>> {
     use incan_semantics_core::executable_representation::{append_owner_coordinates, decode_owner, encode_graph_owner};
-    let src = "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n";
+    let src = concat!(
+        "def pick[T](items: list[T]) -> T:\n    return items[0]\n\n",
+        "def greeting() -> str:\n    return \"hello\"\n\n",
+        "def unrelated(value: int) -> int:\n    return value + 1\n\n",
+        "def main() -> None:\n    println(greeting())\n    println(pick([1, 2, 3]))\n",
+        "    println(pick([\"a\", \"b\", \"c\"]))\n    println(unrelated(41))\n",
+    );
     let module = vec!["main".to_owned()];
     let check = |parsed: &crate::ast::Program, records| -> Result<TypeChecker, String> {
         let mut checker = TypeChecker::new();
@@ -363,10 +369,12 @@ fn selected_scalar_frames_rebind_comments_and_documentation() -> Result<(), Box<
             .iter()
             .find(|body| body.name == owner.name)
             .ok_or("missing native body")?;
+        let positioned = TypeChecker::graph_body_has_scalar_placement(body);
+        assert_eq!(positioned, owner.name != "pick", "producer gate for {}", owner.name);
         let (proof, coordinates) = first
-            .graph_body_inputs(&parsed, owner.span, true)
+            .graph_body_inputs(&parsed, owner.span, positioned)
             .ok_or("missing checked placement")?;
-        assert!(!coordinates.is_empty());
+        assert_eq!(!coordinates.is_empty(), positioned);
         let mut bytes = encode_graph_owner(&native.module_id, "main.incn", &owner.identity, body, Some(proof))?;
         append_owner_coordinates(&mut bytes, &coordinates);
         let reader = body.direct_call_id.path();
@@ -391,29 +399,36 @@ fn selected_scalar_frames_rebind_comments_and_documentation() -> Result<(), Box<
         record.body_ir = Some(frame);
         records.push(record);
     }
-    assert_eq!(records.len(), 2);
+    assert_eq!(records.len(), 4);
     for changed in [
         src.replace("def main()", "# a comment before main\ndef main()"),
-        src.replace("    return", "    \"\"\"New documentation.\"\"\"\n    return"),
+        src.replace(
+            "    return \"hello\"",
+            "    \"\"\"New documentation.\"\"\"\n    return \"hello\"",
+        ),
     ] {
         let after = program(&changed)?;
         let warm = check(&after, records.clone())?;
         let fresh = check(&after, Vec::new())?;
+        let fresh_module = lower_graph_test_module(&after, &fresh);
         for decl in &after.declarations {
-            assert!(
-                warm.type_info().selected_callable_body(decl.span).is_some(),
-                "decl {:?} in {changed}",
-                decl.span
+            let fresh_body = fresh_module
+                .bodies
+                .iter()
+                .find(|body| body.span == decl.span)
+                .ok_or("missing fresh native body")?;
+            assert_eq!(
+                warm.type_info().selected_callable_body(decl.span),
+                Some(fresh_body),
+                "retained frame for {} in {changed}",
+                fresh_body.name
             );
             assert_eq!(
                 warm.completed_graph_body_digest(decl.span),
                 warm.graph_body_physical_inputs(&after, decl.span)
             );
         }
-        assert_eq!(
-            lower_graph_test_module(&after, &warm).bodies,
-            lower_graph_test_module(&after, &fresh).bodies
-        );
+        assert_eq!(lower_graph_test_module(&after, &warm).bodies, fresh_module.bodies);
         let mut corrupted = records.clone();
         for record in &mut corrupted {
             let frame = record.body_ir.as_mut().ok_or("no selected body")?;
@@ -427,6 +442,36 @@ fn selected_scalar_frames_rebind_comments_and_documentation() -> Result<(), Box<
                 .all(|decl| refused.type_info().selected_callable_body(decl.span).is_none())
         );
     }
+    let mut wrong_parameter = records;
+    change_parameter_scope(&mut wrong_parameter)?;
+    let shifted = program(&src.replace("def unrelated", "# move the parameter owner\ndef unrelated"))?;
+    let refused = check(&shifted, wrong_parameter)?;
+    assert!(
+        refused
+            .type_info()
+            .selected_callable_body(shifted.declarations[2].span)
+            .is_none()
+    );
+    Ok(())
+}
+
+/// Change only the checked parameter's canonical scope so the shape gate still permits the frame.
+fn change_parameter_scope(records: &mut [GraphBodyRecord]) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = records
+        .iter_mut()
+        .filter_map(|record| record.body_ir.as_mut())
+        .find(|frame| frame.body.name == "unrelated")
+        .ok_or("missing selected parameter owner")?;
+    let identity = frame
+        .body
+        .locals
+        .first_mut()
+        .ok_or("missing retained parameter")?
+        .identity
+        .as_deref_mut()
+        .ok_or("missing retained parameter identity")?;
+    assert!(identity.scope_discriminant.take().is_some());
+    assert!(TypeChecker::graph_body_has_scalar_placement(&frame.body));
     Ok(())
 }
 
