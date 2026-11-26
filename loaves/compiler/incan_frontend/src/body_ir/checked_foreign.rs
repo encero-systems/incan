@@ -49,86 +49,7 @@ impl BodyBuilder<'_, '_> {
     ) -> Option<bir::Operand> {
         let selected = self.type_info.c_abi.raw_calls.iter().find(|call| call.span == span)?;
         let checked_result_type = self.resolve_ty(span);
-        let result = (|| {
-            if !self.type_info.c_abi.verified_bindings.contains(&selected.binding) {
-                return Err("checked C descriptor has no successful target verification".to_string());
-            }
-            let descriptor = self
-                .type_info
-                .c_abi
-                .bindings
-                .get(&selected.binding)
-                .ok_or("checked C call lost its binding descriptor")?;
-            // A Clove binding links the archive of the configuration it names, under the library's link name that
-            // verification resolved from the unit's description.
-            // An Apple framework links by its framework name, as 0.5.1's `c.framework` did.
-            let framework = descriptor.link_capability == c_abi::LinkCapabilityId::Framework;
-            if descriptor.link_capability != c_abi::LinkCapabilityId::SystemLibrary && !framework {
-                return Err(format!(
-                    "unsupported checked C native link capability {}",
-                    c_abi::link_capability_as_str(descriptor.link_capability)
-                ));
-            }
-            let (library, clove, configuration) = if descriptor.configuration.is_empty() {
-                (descriptor.system_library.clone(), String::new(), String::new())
-            } else {
-                (
-                    self.type_info
-                        .c_abi
-                        .clove_libraries
-                        .get(&selected.binding)
-                        .cloned()
-                        .ok_or("checked C Clove binding has no verified library")?,
-                    descriptor.system_library.clone(),
-                    descriptor.configuration.clone(),
-                )
-            };
-            let symbol = descriptor
-                .symbols
-                .iter()
-                .find(|symbol| symbol.name == selected.symbol)
-                .ok_or("checked C call lost its selected symbol")?;
-            let binding = parameter_types::retained_nominal_identity(&selected.binding, self.type_info)
-                .cloned()
-                .ok_or("checked C call lost its canonical binding identity")?;
-            let parameters = symbol
-                .parameters
-                .iter()
-                .map(|parameter| {
-                    carrier(&parameter.ty)
-                        .ok_or_else(|| format!("unsupported checked C parameter carrier {}", parameter.name))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let return_type = carrier(&symbol.return_type).ok_or("unsupported checked C result carrier")?;
-            let slots = symbol
-                .parameters
-                .iter()
-                .zip(&parameters)
-                .map(|(parameter, ty)| DeclaredSlot {
-                    name: Some(parameter.name.clone()),
-                    has_default: false,
-                    is_partial_preset: false,
-                    kind: IncanCallableParamKind::Normal,
-                    ty: ty.clone(),
-                    is_mut: false,
-                })
-                .collect::<Vec<_>>();
-            Ok((
-                bir::CheckedForeignCall {
-                    binding,
-                    member: symbol.name.clone(),
-                    symbol: symbol.native.clone(),
-                    library,
-                    clove,
-                    configuration,
-                    framework,
-                    header: descriptor.header.clone(),
-                    parameters,
-                    return_type,
-                },
-                slots,
-            ))
-        })();
+        let result = self.checked_foreign_target(selected);
         let (target, slots) = match result {
             Ok(value) => value,
             Err(reason) => {
@@ -163,6 +84,92 @@ impl BodyBuilder<'_, '_> {
             hir_span(span),
             false,
             out,
+        ))
+    }
+
+    /// Project a verified C binding's selected symbol into its native call target and the declared argument slots its
+    /// parameters fill: the library, Clove configuration or framework it links, and each parameter's carrier.
+    fn checked_foreign_target(
+        &self,
+        selected: &crate::typechecker::CBindingRawCall,
+    ) -> Result<(bir::CheckedForeignCall, Vec<DeclaredSlot>), String> {
+        if !self.type_info.c_abi.verified_bindings.contains(&selected.binding) {
+            return Err("checked C descriptor has no successful target verification".to_string());
+        }
+        let descriptor = self
+            .type_info
+            .c_abi
+            .bindings
+            .get(&selected.binding)
+            .ok_or("checked C call lost its binding descriptor")?;
+        // A Clove binding links the archive of the configuration it names, under the library's link name that
+        // verification resolved from the unit's description.
+        // An Apple framework links by its framework name, as 0.5.1's `c.framework` did.
+        let framework = descriptor.link_capability == c_abi::LinkCapabilityId::Framework;
+        if descriptor.link_capability != c_abi::LinkCapabilityId::SystemLibrary && !framework {
+            return Err(format!(
+                "unsupported checked C native link capability {}",
+                c_abi::link_capability_as_str(descriptor.link_capability)
+            ));
+        }
+        let (library, clove, configuration) = if descriptor.configuration.is_empty() {
+            (descriptor.system_library.clone(), String::new(), String::new())
+        } else {
+            (
+                self.type_info
+                    .c_abi
+                    .clove_libraries
+                    .get(&selected.binding)
+                    .cloned()
+                    .ok_or("checked C Clove binding has no verified library")?,
+                descriptor.system_library.clone(),
+                descriptor.configuration.clone(),
+            )
+        };
+        let symbol = descriptor
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == selected.symbol)
+            .ok_or("checked C call lost its selected symbol")?;
+        let binding = parameter_types::retained_nominal_identity(&selected.binding, self.type_info)
+            .cloned()
+            .ok_or("checked C call lost its canonical binding identity")?;
+        let parameters = symbol
+            .parameters
+            .iter()
+            .map(|parameter| {
+                carrier(&parameter.ty)
+                    .ok_or_else(|| format!("unsupported checked C parameter carrier {}", parameter.name))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let return_type = carrier(&symbol.return_type).ok_or("unsupported checked C result carrier")?;
+        let slots = symbol
+            .parameters
+            .iter()
+            .zip(&parameters)
+            .map(|(parameter, ty)| DeclaredSlot {
+                name: Some(parameter.name.clone()),
+                has_default: false,
+                is_partial_preset: false,
+                kind: IncanCallableParamKind::Normal,
+                ty: ty.clone(),
+                is_mut: false,
+            })
+            .collect::<Vec<_>>();
+        Ok((
+            bir::CheckedForeignCall {
+                binding,
+                member: symbol.name.clone(),
+                symbol: symbol.native.clone(),
+                library,
+                clove,
+                configuration,
+                framework,
+                header: descriptor.header.clone(),
+                parameters,
+                return_type,
+            },
+            slots,
         ))
     }
 }

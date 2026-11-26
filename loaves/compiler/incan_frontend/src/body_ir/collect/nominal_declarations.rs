@@ -159,25 +159,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 fields: fields.iter().map(|field| field.node.name.clone()).collect(),
                 field_identities,
                 owned_callable_fields: Vec::new(),
-                field_public: fields
-                    .iter()
-                    .map(|field| {
-                        if let Some(layout) = class_layout {
-                            layout
-                                .fields
-                                .iter()
-                                .find(|checked| checked.name == field.node.name)
-                                .map(|checked| checked.visibility == ast::Visibility::Public)
-                        } else {
-                            type_info
-                                .declarations
-                                .model_field_visibilities
-                                .get(name)
-                                .and_then(|fields| fields.get(&field.node.name))
-                                .map(|visibility| *visibility == ast::Visibility::Public)
-                        }
-                    })
-                    .collect::<Option<Vec<_>>>()?,
+                field_public: field_publicity(name, fields, class_layout, type_info)?,
                 field_aliases: fields.iter().map(|field| field.node.metadata.alias.clone()).collect(),
                 comparison_equality: None,
                 reflection_metadata: if class_layout.is_none() {
@@ -185,19 +167,9 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 } else {
                     None
                 },
-                reflection_fields: class_layout.is_none().then(|| {
-                    fields
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(slot, field)| {
-                            (!type_info
-                                .declarations
-                                .model_type_private_fields
-                                .contains(&(name.clone(), field.node.name.clone())))
-                            .then_some(slot)
-                        })
-                        .collect()
-                }),
+                reflection_fields: class_layout
+                    .is_none()
+                    .then(|| reflected_field_slots(name, fields, type_info)),
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
@@ -215,6 +187,50 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 type_parameters,
             };
             retain_inherited_layout(retained, type_info)
+        })
+        .collect()
+}
+
+/// Whether each field of the nominal `name` is public, from its checked class layout or its model's checked field
+/// visibilities. A field the checker recorded no visibility for leaves the declaration unretained.
+fn field_publicity(
+    name: &str,
+    fields: &[ast::Spanned<ast::FieldDecl>],
+    class_layout: Option<&ClassLayoutInfo>,
+    type_info: &TypeCheckInfo,
+) -> Option<Vec<bool>> {
+    fields
+        .iter()
+        .map(|field| {
+            if let Some(layout) = class_layout {
+                layout
+                    .fields
+                    .iter()
+                    .find(|checked| checked.name == field.node.name)
+                    .map(|checked| checked.visibility == ast::Visibility::Public)
+            } else {
+                type_info
+                    .declarations
+                    .model_field_visibilities
+                    .get(name)
+                    .and_then(|fields| fields.get(&field.node.name))
+                    .map(|visibility| *visibility == ast::Visibility::Public)
+            }
+        })
+        .collect()
+}
+
+/// The slots of the model `name`'s fields that reflection exposes: every field the model does not keep private.
+fn reflected_field_slots(name: &str, fields: &[ast::Spanned<ast::FieldDecl>], type_info: &TypeCheckInfo) -> Vec<usize> {
+    fields
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, field)| {
+            (!type_info
+                .declarations
+                .model_type_private_fields
+                .contains(&(name.to_string(), field.node.name.clone())))
+            .then_some(slot)
         })
         .collect()
 }
