@@ -2,15 +2,14 @@
 
 from rust::std::process import Command, Stdio
 from rust::std::str import from_utf8
-from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
-from pub::incan_platform.store import get, keys_with_prefix
+from pub::incan_platform.store import get
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from bakery import find
-from compiler_body_keys import IDENTITY_PROFILE, namespace_key
-from compiler_graph_records import decode_record_key, readers_of, reusable_evaluation
+from compiler_body_keys import namespace_key
+from compiler_graph_records import reusable_evaluation
 from engine_client import service_generation, service_identity
 from engine_endpoint import endpoint
 from engine_program_records import NativeUnit, SELECTION_KEY, decode_selection
@@ -19,7 +18,6 @@ from engine_protocol_fixtures import json_text_is
 from files import read, write
 from json_fields import required_text
 from lowering_record_fixtures import attempt_trace, command_proof, proof_count, stop_example_engine
-from selected_provider_call_shapes import PROVIDER_CALL_SHAPE_FAMILY
 from store_path_conversion import snapshot
 from unit_reading import read_unit
 from unit_transport import read_unit_document
@@ -80,13 +78,11 @@ def verify_borrow_transitions(binary: str, root: Path, store: Path) -> Result[No
     if earlier_handle == seed_handle:
         return Err("10.3 Rust body edit did not advance the application capture")
 
-    earlier_witnesses = provider_witness_observation(store)
     owned_body = borrowed_body.replace("text: &str", "text: String")
     write(native, owned_body)?
     _owned_report, owned = run_fanout_probe(binary, app, store, trace, "owned", "19\n15\n7\n")?
     owned_window = settlement_window(trace, owned)?
     owned_handle, owned_unit = selected_fanout_program(store, owned_window)?
-    owned_witnesses = provider_witness_observation(store)
     if owned_handle == earlier_handle or owned_unit.identity == earlier_unit.identity:
         return Err("10.3 owned argument did not select a new native unit")
 
@@ -96,21 +92,9 @@ def verify_borrow_transitions(binary: str, root: Path, store: Path) -> Result[No
     handle, unit = selected_fanout_program(store, window)?
     if handle != earlier_handle or unit != earlier_unit or proof_count(report, "native_bakes")? != 0:
         return Err("10.3 borrow return: the app did not reuse its earlier native descriptor with zero new bakes")
-    if let Err(reason) = require_returned_app_checks(app, window, compiler_activations(trace, request)?):
-        returned_witnesses = provider_witness_observation(store)
-        body_selections = [
-            row for row in window
-            if json_text_is(row, "operation", "engine_select") and json_text_is(row, "key", "edit-readers")
-        ]
-        selected_bodies = len(body_selections) > 0
-        issued = [required_text(row, "key").unwrap_or("<missing key>") for row in window if json_text_is(row, "operation", "driver_request")]
-        return Err(
-            "ordinary borrow return: " + reason + "\n"
-            + f"earlier borrowed provider witnesses: {earlier_witnesses}\n"
-            + f"owned provider witnesses: {owned_witnesses}\n"
-            + f"returned provider witnesses: {returned_witnesses}\n"
-            + f"selected checked bodies: {selected_bodies}, driver requests: {issued}"
-        )
+    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?).map_err(
+        (reason) => "ordinary borrow return: " + reason,
+    )?
     _ = require_returned_app_checks(app, owned_window, compiler_activations(trace, owned)?).map_err(
         (reason) => "ordinary owned edit: " + reason,
     )?
@@ -159,28 +143,6 @@ def stop_fanout_engine(binary: str, store: Path) -> Result[None, str]:
     stop_example_engine(binary, store)?
     _lifetime = Path(selected.lock).lock_exclusive().map_err((error) => error.message())?
     return Ok(None)
-
-
-def provider_witness_observation(store: Path) -> list[str]:
-    """Keep a graph read refusal visible without masking the caller assertion."""
-    match provider_witnesses(store):
-        Ok(rows) => return rows
-        Err(reason) => return ["provider witness observation refused: " + reason]
-
-
-def provider_witnesses(store: Path) -> Result[list[str], str]:
-    """Describe the provider owner values selected in the application's graph and their current checker readers."""
-    graph = snapshot(store).map_err((error) => error.message())?
-    prefix = f"{PROVIDER_CALL_SHAPE_FAMILY}\t{IDENTITY_PROFILE}\trustapp\t"
-    mut rows: list[str] = []
-    for slot in keys_with_prefix(graph, prefix).map_err((error) => error.message())?:
-        key = decode_record_key(slot)?
-        value = get(graph, slot).map_err((error) => error.message())?
-        if let Some(digest) = value:
-            readers = readers_of(graph, [key], CHECKER_PROFILE)?
-            owners = sorted([f"{reader.family}/{reader.identity}" for reader in readers])
-            rows.append(f"{key.facet}:{key.context}:{key.identity} {hexlify(digest)} readers={owners}")
-    return Ok(rows)
 
 
 def control_namespace(store: Path) -> Result[str, str]:
