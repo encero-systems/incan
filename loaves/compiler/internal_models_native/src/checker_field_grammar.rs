@@ -203,34 +203,8 @@ fn field_end(field: &CanonicalField) -> Result<usize, CodecFault> {
             validate_type_identity_path(selector)?;
             Ok(1)
         }
-        "identity-context" => {
-            if !node
-                || selector != "reference"
-                || values.len() != 5
-                || values[0].is_empty()
-                || values[1].is_empty()
-                || !matches!(values[3].as_str(), "field" | "method" | "property" | "variant")
-                || values[4].is_empty()
-            {
-                return Err(Malformed);
-            }
-            decimal(&values[2])?;
-            Ok(5)
-        }
-        "binding-type" => {
-            if !node || values.is_empty() || values[0].is_empty() {
-                return Err(Malformed);
-            }
-            match selector {
-                "body" => type_end(values, 1, 0),
-                "parameter-requirement" => match at(values, 1)? {
-                    "none" => Ok(2),
-                    "some" => type_end(values, 2, 0),
-                    _ => Err(Malformed),
-                },
-                _ => unsupported(selector),
-            }
-        }
+        "identity-context" => identity_context_end(field),
+        "binding-type" => binding_type_end(field),
         "mutation" => mutation_end(field),
         "input-call" | "input-local" | "input-flow" | "input-copy" => input_field_end(field),
         "ownership" => {
@@ -267,33 +241,14 @@ fn field_end(field: &CanonicalField) -> Result<usize, CodecFault> {
             Ok(1)
         }
         "artifact-protocol" => artifact_protocol_end(field),
-        "artifact-call" => {
-            if !node {
-                return Err(Malformed);
-            }
-            match call_artifact_codec(selector) {
-                Some(CallArtifactCodec::SpanType) => type_end(values, 0, 0),
-                Some(CallArtifactCodec::Method) => method_call_end(values),
-                Some(codec) if codec.admits_plain_values(values) => Ok(values.len()),
-                Some(_) => Err(Malformed),
-                None => unsupported(selector),
-            }
-        }
+        "artifact-call" => call_artifact_field_end(field),
         "target" => {
             if selector != "source" || values.len() < 2 {
                 return Err(Malformed);
             }
             Ok(values.len())
         }
-        "status" => {
-            if node || !matches!(selector, "refused" | "pending") || values.len() != 1 {
-                return Err(Malformed);
-            }
-            if !matches!(values[0].as_str(), "true" | "false") {
-                return Err(Malformed);
-            }
-            Ok(1)
-        }
+        "status" => status_end(field),
         "effect" => {
             if node || selector.is_empty() || values != ["checked"] {
                 return Err(Malformed);
@@ -321,6 +276,75 @@ fn field_end(field: &CanonicalField) -> Result<usize, CodecFault> {
         "artifact-rust" => rust_artifact_end(field),
         family => unsupported(family),
     }
+}
+
+/// An identity context: its owner, name, decimal ordinal, member kind and member at a node.
+fn identity_context_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = field.values.as_slice();
+    let selector = field.selector.as_str();
+    let node = !field.node.is_empty();
+    if !node
+        || selector != "reference"
+        || values.len() != 5
+        || values[0].is_empty()
+        || values[1].is_empty()
+        || !matches!(values[3].as_str(), "field" | "method" | "property" | "variant")
+        || values[4].is_empty()
+    {
+        return Err(Malformed);
+    }
+    decimal(&values[2])?;
+    Ok(5)
+}
+
+/// A node binding's checked type, or a parameter's recorded requirement or its absence.
+fn binding_type_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = field.values.as_slice();
+    let selector = field.selector.as_str();
+    let node = !field.node.is_empty();
+    if !node || values.is_empty() || values[0].is_empty() {
+        return Err(Malformed);
+    }
+    match selector {
+        "body" => type_end(values, 1, 0),
+        "parameter-requirement" => match at(values, 1)? {
+            "none" => Ok(2),
+            "some" => type_end(values, 2, 0),
+            _ => Err(Malformed),
+        },
+        _ => Err(CodecFault::Unsupported(selector.to_owned())),
+    }
+}
+
+/// A node's call artifact, read by the codec its selector names.
+fn call_artifact_field_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = field.values.as_slice();
+    let selector = field.selector.as_str();
+    let node = !field.node.is_empty();
+    if !node {
+        return Err(Malformed);
+    }
+    match call_artifact_codec(selector) {
+        Some(CallArtifactCodec::SpanType) => type_end(values, 0, 0),
+        Some(CallArtifactCodec::Method) => method_call_end(values),
+        Some(codec) if codec.admits_plain_values(values) => Ok(values.len()),
+        Some(_) => Err(Malformed),
+        None => Err(CodecFault::Unsupported(selector.to_owned())),
+    }
+}
+
+/// A refused or pending record status, `true` or `false`, away from any node.
+fn status_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = field.values.as_slice();
+    let selector = field.selector.as_str();
+    let node = !field.node.is_empty();
+    if node || !matches!(selector, "refused" | "pending") || values.len() != 1 {
+        return Err(Malformed);
+    }
+    if !matches!(values[0].as_str(), "true" | "false") {
+        return Err(Malformed);
+    }
+    Ok(1)
 }
 
 /// Signatures: a declaration's flag, parameters and result type; a call's parameters; or a counted list of types,

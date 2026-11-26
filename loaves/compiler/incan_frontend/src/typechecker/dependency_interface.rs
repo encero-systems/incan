@@ -502,42 +502,9 @@ impl TypeChecker {
     ) -> Arc<ModuleDependencyInterface> {
         self.dependency_exports
             .insert(module_name.to_string(), Arc::clone(&exports));
-        if rebuild_provider_cache {
-            self.register_dependency_derivable_metadata(module_name, module_ast);
-            self.cache_dependency_direct_member_symbols(module_name, module_ast, public_only);
-            self.cache_dependency_registry_definitions(module_name, module_ast, public_only);
-            self.cache_dependency_registry_consts(module_ast);
-            self.cache_dependency_member_symbols(module_name, module_ast, public_only);
-            self.cache_dependency_adoption_traits();
-        }
-        let module_path = self
-            .dependency_module_path_segments
-            .get(module_name)
-            .cloned()
-            .or_else(|| self.current_module_path.clone())
-            .unwrap_or_else(|| vec![module_name.to_string()]);
-        if rebuild_provider_cache {
-            // The provider's own checker holds its contracts as checked declaration facts, not as dependency facts.
-            let provided = self
-                .type_info
-                .declarations
-                .ownership_contracts
-                .iter()
-                .filter(|(identity, _)| provider_input_contract(identity, &module_path))
-                .map(|(identity, contract)| (identity.clone(), contract.clone()))
-                .collect::<Vec<_>>();
-            self.dependency_input_contracts.extend(provided);
-        }
-        let direct_member_identities = self
-            .dependency_direct_member_identities
-            .get(module_name)
-            .cloned()
-            .unwrap_or_default();
-        let direct_member_symbols = self
-            .dependency_direct_member_symbols
-            .get(module_name)
-            .cloned()
-            .unwrap_or_default();
+        let module_path = self.prepare_provider_seal(module_name, module_ast, public_only, rebuild_provider_cache);
+        let direct_member_identities = cached_entry(self.dependency_direct_member_identities.get(module_name));
+        let direct_member_symbols = cached_entry(self.dependency_direct_member_symbols.get(module_name));
         let (transitive_public_types, transitive_public_traits) =
             provider_transitive_semantics(&direct_member_symbols, &direct_member_identities);
         let public_library_type_identities = match &mut collection {
@@ -574,115 +541,33 @@ impl TypeChecker {
             module_path: module_path.clone(),
             public_only,
             exports,
-            member_symbols: self
-                .dependency_member_symbols
-                .get(module_name)
-                .cloned()
-                .unwrap_or_default(),
-            member_type_aliases: self
-                .dependency_member_type_aliases
-                .get(module_name)
-                .cloned()
-                .unwrap_or_default(),
+            member_symbols: cached_entry(self.dependency_member_symbols.get(module_name)),
+            member_type_aliases: cached_entry(self.dependency_member_type_aliases.get(module_name)),
             registry_definitions: self.dependency_registry_definitions.get(module_name).cloned(),
-            registry_consts: Arc::new(
-                self.dependency_registry_consts
-                    .iter()
-                    .filter(|(identity, _)| owned_identity(identity))
-                    .map(|(identity, value)| (identity.clone(), value.clone()))
-                    .collect(),
-            ),
-            member_partial_projections: self
-                .dependency_member_partial_projections
-                .get(module_name)
-                .cloned()
-                .unwrap_or_default(),
+            registry_consts: Arc::new(selected_entries(&self.dependency_registry_consts, owned_identity)),
+            member_partial_projections: cached_entry(self.dependency_member_partial_projections.get(module_name)),
             direct_member_symbols,
-            direct_member_type_aliases: self
-                .dependency_direct_member_type_aliases
-                .get(module_name)
-                .cloned()
-                .unwrap_or_default(),
+            direct_member_type_aliases: cached_entry(self.dependency_direct_member_type_aliases.get(module_name)),
             direct_member_identities,
-            declaration_nominal_scopes: Arc::new(
-                self.declaration_nominal_scopes
-                    .iter()
-                    .filter(|(identity, _)| owned_identity(identity))
-                    .map(|(identity, scope)| (identity.clone(), Arc::clone(scope)))
-                    .collect(),
+            declaration_nominal_scopes: Arc::new(selected_entries(&self.declaration_nominal_scopes, owned_identity)),
+            retained_nominal_carriers: Arc::new(selected_entries(&self.retained_nominal_carriers, owned_identity)),
+            declaration_callables: Arc::new(selected_entries(&self.declaration_callables, owned_identity)),
+            constructor_defaults: Arc::new(selected_entries(&self.constructor_defaults.0, owned_identity)),
+            input_contracts: Arc::new(selected_entries(&self.dependency_input_contracts, |identity| {
+                provider_input_contract(identity, &module_path)
+            })),
+            member_reexports: cached_entry(self.dependency_member_reexports.get(module_name)),
+            body_ir_pub_reexports: cached_entry(self.body_ir_dependency_pub_reexports.get(module_name)),
+            direct_member_partial_projections: cached_entry(
+                self.dependency_direct_member_partial_projections.get(module_name),
             ),
-            retained_nominal_carriers: Arc::new(
-                self.retained_nominal_carriers
-                    .iter()
-                    .filter(|(identity, _)| owned_identity(identity))
-                    .map(|(identity, carrier)| (identity.clone(), carrier.clone()))
-                    .collect(),
-            ),
-            declaration_callables: Arc::new(
-                self.declaration_callables
-                    .iter()
-                    .filter(|(identity, _)| owned_identity(identity))
-                    .map(|(identity, callable)| (identity.clone(), callable.clone()))
-                    .collect(),
-            ),
-            constructor_defaults: Arc::new(
-                self.constructor_defaults
-                    .0
-                    .iter()
-                    .filter(|(identity, _)| owned_identity(identity))
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-            ),
-            input_contracts: Arc::new(
-                self.dependency_input_contracts
-                    .iter()
-                    .filter(|(identity, _)| provider_input_contract(identity, &module_path))
-                    .map(|(identity, contract)| (identity.clone(), contract.clone()))
-                    .collect(),
-            ),
-            member_reexports: self
-                .dependency_member_reexports
-                .get(module_name)
-                .cloned()
-                .unwrap_or_default(),
-            body_ir_pub_reexports: self
-                .body_ir_dependency_pub_reexports
-                .get(module_name)
-                .cloned()
-                .unwrap_or_default(),
-            direct_member_partial_projections: self
-                .dependency_direct_member_partial_projections
-                .get(module_name)
-                .cloned()
-                .unwrap_or_default(),
-            derivable_modules: Arc::new(
-                self.dependency_derivable_modules
-                    .iter()
-                    .filter(|(key, _)| qualified(key))
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-            ),
-            derivable_trait_identities: Arc::new(
-                self.dependency_derivable_trait_identities
-                    .iter()
-                    .filter(|(key, _)| qualified(key))
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-            ),
-            module_traits: Arc::new(
-                self.dependency_module_traits
-                    .iter()
-                    .filter(|(key, _)| qualified(key))
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-            ),
-            trait_rust_derive_paths: Arc::new(
-                self.dependency_trait_rust_derive_paths
-                    .iter()
-                    .filter(|(key, _)| qualified(key))
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-            ),
+            derivable_modules: Arc::new(selected_entries(&self.dependency_derivable_modules, qualified)),
+            derivable_trait_identities: Arc::new(selected_entries(
+                &self.dependency_derivable_trait_identities,
+                qualified,
+            )),
+            module_traits: Arc::new(selected_entries(&self.dependency_module_traits, qualified)),
+            trait_rust_derive_paths: Arc::new(selected_entries(&self.dependency_trait_rust_derive_paths, qualified)),
             transitive_public_types: Arc::new(transitive_public_types),
             transitive_public_traits: Arc::new(transitive_public_traits),
             compiled_libraries: Arc::from(compiled_libraries),
@@ -690,6 +575,45 @@ impl TypeChecker {
             symbol_rows: Arc::from(symbol_rows),
             snapshot: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Rebuild the provider's dependency caches when asked and return the module path its interface is sealed under:
+    /// the registered dependency path, else the current module's path, else the bare module name. A rebuilt provider
+    /// also publishes its own checked input contracts as dependency facts.
+    fn prepare_provider_seal(
+        &mut self,
+        module_name: &str,
+        module_ast: &Program,
+        public_only: bool,
+        rebuild_provider_cache: bool,
+    ) -> Vec<String> {
+        if rebuild_provider_cache {
+            self.register_dependency_derivable_metadata(module_name, module_ast);
+            self.cache_dependency_direct_member_symbols(module_name, module_ast, public_only);
+            self.cache_dependency_registry_definitions(module_name, module_ast, public_only);
+            self.cache_dependency_registry_consts(module_ast);
+            self.cache_dependency_member_symbols(module_name, module_ast, public_only);
+            self.cache_dependency_adoption_traits();
+        }
+        let module_path = self
+            .dependency_module_path_segments
+            .get(module_name)
+            .cloned()
+            .or_else(|| self.current_module_path.clone())
+            .unwrap_or_else(|| vec![module_name.to_string()]);
+        if rebuild_provider_cache {
+            // The provider's own checker holds its contracts as checked declaration facts, not as dependency facts.
+            let provided = self
+                .type_info
+                .declarations
+                .ownership_contracts
+                .iter()
+                .filter(|(identity, _)| provider_input_contract(identity, &module_path))
+                .map(|(identity, contract)| (identity.clone(), contract.clone()))
+                .collect::<Vec<_>>();
+            self.dependency_input_contracts.extend(provided);
+        }
+        module_path
     }
 
     /// Replace dependency lookup caches with the exact selected provider interfaces.
@@ -1088,6 +1012,24 @@ fn provider_input_contract(identity: &CanonicalSymbolId, module_path: &[String])
 fn key_owned_by(key: &str, module_path: &[String]) -> bool {
     let exact = module_path.join(".");
     key == exact || key.strip_prefix(&exact).is_some_and(|suffix| suffix.starts_with('.'))
+}
+
+/// A cached per-module dependency entry, or the empty entry for a module the cache has not seen.
+fn cached_entry<T: Clone + Default>(entry: Option<&T>) -> T {
+    entry.cloned().unwrap_or_default()
+}
+
+/// Copy the entries whose key `keep` selects into a new collection, as a sealed interface retains only the provider's
+/// own facts.
+fn selected_entries<'entry, K: Clone + 'entry, V: Clone + 'entry, C: FromIterator<(K, V)>>(
+    entries: impl IntoIterator<Item = (&'entry K, &'entry V)>,
+    keep: impl Fn(&K) -> bool,
+) -> C {
+    entries
+        .into_iter()
+        .filter(|(key, _)| keep(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
 }
 
 /// Render one module's value from a module-keyed map.

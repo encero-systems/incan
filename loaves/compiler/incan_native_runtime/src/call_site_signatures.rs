@@ -37,9 +37,17 @@ fn the_runtime_exports_only_unit_keyed_static_operations() {
     }
 }
 
-#[test]
 /// Reject runtime exports whose Rust signatures differ from the native plan call sites.
+#[test]
 fn every_runtime_function_takes_its_call_site_types() {
+    pin_functions_a_to_h();
+    pin_functions_i_to_o();
+    pin_functions_p_to_q();
+    pin_functions_r_to_z();
+}
+
+/// Pin the runtime functions from `absolute_int` to `greater_text` to their call-site signatures.
+fn pin_functions_a_to_h() {
     let _: fn(i64) -> i64 = crate::absolute_int;
     let _: fn(i64, i64) -> i64 = crate::add_newtype_sum;
     let _: fn(incan_std_primitives::iter::Generator<i64>, fn(i64) -> bool) -> bool = crate::all_int_generator;
@@ -132,6 +140,10 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(crate::DecimalCarrier, crate::DecimalCarrier) -> bool = crate::greater_equal_decimal;
     let _: for<'a, 'b> fn(&'a std::string::String, &'b std::string::String) -> bool = crate::greater_equal_text;
     let _: for<'a, 'b> fn(&'a std::string::String, &'b std::string::String) -> bool = crate::greater_text;
+}
+
+/// Pin the runtime functions from `initialize_binding` to `not_contains_text` to their call-site signatures.
+fn pin_functions_i_to_o() {
     let _: fn(std::string::String, std::string::String, fn(), usize, usize, std::string::String) =
         crate::initialize_binding;
     let _: fn() = crate::initialize_panic_hook;
@@ -189,6 +201,10 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(i8) -> i8 = crate::negate_i8;
     let _: fn(isize) -> isize = crate::negate_isize;
     let _: for<'a, 'b> fn(&'a std::string::String, &'b std::string::String) -> bool = crate::not_contains_text;
+}
+
+/// Pin the runtime functions from `parse_float` to `py_mod_usize` to their call-site signatures.
+fn pin_functions_p_to_q() {
     let _: for<'a> fn(&'a std::string::String) -> f64 = crate::parse_float;
     let _: for<'a> fn(&'a std::string::String) -> i64 = crate::parse_int;
     // Call site: string_conversion.incn: parameters=[PlanType.String].
@@ -234,6 +250,11 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(u64, u64) -> u64 = crate::py_mod_u64;
     let _: fn(u8, u8) -> u8 = crate::py_mod_u8;
     let _: fn(usize, usize) -> usize = crate::py_mod_usize;
+}
+
+/// Pin the runtime functions from `raise_value_error` to `write_static_text_int_dict_in_unit` to their call-site
+/// signatures.
+fn pin_functions_r_to_z() {
     let _: fn(std::string::String) = crate::raise_value_error;
     let _: fn(i64, i64, i64) -> incan_std_primitives::iter::Generator<i64> = crate::range_generator;
     let _: for<'a> fn(&'a std::string::String) -> std::result::Result<std::string::String, std::string::String> =

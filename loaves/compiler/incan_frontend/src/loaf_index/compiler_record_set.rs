@@ -435,68 +435,9 @@ fn read_group(
         records
     )
     .entered();
-    let opened = {
-        let _open = tracing::trace_span!(
-            target: "incan::invocation",
-            "incan_frontend::open_compiler_record_group",
-            loaf = name,
-            records
-        )
-        .entered();
-        validate_payload_directory(&set.root).map_err(|reason| unreadable(dir, name, reason))?;
-        let opened = selected
-            .into_iter()
-            .map(|(family, index, entry)| {
-                open_value(&set.root, &entry.value)
-                    .map(|bytes| {
-                        set.count_read(&entry.key, bytes.len());
-                        (family, index, entry, bytes)
-                    })
-                    .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
-        let process = set.reads();
-        tracing::trace!(
-            target: "incan::invocation",
-            phase = "open",
-            loaf = name,
-            records,
-            bytes,
-            process_records = process.records,
-            process_bytes = process.bytes
-        );
-        opened
-    };
+    let opened = open_selected(set, selected, dir, name)?;
     let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
-    let verified = {
-        let _verification = tracing::trace_span!(
-            target: "incan::invocation",
-            "incan_frontend::verify_compiler_record_group",
-            loaf = name,
-            records,
-            bytes
-        )
-        .entered();
-        let verified = opened
-            .into_iter()
-            .map(|(family, index, entry, bytes)| {
-                if entry.revision != entry.value {
-                    return Err(unreadable(
-                        dir,
-                        name,
-                        format!(
-                            "compiler-record `{}` has distinct revision and value identities",
-                            entry.key
-                        ),
-                    ));
-                }
-                Ok((family, index, bytes))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        tracing::trace!(target: "incan::invocation", phase = "verification", loaf = name, records, bytes);
-        verified
-    };
+    let verified = verify_revisions(opened, dir, name, bytes)?;
     let families = {
         let _materialization = tracing::trace_span!(
             target: "incan::invocation",
@@ -526,6 +467,83 @@ fn read_group(
     let group = (Arc::new(manifest), manifest_digest);
     set.admit(prefix, projection, &group);
     Ok(Some(group))
+}
+
+/// Open each selected record's payload, counting every read on the set and tracing the group's totals.
+fn open_selected<'a>(
+    set: &RecordSet,
+    selected: Vec<(&'a str, usize, &'a RecordEntry)>,
+    dir: &Path,
+    name: &str,
+) -> Result<Vec<(&'a str, usize, &'a RecordEntry, Vec<u8>)>, LoafIndexError> {
+    let records = selected.len();
+    let _open = tracing::trace_span!(
+        target: "incan::invocation",
+        "incan_frontend::open_compiler_record_group",
+        loaf = name,
+        records
+    )
+    .entered();
+    validate_payload_directory(&set.root).map_err(|reason| unreadable(dir, name, reason))?;
+    let opened = selected
+        .into_iter()
+        .map(|(family, index, entry)| {
+            open_value(&set.root, &entry.value)
+                .map(|bytes| {
+                    set.count_read(&entry.key, bytes.len());
+                    (family, index, entry, bytes)
+                })
+                .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
+    let process = set.reads();
+    tracing::trace!(
+        target: "incan::invocation",
+        phase = "open",
+        loaf = name,
+        records,
+        bytes,
+        process_records = process.records,
+        process_bytes = process.bytes
+    );
+    Ok(opened)
+}
+
+/// Require each opened record's revision identity to be its value identity, keeping only the payload bytes.
+fn verify_revisions<'a>(
+    opened: Vec<(&'a str, usize, &'a RecordEntry, Vec<u8>)>,
+    dir: &Path,
+    name: &str,
+    bytes: usize,
+) -> Result<Vec<(&'a str, usize, Vec<u8>)>, LoafIndexError> {
+    let records = opened.len();
+    let _verification = tracing::trace_span!(
+        target: "incan::invocation",
+        "incan_frontend::verify_compiler_record_group",
+        loaf = name,
+        records,
+        bytes
+    )
+    .entered();
+    let verified = opened
+        .into_iter()
+        .map(|(family, index, entry, bytes)| {
+            if entry.revision != entry.value {
+                return Err(unreadable(
+                    dir,
+                    name,
+                    format!(
+                        "compiler-record `{}` has distinct revision and value identities",
+                        entry.key
+                    ),
+                ));
+            }
+            Ok((family, index, bytes))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    tracing::trace!(target: "incan::invocation", phase = "verification", loaf = name, records, bytes);
+    Ok(verified)
 }
 
 /// Validate and select one Loaf group's record identities without opening their independently addressed values.

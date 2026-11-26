@@ -83,6 +83,24 @@ fn only_direct_readers_see_a_changed_settled_input() -> Result<(), Box<dyn std::
 pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: Borrowed[Native]) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef explicit_projected(wrapper: Borrowed[Wrapper]) -> int:\n    return explicit(wrapper.item)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
     let (program, facts, mut candidate) = checked_seed(source)?;
+    assert_selected_profile_is_retained(&program, &facts, &mut candidate)?;
+    assert_explicit_access_is_kept(&candidate)?;
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut candidate),
+        crate::body_ir::ContextModules::default(),
+    );
+    assert_forwarded_inputs_are_shared(&candidate)?;
+    assert_escaping_inputs_stay_owned(&candidate)?;
+    assert_function_item_adapter_lends(&candidate)
+}
+
+/// Give the leaf a checked input profile and retain only it: the selected body survives both the representation and
+/// the shared-read passes unchanged. The profile stays on `candidate` for the whole-module assertions.
+fn assert_selected_profile_is_retained(
+    program: &crate::ast::Program,
+    facts: &TypeCheckInfo,
+    candidate: &mut bir::BodyIrModule,
+) -> Result<(), Box<dyn std::error::Error>> {
     let leaf = candidate
         .bodies
         .iter_mut()
@@ -112,8 +130,8 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
     let selected = std::collections::HashSet::from([selected_identity]);
     super::retain_module_representations(
         &mut partially_selected,
-        &program,
-        &facts,
+        program,
+        facts,
         crate::body_ir::ContextModules::default(),
         &selected,
     );
@@ -128,6 +146,11 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         .find(|body| body.name == "leaf")
         .ok_or("missing selected loan body")?;
     assert_eq!(retained_selected_leaf, &selected_leaf);
+    Ok(())
+}
+
+/// An explicit shared, exclusive or owned source access is kept with its written type when shared reads are retained.
+fn assert_explicit_access_is_kept(candidate: &bir::BodyIrModule) -> Result<(), Box<dyn std::error::Error>> {
     for access in [
         incan_semantics_core::IncanInputAccess::Shared,
         incan_semantics_core::IncanInputAccess::Exclusive,
@@ -154,10 +177,12 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(parameter.params[0].ty, original_type);
         assert_eq!(parameter.locals[parameter.params[0].local.index()].ty, original_type);
     }
-    super::shared_reads::retain_modules(
-        std::slice::from_mut(&mut candidate),
-        crate::body_ir::ContextModules::default(),
-    );
+    Ok(())
+}
+
+/// Forwarded, recursive, method and explicitly declared inputs that are only read become inferred shared, and each
+/// explicit forwarding call lends its argument.
+fn assert_forwarded_inputs_are_shared(candidate: &bir::BodyIrModule) -> Result<(), Box<dyn std::error::Error>> {
     for name in ["leaf", "forward", "explicit_forward", "left", "right", "escaped"] {
         let body = candidate
             .bodies
@@ -216,6 +241,11 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
             })
         }));
     }
+    Ok(())
+}
+
+/// Trait-dispatched inputs and an input the body returns keep their by-value inferred access.
+fn assert_escaping_inputs_stay_owned(candidate: &bir::BodyIrModule) -> Result<(), Box<dyn std::error::Error>> {
     let trait_forward = candidate
         .bodies
         .iter()
@@ -250,6 +280,12 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         take.params[0].input_access,
         incan_semantics_core::IncanInputAccess::Inferred
     );
+    Ok(())
+}
+
+/// A function item stored as a callback is adapted by a closure that keeps a by-value input and lends it to the
+/// forwarding call.
+fn assert_function_item_adapter_lends(candidate: &bir::BodyIrModule) -> Result<(), Box<dyn std::error::Error>> {
     let use_body = candidate
         .bodies
         .iter()
@@ -404,11 +440,8 @@ pub(super) fn assert_complete_shared_read_shapes() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Read-only string callees and every ordinary caller storage shape retain a loan, while mutable, partial-target and
-/// consumed parameters keep their by-value access.
-#[test]
-fn read_only_string_calls_borrow_the_callers_storage() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"
+/// Read-only string callees, their ordinary callers, and the mutable, partial-target and consumed controls.
+const READ_ONLY_STRING_SOURCE: &str = r#"
 model Holder:
     text: str
 
@@ -491,29 +524,25 @@ def stored(text: str) -> list[str]:
 def mutated(mut text: str) -> int:
     return len(text)
 "#;
-    let (_, _, mut module) = checked_seed(source)?;
+
+/// Read-only string callees and every ordinary caller storage shape retain a loan, while mutable, partial-target and
+/// consumed parameters keep their by-value access.
+#[test]
+fn read_only_string_calls_borrow_the_callers_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, _, mut module) = checked_seed(READ_ONLY_STRING_SOURCE)?;
     super::shared_reads::retain_modules(
         std::slice::from_mut(&mut module),
         crate::body_ir::ContextModules::default(),
     );
 
-    for name in ["ignored", "length", "sliced", "compared"] {
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == name)
-            .ok_or("missing read-only string callee")?;
-        assert_eq!(
-            body.params[0].input_access,
-            incan_semantics_core::IncanInputAccess::InferredShared,
-            "{name}: {body:#?}"
-        );
-    }
-    let sliced = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "sliced")
-        .ok_or("missing sliced string callee")?;
+    assert_parameter_access(
+        &module,
+        &["ignored", "length", "sliced", "compared"],
+        0,
+        incan_semantics_core::IncanInputAccess::InferredShared,
+        "missing read-only string callee",
+    )?;
+    let sliced = named_body(&module, "sliced", "missing sliced string callee")?;
     assert!(
         sliced.locals.iter().any(|local| {
             matches!(local.origin, bir::LocalOrigin::Temporary)
@@ -521,12 +550,71 @@ def mutated(mut text: str) -> int:
         }),
         "{sliced:#?}"
     );
+    assert_string_callers_lend(&module)?;
+    assert_parameter_access(
+        &module,
+        &["moved", "stored"],
+        0,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "missing ownership-changing string control",
+    )?;
+    let mutated = named_body(&module, "mutated", "missing mutable string control")?;
+    assert_eq!(
+        mutated.params[0].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{mutated:#?}"
+    );
+    let indexed = named_body(&module, "indexed", "missing indexed string control")?;
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = first_argument_to(indexed, "length") else {
+        return Err("missing indexed string call argument".into());
+    };
+    assert_eq!(
+        indexed.locals[read.place.local_id().ok_or("missing indexed argument local")?.index()].ty,
+        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
+        "{indexed:#?}"
+    );
+    let set_contains = named_body(&module, "set_contains", "missing set-key control")?;
+    assert_eq!(
+        set_contains.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{set_contains:#?}"
+    );
+    assert_parameter_access(
+        &module,
+        &[
+            "dictionary_key",
+            "optional_dictionary_key",
+            "registration_lookup",
+            "registration",
+        ],
+        1,
+        incan_semantics_core::IncanInputAccess::InferredShared,
+        "missing retained owned-string boundary",
+    )?;
+    let greet = named_body(&module, "greet", "missing partial-target boundary")?;
+    assert_eq!(
+        greet.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{greet:#?}"
+    );
+    assert_string_key_temporaries(&module)?;
+    let keyed_call = named_body(&module, "keyed_call", "missing keyed call control")?;
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = first_argument_to(keyed_call, "keyed_pair") else {
+        return Err("missing keyed call argument".into());
+    };
+    assert_eq!(
+        keyed_call.locals[read.place.local_id().ok_or("missing keyed argument local")?.index()].ty,
+        super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str))),
+        "{keyed_call:#?}"
+    );
+    Ok(())
+}
+
+/// Every ordinary caller storage shape, a local, a forwarded parameter and a field, lends its text to each of the
+/// three read-only string callees.
+fn assert_string_callers_lend(module: &bir::BodyIrModule) -> Result<(), Box<dyn std::error::Error>> {
     for name in ["local", "forwarded", "field"] {
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == name)
-            .ok_or("missing string caller")?;
+        let body = named_body(module, name, "missing string caller")?;
         let calls = body
             .block
             .stmts
@@ -550,142 +638,67 @@ def mutated(mut text: str) -> int:
             "{name}: {body:#?}"
         );
     }
-    for name in ["moved", "stored"] {
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == name)
-            .ok_or("missing ownership-changing string control")?;
-        assert_eq!(
-            body.params[0].input_access,
-            incan_semantics_core::IncanInputAccess::Inferred,
+    Ok(())
+}
+
+/// A dictionary key read borrows its text through a reference temporary, while a temporary that hands the input to an
+/// owned use, here `from_value`'s owned text, keeps its owned value.
+fn assert_string_key_temporaries(module: &bir::BodyIrModule) -> Result<(), Box<dyn std::error::Error>> {
+    let str_ref = super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)));
+    for name in ["dictionary_key", "optional_dictionary_key"] {
+        let body = named_body(module, name, "missing dictionary-key boundary")?;
+        assert!(
+            body.locals
+                .iter()
+                .any(|local| { matches!(local.origin, bir::LocalOrigin::Temporary) && local.ty == str_ref }),
             "{name}: {body:#?}"
         );
     }
-    let mutated = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "mutated")
-        .ok_or("missing mutable string control")?;
-    assert_eq!(
-        mutated.params[0].input_access,
-        incan_semantics_core::IncanInputAccess::Inferred,
-        "{mutated:#?}"
-    );
-    let indexed = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "indexed")
-        .ok_or("missing indexed string control")?;
-    let indexed_argument = indexed.block.stmts.iter().find_map(|statement| match &statement.kind {
+    for name in ["declaration_strings", "policy"] {
+        let body = named_body(module, name, "missing owned-temporary control")?;
+        assert!(
+            body.locals
+                .iter()
+                .all(|local| { !matches!(local.origin, bir::LocalOrigin::Temporary) || local.ty != str_ref }),
+            "{name}: {body:#?}"
+        );
+    }
+    Ok(())
+}
+
+/// The first argument of the first named call to `target` in `body`.
+fn first_argument_to<'body>(body: &'body bir::Body, target: &str) -> Option<&'body bir::ArgumentElement> {
+    body.block.stmts.iter().find_map(|statement| match &statement.kind {
         bir::StatementKind::Call {
-            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            callee: bir::Callee::Function(bir::CallableTarget::Named(named)),
             args,
             ..
-        } if target.name == "length" => args.first(),
+        } if named.name == target => args.first(),
         _ => None,
-    });
-    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = indexed_argument else {
-        return Err("missing indexed string call argument".into());
-    };
-    assert_eq!(
-        indexed.locals[read.place.local_id().ok_or("missing indexed argument local")?.index()].ty,
-        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
-        "{indexed:#?}"
-    );
-    let set_contains = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "set_contains")
-        .ok_or("missing set-key control")?;
-    assert_eq!(
-        set_contains.params[1].input_access,
-        incan_semantics_core::IncanInputAccess::Inferred,
-        "{set_contains:#?}"
-    );
-    for (name, parameter) in [
-        ("dictionary_key", 1),
-        ("optional_dictionary_key", 1),
-        ("registration_lookup", 1),
-        ("registration", 1),
-    ] {
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == name)
-            .ok_or("missing retained owned-string boundary")?;
-        assert_eq!(
-            body.params[parameter].input_access,
-            incan_semantics_core::IncanInputAccess::InferredShared,
-            "{name}: {body:#?}"
-        );
+    })
+}
+
+/// The body named `name` in `module`; `missing` describes the absence.
+fn named_body<'module>(
+    module: &'module bir::BodyIrModule,
+    name: &str,
+    missing: &'static str,
+) -> Result<&'module bir::Body, Box<dyn std::error::Error>> {
+    Ok(module.bodies.iter().find(|body| body.name == name).ok_or(missing)?)
+}
+
+/// Assert that parameter `slot` of each named body has `access`.
+fn assert_parameter_access(
+    module: &bir::BodyIrModule,
+    names: &[&str],
+    slot: usize,
+    access: incan_semantics_core::IncanInputAccess,
+    missing: &'static str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for name in names {
+        let body = named_body(module, name, missing)?;
+        assert_eq!(body.params[slot].input_access, access, "{name}: {body:#?}");
     }
-    let greet = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "greet")
-        .ok_or("missing partial-target boundary")?;
-    assert_eq!(
-        greet.params[1].input_access,
-        incan_semantics_core::IncanInputAccess::Inferred,
-        "{greet:#?}"
-    );
-    for name in ["dictionary_key", "optional_dictionary_key"] {
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == name)
-            .ok_or("missing dictionary-key boundary")?;
-        assert!(
-            body.locals.iter().any(|local| {
-                matches!(local.origin, bir::LocalOrigin::Temporary)
-                    && local.ty
-                        == super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
-            }),
-            "{name}: {body:#?}"
-        );
-    }
-    // A temporary that hands the input to an owned use, here `from_value`'s owned text, keeps its owned value.
-    for name in ["declaration_strings", "policy"] {
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == name)
-            .ok_or("missing owned-temporary control")?;
-        assert!(
-            body.locals.iter().all(|local| {
-                !matches!(local.origin, bir::LocalOrigin::Temporary)
-                    || local.ty
-                        != super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
-            }),
-            "{name}: {body:#?}"
-        );
-    }
-    let keyed_call = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "keyed_call")
-        .ok_or("missing keyed call control")?;
-    let keyed_argument = keyed_call
-        .block
-        .stmts
-        .iter()
-        .find_map(|statement| match &statement.kind {
-            bir::StatementKind::Call {
-                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
-                args,
-                ..
-            } if target.name == "keyed_pair" => args.first(),
-            _ => None,
-        });
-    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = keyed_argument else {
-        return Err("missing keyed call argument".into());
-    };
-    assert_eq!(
-        keyed_call.locals[read.place.local_id().ok_or("missing keyed argument local")?.index()].ty,
-        super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str))),
-        "{keyed_call:#?}"
-    );
     Ok(())
 }
 

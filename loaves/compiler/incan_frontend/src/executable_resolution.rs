@@ -412,22 +412,7 @@ fn resolve_from_catalog(
                 resolved.content_bytes_verified += length;
             }
         }
-        if let ExecutableDeclaration::NominalWithTraits(_, implementations)
-        | ExecutableDeclaration::EnumWithTraits(_, implementations)
-        | ExecutableDeclaration::NominalWithCallables { implementations, .. } = &declaration
-        {
-            // Lazy defaults are declaration requirements, even when the consumer never spells their trait. An
-            // uncovered unused default contributes no body, just as an uncovered source-adoption root does.
-            pending.extend(
-                implementations
-                    .iter()
-                    .filter(|implementation| implementation.implementation == implementation.method)
-                    .map(|implementation| {
-                        retain_dependency_parent(&mut parents, required, &implementation.method, &identity);
-                        (implementation.method.clone(), false, true)
-                    }),
-            );
-        }
+        queue_lazy_defaults(&mut pending, &mut parents, required, &declaration, &identity);
         let owner = canonical_module_identity(&identity)
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
         let module = modules
@@ -437,15 +422,45 @@ fn resolve_from_catalog(
         resolved.decoded_declarations += 1;
     }
     resolved.entries = package_entries(&resolved.package_versions, &visited, &parents);
+    resolved.modules = published_modules(modules);
+    Ok(resolved)
+}
+
+/// Queue a loaded nominal's lazy trait defaults. They are declaration requirements, even when the consumer never
+/// spells their trait; an uncovered unused default contributes no body, just as an uncovered source-adoption root does.
+fn queue_lazy_defaults(
+    pending: &mut BTreeSet<(CanonicalSymbolId, bool, bool)>,
+    parents: &mut BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+    required: &BTreeSet<CanonicalSymbolId>,
+    declaration: &ExecutableDeclaration,
+    identity: &CanonicalSymbolId,
+) {
+    if let ExecutableDeclaration::NominalWithTraits(_, implementations)
+    | ExecutableDeclaration::EnumWithTraits(_, implementations)
+    | ExecutableDeclaration::NominalWithCallables { implementations, .. } = declaration
+    {
+        pending.extend(
+            implementations
+                .iter()
+                .filter(|implementation| implementation.implementation == implementation.method)
+                .map(|implementation| {
+                    retain_dependency_parent(parents, required, &implementation.method, identity);
+                    (implementation.method.clone(), false, true)
+                }),
+        );
+    }
+}
+
+/// Publish each resolved module's declarations. Canonical lookup is name-first; module initialization follows
+/// checked physical declaration order.
+fn published_modules(mut modules: BTreeMap<String, BodyIrModule>) -> Vec<BodyIrModule> {
     for module in modules.values_mut() {
         crate::body_ir::retain_published_module(module);
-        // Canonical lookup is name-first; module initialization follows checked physical declaration order.
         module
             .static_declarations
             .sort_by_key(|storage| storage.canonical.declaration_span.start);
     }
-    resolved.modules = modules.into_values().collect();
-    Ok(resolved)
+    modules.into_values().collect()
 }
 
 /// Preserve the first deterministic incoming edge without turning an explicitly selected root into a child.
@@ -608,33 +623,7 @@ impl OpenSurface {
         }
         let mut file = File::open(&path).map_err(|error| package.unreadable(path.clone(), error))?;
         if let Some(head) = &package.range_head {
-            let file_length = file
-                .metadata()
-                .map_err(|error| package.unreadable(path.clone(), error))?
-                .len();
-            if file_length != head.file_bytes {
-                return Err(package.unusable(malformed(
-                    "installed executable file length differs from its range head",
-                )));
-            }
-            tracing::trace!(
-                target: "incan::invocation", phase = "body_surface_open", path = %path.display(),
-                loaf = %package.surface.name, digest = %head.descriptor.content_digest,
-                proof = "sealed-range", header_digest = %head.header_digest, header_bytes = 0u64, verified_bytes = 0u64, payload_offset = head.payload_offset,
-            );
-            return Ok(Self {
-                file,
-                path,
-                payload_offset: head.payload_offset,
-                index: SurfaceIndex {
-                    library: head.package.clone(),
-                    package_version: head.version.clone(),
-                    declarations: BTreeMap::new(),
-                    implementation: BTreeMap::new(),
-                },
-                fragment_digests: BTreeMap::new(),
-                content_bytes_verified: 0,
-            });
+            return Self::open_sealed_range(file, path, package, head);
         }
         // The frame is written by `encode_surface` as a postcard-encoded `u32` version, then an 8-byte
         // little-endian index length, then the index, then the payload. `SurfaceReader` parses that same frame
@@ -728,6 +717,43 @@ impl OpenSurface {
             index,
             fragment_digests: BTreeMap::new(),
             content_bytes_verified,
+        })
+    }
+
+    /// Open an installed surface whose sealed range head already proved its content: the file must have the head's
+    /// length, and declarations are read by range on demand without decoding an index.
+    fn open_sealed_range(
+        file: File,
+        path: PathBuf,
+        package: &PackageArtifact,
+        head: &RangeHead,
+    ) -> Result<Self, ExecutableResolutionError> {
+        let file_length = file
+            .metadata()
+            .map_err(|error| package.unreadable(path.clone(), error))?
+            .len();
+        if file_length != head.file_bytes {
+            return Err(package.unusable(malformed(
+                "installed executable file length differs from its range head",
+            )));
+        }
+        tracing::trace!(
+            target: "incan::invocation", phase = "body_surface_open", path = %path.display(),
+            loaf = %package.surface.name, digest = %head.descriptor.content_digest,
+            proof = "sealed-range", header_digest = %head.header_digest, header_bytes = 0u64, verified_bytes = 0u64, payload_offset = head.payload_offset,
+        );
+        Ok(Self {
+            file,
+            path,
+            payload_offset: head.payload_offset,
+            index: SurfaceIndex {
+                library: head.package.clone(),
+                package_version: head.version.clone(),
+                declarations: BTreeMap::new(),
+                implementation: BTreeMap::new(),
+            },
+            fragment_digests: BTreeMap::new(),
+            content_bytes_verified: 0,
         })
     }
 

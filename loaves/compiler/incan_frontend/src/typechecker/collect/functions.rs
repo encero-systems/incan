@@ -11,20 +11,7 @@ impl TypeChecker {
 
         let route = self.result_route(&func.params, &func.return_type, func.result_source.as_ref());
         let explicit_borrows = self.signature_keeps_explicit_borrows(&func.params, &route.result, route.source);
-        let params: Vec<_> = func
-            .params
-            .iter()
-            .map(|p| {
-                let surface_type_name = self.alias_surface_type_name(&p.node.ty.node);
-                let annotation = self.parameter_annotation(p, explicit_borrows);
-                let ty = self.resolve_type_checked(&annotation);
-                let ty = self.canonical_borrow_type(ty, explicit_borrows);
-                let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
-                CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
-                    .with_mut(is_mut)
-                    .with_surface_type_name(surface_type_name)
-            })
-            .collect();
+        let params = self.collected_function_params(func, explicit_borrows);
         let return_type = self.resolve_type_checked(&route.result);
         let binding = FunctionBindingInfo {
             is_async: func.is_async(),
@@ -47,19 +34,7 @@ impl TypeChecker {
             emitted_name: None,
         };
 
-        let duplicates_type_token_signature = existing_module_function_id
-            .and_then(|existing_id| self.symbols.get(existing_id))
-            .is_some_and(|existing_symbol| match &existing_symbol.kind {
-                SymbolKind::Function(existing) => type_token_overload_signatures_identical(existing, &info),
-                SymbolKind::FunctionOverloads(overloads) => overloads
-                    .iter()
-                    .any(|overload| type_token_overload_signatures_identical(&overload.info, &info)),
-                _ => false,
-            });
-        if duplicates_type_token_signature {
-            self.errors
-                .push(errors::duplicate_type_token_overload(&func.name, span));
-        }
+        self.refuse_duplicate_type_token_overload(existing_module_function_id, func, &info, span);
 
         let existing_identity = existing_module_function_id
             .and_then(|existing_id| self.symbols.identity_of(existing_id))
@@ -125,6 +100,54 @@ impl TypeChecker {
         }
         // Local declarations replace marker semantics only when registration accepted them.
         self.testing_marker_import_bindings.remove(&func.name);
+        self.record_function_binding(func, span, binding);
+        self.current_module_function_symbols
+            .insert(func.name.clone(), symbol_id);
+    }
+
+    /// Resolve each declared parameter of a function into its checked callable parameter, keeping explicit borrows
+    /// only when the signature's result route needs them.
+    fn collected_function_params(&mut self, func: &FunctionDecl, explicit_borrows: bool) -> Vec<CallableParam> {
+        func.params
+            .iter()
+            .map(|p| {
+                let surface_type_name = self.alias_surface_type_name(&p.node.ty.node);
+                let annotation = self.parameter_annotation(p, explicit_borrows);
+                let ty = self.resolve_type_checked(&annotation);
+                let ty = self.canonical_borrow_type(ty, explicit_borrows);
+                let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
+                CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
+                    .with_mut(is_mut)
+                    .with_surface_type_name(surface_type_name)
+            })
+            .collect()
+    }
+
+    /// Refuse a function whose signature repeats an earlier same-named function's type-token overload signature.
+    fn refuse_duplicate_type_token_overload(
+        &mut self,
+        existing_module_function_id: Option<SymbolId>,
+        func: &FunctionDecl,
+        info: &FunctionInfo,
+        span: Span,
+    ) {
+        let duplicates_type_token_signature = existing_module_function_id
+            .and_then(|existing_id| self.symbols.get(existing_id))
+            .is_some_and(|existing_symbol| match &existing_symbol.kind {
+                SymbolKind::Function(existing) => type_token_overload_signatures_identical(existing, info),
+                SymbolKind::FunctionOverloads(overloads) => overloads
+                    .iter()
+                    .any(|overload| type_token_overload_signatures_identical(&overload.info, info)),
+                _ => false,
+            });
+        if duplicates_type_token_signature {
+            self.errors
+                .push(errors::duplicate_type_token_overload(&func.name, span));
+        }
+    }
+
+    /// Record a function's declaration and its checked binding, by name and by its declaration span.
+    fn record_function_binding(&mut self, func: &FunctionDecl, span: Span, binding: FunctionBindingInfo) {
         self.local_function_decls.insert(func.name.clone(), func.clone());
         self.type_info
             .declarations
@@ -134,8 +157,6 @@ impl TypeChecker {
             .declarations
             .function_bindings_by_span
             .insert(span, binding);
-        self.current_module_function_symbols
-            .insert(func.name.clone(), symbol_id);
     }
 
     /// Collect the name and structured views of a function's declared bounds in their existing two-pass order.

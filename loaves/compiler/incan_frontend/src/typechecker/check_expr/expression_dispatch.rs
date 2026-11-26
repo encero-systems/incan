@@ -242,13 +242,7 @@ impl TypeChecker {
                 self.check_call_with_contextual_facts(expr, callee, type_args, args, expected_ty)
             }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
-                let errors_before = self.errors.len();
-                let ty =
-                    self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty));
-                self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
-                self.retain_body_ir_empty_list_use(expr, errors_before);
-                self.retain_body_ir_string_slice_call(expr, errors_before);
-                ty
+                self.check_method_call_with_contextual_facts(expr, base, method, type_args, args, expected_ty)
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,
             (Expr::Tuple(items), Some(expected_ty)) => self.check_tuple_with_expected(items, expected_ty),
@@ -290,6 +284,25 @@ impl TypeChecker {
         self.retain_body_ir_value_destination(expr, &ty, expected);
         self.refuse_capturing_callables_held_in(expr);
         self.retain_declared_conversion(expr, &ty, expected)
+    }
+
+    /// Check a contextually typed method call and retain its mutable-argument, empty-list and string-slice facts
+    /// against the call's own diagnostic checkpoint.
+    fn check_method_call_with_contextual_facts(
+        &mut self,
+        expr: &Spanned<Expr>,
+        base: &Spanned<Expr>,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        expected_ty: &ResolvedType,
+    ) -> ResolvedType {
+        let errors_before = self.errors.len();
+        let ty = self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty));
+        self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
+        self.retain_body_ir_empty_list_use(expr, errors_before);
+        self.retain_body_ir_string_slice_call(expr, errors_before);
+        ty
     }
 
     /// Check a contextually typed function call and retain its re-export, mutable-argument and empty-list facts

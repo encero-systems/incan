@@ -10,8 +10,9 @@ use super::flow::{
     Permission, Place, Projection, Root,
 };
 use crate::ast::{
-    AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, IfStmt, IndexAssignmentStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
+    AssignmentStmt, BinaryOp, BindingKind, CallArg, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt,
+    ForStmt, FunctionDecl, IfStmt, IndexAssignmentStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement,
+    SurfaceExpr, Type,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -264,110 +265,17 @@ fn build_graph(
             reason: "escaping or nested ownership contract".into(),
         });
     }
-    let mut builder = Builder {
-        checker,
-        nominal_scope: checker.checked_nominal_type_identities(),
-        owner: identity.clone(),
-        allow_fresh_aggregate_elements,
-        locals: checker
-            .symbols
-            .all_symbols()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, symbol)| {
-                let identity = checker.symbols.identity_of(index)?;
-                let SymbolKind::Variable(variable) = &symbol.kind else {
-                    return None;
-                };
-                (identity.kind == SemanticSourceTargetKind::Local).then(|| {
-                    (
-                        identity.clone(),
-                        Permission {
-                            exclusive: variable.is_mutable,
-                            writable: variable.is_mutable,
-                            transferable: true,
-                        },
-                    )
-                })
-            })
-            .collect(),
-        graph: Graph {
-            owner: identity.clone(),
-            permissions: BTreeMap::new(),
-            loans: Vec::new(),
-            direct_iteration_loans: BTreeSet::new(),
-            item_taking_loops: BTreeMap::new(),
-            taking_moves: BTreeMap::new(),
-            dictionary_lookups: BTreeMap::new(),
-            local_loans: BTreeMap::new(),
-            dependent_locals: BTreeMap::new(),
-            dependent_values: BTreeSet::new(),
-            owned_locals: BTreeMap::new(),
-            value_uses: BTreeMap::new(),
-            invocations: BTreeMap::new(),
-            operations: BTreeMap::new(),
-            closures: BTreeMap::new(),
-            mutation: super::flow::MutationBody::default(),
-            nodes: vec![Node {
-                event: Event::Nothing,
-                successors: Vec::new(),
-                span,
-            }],
-            entry: 0,
-        },
-        constrained: BTreeSet::new(),
-        declared_constrained_inputs: BTreeSet::new(),
-        borrowed_inputs: BTreeSet::new(),
-        aliases: BTreeMap::new(),
-        carriers: BTreeMap::new(),
-        taken_carriers: BTreeSet::new(),
-        closures: BTreeMap::new(),
-        awaited: BTreeSet::new(),
-        consumed_carrier_calls: BTreeSet::new(),
-        fresh_loop_locals: BTreeSet::new(),
-        independent_locals: BTreeSet::new(),
-        independent_call_results: BTreeSet::new(),
-        loops: Vec::new(),
-        owned_source: None,
-        view: None,
-        view_carried: None,
-        view_component: Vec::new(),
-        view_in_tuple: false,
-        view_errors: Vec::new(),
-    };
+    let mut builder = Builder::new(checker, identity, allow_fresh_aggregate_elements, span);
     builder.inputs(parameters, identity)?;
-    let mut receiver_root = None;
-    if let Some((binding, receiver)) = receiver {
-        let root = builder.binding_root(&binding.node, binding.span, SemanticSourceTargetKind::Receiver)?;
-        let writable = receiver == Receiver::Mutable;
-        builder.graph.permissions.insert(
-            Root::Binding(root.clone()),
-            Permission {
-                exclusive: writable,
-                writable,
-                transferable: false,
-            },
-        );
-        receiver_root = Some(root);
-    }
+    let receiver_root = builder.receiver_root(receiver)?;
     if let Some(view) = view {
-        let root = match view.source.slot {
-            SourceSlot::Receiver => receiver_root.clone().ok_or(Unavailable {
-                span,
-                reason: "returned view names an absent receiver".into(),
-            })?,
-            SourceSlot::Parameter(slot) => {
-                let parameter = parameters.get(slot).ok_or(Unavailable {
-                    span,
-                    reason: "returned view names an absent parameter".into(),
-                })?;
-                builder.binding_root(
-                    &parameter.node.name,
-                    parameter.span,
-                    SemanticSourceTargetKind::Parameter,
-                )?
-            }
-        };
+        let root = builder.declared_source_root(
+            &view.source.slot,
+            parameters,
+            receiver_root.as_ref(),
+            span,
+            "returned view",
+        )?;
         let place = Place {
             root: Root::Binding(root),
             projection: view.source.fields.iter().cloned().map(Projection::Field).collect(),
@@ -378,23 +286,13 @@ fn build_graph(
         builder.view_in_tuple = super::super::written_tuple_elements(&callable.return_type().node).is_some();
     }
     if let Some(source) = owned_source {
-        let root = match source.slot {
-            SourceSlot::Receiver => receiver_root.clone().ok_or(Unavailable {
-                span,
-                reason: "owned result dependency names an absent receiver".into(),
-            })?,
-            SourceSlot::Parameter(slot) => {
-                let parameter = parameters.get(slot).ok_or(Unavailable {
-                    span,
-                    reason: "owned result dependency names an absent parameter".into(),
-                })?;
-                builder.binding_root(
-                    &parameter.node.name,
-                    parameter.span,
-                    SemanticSourceTargetKind::Parameter,
-                )?
-            }
-        };
+        let root = builder.declared_source_root(
+            &source.slot,
+            parameters,
+            receiver_root.as_ref(),
+            span,
+            "owned result dependency",
+        )?;
         builder.owned_source = Some(Place {
             root: Root::Binding(root),
             projection: source.fields.iter().cloned().map(Projection::Field).collect(),
@@ -404,6 +302,151 @@ fn build_graph(
     view_errors.append(&mut builder.view_errors);
     result?;
     Ok(builder.graph)
+}
+
+/// Every checked local of the checker's symbol table with the permission its declaration grants: a mutable local is
+/// exclusive and writable, and every local may transfer its value.
+fn checked_local_permissions(checker: &TypeChecker) -> BTreeMap<CanonicalSymbolId, Permission> {
+    checker
+        .symbols
+        .all_symbols()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, symbol)| {
+            let identity = checker.symbols.identity_of(index)?;
+            let SymbolKind::Variable(variable) = &symbol.kind else {
+                return None;
+            };
+            (identity.kind == SemanticSourceTargetKind::Local).then(|| {
+                (
+                    identity.clone(),
+                    Permission {
+                        exclusive: variable.is_mutable,
+                        writable: variable.is_mutable,
+                        transferable: true,
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+/// An ownership graph for `owner` with no recorded facts and one empty entry node at the callable's span.
+fn empty_graph(owner: &CanonicalSymbolId, span: Span) -> Graph {
+    Graph {
+        owner: owner.clone(),
+        permissions: BTreeMap::new(),
+        loans: Vec::new(),
+        direct_iteration_loans: BTreeSet::new(),
+        item_taking_loops: BTreeMap::new(),
+        taking_moves: BTreeMap::new(),
+        dictionary_lookups: BTreeMap::new(),
+        local_loans: BTreeMap::new(),
+        dependent_locals: BTreeMap::new(),
+        dependent_values: BTreeSet::new(),
+        owned_locals: BTreeMap::new(),
+        value_uses: BTreeMap::new(),
+        invocations: BTreeMap::new(),
+        operations: BTreeMap::new(),
+        closures: BTreeMap::new(),
+        mutation: super::flow::MutationBody::default(),
+        nodes: vec![Node {
+            event: Event::Nothing,
+            successors: Vec::new(),
+            span,
+        }],
+        entry: 0,
+    }
+}
+
+impl<'a> Builder<'a> {
+    /// A builder for one callable owned by `identity`, starting from its empty graph and the checker's local
+    /// permissions. Inputs, the receiver and any declared result source are added by the caller.
+    fn new(
+        checker: &'a TypeChecker,
+        identity: &CanonicalSymbolId,
+        allow_fresh_aggregate_elements: bool,
+        span: Span,
+    ) -> Self {
+        Builder {
+            checker,
+            nominal_scope: checker.checked_nominal_type_identities(),
+            owner: identity.clone(),
+            allow_fresh_aggregate_elements,
+            locals: checked_local_permissions(checker),
+            graph: empty_graph(identity, span),
+            constrained: BTreeSet::new(),
+            declared_constrained_inputs: BTreeSet::new(),
+            borrowed_inputs: BTreeSet::new(),
+            aliases: BTreeMap::new(),
+            carriers: BTreeMap::new(),
+            taken_carriers: BTreeSet::new(),
+            closures: BTreeMap::new(),
+            awaited: BTreeSet::new(),
+            consumed_carrier_calls: BTreeSet::new(),
+            fresh_loop_locals: BTreeSet::new(),
+            independent_locals: BTreeSet::new(),
+            independent_call_results: BTreeSet::new(),
+            loops: Vec::new(),
+            owned_source: None,
+            view: None,
+            view_carried: None,
+            view_component: Vec::new(),
+            view_in_tuple: false,
+            view_errors: Vec::new(),
+        }
+    }
+
+    /// Bind a method's receiver and grant it the permission its declared receiver mode allows. A receiver never
+    /// transfers its value out of the body. Returns `None` for a function.
+    fn receiver_root(
+        &mut self,
+        receiver: Option<(&Spanned<String>, Receiver)>,
+    ) -> Result<Option<CanonicalSymbolId>, Unavailable> {
+        let Some((binding, receiver)) = receiver else {
+            return Ok(None);
+        };
+        let root = self.binding_root(&binding.node, binding.span, SemanticSourceTargetKind::Receiver)?;
+        let writable = receiver == Receiver::Mutable;
+        self.graph.permissions.insert(
+            Root::Binding(root.clone()),
+            Permission {
+                exclusive: writable,
+                writable,
+                transferable: false,
+            },
+        );
+        Ok(Some(root))
+    }
+
+    /// The bound root of the receiver or parameter a declared result source names. `subject` names the declaration
+    /// in the refusal when that slot is absent.
+    fn declared_source_root(
+        &self,
+        slot: &SourceSlot,
+        parameters: &[Spanned<Param>],
+        receiver_root: Option<&CanonicalSymbolId>,
+        span: Span,
+        subject: &str,
+    ) -> Result<CanonicalSymbolId, Unavailable> {
+        match slot {
+            SourceSlot::Receiver => receiver_root.cloned().ok_or_else(|| Unavailable {
+                span,
+                reason: format!("{subject} names an absent receiver"),
+            }),
+            SourceSlot::Parameter(slot) => {
+                let parameter = parameters.get(*slot).ok_or_else(|| Unavailable {
+                    span,
+                    reason: format!("{subject} names an absent parameter"),
+                })?;
+                self.binding_root(
+                    &parameter.node.name,
+                    parameter.span,
+                    SemanticSourceTargetKind::Parameter,
+                )
+            }
+        }
+    }
 }
 
 impl Builder<'_> {
@@ -437,23 +480,7 @@ impl Builder<'_> {
         if let Some(plan) = self.fresh_newtype_slot(expression) {
             return self.apply_value_use(expression, plan, incoming);
         }
-        // A checker-resolved module constant is an immutable value, not a storage place in this body's access graph.
-        if matches!(expression.node, Expr::Ident(_) | Expr::Field(_, _))
-            && self
-                .checker
-                .type_info
-                .resolved_identity(expression.span)
-                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const)
-        {
-            return Ok(incoming);
-        }
-        if matches!(expression.node, Expr::Field(_, _))
-            && self
-                .checker
-                .type_info
-                .resolved_identity(expression.span)
-                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
-        {
+        if self.is_resolved_immutable_value(expression) {
             return Ok(incoming);
         }
         if self
@@ -468,72 +495,12 @@ impl Builder<'_> {
                 reason: "operator needs selected callable access facts".into(),
             });
         }
-        if matches!(expression.node, Expr::Field(_, _) | Expr::Index(_, _))
-            && let Some((incoming, path)) = self.projected_view_place(expression, incoming.clone())?
-        {
-            let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
-                span: expression.span,
-                reason: "missing checked projected-view type".into(),
-            })?;
-            let access = if consume && !self.copy_value(ty) {
-                Access::Move
-            } else {
-                Access::Read
-            };
-            return Ok(self.event(
-                incoming,
-                Event::Access {
-                    place: path.place,
-                    access,
-                    through: path.through,
-                },
-                expression.span,
-            ));
+        if let Some(outgoing) = self.projected_view_access(expression, &incoming, consume)? {
+            return Ok(outgoing);
         }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
-                let place = self.place(expression)?;
-                let mut incoming = self.evaluate_place(expression, incoming)?;
-                if let Root::Binding(root) = &place.place.root
-                    && let Some(loans) = self.graph.dependent_locals.get(root).cloned()
-                {
-                    for id in loans {
-                        let loan = self.graph.loans.get(id.0).ok_or(Unavailable {
-                            span: expression.span,
-                            reason: "dependent value has no retained source loan".into(),
-                        })?;
-                        incoming = self.event(
-                            incoming,
-                            Event::Access {
-                                place: loan.source.clone(),
-                                access: Access::Read,
-                                through: Some(id),
-                            },
-                            expression.span,
-                        );
-                    }
-                }
-                let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
-                    span: expression.span,
-                    reason: "missing checked access type".into(),
-                })?;
-                let access = if consume
-                    && (place.through.is_some() || self.constrained.contains(&place.place.root))
-                    && !self.copy_value(ty)
-                {
-                    Access::Move
-                } else {
-                    Access::Read
-                };
-                Ok(self.event(
-                    incoming,
-                    Event::Access {
-                        place: place.place,
-                        access,
-                        through: place.through,
-                    },
-                    expression.span,
-                ))
+                self.place_expression(expression, incoming, consume)
             }
             Expr::Literal(_) => Ok(incoming),
             Expr::List(entries)
@@ -568,43 +535,7 @@ impl Builder<'_> {
             }
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, method, _, arguments) => {
-                if self
-                    .checker
-                    .type_info
-                    .resolved_identity(expression.span)
-                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
-                {
-                    let view_fields = self.enum_argument_view_sources(arguments)?;
-                    if view_fields.iter().any(|field| *field) {
-                        return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
-                    }
-                    return self.variant_construction(arguments, expression.span, incoming);
-                }
-                let enum_view_fields = self.enum_view_method_constructor_fields(receiver, method, expression.span);
-                if let Some(view_fields) = &enum_view_fields {
-                    if view_fields.iter().any(|field| *field) {
-                        return self.enum_view_construction(arguments, view_fields, expression.span, incoming);
-                    }
-                    let view_fields = self.enum_argument_view_sources(arguments)?;
-                    if view_fields.iter().any(|field| *field) {
-                        return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
-                    }
-                    return self.variant_construction(arguments, expression.span, incoming);
-                }
-                if let Some(receiver) =
-                    super::builtins::builtin_str_encode_receiver(&self.checker.type_info, expression)
-                {
-                    let incoming = self.expression(receiver, incoming, false)?;
-                    let (incoming, dependency) = self.retain_operation_operand(receiver, incoming)?;
-                    return self.finish_operation(expression.span, dependency.into_iter().collect(), incoming);
-                }
-                match super::builtins::builtin_place_method_writes(&self.checker.type_info, expression.span) {
-                    Some(writes) => self.builtin_place_method(receiver, writes, arguments, expression.span, incoming),
-                    None if self.uses_ordinary_iteration_access(expression.span) => {
-                        self.ordinary_iteration_call(Some(receiver), arguments, incoming)
-                    }
-                    None => self.apply_call(Some(receiver), arguments, expression.span, incoming),
-                }
+                self.method_call_expression(expression, receiver, method, arguments, incoming)
             }
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             // `?` consumes its carrier and continues with the success payload; the error path leaves the body as a
@@ -616,68 +547,24 @@ impl Builder<'_> {
             }
             Expr::Try(_) if self.view_carried == Some(1) => Err(error_view_try(expression.span)),
             Expr::Binary(left, operation, right) => {
-                let builtin_list_concat = self.builtin_list_concat_argument(expression);
-                let incoming = if builtin_list_concat {
-                    self.builtin_list_concat_operand(left, incoming)?
-                } else {
-                    self.expression(left, incoming, false)?
-                };
-                let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
-                let mut outgoing = if builtin_list_concat {
-                    self.builtin_list_concat_operand(right, incoming.clone())?
-                } else {
-                    self.expression(right, incoming.clone(), false)?
-                };
-                let (evaluated, right_dependency) = self.retain_operation_operand(right, outgoing)?;
-                outgoing = evaluated;
-                if matches!(operation, BinaryOp::And | BinaryOp::Or) {
-                    outgoing.extend(incoming);
-                }
-                self.finish_operation(
-                    expression.span,
-                    left_dependency.into_iter().chain(right_dependency).collect(),
-                    outgoing,
-                )
+                self.binary_expression(expression, left, operation, right, incoming)
             }
             Expr::Slice(base, slice) => self.builtin_list_slice(base, slice, expression.span, incoming),
             Expr::ListComp(comprehension) => self.list_comprehension(comprehension, expression.span, incoming),
             Expr::DictComp(comprehension) => self.dict_comprehension(comprehension, expression.span, incoming),
-            // `await` on a call suspends this body until the call's future completes, and the call's loans end there as
-            // a synchronous call's do. Awaiting a stored future needs task facts of its own.
             Expr::Surface(surface) if super::builtins::awaited(surface).is_some() => {
-                let awaited = super::builtins::awaited(surface).ok_or(Unavailable {
-                    span: expression.span,
-                    reason: "await has no awaited expression".into(),
-                })?;
-                let call = super::builtins::view_call(awaited);
-                if matches!(call.node, Expr::Call(..) | Expr::MethodCall(..)) {
-                    self.awaited.insert(call.span);
-                } else if !self.is_loop_item_value(awaited) {
-                    return Err(Unavailable {
-                        span: awaited.span,
-                        reason: "await on a stored future needs checked task facts".into(),
-                    });
-                }
-                self.expression(awaited, incoming, true)
+                self.awaited_expression(expression, surface, incoming)
             }
             Expr::Yield(Some(value)) if self.is_loop_item_value(value) => self.expression(value, incoming, true),
             Expr::Yield(None) => Ok(incoming),
             Expr::Tuple(items) | Expr::Set(items) if items.iter().any(|item| self.is_loop_item_value(item)) => {
-                let mut outgoing = incoming;
-                for item in items {
-                    outgoing = self.expression(item, outgoing, true)?;
-                }
-                Ok(outgoing)
+                self.consumed_values(items, incoming)
             }
             Expr::List(entries) => {
-                let mut outgoing = incoming;
-                for entry in entries {
-                    let value = match entry {
-                        crate::ast::ListEntry::Element(value) | crate::ast::ListEntry::Spread(value) => value,
-                    };
-                    outgoing = self.expression(value, outgoing, true)?;
-                }
-                Ok(outgoing)
+                let values = entries.iter().map(|entry| match entry {
+                    crate::ast::ListEntry::Element(value) | crate::ast::ListEntry::Spread(value) => value,
+                });
+                self.consumed_values(values, incoming)
             }
             Expr::Dict(entries)
                 if entries.iter().any(|entry| match entry {
@@ -686,19 +573,7 @@ impl Builder<'_> {
                     }
                 }) =>
             {
-                let mut outgoing = incoming;
-                for entry in entries {
-                    match entry {
-                        crate::ast::DictEntry::Pair(key, value) => {
-                            outgoing = self.expression(key, outgoing, false)?;
-                            outgoing = self.expression(value, outgoing, true)?;
-                        }
-                        crate::ast::DictEntry::Spread(value) => {
-                            outgoing = self.expression(value, outgoing, true)?;
-                        }
-                    }
-                }
-                Ok(outgoing)
+                self.consumed_dict_entries(entries, incoming)
             }
             Expr::Closure(..) => Err(Unavailable {
                 span: expression.span,
@@ -709,6 +584,255 @@ impl Builder<'_> {
                 reason: "expression needs checked call or dependency access facts".into(),
             }),
         }
+    }
+
+    /// Whether the checker resolved this name or field to a module constant or an enum variant. Both are immutable
+    /// values, not storage places in this body's access graph, so evaluating them records no access.
+    fn is_resolved_immutable_value(&self, expression: &Spanned<Expr>) -> bool {
+        let resolved_as = |accepts: fn(&SemanticSourceTargetKind) -> bool| {
+            self.checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| accepts(&identity.kind))
+        };
+        match expression.node {
+            Expr::Ident(_) => resolved_as(|kind| *kind == SemanticSourceTargetKind::Const),
+            Expr::Field(_, _) => resolved_as(|kind| {
+                matches!(
+                    kind,
+                    SemanticSourceTargetKind::Const | SemanticSourceTargetKind::Variant
+                )
+            }),
+            _ => false,
+        }
+    }
+
+    /// Access a field or index that the checker projected through a view: a consumed non-Copy value moves out of the
+    /// viewed place, anything else reads it. Returns `None` when the expression is not a projected view place, leaving
+    /// `incoming` for the ordinary place access.
+    fn projected_view_access(
+        &mut self,
+        expression: &Spanned<Expr>,
+        incoming: &[usize],
+        consume: bool,
+    ) -> Result<Option<Vec<usize>>, Unavailable> {
+        if !matches!(expression.node, Expr::Field(_, _) | Expr::Index(_, _)) {
+            return Ok(None);
+        }
+        let Some((incoming, path)) = self.projected_view_place(expression, incoming.to_vec())? else {
+            return Ok(None);
+        };
+        let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
+            span: expression.span,
+            reason: "missing checked projected-view type".into(),
+        })?;
+        let access = if consume && !self.copy_value(ty) {
+            Access::Move
+        } else {
+            Access::Read
+        };
+        Ok(Some(self.event(
+            incoming,
+            Event::Access {
+                place: path.place,
+                access,
+                through: path.through,
+            },
+            expression.span,
+        )))
+    }
+
+    /// Access a stored place. A local that depends on retained loans reads each loan's source first; a consumed
+    /// non-Copy value moves out only when it is reached through a loan or its root is ownership-constrained.
+    fn place_expression(
+        &mut self,
+        expression: &Spanned<Expr>,
+        incoming: Vec<usize>,
+        consume: bool,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let place = self.place(expression)?;
+        let mut incoming = self.evaluate_place(expression, incoming)?;
+        if let Root::Binding(root) = &place.place.root
+            && let Some(loans) = self.graph.dependent_locals.get(root).cloned()
+        {
+            for id in loans {
+                let loan = self.graph.loans.get(id.0).ok_or(Unavailable {
+                    span: expression.span,
+                    reason: "dependent value has no retained source loan".into(),
+                })?;
+                incoming = self.event(
+                    incoming,
+                    Event::Access {
+                        place: loan.source.clone(),
+                        access: Access::Read,
+                        through: Some(id),
+                    },
+                    expression.span,
+                );
+            }
+        }
+        let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
+            span: expression.span,
+            reason: "missing checked access type".into(),
+        })?;
+        let access = if consume
+            && (place.through.is_some() || self.constrained.contains(&place.place.root))
+            && !self.copy_value(ty)
+        {
+            Access::Move
+        } else {
+            Access::Read
+        };
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place: place.place,
+                access,
+                through: place.through,
+            },
+            expression.span,
+        ))
+    }
+
+    /// Evaluate a method call: a checker-resolved variant or enum-view constructor builds its value, a builtin
+    /// `str.encode` and a builtin place method follow their builtin access rules, and every other call applies its
+    /// selected callable's access facts.
+    fn method_call_expression(
+        &mut self,
+        expression: &Spanned<Expr>,
+        receiver: &Spanned<Expr>,
+        method: &str,
+        arguments: &[CallArg],
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if self
+            .checker
+            .type_info
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            let view_fields = self.enum_argument_view_sources(arguments)?;
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
+            }
+            return self.variant_construction(arguments, expression.span, incoming);
+        }
+        let enum_view_fields = self.enum_view_method_constructor_fields(receiver, method, expression.span);
+        if let Some(view_fields) = &enum_view_fields {
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, view_fields, expression.span, incoming);
+            }
+            let view_fields = self.enum_argument_view_sources(arguments)?;
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
+            }
+            return self.variant_construction(arguments, expression.span, incoming);
+        }
+        if let Some(receiver) = super::builtins::builtin_str_encode_receiver(&self.checker.type_info, expression) {
+            let incoming = self.expression(receiver, incoming, false)?;
+            let (incoming, dependency) = self.retain_operation_operand(receiver, incoming)?;
+            return self.finish_operation(expression.span, dependency.into_iter().collect(), incoming);
+        }
+        match super::builtins::builtin_place_method_writes(&self.checker.type_info, expression.span) {
+            Some(writes) => self.builtin_place_method(receiver, writes, arguments, expression.span, incoming),
+            None if self.uses_ordinary_iteration_access(expression.span) => {
+                self.ordinary_iteration_call(Some(receiver), arguments, incoming)
+            }
+            None => self.apply_call(Some(receiver), arguments, expression.span, incoming),
+        }
+    }
+
+    /// Evaluate a binary operation's operands in order and retain what each result depends on. A short-circuit `and`
+    /// or `or` may skip its right operand, so the left operand's outgoing edges also reach the result.
+    fn binary_expression(
+        &mut self,
+        expression: &Spanned<Expr>,
+        left: &Spanned<Expr>,
+        operation: &BinaryOp,
+        right: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let builtin_list_concat = self.builtin_list_concat_argument(expression);
+        let incoming = if builtin_list_concat {
+            self.builtin_list_concat_operand(left, incoming)?
+        } else {
+            self.expression(left, incoming, false)?
+        };
+        let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
+        let mut outgoing = if builtin_list_concat {
+            self.builtin_list_concat_operand(right, incoming.clone())?
+        } else {
+            self.expression(right, incoming.clone(), false)?
+        };
+        let (evaluated, right_dependency) = self.retain_operation_operand(right, outgoing)?;
+        outgoing = evaluated;
+        if matches!(operation, BinaryOp::And | BinaryOp::Or) {
+            outgoing.extend(incoming);
+        }
+        self.finish_operation(
+            expression.span,
+            left_dependency.into_iter().chain(right_dependency).collect(),
+            outgoing,
+        )
+    }
+
+    /// `await` on a call suspends this body until the call's future completes, and the call's loans end there as a
+    /// synchronous call's do. Awaiting a stored future needs task facts of its own, so only a loop item may be awaited
+    /// without a call.
+    fn awaited_expression(
+        &mut self,
+        expression: &Spanned<Expr>,
+        surface: &SurfaceExpr,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let awaited = super::builtins::awaited(surface).ok_or(Unavailable {
+            span: expression.span,
+            reason: "await has no awaited expression".into(),
+        })?;
+        let call = super::builtins::view_call(awaited);
+        if matches!(call.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            self.awaited.insert(call.span);
+        } else if !self.is_loop_item_value(awaited) {
+            return Err(Unavailable {
+                span: awaited.span,
+                reason: "await on a stored future needs checked task facts".into(),
+            });
+        }
+        self.expression(awaited, incoming, true)
+    }
+
+    /// Evaluate a display's values in order, consuming each one.
+    fn consumed_values<'value>(
+        &mut self,
+        values: impl IntoIterator<Item = &'value Spanned<Expr>>,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let mut outgoing = incoming;
+        for value in values {
+            outgoing = self.expression(value, outgoing, true)?;
+        }
+        Ok(outgoing)
+    }
+
+    /// Evaluate a dict display that holds a loop item: keys are read, and values and spread sources are consumed.
+    fn consumed_dict_entries(
+        &mut self,
+        entries: &[crate::ast::DictEntry],
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let mut outgoing = incoming;
+        for entry in entries {
+            match entry {
+                crate::ast::DictEntry::Pair(key, value) => {
+                    outgoing = self.expression(key, outgoing, false)?;
+                    outgoing = self.expression(value, outgoing, true)?;
+                }
+                crate::ast::DictEntry::Spread(value) => {
+                    outgoing = self.expression(value, outgoing, true)?;
+                }
+            }
+        }
+        Ok(outgoing)
     }
 
     /// A checker-selected builtin list slice reads its stored base and Copy bounds, then returns fresh storage. A

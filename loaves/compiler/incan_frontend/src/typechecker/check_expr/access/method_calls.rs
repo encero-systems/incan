@@ -651,11 +651,7 @@ impl TypeChecker {
             return result;
         }
 
-        if let Some(ret) = self.check_numeric_resize_method(&base_ty, method, type_args, args, span, expected_return_ty)
-        {
-            return ret;
-        }
-        if let Some(ret) = self.check_integer_overflow_helper(&base_ty, method, type_args, args, &arg_types, span) {
+        if let Some(ret) = self.check_numeric_helper_method(&call, &base_ty, &arg_types) {
             return ret;
         }
         // ---- Declared and builtin members ----
@@ -682,12 +678,7 @@ impl TypeChecker {
             return result;
         }
 
-        if let Some(ret) = self.clone_reference_value(&base_ty, method, type_args, args, span) {
-            return ret;
-        }
-        if let Some(ret) =
-            self.resolve_union_clone_trait_method_call(&base_ty, method, type_args, args, &arg_types, span)
-        {
+        if let Some(ret) = self.check_reference_or_union_clone(&call, &base_ty, &arg_types) {
             return ret;
         }
 
@@ -700,6 +691,43 @@ impl TypeChecker {
         }
 
         self.check_method_fallback(&call, &base_ty, &arg_types)
+    }
+
+    /// Check a numeric resize method or an integer overflow helper on a numeric receiver.
+    fn check_numeric_helper_method(
+        &mut self,
+        call: &MethodCallSite<'_>,
+        base_ty: &ResolvedType,
+        arg_types: &[ResolvedType],
+    ) -> Option<ResolvedType> {
+        let MethodCallSite {
+            method,
+            type_args,
+            args,
+            span,
+            expected_return_ty,
+            ..
+        } = *call;
+        self.check_numeric_resize_method(base_ty, method, type_args, args, span, expected_return_ty)
+            .or_else(|| self.check_integer_overflow_helper(base_ty, method, type_args, args, arg_types, span))
+    }
+
+    /// Check `clone` on a reference receiver, or a `Clone` trait method selected through a union receiver.
+    fn check_reference_or_union_clone(
+        &mut self,
+        call: &MethodCallSite<'_>,
+        base_ty: &ResolvedType,
+        arg_types: &[ResolvedType],
+    ) -> Option<ResolvedType> {
+        let MethodCallSite {
+            method,
+            type_args,
+            args,
+            span,
+            ..
+        } = *call;
+        self.clone_reference_value(base_ty, method, type_args, args, span)
+            .or_else(|| self.resolve_union_clone_trait_method_call(base_ty, method, type_args, args, arg_types, span))
     }
 }
 

@@ -28,22 +28,9 @@ fn option_type(ty: IncanType) -> IncanType {
     generic("Option".into(), vec![ty])
 }
 
-/// Close the ordered source and linked signatures, refusing a changed linked arity without visiting other owners.
-#[test]
-fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), String> {
-    let selected = identity("select");
-    let int = IncanType::Primitive(IncanPrimitiveType::Int);
-    let text = IncanType::Primitive(IncanPrimitiveType::Str);
-    let boolean = IncanType::Primitive(IncanPrimitiveType::Bool);
-    let target = NamedCallableTarget {
-        name: "renamed_select".into(),
-        direct_call_id: None,
-        builtin: None,
-        type_args: vec![int.clone()],
-        binding: ArgumentBinding::resolved_positional(1),
-        canonical: Some(selected.clone()),
-        receiver_type: None,
-    };
+/// A module whose 32 unrelated bodies and 8 linked callables surround three source `select` overloads, one of a
+/// different arity, and the linked `select` the carrier demand names.
+fn carrier_fixture_module(selected: &CanonicalSymbolId, text: &IncanType, boolean: &IncanType) -> BodyIrModule {
     let mut module = BodyIrModule::declarations_only("app".into());
     for index in 0..32 {
         let name = format!("unrelated_{index}");
@@ -73,7 +60,7 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
     different_arity.canonical = Some(selected.clone());
     module.bodies.extend([first, different_arity, second]);
     let linked = LoafCallable {
-        canonical: selected,
+        canonical: selected.clone(),
         item: "app::select".into(),
         parameters: Vec::new(),
         return_type: option_type(boolean.clone()),
@@ -90,6 +77,26 @@ fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), Str
         })
         .collect();
     module.loaf_callables.push(linked);
+    module
+}
+
+/// Close the ordered source and linked signatures, refusing a changed linked arity without visiting other owners.
+#[test]
+fn a_named_carrier_demand_visits_only_its_ordered_signatures() -> Result<(), String> {
+    let selected = identity("select");
+    let int = IncanType::Primitive(IncanPrimitiveType::Int);
+    let text = IncanType::Primitive(IncanPrimitiveType::Str);
+    let boolean = IncanType::Primitive(IncanPrimitiveType::Bool);
+    let target = NamedCallableTarget {
+        name: "renamed_select".into(),
+        direct_call_id: None,
+        builtin: None,
+        type_args: vec![int.clone()],
+        binding: ArgumentBinding::resolved_positional(1),
+        canonical: Some(selected.clone()),
+        receiver_type: None,
+    };
+    let mut module = carrier_fixture_module(&selected, &text, &boolean);
 
     let constructors = ConstructorIndex::default();
     let body_indices = body_index(&module);

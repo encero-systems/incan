@@ -116,83 +116,7 @@ fn signature_block_value_use_mutations_reject_map_err_callback_substitution() ->
             else {
                 return Err(format!("{route}: use flow is not checked").into());
             };
-            let marker = graph
-                .value_uses
-                .values()
-                .find_map(|value_use| value_use.result_map_err)
-                .ok_or_else(|| format!("{route}: missing map_err marker"))?;
-            let outer_receiver = graph
-                .invocations
-                .get(&marker.invocation)
-                .and_then(|invocation| invocation.receiver)
-                .ok_or_else(|| format!("{route}: missing map_err receiver loan"))?;
-            let receiver_source = graph
-                .loans
-                .get(outer_receiver.0)
-                .ok_or_else(|| format!("{route}: missing map_err receiver loan"))?
-                .source
-                .clone();
-            match corruption {
-                0 => {
-                    graph
-                        .value_uses
-                        .get_mut(&marker.receiver)
-                        .ok_or("missing receiver value use")?
-                        .kind = flow::ValueUseKind::Read;
-                }
-                1 => {
-                    graph
-                        .invocations
-                        .get_mut(&marker.invocation)
-                        .ok_or("missing outer invocation")?
-                        .arguments[0]
-                        .slot = 1;
-                }
-                2 => {
-                    graph
-                        .invocations
-                        .get_mut(&marker.invocation)
-                        .ok_or("missing outer invocation")?
-                        .arguments[0]
-                        .access = incan_semantics_core::IncanInputAccess::Owned;
-                }
-                3 => {
-                    graph
-                        .invocations
-                        .get_mut(&marker.invocation)
-                        .ok_or("missing outer invocation")?
-                        .arguments[0]
-                        .source = Some(receiver_source);
-                }
-                4 => {
-                    graph
-                        .invocations
-                        .get_mut(&marker.invocation)
-                        .ok_or("missing outer invocation")?
-                        .arguments[0]
-                        .loan = Some(outer_receiver);
-                }
-                5 => {
-                    let outer_callee = graph
-                        .invocations
-                        .get(&marker.invocation)
-                        .ok_or("missing outer invocation")?
-                        .callee
-                        .clone();
-                    graph
-                        .invocations
-                        .get_mut(&marker.receiver)
-                        .ok_or("missing inner invocation")?
-                        .callee = outer_callee;
-                }
-                _ => {
-                    let loan = graph.loans.get_mut(outer_receiver.0).ok_or("missing receiver loan")?;
-                    let flow::Root::Temporary { expression, .. } = &mut loan.source.root else {
-                        return Err("map_err receiver loan is not a temporary".into());
-                    };
-                    *expression = marker.callback;
-                }
-            }
+            corrupt_map_err_graph(route, graph, corruption)?;
             assert!(
                 corrupted.executable_function_input(&owner, function).is_err(),
                 "{route}: accepted map_err graph corruption {corruption}"
@@ -200,6 +124,101 @@ fn signature_block_value_use_mutations_reject_map_err_callback_substitution() ->
         }
     }
 
+    assert_paired_map_err_routes_are_distinct(provider)?;
+    Ok(())
+}
+
+/// Apply one of seven corruptions to the classified `map_err` call: retype the receiver use, move, re-own,
+/// re-source or re-lend the outer argument, give the inner call the outer callee, or point the receiver loan's
+/// temporary at the callback.
+fn corrupt_map_err_graph(
+    route: &str,
+    graph: &mut flow::Graph,
+    corruption: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let marker = graph
+        .value_uses
+        .values()
+        .find_map(|value_use| value_use.result_map_err)
+        .ok_or_else(|| format!("{route}: missing map_err marker"))?;
+    let outer_receiver = graph
+        .invocations
+        .get(&marker.invocation)
+        .and_then(|invocation| invocation.receiver)
+        .ok_or_else(|| format!("{route}: missing map_err receiver loan"))?;
+    let receiver_source = graph
+        .loans
+        .get(outer_receiver.0)
+        .ok_or_else(|| format!("{route}: missing map_err receiver loan"))?
+        .source
+        .clone();
+    match corruption {
+        0 => {
+            graph
+                .value_uses
+                .get_mut(&marker.receiver)
+                .ok_or("missing receiver value use")?
+                .kind = flow::ValueUseKind::Read;
+        }
+        1 => {
+            graph
+                .invocations
+                .get_mut(&marker.invocation)
+                .ok_or("missing outer invocation")?
+                .arguments[0]
+                .slot = 1;
+        }
+        2 => {
+            graph
+                .invocations
+                .get_mut(&marker.invocation)
+                .ok_or("missing outer invocation")?
+                .arguments[0]
+                .access = incan_semantics_core::IncanInputAccess::Owned;
+        }
+        3 => {
+            graph
+                .invocations
+                .get_mut(&marker.invocation)
+                .ok_or("missing outer invocation")?
+                .arguments[0]
+                .source = Some(receiver_source);
+        }
+        4 => {
+            graph
+                .invocations
+                .get_mut(&marker.invocation)
+                .ok_or("missing outer invocation")?
+                .arguments[0]
+                .loan = Some(outer_receiver);
+        }
+        5 => {
+            let outer_callee = graph
+                .invocations
+                .get(&marker.invocation)
+                .ok_or("missing outer invocation")?
+                .callee
+                .clone();
+            graph
+                .invocations
+                .get_mut(&marker.receiver)
+                .ok_or("missing inner invocation")?
+                .callee = outer_callee;
+        }
+        _ => {
+            let loan = graph.loans.get_mut(outer_receiver.0).ok_or("missing receiver loan")?;
+            let flow::Root::Temporary { expression, .. } = &mut loan.source.root else {
+                return Err("map_err receiver loan is not a temporary".into());
+            };
+            *expression = marker.callback;
+        }
+    }
+    Ok(())
+}
+
+/// Two capture-free `map_err` calls in one body replay, but reusing one call's invocation and callback for the other,
+/// or swapping their callbacks, is refused.
+fn assert_paired_map_err_routes_are_distinct(provider: &str) -> Result<(), Box<dyn std::error::Error>> {
     let paired = "from views import decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Result[int, Fault]:\n    fault = Fault.Malformed\n    first = decode(value).map_err((_) => Fault.Malformed)?\n    second = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(first + second)\n";
     let paired_tokens = crate::lexer::lex(paired).map_err(|errors| format!("{errors:?}"))?;
     let paired_program = crate::parser::parse(&paired_tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -369,21 +388,7 @@ fn signature_block_classifies_package_map_err_and_decoded_record() -> Result<(),
 fn signature_block_retains_explicit_list_result_for_map_err_and_match() -> Result<(), Box<dyn std::error::Error>> {
     let provider = "pub def produce(seed: Owned[int]) -> Result[list[bytes], str]:\n    return Ok([b\"row\"])\n";
     let consumer = "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    rows = produce(seed).map_err((fault) => fault)?\n    return Ok(rows)\n\ndef match_rows(seed: Owned[int]) -> int:\n    match produce(seed):\n        Ok(rows) => return len(rows)\n        Err(_) => return 0\n";
-    for refused in [
-        "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    captured = \"fault\"\n    rows = produce(seed).map_err((_) => captured)?\n    return Ok(rows)\n",
-        "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    result = produce(seed)\n    rows = result.map_err((fault) => fault)?\n    return Ok(rows)\n",
-    ] {
-        for (route, checker) in super::one_type::package_consumer_checkers(provider, refused)? {
-            assert!(
-                checker
-                    .errors
-                    .iter()
-                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
-                "{route}: unsupported Explicit map_err receiver admitted: {:?}",
-                checker.errors
-            );
-        }
-    }
+    assert_unsupported_explicit_map_err_receivers_refused(provider)?;
     let tokens = crate::lexer::lex(consumer).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let map_function = program
@@ -490,6 +495,26 @@ fn signature_block_retains_explicit_list_result_for_map_err_and_match() -> Resul
             .ok_or("missing reanchored outer")?
             .result_requirement = Some(exact);
         assert!(reanchored.executable_function_input(&owner, map_function).is_err());
+    }
+    Ok(())
+}
+
+/// A captureful callback or a stored Explicit Result as the `map_err` receiver stays refused on both routes.
+fn assert_unsupported_explicit_map_err_receivers_refused(provider: &str) -> Result<(), Box<dyn std::error::Error>> {
+    for refused in [
+        "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    captured = \"fault\"\n    rows = produce(seed).map_err((_) => captured)?\n    return Ok(rows)\n",
+        "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    result = produce(seed)\n    rows = result.map_err((fault) => fault)?\n    return Ok(rows)\n",
+    ] {
+        for (route, checker) in super::one_type::package_consumer_checkers(provider, refused)? {
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
+                "{route}: unsupported Explicit map_err receiver admitted: {:?}",
+                checker.errors
+            );
+        }
     }
     Ok(())
 }

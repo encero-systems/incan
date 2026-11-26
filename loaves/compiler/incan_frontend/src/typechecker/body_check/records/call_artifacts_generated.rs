@@ -155,9 +155,46 @@ const CALL_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
 ];
 
-const GENERATOR_SHA256: &str = "d814af54d6b56940eaa2d3de87c2ce6ae75ba99785ceff989cdd561c92877f45";
+const GENERATOR_SHA256: &str = "adb8ce32c9b63958b84f8326831f92147145b46d9449370ea66017cc9250cc7c";
 
+/// Project every call-artifact collection, in schema order, into its record rows.
 pub(super) fn project(
+    positions: &Positions,
+    calls: &crate::typechecker::type_info::CallArtifacts,
+    fields: &mut Fields,
+) -> Result<(), NodeBindingError> {
+    project_part_0(positions, calls, fields)?;
+    project_part_1(positions, calls, fields)?;
+    project_part_2(positions, calls, fields)?;
+    Ok(())
+}
+
+/// Restore one call-artifact row into the collection its selector names. Returns whether the row was a call artifact.
+pub(super) fn restore(
+    positions: &Positions,
+    calls: &mut crate::typechecker::type_info::CallArtifacts,
+    row: &[String],
+) -> Result<bool, NodeBindingError> {
+    if row[0] != "artifact-call" {
+        return Ok(false);
+    }
+    let span = positions.span(&row[1])?;
+    let mut values = row[3..].iter();
+    let selector = row[2].as_str();
+    if !(restore_part_0(positions, calls, selector, span, &mut values)?
+        || restore_part_1(positions, calls, selector, span, &mut values)?
+        || restore_part_2(positions, calls, selector, span, &mut values)?)
+    {
+        return Err(NodeBindingError::MissingNode);
+    }
+    if values.next().is_some() {
+        return Err(NodeBindingError::MissingNode);
+    }
+    Ok(true)
+}
+
+/// Project call-artifact group 0 into its record rows.
+fn project_part_0(
     positions: &Positions,
     calls: &crate::typechecker::type_info::CallArtifacts,
     fields: &mut Fields,
@@ -213,6 +250,94 @@ pub(super) fn project(
             "true".into(),
         ]);
     }
+    Ok(())
+}
+
+/// Restore a row whose selector names a collection of call-artifact group 0. Returns whether it named one.
+fn restore_part_0(
+    positions: &Positions,
+    calls: &mut crate::typechecker::type_info::CallArtifacts,
+    selector: &str,
+    span: crate::ast::Span,
+    values: &mut std::slice::Iter<'_, String>,
+) -> Result<bool, NodeBindingError> {
+    match selector {
+        "body_ir_reexport_calls" => {
+            artifact_admission::restore_body_ir_reexport_calls(
+                positions,
+                &mut calls.body_ir_reexport_calls,
+                span,
+                values,
+            )?;
+        }
+        "body_ir_string_slice_members" => {
+            if calls
+                .body_ir_string_slice_members
+                .insert(span, positions.canonical(next(values)?)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "body_ir_self_result_methods" => {
+            if calls
+                .body_ir_self_result_methods
+                .insert(span, positions.canonical(next(values)?)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "body_ir_async_call_targets" => {
+            if calls
+                .body_ir_async_call_targets
+                .insert(span, positions.canonical(next(values)?)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "body_ir_native_constructor_bindings" => {
+            artifact_admission::restore_body_ir_native_constructor_bindings(
+                positions,
+                &mut calls.body_ir_native_constructor_bindings,
+                span,
+                values,
+            )?;
+        }
+        "body_ir_module_constructor_bindings" => {
+            artifact_admission::restore_body_ir_module_constructor_bindings(
+                positions,
+                &mut calls.body_ir_module_constructor_bindings,
+                span,
+                values,
+            )?;
+        }
+        "body_ir_native_argument_identities" => {
+            if calls
+                .body_ir_native_argument_identities
+                .insert(span, positions.canonical(next(values)?)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "body_ir_factory_result_conflicts" => {
+            if next(values)? != "true" || !calls.body_ir_factory_result_conflicts.insert(span) {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Project call-artifact group 1 into its record rows.
+fn project_part_1(
+    positions: &Positions,
+    calls: &crate::typechecker::type_info::CallArtifacts,
+    fields: &mut Fields,
+) -> Result<(), NodeBindingError> {
     for (span, value) in &calls.body_ir_factory_owner_types {
         let mut row = vec![
             "artifact-call".into(),
@@ -275,6 +400,91 @@ pub(super) fn project(
         fields.push(row);
     }
     artifact_admission::project_isinstance_targets(positions, &calls.isinstance_targets, fields)?;
+    Ok(())
+}
+
+/// Restore a row whose selector names a collection of call-artifact group 1. Returns whether it named one.
+fn restore_part_1(
+    positions: &Positions,
+    calls: &mut crate::typechecker::type_info::CallArtifacts,
+    selector: &str,
+    span: crate::ast::Span,
+    values: &mut std::slice::Iter<'_, String>,
+) -> Result<bool, NodeBindingError> {
+    match selector {
+        "body_ir_factory_owner_types" => {
+            if calls
+                .body_ir_factory_owner_types
+                .insert(span, read_type(values)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "body_ir_constructor_types" => {
+            if calls
+                .body_ir_constructor_types
+                .insert(span, read_type(values)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "body_ir_native_codec_members" => {
+            if calls
+                .body_ir_native_codec_members
+                .insert(span, positions.canonical(next(values)?)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "inferred_constructor_types" => {
+            if calls
+                .inferred_constructor_types
+                .insert(span, read_type(values)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "inferred_call_result_types" => {
+            if calls
+                .inferred_call_result_types
+                .insert(span, read_type(values)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "mutable_receiver_method_calls" => {
+            if next(values)? != "true" || !calls.mutable_receiver_method_calls.insert(span) {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "fixed_unpack_plans" => {
+            if calls
+                .fixed_unpack_plans
+                .insert(span, artifact_admission::read_fixed_unpack(values)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "isinstance_targets" => {
+            artifact_admission::restore_isinstance_targets(positions, &mut calls.isinstance_targets, span, values)?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Project call-artifact group 2 into its record rows.
+fn project_part_2(
+    positions: &Positions,
+    calls: &crate::typechecker::type_info::CallArtifacts,
+    fields: &mut Fields,
+) -> Result<(), NodeBindingError> {
     for (span, value) in &calls.race_arm_binding_types {
         let mut row = vec![
             "artifact-call".into(),
@@ -343,161 +553,23 @@ pub(super) fn project(
     Ok(())
 }
 
-pub(super) fn restore(
+/// Restore a row whose selector names a collection of call-artifact group 2. Returns whether it named one.
+fn restore_part_2(
     positions: &Positions,
     calls: &mut crate::typechecker::type_info::CallArtifacts,
-    row: &[String],
+    selector: &str,
+    span: crate::ast::Span,
+    values: &mut std::slice::Iter<'_, String>,
 ) -> Result<bool, NodeBindingError> {
-    if row[0] != "artifact-call" {
-        return Ok(false);
-    }
-    let span = positions.span(&row[1])?;
-    let mut values = row[3..].iter();
-    match row[2].as_str() {
-        "body_ir_reexport_calls" => {
-            artifact_admission::restore_body_ir_reexport_calls(
-                positions,
-                &mut calls.body_ir_reexport_calls,
-                span,
-                &mut values,
-            )?;
-        }
-        "body_ir_string_slice_members" => {
-            if calls
-                .body_ir_string_slice_members
-                .insert(span, positions.canonical(next(&mut values)?)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "body_ir_self_result_methods" => {
-            if calls
-                .body_ir_self_result_methods
-                .insert(span, positions.canonical(next(&mut values)?)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "body_ir_async_call_targets" => {
-            if calls
-                .body_ir_async_call_targets
-                .insert(span, positions.canonical(next(&mut values)?)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "body_ir_native_constructor_bindings" => {
-            artifact_admission::restore_body_ir_native_constructor_bindings(
-                positions,
-                &mut calls.body_ir_native_constructor_bindings,
-                span,
-                &mut values,
-            )?;
-        }
-        "body_ir_module_constructor_bindings" => {
-            artifact_admission::restore_body_ir_module_constructor_bindings(
-                positions,
-                &mut calls.body_ir_module_constructor_bindings,
-                span,
-                &mut values,
-            )?;
-        }
-        "body_ir_native_argument_identities" => {
-            if calls
-                .body_ir_native_argument_identities
-                .insert(span, positions.canonical(next(&mut values)?)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "body_ir_factory_result_conflicts" => {
-            if next(&mut values)? != "true" || !calls.body_ir_factory_result_conflicts.insert(span) {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "body_ir_factory_owner_types" => {
-            if calls
-                .body_ir_factory_owner_types
-                .insert(span, read_type(&mut values)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "body_ir_constructor_types" => {
-            if calls
-                .body_ir_constructor_types
-                .insert(span, read_type(&mut values)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "body_ir_native_codec_members" => {
-            if calls
-                .body_ir_native_codec_members
-                .insert(span, positions.canonical(next(&mut values)?)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "inferred_constructor_types" => {
-            if calls
-                .inferred_constructor_types
-                .insert(span, read_type(&mut values)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "inferred_call_result_types" => {
-            if calls
-                .inferred_call_result_types
-                .insert(span, read_type(&mut values)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "mutable_receiver_method_calls" => {
-            if next(&mut values)? != "true" || !calls.mutable_receiver_method_calls.insert(span) {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "fixed_unpack_plans" => {
-            if calls
-                .fixed_unpack_plans
-                .insert(span, artifact_admission::read_fixed_unpack(&mut values)?)
-                .is_some()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-        }
-        "isinstance_targets" => {
-            artifact_admission::restore_isinstance_targets(
-                positions,
-                &mut calls.isinstance_targets,
-                span,
-                &mut values,
-            )?;
-        }
+    match selector {
         "race_arm_binding_types" => {
-            if calls
-                .race_arm_binding_types
-                .insert(span, read_type(&mut values)?)
-                .is_some()
-            {
+            if calls.race_arm_binding_types.insert(span, read_type(values)?).is_some() {
                 return Err(NodeBindingError::MissingNode);
             }
         }
         "resolved_operator_calls" => {
-            let kind = artifact_admission::read_operator_kind(next(&mut values)?)?;
-            let method = next(&mut values)?.to_owned();
+            let kind = artifact_admission::read_operator_kind(next(values)?)?;
+            let method = next(values)?.to_owned();
             if calls
                 .resolved_operator_calls
                 .insert(
@@ -514,7 +586,7 @@ pub(super) fn restore(
                 positions,
                 &mut calls.resolved_method_calls,
                 span,
-                &mut values,
+                values,
             )?;
         }
         "compiler_generated_member_identities" => {
@@ -522,35 +594,35 @@ pub(super) fn restore(
                 positions,
                 &mut calls.compiler_generated_member_identities,
                 span,
-                &mut values,
+                values,
             )?;
         }
         "resolved_collection_constructors" => {
-            let value = incan_lang::lang::types::collections::from_str(next(&mut values)?)
-                .ok_or(NodeBindingError::MissingNode)?;
+            let value =
+                incan_lang::lang::types::collections::from_str(next(values)?).ok_or(NodeBindingError::MissingNode)?;
             if calls.resolved_collection_constructors.insert(span, value).is_some() {
                 return Err(NodeBindingError::MissingNode);
             }
         }
         "closure_holding_params" => {
-            if next(&mut values)? != "true" || !calls.closure_holding_params.insert(span) {
+            if next(values)? != "true" || !calls.closure_holding_params.insert(span) {
                 return Err(NodeBindingError::MissingNode);
             }
         }
         "closure_returning_callables" => {
-            if next(&mut values)? != "true" || !calls.closure_returning_callables.insert(span) {
+            if next(values)? != "true" || !calls.closure_returning_callables.insert(span) {
                 return Err(NodeBindingError::MissingNode);
             }
         }
         "capturing_callable_bindings" => {
-            if next(&mut values)? != "true" || !calls.capturing_callable_bindings.insert(span) {
+            if next(values)? != "true" || !calls.capturing_callable_bindings.insert(span) {
                 return Err(NodeBindingError::MissingNode);
             }
         }
         "source_display_methods" => {
             if calls
                 .source_display_methods
-                .insert(span, positions.canonical(next(&mut values)?)?)
+                .insert(span, positions.canonical(next(values)?)?)
                 .is_some()
             {
                 return Err(NodeBindingError::MissingNode);
@@ -561,13 +633,10 @@ pub(super) fn restore(
                 positions,
                 &mut calls.error_message_display_types,
                 span,
-                &mut values,
+                values,
             )?;
         }
-        _ => return Err(NodeBindingError::MissingNode),
-    }
-    if values.next().is_some() {
-        return Err(NodeBindingError::MissingNode);
+        _ => return Ok(false),
     }
     Ok(true)
 }

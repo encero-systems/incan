@@ -143,10 +143,7 @@ impl TypeChecker {
         if let ResolvedType::RustPath(path) = &base_ty
             && let Some((element, _length)) = self.rust_array_parts(path)
         {
-            if !is_intlike_for_index(&index_ty) {
-                self.errors
-                    .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
-            }
+            self.require_int_index(&index_ty, index);
             return element;
         }
         if self.is_std_json_value_type(&base_ty) && !Self::is_std_json_value_index_type(&index_ty) {
@@ -166,10 +163,7 @@ impl TypeChecker {
         match base_ty {
             ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
                 Some(CollectionTypeId::List) if !args.is_empty() => {
-                    if !is_intlike_for_index(&index_ty) {
-                        self.errors
-                            .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
-                    }
+                    self.require_int_index(&index_ty, index);
                     args[0].clone()
                 }
                 Some(CollectionTypeId::Dict) if args.len() >= 2 => {
@@ -202,10 +196,7 @@ impl TypeChecker {
                 || is_frozen_str(&ty)
                 || is_frozen_bytes(&ty) =>
             {
-                if !is_intlike_for_index(&index_ty) {
-                    self.errors
-                        .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
-                }
+                self.require_int_index(&index_ty, index);
                 if matches!(ty, ResolvedType::Bytes) || is_frozen_bytes(&ty) {
                     ResolvedType::Numeric(numerics::NumericTypeId::U8)
                 } else {
@@ -215,10 +206,7 @@ impl TypeChecker {
             // A `const` `FrozenList[T]` is read like a list: `items[i]` is the element at an `int` index, counted from
             // the end when negative, or an `IndexError` at run time (#1757).
             ResolvedType::FrozenList(elem_ty) => {
-                if !is_intlike_for_index(&index_ty) {
-                    self.errors
-                        .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
-                }
+                self.require_int_index(&index_ty, index);
                 *elem_ty
             }
             // A `const` `FrozenDict[K, V]` is read like a dict: `table[key]` is the value, or a `KeyError` at run
@@ -247,6 +235,14 @@ impl TypeChecker {
                 }
             }
             _ => ResolvedType::Unknown,
+        }
+    }
+
+    /// Report an index whose checked type is not an integer where the receiver is indexed by position.
+    fn require_int_index(&mut self, index_ty: &ResolvedType, index: &Spanned<Expr>) {
+        if !is_intlike_for_index(index_ty) {
+            self.errors
+                .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
         }
     }
 

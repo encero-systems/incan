@@ -158,33 +158,13 @@ impl TypeChecker {
         match &obj_ty {
             ResolvedType::SelfType => {
                 if let Some(expected_ty) = self.trait_required_field_type(field, field_assign.target_span) {
-                    self.record_expr_type(field_assign.target_span, expected_ty.clone());
-                    let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
-                    if !self.types_compatible(&value_ty, &expected_ty) {
-                        self.errors.push(errors::field_type_mismatch(
-                            field,
-                            &expected_ty.to_string(),
-                            &value_ty.to_string(),
-                            field_assign.value.span,
-                        ));
-                    }
-                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                    self.check_field_assignment_value(field_assign, expected_ty);
                 }
             }
             ResolvedType::Named(type_name) => {
                 match self.resolve_nominal_field_type(type_name, None, field, field_assign.target_span) {
                     Some(expected_ty) => {
-                        self.record_expr_type(field_assign.target_span, expected_ty.clone());
-                        let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
-                        if !self.types_compatible(&value_ty, &expected_ty) {
-                            self.errors.push(errors::field_type_mismatch(
-                                field,
-                                &expected_ty.to_string(),
-                                &value_ty.to_string(),
-                                field_assign.value.span,
-                            ));
-                        }
-                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                        self.check_field_assignment_value(field_assign, expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -199,17 +179,7 @@ impl TypeChecker {
                     field_assign.target_span,
                 ) {
                     Some(expected_ty) => {
-                        self.record_expr_type(field_assign.target_span, expected_ty.clone());
-                        let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
-                        if !self.types_compatible(&value_ty, &expected_ty) {
-                            self.errors.push(errors::field_type_mismatch(
-                                field,
-                                &expected_ty.to_string(),
-                                &value_ty.to_string(),
-                                field_assign.value.span,
-                            ));
-                        }
-                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                        self.check_field_assignment_value(field_assign, expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -222,17 +192,7 @@ impl TypeChecker {
             // would.
             ResolvedType::RustPath(path) => match self.rust_path_field_type(path, field, field_assign.target_span) {
                 Some(expected_ty) => {
-                    self.record_expr_type(field_assign.target_span, expected_ty.clone());
-                    let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
-                    if !self.types_compatible(&value_ty, &expected_ty) {
-                        self.errors.push(errors::field_type_mismatch(
-                            field,
-                            &expected_ty.to_string(),
-                            &value_ty.to_string(),
-                            field_assign.value.span,
-                        ));
-                    }
-                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                    self.check_field_assignment_value(field_assign, expected_ty);
                 }
                 None => {
                     self.errors
@@ -249,6 +209,22 @@ impl TypeChecker {
             }
         }
         self.note_iteration_field_replacement(&field_assign.object, field_assign.target_span);
+    }
+
+    /// Check an assigned field value against the field's checked type, recording the field's type at its target and
+    /// the value's destination type when they are compatible.
+    fn check_field_assignment_value(&mut self, field_assign: &FieldAssignmentStmt, expected_ty: ResolvedType) {
+        self.record_expr_type(field_assign.target_span, expected_ty.clone());
+        let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
+        if !self.types_compatible(&value_ty, &expected_ty) {
+            self.errors.push(errors::field_type_mismatch(
+                &field_assign.field,
+                &expected_ty.to_string(),
+                &value_ty.to_string(),
+                field_assign.value.span,
+            ));
+        }
+        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
     }
 
     /// Return the key and value types a list or dict index assignment writes through: `int` and the element type of a

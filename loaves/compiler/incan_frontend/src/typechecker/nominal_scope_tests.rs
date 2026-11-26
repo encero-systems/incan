@@ -114,73 +114,7 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
     // ---- Imported declarations and repeated admission ----
     let first = program("pub model First:\n    value: int\n")?;
     let second = program("pub model Second:\n    value: int\n")?;
-    let exports = Arc::from(crate::module::exported_symbols(&first));
-    let mut first_builder = TypeChecker::default();
-    first_builder.set_current_module_path(Some(vec!["first".to_string()]));
-    first_builder
-        .check_program(&first)
-        .map_err(|errors| format!("{errors:?}"))?;
-    let first_interface =
-        first_builder.seal_current_module_dependency_interface("first", &first, Arc::clone(&exports), true);
-    let mut replay_builder = TypeChecker::default();
-    replay_builder.set_current_module_path(Some(vec!["first".to_string()]));
-    replay_builder
-        .check_program(&first)
-        .map_err(|errors| format!("{errors:?}"))?;
-    let replayed_first_interface =
-        replay_builder.seal_current_module_dependency_interface("first", &first, exports, true);
-    assert_eq!(first_interface.snapshot(), replayed_first_interface.snapshot());
-    assert_eq!(
-        first_interface.snapshot().render(),
-        replayed_first_interface.snapshot().render()
-    );
-    let consumer = program("from first import First\n\ndef read(value: First) -> int:\n    return 1\n")?;
-    let dependencies = [("first", &first)];
-    let mut legacy_consumer = TypeChecker::default();
-    legacy_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
-    legacy_consumer
-        .check_with_imports(&consumer, &dependencies)
-        .map_err(|errors| format!("{errors:?}"))?;
-    let legacy_consumer_snapshot = legacy_consumer.dependency_interface_snapshot();
-    let mut interface_builder = TypeChecker::default();
-    interface_builder.set_current_module_path(Some(vec!["first".to_string()]));
-    interface_builder.register_dependency_module_path_segments("first", vec!["first".to_string()]);
-    let direct_interface = interface_builder
-        .build_dependency_interface_component(
-            &[("first", &first, Arc::from(crate::module::exported_symbols(&first)))],
-            &[],
-            true,
-        )
-        .pop()
-        .ok_or("missing direct interface")?;
-    let mut shared_consumer = TypeChecker::default();
-    shared_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
-    shared_consumer.select_dependency_interfaces(vec![Arc::clone(&direct_interface)]);
-    shared_consumer
-        .check_with_imports(&consumer, &dependencies)
-        .map_err(|errors| format!("{errors:?}"))?;
-    assert_eq!(
-        legacy_consumer_snapshot,
-        shared_consumer.dependency_interface_snapshot()
-    );
-    let mut direct_consumer = TypeChecker::default();
-    direct_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
-    direct_consumer.record_nominal_declaring_modules(&consumer, &dependencies);
-    direct_consumer.install_dependency_interfaces_directly(&[direct_interface]);
-    assert!(
-        direct_consumer
-            .dependency_member_symbol_for_path(&crate::ast::ImportPath::simple(vec!["first".to_string()]), "First")
-            .is_some(),
-        "{:?}",
-        direct_consumer.dependency_interface_snapshot(),
-    );
-    direct_consumer
-        .check_program_with_dependency_semantics(&consumer)
-        .map_err(|errors| format!("{errors:?}"))?;
-    assert_interface_snapshots_match(
-        &legacy_consumer_snapshot,
-        &direct_consumer.dependency_interface_snapshot(),
-    );
+    assert_interfaces_replay_identically(&first)?;
     let mut checker = TypeChecker::default();
     for (name, dependency) in [("first", &first), ("second", &second), ("first", &first)] {
         checker.import_module_all(dependency, name);
@@ -259,6 +193,79 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
     );
     assert!(checker.checked_body_nominal_scope().is_none());
     assert_current_inventory(&checker);
+    Ok(())
+}
+
+/// A provider sealed twice renders one interface, and a consumer checked against collected source, a shared interface
+/// and directly installed interfaces sees the same dependency layer.
+fn assert_interfaces_replay_identically(first: &crate::ast::Program) -> Result<(), Box<dyn std::error::Error>> {
+    let exports = Arc::from(crate::module::exported_symbols(first));
+    let mut first_builder = TypeChecker::default();
+    first_builder.set_current_module_path(Some(vec!["first".to_string()]));
+    first_builder
+        .check_program(first)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let first_interface =
+        first_builder.seal_current_module_dependency_interface("first", first, Arc::clone(&exports), true);
+    let mut replay_builder = TypeChecker::default();
+    replay_builder.set_current_module_path(Some(vec!["first".to_string()]));
+    replay_builder
+        .check_program(first)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let replayed_first_interface =
+        replay_builder.seal_current_module_dependency_interface("first", first, exports, true);
+    assert_eq!(first_interface.snapshot(), replayed_first_interface.snapshot());
+    assert_eq!(
+        first_interface.snapshot().render(),
+        replayed_first_interface.snapshot().render()
+    );
+    let consumer = program("from first import First\n\ndef read(value: First) -> int:\n    return 1\n")?;
+    let dependencies = [("first", first)];
+    let mut legacy_consumer = TypeChecker::default();
+    legacy_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
+    legacy_consumer
+        .check_with_imports(&consumer, &dependencies)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let legacy_consumer_snapshot = legacy_consumer.dependency_interface_snapshot();
+    let mut interface_builder = TypeChecker::default();
+    interface_builder.set_current_module_path(Some(vec!["first".to_string()]));
+    interface_builder.register_dependency_module_path_segments("first", vec!["first".to_string()]);
+    let direct_interface = interface_builder
+        .build_dependency_interface_component(
+            &[("first", first, Arc::from(crate::module::exported_symbols(first)))],
+            &[],
+            true,
+        )
+        .pop()
+        .ok_or("missing direct interface")?;
+    let mut shared_consumer = TypeChecker::default();
+    shared_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
+    shared_consumer.select_dependency_interfaces(vec![Arc::clone(&direct_interface)]);
+    shared_consumer
+        .check_with_imports(&consumer, &dependencies)
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert_eq!(
+        legacy_consumer_snapshot,
+        shared_consumer.dependency_interface_snapshot()
+    );
+    let mut direct_consumer = TypeChecker::default();
+    direct_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
+    direct_consumer.record_nominal_declaring_modules(&consumer, &dependencies);
+    direct_consumer.install_dependency_interfaces_directly(&[direct_interface]);
+    assert!(
+        direct_consumer
+            .dependency_member_symbol_for_path(&crate::ast::ImportPath::simple(vec!["first".to_string()]), "First")
+            .is_some(),
+        "{:?}",
+        direct_consumer.dependency_interface_snapshot(),
+    );
+    direct_consumer
+        .check_program_with_dependency_semantics(&consumer)
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert_interface_snapshots_match(
+        &legacy_consumer_snapshot,
+        &direct_consumer.dependency_interface_snapshot(),
+    );
     Ok(())
 }
 
