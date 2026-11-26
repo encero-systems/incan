@@ -39,8 +39,9 @@ use crate::tuples::{is_tuple_type, owned_carrier, tuple_fields, tuple_has_owners
 /// Body IR counts last uses across branches in source order, so one branch may move a value that another only borrows,
 /// and a branch's own temporaries (a condition's constructed model, a comparison's enum value) end with it. Rust drops
 /// such a value at scope end through a drop flag. Destroying text, collections, nominal values and lazy generators
-/// only releases their storage, so releasing the value at the end of the branch that kept it is equivalent. An owner
-/// of any other type left live on only some paths stays refused.
+/// only releases their storage, so releasing the value at the end of the branch that kept it is equivalent. The same
+/// holds for a borrowing closure whose concrete environment holds only loans or builtin scalar captures. Other owners
+/// left live on only some paths stay refused.
 pub fn join_branch_owners(
     builder: &mut Builder,
     join: i64,
@@ -65,7 +66,9 @@ pub fn join_branch_owners(
             if live.contains(local) {
                 continue;
             }
-            if !releases_only_memory(&builder.locals[*local as usize].ty) {
+            if !releases_only_memory(&builder.locals[*local as usize].ty)
+                && !builder.closure_releases_only_storage(*local)
+            {
                 return Err("unsupported Body IR owned-value branch merge".into());
             }
             drop_owned(builder, *local, span);

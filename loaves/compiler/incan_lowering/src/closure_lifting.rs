@@ -111,15 +111,16 @@ pub fn move_closure(
         _ if consumes_environment => PlanType::ClosureOnce(signature.clone()),
         _ => PlanType::Closure(signature.clone()),
     };
-    let scalar_environment = match &value.kind {
-        OperandKind::Move(source) => {
-            source.projection == Projection::Whole
-                && builder.scalar_closures.contains(&source.local)
-                && !builder.unproven_closures.contains(&source.local)
-        }
-        _ => false,
+    let moved_owner = match &value.kind {
+        OperandKind::Move(source) if source.projection == Projection::Whole => Some(source.local),
+        _ => None,
     };
+    let scalar_environment = moved_owner.is_some_and(|source| {
+        builder.scalar_closures.contains(&source) && !builder.unproven_closures.contains(&source)
+    });
     record_scalar_closure(builder, target.local, scalar_environment);
+    let releases_only_storage = moved_owner.is_some_and(|source| builder.closure_releases_only_storage(source));
+    builder.record_closure_drop(target.local, releases_only_storage);
     track_rvalue_moves(builder, &RvalueKind::Use(value.clone()));
     drop_owned(builder, target.local, span);
     hold_closure(builder, target.local, &signature, flags, object_type)?;
@@ -343,8 +344,18 @@ fn construct_environment(
     hold_closure(builder, target.local, &signature, flags, object_type)?;
     let local = target.local;
     terminate_call(builder, CalleeKind::Planned(constructor_name), operands, target, span);
-    let scalar_environment = capture_types.iter().all(scalar_capture);
+    let (scalar_environment, releases_only_storage) =
+        capture_types
+            .iter()
+            .fold((true, true), |(all_scalar, all_storage), ty| {
+                let scalar = scalar_capture(ty);
+                (
+                    all_scalar && scalar,
+                    all_storage && (scalar || reference_capture(ty) || exclusive_capture(ty)),
+                )
+            });
     record_scalar_closure(builder, local, scalar_environment);
+    builder.record_closure_drop(local, releases_only_storage);
     builder.owned.push(local);
     Ok(())
 }
@@ -567,6 +578,7 @@ pub fn lifted_frame(
         partial_callables: Vec::new(),
         scalar_closures: Vec::new(),
         unproven_closures: Vec::new(),
+        closure_drop: Vec::new(),
         unions: builder.unions.clone(),
         local_offset: count,
         consuming_closure_frame: false,
