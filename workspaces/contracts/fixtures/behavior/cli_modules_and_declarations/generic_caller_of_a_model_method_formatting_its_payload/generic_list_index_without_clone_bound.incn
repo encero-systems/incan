@@ -1,0 +1,30 @@
+# Former case generic_list_index_without_clone_bound: a generic function and a trait method with no bound on their type parameter return an element of their list by index and a slice of it, for int and str elements
+
+def first[K](items: list[K]) -> K:
+    return items[0]
+
+
+def rest[K](items: list[K]) -> list[K]:
+    return items[1:]
+
+
+trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+
+    def tail[K](self, items: list[K]) -> list[K]:
+        return items[1:]
+
+
+model Chooser with Picker:
+    id: int
+
+
+pub def main() -> None:
+    println(first([4, 5]))
+    println(first(["x", "y"]))
+    println(len(rest(["x", "y"])))
+    chooser = Chooser(id=1)
+    println(chooser.pick([5, 6]))
+    println(chooser.pick(["z"]))
+    println(len(chooser.tail([7, 8, 9])))

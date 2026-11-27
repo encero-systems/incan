@@ -1,0 +1,11 @@
+# Former case tuple_assignment_takes_a_bare_tuple_value: a tuple assignment takes an unparenthesized tuple on its right side, so a, b = b, a swaps two names exactly as a, b = (b, a) does, and a new pair of names binds from a bare tuple too
+
+pub def main() -> None:
+    mut a = 1
+    mut b = 2
+    a, b = b, a
+    println(f"{a} {b}")
+    a, b = (b, a)
+    println(f"{a} {b}")
+    low, high = 3, 4
+    println(f"{low} {high}")

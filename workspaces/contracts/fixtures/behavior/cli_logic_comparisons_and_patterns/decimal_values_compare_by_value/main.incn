@@ -1,0 +1,144 @@
+# behavior: 11 former cli logic comparisons and patterns cases run in order, each program from its own module: decimal_values_compare_by_value, list_count_and_index_forms, match_payload_patterns_that_cover_together, negation_keeps_its_operand_grouping, nested_not_and_over_parameter_comparisons, not_and_or_over_runtime_bool_operands, not_and_over_parameter_comparisons, not_or_over_parameter_comparisons, numeric_widening_reaches_every_destination, operator_precedence_follows_the_parser_ladder, record_patterns_over_generic_models_and_classes
+# expect-stdout:
+#  true
+#  false
+#  true
+#  1
+#  1.50
+#  1.5
+#  4
+#  2
+#  2
+#  4
+#  2
+#  zero
+#  7
+#  empty
+#  failed: boom
+#  on
+#  off
+#  true
+#  true
+#  -5
+#  true
+#  false
+#  false
+#  -4
+#  true
+#  false
+#  false
+#  false
+#  true
+#  false
+#  false
+#  false
+#  true
+#  false
+#  false
+#  false
+#  false
+#  true
+#  true
+#  true
+#  false
+#  true
+#  true
+#  true
+#  false
+#  true
+#  true
+#  true
+#  false
+#  false
+#  false
+#  true
+#  false
+#  false
+#  false
+#  true
+#  false
+#  false
+#  false
+#  true
+#  false
+#  true
+#  true
+#  true
+#  0
+#  1
+#  1
+#  1
+#  false
+#  true
+#  true
+#  true
+#  false
+#  true
+#  true
+#  true
+#  false
+#  false
+#  false
+#  true
+#  0
+#  0
+#  0
+#  1
+#  false
+#  false
+#  false
+#  true
+#  false
+#  false
+#  false
+#  true
+#  -5 250 -10 1.5
+#  250 [-5, 250]
+#  -5 true
+#  true true 1
+#  true false
+#  [-5, 300] -5 1000 7 -5
+#  true
+#  false
+#  false
+#  -4
+#  -5
+#  4
+#  0.5
+#  -1
+#  5
+#  8
+#  a
+#  b
+#  zero
+#  7
+#  empty
+
+"""Run the program of each former case in order."""
+
+import decimal_values_compare_by_value
+import list_count_and_index_forms
+import match_payload_patterns_that_cover_together
+import negation_keeps_its_operand_grouping
+import nested_not_and_over_parameter_comparisons
+import not_and_or_over_runtime_bool_operands
+import not_and_over_parameter_comparisons
+import not_or_over_parameter_comparisons
+import numeric_widening_reaches_every_destination
+import operator_precedence_follows_the_parser_ladder
+import record_patterns_over_generic_models_and_classes
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    decimal_values_compare_by_value.main()
+    list_count_and_index_forms.main()
+    match_payload_patterns_that_cover_together.main()
+    negation_keeps_its_operand_grouping.main()
+    nested_not_and_over_parameter_comparisons.main()
+    not_and_or_over_runtime_bool_operands.main()
+    not_and_over_parameter_comparisons.main()
+    not_or_over_parameter_comparisons.main()
+    numeric_widening_reaches_every_destination.main()
+    operator_precedence_follows_the_parser_ladder.main()
+    record_patterns_over_generic_models_and_classes.main()

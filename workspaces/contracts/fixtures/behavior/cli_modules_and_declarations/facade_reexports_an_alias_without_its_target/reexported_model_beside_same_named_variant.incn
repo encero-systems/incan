@@ -1,0 +1,9 @@
+# Former case reexported_model_beside_same_named_variant: a model reached through a re-export keeps its fields when another module imports the model and declares an enum variant of the same name
+
+from settings import load
+from gate import gate
+
+
+pub def main() -> None:
+    settings = load()
+    println(f"{settings.name} {gate(settings)}")

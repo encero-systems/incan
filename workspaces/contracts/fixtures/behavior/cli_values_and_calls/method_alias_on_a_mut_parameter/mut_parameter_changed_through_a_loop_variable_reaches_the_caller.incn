@@ -1,0 +1,20 @@
+# Former case mut_parameter_changed_through_a_loop_variable_reaches_the_caller: a mut list-of-lists parameter changed through the variable of a for loop over it, also when the variable reuses the parameter's name, changes the caller's mut list
+
+def grow(mut items: list[list[int]]) -> int:
+    for row in items:
+        row.append(3)
+    return len(items[0])
+
+
+def reuse(mut items: list[list[int]]) -> int:
+    for items in items:
+        items.append(4)
+    return 1
+
+
+pub def main() -> None:
+    mut live: list[list[int]] = [[1]]
+    println(grow(live))
+    println(len(live[0]))
+    println(reuse(live))
+    println(len(live[0]))

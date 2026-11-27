@@ -1,0 +1,15 @@
+# Former case empty_list_comparison_operands: an empty list literal compares against a list of str on either side of == and != (#1476)
+
+def is_empty(values: list[str]) -> bool:
+    return values == []
+
+
+def is_not_empty(values: list[str]) -> bool:
+    return [] != values
+
+
+pub def main() -> None:
+    println(is_empty([]))
+    println(is_empty(["value"]))
+    println(is_not_empty(["value"]))
+    println(is_not_empty([]))

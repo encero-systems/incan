@@ -1,0 +1,82 @@
+# behavior: 10 former cli values and calls cases run in order, each program from its own module: chained_integer_literal_takes_each_target_type, channel_constructors_with_an_explicit_element_type, collection_copies_leave_their_source, compound_assignment_keeps_operator_result_type, display_positions_render_collections_alike, empty_list_assigned_to_optional_binding_is_wrapped, exact_width_integer_arithmetic_keeps_its_type, expected_literal_followups, generator_mut_parameter_advanced_by_the_callee, int_spellings_are_one_type
+# expect-stdout:
+#  1
+#  1.0
+#  -2
+#  -2.0
+#  3
+#  3.5
+#  4
+#  -4.0
+#  5.0
+#  12
+#  got hello
+#  got 3
+#  got true
+#  12
+#  6
+#  1
+#  1
+#  a
+#  4
+#  2.25
+#  4.5
+#  3
+#  1
+#  [1, 2, 3]
+#  [1, 2, 3]
+#  [1, 2, 3]
+#  (10, 20)
+#  Some(1)
+#  None
+#  Err("bad")
+#  {"a": 1}
+#  1
+#  some 0
+#  some 1
+#  list 0
+#  0
+#  -3 2 -21 49
+#  124 4
+#  -4 2
+#  1000
+#  2.5
+#  5
+#  0
+#  y
+#  1
+#  bad
+#  bad
+#  0
+#  1
+#  2
+#  4 10 2
+#  3 250 1.5 7
+#  5
+
+"""Run the program of each former case in order."""
+
+import chained_integer_literal_takes_each_target_type
+import channel_constructors_with_an_explicit_element_type
+import collection_copies_leave_their_source
+import compound_assignment_keeps_operator_result_type
+import display_positions_render_collections_alike
+import empty_list_assigned_to_optional_binding_is_wrapped
+import exact_width_integer_arithmetic_keeps_its_type
+import expected_literal_followups
+import generator_mut_parameter_advanced_by_the_callee
+import int_spellings_are_one_type
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    chained_integer_literal_takes_each_target_type.main()
+    await channel_constructors_with_an_explicit_element_type.main()
+    collection_copies_leave_their_source.main()
+    compound_assignment_keeps_operator_result_type.main()
+    display_positions_render_collections_alike.main()
+    empty_list_assigned_to_optional_binding_is_wrapped.main()
+    exact_width_integer_arithmetic_keeps_its_type.main()
+    expected_literal_followups.main()
+    generator_mut_parameter_advanced_by_the_callee.main()
+    int_spellings_are_one_type.main()

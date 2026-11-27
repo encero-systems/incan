@@ -1,0 +1,17 @@
+# Former case std_serde_prelude_surface: a model derived through the std.serde json bundle encodes to JSON
+
+from std.serde import json
+
+
+@derive(json)
+model SnapshotConfig:
+    name: str
+    enabled: bool
+
+
+def encode_config(config: SnapshotConfig) -> str:
+    return config.to_json()
+
+
+pub def main() -> None:
+    println(encode_config(SnapshotConfig(name="snap", enabled=true)))

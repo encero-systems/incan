@@ -1,0 +1,12 @@
+# Former case trait_default_constructs_module_type_across_modules: an imported trait's default method constructs a model of the trait's module by named fields while the adopting module imports that model too
+
+from shapes import Extent, Measured
+
+
+model Card with Measured:
+    size: int
+
+
+pub def main() -> None:
+    println(Card(size=1).extent().n)
+    println(Extent(n=5).n)
