@@ -52,6 +52,7 @@ from compile_time_trust import combine as combine_trust, decide, decide_registry
 from bakery import bakery, fact_member, forget_view, library_binding, library_directory, rebind_refreshed_file
 from bakery_records import FactFile
 from provider_call_shapes import PROVIDER_CALL_SHAPES
+from provider_body_work import PreparedUnitCompletion, ProviderBodyWork
 from rust_registry import selected_registry
 from rust_manifest import RustFacet, package_environment, rust_facet
 from rust_build import (
@@ -1171,15 +1172,19 @@ def compile_incan_library(
         dependency_search = dependency_search + [native.directory] + native.search
     loaves = incan_artifacts(providers)
     # 2. The graph already prepared every dependency; the source compiler only binds these selected artifacts.
-    mut code: i32 = 1
+    mut completed = PreparedUnitCompletion(code=1)
     mut readings = NativeClosureInput()
+    let accounting: Borrowed[Option[ProviderBodyWork]] = request.provider_body_work
+    provider_counts = match accounting:
+        Some(work) => Some(work.supported)
+        None => None
     match request.incan_compiler:
         Some(compile) =>
             source = library_source(Path(facet.project), request.manifests)?
             selected = [(binding.name, binding.path) for binding in bindings]
             toolchain = selected_toolchain(request)?
             readings = toolchain.native_closures
-            code = compile(
+            completed = compile(
                 source.0,
                 request.profile,
                 facet.features,
@@ -1191,10 +1196,11 @@ def compile_incan_library(
                 request.compiler,
                 request.manifests,
                 request.unattended,
+                provider_counts,
             )?
         None => return Err(f"no Incan unit compiler was supplied for {declared.package}")
-    if code != 0:
-        return Err(f"Incan library {declared.package} failed with exit code {code}")
+    if completed.code != 0:
+        return Err(f"Incan library {declared.package} failed with exit code {completed.code}")
     # 3. Rust's extern edge names the same public facade an Incan consumer receives, or the provider's own Rust facet
     #    when the edge names it by that facet's crate name.
     stored, selected = library_binding(bakery()?, directory)?
@@ -1202,19 +1208,20 @@ def compile_incan_library(
     if let Some(fact) = selected:
         if fact.kind == "library":
             shapes = fact_member(fact, PROVIDER_CALL_SHAPES)
-    return Ok(
-        BuiltUnit(
-            crate_name=compiled_name,
-            artifact=stored.joinpath(artifact.name()).0,
-            directory=stored.0,
-            search=native_search(stored.joinpath(f"{artifact_stem(declared.package)}.native.json"), readings)? + dependency_search,
-            loaf=declared.package,
-            native_crate=own_native.name,
-            native_artifact=own_native.path,
-            provider_call_shapes=shapes,
-            provider_project=facet.project,
-        ),
+    library = BuiltUnit(
+        crate_name=compiled_name,
+        artifact=stored.joinpath(artifact.name()).0,
+        directory=stored.0,
+        search=native_search(stored.joinpath(f"{artifact_stem(declared.package)}.native.json"), readings)? + dependency_search,
+        loaf=declared.package,
+        native_crate=own_native.name,
+        native_artifact=own_native.path,
+        provider_call_shapes=shapes,
+        provider_project=facet.project,
     )
+    if let Some(work) = accounting:
+        work.record(facet.project, completed.provider_body_count)
+    return Ok(library)
 
 
 def provider_dependencies(

@@ -13,12 +13,13 @@ from pub::incan_mir_plan import (
     lowering_refusal_evidence,
 )
 pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
-from pub::internal_models.checked_body_counts import decode_checked_body_counts
+from pub::internal_models.checked_body_counts import decode_checked_body_counts, decode_provider_body_tally
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
 from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
 from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.fs import Path
+from std.tempfile import TemporaryDirectory
 from pub::internal_models.overload_members import scope_output_suffix
 from pub::internal_models.executable_body_wire import (
     EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT, executable_graph_output_marker,
@@ -46,6 +47,9 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from trace_adapter import work, work_clock
 from publication import publish, publish_binary
+pub from provider_body_work import PreparedUnitCompletion
+from provider_body_work import ProviderBodyCount
+from scratch import scratch_directory
 from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
@@ -93,13 +97,6 @@ pub const DIGEST_COMPANION: str = ".digest"
 pub const FRAME_LIST: str = "frames.list"
 
 
-pub model PreparedUnitCompletion:
-    """The compiler exit and the exact selection digest of a successful prepared request."""
-
-    pub code: i32
-    pub plan_module_selection_digest: Option[str] = None
-
-
 pub def compile_prepared_unit(
     unit: UnitDescription,
     toolchain: Toolchain,
@@ -130,6 +127,7 @@ pub def compile_prepared_unit_completion(
     checked_warnings: Option[Path] = None,
     report_directory: Option[Path] = None,
     library_checked_output: Option[Path] = None,
+    provider_counts: Option[bool] = None,
 ) -> Result[PreparedUnitCompletion, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -206,6 +204,10 @@ pub def compile_prepared_unit_completion(
         native += ["--plan-record-report", report.0]
     if let Some(checked_output) = library_checked_output:
         native += ["--graph-body-output", checked_output.0]
+    capture = provider_count_scratch(provider_counts, unit.kind == "library")
+    tally = provider_count_report(capture)
+    if let Some(report) = tally:
+        native += ["--checked-body-counts", report.0]
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
@@ -214,7 +216,39 @@ pub def compile_prepared_unit_completion(
         return Ok(PreparedUnitCompletion(code=code))
     if executable:
         normalize_release_executable(output, unit.profile)?
-    return Ok(PreparedUnitCompletion(code=0, plan_module_selection_digest=plan_selection_digest))
+    return Ok(PreparedUnitCompletion(
+        code=0, plan_module_selection_digest=plan_selection_digest,
+        provider_body_count=completed_provider_count(capture, tally, path),
+    ))
+
+
+def provider_count_scratch(supported: Option[bool], library: bool) -> Result[Option[TemporaryDirectory], str]:
+    """Allocate a fresh private report path only for a supported, requested provider activation."""
+    if let Some(capability) = supported:
+        if not capability or not library:
+            return Err("the selected compiler does not report this provider's body count")
+        return Ok(Some(scratch_directory()?))
+    return Ok(None)
+
+
+def provider_count_report(capture: Borrowed[Result[Option[TemporaryDirectory], str]]) -> Option[Path]:
+    """Keep the scratch directory alive through the original compiler completion."""
+    if let Ok(Some(directory)) = capture:
+        return Some(directory.path().joinpath("checked-body-counts.crumb"))
+    return None
+
+
+def completed_provider_count(
+    capture: Borrowed[Result[Option[TemporaryDirectory], str]], report: Option[Path], descriptor: Path,
+) -> ProviderBodyCount:
+    """Decode only after the compiler and any handed-off native child settled successfully."""
+    if let Err(reason) = capture:
+        return ProviderBodyCount(incomplete=reason)
+    if let Some(path) = report:
+        match provider_body_evaluations(path, descriptor):
+            Ok(count) => return ProviderBodyCount(observed=Some(count))
+            Err(reason) => return ProviderBodyCount(incomplete=reason)
+    return ProviderBodyCount()
 
 
 def trace_staged_namespace_references(
@@ -377,6 +411,12 @@ def write_selected_record_pages(
     if observed_markers == 1 and observed_references == 1:
         return Ok(Some(observed_size))
     return Ok(None)
+
+
+pub def provider_body_evaluations(report: Path, descriptor: Path) -> Result[int, str]:
+    """Require the current provider's typed companion even when its count is zero."""
+    encoded = report.read_bytes().map_err((error) => f"provider body tally unavailable: {error.message()}")?
+    return decode_provider_body_tally(encoded, descriptor.0, report.0)
 
 
 pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:

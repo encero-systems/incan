@@ -12,6 +12,7 @@ from codegen import rust_arguments, unit_metadata
 from driver_command import driver_command
 from intake import ManifestReader
 from loaf_local_graph import LocalFacet
+from provider_body_work import PreparedUnitCompletion, ProviderBodyWork
 from rust_activation import ActivationPurpose
 from registry_units import RegistryUnits, is_dynamic_library
 from retained_readings import installed_digest
@@ -114,7 +115,12 @@ pub model RustBuild:
     # Loaves to use in place of the Loaf of a package name, wherever the graph reaches it.
     pub substitutes: Dict[str, str] = {}
     # The Incan unit orchestrator supplies its compiler without a reverse module dependency.
-    pub incan_compiler: Option[(str, str, list[str], str, list[Tuple[str, str]], list[Tuple[str, str]], list[str], Toolchain, str, ManifestReader, bool) -> Result[i32, str]] = None
+    pub incan_compiler: Option[
+        (str, str, list[str], str, list[Tuple[str, str]], list[Tuple[str, str]], list[str], Toolchain, str,
+         ManifestReader, bool, Option[bool]) -> Result[PreparedUnitCompletion, str]
+    ] = None
+    # A requested Records proof collects successful provider work in this preparation only.
+    pub provider_body_work: Option[ProviderBodyWork] = None
     # The toolchain's own search directories. An Incan provider's native closure leaves them to the search index, so a
     # Rust facet, which rustc links directly, searches them beside the registry's.
     pub toolchain_search: list[str] = []

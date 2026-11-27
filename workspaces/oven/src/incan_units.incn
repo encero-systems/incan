@@ -49,6 +49,7 @@ from compiler_worker import relay_console
 from engine_program_records import NativeUnit
 from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
+from provider_body_work import ProviderBodyWork
 from scratch import scratch_directory
 from toolchain import Toolchain
 from unit import UnitDescription
@@ -190,6 +191,7 @@ pub def make_unit(
     toolchain: Toolchain,
     output: Path,
     development: bool = false,
+    provider_body_work: Option[ProviderBodyWork] = None,
 ) -> Result[Made, str]:
     """
     Compile the described program, library or test unit to `output`, and name the file that starts it.
@@ -201,11 +203,11 @@ pub def make_unit(
     3. Compile a library, or reuse an executable whose inputs have not changed.
     """
     # 1. The shared library is compiled once per project and profile.
-    described, library_code = prepare_project_library(unit, toolchain)?
+    described, library_code = prepare_project_library(unit, toolchain, provider_body_work)?
     if library_code != 0:
         return Ok(Made(code=library_code, launch=output))
     # 2. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
-    ready = prepare_native(described, toolchain)?
+    ready = prepare_native(described, toolchain, provider_body_work=provider_body_work)?
     # 3. Both libraries and executables reuse their complete, unchanged artifact sets.
     if ready.kind == "library":
         return Ok(Made(code=compile_library_unit(ready, toolchain, output)?, launch=output))
@@ -214,6 +216,7 @@ pub def make_unit(
 
 pub def prepare_project_library(
     unit: UnitDescription, toolchain: Toolchain,
+    provider_body_work: Option[ProviderBodyWork] = None,
 ) -> Result[tuple[UnitDescription, i32], str]:
     """
     Bind the exact shared library when the planner selected one. A program whose provider refuses returns its own
@@ -224,7 +227,9 @@ pub def prepare_project_library(
     if let Some(key) = unit.project_library:
         library_path = library_output(unit, key, native_crate_name(key))
         program = unit.kind == "program"
-        library_code = compile_project_library(shared_library(unit, key)?, toolchain, library_path, program)?
+        library_code = compile_project_library(
+            shared_library(unit, key)?, toolchain, library_path, program, provider_body_work,
+        )?
         if library_code == 0:
             described.loaves.append(library_loaf(unit, key, library_path))
         elif program:
@@ -240,18 +245,20 @@ def compile_project_library(
     toolchain: Toolchain,
     output: Path,
     program: bool,
+    provider_body_work: Option[ProviderBodyWork],
 ) -> Result[i32, str]:
     """Compile the shared provider. A program reports diagnostics from its own build if the provider is refused."""
     if not program:
-        return compile_unit(library, toolchain, output)
+        built = make_unit(library, toolchain, output, provider_body_work=provider_body_work)?
+        return Ok(built.code)
     scratch = scratch_directory()?
     mut capturing = toolchain
     library_console = scratch.path().joinpath("library").0
     capturing.console = library_console
-    code = compile_unit(library, capturing, output)?
-    if code == 0:
+    built = make_unit(library, capturing, output, provider_body_work=provider_body_work)?
+    if built.code == 0:
         relay_console(library_console, toolchain.console)?
-    return Ok(code)
+    return Ok(built.code)
 
 
 pub def compile_executable(

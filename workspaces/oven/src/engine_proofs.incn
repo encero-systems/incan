@@ -28,6 +28,8 @@ pub def prepare_report(
     produced: Borrowed[ProgramOutcome],
 ) -> Result[Transaction, str]:
     """Prepare a requested report in the current home view using the settlement's authenticated admission."""
+    if produced.incomplete_provider_proof != "":
+        return Err(produced.incomplete_provider_proof)
     editable = capture.in_reach
     frozen = capture.frozen
     mut whole_units = 0

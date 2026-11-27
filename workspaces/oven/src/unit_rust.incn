@@ -41,7 +41,8 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from native_references import closure_reference, native_anchors
-from unit_compiler import compile_prepared_unit, compile_prepared_unit_completion
+from unit_compiler import PreparedUnitCompletion, compile_prepared_unit_completion
+from provider_body_work import ProviderBodyWork
 from callable_products import retain_callable_products
 from provider_call_shapes import (
     LIBRARY_CALL_SHAPES_PROFILE,
@@ -95,7 +96,8 @@ pub def compile_incan_library(
     compiler: str,
     reader: ManifestReader,
     unattended: bool,
-) -> Result[i32, str]:
+    provider_counts: Option[bool],
+) -> Result[PreparedUnitCompletion, str]:
     """
     Prepare one activated Incan provider after the shared graph prepared all its dependencies.
 
@@ -124,7 +126,9 @@ pub def compile_incan_library(
     unit.search = search
     ready = prepare_linked(unit, toolchain)?
     # 3. The ordinary library stamp preserves a current artifact for either language's consumer.
-    return compile_library_unit(ready, toolchain, Path(output), compiler)
+    return compile_retained_library(
+        with_callable_products(ready, toolchain), toolchain, Path(output), compiler, provider_counts,
+    )
 
 
 def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) -> list[UnitLoaf]:
@@ -157,7 +161,8 @@ pub def compile_library_unit(
 ) -> Result[i32, str]:
     """Prepare private callable products for ordinary libraries, then publish through the complete native key."""
     ready = with_callable_products(library, toolchain)
-    return compile_retained_library(ready, toolchain, output, compiler)
+    completed = compile_retained_library(ready, toolchain, output, compiler, None)?
+    return Ok(completed.code)
 
 
 def compile_retained_library(
@@ -165,7 +170,8 @@ def compile_retained_library(
     toolchain: Toolchain,
     output: Path,
     compiler: str,
-) -> Result[i32, str]:
+    provider_counts: Option[bool],
+) -> Result[PreparedUnitCompletion, str]:
     """
     Obtain a prepared library from the home bakery; its artifact directory becomes a disposable view of the fact.
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
@@ -182,7 +188,7 @@ def compile_retained_library(
     directory = output.parent()
     key = unit_key(library, toolchain, compiler)?
     if key.refusal != "":
-        return compile_unbaked(library, toolchain, output, key)
+        return compile_unbaked(library, toolchain, output, key, provider_counts)
     store = bakery()?
     identity = unit_identity(key)
     register_root(store, library.project_root, f"library\t{library.package}", [identity])?
@@ -192,7 +198,7 @@ def compile_retained_library(
             _ = provider_call_shapes_member(store, fact)?
         view_directory(store, fact, directory)?
         trace(f"{label}: reused")
-        return Ok(0)
+        return Ok(PreparedUnitCompletion(code=0))
     # 2. A concurrent bake of the same identity is waited for, not repeated.
     held = claim(store, identity)?
     if let Some(fact) = find(store, identity)?:
@@ -200,7 +206,7 @@ def compile_retained_library(
             _ = provider_call_shapes_member(store, fact)?
         view_directory(store, fact, directory)?
         trace(f"{label}: reused (built meanwhile by another command)")
-        return Ok(0)
+        return Ok(PreparedUnitCompletion(code=0))
     # 3. A failed compilation publishes nothing.
     staged = staging(store, identity, prior_size(store, unit_name(library)))?
     stage_vocabulary(library, staged)?
@@ -219,10 +225,11 @@ def compile_retained_library(
         Some(key),
         library_reason(store, library),
         library_checked_output=rows,
+        provider_counts=provider_counts,
     )?
     if compiled.code != 0:
         _ = staged.remove_tree()
-        return Ok(compiled.code)
+        return Ok(compiled)
     # 4. Publication can add an indexed Rust ABI cache, and the new manifest decides whether a vocabulary worker
     #    belongs to the completed set; a partial set is never sealed.
     for artifact in artifact_files(staged, library.package)?:
@@ -242,15 +249,19 @@ def compile_retained_library(
     reaches = reached(store, [loaf.dir for loaf in library.loaves])?
     fact = seal(store, identity, staged, "library", unit_name(library), reaches, f"incan library {library.profile}")?
     view_directory(store, fact, directory)?
-    return Ok(0)
+    return Ok(compiled)
 
-def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
+def compile_unbaked(
+    library: UnitDescription, toolchain: Toolchain, output: Path, key: Key, provider_counts: Option[bool],
+) -> Result[PreparedUnitCompletion, str]:
     """Compile a library whose inputs cannot be named portably in place; nothing is baked or reused."""
     directory = output.parent()
     forget_view(directory)?
     stage_vocabulary(library, directory)?
-    compiled = compile_prepared_unit(library, toolchain, output, Some(key), key.refusal)?
-    if compiled != 0:
+    compiled = compile_prepared_unit_completion(
+        library, toolchain, output, Some(key), key.refusal, provider_counts=provider_counts,
+    )?
+    if compiled.code != 0:
         return Ok(compiled)
     borrowed = [worker.0 for worker in published_workers(library, directory)?]
     for artifact in artifact_files(directory, library.package)?:
@@ -258,7 +269,7 @@ def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path
             return Err(f"compiler did not publish {artifact.0}")
         if artifact.0 not in borrowed:
             record_payload(artifact, "", key.provenance, key.refusal)?
-    return Ok(0)
+    return Ok(compiled)
 
 
 def library_reason(store: Path, library: UnitDescription) -> str:
@@ -275,6 +286,7 @@ pub def prepare_native(
     described: UnitDescription,
     toolchain: Toolchain,
     unattended: bool = false,
+    provider_body_work: Option[ProviderBodyWork] = None,
 ) -> Result[UnitDescription, str]:
     """
     Prepare exact artifacts for one selected unit, preserving its kind and activated root features.
@@ -290,7 +302,7 @@ pub def prepare_native(
     mut unit = described
     unit.unattended = unattended or unit.unattended
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
-        unit = resolve_dependencies(unit, toolchain)?
+        unit = resolve_dependencies(unit, toolchain, provider_body_work)?
     else:
         linked = prepare_linked(unit, toolchain)?
         natives = standalone_crates(unit, toolchain, Some(linked))?
@@ -447,7 +459,9 @@ def link_loaf(
     return Ok((exposed, [loaf.dir] + closure_search(closure, document)?))
 
 
-def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+def resolve_dependencies(
+    unit: UnitDescription, toolchain: Toolchain, provider_body_work: Option[ProviderBodyWork],
+) -> Result[UnitDescription, str]:
     """
     Activate the complete local graph once, compile each provider, and bind the selected direct aliases.
 
@@ -489,6 +503,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         features=unit.active_features,
         default_features=false,
         incan_compiler=Some(compile_incan_library),
+        provider_body_work=provider_body_work,
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),
         manifests=unit.manifests,

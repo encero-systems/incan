@@ -386,6 +386,7 @@ def capture(
         profiles = driver_profiles(installed, [document])?
         installed.supports_plan_module_selection_digest = profiles.plan_selection
         installed.supports_library_checked_local = profiles.library_local
+        installed.supports_provider_body_count = profiles.provider_body_count
         documents.append(document)
     rustc = Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
     installed.rust_version = compiler_version(rustc)?
