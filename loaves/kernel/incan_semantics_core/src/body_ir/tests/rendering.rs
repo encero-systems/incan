@@ -239,7 +239,7 @@ fn rendering_body_cases() {
 const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     MutRow {
         name: "helper_call_and_runtime_requirements_render",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -273,7 +273,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "local_callable_target_and_tagged_default_parameter_render",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -323,7 +323,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "dict_aggregate_renders_as_key_value_pairs",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -347,7 +347,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "set_aggregate_renders_as_a_flat_element_list",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -368,7 +368,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "try_propagate_statement_renders_destination_and_operand",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -389,7 +389,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "iter_next_renders_builtin_protocol",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -408,7 +408,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "iter_next_renders_user_defined_protocol_and_fallible_flag",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -448,7 +448,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "format_rvalue_renders_literal_and_expr_parts_in_order",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -488,7 +488,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "closure_rvalue_renders_params_captures_and_nested_body",
-        check: |body| {
+        check: |mut body| {
             // Simulate `(z: int) => x + z` capturing `_0` (the sample body's `x` param) with a `clone` fact, where the
             // closure's own param `z` gets local `_3` and the capture gets local `_4`.
             let param_local = LocalId(3);
@@ -566,7 +566,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "yield_statement_renders_and_marks_the_body_as_a_generator",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -590,7 +590,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "is_generator_finds_a_yield_nested_inside_if_and_loop_blocks",
-        check: |body| {
+        check: |mut body| {
             let yield_stmt = Statement {
                 kind: StatementKind::Yield {
                     value: Operand::Constant(Constant::Int(1)),
@@ -629,7 +629,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "locals_requiring_unwind_drop_is_conservative_over_non_copy_locals",
-        check: |body| {
+        check: |mut body| {
             body.locals.push(LocalDecl {
                 id: LocalId(3),
                 name: Some("s".to_string()),
@@ -647,7 +647,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "locals_requiring_unwind_drop_excludes_receiver_locals_even_when_non_copy",
-        check: |body| {
+        check: |mut body| {
             body.locals.push(LocalDecl {
                 id: LocalId(3),
                 name: Some("self".to_string()),
@@ -668,7 +668,7 @@ const RENDERING_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "receiver_origin_renders_mutability_in_the_snapshot",
-        check: |body| {
+        check: |mut body| {
             body.locals.push(LocalDecl {
                 id: LocalId(3),
                 name: Some("self".to_string()),

@@ -1,6 +1,7 @@
 //! Version refusal, public membership, dependency coverage and fragment index tests.
 
 use super::*;
+use crate::test_rows::{SourceMutRow, run_source_mut_rows};
 
 /// A published binding can move in its source file without changing the native names consumers call.
 #[test]
@@ -147,113 +148,6 @@ fn only_reached_statics_expose_native_accessors() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// Publication rebases the profile's proven owner together with the body, without repairing a wrong owner.
-#[test]
-fn input_profile_publication_retains_canonical_owner() -> Result<(), Box<dyn std::error::Error>> {
-    let mut source = body("input", 1);
-    source.type_parameters.clear();
-    source.canonical = Some(CanonicalSymbolId::module_declaration(
-        vec!["lib".into()],
-        "input",
-        SemanticSourceTargetKind::Function,
-        source.span,
-    ));
-    let owner = source.canonical.clone().ok_or("missing source owner")?;
-    source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
-        result_requirements: Vec::new(),
-        version: 1,
-        owner: owner.clone(),
-        parameters: Vec::new(),
-        owned_initializers: Vec::new(),
-    });
-    source
-        .explicit_input_bindings
-        .push(crate::body_ir::ExplicitInputBinding {
-            declaration: source.span,
-            identity: Some(identity("view", 3)),
-            access: crate::IncanInputAccess::Shared,
-        });
-    let context = module(vec![source.clone()]);
-    let eligible = BTreeSet::from([identity("input", 1)]);
-    let projected =
-        publication::project_body(&source, &context, "probe", &eligible).map_err(|error| format!("{error:?}"))?;
-    // The obligation is published; the session-local binding identity is not.
-    assert!(matches!(
-        projected.body.explicit_input_bindings.as_slice(),
-        [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
-    ));
-    assert_eq!(
-        projected
-            .body
-            .checked_input_profile
-            .as_ref()
-            .map(|profile| &profile.owner),
-        projected.body.canonical.as_ref()
-    );
-    let (frame, _) = publication::project_compiled_frame(&source, &context, "probe", &eligible)
-        .map_err(|error| format!("{error:?}"))?;
-    let ExecutableDeclaration::CompiledCallableFrame { frame, .. } = frame else {
-        return Err("expected compiled frame".into());
-    };
-    assert_eq!(
-        frame.checked_input_profile.as_ref().map(|profile| &profile.owner),
-        frame.canonical.as_ref()
-    );
-    assert!(matches!(
-        frame.explicit_input_bindings.as_slice(),
-        [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
-    ));
-    source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
-    assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
-    assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
-    for obsolete in [36_u32, 37, 38, 39, 40, 41, 42, 43, 44] {
-        assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
-    }
-    Ok(())
-}
-
-/// Generic straight-line publication keeps symbolic result requirements; conditional ownership remains refused.
-#[test]
-fn generic_input_requirements_survive_publication() -> Result<(), Box<dyn std::error::Error>> {
-    let mut source = body("input", 1);
-    source.type_parameters = vec!["E".into()];
-    source.canonical = Some(CanonicalSymbolId::module_declaration(
-        vec!["lib".into()],
-        "input",
-        SemanticSourceTargetKind::Function,
-        source.span,
-    ));
-    let owner = source.canonical.clone().ok_or("missing source owner")?;
-    let required = crate::IncanType::Generic {
-        base: "Result".into(),
-        args: vec![
-            crate::IncanType::Primitive(crate::IncanPrimitiveType::Unit),
-            crate::IncanType::TypeVar("E".into()),
-        ],
-    };
-    source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
-        result_requirements: vec![(source.span, required.clone())],
-        version: 3,
-        owner,
-        parameters: Vec::new(),
-        owned_initializers: Vec::new(),
-    });
-    let context = module(vec![source.clone()]);
-    let eligible = BTreeSet::from([identity("input", 1)]);
-    let projected =
-        publication::project_body(&source, &context, "probe", &eligible).map_err(|error| format!("{error:?}"))?;
-    let profile = projected
-        .body
-        .checked_input_profile
-        .as_ref()
-        .ok_or("missing published requirements")?;
-    assert_eq!(profile.version, 3);
-    assert_eq!(profile.result_requirements, vec![(source.span, required)]);
-    source.checked_input_profile.as_mut().ok_or("missing profile")?.version = 4;
-    assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
-    Ok(())
-}
-
 /// Prior omitted-field layouts and future versions refuse before either reader attempts positional decoding.
 #[test]
 fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
@@ -397,146 +291,6 @@ fn compiled_contract_excludes_native_implementation() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Missing and unsupported callees propagate uncovered status through dependent executable declarations.
-#[test]
-fn missing_and_unsupported_dependencies_are_uncovered_transitively() -> Result<(), Box<dyn std::error::Error>> {
-    let mut caller = body("caller", 1);
-    caller.block.stmts.push(call(identity("private_secret", 2)));
-    let mut dependent = body("dependent", 3);
-    dependent.block.stmts.push(call(identity("caller", 1)));
-    let mut unsupported = body("unsupported", 4);
-    unsupported.block.stmts.push(Statement {
-        span: unsupported.span,
-        kind: StatementKind::Unsupported {
-            description: "never serialized".into(),
-        },
-    });
-    let module = module(vec![caller, dependent, unsupported]);
-    let public = BTreeSet::from([
-        identity("caller", 1),
-        identity("dependent", 3),
-        identity("unsupported", 4),
-    ]);
-    let bytes = publish(&module, &public)?;
-    let reader = SurfaceReader::open(&bytes)?;
-    assert_eq!(reader.covered_identities().count(), 0);
-    // The reason has to be asserted, not just the absence of coverage. `UnsupportedConstruct` is the one
-    // reason whose whole purpose is to reach a consumer distinctly, and without this a mutant mapping it to
-    // `UnresolvedReference` or `PrivateDependency` passes the test named after it.
-    assert!(matches!(
-        reader.index().coverage(&identity("unsupported", 4))?,
-        DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
-    ));
-    assert!(matches!(
-        reader.index().coverage(&identity("caller", 1))?,
-        DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency)
-    ));
-    assert!(matches!(
-        reader.index().coverage(&identity("dependent", 3))?,
-        DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable)
-    ));
-    assert!(
-        !bytes
-            .windows(b"private_secret".len())
-            .any(|part| part == b"private_secret")
-    );
-    // A compiled export's checked signature survives an unavailable implementation without becoming a body.
-    let mut compiled = module;
-    compiled.bodies[2].type_parameters.clear();
-    compiled.bodies[2].callable_representation = Some(crate::body_ir::CallableRepresentation {
-        function_pointer_locals: Vec::new(),
-        closure_holding_locals: Vec::new(),
-        closure_holding_parameters: Vec::new(),
-        closure_holding_return: false,
-    });
-    let bytes = publish(&compiled, &public)?;
-    let reader = SurfaceReader::open(&bytes)?;
-    assert!(matches!(
-        reader.fragment(&identity("unsupported", 4))?,
-        ExecutableDeclaration::CompiledCallableFrame { frame, .. } if frame.block.stmts.is_empty()
-    ));
-    assert!(reader.declaration(&identity("unsupported", 4)).is_err());
-    Ok(())
-}
-
-#[test]
-fn recursive_public_closure_is_order_independent() -> Result<(), Box<dyn std::error::Error>> {
-    let mut alpha = body("alpha", 1);
-    let mut beta = body("beta", 2);
-    alpha.block.stmts.push(call(identity("beta", 2)));
-    beta.block.stmts.push(call(identity("alpha", 1)));
-    let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
-    let forward = publish(&module(vec![alpha.clone(), beta.clone()]), &public)?;
-    let reverse = publish(&module(vec![beta, alpha]), &public)?;
-    assert_eq!(forward, reverse);
-    assert_eq!(SurfaceReader::open(&forward)?.covered_identities().count(), 2);
-    Ok(())
-}
-
-/// Internal recursive fragments retain deterministic ranges without becoming selectable public roots.
-#[test]
-fn recursive_private_closure_keeps_disjoint_ranges_and_public_roots() -> Result<(), Box<dyn std::error::Error>> {
-    let mut alpha = body("alpha", 1);
-    let mut beta = body("beta", 2);
-    alpha.block.stmts.push(call(identity("beta", 2)));
-    beta.block.stmts.push(call(identity("alpha", 1)));
-    let public = BTreeSet::from([identity("alpha", 1)]);
-    let forward = publish(&module(vec![alpha.clone(), beta.clone()]), &public)?;
-    let reverse = publish(&module(vec![beta, alpha]), &public)?;
-    assert_eq!(forward, reverse);
-    let reader = SurfaceReader::open(&forward)?;
-    let payload_length = u64::try_from(reader.payload.len())?;
-    assert_eq!(reader.covered_identities().count(), 1);
-    assert!(reader.index().implementation.contains_key(&identity("beta", 2)));
-    assert!(reader.fragment(&identity("beta", 2)).is_err());
-    let mut overlap = reader.index().clone();
-    let coverage = overlap.coverage(&identity("alpha", 1))?.clone();
-    overlap.implementation.insert(identity("alpha", 1), coverage);
-    assert!(matches!(
-        overlap.validate(payload_length),
-        Err(ExecutableRepresentationError::Malformed { .. })
-    ));
-    let mut ranges = reader.index().clone();
-    let Some(DeclarationCoverage::Covered { offset, .. }) = ranges.implementation.get_mut(&identity("beta", 2)) else {
-        return Err("private recursive body lacks a payload range".into());
-    };
-    *offset = 0;
-    assert!(matches!(
-        ranges.validate(payload_length),
-        Err(ExecutableRepresentationError::Malformed { .. })
-    ));
-    Ok(())
-}
-
-#[test]
-fn private_default_dependency_is_not_hidden_by_an_empty_main_block() -> Result<(), Box<dyn std::error::Error>> {
-    let mut exported = body("exported", 1);
-    exported.params.push(CallableParam {
-        mutable: false,
-        input_access: crate::IncanInputAccess::Inferred,
-        native_owned: false,
-        kind: crate::IncanCallableParamKind::Normal,
-        local: crate::body_ir::LocalId(0),
-        name: "x".into(),
-        ty: IncanType::Primitive(IncanPrimitiveType::Int),
-        span: exported.span,
-        default: CallableParamDefault::Source(Box::new(crate::body_ir::DefaultComputation {
-            span: exported.span,
-            stmts: vec![call(identity("secret", 2))],
-            result: crate::body_ir::Operand::Constant(crate::body_ir::Constant::Int(1)),
-        })),
-    });
-    let bytes = publish(
-        &module(vec![exported, body("secret", 2)]),
-        &BTreeSet::from([identity("exported", 1)]),
-    )?;
-    let reader = SurfaceReader::open(&bytes)?;
-    assert!(reader.covers(&identity("exported", 1)));
-    assert!(reader.index().implementation.contains_key(&identity("secret", 2)));
-    assert!(reader.index().coverage(&identity("secret", 2)).is_err());
-    Ok(())
-}
-
 #[test]
 fn three_selected_fragments_ignore_unrelated_corrupt_payloads() -> Result<(), Box<dyn std::error::Error>> {
     let bodies = (0..400)
@@ -611,3 +365,265 @@ fn index_refuses_overlaps_and_payload_identity_substitution() -> Result<(), Box<
     assert!(asynchronous.identity().is_none());
     Ok(())
 }
+
+#[test]
+fn coverage_body_cases() {
+    run_source_mut_rows(COVERAGE_BODY_CASES, |name| body(name, 1));
+}
+
+const COVERAGE_BODY_CASES: &[SourceMutRow<Body>] = &[
+    // Publication rebases the profile's proven owner together with the body, without repairing a wrong owner.
+    SourceMutRow {
+        name: "input_profile_publication_retains_canonical_owner",
+        source: "input",
+        check: |_source, mut source| {
+            source.type_parameters.clear();
+            source.canonical = Some(CanonicalSymbolId::module_declaration(
+                vec!["lib".into()],
+                "input",
+                SemanticSourceTargetKind::Function,
+                source.span,
+            ));
+            let owner = source.canonical.clone().ok_or("missing source owner")?;
+            source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
+                result_requirements: Vec::new(),
+                version: 1,
+                owner: owner.clone(),
+                parameters: Vec::new(),
+                owned_initializers: Vec::new(),
+            });
+            source
+                .explicit_input_bindings
+                .push(crate::body_ir::ExplicitInputBinding {
+                    declaration: source.span,
+                    identity: Some(identity("view", 3)),
+                    access: crate::IncanInputAccess::Shared,
+                });
+            let context = module(vec![source.clone()]);
+            let eligible = BTreeSet::from([identity("input", 1)]);
+            let projected = publication::project_body(&source, &context, "probe", &eligible)
+                .map_err(|error| format!("{error:?}"))?;
+            // The obligation is published; the session-local binding identity is not.
+            assert!(matches!(
+                projected.body.explicit_input_bindings.as_slice(),
+                [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
+            ));
+            assert_eq!(
+                projected
+                    .body
+                    .checked_input_profile
+                    .as_ref()
+                    .map(|profile| &profile.owner),
+                projected.body.canonical.as_ref()
+            );
+            let (frame, _) = publication::project_compiled_frame(&source, &context, "probe", &eligible)
+                .map_err(|error| format!("{error:?}"))?;
+            let ExecutableDeclaration::CompiledCallableFrame { frame, .. } = frame else {
+                return Err("expected compiled frame".into());
+            };
+            assert_eq!(
+                frame.checked_input_profile.as_ref().map(|profile| &profile.owner),
+                frame.canonical.as_ref()
+            );
+            assert!(matches!(
+                frame.explicit_input_bindings.as_slice(),
+                [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
+            ));
+            source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
+            assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
+            assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
+            for obsolete in [36_u32, 37, 38, 39, 40, 41, 42, 43, 44] {
+                assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
+            }
+            Ok(())
+        },
+    },
+    // Generic straight-line publication keeps symbolic result requirements; conditional ownership remains refused.
+    SourceMutRow {
+        name: "generic_input_requirements_survive_publication",
+        source: "input",
+        check: |_source, mut source| {
+            source.type_parameters = vec!["E".into()];
+            source.canonical = Some(CanonicalSymbolId::module_declaration(
+                vec!["lib".into()],
+                "input",
+                SemanticSourceTargetKind::Function,
+                source.span,
+            ));
+            let owner = source.canonical.clone().ok_or("missing source owner")?;
+            let required = crate::IncanType::Generic {
+                base: "Result".into(),
+                args: vec![
+                    crate::IncanType::Primitive(crate::IncanPrimitiveType::Unit),
+                    crate::IncanType::TypeVar("E".into()),
+                ],
+            };
+            source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
+                result_requirements: vec![(source.span, required.clone())],
+                version: 3,
+                owner,
+                parameters: Vec::new(),
+                owned_initializers: Vec::new(),
+            });
+            let context = module(vec![source.clone()]);
+            let eligible = BTreeSet::from([identity("input", 1)]);
+            let projected = publication::project_body(&source, &context, "probe", &eligible)
+                .map_err(|error| format!("{error:?}"))?;
+            let profile = projected
+                .body
+                .checked_input_profile
+                .as_ref()
+                .ok_or("missing published requirements")?;
+            assert_eq!(profile.version, 3);
+            assert_eq!(profile.result_requirements, vec![(source.span, required)]);
+            source.checked_input_profile.as_mut().ok_or("missing profile")?.version = 4;
+            assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
+            Ok(())
+        },
+    },
+    // Missing and unsupported callees propagate uncovered status through dependent executable declarations.
+    SourceMutRow {
+        name: "missing_and_unsupported_dependencies_are_uncovered_transitively",
+        source: "caller",
+        check: |_source, mut caller| {
+            caller.block.stmts.push(call(identity("private_secret", 2)));
+            let mut dependent = body("dependent", 3);
+            dependent.block.stmts.push(call(identity("caller", 1)));
+            let mut unsupported = body("unsupported", 4);
+            unsupported.block.stmts.push(Statement {
+                span: unsupported.span,
+                kind: StatementKind::Unsupported {
+                    description: "never serialized".into(),
+                },
+            });
+            let module = module(vec![caller, dependent, unsupported]);
+            let public = BTreeSet::from([
+                identity("caller", 1),
+                identity("dependent", 3),
+                identity("unsupported", 4),
+            ]);
+            let bytes = publish(&module, &public)?;
+            let reader = SurfaceReader::open(&bytes)?;
+            assert_eq!(reader.covered_identities().count(), 0);
+            // The reason has to be asserted, not just the absence of coverage. `UnsupportedConstruct` is the one
+            // reason whose whole purpose is to reach a consumer distinctly, and without this a mutant mapping it to
+            // `UnresolvedReference` or `PrivateDependency` passes the test named after it.
+            assert!(matches!(
+                reader.index().coverage(&identity("unsupported", 4))?,
+                DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
+            ));
+            assert!(matches!(
+                reader.index().coverage(&identity("caller", 1))?,
+                DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency)
+            ));
+            assert!(matches!(
+                reader.index().coverage(&identity("dependent", 3))?,
+                DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable)
+            ));
+            assert!(
+                !bytes
+                    .windows(b"private_secret".len())
+                    .any(|part| part == b"private_secret")
+            );
+            // A compiled export's checked signature survives an unavailable implementation without becoming a body.
+            let mut compiled = module;
+            compiled.bodies[2].type_parameters.clear();
+            compiled.bodies[2].callable_representation = Some(crate::body_ir::CallableRepresentation {
+                function_pointer_locals: Vec::new(),
+                closure_holding_locals: Vec::new(),
+                closure_holding_parameters: Vec::new(),
+                closure_holding_return: false,
+            });
+            let bytes = publish(&compiled, &public)?;
+            let reader = SurfaceReader::open(&bytes)?;
+            assert!(matches!(
+                reader.fragment(&identity("unsupported", 4))?,
+                ExecutableDeclaration::CompiledCallableFrame { frame, .. } if frame.block.stmts.is_empty()
+            ));
+            assert!(reader.declaration(&identity("unsupported", 4)).is_err());
+            Ok(())
+        },
+    },
+    SourceMutRow {
+        name: "recursive_public_closure_is_order_independent",
+        source: "alpha",
+        check: |_source, mut alpha| {
+            let mut beta = body("beta", 2);
+            alpha.block.stmts.push(call(identity("beta", 2)));
+            beta.block.stmts.push(call(identity("alpha", 1)));
+            let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
+            let forward = publish(&module(vec![alpha.clone(), beta.clone()]), &public)?;
+            let reverse = publish(&module(vec![beta, alpha]), &public)?;
+            assert_eq!(forward, reverse);
+            assert_eq!(SurfaceReader::open(&forward)?.covered_identities().count(), 2);
+            Ok(())
+        },
+    },
+    // Internal recursive fragments retain deterministic ranges without becoming selectable public roots.
+    SourceMutRow {
+        name: "recursive_private_closure_keeps_disjoint_ranges_and_public_roots",
+        source: "alpha",
+        check: |_source, mut alpha| {
+            let mut beta = body("beta", 2);
+            alpha.block.stmts.push(call(identity("beta", 2)));
+            beta.block.stmts.push(call(identity("alpha", 1)));
+            let public = BTreeSet::from([identity("alpha", 1)]);
+            let forward = publish(&module(vec![alpha.clone(), beta.clone()]), &public)?;
+            let reverse = publish(&module(vec![beta, alpha]), &public)?;
+            assert_eq!(forward, reverse);
+            let reader = SurfaceReader::open(&forward)?;
+            let payload_length = u64::try_from(reader.payload.len())?;
+            assert_eq!(reader.covered_identities().count(), 1);
+            assert!(reader.index().implementation.contains_key(&identity("beta", 2)));
+            assert!(reader.fragment(&identity("beta", 2)).is_err());
+            let mut overlap = reader.index().clone();
+            let coverage = overlap.coverage(&identity("alpha", 1))?.clone();
+            overlap.implementation.insert(identity("alpha", 1), coverage);
+            assert!(matches!(
+                overlap.validate(payload_length),
+                Err(ExecutableRepresentationError::Malformed { .. })
+            ));
+            let mut ranges = reader.index().clone();
+            let Some(DeclarationCoverage::Covered { offset, .. }) = ranges.implementation.get_mut(&identity("beta", 2))
+            else {
+                return Err("private recursive body lacks a payload range".into());
+            };
+            *offset = 0;
+            assert!(matches!(
+                ranges.validate(payload_length),
+                Err(ExecutableRepresentationError::Malformed { .. })
+            ));
+            Ok(())
+        },
+    },
+    SourceMutRow {
+        name: "private_default_dependency_is_not_hidden_by_an_empty_main_block",
+        source: "exported",
+        check: |_source, mut exported| {
+            exported.params.push(CallableParam {
+                mutable: false,
+                input_access: crate::IncanInputAccess::Inferred,
+                native_owned: false,
+                kind: crate::IncanCallableParamKind::Normal,
+                local: crate::body_ir::LocalId(0),
+                name: "x".into(),
+                ty: IncanType::Primitive(IncanPrimitiveType::Int),
+                span: exported.span,
+                default: CallableParamDefault::Source(Box::new(crate::body_ir::DefaultComputation {
+                    span: exported.span,
+                    stmts: vec![call(identity("secret", 2))],
+                    result: crate::body_ir::Operand::Constant(crate::body_ir::Constant::Int(1)),
+                })),
+            });
+            let bytes = publish(
+                &module(vec![exported, body("secret", 2)]),
+                &BTreeSet::from([identity("exported", 1)]),
+            )?;
+            let reader = SurfaceReader::open(&bytes)?;
+            assert!(reader.covers(&identity("exported", 1)));
+            assert!(reader.index().implementation.contains_key(&identity("secret", 2)));
+            assert!(reader.index().coverage(&identity("secret", 2)).is_err());
+            Ok(())
+        },
+    },
+];
