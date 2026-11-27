@@ -659,6 +659,7 @@ impl FileStamp {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_rows::{MutRow, run_mut_rows};
     use std::collections::BTreeMap;
 
     use incan_lang::interop::{
@@ -756,72 +757,82 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_round_trips_across_blocks_and_stays_small() -> Result<(), String> {
-        let items = items();
-        let bytes = encode_rust_abi_cache(&items)?;
-        let cache = RustAbiCache::decode(&bytes)?;
-        assert!(cache.directory.len() > 1, "the records span more than one block");
-        assert_eq!(cache.len(), items.len());
-        assert_eq!(cache.get("demo::module_1500")?, items.get("demo::module_1500").cloned());
-        assert_eq!(cache.get("demo::absent")?, None);
-        assert!(cache.covers_crate("demo"));
-        let plain: usize = items
-            .values()
-            .map(|item| postcard::to_allocvec(item).map_or(0, |bytes| bytes.len()))
-            .sum();
-        assert!(
-            bytes.len() * 10 < plain,
-            "{} encoded bytes against {plain} plain",
-            bytes.len()
-        );
-        assert_eq!(cache.into_items()?, items);
-        Ok(())
+    fn abi_items_cases() {
+        run_mut_rows(ABI_ITEMS_CASES, items);
     }
 
-    #[test]
-    fn a_file_backed_cache_reads_records_on_demand() -> Result<(), String> {
-        let items = items();
-        let directory = std::env::temp_dir().join(format!("incan-abi-cache-test-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        let path = directory.join("demo.rustabi");
-        std::fs::write(&path, encode_rust_abi_cache(&items)?).map_err(|error| error.to_string())?;
-        let cache = RustAbiCache::open(&path)?;
-        for probe in ["demo::module_0000", "demo::module_2999", "demo::module_0001"] {
-            assert_eq!(cache.get(probe)?, items.get(probe).cloned());
-        }
-        let changed_cache = RustAbiCache::open(&path)?;
-        std::fs::write(&path, b"changed")
-            .map_err(|error| format!("cannot replace test ABI cache {}: {error}", path.display()))?;
-        let changed = changed_cache
-            .get("demo::module_0000")
-            .err()
-            .ok_or_else(|| "a changed file-backed cache was accepted".to_owned())?;
-        if !changed.contains("read") || !changed.contains(&path.display().to_string()) {
-            return Err(format!("changed ABI cache error lacks operation or path: {changed}"));
-        }
-        std::fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
-        Ok(())
-    }
+    const ABI_ITEMS_CASES: &[MutRow<BTreeMap<String, RustItemMetadata>, String>] = &[
+        MutRow {
+            name: "a_cache_round_trips_across_blocks_and_stays_small",
+            check: |items| {
+                let bytes = encode_rust_abi_cache(&items)?;
+                let cache = RustAbiCache::decode(&bytes)?;
+                assert!(cache.directory.len() > 1, "the records span more than one block");
+                assert_eq!(cache.len(), items.len());
+                assert_eq!(cache.get("demo::module_1500")?, items.get("demo::module_1500").cloned());
+                assert_eq!(cache.get("demo::absent")?, None);
+                assert!(cache.covers_crate("demo"));
+                let plain: usize = items
+                    .values()
+                    .map(|item| postcard::to_allocvec(item).map_or(0, |bytes| bytes.len()))
+                    .sum();
+                assert!(
+                    bytes.len() * 10 < plain,
+                    "{} encoded bytes against {plain} plain",
+                    bytes.len()
+                );
+                assert_eq!(cache.into_items()?, items);
+                Ok(())
+            },
+        },
+        MutRow {
+            name: "a_file_backed_cache_reads_records_on_demand",
+            check: |items| {
+                let directory = std::env::temp_dir().join(format!("incan-abi-cache-test-{}", std::process::id()));
+                std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+                let path = directory.join("demo.rustabi");
+                std::fs::write(&path, encode_rust_abi_cache(&items)?).map_err(|error| error.to_string())?;
+                let cache = RustAbiCache::open(&path)?;
+                for probe in ["demo::module_0000", "demo::module_2999", "demo::module_0001"] {
+                    assert_eq!(cache.get(probe)?, items.get(probe).cloned());
+                }
+                let changed_cache = RustAbiCache::open(&path)?;
+                std::fs::write(&path, b"changed")
+                    .map_err(|error| format!("cannot replace test ABI cache {}: {error}", path.display()))?;
+                let changed = changed_cache
+                    .get("demo::module_0000")
+                    .err()
+                    .ok_or_else(|| "a changed file-backed cache was accepted".to_owned())?;
+                if !changed.contains("read") || !changed.contains(&path.display().to_string()) {
+                    return Err(format!("changed ABI cache error lacks operation or path: {changed}"));
+                }
+                std::fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+                Ok(())
+            },
+        },
+        MutRow {
+            name: "an_older_shipped_cache_is_a_miss_and_a_newer_one_is_refused",
+            check: |items| {
+                let current = encode_rust_abi_cache(&items)?;
+                let mut older = current.clone();
+                older[0..4].copy_from_slice(&(RUST_ABI_CACHE_VERSION - 1).to_le_bytes());
+                let stale_paths = match RustAbiCache::decode_shipped(older)? {
+                    ShippedRustAbiCache::Previous(paths) => paths,
+                    ShippedRustAbiCache::Current(_) => {
+                        return Err("an older layout was decoded as current records".to_owned());
+                    }
+                };
+                assert_eq!(stale_paths, items.keys().cloned().collect());
 
-    #[test]
-    fn an_older_shipped_cache_is_a_miss_and_a_newer_one_is_refused() -> Result<(), String> {
-        let items = items();
-        let current = encode_rust_abi_cache(&items)?;
-        let mut older = current.clone();
-        older[0..4].copy_from_slice(&(RUST_ABI_CACHE_VERSION - 1).to_le_bytes());
-        let stale_paths = match RustAbiCache::decode_shipped(older)? {
-            ShippedRustAbiCache::Previous(paths) => paths,
-            ShippedRustAbiCache::Current(_) => return Err("an older layout was decoded as current records".to_owned()),
-        };
-        assert_eq!(stale_paths, items.keys().cloned().collect());
-
-        let mut newer = current;
-        newer[0..4].copy_from_slice(&(RUST_ABI_CACHE_VERSION + 1).to_le_bytes());
-        let error = match RustAbiCache::decode_shipped(newer) {
-            Ok(_) => return Err("a newer layout was accepted".to_owned()),
-            Err(error) => error,
-        };
-        assert!(error.contains("version"), "{error}");
-        Ok(())
-    }
+                let mut newer = current;
+                newer[0..4].copy_from_slice(&(RUST_ABI_CACHE_VERSION + 1).to_le_bytes());
+                let error = match RustAbiCache::decode_shipped(newer) {
+                    Ok(_) => return Err("a newer layout was accepted".to_owned()),
+                    Err(error) => error,
+                };
+                assert!(error.contains("version"), "{error}");
+                Ok(())
+            },
+        },
+    ];
 }
