@@ -303,19 +303,23 @@ pub fn event_references(event: &LoweringEvent) -> Result<Vec<NominalReference>, 
         .references
         .iter()
         .map(|reference| {
-            let kind = match reference.kind.as_str() {
-                "enum" => NominalKind::Enum,
-                "model" => NominalKind::Model,
-                "static" => NominalKind::Static,
-                _ => return Err("invalid lowering event nominal kind".to_owned()),
-            };
             Ok(NominalReference {
-                kind,
+                kind: event_reference_kind(&reference.kind)?,
                 index: reference.index,
                 name: reference.name.clone(),
             })
         })
         .collect()
+}
+
+/// Recognize the exact nominal table a reported product names before resolving its position.
+pub(crate) fn event_reference_kind(kind: &str) -> Result<NominalKind, String> {
+    match kind {
+        "enum" => Ok(NominalKind::Enum),
+        "model" => Ok(NominalKind::Model),
+        "static" => Ok(NominalKind::Static),
+        _ => Err("invalid lowering event nominal kind".into()),
+    }
 }
 
 /// Read the Body IR node positions a reported product's spans were placed at in this request.
