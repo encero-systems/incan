@@ -896,7 +896,7 @@ def prepare_installation(run: ReleaseRun, candidate: Candidate) -> Result[Prepar
     return Ok(PreparedInstallation(verification=verification, home=home, environment=environment, inputs=inputs))
 
 
-def installed_verification(run: ReleaseRun, installation: PreparedInstallation) -> Result[Path, str]:
+pub def installed_verification(run: ReleaseRun, installation: PreparedInstallation) -> Result[Path, str]:
     """Run the Incan installed-verification program in the prepared installation and return its census."""
     verification = installation.verification
     home = installation.home
