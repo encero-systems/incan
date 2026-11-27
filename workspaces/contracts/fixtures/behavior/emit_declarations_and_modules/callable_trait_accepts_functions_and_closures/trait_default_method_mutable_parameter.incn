@@ -1,0 +1,16 @@
+# Former case trait_default_method_mutable_parameter: a trait default method taking a `mut` list parameter appends to the caller's list and returns the new length, and the caller reads the appended length back
+
+trait Replacer:
+    def replace(self, mut items: list[int]) -> int:
+        items.append(9)
+        return len(items)
+
+
+model Widget with Replacer:
+    id: int
+
+
+pub def main() -> None:
+    mut items: list[int] = [1, 2]
+    println(Widget(id=1).replace(items))
+    println(len(items))

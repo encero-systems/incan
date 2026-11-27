@@ -1,0 +1,73 @@
+# behavior: 10 former emit calls and builtins cases run in order, each program from its own module: dev7_numeric_instantiation_model_fields, dict_literal_into_optional_union_values, dict_lookups_with_str_keys, enumerate_as_a_list_value_and_over_generic_tuples, fallible_iterator_take, file_builtins_report_errors_as_strings, frozen_str_return_from_literal, generic_list_of_tuples_literal_argument, identifiers_named_like_host_keywords, imported_surface_functions
+# expect-stdout:
+#  3
+#  5
+#  3
+#  5
+#  1.5
+#  2.5
+#  3
+#  4
+#  int 1
+#  bool true
+#  absent
+#  the=2
+#  cat=1
+#  dog missing
+#  literal 2
+#  indexed 2
+#  3
+#  1=b
+#  0=a
+#  1=b
+#  2=c
+#  0:5
+#  1:7
+#  0 some 1
+#  1 none
+#  3
+#  1 2 3
+#  0
+#  0
+#  written
+#  hello file
+#  missing: true
+#  policy
+#  6
+#  policy-v2
+#  2
+#  host=1
+#  port=8080
+#  5
+#  9
+#  10
+#  3
+#  11
+#  slept
+
+"""Run the program of each former case in order."""
+
+import dev7_numeric_instantiation_model_fields
+import dict_literal_into_optional_union_values
+import dict_lookups_with_str_keys
+import enumerate_as_a_list_value_and_over_generic_tuples
+import fallible_iterator_take
+import file_builtins_report_errors_as_strings
+import frozen_str_return_from_literal
+import generic_list_of_tuples_literal_argument
+import identifiers_named_like_host_keywords
+import imported_surface_functions
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    dev7_numeric_instantiation_model_fields.main()
+    dict_literal_into_optional_union_values.main()
+    dict_lookups_with_str_keys.main()
+    enumerate_as_a_list_value_and_over_generic_tuples.main()
+    fallible_iterator_take.main()
+    file_builtins_report_errors_as_strings.main()
+    frozen_str_return_from_literal.main()
+    generic_list_of_tuples_literal_argument.main()
+    identifiers_named_like_host_keywords.main()
+    await imported_surface_functions.main()

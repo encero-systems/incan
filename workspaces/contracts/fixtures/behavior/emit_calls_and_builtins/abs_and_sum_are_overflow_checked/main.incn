@@ -1,0 +1,158 @@
+# behavior: 15 former emit calls and builtins cases run in order, each program from its own module: abs_and_sum_are_overflow_checked, isinstance_str_over_const_union_and_option, minimum_integer_constants, static_method_with_str_argument, std_testing_assert_helpers, arguments_binding_one_type_parameter_widen_to_one_type, await_through_a_module_binding, bounded_type_arguments_the_call_settles_or_expects, closure_parameters_from_their_context, closures_returning_constructors_have_their_own_result, collection_literals_of_constructors_share_one_result_type, compiled_stdlib_module_function_call, constructor_arguments_take_the_type_arguments_the_call_infers, dev7_numeric_instantiation_concrete_model_fields, dev7_numeric_instantiation_generic_equality
+# expect-stdout:
+#  5
+#  7
+#  6
+#  -9223372036854775808
+#  abs overflow raised
+#  sum overflow raised
+#  true
+#  true
+#  true
+#  false
+#  true
+#  false
+#  true
+#  false
+#  true
+#  false
+#  true
+#  true
+#  false
+#  -9223372036854775808
+#  -9223372036854775808
+#  -9223372036854775808
+#  -9223372036854775808
+#  18446744073709551615
+#  -170141183460469231731687303715884105728
+#  abs overflow raised
+#  sum overflow raised
+#  negative sum overflow raised
+#  <p>hello</p> 12
+#  <p>literal</p> 14
+#  plain and messaged assert_eq passed
+#  comparison operand passed
+#  assert_ne passed
+#  constructor comparisons passed
+#  some 5
+#  none passed
+#  ok 42
+#  err boom
+#  raised from call expression
+#  raised from function reference
+#  assert_eq failure is an AssertionError
+#  empty message failure is an AssertionError
+#  5
+#  3
+#  3
+#  2.5
+#  2.5
+#  2.5
+#  5
+#  8
+#  slept
+#  spawned
+#  7
+#  err 4
+#  0
+#  err 3
+#  done
+#  [2, 4, 6]
+#  ["ADA", "LIN"]
+#  ["ada", "ADA", "lin", "LIN"]
+#  [1, 3]
+#  [1, 2]
+#  true
+#  60
+#  5
+#  A
+#  [10, 20, 30]
+#  [1, 3]
+#  1
+#  no
+#  2
+#  2
+#  4
+#  1
+#  5
+#  done
+#  2
+#  X
+#  15
+#  2
+#  2
+#  0
+#  4
+#  5
+#  3
+#  12
+#  5
+#  7
+#  8
+#  a
+#  w
+#  9
+#  10
+#  none
+#  5
+#  x
+#  3
+#  done
+#  3
+#  1.5
+#  4
+#  true
+#  true
+#  false
+#  true
+#  true
+#  false
+#  猫
+#  猫
+#  true
+#  true
+#  true
+#  false
+#  true
+#  true
+#  false
+#  true
+#  猫
+#  2
+
+"""Run the program of each former case in order."""
+
+import abs_and_sum_are_overflow_checked
+import isinstance_str_over_const_union_and_option
+import minimum_integer_constants
+import static_method_with_str_argument
+import standard_testing_assert_helpers
+import arguments_binding_one_type_parameter_widen_to_one_type
+import await_through_a_module_binding
+import bounded_type_arguments_the_call_settles_or_expects
+import closure_parameters_from_their_context
+import closures_returning_constructors_have_their_own_result
+import collection_literals_of_constructors_share_one_result_type
+import compiled_stdlib_module_function_call
+import constructor_arguments_take_the_type_arguments_the_call_infers
+import dev7_numeric_instantiation_concrete_model_fields
+import dev7_numeric_instantiation_generic_equality
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    abs_and_sum_are_overflow_checked.main()
+    isinstance_str_over_const_union_and_option.main()
+    minimum_integer_constants.main()
+    static_method_with_str_argument.main()
+    standard_testing_assert_helpers.main()
+    arguments_binding_one_type_parameter_widen_to_one_type.main()
+    await await_through_a_module_binding.main()
+    bounded_type_arguments_the_call_settles_or_expects.main()
+    closure_parameters_from_their_context.main()
+    closures_returning_constructors_have_their_own_result.main()
+    collection_literals_of_constructors_share_one_result_type.main()
+    compiled_stdlib_module_function_call.main()
+    constructor_arguments_take_the_type_arguments_the_call_infers.main()
+    dev7_numeric_instantiation_concrete_model_fields.main()
+    dev7_numeric_instantiation_generic_equality.main()

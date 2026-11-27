@@ -1,0 +1,18 @@
+# Former case static_method_with_str_argument: a model's static method called through the type name takes a str local and a str literal as owned arguments and builds the model from them
+
+model Page:
+    body: str
+    length: int
+
+    @staticmethod
+    def html(html: str) -> Page:
+        wrapped = f"<p>{html}</p>"
+        return Page(body=wrapped, length=len(wrapped))
+
+
+pub def main() -> None:
+    html = "hello"
+    page = Page.html(html)
+    println(f"{page.body} {page.length}")
+    literal = Page.html("literal")
+    println(f"{literal.body} {literal.length}")
