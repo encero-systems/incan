@@ -896,7 +896,7 @@ def prepare_installation(run: ReleaseRun, candidate: Candidate) -> Result[Prepar
     return Ok(PreparedInstallation(verification=verification, home=home, environment=environment, inputs=inputs))
 
 
-def installed_verification(run: ReleaseRun, installation: PreparedInstallation) -> Result[Path, str]:
+pub def installed_verification(run: ReleaseRun, installation: PreparedInstallation) -> Result[Path, str]:
     """Run the Incan installed-verification program in the prepared installation and return its census."""
     verification = installation.verification
     home = installation.home
@@ -931,11 +931,11 @@ def installed_verification(run: ReleaseRun, installation: PreparedInstallation) 
         run.paths.output.joinpath("tree-samples.tsv"),
         "installed-verification-complete",
     )?
-    reclaim(
-        run,
-        "installed-verification-scratch",
-        [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch")],
-    )?
+    mut disposable: list[Path] = []
+    if not run.options.keep_trees:
+        disposable += [verification, home, runs[0].joinpath("runner")]
+    disposable.append(runs[0].joinpath("scratch"))
+    reclaim(run, "installed-verification-scratch", disposable)?
     return Ok(log)
 
 
