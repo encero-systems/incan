@@ -379,6 +379,11 @@ def write_selected_record_pages(
     return Ok(None)
 
 
+pub def provider_body_evaluations(report: Path, _descriptor: Path) -> Result[int, str]:
+    """Read the checked-body companion for a provider compile."""
+    return Ok(checked_body_counts(report)?.checked)
+
+
 pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     """
     Read a check's typed counts or its historical public JSON report. A certified report replay runs no compiler,
