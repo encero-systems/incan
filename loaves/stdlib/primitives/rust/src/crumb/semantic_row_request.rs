@@ -370,6 +370,10 @@ mod tests {
     use super::*;
 
     fn metadata() -> Meta {
+        metadata_at("example.Stored")
+    }
+
+    fn metadata_at(path: &str) -> Meta {
         let field = Meta::Map(vec![
             ("id".into(), Meta::Binary(b"field1".to_vec())),
             ("name".into(), Meta::Text("amount".into())),
@@ -381,16 +385,20 @@ mod tests {
         Meta::Map(vec![
             ("kind".into(), Meta::Text("Record".into())),
             ("nominal".into(), Meta::Binary(b"record\0".to_vec())),
-            ("path".into(), Meta::Text("example.Stored".into())),
+            ("path".into(), Meta::Text(path.into())),
             ("fields".into(), Meta::List(vec![field])),
             ("properties".into(), Meta::Map(Vec::new())),
         ])
     }
 
     fn encoded_description() -> Result<Vec<u8>, &'static str> {
+        encoded_metadata(&metadata())
+    }
+
+    fn encoded_metadata(metadata: &Meta) -> Result<Vec<u8>, &'static str> {
         let mut budget = Budget::new(u64::MAX, u64::MAX, u64::MAX);
         let mut encoded = Vec::new();
-        rows::encode_metadata(&metadata(), &mut encoded, &mut budget)?;
+        rows::encode_metadata(metadata, &mut encoded, &mut budget)?;
         Ok(encoded)
     }
 
@@ -410,8 +418,12 @@ mod tests {
     }
 
     fn request(sealed: bool) -> Result<RowWriteRequest, &'static str> {
+        request_with(sealed, encoded_description()?)
+    }
+
+    fn request_with(sealed: bool, description: Vec<u8>) -> Result<RowWriteRequest, &'static str> {
         let mut request = RowWriteRequest::new(sealed);
-        request.description(encoded_description()?, true);
+        request.description(description, true);
         request.record(b"record\0".to_vec());
         node(&mut request, 14, 1, &[], "");
         node(&mut request, 18, 0, b"field1", "required");
@@ -477,6 +489,54 @@ mod tests {
         assert_eq!(
             (refused.category.as_str(), refused.cause.as_str()),
             ("limit_exceeded", "elements")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_retained_admission_is_the_one_that_covers_the_most_writes() -> Result<(), &'static str> {
+        let description = encoded_metadata(&metadata_at("example.Retained"))?;
+        let at = |depth: i64| -> Result<RowWriteRequest, &'static str> {
+            let mut request = request_with(false, description.clone())?;
+            request.allow(1_048_576, 1_048_576, depth);
+            Ok(request)
+        };
+        let retained_depth = |request: &RowWriteRequest| {
+            let state = request.locked();
+            schemas::retained(&state.descriptions, &state.kinds).map(|set| {
+                (
+                    set.covers((1_048_576, 1_048_576, 16)),
+                    set.covers((1_048_576, 1_048_576, 63)),
+                )
+            })
+        };
+        let deep = at(64)?;
+        assert!(deep.write().category.is_empty(), "the deep write is refused");
+        assert_eq!(
+            retained_depth(&deep),
+            Some((false, false)),
+            "a set admitted at 64 covers no shallower write"
+        );
+        // A shallower admission covers every write the deeper one did, and more, so it replaces it.
+        let shallow = at(16)?;
+        assert!(shallow.write().category.is_empty(), "the shallow write is refused");
+        assert_eq!(retained_depth(&shallow), Some((true, true)));
+        // A deeper admission of the same set retained later, as a concurrent writer's would be, never narrows it.
+        let inputs = shallow.locked().descriptions.clone();
+        let kinds = shallow.locked().kinds.clone();
+        let set = schemas::retained(&inputs, &kinds).ok_or("the shallow admission is not retained")?;
+        let none = Charge::since((0, 0), &Budget::new(0, 0, 0));
+        schemas::retain(
+            &inputs,
+            &kinds,
+            set.dictionary.clone(),
+            set.entries.clone(),
+            (none, none, 64),
+        );
+        let kept = schemas::retained(&inputs, &kinds).ok_or("the set is gone")?;
+        assert!(
+            Arc::ptr_eq(&set, &kept),
+            "a deeper admission replaced the one covering more writes"
         );
         Ok(())
     }

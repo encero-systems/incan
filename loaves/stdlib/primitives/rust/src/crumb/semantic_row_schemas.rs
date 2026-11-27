@@ -107,8 +107,17 @@ pub(super) fn retain(
         sets.clear();
     }
     let bucket = sets.entry(fingerprint(descriptions, kinds)).or_default();
-    // A set retained under less depth answers fewer writes; keep the one admitted under the most.
-    bucket.retain(|known| known.kinds != kinds || known.descriptions != descriptions);
+    // Equal inputs charge the same, and an admission under depth D covers every write allowed at least D. The set
+    // admitted under less depth covers every write the other covers, so it is the one retained.
+    if let Some(known) = bucket
+        .iter_mut()
+        .find(|known| known.kinds == kinds && known.descriptions == descriptions)
+    {
+        if schema.depth < known.schema.depth {
+            known.schema = Arc::clone(&schema);
+        }
+        return schema;
+    }
     bucket.push(Retained {
         descriptions: descriptions.to_vec(),
         kinds: kinds.to_vec(),
