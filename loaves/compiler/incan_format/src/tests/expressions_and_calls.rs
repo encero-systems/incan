@@ -89,176 +89,6 @@ fn assert_comment_line_immediately_before(
 }
 
 #[test]
-fn test_format_source_simple_function() {
-    let source = r#"def foo() -> int:
-  return 42
-"#;
-    let result = format_source(source);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_format_source_preserves_fallible_loop_adapter_chain() -> Result<(), FormatError> {
-    let source = r#"def consume(stream: FallibleIterator[int, str]) -> Result[None, str]:
-    for value in stream.map(double).map_err(normalize_error)?:
-        println(value)
-    return Ok(None)
-"#;
-
-    assert_eq!(format_source(source)?, source);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_preserves_field_and_index_augmented_assignment() -> Result<(), FormatError> {
-    let source = r#"model Counter:
-    value: int
-
-    def increment(mut self) -> None:
-        self.value += 1
-
-
-def increment_first(mut values: list[int]) -> None:
-    values[0] += 1
-"#;
-
-    assert_eq!(format_source(source)?, source);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_rest_params_and_call_unpacking() -> Result<(), FormatError> {
-    let source = r#"def collect(prefix: str, *items: int, **labels: str) -> int:
-  return collect(prefix,*items,**labels)
-"#;
-    let formatted = format_source(source)?;
-    assert_eq!(
-        formatted,
-        r#"def collect(prefix: str, *items: int, **labels: str) -> int:
-    return collect(prefix, *items, **labels)
-"#
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_source_collection_literal_spread_entries() -> Result<(), FormatError> {
-    let source = r#"def f(xs: list[int], headers: dict[str, str]) -> None:
-  values=[1,*xs,4]
-  merged={"accept":"json",**headers}
-"#;
-    let formatted = format_source(source)?;
-    assert_eq!(
-        formatted,
-        r#"def f(xs: list[int], headers: dict[str, str]) -> None:
-    values = [1, *xs, 4]
-    merged = {"accept": "json", **headers}
-"#
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_source_accepts_leading_dot_fluent_chain() -> Result<(), FormatError> {
-    let source = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
-    enriched = orders
-        .with_column("region_norm", upper(trim(col("region"))))
-        .with_column("status_looks_clean",regexp_like(col("status_norm"), "^[a-z]+$"))
-    return enriched
-"#;
-    let expected = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
-    enriched = orders
-        .with_column("region_norm", upper(trim(col("region"))))
-        .with_column("status_looks_clean", regexp_like(col("status_norm"), "^[a-z]+$"))
-    return enriched
-"#;
-    assert_eq!(format_source(source)?, expected);
-    assert_eq!(format_source(expected)?, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_keeps_comments_inside_leading_dot_fluent_chain() -> Result<(), FormatError> {
-    let source = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
-    enriched = orders
-        # a valid placement for a comment
-        .with_column("region_norm", upper(trim(col("region"))))
-        .with_column("status_looks_clean",regexp_like(col("status_norm"), "^[a-z]+$"))
-    return enriched
-"#;
-    let expected = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
-    enriched = orders
-        # a valid placement for a comment
-        .with_column("region_norm", upper(trim(col("region"))))
-        .with_column("status_looks_clean", regexp_like(col("status_norm"), "^[a-z]+$"))
-    return enriched
-"#;
-    assert_eq!(format_source(source)?, expected);
-    assert_eq!(format_source(expected)?, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_wraps_long_method_chain_as_leading_dot_fluent_chain() -> Result<(), FormatError> {
-    let source = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
-    enriched = orders.with_column("region_norm", upper(trim(col("region")))).with_column("status_norm", lower(trim(col("status")))).with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
-    return enriched
-"#;
-    let expected = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
-    enriched = orders
-        .with_column("region_norm", upper(trim(col("region"))))
-        .with_column("status_norm", lower(trim(col("status"))))
-        .with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
-    return enriched
-"#;
-    let config = FormatConfig::new().with_line_length(120);
-    assert_eq!(format_source_with_config(source, config.clone())?, expected);
-    assert_eq!(format_source_with_config(expected, config)?, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_keeps_phase_comments_before_wrapped_fluent_chain() -> Result<(), FormatError> {
-    let source = r#"def test_case() -> None:
-    # -- Arrange --
-    base = Frame.new()
-
-    # -- Act --
-    projected: Frame = base.with_column("double_id", mul(col("id"), 2)).with_column(
-        "triple_id",
-        mul(col("id"), 3),
-    )
-    output_cols = projected.columns()
-
-    # -- Assert --
-    assert output_cols == ["id", "double_id", "triple_id"], "derived columns should preserve append order"
-"#;
-    let config = FormatConfig::new().with_line_length(88);
-    let formatted = format_source_with_config(source, config.clone())?;
-    assert!(
-        formatted.contains("    # -- Arrange --\n    base = Frame.new()"),
-        "expected arrange comment to stay attached to setup; got:\n{formatted}"
-    );
-    assert!(
-        formatted.contains(
-            "    # -- Act --\n    projected: Frame = base\n        .with_column(\"double_id\", mul(col(\"id\"), 2))\n        .with_column(\"triple_id\", mul(col(\"id\"), 3))"
-        ),
-        "expected act comment to stay attached to wrapped fluent chain; got:\n{formatted}"
-    );
-    assert!(
-        formatted.contains("    # -- Assert --\n    assert output_cols =="),
-        "expected assert comment to stay attached to assertion; got:\n{formatted}"
-    );
-    assert!(
-        !formatted.contains("    # -- Act --\n\n    # -- Assert --"),
-        "formatter floated phase comments away from their anchors; got:\n{formatted}"
-    );
-
-    assert_eq!(format_source_with_config(&formatted, config)?, formatted);
-    Ok(())
-}
-
-#[test]
 fn test_format_source_preserves_expression_vocab_brace_shape_and_comments() -> Result<(), FormatError> {
     let source = r#"import pub::analytics
 
@@ -335,153 +165,6 @@ def pairs(orders: DataFrame, x: int, y: int) -> DataFrame:
         "a statement-position tuple value is written bare; got:\n{formatted}"
     );
     assert_eq!(format_source_with_query_vocab(&formatted)?, formatted);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_generator_expression_full_clause_shape() -> Result<(), FormatError> {
-    let source = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
-  return (x*y for x in xs if x>0 for y in ys if y>x)
-"#;
-    let expected = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
-    return (x * y for x in xs if x > 0 for y in ys if y > x)
-"#;
-    let formatted = format_source(source)?;
-    assert_eq!(formatted, expected);
-    assert_eq!(format_source(&formatted)?, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_list_comprehension_tuple_target_omits_parentheses() -> Result<(), FormatError> {
-    let source = r#"def labels(values: list[str]) -> list[str]:
-  return [f"{idx}:{value}" for idx, value in enumerate(values)]
-"#;
-    let expected = r#"def labels(values: list[str]) -> list[str]:
-    return [f"{idx}:{value}" for idx, value in enumerate(values)]
-"#;
-    let formatted = format_source(source)?;
-    assert_eq!(formatted, expected);
-    assert_eq!(format_source(&formatted)?, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_rfc028_operator_spellings() -> Result<(), FormatError> {
-    let source = r#"def ops(a: Any, b: Any, c: Any) -> None:
-  mat=a@b
-  piped=a|>b<|c
-  bits=~a&b|c^a<<b>>c
-  a @= b
-  a &= b
-  a |= b
-  a ^= b
-  a <<= b
-  a >>= b
-"#;
-    let formatted = format_source(source)?;
-    assert_eq!(
-        formatted,
-        r#"def ops(a: Any, b: Any, c: Any) -> None:
-    mat = a @ b
-    piped = a |> b <| c
-    bits = ~a & b | c ^ a << b >> c
-    a @= b
-    a &= b
-    a |= b
-    a ^= b
-    a <<= b
-    a >>= b
-"#
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_source_preserves_untyped_closure_params() -> Result<(), FormatError> {
-    let source = r#"pub def registered[F](_function_ref: str) -> (F) -> F:
-    return (func) => func
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"pub def registered[F](_function_ref: str) -> (F) -> F:
-    return (func) => func
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_race_for_expression_round_trip() -> Result<(), FormatError> {
-    let source = r#"import std.async
-
-async def run() -> int:
-    return race for value:
-        await fast() => value
-        await slow() =>
-            return value
-"#;
-    let formatted = assert_format_round_trip_lex_parse(source)?;
-    assert!(
-        formatted.contains("race for value:"),
-        "expected formatter to preserve race header; got: {formatted}"
-    );
-    assert!(
-        formatted.contains("await fast() => value"),
-        "expected formatter to preserve inline race arm; got: {formatted}"
-    );
-    assert!(
-        formatted.contains("await slow() =>\n            return value"),
-        "expected formatter to preserve block race arm; got: {formatted}"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_source_union_annotations_round_trip_as_canonical_generic() -> Result<(), FormatError> {
-    let source = r#"def parse(values: List[int | str], maybe: int | str | None) -> int | str:
-    return values[0]
-"#;
-    let formatted = assert_format_round_trip_lex_parse(source)?;
-    assert!(
-        formatted.contains("values: List[Union[int, str]]"),
-        "expected nested pipe annotation to format as canonical Union generic; got: {formatted}"
-    );
-    assert!(
-        formatted.contains("maybe: Union[int, str, None]"),
-        "expected None-containing pipe annotation to remain parseable in formatted AST form; got: {formatted}"
-    );
-    assert!(
-        formatted.contains("-> Union[int, str]:"),
-        "expected return pipe annotation to format as canonical Union generic; got: {formatted}"
-    );
-    Ok(())
-}
-
-/// Regression (GitHub #289): escaped newlines inside f-strings must stay textual (`\\n`) after formatting.
-#[test]
-fn test_format_source_preserves_fstring_escaped_newline() -> Result<(), FormatError> {
-    let source = "def main() -> str:\n    return f\"a\\n{1}\"\n";
-    let formatted = assert_format_round_trip_lex_parse(source)?;
-    assert!(
-        formatted.contains(r#"f"a\n{1}""#),
-        "expected formatter to preserve escaped newline text in f-string, got: {formatted}"
-    );
-    assert!(
-        !formatted.contains("f\"a\n{1}\""),
-        "formatter must not materialize a physical newline in f-string output, got: {formatted}"
-    );
-    Ok(())
-}
-
-/// Regression (GitHub #625): f-string debug markers are semantic and must survive formatting.
-#[test]
-fn test_format_source_preserves_fstring_debug_marker() -> Result<(), FormatError> {
-    let source = "def main(columns: list[str]) -> str:\n    return f\"columns: {columns:?}\"\n";
-    let formatted = assert_format_round_trip_lex_parse(source)?;
-    assert!(
-        formatted.contains(r#"f"columns: {columns:?}""#),
-        "expected formatter to preserve f-string debug marker, got: {formatted}"
-    );
     Ok(())
 }
 
@@ -569,82 +252,6 @@ fn test_format_source_preserves_float_spelling_for_comment_anchors() -> Result<(
     Ok(())
 }
 
-/// [`IntLiteral::repr`](incan_syntax::ast::IntLiteral) / [`FloatLiteral::repr`](incan_syntax::ast::FloatLiteral)
-/// use the lexer source slice (`_`, `E`/`e` preserved).
-#[test]
-fn test_format_source_preserves_numeric_literal_source_substring() -> Result<(), FormatError> {
-    let source = r#"def f() -> None:
-    a = 1_200.0
-    b = 1E6
-    c = 1_000
-    d = 1e6
-    e = 1000.0
-    f = 19.99d
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        formatted.contains("1_200.0"),
-        "expected underscore separators preserved in float literal; got: {formatted:?}"
-    );
-    assert!(
-        formatted.contains("b = 1E6"),
-        "expected uppercase E on b line; got: {formatted:?}"
-    );
-    assert!(
-        formatted.contains("c = 1_000"),
-        "expected underscore separators preserved in int literal; got: {formatted:?}"
-    );
-    assert!(
-        formatted.contains("d = 1e6"),
-        "expected lowercase e on d line; got: {formatted:?}"
-    );
-    assert!(
-        formatted.contains("e = 1000.0"),
-        "expected plain 1000.0 preserved; got: {formatted:?}"
-    );
-    assert!(
-        formatted.contains("f = 19.99d"),
-        "expected decimal literal suffix preserved; got: {formatted:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_long_constructor_call_wraps_args() -> Result<(), FormatError> {
-    let source = r#"def build_schema() -> Schema:
-    return CarrierSchema(declared_columns=declared_columns(), planned_columns=planned_columns(), resolved_columns=resolved_columns())
-"#;
-    let config = FormatConfig::new().with_line_length(60).with_trailing_commas(true);
-    let result = format_source_with_config(source, config)?;
-    let expected = r#"def build_schema() -> Schema:
-    return CarrierSchema(
-        declared_columns=declared_columns(),
-        planned_columns=planned_columns(),
-        resolved_columns=resolved_columns(),
-    )
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_long_constructor_call_wraps_without_trailing_comma_when_disabled() -> Result<(), FormatError> {
-    let source = r#"def build_schema() -> Schema:
-    return CarrierSchema(declared_columns=declared_columns(), planned_columns=planned_columns(), resolved_columns=resolved_columns())
-"#;
-    let config = FormatConfig::new().with_line_length(60).with_trailing_commas(false);
-    let result = format_source_with_config(source, config)?;
-    let expected = r#"def build_schema() -> Schema:
-    return CarrierSchema(
-        declared_columns=declared_columns(),
-        planned_columns=planned_columns(),
-        resolved_columns=resolved_columns()
-    )
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
 /// Suite-valued expressions retain every branch and reach a parseable fixed point.
 #[test]
 fn test_format_source_loop_expression_with_break_value_round_trip() -> Result<(), FormatError> {
@@ -662,3 +269,336 @@ fn test_format_source_loop_expression_with_break_value_round_trip() -> Result<()
     assert_eq!(format_source(&formatted)?, formatted);
     Ok(())
 }
+
+#[test]
+fn expression_and_call_formatting_cases() {
+    run_format_cases(EXPRESSION_AND_CALL_CASES);
+}
+
+const EXPRESSION_AND_CALL_CASES: &[FormatCase] = &[
+    FormatCase {
+        name: "test_format_source_simple_function",
+        source: r#"def foo() -> int:
+  return 42
+"#,
+        checks: &[],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_preserves_fallible_loop_adapter_chain",
+        source: r#"def consume(stream: FallibleIterator[int, str]) -> Result[None, str]:
+    for value in stream.map(double).map_err(normalize_error)?:
+        println(value)
+    return Ok(None)
+"#,
+        checks: &[Check::Unchanged],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_preserves_field_and_index_augmented_assignment",
+        source: r#"model Counter:
+    value: int
+
+    def increment(mut self) -> None:
+        self.value += 1
+
+
+def increment_first(mut values: list[int]) -> None:
+    values[0] += 1
+"#,
+        checks: &[Check::Unchanged],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_rest_params_and_call_unpacking",
+        source: r#"def collect(prefix: str, *items: int, **labels: str) -> int:
+  return collect(prefix,*items,**labels)
+"#,
+        checks: &[Check::Is(
+            r#"def collect(prefix: str, *items: int, **labels: str) -> int:
+    return collect(prefix, *items, **labels)
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_collection_literal_spread_entries",
+        source: r#"def f(xs: list[int], headers: dict[str, str]) -> None:
+  values=[1,*xs,4]
+  merged={"accept":"json",**headers}
+"#,
+        checks: &[Check::Is(
+            r#"def f(xs: list[int], headers: dict[str, str]) -> None:
+    values = [1, *xs, 4]
+    merged = {"accept": "json", **headers}
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_accepts_leading_dot_fluent_chain",
+        source: r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean",regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#,
+        checks: &[
+            Check::Is(
+                r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean", regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#,
+            ),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_keeps_comments_inside_leading_dot_fluent_chain",
+        source: r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        # a valid placement for a comment
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean",regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#,
+        checks: &[
+            Check::Is(
+                r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        # a valid placement for a comment
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean", regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#,
+            ),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_wraps_long_method_chain_as_leading_dot_fluent_chain",
+        source: r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders.with_column("region_norm", upper(trim(col("region")))).with_column("status_norm", lower(trim(col("status")))).with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
+    return enriched
+"#,
+        line_length: Some(120),
+        checks: &[
+            Check::Is(
+                r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_norm", lower(trim(col("status"))))
+        .with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
+    return enriched
+"#,
+            ),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_keeps_phase_comments_before_wrapped_fluent_chain",
+        source: r#"def test_case() -> None:
+    # -- Arrange --
+    base = Frame.new()
+
+    # -- Act --
+    projected: Frame = base.with_column("double_id", mul(col("id"), 2)).with_column(
+        "triple_id",
+        mul(col("id"), 3),
+    )
+    output_cols = projected.columns()
+
+    # -- Assert --
+    assert output_cols == ["id", "double_id", "triple_id"], "derived columns should preserve append order"
+"#,
+        line_length: Some(88),
+        checks: &[
+            Check::Has("    # -- Arrange --\n    base = Frame.new()"),
+            Check::Has(
+                "    # -- Act --\n    projected: Frame = base\n        .with_column(\"double_id\", mul(col(\"id\"), 2))\n        .with_column(\"triple_id\", mul(col(\"id\"), 3))",
+            ),
+            Check::Has("    # -- Assert --\n    assert output_cols =="),
+            Check::Lacks("    # -- Act --\n\n    # -- Assert --"),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_generator_expression_full_clause_shape",
+        source: r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+  return (x*y for x in xs if x>0 for y in ys if y>x)
+"#,
+        checks: &[
+            Check::Is(
+                r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+    return (x * y for x in xs if x > 0 for y in ys if y > x)
+"#,
+            ),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_list_comprehension_tuple_target_omits_parentheses",
+        source: r#"def labels(values: list[str]) -> list[str]:
+  return [f"{idx}:{value}" for idx, value in enumerate(values)]
+"#,
+        checks: &[
+            Check::Is(
+                r#"def labels(values: list[str]) -> list[str]:
+    return [f"{idx}:{value}" for idx, value in enumerate(values)]
+"#,
+            ),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_rfc028_operator_spellings",
+        source: r#"def ops(a: Any, b: Any, c: Any) -> None:
+  mat=a@b
+  piped=a|>b<|c
+  bits=~a&b|c^a<<b>>c
+  a @= b
+  a &= b
+  a |= b
+  a ^= b
+  a <<= b
+  a >>= b
+"#,
+        checks: &[Check::Is(
+            r#"def ops(a: Any, b: Any, c: Any) -> None:
+    mat = a @ b
+    piped = a |> b <| c
+    bits = ~a & b | c ^ a << b >> c
+    a @= b
+    a &= b
+    a |= b
+    a ^= b
+    a <<= b
+    a >>= b
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_preserves_untyped_closure_params",
+        source: r#"pub def registered[F](_function_ref: str) -> (F) -> F:
+    return (func) => func
+"#,
+        checks: &[Check::Is(
+            r#"pub def registered[F](_function_ref: str) -> (F) -> F:
+    return (func) => func
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_race_for_expression_round_trip",
+        source: r#"import std.async
+
+async def run() -> int:
+    return race for value:
+        await fast() => value
+        await slow() =>
+            return value
+"#,
+        checks: &[
+            Check::Parses,
+            Check::Has("race for value:"),
+            Check::Has("await fast() => value"),
+            Check::Has("await slow() =>\n            return value"),
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_union_annotations_round_trip_as_canonical_generic",
+        source: r#"def parse(values: List[int | str], maybe: int | str | None) -> int | str:
+    return values[0]
+"#,
+        checks: &[
+            Check::Parses,
+            Check::Has("values: List[Union[int, str]]"),
+            Check::Has("maybe: Union[int, str, None]"),
+            Check::Has("-> Union[int, str]:"),
+        ],
+        ..FormatCase::DEFAULT
+    },
+    // Regression (GitHub #289): escaped newlines inside f-strings must stay textual (`\\n`) after formatting.
+    FormatCase {
+        name: "test_format_source_preserves_fstring_escaped_newline",
+        source: "def main() -> str:\n    return f\"a\\n{1}\"\n",
+        checks: &[Check::Parses, Check::Has(r#"f"a\n{1}""#), Check::Lacks("f\"a\n{1}\"")],
+        ..FormatCase::DEFAULT
+    },
+    // Regression (GitHub #625): f-string debug markers are semantic and must survive formatting.
+    FormatCase {
+        name: "test_format_source_preserves_fstring_debug_marker",
+        source: "def main(columns: list[str]) -> str:\n    return f\"columns: {columns:?}\"\n",
+        checks: &[Check::Parses, Check::Has(r#"f"columns: {columns:?}""#)],
+        ..FormatCase::DEFAULT
+    },
+    // [`IntLiteral::repr`](incan_syntax::ast::IntLiteral) / [`FloatLiteral::repr`](incan_syntax::ast::FloatLiteral)
+    // use the lexer source slice (`_`, `E`/`e` preserved).
+    FormatCase {
+        name: "test_format_source_preserves_numeric_literal_source_substring",
+        source: r#"def f() -> None:
+    a = 1_200.0
+    b = 1E6
+    c = 1_000
+    d = 1e6
+    e = 1000.0
+    f = 19.99d
+"#,
+        checks: &[
+            Check::Has("1_200.0"),
+            Check::Has("b = 1E6"),
+            Check::Has("c = 1_000"),
+            Check::Has("d = 1e6"),
+            Check::Has("e = 1000.0"),
+            Check::Has("f = 19.99d"),
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_long_constructor_call_wraps_args",
+        source: r#"def build_schema() -> Schema:
+    return CarrierSchema(declared_columns=declared_columns(), planned_columns=planned_columns(), resolved_columns=resolved_columns())
+"#,
+        line_length: Some(60),
+        trailing_commas: Some(true),
+        checks: &[Check::Is(
+            r#"def build_schema() -> Schema:
+    return CarrierSchema(
+        declared_columns=declared_columns(),
+        planned_columns=planned_columns(),
+        resolved_columns=resolved_columns(),
+    )
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_long_constructor_call_wraps_without_trailing_comma_when_disabled",
+        source: r#"def build_schema() -> Schema:
+    return CarrierSchema(declared_columns=declared_columns(), planned_columns=planned_columns(), resolved_columns=resolved_columns())
+"#,
+        line_length: Some(60),
+        trailing_commas: Some(false),
+        checks: &[Check::Is(
+            r#"def build_schema() -> Schema:
+    return CarrierSchema(
+        declared_columns=declared_columns(),
+        planned_columns=planned_columns(),
+        resolved_columns=resolved_columns()
+    )
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+];

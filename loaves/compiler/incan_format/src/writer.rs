@@ -178,63 +178,144 @@ mod tests {
     use super::*;
     use crate::config::QuoteStyle;
 
-    fn default_writer() -> FormatWriter {
-        FormatWriter::new(FormatConfig::default())
+    /// One step of a writer script: an operation, or a check of the writer's state at that point.
+    #[derive(Debug)]
+    enum Step {
+        Write(&'static str),
+        Writeln(&'static str),
+        Newline,
+        Space,
+        Indent,
+        Dedent,
+        BlankLines(usize),
+        IndentIs(usize),
+        RemainingIs(usize),
+        Fits(usize),
+        Exceeds(usize),
     }
 
-    // ========================================
-    // Constructor and finish tests
-    // ========================================
+    /// A check of the finished output.
+    #[derive(Debug)]
+    enum Output {
+        Is(&'static str),
+        StartsWith(&'static str),
+        EndsWith(&'static str),
+        Contains(&'static str),
+    }
 
-    #[test]
-    fn test_new_writer_empty_output() {
-        let writer = default_writer();
-        assert_eq!(writer.finish(), "");
+    struct WriterCase {
+        name: &'static str,
+        indent_width: Option<usize>,
+        line_length: Option<usize>,
+        steps: &'static [Step],
+        output: &'static [Output],
+    }
+
+    impl WriterCase {
+        const DEFAULT: WriterCase = WriterCase {
+            name: "",
+            indent_width: None,
+            line_length: None,
+            steps: &[],
+            output: &[],
+        };
+
+        fn run(&self) -> Result<(), String> {
+            let mut config = FormatConfig::default();
+            if let Some(width) = self.indent_width {
+                config = config.with_indent_width(width);
+            }
+            if let Some(length) = self.line_length {
+                config = config.with_line_length(length);
+            }
+            let mut writer = FormatWriter::new(config);
+            for (index, step) in self.steps.iter().enumerate() {
+                let holds = match step {
+                    Step::Write(text) => {
+                        writer.write(text);
+                        true
+                    }
+                    Step::Writeln(text) => {
+                        writer.writeln(text);
+                        true
+                    }
+                    Step::Newline => {
+                        writer.newline();
+                        true
+                    }
+                    Step::Space => {
+                        writer.space();
+                        true
+                    }
+                    Step::Indent => {
+                        writer.indent();
+                        true
+                    }
+                    Step::Dedent => {
+                        writer.dedent();
+                        true
+                    }
+                    Step::BlankLines(count) => {
+                        writer.blank_lines(*count);
+                        true
+                    }
+                    Step::IndentIs(level) => writer.current_indent() == *level,
+                    Step::RemainingIs(columns) => writer.remaining_line_space() == *columns,
+                    Step::Fits(columns) => !writer.would_exceed_line_length(*columns),
+                    Step::Exceeds(columns) => writer.would_exceed_line_length(*columns),
+                };
+                if !holds {
+                    return Err(format!("step {index} {step:?} does not hold"));
+                }
+            }
+            let finished = writer.finish();
+            for check in self.output {
+                let holds = match check {
+                    Output::Is(text) => finished == *text,
+                    Output::StartsWith(text) => finished.starts_with(text),
+                    Output::EndsWith(text) => finished.ends_with(text),
+                    Output::Contains(text) => finished.contains(text),
+                };
+                if !holds {
+                    return Err(format!("{check:?} does not hold for output {finished:?}"));
+                }
+            }
+            Ok(())
+        }
     }
 
     #[test]
-    fn test_new_writer_at_line_start() {
-        let writer = default_writer();
-        assert_eq!(writer.current_indent(), 0);
+    fn writer_scripts() {
+        let failures: Vec<String> = WRITER_CASES
+            .iter()
+            .filter_map(|case| case.run().err().map(|problem| format!("{}: {problem}", case.name)))
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "{} writer row(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 
     #[test]
-    fn test_new_writer_with_custom_config() {
-        let config = FormatConfig::new().with_indent_width(2);
-        let writer = FormatWriter::new(config);
+    fn test_config_returns_correct_config() {
+        let writer = FormatWriter::new(FormatConfig::new().with_indent_width(2));
         assert_eq!(writer.config().indent_width, 2);
-    }
 
-    // ========================================
-    // Write tests
-    // ========================================
-
-    #[test]
-    fn test_write_simple() {
-        let mut writer = default_writer();
-        writer.write("hello");
-        assert_eq!(writer.finish(), "hello");
-    }
-
-    #[test]
-    fn test_write_empty_string() {
-        let mut writer = default_writer();
-        writer.write("");
-        assert_eq!(writer.finish(), "");
-    }
-
-    #[test]
-    fn test_write_multiple() {
-        let mut writer = default_writer();
-        writer.write("hello");
-        writer.write(" ");
-        writer.write("world");
-        assert_eq!(writer.finish(), "hello world");
+        let config = FormatConfig::new()
+            .with_indent_width(8)
+            .with_line_length(100)
+            .with_quote_style(QuoteStyle::Single);
+        let writer = FormatWriter::new(config);
+        assert_eq!(writer.config().indent_width, 8);
+        assert_eq!(writer.config().line_length, 100);
+        assert_eq!(writer.config().quote_style, QuoteStyle::Single);
     }
 
     #[test]
     fn test_checkpoint_restore_round_trip() {
-        let mut writer = default_writer();
+        let mut writer = FormatWriter::new(FormatConfig::default());
         writer.write("hello");
         let checkpoint = writer.checkpoint();
         writer.write(" world");
@@ -243,322 +324,249 @@ mod tests {
         assert_eq!(writer.finish(), "hello");
     }
 
-    #[test]
-    fn test_write_preserves_content() {
-        let mut writer = default_writer();
-        writer.write("special chars: !@#$%^&*()");
-        assert_eq!(writer.finish(), "special chars: !@#$%^&*()");
-    }
+    use Output::{Contains, EndsWith, Is, StartsWith};
+    use Step::*;
 
-    // ========================================
-    // Writeln tests
-    // ========================================
-
-    #[test]
-    fn test_writeln_adds_newline() {
-        let mut writer = default_writer();
-        writer.writeln("hello");
-        assert_eq!(writer.finish(), "hello\n");
-    }
-
-    #[test]
-    fn test_writeln_empty_string() {
-        let mut writer = default_writer();
-        writer.writeln("");
-        assert_eq!(writer.finish(), "\n");
-    }
-
-    #[test]
-    fn test_writeln_multiple() {
-        let mut writer = default_writer();
-        writer.writeln("line1");
-        writer.writeln("line2");
-        assert_eq!(writer.finish(), "line1\nline2\n");
-    }
-
-    // ========================================
-    // Newline tests
-    // ========================================
-
-    #[test]
-    fn test_newline() {
-        let mut writer = default_writer();
-        writer.newline();
-        assert_eq!(writer.finish(), "\n");
-    }
-
-    #[test]
-    fn test_multiple_newlines() {
-        let mut writer = default_writer();
-        writer.newline();
-        writer.newline();
-        writer.newline();
-        assert_eq!(writer.finish(), "\n\n\n");
-    }
-
-    #[test]
-    fn test_newline_after_write() {
-        let mut writer = default_writer();
-        writer.write("text");
-        writer.newline();
-        assert_eq!(writer.finish(), "text\n");
-    }
-
-    // ========================================
-    // Indent/dedent tests
-    // ========================================
-
-    #[test]
-    fn test_indent_increases_level() {
-        let mut writer = default_writer();
-        assert_eq!(writer.current_indent(), 0);
-        writer.indent();
-        assert_eq!(writer.current_indent(), 1);
-    }
-
-    #[test]
-    fn test_dedent_decreases_level() {
-        let mut writer = default_writer();
-        writer.indent();
-        writer.indent();
-        assert_eq!(writer.current_indent(), 2);
-        writer.dedent();
-        assert_eq!(writer.current_indent(), 1);
-    }
-
-    #[test]
-    fn test_dedent_at_zero_stays_zero() {
-        let mut writer = default_writer();
-        writer.dedent();
-        assert_eq!(writer.current_indent(), 0);
-    }
-
-    #[test]
-    fn test_indent_affects_output() {
-        let mut writer = default_writer();
-        writer.indent();
-        writer.writeln("indented");
-        writer.dedent();
-        writer.writeln("not indented");
-        let output = writer.finish();
-        assert!(output.starts_with("    indented\n"));
-        assert!(output.ends_with("not indented\n"));
-    }
-
-    #[test]
-    fn test_double_indent() {
-        let config = FormatConfig::new().with_indent_width(2);
-        let mut writer = FormatWriter::new(config);
-        writer.indent();
-        writer.indent();
-        writer.write("text");
-        assert_eq!(writer.finish(), "    text"); // 2 * 2 = 4 spaces
-    }
-
-    #[test]
-    fn test_indent_width_4() {
-        let config = FormatConfig::new().with_indent_width(4);
-        let mut writer = FormatWriter::new(config);
-        writer.indent();
-        writer.write("text");
-        assert_eq!(writer.finish(), "    text");
-    }
-
-    #[test]
-    fn test_indent_width_2() {
-        let config = FormatConfig::new().with_indent_width(2);
-        let mut writer = FormatWriter::new(config);
-        writer.indent();
-        writer.write("text");
-        assert_eq!(writer.finish(), "  text");
-    }
-
-    // ========================================
-    // Blank lines tests
-    // ========================================
-
-    #[test]
-    fn test_blank_lines_zero() {
-        let mut writer = default_writer();
-        writer.write("before");
-        writer.blank_lines(0);
-        writer.write("after");
-        assert_eq!(writer.finish(), "beforeafter");
-    }
-
-    #[test]
-    fn test_blank_lines_one() {
-        let mut writer = default_writer();
-        writer.blank_lines(1);
-        assert_eq!(writer.finish(), "\n");
-    }
-
-    #[test]
-    fn test_blank_lines_multiple() {
-        let mut writer = default_writer();
-        writer.blank_lines(3);
-        assert_eq!(writer.finish(), "\n\n\n");
-    }
-
-    #[test]
-    fn test_blank_lines_between_content() {
-        let mut writer = default_writer();
-        writer.writeln("line1");
-        writer.blank_lines(2);
-        writer.writeln("line2");
-        assert_eq!(writer.finish(), "line1\n\n\nline2\n");
-    }
-
-    // ========================================
-    // Space tests
-    // ========================================
-
-    #[test]
-    fn test_space() {
-        let mut writer = default_writer();
-        writer.write("a");
-        writer.space();
-        writer.write("b");
-        assert_eq!(writer.finish(), "a b");
-    }
-
-    // ========================================
-    // Config accessor tests
-    // ========================================
-
-    #[test]
-    fn test_config_returns_correct_config() {
-        let config = FormatConfig::new()
-            .with_indent_width(8)
-            .with_line_length(100)
-            .with_quote_style(QuoteStyle::Single);
-        let writer = FormatWriter::new(config);
-
-        assert_eq!(writer.config().indent_width, 8);
-        assert_eq!(writer.config().line_length, 100);
-        assert_eq!(writer.config().quote_style, QuoteStyle::Single);
-    }
-
-    // ========================================
-    // Line length tracking tests
-    // ========================================
-
-    #[test]
-    fn test_would_exceed_line_length_at_start() {
-        let config = FormatConfig::new().with_line_length(10);
-        let writer = FormatWriter::new(config);
-        assert!(!writer.would_exceed_line_length(5));
-        assert!(!writer.would_exceed_line_length(10));
-        assert!(writer.would_exceed_line_length(11));
-    }
-
-    #[test]
-    fn test_would_exceed_line_length_after_write() {
-        let config = FormatConfig::new().with_line_length(10);
-        let mut writer = FormatWriter::new(config);
-        writer.write("hello"); // 5 chars
-        assert!(!writer.would_exceed_line_length(5)); // 5 + 5 = 10, not exceeded
-        assert!(writer.would_exceed_line_length(6)); // 5 + 6 = 11, exceeded
-    }
-
-    #[test]
-    fn test_would_exceed_with_indent() {
-        let config = FormatConfig::new().with_indent_width(4).with_line_length(10);
-        let mut writer = FormatWriter::new(config);
-        writer.indent(); // Will add 4 spaces when we write
-        // At line start with indent, we have 4 (indent) + additional
-        assert!(!writer.would_exceed_line_length(6)); // 4 + 6 = 10
-        assert!(writer.would_exceed_line_length(7)); // 4 + 7 = 11
-    }
-
-    #[test]
-    fn test_remaining_line_space_at_start() {
-        let config = FormatConfig::new().with_line_length(80);
-        let writer = FormatWriter::new(config);
-        assert_eq!(writer.remaining_line_space(), 80);
-    }
-
-    #[test]
-    fn test_remaining_line_space_after_write() {
-        let config = FormatConfig::new().with_line_length(80);
-        let mut writer = FormatWriter::new(config);
-        writer.write("hello"); // 5 chars
-        assert_eq!(writer.remaining_line_space(), 75);
-    }
-
-    #[test]
-    fn test_remaining_line_space_with_indent() {
-        let config = FormatConfig::new().with_indent_width(4).with_line_length(80);
-        let mut writer = FormatWriter::new(config);
-        writer.indent();
-        // At line start, remaining should account for indent
-        assert_eq!(writer.remaining_line_space(), 76); // 80 - 4
-    }
-
-    #[test]
-    fn test_line_length_resets_after_newline() {
-        let config = FormatConfig::new().with_line_length(80);
-        let mut writer = FormatWriter::new(config);
-        writer.write("this is a long line that takes up space");
-        writer.newline();
-        assert_eq!(writer.remaining_line_space(), 80);
-    }
-
-    // ========================================
-    // Complex scenarios
-    // ========================================
-
-    #[test]
-    fn test_nested_indentation() {
-        let config = FormatConfig::new().with_indent_width(2);
-        let mut writer = FormatWriter::new(config);
-
-        writer.writeln("fn main() {");
-        writer.indent();
-        writer.writeln("if true {");
-        writer.indent();
-        writer.writeln("println!(\"hello\");");
-        writer.dedent();
-        writer.writeln("}");
-        writer.dedent();
-        writer.writeln("}");
-
-        let expected = "fn main() {\n  if true {\n    println!(\"hello\");\n  }\n}\n";
-        assert_eq!(writer.finish(), expected);
-    }
-
-    #[test]
-    fn test_code_block_generation() {
-        let mut writer = default_writer();
-
-        writer.writeln("struct Point {");
-        writer.indent();
-        writer.writeln("x: i32,");
-        writer.writeln("y: i32,");
-        writer.dedent();
-        writer.writeln("}");
-
-        let output = writer.finish();
-        assert!(output.contains("struct Point {"));
-        assert!(output.contains("    x: i32,"));
-        assert!(output.contains("}"));
-    }
-
-    #[test]
-    fn test_mixed_operations() {
-        let mut writer = default_writer();
-
-        writer.write("a");
-        writer.space();
-        writer.write("=");
-        writer.space();
-        writer.write("1");
-        writer.newline();
-        writer.blank_lines(1);
-        writer.indent();
-        writer.writeln("b = 2");
-
-        let output = writer.finish();
-        assert_eq!(output, "a = 1\n\n    b = 2\n");
-    }
+    const WRITER_CASES: &[WriterCase] = &[
+        WriterCase {
+            name: "test_new_writer_empty_output",
+            output: &[Is("")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_new_writer_at_line_start",
+            steps: &[IndentIs(0)],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_write_simple",
+            steps: &[Write("hello")],
+            output: &[Is("hello")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_write_empty_string",
+            steps: &[Write("")],
+            output: &[Is("")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_write_multiple",
+            steps: &[Write("hello"), Write(" "), Write("world")],
+            output: &[Is("hello world")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_write_preserves_content",
+            steps: &[Write("special chars: !@#$%^&*()")],
+            output: &[Is("special chars: !@#$%^&*()")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_writeln_adds_newline",
+            steps: &[Writeln("hello")],
+            output: &[Is("hello\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_writeln_empty_string",
+            steps: &[Writeln("")],
+            output: &[Is("\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_writeln_multiple",
+            steps: &[Writeln("line1"), Writeln("line2")],
+            output: &[Is("line1\nline2\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_newline",
+            steps: &[Newline],
+            output: &[Is("\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_multiple_newlines",
+            steps: &[Newline, Newline, Newline],
+            output: &[Is("\n\n\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_newline_after_write",
+            steps: &[Write("text"), Newline],
+            output: &[Is("text\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_indent_increases_level",
+            steps: &[IndentIs(0), Indent, IndentIs(1)],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_dedent_decreases_level",
+            steps: &[Indent, Indent, IndentIs(2), Dedent, IndentIs(1)],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_dedent_at_zero_stays_zero",
+            steps: &[Dedent, IndentIs(0)],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_indent_affects_output",
+            steps: &[Indent, Writeln("indented"), Dedent, Writeln("not indented")],
+            output: &[StartsWith("    indented\n"), EndsWith("not indented\n")],
+            ..WriterCase::DEFAULT
+        },
+        // 2 * 2 = 4 spaces.
+        WriterCase {
+            name: "test_double_indent",
+            indent_width: Some(2),
+            steps: &[Indent, Indent, Write("text")],
+            output: &[Is("    text")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_indent_width_4",
+            indent_width: Some(4),
+            steps: &[Indent, Write("text")],
+            output: &[Is("    text")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_indent_width_2",
+            indent_width: Some(2),
+            steps: &[Indent, Write("text")],
+            output: &[Is("  text")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_blank_lines_zero",
+            steps: &[Write("before"), BlankLines(0), Write("after")],
+            output: &[Is("beforeafter")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_blank_lines_one",
+            steps: &[BlankLines(1)],
+            output: &[Is("\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_blank_lines_multiple",
+            steps: &[BlankLines(3)],
+            output: &[Is("\n\n\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_blank_lines_between_content",
+            steps: &[Writeln("line1"), BlankLines(2), Writeln("line2")],
+            output: &[Is("line1\n\n\nline2\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_space",
+            steps: &[Write("a"), Space, Write("b")],
+            output: &[Is("a b")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_would_exceed_line_length_at_start",
+            line_length: Some(10),
+            steps: &[Fits(5), Fits(10), Exceeds(11)],
+            ..WriterCase::DEFAULT
+        },
+        // 5 + 5 = 10 is not exceeded; 5 + 6 = 11 is.
+        WriterCase {
+            name: "test_would_exceed_line_length_after_write",
+            line_length: Some(10),
+            steps: &[Write("hello"), Fits(5), Exceeds(6)],
+            ..WriterCase::DEFAULT
+        },
+        // At line start with an indent, the pending 4 indent columns count: 4 + 6 = 10, 4 + 7 = 11.
+        WriterCase {
+            name: "test_would_exceed_with_indent",
+            indent_width: Some(4),
+            line_length: Some(10),
+            steps: &[Indent, Fits(6), Exceeds(7)],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_remaining_line_space_at_start",
+            line_length: Some(80),
+            steps: &[RemainingIs(80)],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_remaining_line_space_after_write",
+            line_length: Some(80),
+            steps: &[Write("hello"), RemainingIs(75)],
+            ..WriterCase::DEFAULT
+        },
+        // At line start, the remaining space accounts for the indent: 80 - 4.
+        WriterCase {
+            name: "test_remaining_line_space_with_indent",
+            indent_width: Some(4),
+            line_length: Some(80),
+            steps: &[Indent, RemainingIs(76)],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_line_length_resets_after_newline",
+            line_length: Some(80),
+            steps: &[
+                Write("this is a long line that takes up space"),
+                Newline,
+                RemainingIs(80),
+            ],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_nested_indentation",
+            indent_width: Some(2),
+            steps: &[
+                Writeln("fn main() {"),
+                Indent,
+                Writeln("if true {"),
+                Indent,
+                Writeln("println!(\"hello\");"),
+                Dedent,
+                Writeln("}"),
+                Dedent,
+                Writeln("}"),
+            ],
+            output: &[Is("fn main() {\n  if true {\n    println!(\"hello\");\n  }\n}\n")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_code_block_generation",
+            steps: &[
+                Writeln("struct Point {"),
+                Indent,
+                Writeln("x: i32,"),
+                Writeln("y: i32,"),
+                Dedent,
+                Writeln("}"),
+            ],
+            output: &[Contains("struct Point {"), Contains("    x: i32,"), Contains("}")],
+            ..WriterCase::DEFAULT
+        },
+        WriterCase {
+            name: "test_mixed_operations",
+            steps: &[
+                Write("a"),
+                Space,
+                Write("="),
+                Space,
+                Write("1"),
+                Newline,
+                BlankLines(1),
+                Indent,
+                Writeln("b = 2"),
+            ],
+            output: &[Is("a = 1\n\n    b = 2\n")],
+            ..WriterCase::DEFAULT
+        },
+    ];
 }
