@@ -1,0 +1,18 @@
+# Former case option_str_unwrap_or_with_str_binding: unwrap_or on an Option[str] takes a str binding as its fallback, in a call argument, an f-string, an assignment and a return
+
+def pick(value: Option[str]) -> str:
+    missing = "none"
+    return value.unwrap_or(missing)
+
+
+pub def main() -> None:
+    missing = "none"
+    first: Option[str] = None
+    println(first.unwrap_or(missing))
+    second: Option[str] = None
+    println(f"value: {second.unwrap_or(missing)}")
+    third: Option[str] = None
+    text = third.unwrap_or(missing)
+    println(text)
+    println(pick(None))
+    println(pick(Some("given")))

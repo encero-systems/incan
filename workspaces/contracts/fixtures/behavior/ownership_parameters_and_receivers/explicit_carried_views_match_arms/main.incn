@@ -1,0 +1,80 @@
+# behavior: 10 former ownership parameters and receivers cases run in order, each program from its own module: explicit_carried_views_match_arms, explicit_closures_capturing_borrowed_locals, explicit_closures_capturing_inputs, explicit_closures_holding_references, explicit_closures_passed_on, explicit_input_loop_reads_each_item, explicit_inputs_used_on_one_branch, explicit_parameter_views, explicit_tuple_views, for_loops_over_strings_bytes_and_enum_lists
+# expect-stdout:
+#  2
+#  closed
+#  -1
+#  true
+#  3
+#  3
+#  -1
+#  19
+#  9
+#  31
+#  12
+#  18
+#  3
+#  8
+#  15
+#  22
+#  8
+#  abc
+#  5
+#  10
+#  11
+#  6
+#  7
+#  12
+#  7
+#  12
+#  9
+#  3
+#  10
+#  6
+#  [6]
+#  kept: first
+#  taken: second
+#  2
+#  6
+#  1
+#  Utrecht!
+#  Leiden
+#  7
+#  6
+#  7
+#  2
+#  Rotterdam 2
+#  ada 6
+#  true
+#  3 2
+#  ["h.", "e.", "y."]
+#  131
+#  leaf 1
+#  branch x
+#  2
+
+"""Run the program of each former case in order."""
+
+import explicit_carried_views_match_arms
+import explicit_closures_capturing_borrowed_locals
+import explicit_closures_capturing_inputs
+import explicit_closures_holding_references
+import explicit_closures_passed_on
+import explicit_input_loop_reads_each_item
+import explicit_inputs_used_on_one_branch
+import explicit_parameter_views
+import explicit_tuple_views
+import for_loops_over_strings_bytes_and_enum_lists
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    explicit_carried_views_match_arms.main()
+    explicit_closures_capturing_borrowed_locals.main()
+    explicit_closures_capturing_inputs.main()
+    explicit_closures_holding_references.main()
+    explicit_closures_passed_on.main()
+    explicit_input_loop_reads_each_item.main()
+    explicit_inputs_used_on_one_branch.main()
+    explicit_parameter_views.main()
+    explicit_tuple_views.main()
+    for_loops_over_strings_bytes_and_enum_lists.main()

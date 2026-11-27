@@ -1,0 +1,11 @@
+# Former case imported_user_json_keeps_field: a user module's imported model named Json keeps and exposes its own value field
+
+from models import Json
+
+
+def read(wrapper: Json[int]) -> int:
+    return wrapper.value
+
+
+pub def main() -> None:
+    println(read(Json[int](value=5)))

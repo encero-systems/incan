@@ -1,0 +1,114 @@
+# behavior: 12 former lowering expressions cases run in order, each program from its own module: borrowed_field_into_a_union_argument, empty_list_argument_takes_instantiated_element_type, integer_literal_takes_float_type_in_more_slots, integer_literal_written_to_float_element, iterator_adapter_surface, method_partial_mutating_receiver, option_str_unwrap_or_with_str_binding, result_method_surface, trait_typed_receivers, user_methods_named_like_builtins, value_assigned_to_nested_option_binding, value_written_to_option_place_is_wrapped
+# expect-stdout:
+#  label sysroot
+#  0
+#  5
+#  0
+#  2.25
+#  3.0
+#  4.0
+#  5.0
+#  6.0
+#  7.0
+#  8.0
+#  2.5
+#  10.0
+#  11.0
+#  3.0
+#  -4.0
+#  5.0
+#  2.5
+#  map 2,4,6,8
+#  filter 2,4
+#  enumerate 0:1 1:2
+#  zip 1:10 2:20
+#  take 1,2
+#  skip 3,4
+#  take_while 1,2
+#  skip_while 3,4
+#  chain 1,2,3,4,9,8
+#  flat_map 1,1,2,2
+#  batch 1,2|3,4|5
+#  count 4
+#  reduce 10
+#  fold 10
+#  any true
+#  all false
+#  find 3
+#  for_each 1
+#  for_each 2
+#  sum 10
+#  false
+#  true
+#  false
+#  none
+#  value: none
+#  none
+#  none
+#  given
+#  map Ok(4)
+#  map_err Err(bad!)
+#  and_then Ok(3)
+#  and_then Err(zero)
+#  or_else Ok(0)
+#  inspect saw 2
+#  inspect Ok(2)
+#  inspect_err saw bad
+#  inspect_err Err(bad)
+#  unwrap 2
+#  unwrap_or 9
+#  plan 7
+#  first 4
+#  Dataset.map(3)
+#  Dataset.join(rows)
+#  Dataset.split(2)
+#  Dataset.replace(a->b)
+#  Dataset.count()
+#  Dataset.index(7)
+#  a-b-c
+#  [x, y]
+#  hexo
+#  [2, 1, 3, 4, 5]
+#  5
+#  0
+#  1
+#  6
+#  none
+#  5
+#  a
+#  1
+#  2
+#  b
+#  3
+#  4
+
+"""Run the program of each former case in order."""
+
+import borrowed_field_into_a_union_argument
+import empty_list_argument_takes_instantiated_element_type
+import integer_literal_takes_float_type_in_more_slots
+import integer_literal_written_to_float_element
+import iterator_adapter_surface
+import method_partial_mutating_receiver
+import option_str_unwrap_or_with_str_binding
+import result_method_surface
+import trait_typed_receivers
+import user_methods_named_like_builtins
+import value_assigned_to_nested_option_binding
+import value_written_to_option_place_is_wrapped
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    borrowed_field_into_a_union_argument.main()
+    empty_list_argument_takes_instantiated_element_type.main()
+    integer_literal_takes_float_type_in_more_slots.main()
+    integer_literal_written_to_float_element.main()
+    iterator_adapter_surface.main()
+    method_partial_mutating_receiver.main()
+    option_str_unwrap_or_with_str_binding.main()
+    result_method_surface.main()
+    trait_typed_receivers.main()
+    user_methods_named_like_builtins.main()
+    value_assigned_to_nested_option_binding.main()
+    value_written_to_option_place_is_wrapped.main()

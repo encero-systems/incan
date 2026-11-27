@@ -1,0 +1,62 @@
+# behavior: 8 former lowering expressions cases run in order, each program from its own module: clone_dispatch_with_std_import, decorator_declared_surface_issue1453, json_protocol_dispatch, native_clone_on_union_and_option_fields, overloaded_stdlib_call_selection, receiver_aware_method_kinds_issue1668, source_partial_keeps_declaration_defaults_issue701, trait_dispatch_receiver_shapes
+# expect-stdout:
+#  original 1
+#  copy 5
+#  7
+#  named
+#  preserve wrapped
+#  configure wrapped
+#  preserve wrapped
+#  echo int 42
+#  echo str hello
+#  twice int 7
+#  plain 3
+#  {"value":1}
+#  {"label":"x"}
+#  7
+#  cloned
+#  absent
+#  7
+#  fallback
+#  true
+#  false
+#  a,b
+#  1,2
+#  mut true
+#  mut a,b,c
+#  mut 1,2,3
+#  5
+#  6
+#  lit
+#  val
+#  raw
+#  registry/alpha:3
+#  registry/beta:1
+#  custom/gamma:1
+#  generic: item-a
+#  nominal generic: chunk of item-b
+#  clone: 3 3
+#  concrete: item-c
+
+"""Run the program of each former case in order."""
+
+import clone_dispatch_with_std_import
+import decorator_declared_surface_issue1453
+import json_protocol_dispatch
+import native_clone_on_union_and_option_fields
+import overloaded_stdlib_call_selection
+import receiver_aware_method_kinds_issue1668
+import source_partial_keeps_declaration_defaults_issue701
+import trait_dispatch_receiver_shapes
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    clone_dispatch_with_std_import.main()
+    decorator_declared_surface_issue1453.main()
+    json_protocol_dispatch.main()
+    native_clone_on_union_and_option_fields.main()
+    overloaded_stdlib_call_selection.main()
+    receiver_aware_method_kinds_issue1668.main()
+    source_partial_keeps_declaration_defaults_issue701.main()
+    trait_dispatch_receiver_shapes.main()

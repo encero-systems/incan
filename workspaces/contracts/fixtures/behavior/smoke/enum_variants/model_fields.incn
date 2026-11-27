@@ -1,0 +1,18 @@
+# Former case model_fields: a model built with named arguments carries each str and int field's value
+
+model Point:
+    x: int
+    y: int
+
+
+pub model User:
+    pub name: str
+    pub age: int
+
+
+pub def main() -> None:
+    p = Point(x=10, y=20)
+    println(p.x)
+    println(p.y)
+    u = User(name="Ada", age=36)
+    println(f"{u.name} {u.age}")

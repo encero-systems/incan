@@ -1,0 +1,22 @@
+# Former case phantom_type_parameter_model_issue1370: a generic model whose type parameter no field mentions is constructed with an explicit type argument, its operator method returns the same generic model, and its Debug rendering shows only the fields (#1370)
+
+@derive(Debug)
+model Column[T with Display]:
+    sql: str
+    note: str = "n"
+
+    def __mul__(self, other: T) -> Column[T]:
+        return Column[T](sql=f"({self.sql} * {other})")
+
+
+def col[T with Display](name: str) -> Column[T]:
+    return Column[T](sql=name)
+
+
+pub def main() -> None:
+    amount: Column[float] = col("amount")
+    total = amount * 2.0
+    println(total.sql)
+    label = Column[str](sql="label")
+    println((label * "x").sql)
+    println(f"{amount:?}")

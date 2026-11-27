@@ -1,0 +1,13 @@
+# Former case string_list_passed_at_last_use_and_empty_literal: a list of strings passed at its last use and an empty list literal both reach a list parameter and are measured by the callee
+
+def total_length(items: list[str]) -> int:
+    mut total = 0
+    for item in items:
+        total += len(item)
+    return total
+
+
+pub def main() -> None:
+    names = ["ab", "c"]
+    println(total_length(names))
+    println(total_length([]))

@@ -1,0 +1,16 @@
+# Former case enum_variants: a unit-variant enum's variants are distinct values a match can tell apart
+
+pub enum Status:
+    Active
+    Inactive
+
+
+def describe(status: Status) -> str:
+    match status:
+        Status.Active => return "active"
+        Status.Inactive => return "inactive"
+
+
+pub def main() -> None:
+    println(describe(Status.Active))
+    println(describe(Status.Inactive))

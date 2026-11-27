@@ -1,0 +1,9 @@
+# Former case default_type_constructors_keep_module_identity: omitted defaults in two modules construct the same-named model declared by each function's own module
+
+from a import make as make_a
+from b import make as make_b
+
+
+pub def main() -> None:
+    println(make_a())
+    println(make_b())

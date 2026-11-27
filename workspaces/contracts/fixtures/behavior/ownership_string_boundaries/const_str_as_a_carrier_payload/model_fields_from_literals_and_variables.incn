@@ -1,0 +1,14 @@
+# Former case model_fields_from_literals_and_variables: a model built from a str literal, an int literal and a str variable reports each field as given, and the variable is usable after the construction
+
+model User:
+    name: str
+    age: int
+
+
+pub def main() -> None:
+    first = User(name="Alice", age=30)
+    println(f"{first.name} {first.age}")
+    name = "Bob"
+    second = User(name=name, age=31)
+    println(f"{second.name} {second.age}")
+    println(name)

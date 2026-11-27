@@ -1,0 +1,86 @@
+# behavior: 10 former ownership parameters and receivers cases run in order, each program from its own module: generic_list_comprehension_consumes_parameter, method_frame_borrows_receiver_and_input, mut_self_call_on_a_loop_item_inside_an_expression, mut_tuple_parameter_elements_changed_in_place, mutable_list_parameter_changes_reach_the_caller, mutable_string_parameter_from_literal_and_variable, result_methods_leave_their_receiver_usable, self_and_wrapped_fields_returned_as_values, view_type_from_one_source, zip_loop_changing_one_operand_in_place
+# expect-stdout:
+#  3
+#  3
+#  3
+#  3
+#  3
+#  0
+#  11
+#  0
+#  2
+#  11
+#  3
+#  12
+#  1
+#  1
+#  6
+#  15
+#  1 6
+#  2 15
+#  3
+#  24
+#  12
+#  1
+#  3
+#  [1, 2, 3]
+#  [1, 2, 3, 3, 3]
+#  true
+#  2
+#  5
+#  [1, 2, 3, 3, 3, 3]
+#  hello!
+#  name!
+#  name
+#  2
+#  3
+#  20
+#  2
+#  10
+#  true
+#  5
+#  15
+#  1
+#  1
+#  2
+#  2
+#  2 1
+#  1 1
+#  1
+#  2
+#  3
+#  4
+#  5
+#  1 3 5 0 0 1
+#  2 4 6 1 1 2
+#  5 6
+#  1 2
+#  1 2
+#  1 2
+
+"""Run the program of each former case in order."""
+
+import generic_list_comprehension_consumes_parameter
+import method_frame_borrows_receiver_and_input
+import mut_self_call_on_a_loop_item_inside_an_expression
+import mut_tuple_parameter_elements_changed_in_place
+import mutable_list_parameter_changes_reach_the_caller
+import mutable_string_parameter_from_literal_and_variable
+import result_methods_leave_their_receiver_usable
+import self_and_wrapped_fields_returned_as_values
+import view_type_from_one_source
+import zip_loop_changing_one_operand_in_place
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    generic_list_comprehension_consumes_parameter.main()
+    method_frame_borrows_receiver_and_input.main()
+    mut_self_call_on_a_loop_item_inside_an_expression.main()
+    mut_tuple_parameter_elements_changed_in_place.main()
+    mutable_list_parameter_changes_reach_the_caller.main()
+    mutable_string_parameter_from_literal_and_variable.main()
+    result_methods_leave_their_receiver_usable.main()
+    self_and_wrapped_fields_returned_as_values.main()
+    view_type_from_one_source.main()
+    zip_loop_changing_one_operand_in_place.main()

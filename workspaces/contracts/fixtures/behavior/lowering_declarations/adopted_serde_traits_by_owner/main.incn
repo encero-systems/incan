@@ -1,32 +1,112 @@
-# behavior: a trait spelled Serialize from another module keeps its own to_json body, while the std.serde.json traits forward the JSON protocol whether adopted module-qualified or derived by their imported name (#1431)
+# behavior: 16 former lowering declarations cases run in order, each program from its own module: adopted_serde_traits_by_owner, comparison_dunders_of_an_adopter_from_another_module, default_type_constructors_keep_module_identity, imported_user_json_keeps_field, local_trait_shadows_imported_trait_issue1592, trait_default_local_shadows_module_type, assert_is_some_binds_the_payload, assert_raises_forms, comparison_trait_adopters_of_every_kind, exact_float_width_arithmetic, function_model_enum_and_entry, generic_nominal_arguments, imported_function_alias, ne_reaches_the_eq_default_of_an_ord_only_adopter, option_identity_and_comparison_bounds, statements_and_expressions
 # expect-stdout:
-#   vendor codec
-#   {"value":1}
-#   9
+#  vendor codec
+#  {"value":1}
+#  9
+#  false
+#  true
+#  false
+#  true
+#  true
+#  false
+#  false
+#  true
+#  true
+#  false
+#  1
+#  2
+#  5
+#  local Some(1)
+#  imported None
+#  5
+#  2
+#  42
+#  43
+#  statement form passed
+#  helper form passed
+#  true
+#  0
+#  true
+#  3
+#  true
+#  true
+#  true
+#  2
+#  true
+#  f32 add 0.3
+#  f64 add 0.30000000000000004
+#  f32 sub 1.1
+#  f32 mul 0.3
+#  f32 div 0.33333334
+#  f64 div 0.3333333333333333
+#  f32 floordiv 3.0
+#  f32 mod 0.20000005
+#  f32 pow 1.21
+#  entered main
+#  5
+#  Ada 36
+#  green
+#  boxed leaf
+#  first 4
+#  first x
+#  value 9
+#  4
+#  true
+#  false
+#  false
+#  true
+#  false
+#  true
+#  true
+#  false
+#  true
+#  true
+#  1
+#  positive
+#  negative
+#  zero
+#  0
+#  1
+#  2
+#  12
+#  3 6
+#  2
 
-from codec import Serialize
-from std.serde import json
-from std.serde.json import Deserialize
+"""Run the program of each former case in order."""
 
-
-model Note with Serialize:
-    text: str
-
-
-model Payload with json.Serialize:
-    value: int
-
-
-@derive(Deserialize)
-model Config:
-    port: int
+import adopted_serde_traits_by_owner
+import comparison_dunders_of_an_adopter_from_another_module
+import default_type_constructors_keep_module_identity
+import imported_user_json_keeps_field
+import local_trait_shadows_imported_trait_issue1592
+import trait_default_local_shadows_module_type
+import assert_is_some_binds_the_payload
+import assert_raises_forms
+import comparison_trait_adopters_of_every_kind
+import exact_float_width_arithmetic
+import function_model_enum_and_entry
+import generic_nominal_arguments
+import imported_function_alias
+import ne_reaches_the_eq_default_of_an_ord_only_adopter
+import option_identity_and_comparison_bounds
+import statements_and_expressions
 
 
 def main() -> None:
-    println(Note(text="a").to_json())
-    println(Payload(value=1).to_json())
-    match Config.from_json('{"port":9}'):
-        case Ok(config):
-            println(config.port)
-        case Err(message):
-            println(message)
+    """Run each former case's program in turn."""
+    adopted_serde_traits_by_owner.main()
+    comparison_dunders_of_an_adopter_from_another_module.main()
+    default_type_constructors_keep_module_identity.main()
+    imported_user_json_keeps_field.main()
+    local_trait_shadows_imported_trait_issue1592.main()
+    trait_default_local_shadows_module_type.main()
+    assert_is_some_binds_the_payload.main()
+    assert_raises_forms.main()
+    comparison_trait_adopters_of_every_kind.main()
+    exact_float_width_arithmetic.main()
+    function_model_enum_and_entry.main()
+    generic_nominal_arguments.main()
+    imported_function_alias.main()
+    ne_reaches_the_eq_default_of_an_ord_only_adopter.main()
+    option_identity_and_comparison_bounds.main()
+    statements_and_expressions.main()

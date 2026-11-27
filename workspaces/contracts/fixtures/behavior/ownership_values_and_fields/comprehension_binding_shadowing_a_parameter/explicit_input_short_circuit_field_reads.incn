@@ -1,0 +1,25 @@
+# Former case explicit_input_short_circuit_field_reads: Short-circuit reads of four fields of one shared input (RFC 164).
+
+model Span:
+    run: str
+    request: str
+    work: str
+    key: str
+
+
+def bounded(value: Borrowed[str]) -> bool:
+    return len(value) < 10
+
+
+def fields_bounded(span: Borrowed[Span]) -> bool:
+    """Short-circuit reads of four fields of one shared input."""
+    return (
+        bounded(span.run)
+        and bounded(span.request)
+        and bounded(span.work)
+        and bounded(span.key)
+    )
+
+
+pub def main() -> None:
+    println(fields_bounded(Span(run="a", request="b", work="c", key="d")))
