@@ -269,9 +269,9 @@ def check_memory(incan: str, project: Path, foreign: str) -> Result[None, str]:
     if "session feedback" not in peer.tool(6, "context_for_task", request)?:
         return Err("tolerant feedback did not explain its context ranking")
 
-    accepted = peer.tool(7, "record_feedback", observation(key, checked, 3600)).map_err(
-        (reason) => f"current checked CLI snapshot could not record feedback: {reason}",
-    )?
+    accepted = peer
+        .tool(7, "record_feedback", observation(key, checked, 3600))
+        .map_err((reason) => f"current checked CLI snapshot could not record feedback: {reason}")?
     if text(parse_json(accepted)?, "snapshot_id") != canonical:
         return Err("checked CLI feedback was stored under a different snapshot")
     entries = memory(peer, 8)?

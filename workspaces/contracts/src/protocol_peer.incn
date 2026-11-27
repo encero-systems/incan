@@ -148,7 +148,10 @@ pub class Peer:
         """Send the next full-sync buffer under the session's actual URI and version."""
         document = JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(version)})
         changes = JsonValue.array([JsonValue.object({"text": JsonValue.string(source)})])
-        return self.notify("textDocument/didChange", JsonValue.object({"textDocument": document, "contentChanges": changes}))
+        return self.notify(
+            "textDocument/didChange",
+            JsonValue.object({"textDocument": document, "contentChanges": changes}),
+        )
 
     pub def close_document(mut self, uri: str) -> Result[None, str]:
         """Wait for didClose so the following requests cannot consult the closed buffer."""
