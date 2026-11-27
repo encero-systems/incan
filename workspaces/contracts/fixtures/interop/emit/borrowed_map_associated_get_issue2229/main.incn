@@ -1,0 +1,73 @@
+# behavior: 10 former emit cases run in order, each program from its own module: borrowed_map_associated_get_issue2229, borrowed_map_method_issue2229, borrowed_str_return_issue2235, checked_c_bindings_over_libc, int_of_rust_to_string_issue2230, into_argument_keeps_string_issue2238, rust_box_any_result, rust_box_as_ref_borrowed_results, rust_std_byte_and_string_argument_shapes, rust_std_call_argument_borrowing
+# expect-stdout:
+#  7
+#  7
+#  borrowed
+#  present
+#  5
+#  7
+#  0.5 4
+#  5
+#  interior nul refused
+#  true
+#  65
+#  0 5
+#  true true true
+#  max_bytes is not a valid bound
+#  42
+#  custom message
+#  custom message
+#  custom message
+#  boxed
+#  boxed
+#  1
+#  2
+#  3
+#  4
+#  5
+#  6
+#  leaf 7
+#  ab
+#  cd
+#  ef
+#  gh
+#  ij
+#  kl
+#  true
+#  true
+#  true
+#  1
+#  2 1
+#  8
+#  16
+#  2
+#  0
+#  xy
+#  ab
+
+"""Run the program of each former case in order."""
+
+import borrowed_map_associated_get_issue2229
+import borrowed_map_method_issue2229
+import borrowed_str_return_issue2235
+import checked_c_bindings_over_libc
+import int_of_rust_to_string_issue2230
+import into_argument_keeps_string_issue2238
+import case_rust_box_any_result
+import case_rust_box_as_ref_borrowed_results
+import case_rust_std_byte_and_string_argument_shapes
+import case_rust_std_call_argument_borrowing
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    borrowed_map_associated_get_issue2229.main()
+    borrowed_map_method_issue2229.main()
+    borrowed_str_return_issue2235.main()
+    checked_c_bindings_over_libc.main()
+    int_of_rust_to_string_issue2230.main()
+    into_argument_keeps_string_issue2238.main()
+    case_rust_box_any_result.main()
+    case_rust_box_as_ref_borrowed_results.main()
+    case_rust_std_byte_and_string_argument_shapes.main()
+    case_rust_std_call_argument_borrowing.main()

@@ -1,0 +1,12 @@
+# Former case rust_error_value_to_a_str_parameter: a Rust error value handed to an Incan function taking a str arrives as its message text
+
+from rust::std::io import Error, ErrorKind
+
+
+def describe(message: str) -> str:
+    return "error: " + message
+
+
+pub def main() -> None:
+    failure = Error.new(ErrorKind.Other, "disk is full")
+    println(describe(failure))
