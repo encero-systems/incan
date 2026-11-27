@@ -105,6 +105,65 @@ pub model GraphOptions:
     # 0.5.1's feature options: the root package's features the inspected unit is checked with.
     pub request: FeatureRequest = FeatureRequest()
 
+    pub def shared_relationship_hits(self) -> bool:
+        """Plain and attributed relationships select the same checked hits under the same source anchor."""
+        return self.query != "" and self.query != "defs" and self.stale == "" and self.task == "" and not self.risk
+
+    pub def cached_format(self) -> str:
+        """Key relationship facts by their shared encoding and other answers by their rendered format."""
+        if self.shared_relationship_hits():
+            return RELATIONSHIP_HITS_FORMAT
+        return self.format
+
+    pub def presentation_domain(self) -> str:
+        """Version raw export bytes independently of query, task and snapshot answers."""
+        if self.raw_export():
+            return EXPORT_PRESENTATION_DOMAIN
+        return PRESENTATION_DOMAIN
+
+    pub def raw_export(self) -> bool:
+        """Whether this request returns the graph records themselves."""
+        return self.query == "" and self.task == "" and self.stale == ""
+
+    pub def needs_snapshot(self) -> bool:
+        """Only snapshot-bearing responses hash graph contents; plain queries are keyed by prepared artifact identities."""
+        return self.query == "" or self.stale != "" or self.risk
+
+    pub def shared_query(self) -> bool:
+        """Allow portable caching for risk-free text queries when their source anchors are portable."""
+        structured = self.query == "defs" and self.format in ["json", MCP_DEFINITIONS_FORMAT]
+        return self.query != "" and not structured and not self.risk
+
+    pub def inspected_path(self) -> Result[Path, str]:
+        """
+        The resolved path a request inspects. A directory that holds no `loaf.toml` but lies inside a Loaf, such as its
+        `src`, names that Loaf, so its answer is the Loaf's.
+        """
+        path = Path(self.path).resolve().map_err((error) => f"cannot {error.message()}")?
+        if path.is_dir() and not path.joinpath("loaf.toml").is_file():
+            if let Some(root) = project_root_of(path.joinpath("loaf.toml")):
+                return Ok(root)
+        return Ok(path)
+
+    pub def page_key(self, path: Path, toolchain: Toolchain) -> Result[str, str]:
+        """
+        The page identity of a request: every graph option and the resolved path. An Incan source's answer and a Rust
+        project's are paged; a process-risk answer, which observes running processes, never is.
+        """
+        if self.risk:
+            return Ok("")
+        source = entry_source(path)
+        mut parts = [self.presentation_domain(), path.0, source.0, self.profile, self.cached_format(), self.query]
+        parts = parts + [self.term]
+        parts = parts + [str(self.limit), str(self.strict), str(self.allow_errors), self.stale]
+        if self.match_export_modes:
+            parts.append("status:export-modes/1")
+        parts = parts + [self.task, str(self.budget), ",".join(self.request.features)]
+        parts = parts + [str(self.request.default_features), str(self.request.all_features)]
+        for name in sorted([name for name in self.substitutes.keys()]):
+            parts.append(f"substitute:{name}={self.substitutes[name]}")
+        return request_key(parts, toolchain)
+
 
 pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
     """
@@ -286,7 +345,7 @@ pub def inspect_codegraph(selected: GraphOptions) -> Result[i32, str]:
     """Check ordinary exports by default and leave an empty query answer silent."""
     mut request = selected
     if not request.risk and not request.allow_errors:
-        if raw_export(request):
+        if request.raw_export():
             request.strict = true
         elif request.stale != "" and request.query == "" and not request.strict:
             request.match_export_modes = true
@@ -348,7 +407,7 @@ pub model PreparedInspection:
     pub def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
         """Render the admitted request for the selected preferences."""
         answered = self.answer(preferences)?
-        if shared_relationship_hits(self.selected):
+        if self.selected.shared_relationship_hits():
             return present_relationship_hits(answered.text, self.selected.format == MCP_RELATIONSHIPS_FORMAT)
         return Ok(answered.text)
 
@@ -388,9 +447,9 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
     3. Otherwise prepare it, watching the inputs its answer will be paged with.
     """
     # 1. Path and installation failures are execution errors after syntax has been admitted.
-    path = inspected_path(selected)?
+    path = selected.inspected_path()?
     toolchain = load_toolchain()?
-    key = page_key(selected, path, toolchain)?
+    key = selected.page_key(path, toolchain)?
     # 2. A warm request reads its page and checks its inputs' metadata.
     if key != "":
         if let Some(page) = warm_page(key)?:
@@ -418,7 +477,7 @@ def prepare_cold(selected: GraphOptions, key: str, toolchain: Toolchain) -> Resu
     """
     # 1. Path failures are execution errors after syntax has been admitted.
     started = Instant.now()
-    path = inspected_path(selected)?
+    path = selected.inspected_path()?
     if key != "":
         watch_inputs()
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
@@ -439,50 +498,6 @@ def prepare_cold(selected: GraphOptions, key: str, toolchain: Toolchain) -> Resu
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
     return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain, key=key))
-
-
-def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result[str, str]:
-    """
-    The page identity of a request: every graph option and the resolved path. An Incan source's answer and a Rust
-    project's are paged; a process-risk answer, which observes running processes, never is.
-    """
-    if selected.risk:
-        return Ok("")
-    source = entry_source(path)
-    mut parts = [presentation_domain(selected), path.0, source.0, selected.profile, cached_format(selected), selected.query]
-    parts = parts + [selected.term]
-    parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
-    if selected.match_export_modes:
-        parts.append("status:export-modes/1")
-    parts = parts + [selected.task, str(selected.budget), ",".join(selected.request.features)]
-    parts = parts + [str(selected.request.default_features), str(selected.request.all_features)]
-    for name in sorted([name for name in selected.substitutes.keys()]):
-        parts.append(f"substitute:{name}={selected.substitutes[name]}")
-    return request_key(parts, toolchain)
-
-
-def shared_relationship_hits(selected: GraphOptions) -> bool:
-    """Plain and attributed relationships select the same checked hits under the same source anchor."""
-    return selected.query != "" and selected.query != "defs" and selected.stale == "" and selected.task == "" and not selected.risk
-
-
-def cached_format(selected: GraphOptions) -> str:
-    """Key relationship facts by their shared encoding and other answers by their rendered format."""
-    if shared_relationship_hits(selected):
-        return RELATIONSHIP_HITS_FORMAT
-    return selected.format
-
-
-def presentation_domain(selected: GraphOptions) -> str:
-    """Version raw export bytes independently of query, task and snapshot answers."""
-    if raw_export(selected):
-        return EXPORT_PRESENTATION_DOMAIN
-    return PRESENTATION_DOMAIN
-
-
-def raw_export(selected: GraphOptions) -> bool:
-    """Whether this request returns the graph records themselves."""
-    return selected.query == "" and selected.task == "" and selected.stale == ""
 
 
 def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answered: Answered) -> None:
@@ -518,18 +533,6 @@ pub model Answered:
     pub unchecked: bool = false
     # A plain relationship can be displayed when a marker cannot be observed. It is not a reusable authored answer.
     pub cacheable: bool = true
-
-
-def inspected_path(selected: GraphOptions) -> Result[Path, str]:
-    """
-    The resolved path a request inspects. A directory that holds no `loaf.toml` but lies inside a Loaf, such as its
-    `src`, names that Loaf, so its answer is the Loaf's.
-    """
-    path = Path(selected.path).resolve().map_err((error) => f"cannot {error.message()}")?
-    if path.is_dir() and not path.joinpath("loaf.toml").is_file():
-        if let Some(root) = project_root_of(path.joinpath("loaf.toml")):
-            return Ok(root)
-    return Ok(path)
 
 
 def entry_source(path: Path) -> Path:
@@ -590,7 +593,7 @@ def response(
     if feedback is None:
         if selected.match_export_modes:
             snapshot = current_status_snapshot(paths, root, selected.stale, not degraded)?
-        elif needs_snapshot(selected):
+        elif selected.needs_snapshot():
             snapshot = snapshot_identity(paths, root, selected.strict)?
     trace(f"graph snapshot: {started.elapsed().as_millis()} ms")
     lookup = Instant.now()
@@ -606,7 +609,7 @@ def response(
         return Ok(Answered(text=status, snapshot=snapshot, unchecked=degraded))
     mut author_root: Option[str] = None
     mut cacheable = true
-    if shared_relationship_hits(selected):
+    if selected.shared_relationship_hits():
         anchors = observe_anchor_root(Path(root), marker_only=true)
         if let Some(problem) = anchors.failure:
             if selected.format == MCP_RELATIONSHIPS_FORMAT:
@@ -615,7 +618,7 @@ def response(
         author_root = Some(anchors.path.0)
     elif selected.format == MCP_DEFINITIONS_FORMAT or selected.format == MCP_RELATIONSHIPS_FORMAT:
         author_root = Some(observed_anchor_root(Path(root))?.0)
-    portable = shared_query(selected)
+    portable = selected.shared_query()
     if not cacheable or (paged and not portable):
         # An unobserved anchor cannot back a cache. A same-root paged answer already has a home in its page.
         rendered = render(paths, root, selected, toolchain, degraded, snapshot, process, preferences, author_root)?
@@ -642,11 +645,6 @@ def response(
     return Ok(Answered(text=rendered.text, snapshot=snapshot, unchecked=degraded))
 
 
-def needs_snapshot(selected: GraphOptions) -> bool:
-    """Only snapshot-bearing responses hash graph contents; plain queries are keyed by prepared artifact identities."""
-    return selected.query == "" or selected.stale != "" or selected.risk
-
-
 def presentation_inputs(
     paths: list[GraphUnit],
     root: str,
@@ -667,11 +665,11 @@ def presentation_inputs(
             None => return Ok(None)
             Some(scope) => key_root = f"relative:{scope}"
     mut inputs = [
-        presentation_domain(selected),
+        selected.presentation_domain(),
         snapshot,
         key_root,
         selected.profile,
-        cached_format(selected),
+        selected.cached_format(),
         selected.query,
         selected.term,
     ]
@@ -693,12 +691,6 @@ def presentation_inputs(
         else:
             inputs.extend([unit.path.0, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?])
     return Ok(Some(inputs))
-
-
-def shared_query(selected: GraphOptions) -> bool:
-    """Allow portable caching for risk-free text queries when their source anchors are portable."""
-    structured = selected.query == "defs" and selected.format in ["json", MCP_DEFINITIONS_FORMAT]
-    return selected.query != "" and not structured and not selected.risk
 
 
 def relative_scope(path: str, root: str) -> Option[str]:
@@ -765,7 +757,7 @@ def render(
             if selected.format == MCP_DEFINITIONS_FORMAT:
                 return Ok(RenderedGraph(text=mcp_definition_response(records, selected.term, selected.limit, anchors)?))
             hits = query(records, selected.query, selected.term, anchors)
-            if shared_relationship_hits(selected):
+            if selected.shared_relationship_hits():
                 return encode_relationship_hits(hits, selected.limit)
             return render_hits(hits, selected.limit, true)
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
