@@ -59,12 +59,10 @@ pub def dependency_catalog(intent: ProjectIntent) -> RustDependencyCatalog:
 pub def dependency_catalog_with(
     intent: ProjectIntent,
     requests: list[RustInputRequest],
+    environment: str = "",
 ) -> RustDependencyCatalog:
     """Project an already normalized environment overlay through the same activation catalog boundary."""
-    mut dependencies: list[RustDependencyDeclaration] = []
-    for dependency in intent.dependencies:
-        if not dependency.rust_facet:
-            dependencies.append(local_declaration(dependency, len(dependencies)))
+    mut dependencies = local_declarations_for(intent, environment)
     for request in requests:
         dependencies.append(declaration(request, len(dependencies)))
     mut features: Dict[str, list[str]] = {}
@@ -74,6 +72,22 @@ pub def dependency_catalog_with(
     if intent.rust_name != "":
         library_name = Some(intent.rust_name)
     return RustDependencyCatalog(dependencies=dependencies, features=features, library_name=library_name)
+
+
+def local_declarations_for(intent: ProjectIntent, environment: str) -> list[RustDependencyDeclaration]:
+    """Project local activation slots from the selected authored list."""
+    if intent.has_local_dependency_overlay(environment):
+        return local_declarations(intent.environment_local_dependencies[environment])
+    return local_declarations(intent.dependencies)
+
+
+def local_declarations(local: list[LocalDependency]) -> list[RustDependencyDeclaration]:
+    """Give local Incan path edges their activation slots in declaration order."""
+    mut selected: list[RustDependencyDeclaration] = []
+    for dependency in local:
+        if not dependency.rust_facet:
+            selected.append(local_declaration(dependency, len(selected)))
+    return selected
 
 
 def local_declaration(dependency: LocalDependency, index: int) -> RustDependencyDeclaration:

@@ -189,7 +189,9 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
     dependencies, rust_inputs = parse_dependencies(root, manifest)?
     features = parse_features(project, dependencies, manifest, rust_inputs)?
     validate_facets(root, manifest, name)?
-    environment_rust_inputs = parse_environment_dependencies(root, rust_inputs, manifest)?
+    environment_local_dependencies, environment_rust_inputs = parse_environment_dependencies(
+        root, dependencies, rust_inputs, manifest,
+    )?
     mut edition = "2024"
     mut rust_name = crate_name(name)
     mut rust_type = ""
@@ -231,6 +233,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             rust_type=rust_type,
             rust_build_script=rust_build_script,
             environment_rust_inputs=environment_rust_inputs,
+            environment_local_dependencies=environment_local_dependencies,
             features=features,
             source_root=source_root,
             contract_models=parse_contract_models(root, manifest)?,

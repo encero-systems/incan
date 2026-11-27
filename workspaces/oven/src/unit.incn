@@ -361,7 +361,7 @@ def described(
     match discovered_project(entry)?:
         None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
         Some(found) =>
-            graph = intake(found, reader).map_err((error) => error.message())?
+            graph = intake(found, reader, purpose).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
             active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets, purpose)?
             projects = projects_by_root(graph.projects)
