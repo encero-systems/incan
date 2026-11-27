@@ -1,0 +1,14 @@
+# Former case await_through_a_module_binding: import std.async binds the reserved module name through ordinary namespace lookup, so its timer runs beside a task spawned through the prelude binding
+
+import std.async
+import std.async.prelude
+
+
+pub async def main() -> None:
+    await async.sleep(0.01)
+    await async.sleep_ms(1)
+    println("slept")
+    handle = prelude.spawn(async.sleep_ms(1))
+    match await handle:
+        Ok(_) => println("spawned")
+        Err(_) => println("failed")

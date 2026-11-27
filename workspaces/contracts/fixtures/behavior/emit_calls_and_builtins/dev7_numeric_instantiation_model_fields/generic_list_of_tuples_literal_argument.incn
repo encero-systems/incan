@@ -1,0 +1,14 @@
+# Former case generic_list_of_tuples_literal_argument: a list literal of (str, int) tuples passed to a generic list[tuple[K, V]] parameter keeps its concrete str keys and int values
+
+def count_pairs[K, V](items: list[tuple[K, V]]) -> int:
+    return len(items)
+
+
+def render(items: list[tuple[str, int]]) -> list[str]:
+    return [f"{key}={value}" for key, value in items]
+
+
+pub def main() -> None:
+    println(count_pairs([("host", 1), ("port", 8080)]))
+    for line in render([("host", 1), ("port", 8080)]):
+        println(line)

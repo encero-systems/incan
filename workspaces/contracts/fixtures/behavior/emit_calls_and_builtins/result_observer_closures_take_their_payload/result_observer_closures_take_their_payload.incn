@@ -1,0 +1,27 @@
+# Former case result_observer_closures_take_their_payload: the closure passed to inspect or inspect_err takes the payload it observes, so string methods, operators, calls, f-strings and captured locals on it run
+
+model Box:
+    v: int
+    tag: str
+
+
+def shout(s: str) -> str:
+    return s.upper()
+
+
+pub def main() -> None:
+    suffix = "?"
+    e: Result[int, str] = Err("abc")
+    e.inspect_err((m) => println(m + "!"))
+    e.inspect_err((m) => println(m.upper()))
+    e.inspect_err((m) => println(len(m)))
+    e.inspect_err((m) => println(shout(m)))
+    e.inspect_err((m) => println(f"{m}-{len(m)}"))
+    e.inspect_err((m) => println(m + suffix))
+    g: Result[str, int] = Ok("v")
+    g.inspect((v) => println(v + "?"))
+    n: Result[float, str] = Ok(2.5)
+    n.inspect((v) => println(v * 2.0))
+    b: Result[Box, str] = Ok(Box(v=1, tag="t"))
+    b.inspect((x) => println(x.tag + "!"))
+    b.inspect((x) => println(x.v + 1))

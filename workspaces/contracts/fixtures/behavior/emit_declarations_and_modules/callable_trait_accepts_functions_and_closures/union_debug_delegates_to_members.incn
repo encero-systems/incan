@@ -1,0 +1,50 @@
+# Former case union_debug_delegates_to_members: Debug formatting borrows source and native enum owners and structural fields through their retained implementations (#2256)
+
+from rust::std::io import SeekFrom
+
+
+enum Note:
+    """Retain an owned payload while Debug reads the enum through a shared parameter."""
+
+    Text(str)
+    Empty
+
+
+model Holder:
+    """Keep source and native enums behind shared structural field projections."""
+
+    note: Note
+    position: SeekFrom
+
+
+def show_fields(value: Borrowed[Holder]) -> None:
+    """Format each field twice while retaining the shared enclosing owner."""
+    println(f"{value.note:?}")
+    println(f"{value.note:?}")
+    println(f"{value.position:?}")
+    println(f"{value.position:?}")
+
+
+def show_note(value: Borrowed[Note]) -> None:
+    """Read either variant repeatedly without cloning or consuming its payload."""
+    println(f"{value:?}")
+    println(f"{value:?}")
+
+
+def show_indexed(values: Borrowed[list[Holder]]) -> None:
+    """Format materialized source and native enum elements through their retained Debug implementations."""
+    println(f"{values[0].note:?}")
+    println(f"{values[-1].position:?}")
+
+def show(value: int | str) -> None:
+    println(f"{value:?}")
+
+
+pub def main() -> None:
+    """Observe both existing union members and both source enum variants."""
+    show(7)
+    show("text")
+    show_note(Note.Text("hello"))
+    show_note(Note.Empty)
+    show_fields(Holder(note=Note.Text("field"), position=SeekFrom.Start(2)))
+    show_indexed([Holder(note=Note.Text("indexed"), position=SeekFrom.Start(3))])
