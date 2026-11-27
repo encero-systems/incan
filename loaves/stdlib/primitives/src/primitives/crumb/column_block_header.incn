@@ -9,7 +9,7 @@ from crate.primitives.crumb.column_key_read import ColumnKeys
 from crate.primitives.crumb.column_numbers import numeric_type, coefficient
 from crate.primitives.crumb.column_pack_read import validate_pack, octet
 from crate.primitives.crumb.column_value_dictionary import dictionary_type
-from crate.primitives.crumb.column_types import BlockEncoding, uses_dictionary
+from crate.primitives.crumb.column_types import BlockEncoding
 from crate.primitives.crumb.cell_read import cell
 from crate.primitives.crumb.encoding_cursor import EncodingCursor
 from crate.primitives.crumb.description_dictionary import Dictionary
@@ -53,7 +53,7 @@ pub def read_header(
     numeric = selected == BlockEncoding.FrameOfReference or selected == BlockEncoding.ZigzagDelta
     if numeric and not numeric_type(node):
         return Err(failure(ColumnFailure.EncodingType, cursor.absolute()))
-    if uses_dictionary(selected):
+    if selected.uses_dictionary():
         if not dictionary_type(node):
             return Err(failure(ColumnFailure.EncodingType, cursor.absolute()))
         if keys.is_none():
