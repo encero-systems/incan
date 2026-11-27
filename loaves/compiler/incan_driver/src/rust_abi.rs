@@ -636,6 +636,7 @@ fn failure(error: impl std::fmt::Display) -> CliError {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_rows::{MutRow, run_mut_rows};
     use std::collections::BTreeSet;
     use std::fs;
     use std::io::Write;
@@ -662,68 +663,6 @@ mod tests {
             .collect::<Result<Vec<_>, std::io::Error>>()?;
         names.sort();
         Ok(names)
-    }
-
-    #[test]
-    fn identical_extractions_share_one_stored_cache() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let (units, store) = (root.path().join("units"), root.path().join("objects"));
-        fs::create_dir_all(&units)?;
-        let (first, second) = (units.join("first.rustabi"), units.join("second.rustabi"));
-        publish_cache(&store, extracted(&units, b"facts")?, &first)?;
-        publish_cache(&store, extracted(&units, b"facts")?, &second)?;
-        assert_eq!(fs::read(&first)?, b"facts");
-        assert_eq!(fs::read(&second)?, b"facts");
-        assert_eq!(names(&store)?.len(), 1);
-        assert_eq!(names(&units)?, ["first.rustabi", "second.rustabi"]);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            assert_eq!(fs::metadata(&first)?.ino(), fs::metadata(&second)?.ino());
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn distinct_extractions_keep_their_own_bytes() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let (units, store) = (root.path().join("units"), root.path().join("objects"));
-        fs::create_dir_all(&units)?;
-        let (first, second) = (units.join("first.rustabi"), units.join("second.rustabi"));
-        publish_cache(&store, extracted(&units, b"first facts")?, &first)?;
-        publish_cache(&store, extracted(&units, b"second facts")?, &second)?;
-        assert_eq!(fs::read(&first)?, b"first facts");
-        assert_eq!(fs::read(&second)?, b"second facts");
-        assert_eq!(names(&store)?.len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn stored_cache_with_wrong_bytes_is_replaced_before_linking() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let (units, store) = (root.path().join("units"), root.path().join("objects"));
-        fs::create_dir_all(&units)?;
-        fs::create_dir_all(&store)?;
-        let named = store.join(format!("{}.rustabi", hex::encode(Sha256::digest(b"facts"))));
-        fs::write(&named, b"damaged")?;
-        let cache = units.join("request.rustabi");
-        publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
-        assert_eq!(fs::read(&cache)?, b"facts");
-        assert_eq!(fs::read(&named)?, b"facts");
-        Ok(())
-    }
-
-    #[test]
-    fn republishing_the_same_cache_leaves_no_temporary_name() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let (units, store) = (root.path().join("units"), root.path().join("objects"));
-        fs::create_dir_all(&units)?;
-        let cache = units.join("request.rustabi");
-        publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
-        publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
-        assert_eq!(fs::read(&cache)?, b"facts");
-        assert_eq!(names(&units)?, ["request.rustabi"]);
-        Ok(())
     }
 
     /// An installed toolchain whose descriptor owns one shipped cache, as `installed_toolchain` requires.
@@ -771,48 +710,6 @@ mod tests {
         Ok(unit)
     }
 
-    #[test]
-    fn a_standard_path_reached_by_two_units_is_extracted_once() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let shipped = installed(root.path())?;
-        let paths = BTreeSet::from(["std::net::Ipv4Addr".to_owned()]);
-        let extractions = std::cell::Cell::new(0);
-        let extract = |requested: &BTreeSet<String>| -> Result<RustFacts, String> {
-            extractions.set(extractions.get() + 1);
-            assert_eq!(requested, &paths);
-            Ok(RustFacts::new())
-        };
-        cached_path_facts(&unit(root.path(), "first", &shipped)?, &paths, extract)?;
-        cached_path_facts(&unit(root.path(), "second", &shipped)?, &paths, extract)?;
-        assert_eq!(
-            extractions.get(),
-            1,
-            "a second unit extracted the same standard path again"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_unit_reaching_its_own_crate_and_a_standard_path_extracts_them_together() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let shipped = installed(root.path())?;
-        // An extraction describes the types a signature names only for the crates the same extraction names, so a
-        // unit's paths are extracted in one session whenever one of them is rooted in the unit's own crate.
-        let paths = BTreeSet::from(["first::Carrier".to_owned(), "std::net::Ipv4Addr".to_owned()]);
-        let requests = std::cell::RefCell::new(Vec::new());
-        let extract = |requested: &BTreeSet<String>| -> Result<RustFacts, String> {
-            requests.borrow_mut().push(requested.clone());
-            Ok(RustFacts::new())
-        };
-        cached_path_facts(&unit(root.path(), "first", &shipped)?, &paths, extract)?;
-        assert_eq!(
-            requests.into_inner(),
-            vec![paths],
-            "the unit's paths were split between extractions"
-        );
-        Ok(())
-    }
-
     /// One Rust record type of the unit's own crate, as an extraction describes it.
     fn carrier() -> incan_lang::interop::RustItemMetadata {
         incan_lang::interop::RustItemMetadata {
@@ -823,40 +720,156 @@ mod tests {
         }
     }
 
-    /// A unit's extraction that Oven baked into its index is read as the stored cache itself, its items decoded when a
-    /// checker reads them: the session receives that cache, not items decoded and encoded into another one.
     #[test]
-    fn an_indexed_extraction_is_read_as_its_stored_cache() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let shipped = installed(root.path())?;
-        let unit = unit(root.path(), "first", &shipped)?;
-        let paths = BTreeSet::from(["first::Carrier".to_owned()]);
-        let extractions = std::cell::Cell::new(0);
-        let extract = |_: &BTreeSet<String>| -> Result<RustFacts, String> {
-            extractions.set(extractions.get() + 1);
-            Ok(RustFacts::from([("first::Carrier".to_owned(), carrier())]))
-        };
-        let fresh = cached_path_facts(&unit, &paths, extract)?;
-        assert!(fresh.contains("first::Carrier"));
-
-        // Oven bakes the staged extraction and indexes it under its request identity before the next run.
-        let directory = unit.rust_facts.clone().ok_or("the unit has no facts directory")?;
-        let staged = fs::read_dir(directory.join("staging"))?
-            .map(|entry| Ok(entry?.path()))
-            .collect::<Result<Vec<_>, std::io::Error>>()?
-            .into_iter()
-            .find(|path| path.extension().is_some_and(|extension| extension == "rustabi"))
-            .ok_or("no extraction was staged")?;
-        let identity = staged
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .ok_or("the staged extraction has no identity")?;
-        fs::write(directory.join("index"), format!("{identity}\t{}\n", staged.display()))?;
-
-        let reused = cached_path_facts(&unit, &paths, extract)?;
-        assert_eq!(extractions.get(), 1, "the indexed extraction was extracted again");
-        assert_eq!(reused.len(), 1);
-        assert_eq!(reused.get("first::Carrier")?, Some(carrier()));
-        Ok(())
+    fn rust_abi_tempdir_cases() {
+        run_mut_rows(RUST_ABI_TEMPDIR_CASES, || {
+            tempfile::tempdir().expect("temporary directory")
+        });
     }
+
+    const RUST_ABI_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[
+        MutRow {
+            name: "identical_extractions_share_one_stored_cache",
+            check: |root| {
+                let (units, store) = (root.path().join("units"), root.path().join("objects"));
+                fs::create_dir_all(&units)?;
+                let (first, second) = (units.join("first.rustabi"), units.join("second.rustabi"));
+                publish_cache(&store, extracted(&units, b"facts")?, &first)?;
+                publish_cache(&store, extracted(&units, b"facts")?, &second)?;
+                assert_eq!(fs::read(&first)?, b"facts");
+                assert_eq!(fs::read(&second)?, b"facts");
+                assert_eq!(names(&store)?.len(), 1);
+                assert_eq!(names(&units)?, ["first.rustabi", "second.rustabi"]);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    assert_eq!(fs::metadata(&first)?.ino(), fs::metadata(&second)?.ino());
+                }
+                Ok(())
+            },
+        },
+        MutRow {
+            name: "distinct_extractions_keep_their_own_bytes",
+            check: |root| {
+                let (units, store) = (root.path().join("units"), root.path().join("objects"));
+                fs::create_dir_all(&units)?;
+                let (first, second) = (units.join("first.rustabi"), units.join("second.rustabi"));
+                publish_cache(&store, extracted(&units, b"first facts")?, &first)?;
+                publish_cache(&store, extracted(&units, b"second facts")?, &second)?;
+                assert_eq!(fs::read(&first)?, b"first facts");
+                assert_eq!(fs::read(&second)?, b"second facts");
+                assert_eq!(names(&store)?.len(), 2);
+                Ok(())
+            },
+        },
+        MutRow {
+            name: "stored_cache_with_wrong_bytes_is_replaced_before_linking",
+            check: |root| {
+                let (units, store) = (root.path().join("units"), root.path().join("objects"));
+                fs::create_dir_all(&units)?;
+                fs::create_dir_all(&store)?;
+                let named = store.join(format!("{}.rustabi", hex::encode(Sha256::digest(b"facts"))));
+                fs::write(&named, b"damaged")?;
+                let cache = units.join("request.rustabi");
+                publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
+                assert_eq!(fs::read(&cache)?, b"facts");
+                assert_eq!(fs::read(&named)?, b"facts");
+                Ok(())
+            },
+        },
+        MutRow {
+            name: "republishing_the_same_cache_leaves_no_temporary_name",
+            check: |root| {
+                let (units, store) = (root.path().join("units"), root.path().join("objects"));
+                fs::create_dir_all(&units)?;
+                let cache = units.join("request.rustabi");
+                publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
+                publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
+                assert_eq!(fs::read(&cache)?, b"facts");
+                assert_eq!(names(&units)?, ["request.rustabi"]);
+                Ok(())
+            },
+        },
+        MutRow {
+            name: "a_standard_path_reached_by_two_units_is_extracted_once",
+            check: |root| {
+                let shipped = installed(root.path())?;
+                let paths = BTreeSet::from(["std::net::Ipv4Addr".to_owned()]);
+                let extractions = std::cell::Cell::new(0);
+                let extract = |requested: &BTreeSet<String>| -> Result<RustFacts, String> {
+                    extractions.set(extractions.get() + 1);
+                    assert_eq!(requested, &paths);
+                    Ok(RustFacts::new())
+                };
+                cached_path_facts(&unit(root.path(), "first", &shipped)?, &paths, extract)?;
+                cached_path_facts(&unit(root.path(), "second", &shipped)?, &paths, extract)?;
+                assert_eq!(
+                    extractions.get(),
+                    1,
+                    "a second unit extracted the same standard path again"
+                );
+                Ok(())
+            },
+        },
+        MutRow {
+            name: "a_unit_reaching_its_own_crate_and_a_standard_path_extracts_them_together",
+            check: |root| {
+                let shipped = installed(root.path())?;
+                // An extraction describes the types a signature names only for the crates the same extraction names, so
+                // a unit's paths are extracted in one session whenever one of them is rooted in the
+                // unit's own crate.
+                let paths = BTreeSet::from(["first::Carrier".to_owned(), "std::net::Ipv4Addr".to_owned()]);
+                let requests = std::cell::RefCell::new(Vec::new());
+                let extract = |requested: &BTreeSet<String>| -> Result<RustFacts, String> {
+                    requests.borrow_mut().push(requested.clone());
+                    Ok(RustFacts::new())
+                };
+                cached_path_facts(&unit(root.path(), "first", &shipped)?, &paths, extract)?;
+                assert_eq!(
+                    requests.into_inner(),
+                    vec![paths],
+                    "the unit's paths were split between extractions"
+                );
+                Ok(())
+            },
+        },
+        // A unit's extraction that Oven baked into its index is read as the stored cache itself, its items decoded
+        // when a checker reads them: the session receives that cache, not items decoded and encoded into
+        // another one.
+        MutRow {
+            name: "an_indexed_extraction_is_read_as_its_stored_cache",
+            check: |root| {
+                let shipped = installed(root.path())?;
+                let unit = unit(root.path(), "first", &shipped)?;
+                let paths = BTreeSet::from(["first::Carrier".to_owned()]);
+                let extractions = std::cell::Cell::new(0);
+                let extract = |_: &BTreeSet<String>| -> Result<RustFacts, String> {
+                    extractions.set(extractions.get() + 1);
+                    Ok(RustFacts::from([("first::Carrier".to_owned(), carrier())]))
+                };
+                let fresh = cached_path_facts(&unit, &paths, extract)?;
+                assert!(fresh.contains("first::Carrier"));
+
+                // Oven bakes the staged extraction and indexes it under its request identity before the next run.
+                let directory = unit.rust_facts.clone().ok_or("the unit has no facts directory")?;
+                let staged = fs::read_dir(directory.join("staging"))?
+                    .map(|entry| Ok(entry?.path()))
+                    .collect::<Result<Vec<_>, std::io::Error>>()?
+                    .into_iter()
+                    .find(|path| path.extension().is_some_and(|extension| extension == "rustabi"))
+                    .ok_or("no extraction was staged")?;
+                let identity = staged
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .ok_or("the staged extraction has no identity")?;
+                fs::write(directory.join("index"), format!("{identity}\t{}\n", staged.display()))?;
+
+                let reused = cached_path_facts(&unit, &paths, extract)?;
+                assert_eq!(extractions.get(), 1, "the indexed extraction was extracted again");
+                assert_eq!(reused.len(), 1);
+                assert_eq!(reused.get("first::Carrier")?, Some(carrier()));
+                Ok(())
+            },
+        },
+    ];
 }
