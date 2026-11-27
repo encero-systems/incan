@@ -41,9 +41,10 @@ module HeadToHead
 
     # Per engine, the warm census reuses the cold census's Bakery and its retained scratch: the same realized
     # projects, targets and paths, which the stock materializer keeps when their bytes are unchanged. Only the logs
-    # and temporary directories are per state.
+    # and temporary directories are per state. Returns the number of refused runs; a pair with one keeps its trees.
     def self.run_pair(session, pair, jobs, expected)
       root = session.directory('census', "jobs-#{jobs}", format('pair-%02d', pair))
+      refused = 0
       session.order(pair).each_with_index do |engine, position|
         base = File.join(root, engine)
         bakery = HeadToHead.clone_tree(session.prefill, File.join(base, 'bakery'))
@@ -54,13 +55,26 @@ module HeadToHead
           scope = { arm: 'census', pair: pair, position: position, engine: engine, jobs: jobs, stage: "census-#{state}",
                     state: state == 'cold' ? 'prefilled-cold' : 'warm-unchanged' }
           before = retained(session, arm)
-          census_run(session, scope, engine, arm, jobs, expected)
+          refused += 1 unless attempt(session) { census_run(session, scope, engine, arm, jobs, expected) }
           after = retained(session, arm)
           session.log(scope.merge(role: 'retained-state', before: before, after: after,
                                   workers_kept: before.fetch(:workers) & after.fetch(:workers)))
         end
       end
-      session.retire(root)
+      session.retire(root) if refused.zero?
+      refused
+    end
+
+    # Without --keep-going the first refusal ends the arm. With it, each refusal is kept with its evidence and the
+    # remaining runs go on, so both engines' outcomes are on record.
+    def self.attempt(session)
+      yield
+      true
+    rescue Refusal => refusal
+      raise unless session.settings[:keep_going]
+
+      session.fail_arm('census', refusal)
+      false
     end
 
     # What a census state starts or ends with: the scratch's realized size and project targets, the Bakery's

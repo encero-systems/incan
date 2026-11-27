@@ -5,7 +5,7 @@
 #   run.rb compare [--untimed] --output DIR --source CHECKOUT --archive TOOLCHAIN_ARCHIVE --pin PIN_JSON
 #          --prefill BAKERY --prefill-receipt RECEIPT --cache-note TEXT [--arms hello,two-homes,graph-lsp,census]
 #          [--contracts-runner RUNNER --oracle VERDICTS] [--slots PAR_SLOT_DIRECTORY] [--pairs N] [--census-pairs N]
-#          [--census-jobs 2,12] [--census-states cold,warm] [--retire-trees]
+#          [--census-jobs 2,12] [--census-states cold,warm] [--retire-trees] [--keep-going]
 #   run.rb summarize OUTPUT
 #
 # Run under par.rb: the installed home is INCAN_HOME, and INCAN must be its launcher.
@@ -31,6 +31,7 @@ module HeadToHead
     OptionParser.new do |parser|
       parser.on('--untimed') { settings[:timed] = false }
       parser.on('--retire-trees') { settings[:retire_trees] = true }
+      parser.on('--keep-going') { settings[:keep_going] = true }
       %i[output source archive pin prefill prefill_receipt cache_note contracts_runner oracle slots].each do |name|
         parser.on("--#{name.to_s.tr('_', '-')} VALUE") { |value| settings[name] = value }
       end
@@ -92,9 +93,10 @@ module HeadToHead
       references = {}
       (1..pairs).each { |pair| GraphLsp.run_pair(session, pair, arms, references) }
     when 'census'
-      session.settings.fetch(:census_jobs).each do |jobs|
-        (1..session.settings.fetch(:census_pairs)).each { |pair| Census.run_pair(session, pair, jobs, expected) }
+      refused = session.settings.fetch(:census_jobs).sum do |jobs|
+        (1..session.settings.fetch(:census_pairs)).sum { |pair| Census.run_pair(session, pair, jobs, expected) }
       end
+      refuse("#{refused} census runs differed from the frozen oracle") unless refused.zero?
     end
     true
   rescue Refusal => refusal
