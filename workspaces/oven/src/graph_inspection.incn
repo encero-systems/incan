@@ -11,11 +11,7 @@ from files import json_text, read
 from graph_cache import (
     GraphUnit,
     cache_file,
-    published,
-    read_graph,
-    relationships,
     save_observations,
-    stamp_file,
     tree_inputs,
     unchecked_note,
     unchecked_refusal,
@@ -686,10 +682,10 @@ def presentation_inputs(
             match relative_scope(unit.root.0, anchors):
                 None => return Ok(None)
                 Some(scope) =>
-                    observed = tree_inputs(stamp_file(unit))?
+                    observed = tree_inputs(unit.stamp_file())?
                     inputs.extend([scope, unit.package, unit.version, observed[1]])
         else:
-            inputs.extend([unit.path.0, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?])
+            inputs.extend([unit.path.0, unit.root.0, unit.package, unit.version, artifact_identity(unit.stamp_file())?])
     return Ok(Some(inputs))
 
 
@@ -877,10 +873,10 @@ def query_records(
         started = Instant.now()
         author = selected_author(unit, author_root)
         mut lines: list[str] = []
-        if published(unit):
-            lines = relationships(unit, toolchain, kind, keys)?
+        if unit.published():
+            lines = unit.relationships(toolchain, kind, keys)?
         else:
-            lines = read_graph(unit, toolchain, kind)?.split("\n")
+            lines = unit.read_graph(toolchain, kind)?.split("\n")
         for line in lines:
             if line.strip() == "":
                 continue
@@ -1019,7 +1015,7 @@ def provider_keys(paths: list[GraphUnit], toolchain: Toolchain) -> Result[list[J
     mut records: list[JsonValue] = []
     for unit in paths:
         mut package = unit.package
-        for line in read_graph(unit, toolchain, "declaration", fields)?.split("\n"):
+        for line in unit.read_graph(toolchain, "declaration", fields)?.split("\n"):
             if line == "":
                 continue
             record = parse(line).map_err((error) => error.message())?
@@ -1182,7 +1178,7 @@ def read_records(
     for unit in paths:
         started = Instant.now()
         # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
-        document = read_graph(unit, toolchain, group)?
+        document = unit.read_graph(toolchain, group)?
         mut package_name = unit.package
         author = selected_author(unit, author_root)
         for line in document.split("\n"):
