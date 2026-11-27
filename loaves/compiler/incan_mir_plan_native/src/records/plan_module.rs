@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::records::lowering_events::{AdmittedDefinition, projected_definition};
 use crate::wire::{
     MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, boolean_value,
-    decode_graph_row, encode_graph_row, field, items, number, required, text, tuple_items,
+    borrowed_text, decode_graph_row, encode_graph_row, field, items, number, required, text, tuple_items,
 };
 
 /// The family of a module's plan record.
@@ -248,7 +248,10 @@ pub fn read_positioned_plan_members(
         return Err("positioned Plan page differs from its selected module name".into());
     }
     let functions = page.row.read_field(b"funcs_")?;
-    let fields = items(&functions)?.iter().map(text).collect::<Result<Vec<_>, _>>()?;
+    let fields = items(&functions)?
+        .iter()
+        .map(borrowed_text)
+        .collect::<Result<Vec<_>, _>>()?;
     if fields.len() != selected.count as usize * FUNCTION_FIELDS {
         return Err("positioned Plan declarations differ from the selected count".into());
     }
@@ -261,7 +264,7 @@ pub fn read_positioned_plan_members(
             return Err("malformed positioned Plan module member".into());
         };
         previous = member_order(identity, symbol, function, key, &previous)?;
-        if !canonical_digest(key) || !names.insert(function) {
+        if !canonical_digest(key) || !names.insert(*function) {
             return Err("positioned Plan page repeats a function or has a malformed member key".into());
         }
         definitions.push(projected_definition(&event, &module, function, symbol, key)?);

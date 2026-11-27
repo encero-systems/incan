@@ -411,16 +411,20 @@ pub(crate) fn unsigned_value(value: &Wire) -> Result<u64, String> {
     }
 }
 
-/// One required text field, without coercion.
-pub(crate) fn text(value: &Wire) -> Result<String, String> {
+/// Borrow one required text field, without coercion.
+pub(crate) fn borrowed_text(value: &Wire) -> Result<&str, String> {
     match value {
-        Wire::Text(item) => {
-            #[cfg(test)]
-            OWNED_TEXT_COPIES.with(|count| count.set(count.get() + 1));
-            Ok(item.clone())
-        }
+        Wire::Text(item) => Ok(item),
         _ => Err("expected compiler graph text".to_owned()),
     }
+}
+
+/// Own one required text field, without coercion.
+pub(crate) fn text(value: &Wire) -> Result<String, String> {
+    let item = borrowed_text(value)?;
+    #[cfg(test)]
+    OWNED_TEXT_COPIES.with(|count| count.set(count.get() + 1));
+    Ok(item.to_owned())
 }
 
 /// One list; list and tuple have different Crumb representations.
