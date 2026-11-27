@@ -44,6 +44,7 @@ fn selected_native_loaf_requires_producer_owned_static_storage() -> Result<(), B
         kind: ExportIdentityKind::Static,
         projection: ExportIdentityProjection::Direct,
         canonical: Some(exported),
+        source_signature: None,
     });
     let owner = incan_semantics_core::canonical_module_identity(&identity).ok_or("missing static owner")?;
     let mut module = BodyIrModule::declarations_only(owner);

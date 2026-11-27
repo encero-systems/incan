@@ -3,6 +3,7 @@
 from rust::std::process import Command, Output
 from std.fs import Path
 from std.json import JsonValue
+from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_facts import FactAdmission, verified_fact
 from frozen_inputs import Document
 from json_fields import required_text
@@ -10,32 +11,43 @@ from observation import observe
 from rust_target import decoded, host_triple
 from toolchain_types import InstalledCompiler
 
-const DRIVER_CAPABILITY_SCHEMA: str = "incan.driver-capabilities/1"
+const PLAN_ONLY: str = "incan.driver-capabilities/1"
+const WITH_LIBRARY_LOCAL: str = "incan.driver-capabilities/2"
+const LIBRARY_LOCAL_PROFILE: str = "incan.library-local-compiled-body-rows/1"
 const PLAN_SELECTION_PROFILE: str = "incan.plan-module-selection-sha256/1"
 const LEGACY_IDENTITY_USAGE: str = "usage: incan-rustc-driver --identity SYSROOT\n"
 
+pub model DriverCapabilityProof:
+    """A supported response bound to the responding driver and its exact filesystem observation."""
+
+    pub fact: FactAdmission
+    pub library_local: bool
+
+pub model DriverProfiles:
+    """The compiler capabilities authenticated by the selected installation page."""
+
+    pub plan_selection: bool = false
+    pub library_local: bool = false
 
 pub enum DriverCapabilityIntake:
     """Which existing admission can speak for the installed driver."""
 
     Legacy
     Selected
-    Staged(Option[FactAdmission])
+    Staged(Option[DriverCapabilityProof])
 
-
-pub def plan_selection_capability(toolchain: InstalledCompiler, documents: list[Document]) -> Result[bool, str]:
+pub def driver_profiles(toolchain: InstalledCompiler, documents: list[Document]) -> Result[DriverProfiles, str]:
     """Read the one driver-addressed declaration, refusing misplaced or malformed claims."""
-    mut supported = false
+    mut profiles = DriverProfiles()
     for document in documents:
         if document.path == toolchain.driver:
-            if supported or document.path in [toolchain.registry_lock, toolchain.registry_units]:
+            if profiles.plan_selection or document.path in [toolchain.registry_lock, toolchain.registry_units]:
                 return Err(f"{document.path}: duplicate or aliased driver capability")
-            verify_document(toolchain, document)?
-            supported = true
+            library_local = verify_document(toolchain, document)?
+            profiles = DriverProfiles(plan_selection=true, library_local=library_local)
         elif capability_schema(document.value).startswith("incan.driver-capabilities/"):
             return Err(f"{document.path}: driver capability belongs at {toolchain.driver}")
-    return Ok(supported)
-
+    return Ok(profiles)
 
 def capability_schema(document: JsonValue) -> str:
     """Identify the reserved schema family without assigning meaning to ordinary installation documents."""
@@ -43,18 +55,22 @@ def capability_schema(document: JsonValue) -> str:
         None => return ""
         Some(value) => return value.as_str().unwrap_or("")
 
-
-def verify_document(toolchain: InstalledCompiler, document: Document) -> Result[None, str]:
+def verify_document(toolchain: InstalledCompiler, document: Document) -> Result[bool, str]:
     """Require the exact protocol, driver SHA-256 and admitted observation at the selected driver path."""
     detail = f"{document.path}: invalid driver capability"
     digest = required_text(document.value, "driver_sha256").map_err((error) => f"{detail}: {error}")?
     profile = required_text(document.value, "plan_selection_profile").map_err((error) => f"{detail}: {error}")?
+    schema = capability_schema(document.value)
     fields = document.value.keys()
-    if (
-        len(fields) != 3
-        or capability_schema(document.value) != DRIVER_CAPABILITY_SCHEMA
-        or profile != PLAN_SELECTION_PROFILE
-    ):
+    if profile != PLAN_SELECTION_PROFILE or (schema != PLAN_ONLY and schema != WITH_LIBRARY_LOCAL):
+        return Err(f"{detail}: unsupported declaration")
+    library_local = schema == WITH_LIBRARY_LOCAL
+    if library_local:
+        rows = required_text(document.value, "library_local_profile").map_err((error) => f"{detail}: {error}")?
+        checker = required_text(document.value, "checker_profile").map_err((error) => f"{detail}: {error}")?
+        if len(fields) != 5 or rows != LIBRARY_LOCAL_PROFILE or checker != CHECKER_PROFILE:
+            return Err(f"{detail}: unsupported declaration")
+    elif len(fields) != 3:
         return Err(f"{detail}: unsupported declaration")
     if len(digest) != 64:
         return Err(f"{detail}: expected a lowercase SHA-256")
@@ -65,50 +81,65 @@ def verify_document(toolchain: InstalledCompiler, document: Document) -> Result[
         return Err(f"{detail}: driver SHA-256 differs from the admitted fact")
     if document.stamp == "" or toolchain.driver_observation != document.stamp:
         return Err(f"{detail}: driver observation differs from admission")
-    return Ok(None)
+    return Ok(library_local)
 
+pub def driver_document(driver: str, proof: DriverCapabilityProof) -> Document:
+    """Store only the profiles the responding driver proved, beside its admitted observation."""
+    mut fields = {
+        "schema": JsonValue.string(PLAN_ONLY),
+        "driver_sha256": JsonValue.string(proof.fact.digest),
+        "plan_selection_profile": JsonValue.string(PLAN_SELECTION_PROFILE),
+    }
+    if proof.library_local:
+        fields["schema"] = JsonValue.string(WITH_LIBRARY_LOCAL)
+        fields["library_local_profile"] = JsonValue.string(LIBRARY_LOCAL_PROFILE)
+        fields["checker_profile"] = JsonValue.string(CHECKER_PROFILE)
+    return Document(path=driver, stamp=proof.fact.observation, value=JsonValue.object(fields))
 
-pub def driver_document(driver: str, proof: FactAdmission) -> Document:
-    """Project the responding driver into the existing typed installation document inventory."""
-    return Document(
-        path=driver,
-        stamp=proof.observation,
-        value=JsonValue.object(
-            {"schema": JsonValue.string(DRIVER_CAPABILITY_SCHEMA), "driver_sha256": JsonValue.string(proof.digest), "plan_selection_profile": JsonValue.string(
-                PLAN_SELECTION_PROFILE,
-            )},
-        ),
-    )
-
-
-pub def probe_driver_capability(driver: str, sysroot: str) -> Result[Option[FactAdmission], str]:
-    """At admission, prove the selected driver's identity and accept only an exact profile reply."""
+pub def probe_driver_capability(driver: str, sysroot: str) -> Result[Option[DriverCapabilityProof], str]:
+    """Prove the selected driver's identity and accept only an exact supported profile reply."""
     path = Path(driver)
     before = verified_fact(path)?
     rustc = Path(sysroot).joinpath("bin/rustc")
     rustc_stamp = observe(rustc)?.stamp
     host = host_triple(rustc.0)?
-    reply = identity_output(driver, ["--identity", sysroot, "--capabilities", DRIVER_CAPABILITY_SCHEMA])?
-    expected = f"{DRIVER_CAPABILITY_SCHEMA}\n{host}\n{PLAN_SELECTION_PROFILE}\n".encode("utf-8")
-    supported = reply.status.success() and reply.stderr == b"" and reply.stdout == expected
-    if not supported:
-        usage = LEGACY_IDENTITY_USAGE.encode("utf-8")
-        if reply.status.code() != Some(1i32) or reply.stdout != b"" or reply.stderr != usage:
-            return Err(
-                f"{driver}: invalid driver capability returned for Rust sysroot {sysroot}: {decoded(reply.stderr)}",
-            )
-        legacy = identity_output(driver, ["--identity", sysroot])?
-        if not legacy.status.success() or legacy.stderr != b"" or legacy.stdout != f"{host}\n".encode("utf-8"):
-            return Err(
-                f"{driver}: cannot verify legacy identity against Rust sysroot {sysroot}: {decoded(legacy.stderr)}",
-            )
+    proof = authenticated_profiles(driver, sysroot, host, before)?
     after = verified_fact(path)?
     if before.digest != after.digest or before.observation != after.observation or rustc_stamp != observe(rustc)?.stamp:
         return Err(f"{driver}: driver or Rust compiler changed during identity verification")
-    if supported:
-        return Ok(Some(before))
+    return Ok(proof)
+
+def authenticated_profiles(
+    driver: str, sysroot: str, host: str, fact: FactAdmission,
+) -> Result[Option[DriverCapabilityProof], str]:
+    """Ask once for the complete profile and recognize only the exact historical unsupported reply."""
+    reply = identity_output(driver, ["--identity", sysroot, "--capabilities", WITH_LIBRARY_LOCAL])?
+    expected = f"{WITH_LIBRARY_LOCAL}\n{host}\n{PLAN_SELECTION_PROFILE}\n{LIBRARY_LOCAL_PROFILE}\n{CHECKER_PROFILE}\n".encode("utf-8")
+    if exact_reply(reply, expected):
+        return Ok(Some(DriverCapabilityProof(fact=fact, library_local=true)))
+    if legacy_usage(reply):
+        return prove_prior_profiles(driver, sysroot, host, fact)
+    return Err(f"{driver}: invalid driver capability returned for Rust sysroot {sysroot}: {decoded(reply.stderr)}")
+
+def prove_prior_profiles(driver: str, sysroot: str, host: str, fact: FactAdmission) -> Result[Option[DriverCapabilityProof], str]:
+    """Recognize old drivers solely through their exact historical replies after an unsupported request."""
+    reply = identity_output(driver, ["--identity", sysroot, "--capabilities", PLAN_ONLY])?
+    if exact_reply(reply, f"{PLAN_ONLY}\n{host}\n{PLAN_SELECTION_PROFILE}\n".encode("utf-8")):
+        return Ok(Some(DriverCapabilityProof(fact=fact, library_local=false)))
+    if not legacy_usage(reply):
+        return Err(f"{driver}: invalid driver capability returned for Rust sysroot {sysroot}: {decoded(reply.stderr)}")
+    plain = identity_output(driver, ["--identity", sysroot])?
+    if not exact_reply(plain, f"{host}\n".encode("utf-8")):
+        return Err(f"{driver}: cannot verify legacy identity against Rust sysroot {sysroot}: {decoded(plain.stderr)}")
     return Ok(None)
 
+def exact_reply(reply: Output, expected: bytes) -> bool:
+    """Require a successful process and the full byte-exact response with no diagnostics."""
+    return reply.status.success() and reply.stderr == b"" and reply.stdout == expected
+
+def legacy_usage(reply: Output) -> bool:
+    """The historical unsupported-protocol reply permits one earlier identity contract to be asked."""
+    return reply.status.code() == Some(1i32) and reply.stdout == b"" and reply.stderr == LEGACY_IDENTITY_USAGE.encode("utf-8")
 
 def identity_output(driver: str, arguments: list[str]) -> Result[Output, str]:
     """Use the installer's established bootstrap-free identity environment."""

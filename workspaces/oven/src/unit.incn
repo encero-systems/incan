@@ -6,6 +6,7 @@ The compiler reads no manifest; it reads this. Its fields are the compiler's `in
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
+from bakery_records import FactFile
 from clove_units import CloveUnit, clove_unit
 from c_interop import LinkedArchive, linked_archives
 from c_interop_target import CAbiTargetSelection, select_interop_target, selected_abi_clang
@@ -62,6 +63,8 @@ pub model UnitDescription:
     pub source_root: str
     # Request-only readings are derived from capture and never enter the portable unit description.
     pub source_readings: Option[Rc[Dict[str, SourceReading]]] = None
+    # The selected member and authored project are keyed by the same immutable library directory the Loaf links.
+    pub provider_call_shapes: Dict[str, tuple[str, FactFile]] = {}
     pub package: str
     pub version: str
     pub profile: str
@@ -90,6 +93,8 @@ pub model UnitDescription:
     pub search_index: Option[str] = None
     pub rust_abi: list[str] = []
     pub kind: str = "program"
+    # The selected ordinary library's Oven-owned output contract; it does not change the compiler's descriptor wire.
+    pub library_publication: str = ""
     pub program_entries: list[str] = []
     # Further test modules a test unit compiles beside its entry, in run order: the modules that share a plain
     # session-scoped conftest fixture with it, whose tests run in one process.

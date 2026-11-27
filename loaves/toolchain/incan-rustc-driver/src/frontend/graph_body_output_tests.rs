@@ -12,18 +12,18 @@ fn sidecar_root_resolves_aliases_and_refuses_missing_roots() -> Result<(), Box<d
     std::fs::create_dir(&actual)?;
     std::os::unix::fs::symlink(&actual, &alias)?;
     let output = Some(root.join("bodies"));
-    let collector = GraphBodyOutput::prepare(output.clone(), alias)?;
+    let collector = GraphBodyOutput::prepare(output.clone(), alias, false)?;
     assert_eq!(collector.project_root, actual.canonicalize()?);
     assert!(!collector.namespace_proofs);
     let current_output = root.join(format!("units{}", internal_models::namespace_proof_output_suffix()));
-    assert!(GraphBodyOutput::prepare(Some(current_output), actual.clone())?.namespace_proofs);
+    assert!(GraphBodyOutput::prepare(Some(current_output), actual.clone(), false)?.namespace_proofs);
     let missing = root.join("missing");
-    let refused = match GraphBodyOutput::prepare(output, missing.clone()) {
+    let refused = match GraphBodyOutput::prepare(output, missing.clone(), false) {
         Ok(_) => return Err("an explicit missing graph body root was accepted".into()),
         Err(message) => message,
     };
     assert!(refused.contains("cannot resolve graph body project root"));
-    assert!(GraphBodyOutput::prepare(None, missing).is_ok());
+    assert!(GraphBodyOutput::prepare(None, missing, false).is_ok());
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -101,7 +101,7 @@ fn attached_output(
     } else {
         "bodies".to_owned()
     };
-    let mut output = GraphBodyOutput::prepare(Some(root.join(name)), root.clone())?;
+    let mut output = GraphBodyOutput::prepare(Some(root.join(name)), root.clone(), false)?;
     let provider = typed.then(|| {
         checker.seal_current_module_dependency_interface(
             "main",
@@ -205,6 +205,41 @@ fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<
         assert_eq!(witness.bindings, restored);
     }
     assert!(output.values.iter().any(|value| value.name == "route"));
+    library_census_preserves_unavailable_owners(&scratch.canonicalize()?)?;
     std::fs::remove_dir_all(&scratch)?;
+    Ok(())
+}
+
+/// A live method with unavailable checked records is a refusal. A restored-only module supplies no census.
+fn library_census_preserves_unavailable_owners(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Provider:\n    value: int\n    def retained(self) -> int:\n        return self.value\n";
+    let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let module = incan_frontend::parsed_module::ParsedModule {
+        name: "provider".into(),
+        path_segments: vec!["provider".into()],
+        file_path: root.join("src/provider.incn"),
+        source_positions: incan_frontend::diagnostics::SourcePositionIndex::new(source),
+        source: source.to_owned(),
+        ast: incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?,
+        gated_exports: Vec::new(),
+    };
+    let output_path = root.join(format!(
+        "library{}",
+        internal_models_native::LIBRARY_OWNER_OUTPUT_SUFFIX
+    ));
+    let mut output = GraphBodyOutput::prepare(Some(output_path.clone()), root.to_owned(), true)?;
+    // Withhold the checker records while keeping the concrete method that must be accounted for.
+    let no_records = incan_frontend::typechecker::TypeChecker::new();
+    output.observe(&module, &no_records, None, &["src/restored.incn".into()], "app");
+    let restored = root.join("src/restored.incn");
+    let indexes = std::collections::BTreeMap::from([(restored.clone(), 0)]);
+    output.include_restored_imports(&restored, &indexes, |_| Vec::new())?;
+    assert_eq!(output.fallbacks.len(), 1);
+    assert_eq!(output.fallbacks[0].name, "retained");
+    output.publish(&incan_frontend::checker_records::GraphBodyRecords::default())?;
+    let census = std::fs::read(output_path.join(internal_models_native::IMPORT_ORDER_FILE))?;
+    let visited = internal_models_native::read_import_closures(&census)?;
+    assert_eq!(visited.len(), 1);
+    assert!(visited.get("src/provider.incn").is_some_and(Vec::is_empty));
     Ok(())
 }

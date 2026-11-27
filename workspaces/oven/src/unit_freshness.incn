@@ -547,17 +547,24 @@ pub def unit_key_with(
     # frozen installation inputs after admission.
     artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
-    key = assembled(compiler, described, sources, artifacts)?
+    mut key = assembled(compiler, described, sources, artifacts)?
     mut replay = ""
     if native:
         replay = assembled(compiler, described, source_contents(unit, project, graph, false)?, artifacts)?.digest
+    mut descriptor = fingerprint([json_text(unit.to_json())?])?
+    if unit.kind == "library" and unit.library_publication != "":
+        # Reuse and refusal replay must select this output contract, even with the same driver and code generation.
+        publication = unit.library_publication
+        key.digest = "sha256:" + fingerprint([key.digest, publication])?
+        key.parts.append(f"library-publication {publication}")
+        descriptor = fingerprint([descriptor, publication])?
     return Ok(
         Key(
             digest=key.digest,
             parts=key.parts,
             codegen=key.codegen,
             provenance=[unit.project_root, unit.source],
-            descriptor=fingerprint([json_text(unit.to_json())?])?,
+            descriptor=descriptor,
             compiler=key.compiler,
             replay=replay,
         ),

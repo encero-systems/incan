@@ -4,6 +4,8 @@ from rust::incan_loaf_names import artifact_stem, native_crate_name
 from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue
+from std.tempfile import TemporaryDirectory
+from pub::internal_models.namespace_order import LIBRARY_OWNER_OUTPUT_SUFFIX
 from bakery import (
     bakery,
     claim,
@@ -39,8 +41,15 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from native_references import closure_reference, native_anchors
-from unit_compiler import compile_prepared_unit
+from unit_compiler import compile_prepared_unit, compile_prepared_unit_completion
 from callable_products import retain_callable_products
+from provider_call_shapes import (
+    LIBRARY_CALL_SHAPES_PROFILE,
+    PROVIDER_CALL_SHAPES,
+    provider_call_shapes_member,
+    stage_provider_call_shapes,
+)
+from scratch import scratch_directory
 from unit_freshness import Key, artifact_files, unit_key
 from unit_publication import record_payload
 from compiler_facts import admit_fact
@@ -108,6 +117,8 @@ pub def compile_incan_library(
         native = NativeCrate(name=alias, path=artifact)
         if own.kind != "" and alias == own.crate_name:
             unit = add_rust_root(unit, native)?
+            if toolchain.supports_library_checked_local:
+                unit.library_publication = LIBRARY_CALL_SHAPES_PROFILE
         else:
             unit = add_extern(unit, native)?
     unit.search = search
@@ -177,28 +188,41 @@ def compile_retained_library(
     register_root(store, library.project_root, f"library\t{library.package}", [identity])?
     label = f"unit {library.package} library"
     if let Some(fact) = find(store, identity)?:
+        if library.library_publication != "":
+            _ = provider_call_shapes_member(store, fact)?
         view_directory(store, fact, directory)?
         trace(f"{label}: reused")
         return Ok(0)
     # 2. A concurrent bake of the same identity is waited for, not repeated.
     held = claim(store, identity)?
     if let Some(fact) = find(store, identity)?:
+        if library.library_publication != "":
+            _ = provider_call_shapes_member(store, fact)?
         view_directory(store, fact, directory)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(0)
     # 3. A failed compilation publishes nothing.
     staged = staging(store, identity, prior_size(store, unit_name(library)))?
     stage_vocabulary(library, staged)?
-    compiled = compile_prepared_unit(
+    # Graph rows and the checker report are private to this invocation; only the admitted member reaches the Fact.
+    capture = match library.library_publication:
+        "" => None
+        _ => Some(scratch_directory()?)
+    let private: Borrowed[Option[TemporaryDirectory]] = capture
+    rows = match private:
+        Some(directory) => Some(directory.path().joinpath("library-local" + LIBRARY_OWNER_OUTPUT_SUFFIX))
+        None => None
+    compiled = compile_prepared_unit_completion(
         library,
         toolchain,
         staged.joinpath(output.name()),
         Some(key),
         library_reason(store, library),
+        library_checked_output=rows,
     )?
-    if compiled != 0:
+    if compiled.code != 0:
         _ = staged.remove_tree()
-        return Ok(compiled)
+        return Ok(compiled.code)
     # 4. Publication can add an indexed Rust ABI cache, and the new manifest decides whether a vocabulary worker
     #    belongs to the completed set; a partial set is never sealed.
     for artifact in artifact_files(staged, library.package)?:
@@ -210,11 +234,15 @@ def compile_retained_library(
     for artifact in artifact_files(staged, library.package)?:
         if artifact.0 not in borrowed:
             record_payload(artifact, key.digest, key.provenance)?
+    if let Some(output_rows) = rows:
+        if let Err(reason) = stage_provider_call_shapes(output_rows, staged):
+            _ = staged.remove_tree()
+            return Err(reason)
+        record_payload(staged.joinpath(PROVIDER_CALL_SHAPES), key.digest, key.provenance)?
     reaches = reached(store, [loaf.dir for loaf in library.loaves])?
     fact = seal(store, identity, staged, "library", unit_name(library), reaches, f"incan library {library.profile}")?
     view_directory(store, fact, directory)?
     return Ok(0)
-
 
 def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
     """Compile a library whose inputs cannot be named portably in place; nothing is baked or reused."""
@@ -472,7 +500,10 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     #    The registry's directories are in the toolchain's search index.
     mut result = unit
     for key in sorted([key for key in built.keys()]):
-        result.search = result.search + [built[key].directory] + built[key].search
+        selected = built[key]
+        result.search = result.search + [selected.directory] + selected.search
+        if let Some(member) = selected.provider_call_shapes:
+            result.provider_call_shapes[selected.directory] = (selected.provider_project, member)
     result.loaves = rebase_loaves(result.loaves, incan_artifacts(built))
     purpose = root_purpose(facets, unit.project_root)
     for facet in facets:

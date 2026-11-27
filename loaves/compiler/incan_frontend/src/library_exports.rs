@@ -320,6 +320,8 @@ pub struct CheckedExportIdentity {
     pub projection: CheckedExportProjection,
     /// Canonical declaration identity selected by the frontend, absent only when resolution stayed unproven.
     pub canonical: Option<CanonicalSymbolId>,
+    /// The declaring checker's source signature for this exact callable.
+    pub source_signature: Option<incan_semantics_core::stable_identity::DeclarationSignature>,
     /// Checked foreign nominal bindings available while this export was projected; only referenced type leaves
     /// are serialized, so unrelated implementation imports do not become artifact metadata.
     pub type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
@@ -332,6 +334,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Direct,
             canonical: None,
+            source_signature: None,
             type_origins: Default::default(),
         }
     }
@@ -342,6 +345,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Alias { target_path },
             canonical: None,
+            source_signature: None,
             type_origins: Default::default(),
         }
     }
@@ -352,6 +356,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Reexport { target_path },
             canonical: None,
+            source_signature: None,
             type_origins: Default::default(),
         }
     }
@@ -365,6 +370,7 @@ impl CheckedExportIdentity {
                 target_kind,
             },
             canonical: None,
+            source_signature: None,
             type_origins: Default::default(),
         }
     }

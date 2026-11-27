@@ -404,6 +404,7 @@ fn finish_replayed_export(
             source_path: identity.source_path.clone(),
             projection,
             canonical: Some(canonical),
+            source_signature: identity.source_signature.clone(),
             type_origins: origins,
         },
         kind: shape,

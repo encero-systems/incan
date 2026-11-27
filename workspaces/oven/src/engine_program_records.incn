@@ -4,6 +4,7 @@ from rust::std::str import from_utf8
 from std.json import parse
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
+from pub::incan_platform.store import Snapshot, get
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, text
 from json_fields import required_text
@@ -32,6 +33,23 @@ pub model NativeUnit:
             required_value(b"paylod", Value.Text(self.payload)),
             required_value(b"warn__", Value.Text(self.warnings)),
         ])
+
+
+pub model RestoredProgramSelection:
+    """The current descriptor and immutable view used by a successful native restore."""
+
+    pub snapshot: Snapshot
+    pub handle: str
+    pub unit: NativeUnit
+
+    pub def matches(self, selected: Borrowed[Snapshot], handle: str, unit: Borrowed[NativeUnit]) -> bool:
+        """Test whether the selected view and descriptor remain the ones already restored."""
+        let earlier: Borrowed[Snapshot] = self.snapshot
+        return (
+            self.handle == handle and self.unit == unit and earlier.view == selected.view
+            and earlier.root.value == selected.root.value and earlier.root.placement == selected.root.placement
+            and earlier.index == selected.index
+        )
 
 
 def descriptor_description() -> Description:
@@ -106,6 +124,13 @@ pub def decode_selection(view: str, data: bytes) -> Result[str, str]:
     if program_view(handle)? != view:
         return Err("native selection belongs to a different project view")
     return Ok(handle)
+
+
+pub def selected_program_handle(selected: Borrowed[Snapshot]) -> Result[Option[str], str]:
+    """Read the current native selection in this view and verify the handle's view binding."""
+    match get(selected, SELECTION_KEY).map_err((error) => error.message())?:
+        Some(pointer) => return Ok(Some(decode_selection(selected.view, pointer)?))
+        None => return Ok(None)
 
 
 pub def program_view(handle: str) -> Result[str, str]:

@@ -429,7 +429,7 @@ fn checked_attempt(
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &mut session);
     let observes_graph = graph_body_output.is_some();
     let mut graph_body_output =
-        graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
+        graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone(), library)?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
     let imports = {
         let _invocation =
@@ -481,7 +481,9 @@ fn checked_attempt(
                         && let Some(&index) = indexes.get(module.file_path.as_path())
                     {
                         let dependencies = project_dependencies(index);
-                        graph_body_output.observe(module, checker, provider, &dependencies, package_identity);
+                        // Package-owned library declarations cannot enter the module namespace interface.
+                        let namespace_provider = provider.filter(|_| !library);
+                        graph_body_output.observe(module, checker, namespace_provider, &dependencies, package_identity);
                     }
                     if let Some(publication) = publication.as_mut() {
                         publication.visit(module, checker, module.file_path == path);

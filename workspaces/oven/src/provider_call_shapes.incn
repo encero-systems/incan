@@ -1,0 +1,166 @@
+"""Retain checked interop shapes beside the library artifacts produced by the same compiler invocation."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_owned_record
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, items, text, tuple_items
+from bakery import fact_file
+from bakery_records import Fact, FactFile
+from compiler_body_rows import compiled_library_owner_sources, read_compiled_body_outputs
+from publication import publish_binary
+
+pub const PROVIDER_CALL_SHAPES: str = "provider-call-shapes.crumb"
+pub const LIBRARY_CALL_SHAPES_PROFILE: str = "incan.library.checked-rust-call-shapes/2"
+const SHAPES_ROW: bytes = b"libcal\x00"
+const COVERED_MODULES: bytes = b"covers"
+
+
+pub def stage_provider_call_shapes(checked_output: Path, library: Path) -> Result[None, str]:
+    """
+    Stage the per-owner checked Rust calls and argument conversions for this library's Fact.
+
+    The caller holds the Fact's claim and owns both directories. It supplies only the output of the compiler
+    invocation that completed the archive here. Modules with any unsupported owner may supply shape values,
+    but cannot authorize removing a shape. A checked module with no owners still certifies their absence.
+    """
+    sources = compiled_library_owner_sources(checked_output)?
+    checked = read_compiled_body_outputs(checked_output)?
+    if len(checked.namespaces) > 0:
+        return Err("library call shapes cannot contain program namespaces")
+
+    incomplete = set([owner.module for owner in checked.fallbacks])
+    covered = sorted([module for module in sources if module not in incomplete])
+    mut owners: list[Value] = []
+    # The compiled row reader preserves canonical order by module and owner. The admitted Local fields are
+    # already in canonical order; keeping the structural anchor retains which argument received the conversion.
+    for owner in checked.values:
+        if owner.module not in sources:
+            return Err(f"library call shape owner is outside the checked sources: {owner.module}")
+        local = decode_owned_record(owner.local, CHECKER_PROFILE, owner.identity).map_err((error) => f"{error:?}")?
+        if local.family != CheckedFamily.Local:
+            return Err(f"{owner.module}/{owner.name}: expected a Local checker record")
+        mut fields: list[Value] = []
+        for field in local.fields:
+            if field.family == "artifact-rust" and field.selector in ["checked_calls", "arg_coercions"]:
+                fields.append(Value.Tuple([
+                    Value.Text(field.node),
+                    Value.Text(field.selector),
+                    Value.List([Value.Text(value) for value in field.values]),
+                ]))
+        owners.append(owner_call_shape(owner.module, owner.identity, fields))
+
+    encoded = encode_call_shapes(owners, covered)?
+    return publish_binary(library.joinpath(PROVIDER_CALL_SHAPES), encoded)
+
+
+pub model CallShapeField:
+    """A checked Rust call or argument conversion at one structural node of the owner."""
+
+    pub node: str
+    pub selector: str
+    pub values: list[str]
+
+
+pub model OwnerCallShapes:
+    """The checked Rust boundary evidence stored for one admitted library owner."""
+
+    pub module: str
+    pub identity: str
+    pub fields: list[CallShapeField]
+
+
+pub model ProviderCallShapeMember:
+    """Checked shape values and project-relative modules whose complete census can retire old values."""
+
+    pub owners: list[OwnerCallShapes]
+    pub covered_modules: list[str]
+
+
+pub def provider_call_shapes_member(store: Path, fact: Fact) -> Result[Path, str]:
+    """Name the call-shape member of a library whose exact selected Fact has already been verified."""
+    if fact.kind == "library":
+        if let Some(payload) = fact_file(store, fact, PROVIDER_CALL_SHAPES):
+            return Ok(payload)
+    return Err(f"selected provider Fact {fact.identity} has no checked call-shape member")
+
+
+pub def read_provider_call_shapes(path: Path, member: FactFile) -> Result[ProviderCallShapeMember, str]:
+    """Decode one selected library member after its exact bytes match the admitted size and digest."""
+    if member.path != PROVIDER_CALL_SHAPES:
+        return Err("the selected library member is not a checked call-shape record")
+    encoded = path.read_bytes().map_err((error) => error.message())?
+    if len(encoded) != member.size or hexlify(sha256.digest(encoded)) != member.digest:
+        return Err(f"{path.0}: checked call shapes differ from the selected library Fact")
+    return decode_provider_call_shapes(encoded)
+
+
+def decode_provider_call_shapes(encoded: bytes) -> Result[ProviderCallShapeMember, str]:
+    """Decode the checked shapes of a library member whose Fact has already been authenticated."""
+    row = decode_graph_row(encoded, SHAPES_ROW, call_shapes_description(), 2)?
+    mut owners: list[OwnerCallShapes] = []
+    mut previous_owner = ""
+    for value in items(row[1].value)?:
+        columns = tuple_items(value, 3)?
+        module = text(columns[0])?
+        identity = text(columns[1])?
+        owner = module + "\n" + identity
+        if module == "" or identity == "" or owner <= previous_owner:
+            return Err("library call shape owners are missing or out of canonical order")
+        previous_owner = owner
+        mut fields: list[CallShapeField] = []
+        for value in items(columns[2])?:
+            parts = tuple_items(value, 3)?
+            node = text(parts[0])?
+            selector = text(parts[1])?
+            if node == "" or selector not in ["checked_calls", "arg_coercions"]:
+                return Err("invalid library call shape field")
+            fields.append(CallShapeField(node=node, selector=selector, values=[text(item)? for item in items(parts[2])?]))
+        owners.append(OwnerCallShapes(module=module, identity=identity, fields=fields))
+    mut covered: list[str] = []
+    mut previous_module = ""
+    for value in items(row[0].value)?:
+        module = text(value)?
+        parts = module.split("/")
+        if module <= previous_module or "" in parts or "." in parts or ".." in parts:
+            return Err("library call shape coverage is missing or out of canonical order")
+        previous_module = module
+        covered.append(module)
+    return Ok(ProviderCallShapeMember(owners=owners, covered_modules=covered))
+
+
+pub def provider_call_shape_digest(owner: OwnerCallShapes) -> Result[bytes, str]:
+    """Project one owner's stable checked fields without depending on the archive's native identity."""
+    fields = [
+        Value.Tuple([Value.Text(field.node), Value.Text(field.selector), Value.List([Value.Text(value) for value in field.values])])
+        for field in owner.fields
+    ]
+    value = owner_call_shape(owner.module, owner.identity, fields)
+    encoded = encode_call_shapes([value], [])?
+    return Ok(sha256.digest(encoded))
+
+
+def owner_call_shape(module: str, identity: str, fields: list[Value]) -> Value:
+    """Spell one canonical provider owner the same way in the Fact and its change witness."""
+    return Value.Tuple([Value.Text(module), Value.Text(identity), Value.List(fields)])
+
+
+def encode_call_shapes(owners: list[Value], covered_modules: list[str]) -> Result[bytes, str]:
+    """Seal the shape values and absence authority together under the selected library Fact."""
+    return encode_graph_row(SHAPES_ROW, call_shapes_description(), [
+        required_value(COVERED_MODULES, Value.List([Value.Text(module) for module in covered_modules])),
+        required_value(b"owners", Value.List(owners)),
+    ])
+
+
+def call_shapes_description() -> Description:
+    """Describe canonical owner values and the checked source paths that establish complete coverage."""
+    return model_description(SHAPES_ROW, LIBRARY_CALL_SHAPES_PROFILE, [
+        ModelField(identity=COVERED_MODULES, name="covered_modules", storage="list<string>"),
+        ModelField(
+            identity=b"owners", name="owners", storage="list<tuple<string,string,list<tuple<string,string,list<string>>>>>",
+        ),
+    ])

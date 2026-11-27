@@ -102,7 +102,7 @@ def settled_request(
     Settle one request without executing user code in the engine.
 
     1. Ask for the captured unit record, activating its epoch only on a miss.
-    2. Retain counters only when this caller explicitly requested a proof report.
+    2. Return library builds or failed programs without selecting a native descriptor.
     3. Select successful results in the caller's virtual view and hold an execution lease before replying.
     """
     # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
@@ -141,36 +141,19 @@ def settled_request(
     counters.frozen.reads += frozen.reads
     counters.frozen.hashes += frozen.hashes
     record(Operation.EngineUnit, pending.capture.revision, producing)
-    # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
-    mut observation = ""
+    # 2. Return library builds or failed programs without selecting a native descriptor.
     if produced.library and produced.code == 0:
         return settled_library(store, pending, run, counters, produced)
     match produced.unit:
-        None =>
-            mut incomplete = ""
-            if pending.proofs:
-                match retain(store, run, counters, produced):
-                    Ok(handle) => observation = handle
-                    Err(reason) => incomplete = reason
-            return Ok(
-                Ready(
-                    message=Complete(
-                        snapshot="",
-                        admission_proof="",
-                        result_handles="",
-                        binding_outcome=BindingOutcome.NotSelected,
-                        status=CompletionStatus.Failed,
-                        observation_handle=observation,
-                    ),
-                    console=produced.console,
-                    incomplete_proof=incomplete,
-                ),
-            )
+        None => return settled_failure(store, run, counters, produced, pending.proofs)
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
+            mut observation = ""
             selecting = begin()
             mut captured = after_projection(pending.capture)?
-            mut selection = prepare_selection(admission, pending.view, unit, pending.handle)?
+            mut selection = prepare_selection(
+                admission, pending.view, unit, pending.handle, restored=take(produced.restored_selection),
+            )?
             mut group: list[Transaction] = []
             if let Some(transaction) = take(captured.transaction):
                 group.append(transaction)
@@ -219,6 +202,32 @@ def settled_request(
                     pin=Some(pin),
                 ),
             )
+
+
+def settled_failure(
+    store: Path, run: str, counters: CaptureCounters, produced: ProgramOutcome, proofs: bool,
+) -> Result[Ready, str]:
+    """Return the failed program's console and retain its proof only when the caller asked for one."""
+    mut observation = ""
+    mut incomplete = ""
+    if proofs:
+        match retain(store, run, counters, produced):
+            Ok(handle) => observation = handle
+            Err(reason) => incomplete = reason
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot="",
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=CompletionStatus.Failed,
+                observation_handle=observation,
+            ),
+            console=produced.console,
+            incomplete_proof=incomplete,
+        ),
+    )
 
 
 def produce_program(

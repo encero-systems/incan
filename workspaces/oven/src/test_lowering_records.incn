@@ -37,6 +37,7 @@ from borrowed_positioned_member_control import (
     observed_plan_reconciliations, ordinary_member_rows, verify_alpha_request_routes, verify_borrowed_gamma_members,
 )
 from scratch import scratch_directory
+from rust_argument_borrow_return_fixture import verify_rust_argument_borrow_return
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
 from pub::incan_mir_plan import AdmittedFunction, AdmittedModule, encode_module_note
@@ -253,7 +254,8 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
     """A local Rust source edit rebuilds its native unit, while an unchanged request does no work."""
     scratch = scratch_directory()?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
-    return verify_rust_source_edit_rebuild(binary, scratch.path())
+    verify_rust_source_edit_rebuild(binary, scratch.path())?
+    return verify_rust_argument_borrow_return(binary, scratch.path().joinpath("rust-borrow-return"))
 
 
 pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:

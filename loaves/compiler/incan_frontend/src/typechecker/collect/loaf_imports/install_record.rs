@@ -8,6 +8,7 @@ use crate::library_manifest::install_record::{
     InstallModule, InstallNamedExport, InstallNestedLayout, InstallNestedLayoutKind, InstallRootExports,
     InstallScopeTarget, LoafInstallRecord,
 };
+use incan_semantics_core::stable_identity::DeclarationSignature;
 
 impl TypeChecker {
     /// The compiled Loaf's install record, shared by the checkers of one module graph. Produce it for an older Loaf
@@ -53,6 +54,46 @@ impl TypeChecker {
                 let record = self.prepared_install_record(key)?;
                 record.identity_graph.publishes(canonical).then_some((key, record))
             })
+    }
+
+    /// Resolve the exact imported function's source signature from the install record already used for its Loaf.
+    pub(crate) fn imported_function_source_signature(
+        &self,
+        canonical: &CanonicalSymbolId,
+    ) -> Result<Option<DeclarationSignature>, ()> {
+        let SymbolOrigin::Package { library, .. } = &canonical.origin else {
+            return Ok(None);
+        };
+        if canonical.kind != SemanticSourceTargetKind::Function {
+            return Ok(None);
+        }
+        let mut signatures = self
+            .dependency_interface_preparation_cache
+            .imported_function_signatures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        signatures
+            .entry(canonical.clone())
+            .or_insert_with(|| {
+                let mut selected = None;
+                for (key, _) in self
+                    .loaves
+                    .package_names()
+                    .filter(|(_, package)| *package == library.as_str())
+                {
+                    let Some(record) = self.prepared_install_record(key) else {
+                        continue;
+                    };
+                    if let Some(signature) = record.identity_graph.function_source_signature(canonical)? {
+                        if selected.as_ref().is_some_and(|existing| existing != signature) {
+                            return Err(());
+                        }
+                        selected = Some(signature.clone());
+                    }
+                }
+                Ok(selected)
+            })
+            .clone()
     }
 
     /// The install record of the compiled Loaf indexed as `library`, whose manifest is `manifest`: its nominal public

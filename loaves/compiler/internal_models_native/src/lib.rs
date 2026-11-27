@@ -129,9 +129,10 @@ pub use namespace_headers::{
     NamespaceHeaderValue, decode_namespace_header, encode_namespace_header, namespace_header_of,
 };
 pub use namespace_order::{
-    CHECKING_BASIS, IMPORT_ORDER_FILE, NamespaceOrder, certified_namespace_order, checking_basis_key,
-    checking_completion_receipt, decode_namespace_order, encode_checking_basis, encode_checking_completion,
-    encode_import_closures, ranked_output_suffix, read_checking_basis, read_import_closures,
+    CHECKING_BASIS, IMPORT_ORDER_FILE, LIBRARY_OWNER_OUTPUT_SUFFIX, NamespaceOrder, certified_namespace_order,
+    checking_basis_key, checking_completion_receipt, decode_namespace_order, encode_checking_basis,
+    encode_checking_completion, encode_import_closures, ranked_output_suffix, read_checking_basis,
+    read_import_closures,
 };
 pub use namespace_proof::{
     encode_namespace_proof, namespace_proof_identity, namespace_proof_output_suffix, read_namespace_proof,

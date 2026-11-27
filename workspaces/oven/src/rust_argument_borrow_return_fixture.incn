@@ -1,0 +1,560 @@
+"""Check that ordinary and diagnostic borrow-shape returns refresh both affected callers before selection."""
+
+from rust::std::process import Command, Stdio
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from pub::incan_platform.store import get
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from bakery import find
+from compiler_body_keys import namespace_key
+from compiler_graph_records import reusable_evaluation
+from engine_client import service_generation, service_identity
+from engine_endpoint import endpoint
+from engine_program_records import NativeUnit, SELECTION_KEY, decode_selection
+from engine_programs import selected_program
+from engine_protocol_fixtures import json_text_is
+from files import read, write
+from json_fields import required_text
+from lowering_record_fixtures import attempt_trace, command_proof, proof_count, stop_example_engine
+from store_path_conversion import snapshot
+from unit_reading import read_unit
+from unit_transport import read_unit_document
+
+
+const PROVIDER_MANIFEST: str = "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"provider_native\"\n\n[rust.source]\nroot = \"rust\"\n"
+const APP_MANIFEST: str = "[project]\nname = \"rustapp\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nprovider = { path = \"../provider\" }\n"
+const PROVIDER_SOURCE: str = "from rust::provider_native import native_len\n\n\npub def value(text: str) -> int:\n    return native_len(text) + 3\n"
+const BORROWED_RUST: str = "/// The length of a borrowed text, plus a constant the body edit changes.\npub fn native_len(text: &str) -> i64 {\n    text.len() as i64 + 0\n}\n"
+const FANOUT_PROVIDER_SECOND: str = "from rust::provider_native import native_len\n\n\npub def second_value(text: str) -> int:\n    \"\"\"Read the same native text value from another provider module.\"\"\"\n    return native_len(text)\n"
+const FANOUT_APP_MAIN: str = "from pub::provider import value\nfrom control import unchanged_marker\nfrom second_reader import read_second\n\n\ndef main() -> None:\n    println(f\"{value(\"hello\") + 1}\")\n    println(read_second())\n    println(unchanged_marker())\n"
+const FANOUT_APP_READER: str = "from pub::provider.second import second_value\n\n\npub def read_second() -> int:\n    \"\"\"Enter the second provider owner from a separate app module.\"\"\"\n    return second_value(\"world\")\n"
+const FANOUT_APP_CONTROL: str = "pub def unchanged_marker() -> int:\n    \"\"\"Read an independent owner in every run.\"\"\"\n    return 7\n"
+
+
+pub def verify_rust_argument_borrow_return(binary: str, root: Path) -> Result[None, str]:
+    """Keep one ordinary Records store for the historical executable and both shape transitions."""
+    root.mkdir(true, true).map_err((error) => error.message())?
+    physical = root.resolve().map_err((error) => error.message())?
+    store = physical.joinpath("store")
+    mut result = verify_borrow_transitions(binary, physical, store)
+    if store.is_dir():
+        if let Err(reason) = stop_example_engine(binary, store):
+            if result.is_ok():
+                result = Err(reason)
+    return result
+
+
+def verify_borrow_transitions(binary: str, root: Path, store: Path) -> Result[None, str]:
+    """Change only the Rust argument, and return to the same executable after its caller evidence changes."""
+    app = root.joinpath("app")
+    provider = root.joinpath("provider")
+    for directory in [app.joinpath("src"), provider.joinpath("src"), provider.joinpath("rust/src")]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    write(provider.joinpath("loaf.toml"), PROVIDER_MANIFEST)?
+    write(provider.joinpath("src/lib.incn"), PROVIDER_SOURCE)?
+    write(provider.joinpath("src/second.incn"), FANOUT_PROVIDER_SECOND)?
+    write(app.joinpath("loaf.toml"), APP_MANIFEST)?
+    write(app.joinpath("src/main.incn"), FANOUT_APP_MAIN)?
+    write(app.joinpath("src/second_reader.incn"), FANOUT_APP_READER)?
+    write(app.joinpath("src/control.incn"), FANOUT_APP_CONTROL)?
+    native = provider.joinpath("rust/src/lib.rs")
+    evidence = get_or("INCAN_ENGINE_TRACE", "")
+    mut trace_root = root.joinpath("readback")
+    if evidence != "":
+        trace_root = Path(evidence).joinpath("rust-borrow-return-" + root.parent().name())
+    trace = attempt_trace(trace_root, "trace")?
+
+    write(native, BORROWED_RUST)?
+    _seed_report, seed = run_fanout_probe(binary, app, store, trace, "seed", "9\n5\n7\n")?
+    seed_handle, _seed_unit = selected_fanout_program(store, settlement_window(trace, seed)?)?
+    control = control_namespace(store)?
+
+    borrowed_body = BORROWED_RUST.replace("as i64 + 0", "as i64 + 10")
+    write(native, borrowed_body)?
+    _edited_report, earlier = run_fanout_probe(binary, app, store, trace, "borrowed edit", "19\n15\n7\n")?
+    earlier_handle, earlier_unit = selected_fanout_program(store, settlement_window(trace, earlier)?)?
+    if earlier_handle == seed_handle:
+        return Err("10.3 Rust body edit did not advance the application capture")
+
+    owned_body = borrowed_body.replace("text: &str", "text: String")
+    write(native, owned_body)?
+    _owned_report, owned = run_fanout_probe(binary, app, store, trace, "owned", "19\n15\n7\n")?
+    owned_window = settlement_window(trace, owned)?
+    owned_handle, owned_unit = selected_fanout_program(store, owned_window)?
+    if owned_handle == earlier_handle or owned_unit.identity == earlier_unit.identity:
+        return Err("10.3 owned argument did not select a new native unit")
+
+    write(native, borrowed_body)?
+    report, request = run_fanout_probe(binary, app, store, trace, "borrow return", "19\n15\n7\n")?
+    window = settlement_window(trace, request)?
+    handle, unit = selected_fanout_program(store, window)?
+    if handle != earlier_handle or unit != earlier_unit or proof_count(report, "native_bakes")? != 0:
+        return Err("10.3 borrow return: the app did not reuse its earlier native descriptor with zero new bakes")
+    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?).map_err(
+        (reason) => "ordinary borrow return: " + reason,
+    )?
+    _ = require_returned_app_checks(app, owned_window, compiler_activations(trace, owned)?).map_err(
+        (reason) => "ordinary owned edit: " + reason,
+    )?
+    if control_namespace(store)? != control:
+        return Err("10.3 independent control no longer has its original checked namespace")
+    write(native, owned_body)?
+    return verify_diagnostic_return(binary, app, store, trace, owned_unit)
+
+
+def verify_diagnostic_return(
+    binary: str, app: Path, store: Path, trace: Path, owned: NativeUnit,
+) -> Result[None, str]:
+    """Return to the sealed owned payload in diagnostic mode, then require the ordinary warning receipt."""
+    # This comment changes the warning identity without moving any code in the native input.
+    write(app.joinpath("src/main.incn"), FANOUT_APP_MAIN + "\n# Diagnostic return.\n")?
+    stop_fanout_engine(binary, store)?
+    report, request = run_fanout_probe(
+        binary, app, store, trace, "diagnostic return", "19\n15\n7\n", trace.joinpath("semantic-report.json").0,
+    )?
+    window = settlement_window(trace, request)?
+    _diagnostic_handle, diagnostic = selected_fanout_program(store, window)?
+    if (
+        diagnostic.identity != owned.identity or diagnostic.payload != owned.payload or diagnostic.binary != owned.binary
+        or proof_count(report, "native_bakes")? != 0
+    ):
+        return Err("10.3 diagnostic return did not reuse the sealed owned payload")
+    _ = require_returned_app_checks(app, window, compiler_activations(trace, request)?).map_err(
+        (reason) => "diagnostic return: " + reason,
+    )?
+    if diagnostic.warnings == "" or diagnostic.warnings == owned.warnings:
+        return Err("10.3 diagnostic return did not bind the new source warning identity")
+    if find(store, diagnostic.warnings)? is not None:
+        return Err("10.3 diagnostic return did not leave a new warning receipt for ordinary compilation")
+    stop_fanout_engine(binary, store)?
+    _ordinary, _request = run_fanout_probe(binary, app, store, trace, "ordinary after diagnosis", "19\n15\n7\n")?
+    if find(store, diagnostic.warnings)? is None:
+        return Err("10.3 ordinary return did not admit its missing warning receipt")
+    return Ok(None)
+
+
+def stop_fanout_engine(binary: str, store: Path) -> Result[None, str]:
+    """Wait for this private engine to exit so its replacement inherits the next command's mode."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    selected = endpoint(store, identity).map_err((refusal) => refusal.detail)?
+    stop_example_engine(binary, store)?
+    _lifetime = Path(selected.lock).lock_exclusive().map_err((error) => error.message())?
+    return Ok(None)
+
+
+def control_namespace(store: Path) -> Result[str, str]:
+    """Read the existing reusable namespace record for the independent unchanged owner."""
+    graph = snapshot(store).map_err((error) => error.message())?
+    selected = reusable_evaluation(graph, namespace_key("rustapp", "src/control.incn"), CHECKER_PROFILE)?
+    if let Some(record) = selected:
+        if record.value_digest != "":
+            return Ok(record.value_digest)
+    return Err("10.3 independent control has no selected checked namespace")
+
+
+model Activation:
+    """One worker activation, with its actual process origin and closed invocation records."""
+
+    driver: str
+    completed: JsonValue
+    invocations: list[JsonValue]
+
+
+def client_request(trace: Path, pid: int, app: Path) -> Result[JsonValue, str]:
+    """Select the exact frontend request emitted by the successfully waited child."""
+    rows = trace_rows(trace.joinpath(f"engine-oven-{pid}.jsonl"))?
+    starts = [row for row in rows if json_text_is(row, "operation", "cli_start")]
+    requests = [row for row in rows if json_text_is(row, "operation", "engine_request")]
+    if len(starts) != 1 or len(requests) != 1:
+        return Err("client trace does not name one command and one request")
+    start = starts[0]
+    request = requests[0]
+    if (
+        not oven_origin(start, pid)?
+        or not oven_origin(request, pid)?
+        or not done_span(request, "oven")
+        or not json_text_is(start, "key", "run")
+    ):
+        return Err("client trace origin does not match the waited command")
+    source = Path(required_text(request, "key")?).resolve().map_err((error) => error.message())?
+    if source.0 != app.joinpath("src/main.incn").0 or not precedes(start, request)?:
+        return Err("client request does not name the selected application")
+    return Ok(request)
+
+
+def settlement_window(trace: Path, request: JsonValue) -> Result[list[JsonValue], str]:
+    """Use the unique process that returned the selected execution lease for this request."""
+    mut selected: list[JsonValue] = []
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not trace_filename(entry, "engine-oven-"):
+            continue
+        rows = trace_rows(entry)?
+        mut window: list[JsonValue] = []
+        for row in rows:
+            if json_text_is(row, "operation", "engine_lease") and contains_span(request, row)?:
+                window.append(row)
+        if len(window) == 0:
+            continue
+        starts = [row for row in rows if json_text_is(row, "operation", "cli_start")]
+        if len(starts) != 1 or not json_text_is(starts[0], "key", "--internal-engine-settlement") or len(selected) != 0:
+            return Err("issued work does not come from one settlement process")
+        pid = proof_count(starts[0], "process")?
+        if entry.name() != f"engine-oven-{pid}.jsonl" or not oven_origin(starts[0], pid)?:
+            return Err("settlement trace has a mismatched process origin")
+        for row in rows:
+            if contains_span(request, row)?:
+                if not oven_origin(row, pid)?:
+                    return Err("settlement request window has a foreign or malformed row")
+                selected.append(row)
+    if len(selected) == 0:
+        return Err("current request has no completed settlement trace")
+    return Ok(selected)
+
+
+def compiler_activations(trace: Path, request: JsonValue) -> Result[list[Activation], str]:
+    """Read each compiler trace once and keep the complete contained activations."""
+    mut completed: list[Activation] = []
+    mut seen: set[str] = set()
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not trace_filename(entry, "engine-compiler-"):
+            continue
+        mut origin: Option[JsonValue] = None
+        mut rows: list[JsonValue] = []
+        for record in trace_rows(entry)?:
+            if json_text_is(record, "operation", "invocation"):
+                if json_text_is(record, "kind", "process"):
+                    if origin is not None:
+                        return Err("compiler trace repeats its process origin")
+                    origin = Some(record)
+                else:
+                    rows.append(record)
+            elif json_text_is(record, "operation", "driver_request") and json_text_is(record, "key", "activation"):
+                if contains_span(request, record)?:
+                    current = compiler_origin(entry, origin, record, rows)?
+                    identity = required_text(record, "work")?
+                    if identity in seen:
+                        return Err(f"compiler trace repeats activation {identity}")
+                    seen.add(identity)
+                    completed.append(current)
+                rows = []
+    return Ok(completed)
+
+
+def compiler_origin(
+    path: Path,
+    origin: Option[JsonValue],
+    completed: JsonValue,
+    rows: list[JsonValue],
+) -> Result[Activation, str]:
+    """Bind the completion and invocation rows to the physical worker trace file's process."""
+    if not done_span(completed, "compiler-worker"):
+        return Err("compiler activation has no successful terminal")
+    pid = proof_count(completed, "process")?
+    if path.name() != f"engine-compiler-{pid}.jsonl":
+        return Err("compiler activation does not match its process file")
+    if let Some(process) = origin:
+        if not json_text_is(process, "schema", "incan.invocations/1") or proof_count(process, "pid")? != pid:
+            return Err("worker invocation origin does not match its completed activation")
+        for row in rows:
+            if proof_count(row, "pid")? != pid:
+                return Err("foreign or malformed invocation in completed compiler activation")
+        return Ok(Activation(driver=required_text(process, "executable")?, completed=completed, invocations=rows))
+    return Err("compiler activation has no process origin")
+
+
+def issued_activation(
+    rpc: JsonValue,
+    settlement: list[JsonValue],
+    workers: list[Activation],
+) -> Result[Activation, str]:
+    """Join an issued compiler call once to its worker and exact host-clock completion."""
+    if not done_span(rpc, "oven"):
+        return Err("issued compiler call has no successful terminal")
+    mut matched: list[Activation] = []
+    for worker in workers:
+        if contains_span(rpc, worker.completed)?:
+            matched.append(worker)
+    if len(matched) != 1:
+        return Err("issued compiler call does not have one completed activation")
+    selected = matched[0]
+    connected = [row for row in settlement if json_text_is(row, "operation", "worker_connect") and json_text_is(
+        row,
+        "key",
+        selected.driver,
+    )]
+    for connection in connected:
+        if precedes(connection, rpc)?:
+            return Ok(selected)
+    return Err("issued compiler call has no matching selected driver connection")
+
+
+def validate_descriptor(path: Path) -> Result[None, str]:
+    """Require the issued typed unit to be an existing physical descriptor."""
+    if not path.0.endswith(".unit.crumb") or not path.is_file():
+        return Err(f"issued unit descriptor is missing: {path.0}")
+    physical = path.resolve().map_err((error) => error.message())?
+    if physical.0 != path.0:
+        return Err(f"issued unit descriptor is not the selected physical path: {path.0}")
+    return Ok(None)
+
+
+def trace_filename(path: Path, prefix: str) -> bool:
+    """Select only the engine's process trace files."""
+    return path.name().startswith(prefix) and path.name().endswith(".jsonl")
+
+
+def oven_origin(row: JsonValue, pid: int) -> Result[bool, str]:
+    """Check the settlement or client record against its own file and request origin."""
+    return Ok(
+        json_text_is(row, "schema", "incan.engine.trace/1") and json_text_is(row, "kind", "span") and json_text_is(
+            row,
+            "producer",
+            "oven",
+        ) and proof_count(row, "process")? == pid and json_text_is(row, "request", f"oven-{pid}"),
+    )
+
+
+def done_span(row: JsonValue, producer: str) -> bool:
+    """Require a complete span from the selected producer."""
+    return (
+        json_text_is(row, "schema", "incan.engine.trace/1")
+        and json_text_is(row, "kind", "span")
+        and json_text_is(row, "producer", producer)
+        and json_text_is(row, "outcome", "done")
+    )
+
+
+def precedes(first: JsonValue, second: JsonValue) -> Result[bool, str]:
+    """Require two completed nonoverlapping spans in chronological order."""
+    if not done_span(first, "oven") or not done_span(second, "oven"):
+        return Ok(false)
+    if not json_text_is(first, "clock", "host-monotonic-raw") or not json_text_is(second, "clock", "host-monotonic-raw"):
+        return Ok(false)
+    return Ok(proof_count(first, "end_ns")? <= proof_count(second, "start_ns")?)
+
+
+def below_root(row: JsonValue, root: str, begins: Dict[str, JsonValue]) -> Result[bool, str]:
+    """Check the compiler's recorded parent chain for the selected compile root."""
+    mut parent = required_text(row, "parent").unwrap_or("")
+    mut seen: set[str] = set()
+    while parent in begins and parent not in seen:
+        if parent == root:
+            return Ok(true)
+        seen.add(parent)
+        parent = required_text(begins[parent], "parent").unwrap_or("")
+    return Ok(false)
+
+
+def expect_closed(begin: JsonValue, ended: Dict[str, JsonValue]) -> Result[None, str]:
+    """Require an actual invocation terminal from the same process and thread."""
+    identifier = required_text(begin, "id")?
+    if identifier not in ended:
+        return Err(f"missing compiler invocation terminal {identifier}")
+    terminal = ended[identifier]
+    if (
+        proof_count(begin, "pid")? != proof_count(terminal, "pid")?
+        or required_text(begin, "thread")? != required_text(terminal, "thread")?
+    ):
+        return Err(f"foreign compiler invocation terminal {identifier}")
+    if proof_count(begin, "time_ns")? >= proof_count(terminal, "time_ns")?:
+        return Err(f"unordered compiler invocation terminal {identifier}")
+    return Ok(None)
+
+
+def contains_span(parent: JsonValue, child: JsonValue) -> Result[bool, str]:
+    """Use one host monotonic clock to join the completed request and compiler boundaries."""
+    if not json_text_is(parent, "clock", "host-monotonic-raw") or not json_text_is(child, "clock", "host-monotonic-raw"):
+        return Ok(false)
+    start = proof_count(child, "start_ns")?
+    end = proof_count(child, "end_ns")?
+    return Ok(proof_count(parent, "start_ns")? <= start and start < end and end <= proof_count(parent, "end_ns")?)
+
+
+def fields(row: JsonValue) -> Result[JsonValue, str]:
+    """Read required structured invocation fields without text matching."""
+    return row.require("fields").map_err((error) => error.message())
+
+
+def trace_rows(path: Path) -> Result[list[JsonValue], str]:
+    """Read the exact complete JSONL records written by one process in the fixture's private trace."""
+    text = read(path)?
+    if text != "" and not text.endswith("\n"):
+        return Err(f"incomplete trace line in {path.0}")
+    mut rows: list[JsonValue] = []
+    for line in text.split("\n"):
+        if line != "":
+            rows.append(parse(line).map_err((error) => error.message())?)
+    return Ok(rows)
+
+
+def require_returned_app_checks(
+    app: Path, window: list[JsonValue], workers: list[Activation],
+) -> Result[Dict[str, str], str]:
+    """Use the app's issued compiler work before the returned lease to count fresh caller statements."""
+    source = app.joinpath("src/main.incn")
+    units = app.joinpath("target/incan/units").0 + "/"
+    mut owners: Dict[str, str] = {}
+    for rpc in window:
+        if not json_text_is(rpc, "operation", "driver_request"):
+            continue
+        key = required_text(rpc, "key")?
+        check_only = key.startswith("--check " + units)
+        if not check_only and not key.startswith("--unit " + units):
+            continue
+        # The check pipeline does not label its root with the source. Read the issued physical descriptor once.
+        mut path_start = 7
+        if check_only:
+            path_start = 8
+        descriptor = Path(key[path_start:])
+        validate_descriptor(descriptor)?
+        unit = read_unit(read_unit_document(descriptor)?)?
+        if unit.kind != "program" or unit.project_root != app.0 or unit.source != source.0:
+            return Err("10.3 borrow return: issued checking does not name the physical application")
+        leases = [row for row in window if json_text_is(row, "operation", "engine_lease") and precedes(rpc, row)?]
+        if len(leases) != 1:
+            return Err("10.3 borrow return: issued checking did not complete before selection")
+        activation = issued_activation(rpc, window, workers)?
+        checked = app_statement_owners(activation.invocations, source, check_only)?
+        for name in checked.keys():
+            if name in owners:
+                return Err(f"10.3 borrow return: app caller {name} checked twice")
+            owners[name] = checked[name]
+    if sorted(owners.keys()) != ["main", "read_second"]:
+        return Err(f"10.3 borrow return: fresh app caller checks differ: {owners}")
+    return Ok(owners)
+
+
+def selected_fanout_program(store: Path, window: list[JsonValue]) -> Result[tuple[str, NativeUnit], str]:
+    """Read the program through the existing selected-descriptor record for the waited request's view."""
+    leases = [row for row in window if json_text_is(row, "operation", "engine_lease") and done_span(row, "oven")]
+    if len(leases) != 1:
+        return Err("10.3: no unique execution lease for the selected app")
+    view = required_text(leases[0], "key")?
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    pointer = match get(selected, SELECTION_KEY).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Err("10.3: the app view has no selected program handle")
+    handle = decode_selection(view, pointer)?
+    match selected_program(selected, handle)?:
+        Some(unit) => return Ok((handle, unit))
+        None => return Err("10.3: the selected app handle has no native descriptor")
+
+
+def run_fanout_probe(
+    binary: str, app: Path, store: Path, trace: Path, stage: str, expected: str, semantic_report: str = "",
+) -> Result[tuple[JsonValue, JsonValue], str]:
+    """Wait one Records run, keeping its report and exact request boundary."""
+    mut command = Command.new(binary)
+    command.arg("run").arg("--engine-report").current_dir(app.0)
+    command.env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).env("INCAN_ENGINE_TRACE", trace.0)
+    command.stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
+    command.env_remove("INCAN_DIRECT_REFUSAL_REPORT").env_remove("INCAN_DIRECT_SEMANTIC_REPORT")
+    if semantic_report != "":
+        command.env("INCAN_DIRECT_SEMANTIC_REPORT", semantic_report)
+    child = command.spawn().map_err((error) => str(error))?
+    pid = int(child.id())
+    result = child.wait_with_output().map_err((error) => str(error))?
+    output = from_utf8(result.stdout).map_err((error) => str(error))?
+    errors = from_utf8(result.stderr).map_err((error) => str(error))?
+    if not result.status.success() or errors != "" or "\n".join(output.split("\n")[1:]) != expected:
+        return Err(f"10.3 {stage}: ordinary fanout command refused: {result.status.code()} {output} {errors}")
+    report = command_proof(result.stdout)?
+    if (
+        not json_text_is(report, "schema", "incan.engine.proofs/3")
+        or not json_text_is(report, "granularity", "unit-record")
+    ):
+        return Err(f"10.3 {stage}: wrong ordinary proof envelope")
+    return Ok((report, client_request(trace, pid, app)?))
+
+
+def app_statement_owners(
+    rows: list[JsonValue], source: Path, check_only: bool = false,
+) -> Result[Dict[str, str], str]:
+    """Collect each completed application owner statement once."""
+    mut begins: Dict[str, JsonValue] = {}
+    mut ended: Dict[str, JsonValue] = {}
+    mut root_function = "incan_rustc_driver::compile_unit"
+    if check_only:
+        root_function = "incan_driver::check_pipeline"
+    mut roots: list[str] = []
+    for row in rows:
+        if json_text_is(row, "kind", "begin"):
+            identifier = required_text(row, "id")?
+            if identifier in begins:
+                return Err("fanout trace repeats a compiler span")
+            begins[identifier] = row
+            if json_text_is(row, "function", root_function):
+                if not check_only and not json_text_is(fields(row)?, "input", source.0):
+                    return Err("fanout compile has the wrong physical source")
+                roots.append(identifier)
+        elif json_text_is(row, "kind", "end"):
+            identifier = required_text(row, "id")?
+            if identifier in ended:
+                return Err("fanout trace repeats a compiler terminal")
+            ended[identifier] = row
+    if len(roots) != 1:
+        return Err(f"fanout has no unique {root_function} root")
+    root = roots[0]
+    expect_closed(begins[root], ended)?
+    mut owners: Dict[str, str] = {}
+    mut counted: set[str] = set()
+    for row in rows:
+        if not json_text_is(row, "kind", "event"):
+            continue
+        event = fields(row)?
+        if json_text_is(event, "message", "checked owner statements"):
+            name = required_text(event, "owner")?
+            if name in owners:
+                return Err(f"fanout repeated checked owner {name}")
+            identity, statement = app_statement(row, begins, ended, root)?
+            owners[name] = identity
+            counted.add(statement)
+    for identifier in begins.keys():
+        statement = begins[identifier]
+        if (
+            json_text_is(statement, "function", "incan_frontend::check_body_statements")
+            and below_root(statement, root, begins)?
+            and identifier not in counted
+        ):
+            return Err("fanout has unjoined callable statement work")
+    return Ok(owners)
+
+
+def app_statement(
+    row: JsonValue,
+    begins: Dict[str, JsonValue],
+    ended: Dict[str, JsonValue],
+    root: str,
+) -> Result[tuple[str, str], str]:
+    """Bind fresh work to a named source owner and its one closed statement span."""
+    parent = required_text(row, "parent")?
+    if parent not in begins:
+        return Err("fanout statement event has no owner span")
+    begin = begins[parent]
+    event = fields(row)?
+    name = required_text(event, "owner")?
+    module = required_text(event, "module")?
+    allowed: Dict[str, str] = {"main": "main", "read_second": "second_reader", "unchanged_marker": "control"}
+    if (
+        name not in allowed
+        or allowed[name] != module
+        or not json_text_is(begin, "function", "incan_frontend::check_owner_body")
+        or not below_root(begin, root, begins)?
+    ):
+        return Err(f"fanout checked a foreign owner {module}::{name}")
+    identity = required_text(fields(begin)?, "identity")?
+    if not identity.startswith(f"function:{module}::{name}|incan.source-signature/2:sha256:"):
+        return Err(f"fanout stable owner does not identify {module}::{name}")
+    statements = [start for start in begins.values() if json_text_is(start, "parent", parent) and json_text_is(
+        start,
+        "function",
+        "incan_frontend::check_body_statements",
+    )]
+    if len(statements) != 1:
+        return Err(f"fanout {module}::{name} does not have one statement span")
+    expect_closed(begin, ended)?
+    expect_closed(statements[0], ended)?
+    return Ok((identity, required_text(statements[0], "id")?))

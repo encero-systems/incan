@@ -2,7 +2,7 @@
 
 from pub::incan_mir_plan import LoweringEvent
 from pub::incan_platform.store import Snapshot
-from pub::internal_models import CompiledBodyFallback
+from pub::internal_models import CompiledBodyFallback, CompiledBodyValue
 from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from pub::internal_models.records import RecordKey, RecordRequest
 from compiler_body_fallbacks import (
@@ -12,12 +12,16 @@ from compiler_body_fallbacks import (
     retained_namespace_event,
 )
 from compiler_body_keys import body_key
-from compiler_body_projection import root
+from compiler_executable_metadata import predecessor_owner_metadata
+from compiler_executable_scopes import ExecutableScopeInputs
+from compiler_body_projection import dependency_read_key, dependency_signature_key, dependency_span_key, root
 from compiler_graph_records import EditCutoff
 from compiler_lowering_order import LoweringOrder, LoweringOrders
 from compiler_namespace_products import member_plan_inputs, retained_member_product
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
-from unit import UnitDescription
+from compiler_source_projection import SourceProjection, scope_key, signature_scope_key
+from selected_provider_call_shapes import ProviderCallShapeSelection, dependency_call_shape_key
+from unit import UnitDescription, dependency_source_roots
 
 
 pub model LoweringBody:
@@ -40,6 +44,63 @@ pub model LoweringEventSource:
     pub order: LoweringOrder = LoweringOrder()
     pub body_reads: list[RecordRequest] = []
     pub signature_reads: list[RecordRequest] = []
+
+
+pub def add_fresh_lowering_witnesses(
+    mut witnesses: BorrowedMut[list[LoweringBody]],
+    mut witnessed: BorrowedMut[set[str]],
+    projections: Borrowed[Dict[str, SourceProjection]],
+    fresh: list[CompiledBodyValue],
+    unit: UnitDescription,
+    origin: str,
+    orders: Borrowed[LoweringOrders],
+    scopes: Borrowed[ExecutableScopeInputs],
+    provider_shapes: Borrowed[ProviderCallShapeSelection],
+) -> Result[None, str]:
+    """Read the current checker outputs and collect the exact inputs each fresh lowering owner consumed."""
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in fresh:
+        projection = projections[value.module]
+        mut signatures = [body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)]
+        if len(value.scope_names) == 0:
+            signatures.append(projection.census.key)
+        else:
+            for name in value.scope_names:
+                signatures.append(scope_key(projection.census, name))
+        for feature in projections[value.module].feature_inputs:
+            signatures.append(feature.key)
+        for dependency in value.dependency_reads:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            if let Some(key) = dependency_call_shape_key(provider_shapes, origin, dependency)?:
+                signatures.append(key)
+            match dependency_span_key(projections, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
+                Some(key) =>
+                    signatures.append(key)
+                    signatures.append(signature_scope_key(key))
+                None => pass
+        header = match value.identity in scopes.owners:
+            true => scopes.owners[value.identity]
+            false => predecessor_owner_metadata(value.body_ir)?
+
+        if header.identity != value.identity:
+            return Err("graph-eligible Body IR disagrees with its stable owner")
+        witnesses.append(
+            LoweringBody(
+                identity=value.identity,
+                symbol=header.symbol,
+                module=value.module,
+                order=orders.fresh(value.module),
+                final=value.final,
+                signature_reads=signatures,
+            ),
+        )
+        witnessed.add(value.identity)
+    return Ok(None)
 
 
 pub def lowering_event_source(
