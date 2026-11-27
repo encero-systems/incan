@@ -11,6 +11,7 @@ use crate::api_metadata::{
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::loaf_index::LoafIndex;
+use crate::test_rows::{MutRow, run_mut_rows};
 use crate::test_rows::{SourceRow, run_source_rows};
 
 /// How many public functions the module declares beside the one the program calls.
@@ -180,66 +181,6 @@ fn standard_import_reads() -> Result<Vec<String>, Box<dyn std::error::Error>> {
         .map_err(|errors| format!("{errors:?}"))?;
     checker.seal_current_module_dependency_interface("main", &program, exports, true);
     Ok(thread_selection::read_keys())
-}
-
-/// A program importing a standard module and calling one of its functions is checked, and its interface sealed, from
-/// that module's records: it reads `b64encode`'s signature by name and never the Loaf's contract metadata.
-#[test]
-fn a_program_checks_a_standard_module_import_from_its_records() -> Result<(), Box<dyn std::error::Error>> {
-    let read = standard_import_reads()?;
-    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
-    let named = format!("/{}", content_name(b"encoding::base64::b64encode"));
-    assert!(
-        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
-        "checking reads `b64encode`'s signature by name; it read {read:?}"
-    );
-    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
-    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
-    assert!(
-        whole.is_empty(),
-        "checking read the Loaf's contract metadata: {whole:?}"
-    );
-    Ok(())
-}
-
-/// Checking a program and sealing its interface read each record they use once: the index keeps every namespace and
-/// declaration record it has read for the rest of the check.
-#[test]
-fn a_program_reads_each_record_it_checks_with_once() -> Result<(), Box<dyn std::error::Error>> {
-    let read = standard_import_reads()?;
-    let mut again = read
-        .iter()
-        .filter(|key| read.iter().filter(|other| other == key).count() > 1)
-        .collect::<Vec<_>>();
-    again.dedup();
-    assert!(
-        again.is_empty(),
-        "checking read these records more than once: {again:?}; all reads: {read:?}"
-    );
-    Ok(())
-}
-
-/// Importing the namespace `encoding.base64` reads its own record, never that of its parent `encoding`, which publishes
-/// every member of its child modules: the child's record says whether the parent publishes a member of its name.
-#[test]
-fn importing_a_child_namespace_reads_no_record_of_its_parent() -> Result<(), Box<dyn std::error::Error>> {
-    let read = standard_import_reads()?;
-    let namespace = format!("/{}/", RecordFamily::PublicNamespace.as_str());
-    let parent = format!("/{}", content_name(b"encoding"));
-    let child = format!("/{}", content_name(b"encoding::base64"));
-    assert!(
-        read.iter().any(|key| key.contains(&namespace) && key.ends_with(&child)),
-        "the import reads `encoding::base64`'s record; it read {read:?}"
-    );
-    let parents = read
-        .iter()
-        .filter(|key| key.contains(&namespace) && key.ends_with(&parent))
-        .collect::<Vec<_>>();
-    assert!(
-        parents.is_empty(),
-        "the import read the parent namespace's record: {parents:?}"
-    );
-    Ok(())
 }
 
 /// Check `source`, a program importing from the installed Loaf `prices`, and return the keys of the records it read.
@@ -414,6 +355,77 @@ const TYPECHECKER_READS_PRICES_READS_CASES: &[SourceRow<Vec<String>>] = &[
             assert!(
                 whole.is_empty(),
                 "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+];
+
+#[test]
+fn standard_reads_cases() {
+    run_mut_rows(STANDARD_READS_CASES, || {
+        standard_import_reads().expect("standard import reads")
+    });
+}
+
+const STANDARD_READS_CASES: &[MutRow<Vec<String>>] = &[
+    // A program importing a standard module and calling one of its functions is checked, and its interface sealed,
+    // from that module's records: it reads `b64encode`'s signature by name and never the Loaf's contract metadata.
+    MutRow {
+        name: "a_program_checks_a_standard_module_import_from_its_records",
+        check: |read| {
+            let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+            let named = format!("/{}", content_name(b"encoding::base64::b64encode"));
+            assert!(
+                read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+                "checking reads `b64encode`'s signature by name; it read {read:?}"
+            );
+            let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+            let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+            assert!(
+                whole.is_empty(),
+                "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+    // Checking a program and sealing its interface read each record they use once: the index keeps every namespace and
+    // declaration record it has read for the rest of the check.
+    MutRow {
+        name: "a_program_reads_each_record_it_checks_with_once",
+        check: |read| {
+            let mut again = read
+                .iter()
+                .filter(|key| read.iter().filter(|other| other == key).count() > 1)
+                .collect::<Vec<_>>();
+            again.dedup();
+            assert!(
+                again.is_empty(),
+                "checking read these records more than once: {again:?}; all reads: {read:?}"
+            );
+            Ok(())
+        },
+    },
+    // Importing the namespace `encoding.base64` reads its own record, never that of its parent `encoding`, which
+    // publishes every member of its child modules: the child's record says whether the parent publishes a member
+    // of its name.
+    MutRow {
+        name: "importing_a_child_namespace_reads_no_record_of_its_parent",
+        check: |read| {
+            let namespace = format!("/{}/", RecordFamily::PublicNamespace.as_str());
+            let parent = format!("/{}", content_name(b"encoding"));
+            let child = format!("/{}", content_name(b"encoding::base64"));
+            assert!(
+                read.iter().any(|key| key.contains(&namespace) && key.ends_with(&child)),
+                "the import reads `encoding::base64`'s record; it read {read:?}"
+            );
+            let parents = read
+                .iter()
+                .filter(|key| key.contains(&namespace) && key.ends_with(&parent))
+                .collect::<Vec<_>>();
+            assert!(
+                parents.is_empty(),
+                "the import read the parent namespace's record: {parents:?}"
             );
             Ok(())
         },
