@@ -411,12 +411,20 @@ pub(crate) fn unsigned_value(value: &Wire) -> Result<u64, String> {
     }
 }
 
-/// One required text field, without coercion.
-pub(crate) fn text(value: &Wire) -> Result<String, String> {
+/// Borrow one required text field, without coercion.
+pub(crate) fn borrowed_text(value: &Wire) -> Result<&str, String> {
     match value {
-        Wire::Text(item) => Ok(item.clone()),
+        Wire::Text(item) => Ok(item),
         _ => Err("expected compiler graph text".to_owned()),
     }
+}
+
+/// Own one required text field, without coercion.
+pub(crate) fn text(value: &Wire) -> Result<String, String> {
+    let item = borrowed_text(value)?;
+    #[cfg(test)]
+    OWNED_TEXT_COPIES.with(|count| count.set(count.get() + 1));
+    Ok(item.to_owned())
 }
 
 /// One list; list and tuple have different Crumb representations.
@@ -935,12 +943,21 @@ impl AdmittedRow {
 thread_local! {
     /// Native binary byte buffers materialized by the wire reader on this test's thread.
     static MATERIALIZED_BINARY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Owned text copies made by the wire accessor on this test's thread.
+    static OWNED_TEXT_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Take the current test's materialization count before comparing the mapped route.
 #[cfg(test)]
 pub(crate) fn take_materialized_binary_bytes() -> usize {
     MATERIALIZED_BINARY_BYTES.with(|count| count.replace(0))
+}
+
+/// Take the current test's owned text copy count and clear the observation.
+#[cfg(test)]
+pub(crate) fn take_owned_text_copies() -> usize {
+    OWNED_TEXT_COPIES.with(|count| count.replace(0))
 }
 
 /// Build one logical value from a successful native read's pre-order nodes.

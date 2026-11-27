@@ -10,7 +10,7 @@ use incan_mir_plan_native::{
     POSITIONED_MODULE_PAGE, PlanSelectedModule, RequestModuleNote, WHOLE_ADMISSION_SELECTOR, WholeModuleAdmission,
     decode_request_module_note, read_positioned_plan_members,
 };
-use internal_models_bindings::{complete_view, mapped_bytes, single_row_reference_prefix};
+use internal_models_bindings::{complete_view, single_row_reference_prefix, take_mapped_bytes};
 use sha2::{Digest, Sha256};
 
 use super::{FRAME_LIST, ListedFrame, PlanModuleSelection, framed_bytes, parse_frame_list, read_selection_file};
@@ -29,6 +29,7 @@ pub struct AuthenticatedWholeAdmission {
 thread_local! {
     static DECODED_NOTES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     static PREFIX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static POSITIONED_BACKING_BYTES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// Read all exact compact admissions for the current activation in canonical module-name order.
@@ -166,7 +167,7 @@ fn no_sparse_placement(note: &Path) -> Result<(), String> {
     }
 }
 
-/// Read the exact named positioned copy or immutable store frame as one bounded input.
+/// Read the exact named positioned copy or immutable store frame, then move its bytes into the retained view.
 fn selected_module_definitions(
     products: &Path,
     selected: &PlanSelectedModule,
@@ -174,7 +175,7 @@ fn selected_module_definitions(
 ) -> Result<Vec<AdmittedDefinition>, String> {
     let basename = format!("{}{POSITIONED_MODULE_PAGE}", hex::encode(&selected.module));
     let path = products.join(&basename);
-    let bytes = match std::fs::symlink_metadata(&path) {
+    let mut bytes = match std::fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() => {
             let named = read_selection_file(&products.join(format!("{basename}.digest")), 64)?;
             if named != selected.digest.as_bytes() {
@@ -209,9 +210,26 @@ fn selected_module_definitions(
             return Err(format!("cannot inspect staged positioned Plan copy: {error}"));
         }
     };
-    let owner = mapped_bytes(&bytes)?;
-    drop(bytes);
+    #[cfg(test)]
+    let capture = (bytes.as_ptr().addr(), bytes.len());
+    let owner = take_mapped_bytes(&mut bytes)?;
+    #[cfg(test)]
+    assert!(
+        bytes.is_empty(),
+        "the original capture retained its bytes after transfer"
+    );
     let view = complete_view(&owner).ok_or("cannot retain the selected positioned Plan view")?;
+    #[cfg(test)]
+    POSITIONED_BACKING_BYTES.with(|backing| {
+        let (total, copied) = backing.get();
+        let (address, bytes) = capture;
+        let copied_bytes = if view.0.as_bytes().as_ptr().addr() == address {
+            0
+        } else {
+            bytes
+        };
+        backing.set((total + bytes, copied + copied_bytes));
+    });
     read_positioned_plan_members(&view, selected)
 }
 
@@ -242,8 +260,8 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::{
-        AdmittedDefinition, DECODED_NOTES, NOTE_PREFIX_BYTES, PREFIX_BYTES, WHOLE_ADMISSION_SELECTOR,
-        read_plan_module_admissions,
+        AdmittedDefinition, DECODED_NOTES, NOTE_PREFIX_BYTES, POSITIONED_BACKING_BYTES, PREFIX_BYTES,
+        WHOLE_ADMISSION_SELECTOR, read_plan_module_admissions,
     };
     use crate::plan_modules::{FRAME_LIST, PlanModuleSelection, tests::directory};
 
@@ -451,11 +469,13 @@ mod tests {
         write_module_placement(&format!("{}.placement", scalar_path.display()), &scalar)?;
         assert_eq!(read_module_admission(&scalar_path.to_string_lossy())?, scalar);
         let read = || read_plan_module_admissions(&root, Some(&selected));
+        POSITIONED_BACKING_BYTES.with(|count| count.set((0, 0)));
         let kept = read()?;
+        let copy_backing = POSITIONED_BACKING_BYTES.with(|count| count.replace((0, 0)));
         assert_eq!(kept.len(), 1, "the compact request accepted no positioned module");
         assert_eq!(kept[0].note, compact);
         assert_eq!(kept[0].note_sha256, <[u8; 32]>::from(Sha256::digest(&whole_bytes)));
-        assert_eq!(kept[0].definitions, [definition]);
+        assert!(kept[0].definitions == [definition.clone()]);
         assert!(read_plan_module_admissions(&root, None).is_err());
         let foreign_output = WholeModuleAdmission {
             output: "foreign-output".into(),
@@ -490,7 +510,11 @@ mod tests {
             )
         };
         write(&frame, indexed(7).as_bytes())?;
-        assert_eq!(read()?.len(), 1);
+        POSITIONED_BACKING_BYTES.with(|count| count.set((0, 0)));
+        let framed = read()?;
+        let frame_backing = POSITIONED_BACKING_BYTES.with(|count| count.replace((0, 0)));
+        assert_eq!(framed.len(), 1);
+        assert!(framed[0].definitions == [definition]);
         write(&frame, indexed(encoded.len() + 20).as_bytes())?;
         assert!(read().is_err(), "an out-of-range compact frame was admitted");
         write(&frame, indexed(7).as_bytes())?;
@@ -505,6 +529,11 @@ mod tests {
 
         assert_unpinned_requests_skip_scalar_notes(&root, &admissions, &note, whole_bytes)?;
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(
+            [copy_backing, frame_backing],
+            [(encoded.len(), 0); 2],
+            "direct and framed compact admission must retain the original capture without copying its bytes"
+        );
         Ok(())
     }
 }

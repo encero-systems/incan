@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::records::lowering_events::{AdmittedDefinition, projected_definition};
 use crate::wire::{
     MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, boolean_value,
-    decode_graph_row, encode_graph_row, field, items, number, required, text, tuple_items,
+    borrowed_text, decode_graph_row, encode_graph_row, field, items, number, required, text, tuple_items,
 };
 
 /// The family of a module's plan record.
@@ -248,7 +248,10 @@ pub fn read_positioned_plan_members(
         return Err("positioned Plan page differs from its selected module name".into());
     }
     let functions = page.row.read_field(b"funcs_")?;
-    let fields = items(&functions)?.iter().map(text).collect::<Result<Vec<_>, _>>()?;
+    let fields = items(&functions)?
+        .iter()
+        .map(borrowed_text)
+        .collect::<Result<Vec<_>, _>>()?;
     if fields.len() != selected.count as usize * FUNCTION_FIELDS {
         return Err("positioned Plan declarations differ from the selected count".into());
     }
@@ -261,7 +264,7 @@ pub fn read_positioned_plan_members(
             return Err("malformed positioned Plan module member".into());
         };
         previous = member_order(identity, symbol, function, key, &previous)?;
-        if !canonical_digest(key) || !names.insert(function) {
+        if !canonical_digest(key) || !names.insert(*function) {
             return Err("positioned Plan page repeats a function or has a malformed member key".into());
         }
         definitions.push(projected_definition(&event, &module, function, symbol, key)?);
@@ -469,7 +472,7 @@ mod tests {
         AdmittedFunction, AdmittedModule, LoweringEvent, decode_lowering_event, decode_module_note,
         encode_lowering_event, encode_module_note,
     };
-    use crate::wire::take_materialized_binary_bytes;
+    use crate::wire::{take_materialized_binary_bytes, take_owned_text_copies};
     use crate::{
         Function, Local, PlanFunctionRecord, PlanType, RvalueKind, TerminatorKind, assign, block,
         decode_plan_function_record, encode_plan_function_record, encode_product, integer, place, plan_function_digest,
@@ -585,7 +588,29 @@ mod tests {
         Ok(())
     }
 
-    /// Member projection validates the selected page digest and returns only its exact native fingerprints.
+    /// A selected page with bad declaration text refuses before a mismatched member count.
+    fn refuse_invalid_declaration_text(encoded: &[u8], selected: &PlanSelectedModule) -> Result<(), String> {
+        // The declaration owner appears only in the outer page; the event uses the separate public symbol.
+        let identity = b"function:probe::run|signature";
+        let mut damaged = encoded.to_vec();
+        let offset = damaged
+            .windows(identity.len())
+            .position(|window| window == identity)
+            .ok_or("fixture declaration text missing")?;
+        damaged[offset] = 0xff;
+        let selected = PlanSelectedModule {
+            digest: format!("{:x}", Sha256::digest(&damaged)),
+            count: 2,
+            ..selected.clone()
+        };
+        let owner = mapped_bytes(&damaged)?;
+        let view = complete_view(&owner).ok_or("invalid text fixture backing missing")?;
+        let refused = read_positioned_plan_members(&view, &selected);
+        assert!(matches!(refused, Err(reason) if reason.contains("invalid_utf8")));
+        Ok(())
+    }
+
+    /// Member projection returns its exact native fingerprints without making owned declaration copies.
     #[test]
     fn selected_positioned_members_need_the_exact_admitted_backing() -> Result<(), String> {
         let function = projected_event()?;
@@ -598,6 +623,16 @@ mod tests {
             digest: old.digest,
         };
         assert_ne!(function.identity, expected.identity);
+        let event_owner = mapped_bytes(&function.event)?;
+        let event = complete_view(&event_owner).ok_or("fixture event backing missing")?;
+        let _ = take_owned_text_copies();
+        assert_eq!(
+            projected_definition(&event, "probe", &function.function, &function.symbol, &function.key)?,
+            expected
+        );
+        let event_text_copies = take_owned_text_copies();
+        // Include the outer module name when isolating declaration copies.
+        let other_text_copies = event_text_copies + 1;
         let mut page = PlanModuleValue {
             module: "probe".into(),
             functions: vec![function],
@@ -615,6 +650,7 @@ mod tests {
         let owner = mapped_bytes(&encoded)?;
         let view = complete_view(&owner).ok_or("no mapped fixture page")?;
         let _ = take_materialized_binary_bytes();
+        let _ = take_owned_text_copies();
         let projected = read_positioned_plan_members(&view, &selected);
         assert!(
             projected.is_ok(),
@@ -622,12 +658,17 @@ mod tests {
         );
         assert_eq!(projected?, [expected]);
         assert_eq!(take_materialized_binary_bytes(), 0);
+        let declaration_copies = take_owned_text_copies()
+            .checked_sub(other_text_copies)
+            .ok_or("projection omitted the module or event text reads")?;
 
         let wrong_arity = PlanSelectedModule {
             count: 2,
             ..selected.clone()
         };
-        assert!(read_positioned_plan_members(&view, &wrong_arity).is_err());
+        assert!(matches!(read_positioned_plan_members(&view, &wrong_arity),
+                     Err(reason) if reason.contains("selected count")));
+        refuse_invalid_declaration_text(&encoded, &selected)?;
         let repositioned = PlanSelectedModule {
             positioned: false,
             ..selected.clone()
@@ -658,6 +699,14 @@ mod tests {
         let foreign_view = complete_view(&foreign_owner).ok_or("foreign fixture backing missing")?;
         assert!(matches!(read_positioned_plan_members(&foreign_view, &foreign_selected),
                      Err(reason) if reason.contains("selected module name")));
+        assert_eq!(
+            declaration_copies, 0,
+            "positioned Plan projection copied declaration text"
+        );
+        assert_eq!(
+            event_text_copies, 0,
+            "positioned Plan projection copied event header text"
+        );
         Ok(())
     }
 
