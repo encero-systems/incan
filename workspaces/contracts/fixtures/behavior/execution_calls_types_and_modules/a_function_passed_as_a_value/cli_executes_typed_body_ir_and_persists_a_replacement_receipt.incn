@@ -1,0 +1,15 @@
+# Former case cli_executes_typed_body_ir_and_persists_a_replacement_receipt: cli executes typed body ir and persists a replacement receipt
+
+"""Cli executes typed body ir and persists a replacement receipt."""
+def program_result() -> int:
+  """Return the sum when left is larger; otherwise return right."""
+  left = 40
+  right = 2
+  if left > right:
+    return left + right
+  return right
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

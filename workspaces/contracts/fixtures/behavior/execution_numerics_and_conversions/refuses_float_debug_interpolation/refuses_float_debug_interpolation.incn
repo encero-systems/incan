@@ -1,0 +1,12 @@
+# Former case refuses_float_debug_interpolation: refuses float debug interpolation
+
+"""Refuses float debug interpolation."""
+def program_result() -> str:
+  """Compute and return `f"{value:?}"`."""
+  value: float = 1.5
+  return f"{value:?}"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

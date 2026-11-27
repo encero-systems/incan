@@ -1,0 +1,15 @@
+# Former case refuses_a_foreign_named_call_identity_at_its_original_source_span: refuses a foreign named call identity at its original source span
+
+"""Refuses a foreign named call identity at its original source span."""
+def helper() -> int:
+  """Return `42` for this fixture."""
+  return 42
+
+def program_result() -> int:
+  """Return the fixture expression `helper()`."""
+  return helper()
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

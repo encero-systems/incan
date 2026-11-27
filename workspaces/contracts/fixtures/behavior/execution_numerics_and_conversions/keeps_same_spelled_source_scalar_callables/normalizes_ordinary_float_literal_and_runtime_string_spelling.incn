@@ -1,0 +1,17 @@
+# Former case normalizes_ordinary_float_literal_and_runtime_string_spelling: float literals and parsed strings accept digit separators and exponent spellings and render their numeric values
+
+"""Normalizes ordinary float literal and runtime string spelling."""
+def program_result() -> str:
+  """Return the fixture expression `f"{str(1_000.50)} {str(1.25e2)} {float('1_000.50')} {float('1.25e1_0')}"`."""
+  return f"{str(1_000.50)} {str(1.25e2)} {float('1_000.50')} {float('1.25e1_0')}"
+
+
+def render() -> str:
+    """Render ordinary float literals through str."""
+    return f"{str(1_000.50)} {str(1.25e2)}"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())
+    println(render())

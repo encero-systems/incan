@@ -1,0 +1,41 @@
+# behavior: 10 former execution calls types and modules cases run in order, each program from its own module: malformed_isinstance_in_a_reachable_callee_refuses_before_entrypoint_e, non_scalar_checked_value_types_refuse_before_effects, parity_a_module_len_shadows_the_builtin, parity_assert_is_some_binds_the_payload, parity_async_main_awaits_a_value, parity_await_an_async_function, parity_builtin_reached_through_std_builtins_beside_a_shadow, parity_call_spreads_into_rest_parameters, parity_collect_a_generator_function, parity_explicit_type_argument_to_a_generic_function
+# expect-stdout:
+#  must not run
+#  true
+#  must not run
+#  true
+#  6
+#  x
+#  7
+#  42
+#  8
+#  1
+#  123
+#  42
+
+"""Run the program of each former case in order."""
+
+import malformed_isinstance_in_a_reachable_callee_refuses_before_entrypoint_e
+import non_scalar_checked_value_types_refuse_before_effects
+import parity_a_module_len_shadows_the_builtin
+import parity_assert_is_some_binds_the_payload
+import parity_async_main_awaits_a_value
+import parity_await_an_async_function
+import parity_builtin_reached_through_std_builtins_beside_a_shadow
+import parity_call_spreads_into_rest_parameters
+import parity_collect_a_generator_function
+import parity_explicit_type_argument_to_a_generic_function
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    malformed_isinstance_in_a_reachable_callee_refuses_before_entrypoint_e.main()
+    non_scalar_checked_value_types_refuse_before_effects.main()
+    parity_a_module_len_shadows_the_builtin.main()
+    parity_assert_is_some_binds_the_payload.main()
+    await parity_async_main_awaits_a_value.main()
+    await parity_await_an_async_function.main()
+    parity_builtin_reached_through_std_builtins_beside_a_shadow.main()
+    parity_call_spreads_into_rest_parameters.main()
+    parity_collect_a_generator_function.main()
+    parity_explicit_type_argument_to_a_generic_function.main()

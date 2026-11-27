@@ -1,0 +1,11 @@
+# Former case a_returned_string_keeps_its_trailing_newline: a str returned unchanged keeps its trailing newline
+
+"""A str returned unchanged keeps its trailing newline."""
+def echo(text: str) -> str:
+    """Return `text` for this fixture."""
+    return text
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(f"[{echo("line\n")}]")

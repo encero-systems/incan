@@ -1,0 +1,14 @@
+# Former case json_stringify_scalars: json_stringify renders the largest int, a string with escapes and None as JSON scalars
+
+"""json_stringify over scalar values."""
+def program_result() -> str:
+  """Compute and return `f"{maximum}|{escaped}|{absent}"`."""
+  maximum = json_stringify(9223372036854775807)
+  escaped = json_stringify("line\né\t\\\"")
+  absent = json_stringify(None)
+  return f"{maximum}|{escaped}|{absent}"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

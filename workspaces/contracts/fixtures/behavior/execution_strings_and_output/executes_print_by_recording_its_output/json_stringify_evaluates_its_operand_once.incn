@@ -1,0 +1,16 @@
+# Former case json_stringify_evaluates_its_operand_once: json stringify evaluates its operand once
+
+"""Json stringify evaluates its operand once."""
+def observed_operand() -> int:
+  """Print the JSON operand marker and return the integer."""
+  println("direct JSON operand")
+  return 7
+
+def program_result() -> str:
+  """Return the fixture expression `json_stringify(observed_operand())`."""
+  return json_stringify(observed_operand())
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

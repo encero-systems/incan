@@ -1,0 +1,11 @@
+# Former case parity_list_concatenation: `+` between two lists concatenates them (parity corpus case 23)
+
+"""`+` between two lists concatenates them (parity corpus case 23)."""
+def joined(xs: List[int], ys: List[int]) -> List[int]:
+    """Return the fixture expression `xs + ys`."""
+    return xs + ys
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(joined([1], [2, 3]))

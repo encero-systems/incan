@@ -1,0 +1,55 @@
+# behavior: 12 former execution scalars and bodies cases run in order, each program from its own module: a_program_activating_std_async_under_an_alias, a_program_declaring_a_class, a_program_importing_from_std_async_time, a_range_argument_for_a_list_parameter, a_scalar_profile_compares_program_streams_and_typed_result, a_source_outside_the_replacement_profile_stays_unavailable, abs_and_sum_safe_values_execute_normally, bool_truthiness_cli_publishes_its_result_and_receipt, canonical_bool_evaluates_its_operand_once, canonical_bool_executes_bounded_scalar_and_structural_truthiness, a_program_importing_a_rust_crate, a_program_importing_a_rust_item
+# expect-stdout:
+#  42
+#  42
+#  42
+#  42
+#  42
+#  42
+#  42
+#  42
+#  42
+#  42
+#  normal program stdout
+#  42
+#  [(1, 2)]
+#  15
+#  bool truthiness
+#  true
+#  bool operand
+#  false
+#  bool truthiness
+#  true
+#  42
+#  42
+
+"""Run the program of each former case in order."""
+
+import a_program_activating_std_async_under_an_alias
+import a_program_declaring_a_class
+import a_program_importing_from_std_async_time
+import a_range_argument_for_a_list_parameter
+import a_scalar_profile_compares_program_streams_and_typed_result
+import a_source_outside_the_replacement_profile_stays_unavailable
+import abs_and_sum_safe_values_execute_normally
+import bool_truthiness_cli_publishes_its_result_and_receipt
+import canonical_bool_evaluates_its_operand_once
+import canonical_bool_executes_bounded_scalar_and_structural_truthiness
+import a_program_importing_a_rust_crate
+import a_program_importing_a_rust_item
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    await a_program_activating_std_async_under_an_alias.main()
+    a_program_declaring_a_class.main()
+    a_program_importing_from_std_async_time.main()
+    a_range_argument_for_a_list_parameter.main()
+    a_scalar_profile_compares_program_streams_and_typed_result.main()
+    a_source_outside_the_replacement_profile_stays_unavailable.main()
+    abs_and_sum_safe_values_execute_normally.main()
+    bool_truthiness_cli_publishes_its_result_and_receipt.main()
+    canonical_bool_evaluates_its_operand_once.main()
+    canonical_bool_executes_bounded_scalar_and_structural_truthiness.main()
+    a_program_importing_a_rust_crate.main()
+    a_program_importing_a_rust_item.main()

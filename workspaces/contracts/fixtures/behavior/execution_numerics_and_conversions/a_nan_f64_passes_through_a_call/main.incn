@@ -1,0 +1,54 @@
+# behavior: 10 former execution numerics and conversions cases run in order, each program from its own module: a_nan_f64_passes_through_a_call, aliases_normalize_to_canonical_numeric_carriers, checked_widening_of_f32_to_f64_and_float, cli_executes_unchanged_type_conversions_with_receipt, contextual_negative_literals_survive_direct_returns_and_same_module_ca, every_admitted_scalar_conversion_pair_matches_the_native_route, executes_checked_typed_numeric_locals_through_selected_scalar_conversi, executes_checked_unary_scalar_conversions, float_parameter_default_renders_through_str, float_parser_and_int_cast_edges_match_the_native_route
+# expect-stdout:
+#  nan
+#  1.2345679
+#  170141183460469231731687303715884105727
+#  1.2345678806304932
+#  1.2345678806304932
+#  255
+#  String '42' -> int 42
+#  Int 123 -> string '123'
+#  String '3.14' -> float 3.14
+#  Int 10 -> float 10.0
+#  10 + 20 = 30
+#  -170141183460469231731687303715884105728
+#  -170141183460469231731687303715884105728
+#  -1.0
+#  -2.0
+#  42 true false text 3.14 1 0 1000 3 10.0 3.14 1000.5
+#  1.2345679
+#  1
+#  10.0
+#  1.2345679
+#  1000 1 1000.5 10.0 3
+#  1.5
+#  3.14 1.5
+#  3.14 1.5
+#  0 9223372036854775807 -9223372036854775808 9223372036854775807 3 -3
+
+"""Run the program of each former case in order."""
+
+import a_nan_f64_passes_through_a_call
+import aliases_normalize_to_canonical_numeric_carriers
+import checked_widening_of_f32_to_f64_and_float
+import cli_executes_unchanged_type_conversions_with_receipt
+import contextual_negative_literals_survive_direct_returns_and_same_module_ca
+import every_admitted_scalar_conversion_pair_matches_the_native_route
+import executes_checked_typed_numeric_locals_through_selected_scalar_conversi
+import executes_checked_unary_scalar_conversions
+import float_parameter_default_renders_through_str
+import float_parser_and_int_cast_edges_match_the_native_route
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    a_nan_f64_passes_through_a_call.main()
+    aliases_normalize_to_canonical_numeric_carriers.main()
+    checked_widening_of_f32_to_f64_and_float.main()
+    cli_executes_unchanged_type_conversions_with_receipt.main()
+    contextual_negative_literals_survive_direct_returns_and_same_module_ca.main()
+    every_admitted_scalar_conversion_pair_matches_the_native_route.main()
+    executes_checked_typed_numeric_locals_through_selected_scalar_conversi.main()
+    executes_checked_unary_scalar_conversions.main()
+    float_parameter_default_renders_through_str.main()
+    float_parser_and_int_cast_edges_match_the_native_route.main()

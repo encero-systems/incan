@@ -1,0 +1,11 @@
+# Former case abs_and_sum_safe_values_execute_normally: abs and sum safe values execute normally
+
+"""Abs and sum safe values execute normally."""
+def observe(value: int) -> int:
+    """Return the fixture expression `abs(value) + sum([1, 2, 3])`."""
+    return abs(value) + sum([1, 2, 3])
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe(-9))

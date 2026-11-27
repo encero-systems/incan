@@ -1,0 +1,18 @@
+# Former case records_construct_only_task_lifecycle_evidence: records construct only task lifecycle evidence
+
+"""Records construct only task lifecycle evidence."""
+
+async def child() -> int:
+  """Fail the assertion when this callable is reached."""
+  assert false
+  return 7
+
+def program_result() -> int:
+  """Compute and return `1`."""
+  child()
+  return 1
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

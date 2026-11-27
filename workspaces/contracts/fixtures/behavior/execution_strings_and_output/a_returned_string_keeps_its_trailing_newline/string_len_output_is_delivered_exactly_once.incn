@@ -1,0 +1,19 @@
+# Former case string_len_output_is_delivered_exactly_once: builtin and method length calls each preserve exactly one preceding print of the Unicode operand
+
+"""String len output is delivered exactly once."""
+def length(value: str) -> int:
+    """Print the string before returning its length."""
+    println(value)
+    return len(value)
+
+
+def method_length(value: str) -> int:
+    """Print the string before returning its method length."""
+    println(value)
+    return value.len()
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(length("é"))
+    println(method_length("é"))

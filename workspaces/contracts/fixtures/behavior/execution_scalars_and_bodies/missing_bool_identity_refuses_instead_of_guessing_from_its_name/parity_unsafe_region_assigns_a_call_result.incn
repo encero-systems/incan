@@ -1,0 +1,19 @@
+# Former case parity_unsafe_region_assigns_a_call_result: an `unsafe:` region assigns a call's result to an outer local (parity corpus case 19)
+
+"""An `unsafe:` region assigns a call's result to an outer local (parity corpus case 19)."""
+def probe(x: int) -> int:
+    """Return `x` for this fixture."""
+    return x
+
+
+def touch(value: int) -> int:
+    """Assign a call result inside an unsafe region."""
+    mut total = 0
+    unsafe:
+        total = probe(value)
+    return total
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(touch(5))

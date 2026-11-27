@@ -1,0 +1,12 @@
+# Former case executes_dict_membership_with_a_hashed_value: executes dict membership with a hashed value
+
+"""Executes dict membership with a hashed value."""
+def program_result() -> bool:
+  """Compute and return `"a" in d`."""
+  d = {"a": 1}
+  return "a" in d
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

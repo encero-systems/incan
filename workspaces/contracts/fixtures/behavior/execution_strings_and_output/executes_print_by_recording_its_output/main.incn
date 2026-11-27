@@ -1,0 +1,55 @@
+# behavior: 10 former execution strings and output cases run in order, each program from its own module: executes_print_by_recording_its_output, frozen_field_boundaries, frozen_list_equality, global_len_str_executes_unicode_scalar_rows_length, iterates_any_list_of_representable_elements, json_report_file_preserves_program_stdout, json_stringify_evaluates_its_operand_once, json_stringify_scalars, lexical_len_shadow_executes_the_user_declaration, optional_text_equality
+# expect-stdout:
+#  hello
+#  count 3 true
+#  frozen field boundaries
+#  frozen list equality
+#  0
+#  3
+#  1
+#  1
+#  2
+#  0
+#  3
+#  1
+#  1
+#  2
+#  6
+#  2
+#  2
+#  2
+#  3
+#  program output
+#  42
+#  direct JSON operand
+#  7
+#  9223372036854775807|"line\né\t\\\""|null
+#  99
+#  optional text equality
+
+"""Run the program of each former case in order."""
+
+import executes_print_by_recording_its_output
+import frozen_field_boundaries
+import frozen_list_equality
+import global_len_str_executes_unicode_scalar_rows_length
+import iterates_any_list_of_representable_elements
+import json_report_file_preserves_program_stdout
+import json_stringify_evaluates_its_operand_once
+import json_stringify_scalars
+import lexical_len_shadow_executes_the_user_declaration
+import optional_text_equality
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    executes_print_by_recording_its_output.main()
+    frozen_field_boundaries.main()
+    frozen_list_equality.main()
+    global_len_str_executes_unicode_scalar_rows_length.main()
+    iterates_any_list_of_representable_elements.main()
+    json_report_file_preserves_program_stdout.main()
+    json_stringify_evaluates_its_operand_once.main()
+    json_stringify_scalars.main()
+    lexical_len_shadow_executes_the_user_declaration.main()
+    optional_text_equality.main()

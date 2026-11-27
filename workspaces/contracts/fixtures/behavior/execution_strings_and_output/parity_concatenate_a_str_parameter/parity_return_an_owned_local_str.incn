@@ -1,0 +1,12 @@
+# Former case parity_return_an_owned_local_str: a function returns a str it bound to a local (parity corpus row replacement-body-v0-003)
+
+"""A function returns a str it bound to a local (parity corpus row replacement-body-v0-003)."""
+def return_owned() -> str:
+    """Return the locally bound owned string."""
+    value = "owned"
+    return value
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(return_owned())

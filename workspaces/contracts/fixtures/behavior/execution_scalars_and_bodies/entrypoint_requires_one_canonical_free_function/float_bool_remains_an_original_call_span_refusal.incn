@@ -1,0 +1,11 @@
+# Former case float_bool_remains_an_original_call_span_refusal: float bool remains an original call span refusal
+
+"""Float bool remains an original call span refusal."""
+def observe() -> bool:
+  """Return the fixture expression `bool(0.5)`."""
+  return bool(0.5)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

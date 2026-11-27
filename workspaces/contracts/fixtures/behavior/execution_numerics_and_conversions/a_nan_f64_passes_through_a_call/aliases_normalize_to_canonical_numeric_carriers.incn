@@ -1,0 +1,16 @@
+# Former case aliases_normalize_to_canonical_numeric_carriers: real and hugeint aliases retain their canonical numeric carriers when returned and printed
+
+"""Aliases normalize to canonical numeric carriers."""
+def real_value() -> real:
+  """Return `1.23456789` for this fixture."""
+  return 1.23456789
+
+def huge_value() -> hugeint:
+  """Return `170141183460469231731687303715884105727` for this fixture."""
+  return 170141183460469231731687303715884105727
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(real_value())
+    println(huge_value())

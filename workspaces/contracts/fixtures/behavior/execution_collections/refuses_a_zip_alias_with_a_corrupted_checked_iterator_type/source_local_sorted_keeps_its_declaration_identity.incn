@@ -1,0 +1,15 @@
+# Former case source_local_sorted_keeps_its_declaration_identity: source local sorted keeps its declaration identity
+
+"""Source local sorted keeps its declaration identity."""
+def sorted(value: int) -> int:
+  """Return the fixture expression `value + 1`."""
+  return value + 1
+
+def observe() -> int:
+  """Return the fixture expression `sorted(41)`."""
+  return sorted(41)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

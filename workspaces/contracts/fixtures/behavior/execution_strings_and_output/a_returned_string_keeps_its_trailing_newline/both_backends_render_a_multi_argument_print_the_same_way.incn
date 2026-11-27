@@ -1,0 +1,6 @@
+# Former case both_backends_render_a_multi_argument_print_the_same_way: both backends render a multi argument print the same way
+
+"""Both backends render a multi argument print the same way."""
+pub def main() -> None:
+  """Print the fixture values in the expected order."""
+  println("count", 3, true)

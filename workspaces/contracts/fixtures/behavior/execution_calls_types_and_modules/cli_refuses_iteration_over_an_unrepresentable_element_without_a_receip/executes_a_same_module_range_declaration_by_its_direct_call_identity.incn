@@ -1,0 +1,15 @@
+# Former case executes_a_same_module_range_declaration_by_its_direct_call_identity: executes a same module range declaration by its direct call identity
+
+"""Executes a same module range declaration by its direct call identity."""
+def range(start: int, end: int) -> int:
+  """Return the fixture expression `start + end`."""
+  return start + end
+
+def program_result() -> int:
+  """Return the fixture expression `range(20, 22)`."""
+  return range(20, 22)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

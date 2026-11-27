@@ -1,0 +1,12 @@
+# Former case cli_json_report_projects_canonical_execution_evidence: cli json report projects canonical execution evidence
+
+"""Cli json report projects canonical execution evidence."""
+def program_result() -> int:
+  """Compute and return `42`."""
+  println("answer follows")
+  return 42
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())
