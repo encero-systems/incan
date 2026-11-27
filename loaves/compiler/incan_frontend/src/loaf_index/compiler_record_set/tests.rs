@@ -24,6 +24,7 @@ use crate::api_metadata::{
 };
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
 use crate::library_manifest::{ExecutableRepresentationExport, LibraryContractMetadata, LibraryManifest};
+use crate::test_rows::{MutRow, run_rows};
 
 /// The canonical lowercase SHA-256 spelling of `bytes`.
 fn content_name(bytes: &[u8]) -> String {
@@ -47,74 +48,6 @@ fn record_set(root: &Path, name: &str, values: &[(&str, Vec<u8>)]) -> Result<Rec
         });
     }
     Ok(RecordSet::new(root.to_path_buf(), entries))
-}
-
-#[test]
-fn a_record_group_is_read_and_authenticated_once_per_process() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let metadata = LibraryManifest::encode_compiler_record_value(&Metadata {
-        name: "probe_loaf".to_owned(),
-        version: "0.1.0".to_owned(),
-        incan_version: "0.6.0".to_owned(),
-        manifest_format: 1,
-        manifest_digest: content_name(b"probe_loaf manifest"),
-        vocabulary: false,
-        provider_operations: false,
-        native_unions: false,
-        rust_paths: BTreeSet::new(),
-        rust_abi_cache_declared: false,
-        rust_abi_cache_digest: None,
-    })?;
-    let contract = LibraryManifest::encode_compiler_record_value(&LibraryContractMetadata::default())?;
-    let expected = RecordReads {
-        records: 2,
-        bytes: metadata.len() + contract.len(),
-    };
-    let set = record_set(
-        root.path(),
-        "probe_loaf",
-        &[("metadata", metadata), ("contract-metadata", contract)],
-    )?;
-    let dir = root.path().join("debug");
-
-    let (first, first_digest) =
-        read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
-    assert_eq!(set.reads(), expected, "the first read opens each record once");
-    let (second, second_digest) =
-        read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
-    assert_eq!(first_digest, second_digest);
-    assert_eq!(first.name, second.name);
-    assert_eq!(
-        set.reads(),
-        expected,
-        "a group this process already authenticated is not read or hashed again"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_payload_that_still_parses_but_differs_from_its_content_name_is_refused() -> Result<(), Box<dyn std::error::Error>>
-{
-    let root = tempfile::tempdir()?;
-    fs::create_dir(root.path().join("payloads"))?;
-    let original = br#"{"name":"BindingDeclaration"}"#;
-    let digest = content_name(original);
-    let payload = root.path().join("payloads").join(&digest);
-    fs::write(&payload, original)?;
-    assert_eq!(open_value(root.path(), &digest)?, original);
-
-    // One byte changed in place: the value still decodes, but it is no longer the content its name promises.
-    fs::write(&payload, br#"{"name":"BindingXeclaration"}"#)?;
-    let refusal = match open_value(root.path(), &digest) {
-        Ok(_) => return Err("a damaged compiler-record payload was accepted".into()),
-        Err(reason) => reason,
-    };
-    assert!(refusal.contains(&digest), "the refusal names the payload: {refusal}");
-    assert!(
-        refusal.contains("does not match its content name"),
-        "the refusal says why: {refusal}"
-    );
-    Ok(())
 }
 
 /// The metadata record of the probe Loaf.
@@ -181,63 +114,6 @@ fn documented_set(
     Ok((set, original, facts_read))
 }
 
-#[test]
-fn a_compile_reads_no_documentation_records() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let (set, _, facts_read) = documented_set(root.path())?;
-    let dir = root.path().join("debug");
-    for projection in [Projection::Complete, Projection::Execution] {
-        read_group(&set, &dir, "probe_loaf", projection)?.ok_or("the group is installed")?;
-    }
-    assert_eq!(
-        set.reads(),
-        facts_read,
-        "compiles open the metadata and contract facts, never the documentation"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_documented_read_restores_the_documentation_records() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let (set, original, _) = documented_set(root.path())?;
-    let dir = root.path().join("debug");
-    let (compiled, _) = read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
-    let (documented, _) =
-        read_group(&set, &dir, "probe_loaf", Projection::Documented)?.ok_or("the group is installed")?;
-    assert_ne!(
-        compiled.contract_metadata, original,
-        "the compile's manifest carries no documentation"
-    );
-    assert_eq!(
-        documented.contract_metadata, original,
-        "a documented read gives back the checked API with its documentation"
-    );
-    Ok(())
-}
-
-#[test]
-fn an_inventory_summary_is_read_once_per_process() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let metadata = probe_metadata()?;
-    let expected = RecordReads {
-        records: 1,
-        bytes: metadata.len(),
-    };
-    let set = record_set(root.path(), "probe_loaf", &[("metadata", metadata)])?;
-    let dir = root.path().join("debug");
-    for _ in 0..2 {
-        let summary = read_summary(&set, &dir, "probe_loaf")?.ok_or("the group is installed")?;
-        assert_eq!(summary.identity.name, "probe_loaf");
-    }
-    assert_eq!(
-        set.reads(),
-        expected,
-        "a summary this process already authenticated is not read or hashed again"
-    );
-    Ok(())
-}
-
 /// What executable resolution may read of a reached Loaf: its metadata, descriptor and public identities.
 const SURFACE_BOUND: usize = 4096;
 
@@ -285,27 +161,6 @@ fn installed_library(root: &Path, manifest: &LibraryManifest) -> Result<RecordSe
         });
     }
     Ok(RecordSet::new(root.to_path_buf(), entries))
-}
-
-#[test]
-fn executable_resolution_reads_only_a_reached_loafs_executable_surface() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let manifest = surfaced_library()?;
-    let set = installed_library(root.path(), &manifest)?;
-    let (surface, _) = read_surface_in(&set, &root.path().join("debug"), "prices")?.ok_or("the Loaf is installed")?;
-    assert_eq!(
-        *surface,
-        ExecutableSurface::of(&manifest),
-        "the surface the manifest describes"
-    );
-    let read = set.reads();
-    assert!(
-        read.bytes <= SURFACE_BOUND,
-        "executable resolution read {} records, {} bytes; the bound is {SURFACE_BOUND}",
-        read.records,
-        read.bytes
-    );
-    Ok(())
 }
 
 #[test]
@@ -424,80 +279,6 @@ fn sealed_ranges_read_only_the_requested_trait_and_refuse_changed_bytes_and_wron
 }
 
 #[test]
-fn native_lowering_reads_a_loafs_runtime_bindings_by_name() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let manifest = surfaced_library()?;
-    let set = installed_library(root.path(), &manifest)?;
-    let dir = root.path().join("debug");
-    // The index admits an installed Loaf by its inventory summary before anything demands its records.
-    read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
-    let indexed = set.reads();
-    let (bindings, _) = read_runtime_bindings_in(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
-    let expected = runtime_bindings(&manifest);
-    assert!(!expected.is_empty(), "`prices::price` is a runtime callable");
-    assert_eq!(*bindings, expected, "the bindings the manifest describes");
-    let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
-    assert_eq!(
-        records, 1,
-        "native lowering read {records} records, {bytes} bytes; it needs the runtime bindings record alone"
-    );
-    Ok(())
-}
-
-#[test]
-fn both_parser_vocabularies_share_one_validated_registration_without_reading_the_contract()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let mut manifest = surfaced_library()?;
-    let registration = super::VocabExports {
-        metadata_version: incan_vocab::VOCAB_METADATA_VERSION,
-        unit_identity: content_name(b"checked registration"),
-        crate_path: "src/lib.incn".to_string(),
-        package_name: manifest.name.clone(),
-        keyword_registrations: Vec::new(),
-        dsl_surfaces: Vec::new(),
-        provider_manifest: Default::default(),
-        desugarer_artifact: None,
-    };
-    manifest.vocab = Some(registration.clone());
-    let selected = thread_selection::select(installed_library(root.path(), &manifest)?);
-    let index = crate::loaf_index::LoafIndex::deferred([(
-        manifest.name.clone(),
-        manifest.name.clone(),
-        root.path().join("debug"),
-        false,
-    )])?;
-    let before = selected.0.reads();
-    let _ = index.imported_vocab();
-    let _ = index.imported_dsl_surfaces();
-    index.validate_demands()?;
-    // The resident worker opens independent parse and compile sessions against the same immutable set.
-    let second = crate::loaf_index::LoafIndex::deferred([(
-        manifest.name.clone(),
-        manifest.name.clone(),
-        root.path().join("debug"),
-        false,
-    )])?;
-    let _ = second.imported_vocab();
-    second.validate_demands()?;
-    let after = selected.0.reads();
-    assert_eq!(after.records - before.records, 1);
-    assert_eq!(
-        after.bytes - before.bytes,
-        registration.encode_compiler_record_value()?.len()
-    );
-    assert!(
-        !thread_selection::read_keys()
-            .iter()
-            .any(|key| key.contains("/contract-metadata/"))
-    );
-    let mut unsupported = registration;
-    unsupported.metadata_version += 1;
-    assert!(super::VocabExports::decode_compiler_record_value(&unsupported.encode_compiler_record_value()?).is_err());
-    Ok(())
-}
-
-#[test]
 fn runtime_planning_reads_only_the_individually_requested_facade() -> Result<(), Box<dyn std::error::Error>> {
     let name = "incan_native_runtime";
     let root = tempfile::tempdir()?;
@@ -565,217 +346,453 @@ fn an_aggregate_only_runtime_keeps_its_published_facade_and_native_absences() ->
 }
 
 #[test]
-fn an_aggregate_only_runtime_refuses_disagreeing_facade_owners() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let name = "incan_native_runtime";
-    let manifest = surfaced_library_for(name, "pub def used() -> int:\n    return 1\n")?;
-    let mut set = installed_library(root.path(), &manifest)?;
-    set.entries.retain(|entry| !entry.key.contains("/runtime-binding/"));
-    let mut bindings = runtime_bindings(&manifest);
-    let original = bindings
-        .iter()
-        .find(|row| row.path == "incan_native_runtime::used")
-        .ok_or("missing facade")?;
-    let mut other = original.clone();
-    other.canonical.declaration_name = "distinct_declaration".to_owned();
-    bindings.push(other);
-    let bytes = LibraryManifest::encode_compiler_record_value(&bindings)?;
-    let digest = content_name(&bytes);
-    fs::write(root.path().join("payloads").join(&digest), bytes)?;
-    let aggregate = set
-        .entries
-        .iter_mut()
-        .find(|entry| entry.key.contains("/runtime-bindings/"))
-        .ok_or("missing aggregate")?;
-    aggregate.value = digest.clone();
-    aggregate.revision = digest;
-    let _selected = thread_selection::select(set);
-    let dir = root.path().join("debug");
-    let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
-    assert!(index.runtime_binding(name, "incan_native_runtime::used").is_err());
-    Ok(())
-}
-
-/// An installed Loaf can serve either an authored signature or an admitted root layout in one record read.
-#[test]
-fn a_consumer_reads_one_declaration_or_root_export_record_alone() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    // One copy of the checked API module, so `prices::price` names one declaration.
-    let mut manifest = surfaced_library()?;
-    if let Some(api) = manifest.contract_metadata.api.as_mut() {
-        api.modules.truncate(1);
-    }
-    let set = installed_library(root.path(), &manifest)?;
-    let dir = root.path().join("debug");
-    // The index admits an installed Loaf by its inventory summary before anything demands its records.
-    read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
-    let indexed = set.reads();
-    let (signatures, _) = read_declaration_in(&set, &dir, "prices", "declaration-signature", "prices::price")?
-        .ok_or("the signature record is installed")?;
-    assert_eq!(signatures.len(), 1, "one declaration named `prices::price`");
-    assert_eq!(signatures[0]["name"], "price", "the signature of `price`");
-    let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
-    assert_eq!(
-        records, 1,
-        "the consumer read {records} records, {bytes} bytes; it needs the signature record alone"
-    );
-    let after_signature = set.reads();
-    let (models, _) =
-        read_declaration_in(&set, &dir, "prices", "model", "Money")?.ok_or("the root model record is installed")?;
-    let [model] = models.as_slice() else {
-        return Err("expected one root model named Money".into());
-    };
-    assert_eq!(model["name"], "Money");
-    assert_eq!(model["fields"][0]["name"], "cents");
-    assert_eq!(set.reads().records - after_signature.records, 1);
-    Ok(())
-}
-
-/// In records mode a dependency Loaf outside the installed set keeps its ordinary artifact contract, retained
-/// generation-bound inventory included: the first request's session reads its manifest whole and retains the
-/// inventory, and a later request's session (a parsing session asks only for vocabulary) opens it from the inventory
-/// without reading the manifest again.
-#[test]
-fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() -> Result<(), Box<dyn std::error::Error>>
-{
-    let root = tempfile::tempdir()?;
-    let home = tempfile::tempdir()?;
-    let _home = super::super::manifest_input::select_test_home(home.path());
-    let _selected = thread_selection::select(RecordSet::new(root.path().join("installed"), Vec::new()));
-    let directory = root.path().join("dependency");
-    fs::create_dir(&directory)?;
-    let project_record = crate::library_manifest::install_record::LoafInstallRecord {
-        schema: crate::library_manifest::install_record::INSTALL_RECORD_SCHEMA,
-        ..Default::default()
-    };
-    let mut manifest = LibraryManifest::new("dependency", "1.0.0");
-    let install = manifest.prepare_install_record(&project_record, false)?;
-    let manifest_path = directory.join("dependency.incnlib");
-    let encoded = manifest.to_json_string()?;
-    fs::write(&manifest_path, &encoded)?;
-    fs::write(
-        manifest_path.with_extension("incnfacts"),
-        manifest.encode_loaf_facts(&encoded, Some(install))?,
-    )?;
-    let open = || {
-        super::super::lazy_entry::IndexedLoaf::open(
-            "dependency".to_owned(),
-            crate::loaf_index::LoafNamespace::Dependency {
-                key: "dependency".to_owned(),
-            },
-            directory.clone(),
-            "dependency",
-        )
-    };
-    let first = open()?;
-    assert!(
-        first.was_demanded(),
-        "the first session admitted no inventory before reading"
-    );
-    let surface = first.executable_surface()?;
-    crate::loaf_index::settle_retained_loaves(true);
-    let later = open()?;
-    assert!(
-        !later.was_demanded(),
-        "a later session read the unchanged manifest whole again"
-    );
-    assert!(!later.globals.vocabulary);
-    assert_eq!(later.summary()?.identity, first.summary()?.identity);
-    let selected = later.install_record()?.ok_or("the local Loaf has an install record")?;
-    assert_eq!(selected.as_ref(), &project_record);
-    assert!(
-        !later.was_demanded(),
-        "the admitted install digest must avoid a whole local manifest decode"
-    );
-    let warm_surface = later.executable_surface()?;
-    assert!(
-        !later.was_demanded(),
-        "unchanged executable admission demanded the whole path manifest again"
-    );
-    assert!(
-        std::sync::Arc::ptr_eq(&surface, &warm_surface),
-        "unchanged executable admission rebuilt the same surface"
-    );
-
-    let full = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
-    crate::loaf_index::settle_retained_loaves(true);
-    let warm = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
-    assert_eq!(full.identity, warm.identity);
-    assert!(
-        std::sync::Arc::ptr_eq(&full.manifest, &warm.manifest),
-        "a full local manifest demanded on the unchanged generation was decoded again"
-    );
-
-    let old_selection = open()?;
-    assert!(!old_selection.was_demanded());
-    let modified = fs::metadata(&manifest_path)?.modified()?;
-    let replacement = encoded.replacen("\"1.0.0\"", "\"1.0.1\"", 1);
-    assert_ne!(replacement, encoded);
-    assert_eq!(replacement.len(), encoded.len());
-    fs::write(&manifest_path, replacement)?;
-    fs::File::options()
-        .write(true)
-        .open(&manifest_path)?
-        .set_times(std::fs::FileTimes::new().set_modified(modified))?;
-    assert!(
-        old_selection.install_record().is_err_and(|error| error
-            .to_string()
-            .contains("the manifest changed after its inventory was admitted")),
-        "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
-    );
-    assert!(old_selection.executable_surface().is_err());
-    let changed_surface = open()?.executable_surface()?;
-    assert_eq!(changed_surface.version, "1.0.1");
-    assert!(!std::sync::Arc::ptr_eq(&surface, &changed_surface));
-    let changed = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
-    assert_eq!(changed.manifest.version, "1.0.1");
-    assert_ne!(changed.identity.digest, full.identity.digest);
-
-    Ok(())
-}
-
-/// A record group decoded for one request is shared inside it and released when the request ends, as the Loaf manifests
-/// are: a resident worker keeps no decoded copy of an installed Loaf between requests, and the next request reads the
-/// group's records again.
-#[test]
-fn a_record_group_decoded_for_a_request_is_released_when_it_ends() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let metadata = LibraryManifest::encode_compiler_record_value(&Metadata {
-        name: "released_loaf".to_owned(),
-        version: "0.1.0".to_owned(),
-        incan_version: "0.6.0".to_owned(),
-        manifest_format: 1,
-        manifest_digest: content_name(b"released_loaf manifest"),
-        vocabulary: false,
-        provider_operations: false,
-        native_unions: false,
-        rust_paths: BTreeSet::new(),
-        rust_abi_cache_declared: false,
-        rust_abi_cache_digest: None,
-    })?;
-    let contract = LibraryManifest::encode_compiler_record_value(&LibraryContractMetadata::default())?;
-    let expected = RecordReads {
-        records: 2,
-        bytes: metadata.len() + contract.len(),
-    };
-    let selection = thread_selection::select(record_set(
-        root.path(),
-        "released_loaf",
-        &[("metadata", metadata), ("contract-metadata", contract)],
-    )?);
-    let dir = root.path().join("debug");
-    super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
-    super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
-    assert_eq!(selection.0.reads(), expected, "one request reads each record once");
-    crate::loaf_index::release_retained_loaves();
-    super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
-    assert_eq!(
-        selection.0.reads(),
-        RecordReads {
-            records: expected.records * 2,
-            bytes: expected.bytes * 2,
+fn tests_tempdir_cases() {
+    run_rows(
+        TESTS_TEMPDIR_CASES,
+        |row| row.name,
+        |row| {
+            let root = tempfile::tempdir().map_err(|error| format!("create temporary directory: {error}"))?;
+            (row.check)(root).map_err(|error| format!("{error:?}"))
         },
-        "a group decoded for an earlier request outlived it"
     );
-    Ok(())
 }
+
+const TESTS_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[
+    MutRow {
+        name: "a_record_group_is_read_and_authenticated_once_per_process",
+        check: |root| {
+            let metadata = LibraryManifest::encode_compiler_record_value(&Metadata {
+                name: "probe_loaf".to_owned(),
+                version: "0.1.0".to_owned(),
+                incan_version: "0.6.0".to_owned(),
+                manifest_format: 1,
+                manifest_digest: content_name(b"probe_loaf manifest"),
+                vocabulary: false,
+                provider_operations: false,
+                native_unions: false,
+                rust_paths: BTreeSet::new(),
+                rust_abi_cache_declared: false,
+                rust_abi_cache_digest: None,
+            })?;
+            let contract = LibraryManifest::encode_compiler_record_value(&LibraryContractMetadata::default())?;
+            let expected = RecordReads {
+                records: 2,
+                bytes: metadata.len() + contract.len(),
+            };
+            let set = record_set(
+                root.path(),
+                "probe_loaf",
+                &[("metadata", metadata), ("contract-metadata", contract)],
+            )?;
+            let dir = root.path().join("debug");
+
+            let (first, first_digest) =
+                read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
+            assert_eq!(set.reads(), expected, "the first read opens each record once");
+            let (second, second_digest) =
+                read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
+            assert_eq!(first_digest, second_digest);
+            assert_eq!(first.name, second.name);
+            assert_eq!(
+                set.reads(),
+                expected,
+                "a group this process already authenticated is not read or hashed again"
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "a_payload_that_still_parses_but_differs_from_its_content_name_is_refused",
+        check: |root| {
+            fs::create_dir(root.path().join("payloads"))?;
+            let original = br#"{"name":"BindingDeclaration"}"#;
+            let digest = content_name(original);
+            let payload = root.path().join("payloads").join(&digest);
+            fs::write(&payload, original)?;
+            assert_eq!(open_value(root.path(), &digest)?, original);
+
+            // One byte changed in place: the value still decodes, but it is no longer the content its name promises.
+            fs::write(&payload, br#"{"name":"BindingXeclaration"}"#)?;
+            let refusal = match open_value(root.path(), &digest) {
+                Ok(_) => return Err("a damaged compiler-record payload was accepted".into()),
+                Err(reason) => reason,
+            };
+            assert!(refusal.contains(&digest), "the refusal names the payload: {refusal}");
+            assert!(
+                refusal.contains("does not match its content name"),
+                "the refusal says why: {refusal}"
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "a_compile_reads_no_documentation_records",
+        check: |root| {
+            let (set, _, facts_read) = documented_set(root.path())?;
+            let dir = root.path().join("debug");
+            for projection in [Projection::Complete, Projection::Execution] {
+                read_group(&set, &dir, "probe_loaf", projection)?.ok_or("the group is installed")?;
+            }
+            assert_eq!(
+                set.reads(),
+                facts_read,
+                "compiles open the metadata and contract facts, never the documentation"
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "a_documented_read_restores_the_documentation_records",
+        check: |root| {
+            let (set, original, _) = documented_set(root.path())?;
+            let dir = root.path().join("debug");
+            let (compiled, _) =
+                read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
+            let (documented, _) =
+                read_group(&set, &dir, "probe_loaf", Projection::Documented)?.ok_or("the group is installed")?;
+            assert_ne!(
+                compiled.contract_metadata, original,
+                "the compile's manifest carries no documentation"
+            );
+            assert_eq!(
+                documented.contract_metadata, original,
+                "a documented read gives back the checked API with its documentation"
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "an_inventory_summary_is_read_once_per_process",
+        check: |root| {
+            let metadata = probe_metadata()?;
+            let expected = RecordReads {
+                records: 1,
+                bytes: metadata.len(),
+            };
+            let set = record_set(root.path(), "probe_loaf", &[("metadata", metadata)])?;
+            let dir = root.path().join("debug");
+            for _ in 0..2 {
+                let summary = read_summary(&set, &dir, "probe_loaf")?.ok_or("the group is installed")?;
+                assert_eq!(summary.identity.name, "probe_loaf");
+            }
+            assert_eq!(
+                set.reads(),
+                expected,
+                "a summary this process already authenticated is not read or hashed again"
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "executable_resolution_reads_only_a_reached_loafs_executable_surface",
+        check: |root| {
+            let manifest = surfaced_library()?;
+            let set = installed_library(root.path(), &manifest)?;
+            let (surface, _) =
+                read_surface_in(&set, &root.path().join("debug"), "prices")?.ok_or("the Loaf is installed")?;
+            assert_eq!(
+                *surface,
+                ExecutableSurface::of(&manifest),
+                "the surface the manifest describes"
+            );
+            let read = set.reads();
+            assert!(
+                read.bytes <= SURFACE_BOUND,
+                "executable resolution read {} records, {} bytes; the bound is {SURFACE_BOUND}",
+                read.records,
+                read.bytes
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "native_lowering_reads_a_loafs_runtime_bindings_by_name",
+        check: |root| {
+            let manifest = surfaced_library()?;
+            let set = installed_library(root.path(), &manifest)?;
+            let dir = root.path().join("debug");
+            // The index admits an installed Loaf by its inventory summary before anything demands its records.
+            read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+            let indexed = set.reads();
+            let (bindings, _) = read_runtime_bindings_in(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+            let expected = runtime_bindings(&manifest);
+            assert!(!expected.is_empty(), "`prices::price` is a runtime callable");
+            assert_eq!(*bindings, expected, "the bindings the manifest describes");
+            let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
+            assert_eq!(
+                records, 1,
+                "native lowering read {records} records, {bytes} bytes; it needs the runtime bindings record alone"
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "both_parser_vocabularies_share_one_validated_registration_without_reading_the_contract",
+        check: |root| {
+            let mut manifest = surfaced_library()?;
+            let registration = super::VocabExports {
+                metadata_version: incan_vocab::VOCAB_METADATA_VERSION,
+                unit_identity: content_name(b"checked registration"),
+                crate_path: "src/lib.incn".to_string(),
+                package_name: manifest.name.clone(),
+                keyword_registrations: Vec::new(),
+                dsl_surfaces: Vec::new(),
+                provider_manifest: Default::default(),
+                desugarer_artifact: None,
+            };
+            manifest.vocab = Some(registration.clone());
+            let selected = thread_selection::select(installed_library(root.path(), &manifest)?);
+            let index = crate::loaf_index::LoafIndex::deferred([(
+                manifest.name.clone(),
+                manifest.name.clone(),
+                root.path().join("debug"),
+                false,
+            )])?;
+            let before = selected.0.reads();
+            let _ = index.imported_vocab();
+            let _ = index.imported_dsl_surfaces();
+            index.validate_demands()?;
+            // The resident worker opens independent parse and compile sessions against the same immutable set.
+            let second = crate::loaf_index::LoafIndex::deferred([(
+                manifest.name.clone(),
+                manifest.name.clone(),
+                root.path().join("debug"),
+                false,
+            )])?;
+            let _ = second.imported_vocab();
+            second.validate_demands()?;
+            let after = selected.0.reads();
+            assert_eq!(after.records - before.records, 1);
+            assert_eq!(
+                after.bytes - before.bytes,
+                registration.encode_compiler_record_value()?.len()
+            );
+            assert!(
+                !thread_selection::read_keys()
+                    .iter()
+                    .any(|key| key.contains("/contract-metadata/"))
+            );
+            let mut unsupported = registration;
+            unsupported.metadata_version += 1;
+            assert!(
+                super::VocabExports::decode_compiler_record_value(&unsupported.encode_compiler_record_value()?)
+                    .is_err()
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "an_aggregate_only_runtime_refuses_disagreeing_facade_owners",
+        check: |root| {
+            let name = "incan_native_runtime";
+            let manifest = surfaced_library_for(name, "pub def used() -> int:\n    return 1\n")?;
+            let mut set = installed_library(root.path(), &manifest)?;
+            set.entries.retain(|entry| !entry.key.contains("/runtime-binding/"));
+            let mut bindings = runtime_bindings(&manifest);
+            let original = bindings
+                .iter()
+                .find(|row| row.path == "incan_native_runtime::used")
+                .ok_or("missing facade")?;
+            let mut other = original.clone();
+            other.canonical.declaration_name = "distinct_declaration".to_owned();
+            bindings.push(other);
+            let bytes = LibraryManifest::encode_compiler_record_value(&bindings)?;
+            let digest = content_name(&bytes);
+            fs::write(root.path().join("payloads").join(&digest), bytes)?;
+            let aggregate = set
+                .entries
+                .iter_mut()
+                .find(|entry| entry.key.contains("/runtime-bindings/"))
+                .ok_or("missing aggregate")?;
+            aggregate.value = digest.clone();
+            aggregate.revision = digest;
+            let _selected = thread_selection::select(set);
+            let dir = root.path().join("debug");
+            let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+            assert!(index.runtime_binding(name, "incan_native_runtime::used").is_err());
+            Ok(())
+        },
+    },
+    // An installed Loaf can serve either an authored signature or an admitted root layout in one record read.
+    MutRow {
+        name: "a_consumer_reads_one_declaration_or_root_export_record_alone",
+        check: |root| {
+            // One copy of the checked API module, so `prices::price` names one declaration.
+            let mut manifest = surfaced_library()?;
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                api.modules.truncate(1);
+            }
+            let set = installed_library(root.path(), &manifest)?;
+            let dir = root.path().join("debug");
+            // The index admits an installed Loaf by its inventory summary before anything demands its records.
+            read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+            let indexed = set.reads();
+            let (signatures, _) = read_declaration_in(&set, &dir, "prices", "declaration-signature", "prices::price")?
+                .ok_or("the signature record is installed")?;
+            assert_eq!(signatures.len(), 1, "one declaration named `prices::price`");
+            assert_eq!(signatures[0]["name"], "price", "the signature of `price`");
+            let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
+            assert_eq!(
+                records, 1,
+                "the consumer read {records} records, {bytes} bytes; it needs the signature record alone"
+            );
+            let after_signature = set.reads();
+            let (models, _) = read_declaration_in(&set, &dir, "prices", "model", "Money")?
+                .ok_or("the root model record is installed")?;
+            let [model] = models.as_slice() else {
+                return Err("expected one root model named Money".into());
+            };
+            assert_eq!(model["name"], "Money");
+            assert_eq!(model["fields"][0]["name"], "cents");
+            assert_eq!(set.reads().records - after_signature.records, 1);
+            Ok(())
+        },
+    },
+    // In records mode a dependency Loaf outside the installed set keeps its ordinary artifact contract, retained
+    // generation-bound inventory included: the first request's session reads its manifest whole and retains the
+    // inventory, and a later request's session (a parsing session asks only for vocabulary) opens it from the
+    // inventory without reading the manifest again.
+    MutRow {
+        name: "a_dependency_outside_the_installed_set_opens_from_its_retained_inventory",
+        check: |root| {
+            let home = tempfile::tempdir()?;
+            let _home = super::super::manifest_input::select_test_home(home.path());
+            let _selected = thread_selection::select(RecordSet::new(root.path().join("installed"), Vec::new()));
+            let directory = root.path().join("dependency");
+            fs::create_dir(&directory)?;
+            let project_record = crate::library_manifest::install_record::LoafInstallRecord {
+                schema: crate::library_manifest::install_record::INSTALL_RECORD_SCHEMA,
+                ..Default::default()
+            };
+            let mut manifest = LibraryManifest::new("dependency", "1.0.0");
+            let install = manifest.prepare_install_record(&project_record, false)?;
+            let manifest_path = directory.join("dependency.incnlib");
+            let encoded = manifest.to_json_string()?;
+            fs::write(&manifest_path, &encoded)?;
+            fs::write(
+                manifest_path.with_extension("incnfacts"),
+                manifest.encode_loaf_facts(&encoded, Some(install))?,
+            )?;
+            let open = || {
+                super::super::lazy_entry::IndexedLoaf::open(
+                    "dependency".to_owned(),
+                    crate::loaf_index::LoafNamespace::Dependency {
+                        key: "dependency".to_owned(),
+                    },
+                    directory.clone(),
+                    "dependency",
+                )
+            };
+            let first = open()?;
+            assert!(
+                first.was_demanded(),
+                "the first session admitted no inventory before reading"
+            );
+            let surface = first.executable_surface()?;
+            crate::loaf_index::settle_retained_loaves(true);
+            let later = open()?;
+            assert!(
+                !later.was_demanded(),
+                "a later session read the unchanged manifest whole again"
+            );
+            assert!(!later.globals.vocabulary);
+            assert_eq!(later.summary()?.identity, first.summary()?.identity);
+            let selected = later.install_record()?.ok_or("the local Loaf has an install record")?;
+            assert_eq!(selected.as_ref(), &project_record);
+            assert!(
+                !later.was_demanded(),
+                "the admitted install digest must avoid a whole local manifest decode"
+            );
+            let warm_surface = later.executable_surface()?;
+            assert!(
+                !later.was_demanded(),
+                "unchanged executable admission demanded the whole path manifest again"
+            );
+            assert!(
+                std::sync::Arc::ptr_eq(&surface, &warm_surface),
+                "unchanged executable admission rebuilt the same surface"
+            );
+
+            let full = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
+            crate::loaf_index::settle_retained_loaves(true);
+            let warm = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
+            assert_eq!(full.identity, warm.identity);
+            assert!(
+                std::sync::Arc::ptr_eq(&full.manifest, &warm.manifest),
+                "a full local manifest demanded on the unchanged generation was decoded again"
+            );
+
+            let old_selection = open()?;
+            assert!(!old_selection.was_demanded());
+            let modified = fs::metadata(&manifest_path)?.modified()?;
+            let replacement = encoded.replacen("\"1.0.0\"", "\"1.0.1\"", 1);
+            assert_ne!(replacement, encoded);
+            assert_eq!(replacement.len(), encoded.len());
+            fs::write(&manifest_path, replacement)?;
+            fs::File::options()
+                .write(true)
+                .open(&manifest_path)?
+                .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+            assert!(
+                old_selection.install_record().is_err_and(|error| error
+                    .to_string()
+                    .contains("the manifest changed after its inventory was admitted")),
+                "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
+            );
+            assert!(old_selection.executable_surface().is_err());
+            let changed_surface = open()?.executable_surface()?;
+            assert_eq!(changed_surface.version, "1.0.1");
+            assert!(!std::sync::Arc::ptr_eq(&surface, &changed_surface));
+            let changed = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
+            assert_eq!(changed.manifest.version, "1.0.1");
+            assert_ne!(changed.identity.digest, full.identity.digest);
+            Ok(())
+        },
+    },
+    // A record group decoded for one request is shared inside it and released when the request ends, as the Loaf
+    // manifests are: a resident worker keeps no decoded copy of an installed Loaf between requests, and the next
+    // request reads the group's records again.
+    MutRow {
+        name: "a_record_group_decoded_for_a_request_is_released_when_it_ends",
+        check: |root| {
+            let metadata = LibraryManifest::encode_compiler_record_value(&Metadata {
+                name: "released_loaf".to_owned(),
+                version: "0.1.0".to_owned(),
+                incan_version: "0.6.0".to_owned(),
+                manifest_format: 1,
+                manifest_digest: content_name(b"released_loaf manifest"),
+                vocabulary: false,
+                provider_operations: false,
+                native_unions: false,
+                rust_paths: BTreeSet::new(),
+                rust_abi_cache_declared: false,
+                rust_abi_cache_digest: None,
+            })?;
+            let contract = LibraryManifest::encode_compiler_record_value(&LibraryContractMetadata::default())?;
+            let expected = RecordReads {
+                records: 2,
+                bytes: metadata.len() + contract.len(),
+            };
+            let selection = thread_selection::select(record_set(
+                root.path(),
+                "released_loaf",
+                &[("metadata", metadata), ("contract-metadata", contract)],
+            )?);
+            let dir = root.path().join("debug");
+            super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
+            super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
+            assert_eq!(selection.0.reads(), expected, "one request reads each record once");
+            crate::loaf_index::release_retained_loaves();
+            super::read(&dir, "released_loaf")?.ok_or("the group is installed")?;
+            assert_eq!(
+                selection.0.reads(),
+                RecordReads {
+                    records: expected.records * 2,
+                    bytes: expected.bytes * 2,
+                },
+                "a group decoded for an earlier request outlived it"
+            );
+            Ok(())
+        },
+    },
+];

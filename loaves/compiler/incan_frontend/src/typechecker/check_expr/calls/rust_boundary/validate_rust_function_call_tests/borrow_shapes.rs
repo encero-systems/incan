@@ -1,6 +1,7 @@
 //! Native identity prewarming, generic boundaries, and Rust reference and trait-object borrow shapes.
 
 use super::*;
+use crate::test_rows::{MutRow, run_mut_rows};
 
 #[test]
 fn rust_identity_prewarm_skips_owner_relative_standard_wrappers() {
@@ -20,57 +21,6 @@ fn rust_identity_prewarm_skips_owner_relative_standard_wrappers() {
         TypeChecker::rust_identity_metadata_base_should_probe("datafusion_expr::expr::WindowFunction"),
         "nominal dependency item displays should still reuse cache-only identity metadata"
     );
-}
-
-#[test]
-fn exact_generic_rust_boundary_preserves_nested_borrowed_return() {
-    let mut checker = TypeChecker::new();
-    let span = Span::new(10, 20);
-    let argument = Spanned::new(Expr::Ident("borrowed".to_string()), span);
-    checker.type_info.rust.return_coercions.insert(
-        span,
-        RustArgCoercionInfo {
-            rust_target_type: "String".to_string(),
-            target_type: ResolvedType::Str,
-            kind: RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
-        },
-    );
-
-    checker.validate_rust_boundary_value("std::string::String::from", "T", &argument, &ResolvedType::Str, false);
-
-    assert!(
-        checker.type_info.rust.return_coercions.is_empty(),
-        "a direct generic Rust consumer must receive the original borrowed Rust result"
-    );
-    checker.record_rust_return_coercion_from_display("&str", &ResolvedType::Str, span);
-    assert!(
-        checker.type_info.rust.return_coercions.is_empty(),
-        "later return inspection must preserve the generic consumer's native Rust value"
-    );
-    assert_eq!(
-        checker.type_info.rust.native_return_consumers,
-        std::collections::HashSet::from([span])
-    );
-}
-
-#[test]
-fn unresolved_rust_call_preserves_direct_native_return() {
-    let mut checker = TypeChecker::new();
-    let span = Span::new(30, 45);
-    let argument = Spanned::new(Expr::Ident("borrowed".to_string()), span);
-    checker.type_info.rust.return_coercions.insert(
-        span,
-        RustArgCoercionInfo {
-            rust_target_type: "String".to_string(),
-            target_type: ResolvedType::Str,
-            kind: RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
-        },
-    );
-
-    checker.preserve_unresolved_rust_call_argument_returns(&[CallArg::Positional(argument)]);
-
-    assert!(checker.type_info.rust.return_coercions.is_empty());
-    assert!(checker.type_info.rust.native_return_consumers.contains(&span));
 }
 
 #[test]
@@ -371,25 +321,93 @@ fn rust_method_mutable_reference_rejects_an_immutable_binding() {
 }
 
 #[test]
-fn mutable_rust_trait_object_borrow_rejects_immutable_binding() {
-    let mut checker = TypeChecker::new();
-    let span = Span::new(10, 16);
-    let arg = Spanned::new(Expr::Ident("output".to_string()), span);
-    let adapter_mut = checker.resolved_type_from_rust_display("dyn demo::AdapterMut");
-
-    checker.validate_rust_boundary_value(
-        "demo::Processor",
-        "&mut dyn demo::AdapterMut",
-        &arg,
-        &adapter_mut,
-        false,
-    );
-
-    assert!(
-        checker.errors.iter().any(|error| error
-            .message
-            .contains("Rust parameter requires a mutable borrow of 'output'")),
-        "expected a mutable trait-object borrow diagnostic, got {:?}",
-        checker.errors
-    );
+fn borrow_shapes_fresh_checker_cases() {
+    run_mut_rows(BORROW_SHAPES_FRESH_CHECKER_CASES, TypeChecker::new);
 }
+
+const BORROW_SHAPES_FRESH_CHECKER_CASES: &[MutRow<TypeChecker, String>] = &[
+    MutRow {
+        name: "exact_generic_rust_boundary_preserves_nested_borrowed_return",
+        check: |mut checker| {
+            let span = Span::new(10, 20);
+            let argument = Spanned::new(Expr::Ident("borrowed".to_string()), span);
+            checker.type_info.rust.return_coercions.insert(
+                span,
+                RustArgCoercionInfo {
+                    rust_target_type: "String".to_string(),
+                    target_type: ResolvedType::Str,
+                    kind: RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
+                },
+            );
+
+            checker.validate_rust_boundary_value(
+                "std::string::String::from",
+                "T",
+                &argument,
+                &ResolvedType::Str,
+                false,
+            );
+
+            assert!(
+                checker.type_info.rust.return_coercions.is_empty(),
+                "a direct generic Rust consumer must receive the original borrowed Rust result"
+            );
+            checker.record_rust_return_coercion_from_display("&str", &ResolvedType::Str, span);
+            assert!(
+                checker.type_info.rust.return_coercions.is_empty(),
+                "later return inspection must preserve the generic consumer's native Rust value"
+            );
+            assert_eq!(
+                checker.type_info.rust.native_return_consumers,
+                std::collections::HashSet::from([span])
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "unresolved_rust_call_preserves_direct_native_return",
+        check: |mut checker| {
+            let span = Span::new(30, 45);
+            let argument = Spanned::new(Expr::Ident("borrowed".to_string()), span);
+            checker.type_info.rust.return_coercions.insert(
+                span,
+                RustArgCoercionInfo {
+                    rust_target_type: "String".to_string(),
+                    target_type: ResolvedType::Str,
+                    kind: RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
+                },
+            );
+
+            checker.preserve_unresolved_rust_call_argument_returns(&[CallArg::Positional(argument)]);
+
+            assert!(checker.type_info.rust.return_coercions.is_empty());
+            assert!(checker.type_info.rust.native_return_consumers.contains(&span));
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "mutable_rust_trait_object_borrow_rejects_immutable_binding",
+        check: |mut checker| {
+            let span = Span::new(10, 16);
+            let arg = Spanned::new(Expr::Ident("output".to_string()), span);
+            let adapter_mut = checker.resolved_type_from_rust_display("dyn demo::AdapterMut");
+
+            checker.validate_rust_boundary_value(
+                "demo::Processor",
+                "&mut dyn demo::AdapterMut",
+                &arg,
+                &adapter_mut,
+                false,
+            );
+
+            assert!(
+                checker.errors.iter().any(|error| error
+                    .message
+                    .contains("Rust parameter requires a mutable borrow of 'output'")),
+                "expected a mutable trait-object borrow diagnostic, got {:?}",
+                checker.errors
+            );
+            Ok(())
+        },
+    },
+];
