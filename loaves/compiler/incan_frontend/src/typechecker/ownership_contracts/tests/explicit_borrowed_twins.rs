@@ -70,44 +70,14 @@ fn messages(checker: &TypeChecker) -> Vec<String> {
     checker.errors.iter().map(|error| error.message.clone()).collect()
 }
 
+/// Expand the `{ITEM}` and `{COUNTER}` preludes a twin template may start with; other braces pass through.
+fn with_preludes(template: &str) -> String {
+    template.replace("{ITEM}", ITEM).replace("{COUNTER}", COUNTER)
+}
+
 const ITEM: &str =
     "model Item:\n    name: str\n    count: int\n\n    def label(self) -> str:\n        return self.name\n\n";
 const COUNTER: &str = "model Counter:\n    value: int\n\n    def bump(mut self) -> None:\n        self.value += 1\n\n    def read(self) -> int:\n        return self.value\n\n";
-
-/// Reads through a shared borrow: fields, methods, measuring, indexing, iteration, membership and comparison.
-#[test]
-fn shared_reads_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
-    let template = format!(
-        "{ITEM}def reads(item: {{borrow:Item}}, items: {{borrow:list[Item]}}, names: {{borrow:dict[str, int]}}, text: {{borrow:str}}) -> int:\n    mut total = item.count + len(item.label()) + len(items) + len(text)\n    for entry in items:\n        total += entry.count\n    if items[0].name == item.name and text == \"a\":\n        total += 1\n    if \"a\" in names:\n        total += names[\"a\"]\n    return total\n\ndef main() -> int:\n    item = Item(name=\"a\", count=1)\n    return reads(item, [item], {{\"a\": 1}}, \"a\")\n"
-    );
-    let checker = check_twins(&template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    Ok(())
-}
-
-/// Owned uses of a shared borrow: returned as the value, handed to an owned parameter, stored in a list and in a
-/// field. Each gets a clone; none is refused.
-#[test]
-fn owned_uses_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
-    let template = format!(
-        "{ITEM}def keep(item: Item) -> list[Item]:\n    return [item]\n\ndef give(item: {{borrow:Item}}) -> Item:\n    return item\n\ndef hand_on(item: {{borrow:Item}}) -> list[Item]:\n    return keep(item)\n\ndef store(item: {{borrow:Item}}) -> list[Item]:\n    mut out: list[Item] = []\n    out.append(item)\n    return out\n\nclass Shelf:\n    items: list[Item]\n\n    pub def put(mut self, item: {{borrow:Item}}) -> None:\n        self.items.append(item)\n"
-    );
-    let checker = check_twins(&template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    Ok(())
-}
-
-/// An exclusive borrow writes a field, calls a changing method and is handed on to another exclusive borrow; an
-/// owned `mut` local is lent to it with no `&`.
-#[test]
-fn exclusive_writes_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
-    let template = format!(
-        "{COUNTER}def bump_twice(mut counter: {{borrow_mut:Counter}}) -> int:\n    counter.value = counter.value + 1\n    counter.bump()\n    return counter.read()\n\ndef forward(mut counter: {{borrow_mut:Counter}}) -> int:\n    return bump_twice(counter)\n\ndef peek(counter: {{borrow:Counter}}) -> int:\n    return counter.value\n\ndef lend(mut counter: {{borrow_mut:Counter}}) -> int:\n    return peek(counter)\n\ndef main() -> int:\n    mut counter = Counter(value=0)\n    forward(counter)\n    return lend(counter) + counter.value\n"
-    );
-    let checker = check_twins(&template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    Ok(())
-}
 
 /// A shared borrow cannot be written through, with or without `mut`: not a field, not a changing method, and it
 /// cannot be handed to an exclusive borrow.
@@ -161,35 +131,6 @@ fn local_borrows_check_as_their_reference_twins() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// A trait method declared with a borrow is implemented with the same borrow in either spelling, and called through
-/// the trait and through the implementation; mixing the spellings across the two refuses only the Rust spelling.
-#[test]
-fn trait_methods_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
-    let template = format!(
-        "{ITEM}trait Sizer:\n    def size(self, item: {{borrow:Item}}) -> int: ...\n\nclass Measure with Sizer:\n    def size(self, item: {{borrow:Item}}) -> int:\n        return item.count\n\ndef through[S with Sizer](sizer: S, item: {{borrow:Item}}) -> int:\n    return sizer.size(item)\n\ndef main() -> int:\n    item = Item(name=\"a\", count=1)\n    measure = Measure()\n    return measure.size(item) + through(measure, item)\n"
-    );
-    let checker = check_twins(&template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    for (trait_spelling, implementation_spelling) in [(EXPLICIT, NATIVE), (NATIVE, EXPLICIT)] {
-        let trait_part = spelled(
-            "trait Sizer:\n    def size(self, item: {borrow:Item}) -> int: ...\n\n",
-            trait_spelling,
-        );
-        let implementation = spelled(
-            "class Measure with Sizer:\n    def size(self, item: {borrow:Item}) -> int:\n        return item.count\n",
-            implementation_spelling,
-        );
-        let mixed = checked(&format!("{ITEM}{trait_part}{implementation}"))?;
-        // The Rust spelling is refused once; the trait and its implementation agree in either spelling.
-        assert!(
-            mixed.errors.len() == 1 && mixed.errors.iter().all(spelling_refusal),
-            "mixed spellings: {:?}",
-            mixed.errors
-        );
-    }
-    Ok(())
-}
-
 /// A returned view borrows from a shared borrow named by its `from` clause in either spelling of the input; an owned
 /// input still cannot back one.
 #[test]
@@ -202,37 +143,6 @@ fn returned_views_from_borrows_check_as_their_reference_twins() -> Result<(), Bo
         "{ITEM}def table(items: Owned[list[Item]]) -> Borrowed[list[Item]] from items:\n    return items\n"
     ))?;
     assert!(!refused.errors.is_empty(), "an owned input backed a returned view");
-    Ok(())
-}
-
-/// Slice 06's chained-call relation with slice 09B's lifetime elision: a borrowed result `from` its only borrowed
-/// input, reached from that input rather than being it, keeps native passing in both spellings. Its result is the
-/// native reference, it has no ownership contract, and callers read through it.
-#[test]
-fn borrowed_results_reached_from_their_source_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>>
-{
-    let template = format!(
-        "{ITEM}def first(values: {{borrow:list[Item]}}, position: int) -> {{borrow:Item}} from values:\n    item: {{borrow:Item}} = values[position]\n    return item\n\ndef first_label(values: {{borrow:list[Item]}}) -> str:\n    return first(values, 0).label()\n\ndef main() -> int:\n    items = [Item(name=\"a\", count=1)]\n    chosen = first(items, 0)\n    return len(first_label(items)) + chosen.count\n"
-    );
-    let checker = check_twins(&template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let contracts: Vec<_> = checker
-        .type_info
-        .declarations
-        .ownership_contracts
-        .keys()
-        .map(|identity| identity.declaration_name.clone())
-        .collect();
-    assert!(contracts.is_empty(), "{contracts:?}");
-    let Some(crate::symbols::SymbolKind::Function(first)) = checker.lookup_symbol("first").map(|symbol| &symbol.kind)
-    else {
-        return Err("missing function first".into());
-    };
-    assert!(
-        matches!(first.return_type, ResolvedType::Ref(_)),
-        "{:?}",
-        first.return_type
-    );
     Ok(())
 }
 
@@ -422,18 +332,6 @@ fn loan_conflicts_outside_the_proof_are_refused_in_both_spellings() -> Result<()
     Ok(())
 }
 
-/// Lends that do not overlap stay accepted outside the proof: one exclusive lend after another, a read after the
-/// lend has ended, and a closure over a local borrow whose owner is edited only after the closure's last call.
-#[test]
-fn separate_loans_outside_the_proof_are_accepted() -> Result<(), Box<dyn std::error::Error>> {
-    let template = format!(
-        "{COUNTER}def bump(mut counter: {{borrow_mut:Counter}}) -> None:\n    counter.value += 1\n\ndef peek(counter: {{borrow:Counter}}) -> int:\n    return counter.value\n\ndef twice(mut counter: {{borrow_mut:Counter}}) -> int:\n    bump(counter)\n    bump(counter)\n    return peek(counter)\n\ndef main() -> int:\n    mut owned = 1\n    view: {{borrow:int}} = owned\n    read: () -> int = () => view + 1\n    total = read()\n    owned += 10\n    mut counter = Counter(value=0)\n    bump(counter)\n    return total + owned + twice(counter)\n"
-    );
-    let checker = check_twins(&template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    Ok(())
-}
-
 const TRACE_STATE: &str = "class State:\n    pub active: str\n    pub count: int\n    pub items: list[int]\n\ndef write_end(mut state: {borrow_mut:State}, identifier: str) -> int:\n    state.count += 1\n    return len(identifier)\n\ndef check(mut state: {borrow_mut:State}, flag: bool) -> int:\n    state.count += 1\n    return state.count\n\ndef bump(mut state: {borrow_mut:State}) -> str:\n    state.count += 1\n    return state.active\n\ndef take_first(mut items: {borrow_mut:list[int]}) -> str:\n    return \"first\"\n\nclass Counter:\n    pub value: int\n\n    pub def add(mut self, step: int) -> None:\n        self.value += step\n\n";
 
 /// Rust makes the implicit reborrow of a `&mut` binding passed as an argument, or of a method's receiver, a two-phase
@@ -543,7 +441,7 @@ fn library_metadata_keeps_an_exclusive_borrow_exclusive() -> Result<(), Box<dyn 
 
 #[test]
 fn twin_cases() {
-    run_source_rows(TWIN_CASES, check_twins);
+    run_source_rows(TWIN_CASES, |template| check_twins(&with_preludes(template)));
 }
 
 const TWIN_CASES: &[SourceRow<TypeChecker>] = &[
@@ -682,6 +580,101 @@ const TWIN_CASES: &[SourceRow<TypeChecker>] = &[
                 "{:?}",
                 checker.errors
             );
+            Ok(())
+        },
+    },
+    // Reads through a shared borrow: fields, methods, measuring, indexing, iteration, membership and comparison.
+    SourceRow {
+        name: "shared_reads_check_as_their_reference_twins",
+        source: "{ITEM}def reads(item: {borrow:Item}, items: {borrow:list[Item]}, names: {borrow:dict[str, int]}, text: {borrow:str}) -> int:\n    mut total = item.count + len(item.label()) + len(items) + len(text)\n    for entry in items:\n        total += entry.count\n    if items[0].name == item.name and text == \"a\":\n        total += 1\n    if \"a\" in names:\n        total += names[\"a\"]\n    return total\n\ndef main() -> int:\n    item = Item(name=\"a\", count=1)\n    return reads(item, [item], {\"a\": 1}, \"a\")\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            Ok(())
+        },
+    },
+    // Owned uses of a shared borrow: returned as the value, handed to an owned parameter, stored in a list and in a
+    // field. Each gets a clone; none is refused.
+    SourceRow {
+        name: "owned_uses_check_as_their_reference_twins",
+        source: "{ITEM}def keep(item: Item) -> list[Item]:\n    return [item]\n\ndef give(item: {borrow:Item}) -> Item:\n    return item\n\ndef hand_on(item: {borrow:Item}) -> list[Item]:\n    return keep(item)\n\ndef store(item: {borrow:Item}) -> list[Item]:\n    mut out: list[Item] = []\n    out.append(item)\n    return out\n\nclass Shelf:\n    items: list[Item]\n\n    pub def put(mut self, item: {borrow:Item}) -> None:\n        self.items.append(item)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            Ok(())
+        },
+    },
+    // An exclusive borrow writes a field, calls a changing method and is handed on to another exclusive borrow; an
+    // owned `mut` local is lent to it with no `&`.
+    SourceRow {
+        name: "exclusive_writes_check_as_their_reference_twins",
+        source: "{COUNTER}def bump_twice(mut counter: {borrow_mut:Counter}) -> int:\n    counter.value = counter.value + 1\n    counter.bump()\n    return counter.read()\n\ndef forward(mut counter: {borrow_mut:Counter}) -> int:\n    return bump_twice(counter)\n\ndef peek(counter: {borrow:Counter}) -> int:\n    return counter.value\n\ndef lend(mut counter: {borrow_mut:Counter}) -> int:\n    return peek(counter)\n\ndef main() -> int:\n    mut counter = Counter(value=0)\n    forward(counter)\n    return lend(counter) + counter.value\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            Ok(())
+        },
+    },
+    // A trait method declared with a borrow is implemented with the same borrow in either spelling, and called through
+    // the trait and through the implementation; mixing the spellings across the two refuses only the Rust spelling.
+    SourceRow {
+        name: "trait_methods_check_as_their_reference_twins",
+        source: "{ITEM}trait Sizer:\n    def size(self, item: {borrow:Item}) -> int: ...\n\nclass Measure with Sizer:\n    def size(self, item: {borrow:Item}) -> int:\n        return item.count\n\ndef through[S with Sizer](sizer: S, item: {borrow:Item}) -> int:\n    return sizer.size(item)\n\ndef main() -> int:\n    item = Item(name=\"a\", count=1)\n    measure = Measure()\n    return measure.size(item) + through(measure, item)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            for (trait_spelling, implementation_spelling) in [(EXPLICIT, NATIVE), (NATIVE, EXPLICIT)] {
+                let trait_part = spelled(
+                    "trait Sizer:\n    def size(self, item: {borrow:Item}) -> int: ...\n\n",
+                    trait_spelling,
+                );
+                let implementation = spelled(
+                    "class Measure with Sizer:\n    def size(self, item: {borrow:Item}) -> int:\n        return item.count\n",
+                    implementation_spelling,
+                );
+                let mixed = checked(&format!("{ITEM}{trait_part}{implementation}"))?;
+                // The Rust spelling is refused once; the trait and its implementation agree in either spelling.
+                assert!(
+                    mixed.errors.len() == 1 && mixed.errors.iter().all(spelling_refusal),
+                    "mixed spellings: {:?}",
+                    mixed.errors
+                );
+            }
+            Ok(())
+        },
+    },
+    // Slice 06's chained-call relation with slice 09B's lifetime elision: a borrowed result `from` its only borrowed
+    // input, reached from that input rather than being it, keeps native passing in both spellings. Its result is the
+    // native reference, it has no ownership contract, and callers read through it.
+    SourceRow {
+        name: "borrowed_results_reached_from_their_source_check_as_their_reference_twins",
+        source: "{ITEM}def first(values: {borrow:list[Item]}, position: int) -> {borrow:Item} from values:\n    item: {borrow:Item} = values[position]\n    return item\n\ndef first_label(values: {borrow:list[Item]}) -> str:\n    return first(values, 0).label()\n\ndef main() -> int:\n    items = [Item(name=\"a\", count=1)]\n    chosen = first(items, 0)\n    return len(first_label(items)) + chosen.count\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            let contracts: Vec<_> = checker
+                .type_info
+                .declarations
+                .ownership_contracts
+                .keys()
+                .map(|identity| identity.declaration_name.clone())
+                .collect();
+            assert!(contracts.is_empty(), "{contracts:?}");
+            let Some(crate::symbols::SymbolKind::Function(first)) =
+                checker.lookup_symbol("first").map(|symbol| &symbol.kind)
+            else {
+                return Err("missing function first".into());
+            };
+            assert!(
+                matches!(first.return_type, ResolvedType::Ref(_)),
+                "{:?}",
+                first.return_type
+            );
+            Ok(())
+        },
+    },
+    // Lends that do not overlap stay accepted outside the proof: one exclusive lend after another, a read after the
+    // lend has ended, and a closure over a local borrow whose owner is edited only after the closure's last call.
+    SourceRow {
+        name: "separate_loans_outside_the_proof_are_accepted",
+        source: "{COUNTER}def bump(mut counter: {borrow_mut:Counter}) -> None:\n    counter.value += 1\n\ndef peek(counter: {borrow:Counter}) -> int:\n    return counter.value\n\ndef twice(mut counter: {borrow_mut:Counter}) -> int:\n    bump(counter)\n    bump(counter)\n    return peek(counter)\n\ndef main() -> int:\n    mut owned = 1\n    view: {borrow:int} = owned\n    read: () -> int = () => view + 1\n    total = read()\n    owned += 10\n    mut counter = Counter(value=0)\n    bump(counter)\n    return total + owned + twice(counter)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
             Ok(())
         },
     },
