@@ -1,4 +1,4 @@
-# behavior: 6 former codegen modules and imports cases run in order, each program from its own module: facade_reexported_serde_trait, flat_module_import, module_derive_through_import_binding, module_item_import_spellings, newtype_fields_across_modules, subtrait_bound_calls_unimported_supertrait_method
+# behavior: 8 former codegen modules and imports cases run in order, each program from its own module: facade_reexported_serde_trait, flat_module_import, module_derive_through_import_binding, module_item_import_spellings, newtype_fields_across_modules, subtrait_bound_calls_unimported_supertrait_method, std_root_module_import, std_submodule_single_import
 # expect-stdout:
 #  {"value":1}
 #  store:7
@@ -16,6 +16,9 @@
 #  true
 #  root
 #  42
+#  4
+#  3
+#  error
 
 """Run the program of each former case in order."""
 
@@ -25,6 +28,8 @@ import module_derive_through_import_binding
 import module_item_import_spellings
 import newtype_fields_across_modules
 import subtrait_bound_calls_unimported_supertrait_method
+import std_root_module_import
+import std_submodule_single_import
 
 
 def main() -> None:
@@ -35,3 +40,5 @@ def main() -> None:
     module_item_import_spellings.main()
     newtype_fields_across_modules.main()
     subtrait_bound_calls_unimported_supertrait_method.main()
+    std_root_module_import.main()
+    std_submodule_single_import.main()

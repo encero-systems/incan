@@ -1,4 +1,4 @@
-# behavior: 10 former selfhost cases run in order, each program from its own module: borrowed_list_trait_clone, borrowed_native_vector_field, borrowed_text_observations, boxed_model_argument, computed_codec_label, native_callable_alias, native_generic_future, native_result_error, native_scalar_parse_error, native_value_comparisons
+# behavior: 14 former selfhost cases run in order, each program from its own module: borrowed_list_trait_clone, borrowed_native_vector_field, borrowed_text_observations, boxed_model_argument, computed_codec_label, native_callable_alias, native_generic_future, native_result_error, native_scalar_parse_error, native_value_comparisons, nested_native_constructors, nested_native_field_option, rust_async_unit_output, source_generic_native_slice
 # expect-stdout:
 #  [3.0, 1.0]
 #  [9.0, 1.0]
@@ -71,6 +71,14 @@
 #  3
 #  3
 #  5
+#  created
+#  impl AsRef<std::path::Path>
+#  impl AsRef<[u8]>
+#  0
+#  2
+#  checked
+#  abc
+#  abc
 
 """Run the program of each former case in order."""
 
@@ -84,6 +92,10 @@ import native_generic_future
 import native_result_error
 import native_scalar_parse_error
 import native_value_comparisons
+import nested_native_constructors
+import nested_native_field_option
+import case_rust_async_unit_output
+import source_generic_native_slice
 
 
 def main() -> None:
@@ -98,3 +110,7 @@ def main() -> None:
     native_result_error.main()
     native_scalar_parse_error.main()
     native_value_comparisons.main()
+    nested_native_constructors.main()
+    nested_native_field_option.main()
+    case_rust_async_unit_output.main()
+    source_generic_native_slice.main()

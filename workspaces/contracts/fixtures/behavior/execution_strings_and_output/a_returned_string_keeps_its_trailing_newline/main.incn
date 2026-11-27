@@ -1,4 +1,4 @@
-# behavior: 10 former execution strings and output cases run in order, each program from its own module: a_returned_string_keeps_its_trailing_newline, both_backends_render_a_multi_argument_print_the_same_way, canonical_string_comparisons_use_shared_unicode_order, canonical_string_membership_uses_the_selected_contains_helper_membership, committed_strings_example_executes_with_ordinary_output, dispatches_a_lexical_json_stringify_function_by_declaration_identity, executes_dict_membership_with_a_hashed_value, executes_f_string_interpolation, executes_json_stringify_for_the_admitted_scalar_domain, executes_list_concatenation_and_membership
+# behavior: 16 former execution strings and output cases run in order, each program from its own module: a_returned_string_keeps_its_trailing_newline, both_backends_render_a_multi_argument_print_the_same_way, canonical_string_comparisons_use_shared_unicode_order, canonical_string_membership_uses_the_selected_contains_helper_membership, committed_strings_example_executes_with_ordinary_output, dispatches_a_lexical_json_stringify_function_by_declaration_identity, executes_dict_membership_with_a_hashed_value, executes_f_string_interpolation, executes_json_stringify_for_the_admitted_scalar_domain, executes_list_concatenation_and_membership, refuses_list_membership_it_cannot_compare, selected_string_helpers_preserve_shared_edge_semantics, string_len_matches_the_receipt_backed_native_route, string_len_output_is_delivered_exactly_once, string_membership_cli_records_the_shared_helper_result, unselected_string_methods_refuse_before_program_output
 # expect-stdout:
 #  [line
 #  ]
@@ -33,6 +33,34 @@
 #  4
 #  61
 #  15
+#  true
+#  true true
+#  false false
+#  true true
+#  false false
+#  true true
+#  false false
+#  true true
+#  true true
+#  true true
+#  false false
+#  STRASSE
+#  héllo
+#  hi
+#  xba
+#  -é-
+#  α, β
+#  |é|
+#  a||b|
+#  string len
+#  true
+#  é
+#  1
+#  é
+#  1
+#  true
+#  must not run
+#  x
 
 """Run the program of each former case in order."""
 
@@ -46,6 +74,12 @@ import executes_dict_membership_with_a_hashed_value
 import executes_f_string_interpolation
 import executes_json_stringify_for_the_admitted_scalar_domain
 import executes_list_concatenation_and_membership
+import refuses_list_membership_it_cannot_compare
+import selected_string_helpers_preserve_shared_edge_semantics
+import string_len_matches_the_receipt_backed_native_route
+import string_len_output_is_delivered_exactly_once
+import string_membership_cli_records_the_shared_helper_result
+import unselected_string_methods_refuse_before_program_output
 
 
 def main() -> None:
@@ -60,3 +94,9 @@ def main() -> None:
     executes_f_string_interpolation.main()
     executes_json_stringify_for_the_admitted_scalar_domain.main()
     executes_list_concatenation_and_membership.main()
+    refuses_list_membership_it_cannot_compare.main()
+    selected_string_helpers_preserve_shared_edge_semantics.main()
+    string_len_matches_the_receipt_backed_native_route.main()
+    string_len_output_is_delivered_exactly_once.main()
+    string_membership_cli_records_the_shared_helper_result.main()
+    unselected_string_methods_refuse_before_program_output.main()

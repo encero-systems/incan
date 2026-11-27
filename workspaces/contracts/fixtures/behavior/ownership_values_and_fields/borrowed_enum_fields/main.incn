@@ -1,4 +1,4 @@
-# behavior: 7 former ownership values and fields cases run in order, each program from its own module: borrowed_enum_fields, explicit_input_makes_native_bytes, explicit_input_reads_a_module_constant, indexed_field_reads_preserve_storage, loop_return_moves_owner, native_mut_reference_is_a_borrowed_mut_value, web_extractor_field_read_at_three_sinks
+# behavior: 12 former ownership values and fields cases run in order, each program from its own module: borrowed_enum_fields, explicit_input_makes_native_bytes, explicit_input_reads_a_module_constant, indexed_field_reads_preserve_storage, loop_return_moves_owner, native_mut_reference_is_a_borrowed_mut_value, web_extractor_field_read_at_three_sinks, ordinary_body_constructs_after_an_explicit_call, owned_initializers_stay_independent, owned_input_feeds_native_hashing, returned_field_view_edits_the_original_field, string_list_passed_at_last_use_and_empty_literal
 # expect-stdout:
 #  ready
 #  optional
@@ -22,6 +22,13 @@
 #  orders
 #  posted
 #  held
+#  abc
+#  ["apple"] ["apple", "plum"] ["kiwi", "fig"] ["apple", "lime"]
+#  64
+#  Samuel
+#  Rotterdam
+#  3
+#  0
 
 """Run the program of each former case in order."""
 
@@ -32,6 +39,11 @@ import indexed_field_reads_preserve_storage
 import loop_return_moves_owner
 import native_mut_reference_is_a_borrowed_mut_value
 import web_extractor_field_read_at_three_sinks
+import ordinary_body_constructs_after_an_explicit_call
+import owned_initializers_stay_independent
+import owned_input_feeds_native_hashing
+import returned_field_view_edits_the_original_field
+import string_list_passed_at_last_use_and_empty_literal
 
 
 def main() -> None:
@@ -43,3 +55,8 @@ def main() -> None:
     loop_return_moves_owner.main()
     native_mut_reference_is_a_borrowed_mut_value.main()
     web_extractor_field_read_at_three_sinks.main()
+    ordinary_body_constructs_after_an_explicit_call.main()
+    owned_initializers_stay_independent.main()
+    owned_input_feeds_native_hashing.main()
+    returned_field_view_edits_the_original_field.main()
+    string_list_passed_at_last_use_and_empty_literal.main()

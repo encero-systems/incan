@@ -1,4 +1,4 @@
-# behavior: 10 former snapshots enums and matching cases run in order, each program from its own module: enum_constructor_match, enum_methods_and_traits, enums, for_in_list_enum_equality, if_let_while_let, match_statements, pattern_alternation, patterns, trailing_match_expression, tuple_pattern_bindings
+# behavior: 15 former snapshots enums and matching cases run in order, each program from its own module: enum_constructor_match, enum_methods_and_traits, enums, for_in_list_enum_equality, if_let_while_let, match_statements, pattern_alternation, patterns, trailing_match_expression, tuple_pattern_bindings, imported_enum_loop_ownership, unqualified_and_aliased_variant_patterns, isinstance_explicit_builtin_and_aliases, newtype_union_isinstance, option_union_payloads
 # expect-stdout:
 #  FilterRel
 #  ReadRel
@@ -60,6 +60,40 @@
 #  payload
 #  payload
 #  none
+#  true
+#  false
+#  1.5
+#  0.0
+#  -1
+#  3
+#  4
+#  9
+#  6
+#  7
+#  8
+#  false
+#  true false
+#  ABC number
+#  number missing UP
+#  true
+#  frozen text number
+#  frozen text missing
+#  frozen text other
+#  frozen text plain number
+#  frozen text plain other
+#  PLAIN
+#  local
+#  missing
+#  plain
+#  local
+#  text
+#  PLAIN
+#  path p
+#  LOCAL
+#  RETURNED
+#  missing
+#  frozen text
+#  number
 
 """Run the program of each former case in order."""
 
@@ -73,6 +107,11 @@ import pattern_alternation
 import patterns
 import trailing_match_expression
 import tuple_pattern_bindings
+import imported_enum_loop_ownership
+import unqualified_and_aliased_variant_patterns
+import isinstance_explicit_builtin_and_aliases
+import newtype_union_isinstance
+import option_union_payloads
 
 
 def main() -> None:
@@ -87,3 +126,8 @@ def main() -> None:
     patterns.main()
     trailing_match_expression.main()
     tuple_pattern_bindings.main()
+    imported_enum_loop_ownership.main()
+    unqualified_and_aliased_variant_patterns.main()
+    isinstance_explicit_builtin_and_aliases.main()
+    newtype_union_isinstance.main()
+    option_union_payloads.main()
