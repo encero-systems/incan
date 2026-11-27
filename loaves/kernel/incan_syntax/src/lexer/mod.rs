@@ -539,6 +539,7 @@ pub fn lex_tolerant(source: &str) -> (Vec<Token>, Vec<CompileError>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_rows::{SourceRow, run_source_rows};
     use incan_lang::lang::keywords::KeywordId;
     use incan_lang::lang::operators::OperatorId;
 
@@ -699,56 +700,6 @@ mod tests {
     }
 
     #[test]
-    fn test_keywords() {
-        let tokens = lex_ok("def async await class model trait");
-        assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Def)));
-        assert!(matches!(tokens[1].kind, TokenKind::Keyword(KeywordId::Async)));
-        assert!(matches!(tokens[2].kind, TokenKind::Keyword(KeywordId::Await)));
-        assert!(matches!(tokens[3].kind, TokenKind::Keyword(KeywordId::Class)));
-        assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::Model)));
-        assert!(matches!(tokens[5].kind, TokenKind::Keyword(KeywordId::Trait)));
-    }
-
-    #[test]
-    fn test_operators() {
-        let tokens = lex_ok("+ - * / :: => -> ? @ | == != @= |> <| & &= |= ^ ^= ~ << <<= >> >>=");
-        assert!(matches!(tokens[0].kind, TokenKind::Operator(OperatorId::Plus)));
-        assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::Minus)));
-        assert!(matches!(tokens[2].kind, TokenKind::Operator(OperatorId::Star)));
-        assert!(matches!(tokens[3].kind, TokenKind::Operator(OperatorId::Slash)));
-        assert!(matches!(
-            tokens[4].kind,
-            TokenKind::Punctuation(PunctuationId::ColonColon)
-        ));
-        assert!(matches!(
-            tokens[5].kind,
-            TokenKind::Punctuation(PunctuationId::FatArrow)
-        ));
-        assert!(matches!(tokens[6].kind, TokenKind::Punctuation(PunctuationId::Arrow)));
-        assert!(matches!(
-            tokens[7].kind,
-            TokenKind::Punctuation(PunctuationId::Question)
-        ));
-        assert!(matches!(tokens[8].kind, TokenKind::Punctuation(PunctuationId::At)));
-        assert!(matches!(tokens[9].kind, TokenKind::Punctuation(PunctuationId::Pipe)));
-        assert!(matches!(tokens[10].kind, TokenKind::Operator(OperatorId::EqEq)));
-        assert!(matches!(tokens[11].kind, TokenKind::Operator(OperatorId::NotEq)));
-        assert!(matches!(tokens[12].kind, TokenKind::Operator(OperatorId::MatMulEq)));
-        assert!(matches!(tokens[13].kind, TokenKind::Operator(OperatorId::PipeForward)));
-        assert!(matches!(tokens[14].kind, TokenKind::Operator(OperatorId::PipeBackward)));
-        assert!(matches!(tokens[15].kind, TokenKind::Operator(OperatorId::Amp)));
-        assert!(matches!(tokens[16].kind, TokenKind::Operator(OperatorId::AmpEq)));
-        assert!(matches!(tokens[17].kind, TokenKind::Operator(OperatorId::PipeEq)));
-        assert!(matches!(tokens[18].kind, TokenKind::Operator(OperatorId::Caret)));
-        assert!(matches!(tokens[19].kind, TokenKind::Operator(OperatorId::CaretEq)));
-        assert!(matches!(tokens[20].kind, TokenKind::Operator(OperatorId::Tilde)));
-        assert!(matches!(tokens[21].kind, TokenKind::Operator(OperatorId::Shl)));
-        assert!(matches!(tokens[22].kind, TokenKind::Operator(OperatorId::ShlEq)));
-        assert!(matches!(tokens[23].kind, TokenKind::Operator(OperatorId::Shr)));
-        assert!(matches!(tokens[24].kind, TokenKind::Operator(OperatorId::ShrEq)));
-    }
-
-    #[test]
     #[allow(clippy::approx_constant)]
     fn test_numbers() {
         let tokens = lex_ok("42 3.14 1_000_000 1e1_0 19.99d 1_000.5_0d 340282366920938463463374607431768211455");
@@ -760,21 +711,6 @@ mod tests {
         assert!(matches!(&tokens[5].kind, TokenKind::Decimal(dl) if dl.body == "1000.50" && dl.repr == "1_000.5_0d"));
         assert!(
             matches!(&tokens[6].kind, TokenKind::Int(il) if il.magnitude == u128::MAX && il.repr == "340282366920938463463374607431768211455")
-        );
-    }
-
-    #[test]
-    fn numeric_suffix_literals_are_single_tokens_numeric_contract() {
-        let tokens = lex_ok("42u16 7i8 3.14f32");
-        assert_eq!(tokens.len(), 4, "three literals plus EOF: {tokens:?}");
-        assert!(
-            matches!(&tokens[0].kind, TokenKind::Int(lit) if lit.repr == "42u16" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::U16))
-        );
-        assert!(
-            matches!(&tokens[1].kind, TokenKind::Int(lit) if lit.repr == "7i8" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::I8))
-        );
-        assert!(
-            matches!(&tokens[2].kind, TokenKind::Float(lit) if lit.repr == "3.14f32" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::F32))
         );
     }
 
@@ -798,13 +734,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_strings() {
-        let tokens = lex_ok(r#""hello" 'world'"#);
-        assert!(matches!(&tokens[0].kind, TokenKind::String(s) if s == "hello"));
-        assert!(matches!(&tokens[1].kind, TokenKind::String(s) if s == "world"));
-    }
-
     /// Bidirectional controls are refused in every lexical context and retain their exact character span.
     #[test]
     fn bidirectional_controls_are_refused_in_code_comments_and_strings() {
@@ -822,18 +751,6 @@ mod tests {
         }
     }
 
-    /// Unicode scalar escapes decode in ordinary strings and f-string literal parts without admitting raw controls.
-    #[test]
-    fn unicode_scalar_escapes_decode_in_text_literals() {
-        let tokens = lex_ok(r#""A\u{1f388}" f"\u{200f}{name}""#);
-        assert!(matches!(&tokens[0].kind, TokenKind::String(value) if value == "A🎈"));
-        assert!(matches!(
-            &tokens[1].kind,
-            TokenKind::FString(parts)
-                if matches!(&parts[0], FStringPart::Literal(value) if value == "\u{200f}")
-        ));
-    }
-
     /// Malformed, surrogate and out-of-range Unicode scalar escapes share the dedicated refusal.
     #[test]
     fn malformed_unicode_scalar_escapes_are_refused() {
@@ -845,69 +762,6 @@ mod tests {
                 "source should have one malformed-escape diagnostic: {source:?}"
             );
             assert_eq!(errors[0].stable_code(), Some("INCAN-P0102"));
-        }
-    }
-
-    #[test]
-    fn test_indentation() {
-        let source = "def foo():\n  x = 1\n  y = 2\nx = 3";
-        let tokens = lex_ok(source);
-
-        // Find indent and dedent tokens
-        let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
-        let dedent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Dedent)).count();
-
-        assert_eq!(indent_count, 1, "Should have 1 INDENT token");
-        assert_eq!(dedent_count, 1, "Should have 1 DEDENT token");
-    }
-
-    #[test]
-    fn test_import_path() {
-        let tokens = lex_ok("import polars::prelude as pl");
-        assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Import)));
-        assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "polars"));
-        assert!(matches!(
-            tokens[2].kind,
-            TokenKind::Punctuation(PunctuationId::ColonColon)
-        ));
-        assert!(matches!(&tokens[3].kind, TokenKind::Ident(s) if s == "prelude"));
-        assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::As)));
-        assert!(matches!(&tokens[5].kind, TokenKind::Ident(s) if s == "pl"));
-    }
-
-    #[test]
-    fn test_fstring() {
-        let tokens = lex_ok(r#"f"Hello {name}!""#);
-        match &tokens[0].kind {
-            TokenKind::FString(parts) => {
-                assert_eq!(parts.len(), 3);
-                assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "Hello "));
-                assert!(matches!(
-                    &parts[1],
-                    FStringPart::Expr { text, offset } if text == "name" && *offset == 8
-                ));
-                assert!(matches!(&parts[2], FStringPart::Literal(s) if s == "!"));
-            }
-            _ => panic!("Expected FString token"),
-        }
-    }
-
-    #[test]
-    fn test_fstring_multiple_expression_offsets() {
-        let tokens = lex_ok(r#"f"A {x} B {user.name}!""#);
-        match &tokens[0].kind {
-            TokenKind::FString(parts) => {
-                assert_eq!(parts.len(), 5);
-                assert!(matches!(
-                    &parts[1],
-                    FStringPart::Expr { text, offset } if text == "x" && *offset == 4
-                ));
-                assert!(matches!(
-                    &parts[3],
-                    FStringPart::Expr { text, offset } if text == "user.name" && *offset == 10
-                ));
-            }
-            _ => panic!("Expected FString token"),
         }
     }
 
@@ -935,62 +789,233 @@ mod tests {
     }
 
     #[test]
-    fn test_matched_brackets_ok() {
-        // Properly matched brackets should work fine
-        let tokens = lex_ok("(x)");
-        assert!(matches!(tokens[0].kind, TokenKind::Punctuation(PunctuationId::LParen)));
-        assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "x"));
-        assert!(matches!(tokens[2].kind, TokenKind::Punctuation(PunctuationId::RParen)));
+    fn lexer_cases() {
+        run_source_rows(LEXER_CASES, |source| crate::lexer::lex(source));
     }
 
-    #[test]
-    fn test_multiple_dedents() {
-        // Multiple dedent levels in one line
-        let source = "def foo():\n  if True:\n    x = 1\ny = 2";
-        let tokens = lex_ok(source);
+    const LEXER_CASES: &[SourceRow<Vec<Token>, String>] = &[
+        SourceRow {
+            name: "test_keywords",
+            source: "def async await class model trait",
+            check: |_source, tokens| {
+                assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Def)));
+                assert!(matches!(tokens[1].kind, TokenKind::Keyword(KeywordId::Async)));
+                assert!(matches!(tokens[2].kind, TokenKind::Keyword(KeywordId::Await)));
+                assert!(matches!(tokens[3].kind, TokenKind::Keyword(KeywordId::Class)));
+                assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::Model)));
+                assert!(matches!(tokens[5].kind, TokenKind::Keyword(KeywordId::Trait)));
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_operators",
+            source: "+ - * / :: => -> ? @ | == != @= |> <| & &= |= ^ ^= ~ << <<= >> >>=",
+            check: |_source, tokens| {
+                assert!(matches!(tokens[0].kind, TokenKind::Operator(OperatorId::Plus)));
+                assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::Minus)));
+                assert!(matches!(tokens[2].kind, TokenKind::Operator(OperatorId::Star)));
+                assert!(matches!(tokens[3].kind, TokenKind::Operator(OperatorId::Slash)));
+                assert!(matches!(
+                    tokens[4].kind,
+                    TokenKind::Punctuation(PunctuationId::ColonColon)
+                ));
+                assert!(matches!(
+                    tokens[5].kind,
+                    TokenKind::Punctuation(PunctuationId::FatArrow)
+                ));
+                assert!(matches!(tokens[6].kind, TokenKind::Punctuation(PunctuationId::Arrow)));
+                assert!(matches!(
+                    tokens[7].kind,
+                    TokenKind::Punctuation(PunctuationId::Question)
+                ));
+                assert!(matches!(tokens[8].kind, TokenKind::Punctuation(PunctuationId::At)));
+                assert!(matches!(tokens[9].kind, TokenKind::Punctuation(PunctuationId::Pipe)));
+                assert!(matches!(tokens[10].kind, TokenKind::Operator(OperatorId::EqEq)));
+                assert!(matches!(tokens[11].kind, TokenKind::Operator(OperatorId::NotEq)));
+                assert!(matches!(tokens[12].kind, TokenKind::Operator(OperatorId::MatMulEq)));
+                assert!(matches!(tokens[13].kind, TokenKind::Operator(OperatorId::PipeForward)));
+                assert!(matches!(tokens[14].kind, TokenKind::Operator(OperatorId::PipeBackward)));
+                assert!(matches!(tokens[15].kind, TokenKind::Operator(OperatorId::Amp)));
+                assert!(matches!(tokens[16].kind, TokenKind::Operator(OperatorId::AmpEq)));
+                assert!(matches!(tokens[17].kind, TokenKind::Operator(OperatorId::PipeEq)));
+                assert!(matches!(tokens[18].kind, TokenKind::Operator(OperatorId::Caret)));
+                assert!(matches!(tokens[19].kind, TokenKind::Operator(OperatorId::CaretEq)));
+                assert!(matches!(tokens[20].kind, TokenKind::Operator(OperatorId::Tilde)));
+                assert!(matches!(tokens[21].kind, TokenKind::Operator(OperatorId::Shl)));
+                assert!(matches!(tokens[22].kind, TokenKind::Operator(OperatorId::ShlEq)));
+                assert!(matches!(tokens[23].kind, TokenKind::Operator(OperatorId::Shr)));
+                assert!(matches!(tokens[24].kind, TokenKind::Operator(OperatorId::ShrEq)));
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "numeric_suffix_literals_are_single_tokens_numeric_contract",
+            source: "42u16 7i8 3.14f32",
+            check: |_source, tokens| {
+                assert_eq!(tokens.len(), 4, "three literals plus EOF: {tokens:?}");
+                assert!(
+                    matches!(&tokens[0].kind, TokenKind::Int(lit) if lit.repr == "42u16" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::U16))
+                );
+                assert!(
+                    matches!(&tokens[1].kind, TokenKind::Int(lit) if lit.repr == "7i8" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::I8))
+                );
+                assert!(
+                    matches!(&tokens[2].kind, TokenKind::Float(lit) if lit.repr == "3.14f32" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::F32))
+                );
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_strings",
+            source: r#""hello" 'world'"#,
+            check: |_source, tokens| {
+                assert!(matches!(&tokens[0].kind, TokenKind::String(s) if s == "hello"));
+                assert!(matches!(&tokens[1].kind, TokenKind::String(s) if s == "world"));
+                Ok(())
+            },
+        },
+        // Unicode scalar escapes decode in ordinary strings and f-string literal parts without admitting raw controls.
+        SourceRow {
+            name: "unicode_scalar_escapes_decode_in_text_literals",
+            source: r#""A\u{1f388}" f"\u{200f}{name}""#,
+            check: |_source, tokens| {
+                assert!(matches!(&tokens[0].kind, TokenKind::String(value) if value == "A🎈"));
+                assert!(matches!(
+                    &tokens[1].kind,
+                    TokenKind::FString(parts)
+                        if matches!(&parts[0], FStringPart::Literal(value) if value == "\u{200f}")
+                ));
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_indentation",
+            source: "def foo():\n  x = 1\n  y = 2\nx = 3",
+            check: |_source, tokens| {
+                // Find indent and dedent tokens
+                let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
+                let dedent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Dedent)).count();
 
-        let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
-        let dedent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Dedent)).count();
+                assert_eq!(indent_count, 1, "Should have 1 INDENT token");
+                assert_eq!(dedent_count, 1, "Should have 1 DEDENT token");
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_import_path",
+            source: "import polars::prelude as pl",
+            check: |_source, tokens| {
+                assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Import)));
+                assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "polars"));
+                assert!(matches!(
+                    tokens[2].kind,
+                    TokenKind::Punctuation(PunctuationId::ColonColon)
+                ));
+                assert!(matches!(&tokens[3].kind, TokenKind::Ident(s) if s == "prelude"));
+                assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::As)));
+                assert!(matches!(&tokens[5].kind, TokenKind::Ident(s) if s == "pl"));
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_fstring",
+            source: r#"f"Hello {name}!""#,
+            check: |_source, tokens| {
+                match &tokens[0].kind {
+                    TokenKind::FString(parts) => {
+                        assert_eq!(parts.len(), 3);
+                        assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "Hello "));
+                        assert!(matches!(
+                            &parts[1],
+                            FStringPart::Expr { text, offset } if text == "name" && *offset == 8
+                        ));
+                        assert!(matches!(&parts[2], FStringPart::Literal(s) if s == "!"));
+                    }
+                    _ => panic!("Expected FString token"),
+                }
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_fstring_multiple_expression_offsets",
+            source: r#"f"A {x} B {user.name}!""#,
+            check: |_source, tokens| {
+                match &tokens[0].kind {
+                    TokenKind::FString(parts) => {
+                        assert_eq!(parts.len(), 5);
+                        assert!(matches!(
+                            &parts[1],
+                            FStringPart::Expr { text, offset } if text == "x" && *offset == 4
+                        ));
+                        assert!(matches!(
+                            &parts[3],
+                            FStringPart::Expr { text, offset } if text == "user.name" && *offset == 10
+                        ));
+                    }
+                    _ => panic!("Expected FString token"),
+                }
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_matched_brackets_ok",
+            source: "(x)",
+            check: |_source, tokens| {
+                assert!(matches!(tokens[0].kind, TokenKind::Punctuation(PunctuationId::LParen)));
+                assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "x"));
+                assert!(matches!(tokens[2].kind, TokenKind::Punctuation(PunctuationId::RParen)));
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_multiple_dedents",
+            source: "def foo():\n  if True:\n    x = 1\ny = 2",
+            check: |_source, tokens| {
+                let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
+                let dedent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Dedent)).count();
 
-        assert_eq!(indent_count, 2, "Should have 2 INDENT tokens");
-        assert_eq!(dedent_count, 2, "Should have 2 DEDENT tokens");
-    }
-
-    #[test]
-    fn test_tabs_as_spaces() {
-        // Tabs count as 2 spaces
-        let source = "def foo():\n\tx = 1"; // Tab indentation
-        let tokens = lex_ok(source);
-
-        let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
-        assert_eq!(indent_count, 1, "Tab should produce INDENT");
-    }
-
-    #[test]
-    fn test_newlines_inside_brackets() {
-        // Newlines inside brackets should NOT emit Newline tokens (implicit continuation)
-        let source = "foo(\n  x,\n  y\n)";
-        let tokens = lex_ok(source);
-
-        let newline_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Newline)).count();
-        assert_eq!(newline_count, 0, "No Newline tokens inside brackets");
-    }
-
-    #[test]
-    fn test_range_not_float() {
-        // 1..2 should be Int, DotDot, Int - not a float
-        let tokens = lex_ok("1..2");
-        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
-        assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDot)));
-        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 2));
-    }
-
-    #[test]
-    fn test_inclusive_range() {
-        // 1..=5 should work
-        let tokens = lex_ok("1..=5");
-        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
-        assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDotEq)));
-        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 5));
-    }
+                assert_eq!(indent_count, 2, "Should have 2 INDENT tokens");
+                assert_eq!(dedent_count, 2, "Should have 2 DEDENT tokens");
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_tabs_as_spaces",
+            source: "def foo():\n\tx = 1",
+            check: |_source, tokens| {
+                let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
+                assert_eq!(indent_count, 1, "Tab should produce INDENT");
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_newlines_inside_brackets",
+            source: "foo(\n  x,\n  y\n)",
+            check: |_source, tokens| {
+                let newline_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Newline)).count();
+                assert_eq!(newline_count, 0, "No Newline tokens inside brackets");
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_range_not_float",
+            source: "1..2",
+            check: |_source, tokens| {
+                assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
+                assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDot)));
+                assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 2));
+                Ok(())
+            },
+        },
+        SourceRow {
+            name: "test_inclusive_range",
+            source: "1..=5",
+            check: |_source, tokens| {
+                assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
+                assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDotEq)));
+                assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 5));
+                Ok(())
+            },
+        },
+    ];
 }
