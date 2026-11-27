@@ -14,6 +14,8 @@ const BASIS_SELECTOR: &[u8] = b"chbase\x00";
 const ORDER_SELECTOR: &[u8] = b"nsrank\x00";
 const COMPLETION_SELECTOR: &[u8] = b"chdone\x00";
 pub const IMPORT_ORDER_FILE: &str = "import-closures.crumb";
+/// Request a fresh checked-library owner census rather than a program import closure.
+pub const LIBRARY_OWNER_OUTPUT_SUFFIX: &str = ".library-owners.graph-body-output";
 const IMPORT_ORDER_ROW: &[u8] = b"imprnk\x00";
 
 /// One completed worker value and its exact source receipt before the next stage.

@@ -53,7 +53,7 @@ from compiler_namespace_products import (
     ExecutableCallInputs, prepare_namespace_products, stage_call_contracts,
 )
 from compiler_lowering_order import LoweringOrders
-from compiler_lowering_sources import LoweringBody, body_value, lowering_event_source
+from compiler_lowering_sources import LoweringBody, add_fresh_lowering_witnesses, body_value, lowering_event_source
 from compiler_plan_modules import (
     PlanModuleAdmissions,
     StagedPlan,
@@ -68,7 +68,7 @@ from compiler_body_projection import (
     dependency_read_key,
     dependency_signature_key,
     dependency_span_key,
-    module_spans,
+    namespace_dependency_reads,
     root,
     source_projection,
 )
@@ -78,6 +78,7 @@ from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord
 from compiler_selected_body_roots import BodyRootSelection
 from compiler_lowering_settlement import settle_reported_lowering
 from engine_lowering_evidence import LoweredFunction, PlanRefusalReport, SelectedBodyRoot
+from selected_provider_call_shapes import PROVIDER_CALL_SHAPE_FAMILY, ProviderCallShapeSelection, dependency_call_shape_key
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
@@ -189,6 +190,7 @@ pub def prepare_compiled_bodies(
     plan_admissions: Option[PlanModuleAdmissions] = None,
     completed_plan_events: Option[CompletedPlanEvents] = None,
     report_roots: bool = false,
+    provider_shapes: ProviderCallShapeSelection = ProviderCallShapeSelection(),
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -211,6 +213,8 @@ pub def prepare_compiled_bodies(
     staging = begin_work()
     staging_sources = begin_work()
     mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods, compiler, captured_sources)?
+    for slot in provider_shapes.values.keys():
+        staged.source.add(slot, provider_shapes.values[slot].digest)
     for positioned in captured_positions.keys():
         staged.source.add(positioned, captured_positions[positioned])
 
@@ -218,6 +222,7 @@ pub def prepare_compiled_bodies(
     order = authenticated.order
     executable, local_receipts = stage_compiled_scope_and_namespaces(
         staged, authenticated, origin, selected, changed_sources, retained, cutoff, plan_output is not None,
+        provider_shapes,
     )?
     staging_bodies = begin_work()
     mut body_roots = BodyRootSelection(enabled=report_roots)
@@ -237,7 +242,7 @@ pub def prepare_compiled_bodies(
         set([namespace.module for namespace in authenticated.outputs.namespaces]),
         order,
         executable,
-        authenticated.scopes, body_roots,
+        authenticated.scopes, body_roots, provider_shapes,
     )?
     record_work(Operation.EngineGraphStaging, "compiled-body-staging", staging_bodies)
     staging_lowering = begin_work()
@@ -262,6 +267,7 @@ pub def prepare_compiled_bodies(
         authenticated.scopes,
         plan_admissions,
         completed_plan_events, body_roots,
+        provider_shapes,
     )?
     record_work(Operation.EngineGraphStaging, "compiled-lowering-staging", staging_lowering)
     record_work(Operation.EngineGraphStaging, output.0, staging)
@@ -282,7 +288,7 @@ pub def prepare_compiled_bodies(
 def stage_compiled_scope_and_namespaces(
     mut staged: BorrowedMut[StagedCompiledBodySources], authenticated: Borrowed[AuthenticatedCompiledBodies],
     origin: str, selected: Option[Snapshot], changed_sources: list[RecordKey], retained: list[SelectedBodyRecord],
-    cutoff: EditCutoff, has_plan: bool,
+    cutoff: EditCutoff, has_plan: bool, provider_shapes: Borrowed[ProviderCallShapeSelection],
 ) -> Result[tuple[ExecutableCallInputs, PublicationLocalReceipts], str]:
     """Stage scope, namespace order and namespaces in the same transaction as their dependent bodies."""
     staging_scope = begin_work()
@@ -300,15 +306,18 @@ def stage_compiled_scope_and_namespaces(
         retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
     executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
     mut local_receipts = PublicationLocalReceipts.open(selected, has_plan)
-    spans = module_spans(
-        staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff,
-        local_receipts, authenticated.scopes.typed,
+    dependencies = namespace_dependency_reads(
+        staged.projections, authenticated.outputs.values, retained, authenticated.restored_owners, selected,
+        staged.editable_packages, origin, cutoff, local_receipts, provider_shapes, authenticated.scopes.typed,
     )?
-    for slot in spans.retained.keys():
-        staged.source.add(slot, spans.retained[slot])
+    for slot in dependencies.retained.keys():
+        staged.source.add(slot, dependencies.retained[slot])
     record_work(Operation.EngineGraphStaging, "compiled-scope-order", staging_scope)
     staging_namespaces = begin_work()
-    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts, authenticated.scopes)?
+    stage_compiled_namespaces(
+        staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin,
+        order, executable, dependencies.modules, authenticated.layouts, authenticated.scopes,
+    )?
     record_work(Operation.EngineGraphStaging, "compiled-namespace-staging", staging_namespaces)
     return Ok((executable, local_receipts))
 
@@ -328,6 +337,7 @@ def stage_compiled_body_values(
     order: Borrowed[Dict[str, NamespaceOrder]],
     executable: Borrowed[ExecutableCallInputs],
     scopes: Borrowed[ExecutableScopeInputs], mut body_roots: BorrowedMut[BodyRootSelection],
+    provider_shapes: Borrowed[ProviderCallShapeSelection],
 ) -> Result[int, str]:
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
@@ -371,6 +381,8 @@ def stage_compiled_body_values(
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
+            if let Some(key) = dependency_call_shape_key(provider_shapes, origin, dependency)?:
+                local_reads.append(prepared_product_request(key))
             match dependency_span_key(projections, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
@@ -438,7 +450,7 @@ def stage_compiled_namespaces(
     origin: str,
     order: Borrowed[Dict[str, NamespaceOrder]],
     executable: Borrowed[ExecutableCallInputs],
-    spans: Borrowed[Dict[str, list[RecordKey]]],
+    dependency_reads: Borrowed[Dict[str, list[RecordKey]]],
     layouts: Borrowed[Dict[str, bytes]],
     scopes: Borrowed[ExecutableScopeInputs],
 ) -> Result[None, str]:
@@ -447,7 +459,8 @@ def stage_compiled_namespaces(
 
     A namespace row carries its module's whole Body IR, so it reads every owner's source: a body edit that leaves the
     census and the declaration index unchanged must still retire the row, or the module is restored with the old body.
-    For the same reason it reads the span of every editable dependency declaration its owners read.
+    Its restoration also depends on the editable declaration spans and checked provider shapes its owners read.
+    Those executable inputs do not change the semantic interface and member authority prepared above them.
     """
     for namespace in namespaces:
         projection = projections[namespace.module]
@@ -471,8 +484,8 @@ def stage_compiled_namespaces(
         prepare_namespace_products(prepared, source, scope, namespace, origin, reads, rank, position.evidence)?
         # Restoring the complete record also restores positioned spans and editor documentation.
         reads.append(prepared_product_request(projection.positioned.key))
-        if spans.contains_key(namespace.module):
-            reads.extend([prepared_product_request(span) for span in spans[namespace.module]])
+        if namespace.module in dependency_reads:
+            reads.extend([prepared_product_request(key) for key in dependency_reads[namespace.module]])
         if namespace.module in executable.modules:
             reads.extend([prepared_product_request(target) for target in executable.modules[namespace.module]])
         if namespace.module in scopes.namespaces:
@@ -532,6 +545,7 @@ def prepare_optional_lowering_records(
     scopes: Borrowed[ExecutableScopeInputs],
     plan_admissions: Option[PlanModuleAdmissions],
     completed_plan_events: Option[CompletedPlanEvents], mut body_roots: BorrowedMut[BodyRootSelection],
+    provider_shapes: Borrowed[ProviderCallShapeSelection],
 ) -> Result[tuple[LoweringDemandWork, Option[list[SelectedBodyRoot]], list[LoweredFunction]], str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
@@ -559,7 +573,7 @@ def prepare_optional_lowering_records(
             return Err("partially restored plan did not retain its demanded checked owner")
         witnesses = lowering_witnesses(
             projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, scopes,
-            local_receipts, cutoff, body_roots,
+            local_receipts, cutoff, body_roots, provider_shapes,
         )?
         selected_roots = body_roots.selected()
         functions: list[LoweredFunction] = match (selected_roots, refusals):
@@ -832,6 +846,7 @@ def lowering_witnesses(
     scopes: Borrowed[ExecutableScopeInputs],
     local_receipts: Borrowed[PublicationLocalReceipts],
     cutoff: EditCutoff, mut body_roots: BorrowedMut[BodyRootSelection],
+    provider_shapes: Borrowed[ProviderCallShapeSelection],
 ) -> Result[list[LoweringBody], str]:
     """
     Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts. A
@@ -839,7 +854,9 @@ def lowering_witnesses(
     """
     mut witnesses: list[LoweringBody] = []
     mut witnessed: set[str] = set()
-    add_fresh_lowering_witnesses(witnesses, witnessed, projections, fresh, unit, origin, orders, scopes)?
+    add_fresh_lowering_witnesses(
+        witnesses, witnessed, projections, fresh, unit, origin, orders, scopes, provider_shapes,
+    )?
     reader = selected_owner_metadata_reader(scopes.typed and len(retained) > 0)?
     for record in retained:
         if record.identity in witnessed:
@@ -878,6 +895,11 @@ def lowering_witnesses(
             match witness:
                 ReadWitness.Found(found, _) =>
                     input = found.request.key
+                    if input.family == PROVIDER_CALL_SHAPE_FAMILY:
+                        if not source.holds(encode_record_key(input)?):
+                            return Err("retained lowering owner has no currently selected provider call shape")
+                        signatures.append(input)
+                        continue
                     if input.family in [
                         "declaration",
                         "declaration-slot",
@@ -915,54 +937,6 @@ def lowering_witnesses(
         witnessed.add(record.identity)
         body_roots.retained(key, decoded.name, decoded.source, decoded.symbol)
     return Ok(witnesses)
-
-
-def add_fresh_lowering_witnesses(
-    mut witnesses: BorrowedMut[list[LoweringBody]], mut witnessed: BorrowedMut[set[str]],
-    projections: Borrowed[Dict[str, SourceProjection]], fresh: list[CompiledBodyValue], unit: UnitDescription,
-    origin: str, orders: Borrowed[LoweringOrders], scopes: Borrowed[ExecutableScopeInputs],
-) -> Result[None, str]:
-    """Read the current checker outputs and collect the exact inputs each fresh lowering owner consumed."""
-    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
-    for value in fresh:
-        projection = projections[value.module]
-        mut signatures = [body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)]
-        if len(value.scope_names) == 0:
-            signatures.append(projection.census.key)
-        else:
-            for name in value.scope_names:
-                signatures.append(scope_key(projection.census, name))
-        for feature in projections[value.module].feature_inputs:
-            signatures.append(feature.key)
-        for dependency in value.dependency_reads:
-            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) => signatures.append(key)
-                None => pass
-            match dependency_span_key(projections, dependency, editable_packages)?:
-                Some(key) => signatures.append(key)
-                None => pass
-            match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) =>
-                    signatures.append(key)
-                    signatures.append(signature_scope_key(key))
-                None => pass
-        header = match value.identity in scopes.owners:
-            true => scopes.owners[value.identity]
-            false => predecessor_owner_metadata(value.body_ir)?
-        if header.identity != value.identity:
-            return Err("graph-eligible Body IR disagrees with its stable owner")
-        witnesses.append(
-            LoweringBody(
-                identity=value.identity,
-                symbol=header.symbol,
-                module=value.module,
-                order=orders.fresh(value.module),
-                final=value.final,
-                signature_reads=signatures,
-            ),
-        )
-        witnessed.add(value.identity)
-    return Ok(None)
 
 
 def retained_sources_current(

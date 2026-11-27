@@ -11,6 +11,7 @@ pub from rust::internal_models_native import (
     decode_namespace_order,
     certified_namespace_order,
     IMPORT_ORDER_FILE,
+    LIBRARY_OWNER_OUTPUT_SUFFIX,
     ranked_output_suffix,
     encode_import_closures,
     read_import_closures,

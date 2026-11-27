@@ -20,6 +20,9 @@ use stable_encoding::stable_encode;
 
 use super::transitive_layouts::{built_table, ready_layouts, ready_tables};
 
+type ImportedFunctionSignatures =
+    HashMap<CanonicalSymbolId, Result<Option<incan_semantics_core::stable_identity::DeclarationSignature>, ()>>;
+
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
 pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 6;
 
@@ -35,6 +38,8 @@ pub struct DependencyInterfacePreparationCache {
     /// Each compiled Loaf's install record, by Loaf key: what installing it reads of it.
     pub(super) install_records:
         Arc<std::sync::Mutex<HashMap<String, Arc<crate::library_manifest::install_record::LoafInstallRecord>>>>,
+    /// Exact imported function signatures reached by this build, including missing or conflicting evidence.
+    pub(super) imported_function_signatures: Arc<std::sync::Mutex<ImportedFunctionSignatures>>,
     /// Each compiled Loaf's nominal type origins, by Loaf key, for the foreign preparations that reach it.
     pub(super) type_origins: Arc<std::sync::Mutex<HashMap<String, Arc<LoafTypeOrigins>>>>,
     /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.

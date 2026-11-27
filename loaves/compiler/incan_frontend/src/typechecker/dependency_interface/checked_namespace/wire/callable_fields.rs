@@ -118,22 +118,11 @@ impl Project for DeclarationSignature {
         Cell::Text(self.as_str().to_owned())
     }
     fn restore(value: Cell) -> Result<Self, String> {
-        use incan_semantics_core::stable_identity::source_signature::SOURCE_SIGNATURE_PROFILE;
         use serde::Deserialize;
         use serde::de::value::{Error, SeqDeserializer};
 
         let spelling = String::restore(value)?;
-        let digest = spelling
-            .strip_prefix(SOURCE_SIGNATURE_PROFILE)
-            .and_then(|rest| rest.strip_prefix(":sha256:"))
-            .ok_or_else(|| "unknown callable declaration signature profile".to_owned())?;
-        if digest.len() != 64
-            || !digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err("invalid callable declaration signature digest".into());
-        }
+        crate::library_manifest::validate_source_signature(&spelling)?;
         // The kernel exposes its scalar as a one-field tuple struct through its existing typed Serde contract.
         Self::deserialize(SeqDeserializer::<_, Error>::new(std::iter::once(spelling)))
             .map_err(|error| error.to_string())

@@ -1,0 +1,128 @@
+"""Select checked interop witnesses from the same provider Facts the ordinary executable links."""
+
+from std.fs import Path
+from pub::incan_platform.store import Snapshot, Transaction, get, keys_with_prefix, stage_delete, stage_put
+from pub::internal_models import CompiledBodyDependencyRead
+from pub::internal_models.records import RecordKey, encode_record_key
+from compiler_body_keys import IDENTITY_PROFILE, body_key
+from compiler_captured_sources import source_origin
+from provider_call_shapes import provider_call_shape_digest, read_provider_call_shapes
+from unit import UnitDescription
+
+pub const PROVIDER_CALL_SHAPE_FAMILY: str = "provider-call-shape"
+
+
+pub model ProviderCallShape:
+    """A checked provider owner and the digest of its canonical interop fields."""
+
+    pub key: RecordKey
+    pub digest: bytes
+
+
+pub model ProviderCallShapeSelection:
+    """Captured shape values, proven module coverage, and prior values a narrower capture cannot reuse."""
+
+    pub values: Dict[str, ProviderCallShape] = {}
+    pub covered_modules: set[tuple[str, str]] = set()
+    pub uncaptured: Dict[str, RecordKey] = {}
+
+
+pub def selected_provider_call_shapes(
+    unit: UnitDescription, modules: Borrowed[Dict[str, tuple[str, str]]],
+) -> Result[ProviderCallShapeSelection, str]:
+    """Read each reached immutable member once and bind its owners to this request's authored source identities."""
+    mut shapes: Dict[str, ProviderCallShape] = {}
+    mut covered: set[tuple[str, str]] = set()
+    if len(unit.provider_call_shapes) == 0 or len(modules) == 0:
+        return Ok(ProviderCallShapeSelection())
+    origin = source_origin(unit)
+    mut layouts: set[str] = set()
+    for loaf in unit.loaves:
+        if loaf.dir in layouts or loaf.dir not in unit.provider_call_shapes:
+            continue
+        layouts.add(loaf.dir)
+        provider = unit.provider_call_shapes[loaf.dir]
+        project = Path(provider[0])
+        member = provider[1]
+        selected = read_provider_call_shapes(Path(loaf.dir).joinpath(member.path), member)?
+        for source in selected.covered_modules:
+            if let Some(module) = captured_provider_module(project, source, loaf.name, modules)?:
+                covered.add((loaf.name, module))
+        for owner in selected.owners:
+            # A complete library Fact can contain owners this request did not capture.
+            module = match captured_provider_module(project, owner.module, loaf.name, modules)?:
+                Some(found) => found
+                None => continue
+            key = provider_call_shape_key(origin, loaf.name, module, owner.identity)
+            slot = encode_record_key(key)?
+            if slot in shapes:
+                return Err(f"selected providers publish two checked call shapes for {loaf.name}:{module}:{owner.identity}")
+            shapes[slot] = ProviderCallShape(key=key, digest=provider_call_shape_digest(owner)?)
+    return Ok(ProviderCallShapeSelection(values=shapes, covered_modules=covered))
+
+
+def captured_provider_module(
+    project: Path, relative: str, package: str, modules: Borrowed[Dict[str, tuple[str, str]]],
+) -> Result[Option[str], str]:
+    """Bind a member's project-relative source to the captured package and its logical module."""
+    source = project.joinpath(relative).0
+    if source not in modules:
+        return Ok(None)
+    captured = modules[source]
+    if captured[0] != package:
+        return Err(f"selected provider {package} and captured authority {captured[0]} disagree about {relative}")
+    return Ok(Some(captured[1]))
+
+
+pub def stage_provider_call_shapes(
+    selected: Snapshot, mut prepared: Transaction, unit: UnitDescription,
+    modules: Borrowed[Dict[str, tuple[str, str]]], mut shapes: BorrowedMut[ProviderCallShapeSelection],
+) -> Result[list[RecordKey], str]:
+    """Stage each changed witness before traversing readers, including deletions authorized by the selected member."""
+    origin = source_origin(unit)
+    packages = set([loaf.name for loaf in unit.loaves if loaf.is_dependency()])
+    captured = set([module for module in modules.values()])
+    prefix = f"{PROVIDER_CALL_SHAPE_FAMILY}\t{IDENTITY_PROFILE}\t{origin}\t"
+    mut changed: list[RecordKey] = []
+    for previous in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
+        if previous in shapes.values:
+            continue
+        fields = previous.split("\t")
+        if len(fields) != 6:
+            return Err("the selected graph contains a malformed provider call-shape key")
+        key = provider_call_shape_key(origin, fields[4], fields[5], fields[3])
+        if fields[4] in packages:
+            module = (fields[4], fields[5])
+            if module not in captured:
+                # A narrower request cannot delete a shared fact or use it to restore a dependent.
+                shapes.uncaptured[previous] = key
+                continue
+            if module not in shapes.covered_modules:
+                return Err(f"selected provider {fields[4]} does not certify the previously witnessed call shape {fields[5]}:{fields[3]}")
+        stage_delete(prepared, previous)
+        changed.append(key)
+    for slot in shapes.values.keys():
+        shape = shapes.values[slot]
+        if get(selected, slot).map_err((error) => error.message())? != Some(shape.digest):
+            stage_put(prepared, slot, shape.digest)
+            changed.append(shape.key)
+    return Ok(changed)
+
+
+pub def dependency_call_shape_key(
+    shapes: Borrowed[ProviderCallShapeSelection], origin: str, dependency: CompiledBodyDependencyRead,
+) -> Result[Option[RecordKey], str]:
+    """Use the selected witness only for the exact package, module and checked declaration reported by the caller."""
+    if let Some(package) = dependency.package:
+        key = provider_call_shape_key(origin, package, dependency.module, dependency.identity)
+        slot = encode_record_key(key)?
+        if slot in shapes.uncaptured:
+            return Err(f"checked dependency {package}:{dependency.module}:{dependency.identity} is outside the current capture")
+        if slot in shapes.values:
+            return Ok(Some(key))
+    return Ok(None)
+
+
+pub def provider_call_shape_key(origin: str, package: str, module: str, identity: str) -> RecordKey:
+    """Name one provider declaration in the consumer's selected graph without coupling it to the native result."""
+    return body_key(PROVIDER_CALL_SHAPE_FAMILY, origin, identity, package, module)

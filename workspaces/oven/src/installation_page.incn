@@ -30,7 +30,7 @@ from toolchain_types import NativeCrate, Toolchain
 from installation_capability import (
     DriverCapabilityIntake,
     driver_document,
-    plan_selection_capability,
+    driver_profiles,
     probe_driver_capability,
 )
 from installation_documents import capture as capture_documents
@@ -375,7 +375,7 @@ def capture(
     installed.compiler_facts.extend([fact_identity(Path(path))? for path in toolchain.rust_abi])
     installed.driver_observation = observe(Path(toolchain.driver))?.stamp
     mut documents = captured.documents
-    if plan_selection_capability(installed, documents)?:
+    if driver_profiles(installed, documents)?.plan_selection:
         return Err(f"{toolchain.driver}: installed documents did not authenticate the driver capability")
     proof = match intake:
         DriverCapabilityIntake.Legacy => None
@@ -383,7 +383,9 @@ def capture(
         DriverCapabilityIntake.Staged(verified) => verified
     if let Some(driver) = proof:
         document = driver_document(installed.driver, driver)
-        installed.supports_plan_module_selection_digest = plan_selection_capability(installed, [document])?
+        profiles = driver_profiles(installed, [document])?
+        installed.supports_plan_module_selection_digest = profiles.plan_selection
+        installed.supports_library_checked_local = profiles.library_local
         documents.append(document)
     rustc = Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
     installed.rust_version = compiler_version(rustc)?

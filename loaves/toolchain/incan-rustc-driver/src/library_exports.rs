@@ -295,6 +295,7 @@ mod tests {
             kind: ExportIdentityKind::Alias,
             projection: ExportIdentityProjection::Reexport { target_path },
             canonical: Some(CanonicalIdentityExport::from_canonical("facade", &identity).ok_or("missing identity")?),
+            source_signature: None,
         });
         Ok(())
     }

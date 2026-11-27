@@ -241,11 +241,25 @@ impl Dependencies {
     pub(crate) fn graph_body_records(&self) -> incan_frontend::checker_records::GraphBodyRecords {
         self.graph_body_records.clone()
     }
+
+    /// Whether this activation must publish checker products as well as diagnostics.
+    pub(crate) fn requests_graph_body_output(&self) -> bool {
+        self.graph_body_output.is_some()
+    }
 }
 
 /// Read exact artifacts from Oven's unit description and parse compilation options. Native inputs cannot be
 /// overridden by command-line flags, so checking, facts extraction, and compilation share one source.
 pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Result<Dependencies, String> {
+    dependencies_with_check_products(unit, arguments, false)
+}
+
+/// Also retain authenticated namespaces when a check is publishing the graph products of a program.
+pub(crate) fn dependencies_with_check_products(
+    unit: &UnitDescription,
+    arguments: &[String],
+    checking: bool,
+) -> Result<Dependencies, String> {
     let mut names = std::collections::BTreeSet::new();
     let mut externs = Vec::new();
     for native in &unit.externs {
@@ -327,7 +341,9 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
                 path,
                 anchors.bakery.clone(),
                 &unit.project_root,
-                graph_body_output.is_some() && plan_record_products.is_some() && unit.kind == UnitKind::Program,
+                graph_body_output.is_some()
+                    && unit.kind == UnitKind::Program
+                    && (checking || plan_record_products.is_some()),
             )?;
             if let Some(output) = graph_body_output.as_deref()
                 && pages.typed_executable != graph_body_output::typed_executable_output(output)
