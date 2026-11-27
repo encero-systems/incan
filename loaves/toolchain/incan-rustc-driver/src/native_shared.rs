@@ -78,15 +78,7 @@ pub(crate) fn libraries(
         {
             continue;
         }
-        let library = prepared(
-            root,
-            artifact,
-            externs,
-            directories,
-            identity,
-            &installation.store,
-            &shared,
-        )?;
+        let library = prepared(root, artifact, externs, directories, identity, &installation, &shared)?;
         covered.extend(library.inputs.iter().map(|(path, _)| path.clone()));
         shared.push((format!("incan_debug_shared_{}", shared.len()), library.path));
     }
@@ -106,6 +98,7 @@ fn shared_rank(root: &str) -> u8 {
 struct Installation {
     directories: Vec<PathBuf>,
     store: PathBuf,
+    home: Option<PathBuf>,
 }
 
 impl Installation {
@@ -113,18 +106,20 @@ impl Installation {
     /// the installed and relinked Loaves and keeps the carriers in its cache. An uninstalled driver has no home, as
     /// it stores no identity proof: it derives carriers of the sysroot alone in the development store it is given.
     fn observed(identity: &DriverIdentity, store: &Path) -> Result<Self, DriverError> {
-        let executable = fs::canonicalize(std::env::current_exe().map_err(io_error)?).map_err(io_error)?;
+        let executable = std::env::current_exe().map_err(io_error)?;
         let mut layout = executable.ancestors().skip(1);
         let bin = layout.next().and_then(Path::file_name);
         let toolchains = layout.nth(1).and_then(Path::file_name);
         match (bin, toolchains, executable.ancestors().nth(4)) {
             (Some(bin), Some(toolchains), Some(home)) if bin == "bin" && toolchains == "toolchains" => Ok(Self {
-                directories: vec![identity.sysroot.clone(), home.to_path_buf()],
+                directories: vec![identity.sysroot.clone(), fs::canonicalize(home).map_err(io_error)?],
                 store: home.join("cache/native-shared"),
+                home: Some(home.to_path_buf()),
             }),
             _ => Ok(Self {
                 directories: vec![identity.sysroot.clone()],
                 store: store.to_path_buf(),
+                home: None,
             }),
         }
     }
@@ -206,10 +201,12 @@ fn prepared(
     externs: &[(String, PathBuf)],
     directories: &[PathBuf],
     identity: &DriverIdentity,
-    store: &Path,
+    installation: &Installation,
     shared: &[(String, PathBuf)],
 ) -> Result<Library, DriverError> {
     // ---- Exact recipe and publication lock ----
+    let store = installation.store.as_path();
+    let home = installation.home.as_deref();
     let recipe = recipe(root, artifact, identity, store, shared)?;
     let index = store.join(format!("{}.json", recipe.key));
     let lock = File::options()
@@ -221,7 +218,7 @@ fn prepared(
     lock.lock().map_err(io_error)?;
 
     // ---- Completed native evidence ----
-    if let Some(library) = cached(&index, &recipe) {
+    if let Some(library) = cached(&index, &recipe, home) {
         return Ok(library);
     }
 
@@ -230,7 +227,7 @@ fn prepared(
     let staging = store.join(format!(".staged-{}-{number}", std::process::id()));
     fs::create_dir(&staging).map_err(io_error)?;
     let built = build(root, recipe, externs, directories, identity, store, &staging, shared);
-    let result = built.and_then(|library| publish(store, &index, library));
+    let result = built.and_then(|library| publish(store, &index, library, home));
     // This directory and every file in it belong to this invocation; no completed store entry is removed here.
     let _ = fs::remove_dir_all(&staging);
     result
@@ -336,8 +333,13 @@ fn link_tools(sdk: &str, target: &str) -> Result<Vec<PathBuf>, DriverError> {
 }
 
 /// Reuse only a completed carrier and transitive native inputs whose complete filesystem generations still match.
-fn cached(index: &Path, recipe: &Recipe) -> Option<Library> {
+fn cached(index: &Path, recipe: &Recipe, home: Option<&Path>) -> Option<Library> {
     let (path, stamp, inputs): Record = serde_json::from_slice(&fs::read(index).ok()?).ok()?;
+    let path = located(&path, home);
+    let inputs = inputs
+        .iter()
+        .map(|(input, generation)| (located(input, home), generation.clone()))
+        .collect::<Inputs>();
     let expected = format!("libincan_debug_shared_{}", &recipe.key[..16]);
     if path.file_stem()?.to_str()? != expected || path.parent()?.parent()? != index.parent()? {
         return None;
@@ -490,7 +492,7 @@ fn build(
 }
 
 /// Publish by the completed library's content digest, then atomically install its generation-guarded index.
-fn publish(store: &Path, index: &Path, library: Library) -> Result<Library, DriverError> {
+fn publish(store: &Path, index: &Path, library: Library, home: Option<&Path>) -> Result<Library, DriverError> {
     // ---- Content-addressed native output ----
     let bytes = fs::read(&library.path).map_err(io_error)?;
     let digest = hex::encode(Sha256::digest(&bytes));
@@ -512,7 +514,12 @@ fn publish(store: &Path, index: &Path, library: Library) -> Result<Library, Driv
 
     // ---- Completed recipe witness ----
     let (_, stamp) = observed(&path)?;
-    let record = (path.clone(), stamp, &library.inputs);
+    let inputs = library
+        .inputs
+        .iter()
+        .map(|(input, generation)| (recorded(input, home), generation.clone()))
+        .collect::<Inputs>();
+    let record = (recorded(&path, home), stamp, inputs);
     let bytes = serde_json::to_vec(&record).map_err(|error| refusal(&error.to_string()))?;
     let temporary = index.with_extension(format!("json.{}.tmp", std::process::id()));
     fs::write(&temporary, bytes).map_err(io_error)?;
@@ -521,6 +528,26 @@ fn publish(store: &Path, index: &Path, library: Library) -> Result<Library, Driv
         path,
         inputs: library.inputs,
     })
+}
+
+/// The prefix an index gives a file of the home, so the home's carriers are read again, not derived again, after the
+/// home moves: a move keeps every file's generation and changes only the home's path.
+const HOME_RELATIVE: &str = "$INCAN_HOME";
+
+/// Name a file of the home relative to it in an index; any other file keeps its absolute path.
+fn recorded(path: &Path, home: Option<&Path>) -> PathBuf {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) => Path::new(HOME_RELATIVE).join(rest),
+        None => path.to_path_buf(),
+    }
+}
+
+/// Resolve an index's file against the current home.
+fn located(path: &Path, home: Option<&Path>) -> PathBuf {
+    match (home, path.strip_prefix(HOME_RELATIVE)) {
+        (Some(home), Ok(rest)) => home.join(rest),
+        _ => path.to_path_buf(),
+    }
 }
 
 /// Observe each followed native file; unsupported filesystem observations never authorize reuse.
@@ -569,4 +596,46 @@ fn refusal(message: &str) -> DriverError {
 fn native_input_digest(path: &Path) -> std::io::Result<String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_input_digest", input = %path.display()).entered();
     crate::adapter::stable_link::file_digest(path)
+}
+
+#[cfg(test)]
+mod relocation_tests {
+    use super::*;
+
+    /// A carrier published in one home is read, not derived again, after that home moves to another path.
+    #[test]
+    fn a_moved_home_reads_its_carriers() -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let installed = scratch.path().join("install-home");
+        let input = installed.join("toolchains/0.6.0/native/libincan_native_runtime.rlib");
+        let staged = installed.join("cache/native-shared/.staged");
+        fs::create_dir_all(input.parent().ok_or("input has no directory")?)?;
+        fs::create_dir_all(&staged)?;
+        fs::write(&input, b"runtime")?;
+        let key = "0".repeat(64);
+        let name = format!("libincan_debug_shared_{}.dylib", &key[..16]);
+        fs::write(staged.join(&name), b"carrier")?;
+        let store = installed.join("cache/native-shared");
+        let index = store.join(format!("{key}.json"));
+        let library = Library {
+            path: staged.join(&name),
+            inputs: vec![observed(&input)?],
+        };
+        publish(&store, &index, library, Some(&installed))?;
+        assert!(!fs::read_to_string(&index)?.contains(installed.to_str().ok_or("home is not text")?));
+
+        let moved = scratch.path().join("home");
+        fs::rename(&installed, &moved)?;
+        let recipe = Recipe {
+            key,
+            inputs: vec![observed(
+                &moved.join("toolchains/0.6.0/native/libincan_native_runtime.rlib"),
+            )?],
+        };
+        let store = moved.join("cache/native-shared");
+        let read = cached(&store.join(format!("{}.json", recipe.key)), &recipe, Some(&moved))
+            .ok_or("carrier derived again")?;
+        assert!(read.path.starts_with(&store) && read.path.ends_with(&name));
+        Ok(())
+    }
 }
