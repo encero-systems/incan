@@ -156,3 +156,36 @@ pub(super) fn run_refusal_cases(cases: &[RefusalCase]) {
         .collect();
     report("refusal", failures);
 }
+
+pub(super) type VocabKeywords = std::collections::HashMap<String, Vec<incan_vocab::KeywordRegistration>>;
+pub(super) type VocabSurfaces = std::collections::HashMap<String, Vec<incan_vocab::DslSurface>>;
+
+/// A source parsed with the vocabulary registrations its row builds, and the checks its parse result must pass.
+pub(super) struct VocabCase {
+    /// The row's name, reported when it fails.
+    pub name: &'static str,
+    pub source: &'static str,
+    /// Builds the imported keyword registrations and, when the row declares surfaces, the DSL surfaces.
+    pub registrations: fn() -> (VocabKeywords, Option<VocabSurfaces>),
+    /// Receives the source and the parse result, accepted or refused.
+    pub check: fn(&str, Result<Program, Vec<CompileError>>) -> Result<(), Box<dyn std::error::Error>>,
+}
+
+/// Lexes each row's source, parses it with the row's registrations and runs its checks; fails once, naming each
+/// failing row.
+pub(super) fn run_vocab_cases(cases: &[VocabCase]) {
+    let failures = cases
+        .iter()
+        .filter_map(|case| {
+            run_row(|| {
+                let tokens = lexer::lex(case.source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+                let (keywords, surfaces) = (case.registrations)();
+                let parsed =
+                    crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keywords), surfaces.as_ref());
+                (case.check)(case.source, parsed).map_err(|error| error.to_string())
+            })
+            .map(|problem| format!("{}: {problem}", case.name))
+        })
+        .collect();
+    report("vocabulary", failures);
+}
