@@ -1,4 +1,9 @@
-"""Language-neutral v1 control-message models; strings name descriptors, never record payloads."""
+"""
+Language-neutral v1 control-message models and their versioned, tagged binary bodies; strings name descriptors,
+never record payloads, and lengths are validated before each decode allocation.
+"""
+
+from engine_wire import Decoder, MAX_PAYLOAD, Refusal, RefusalKind, joined, scalar, text, wide
 
 
 pub model Hello:
@@ -12,6 +17,49 @@ pub model Hello:
     pub credits: int
     pub payload_limit: int
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Hello's ordered v1 fields."""
+        if self.credits < 0 or self.credits > 4294967295:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="Hello.credits exceeds u32"))
+        if self.payload_limit < 0 or self.payload_limit > 4294967295:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="Hello.payload_limit exceeds u32"))
+        return Ok(
+            joined(
+                [
+                    scalar(1, 2),
+                    text(self.store_id)?,
+                    text(self.profile)?,
+                    text(self.service_generation)?,
+                    text(self.compiler_generation)?,
+                    scalar(int(self.peer_uid), 4),
+                    scalar(int(self.credits), 4),
+                    scalar(int(self.payload_limit), 4),
+                ],
+            ),
+        )
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Hello's fields only after checking their declared lengths."""
+        store_id = reader.text()?
+        profile = reader.text()?
+        service_generation = reader.text()?
+        compiler_generation = reader.text()?
+        peer_uid: u32 = reader.number(4)?.wrapping_resize()
+        credits = int(reader.number(4)?)
+        payload_limit = int(reader.number(4)?)
+        return Ok(
+            Hello(
+                store_id=store_id,
+                profile=profile,
+                service_generation=service_generation,
+                compiler_generation=compiler_generation,
+                peer_uid=peer_uid,
+                credits=credits,
+                payload_limit=payload_limit,
+            ),
+        )
+
 
 pub model Welcome:
     """Exact negotiated service identity and transport limits."""
@@ -23,6 +71,49 @@ pub model Welcome:
     pub peer_uid: u32
     pub credits: int
     pub payload_limit: int
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Welcome's ordered v1 fields."""
+        if self.credits < 0 or self.credits > 4294967295:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="Welcome.credits exceeds u32"))
+        if self.payload_limit < 0 or self.payload_limit > 4294967295:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="Welcome.payload_limit exceeds u32"))
+        return Ok(
+            joined(
+                [
+                    scalar(1, 2),
+                    text(self.store_id)?,
+                    text(self.profile)?,
+                    text(self.service_generation)?,
+                    text(self.compiler_generation)?,
+                    scalar(int(self.peer_uid), 4),
+                    scalar(int(self.credits), 4),
+                    scalar(int(self.payload_limit), 4),
+                ],
+            ),
+        )
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Welcome's fields only after checking their declared lengths."""
+        store_id = reader.text()?
+        profile = reader.text()?
+        service_generation = reader.text()?
+        compiler_generation = reader.text()?
+        peer_uid: u32 = reader.number(4)?.wrapping_resize()
+        credits = int(reader.number(4)?)
+        payload_limit = int(reader.number(4)?)
+        return Ok(
+            Welcome(
+                store_id=store_id,
+                profile=profile,
+                service_generation=service_generation,
+                compiler_generation=compiler_generation,
+                peer_uid=peer_uid,
+                credits=credits,
+                payload_limit=payload_limit,
+            ),
+        )
 
 
 pub model Submit:
@@ -39,6 +130,48 @@ pub model Submit:
     # The canonical unit options the client parsed (`engine_unit_options`); empty for an ordinary unit.
     pub unit_options: str = ""
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Submit's ordered v1 fields."""
+        return Ok(
+            joined(
+                [
+                    scalar(1, 2),
+                    text(self.command)?,
+                    text(self.view)?,
+                    text(self.input_selection)?,
+                    text(self.requested_roots)?,
+                    text(self.options)?,
+                    text(self.observation_policy)?,
+                    text(self.directory)?,
+                    text(self.unit_options)?,
+                ],
+            ),
+        )
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Submit's fields only after checking their declared lengths."""
+        command = reader.text()?
+        view = reader.text()?
+        input_selection = reader.text()?
+        requested_roots = reader.text()?
+        options = reader.text()?
+        observation_policy = reader.text()?
+        directory = reader.text()?
+        unit_options = reader.text()?
+        return Ok(
+            Submit(
+                command=command,
+                view=view,
+                input_selection=input_selection,
+                requested_roots=requested_roots,
+                options=options,
+                observation_policy=observation_policy,
+                directory=directory,
+                unit_options=unit_options,
+            ),
+        )
+
 
 pub model Accepted:
     """Capture and interest tokens; acceptance does not imply capture or completion."""
@@ -46,12 +179,34 @@ pub model Accepted:
     pub capture_token: str
     pub interest_token: str
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Accepted's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.capture_token)?, text(self.interest_token)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Accepted's fields only after checking their declared lengths."""
+        capture_token = reader.text()?
+        interest_token = reader.text()?
+        return Ok(Accepted(capture_token=capture_token, interest_token=interest_token))
+
 
 pub model Captured:
     """Immutable epoch and snapshot handles; capture is a separate producer."""
 
     pub epoch: str
     pub snapshot: str
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Captured's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.epoch)?, text(self.snapshot)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Captured's fields only after checking their declared lengths."""
+        epoch = reader.text()?
+        snapshot = reader.text()?
+        return Ok(Captured(epoch=epoch, snapshot=snapshot))
 
 
 pub model Query:
@@ -63,6 +218,35 @@ pub model Query:
     pub row_limit: int
     pub byte_limit: int
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Query's ordered v1 fields."""
+        if self.row_limit < 0 or self.row_limit > 4294967295:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="Query.row_limit exceeds u32"))
+        if self.byte_limit < 0 or self.byte_limit > 4294967295:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="Query.byte_limit exceeds u32"))
+        return Ok(
+            joined(
+                [
+                    scalar(1, 2),
+                    text(self.snapshot)?,
+                    text(self.query_root)?,
+                    text(self.cursor)?,
+                    scalar(int(self.row_limit), 4),
+                    scalar(int(self.byte_limit), 4),
+                ],
+            ),
+        )
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Query's fields only after checking their declared lengths."""
+        snapshot = reader.text()?
+        query_root = reader.text()?
+        cursor = reader.text()?
+        row_limit = int(reader.number(4)?)
+        byte_limit = int(reader.number(4)?)
+        return Ok(Query(snapshot=snapshot, query_root=query_root, cursor=cursor, row_limit=row_limit, byte_limit=byte_limit))
+
 
 pub model Page:
     """Bounded result and continuation handles at the requested snapshot."""
@@ -71,12 +255,35 @@ pub model Page:
     pub rows_root: str
     pub cursor: str
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Page's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.snapshot)?, text(self.rows_root)?, text(self.cursor)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Page's fields only after checking their declared lengths."""
+        snapshot = reader.text()?
+        rows_root = reader.text()?
+        cursor = reader.text()?
+        return Ok(Page(snapshot=snapshot, rows_root=rows_root, cursor=cursor))
+
 
 pub model Event:
     """Bounded status and trace handle; never program console bytes."""
 
     pub status: str
     pub trace_handle: str
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Event's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.status)?, text(self.trace_handle)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Event's fields only after checking their declared lengths."""
+        status = reader.text()?
+        trace_handle = reader.text()?
+        return Ok(Event(status=status, trace_handle=trace_handle))
 
 
 pub model Complete:
@@ -91,11 +298,60 @@ pub model Complete:
     # The unit reasons the engine recorded for this request, one per line, for the caller's own trace channel.
     pub notes: str = ""
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Complete's ordered v1 fields."""
+        return Ok(
+            joined(
+                [
+                    scalar(1, 2),
+                    text(self.snapshot)?,
+                    text(self.admission_proof)?,
+                    text(self.result_handles)?,
+                    scalar(self.binding_outcome.tag(), 2),
+                    scalar(self.status.tag(), 2),
+                    text(self.observation_handle)?,
+                    text(self.notes)?,
+                ],
+            ),
+        )
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Complete's fields only after checking their declared lengths."""
+        snapshot = reader.text()?
+        admission_proof = reader.text()?
+        result_handles = reader.text()?
+        binding_outcome = BindingOutcome.from_tag(int(reader.number(2)?))?
+        status = CompletionStatus.from_tag(int(reader.number(2)?))?
+        observation_handle = reader.text()?
+        notes = reader.text()?
+        return Ok(
+            Complete(
+                snapshot=snapshot,
+                admission_proof=admission_proof,
+                result_handles=result_handles,
+                binding_outcome=binding_outcome,
+                status=status,
+                observation_handle=observation_handle,
+                notes=notes,
+            ),
+        )
+
 
 pub model Cancel:
     """Detach one interest; other interests may keep shared work alive."""
 
     pub interest_token: str
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Cancel's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.interest_token)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Cancel's fields only after checking their declared lengths."""
+        interest_token = reader.text()?
+        return Ok(Cancel(interest_token=interest_token))
 
 
 pub model Cancelled:
@@ -104,12 +360,36 @@ pub model Cancelled:
     pub interest_token: str
     pub effects_stopped: EffectDisposition
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode the exact effect disposition, never a guessed numeric boolean."""
+        return Ok(
+            joined([scalar(1, 2), text(self.interest_token)?, scalar(self.effects_stopped.tag(), 2)]),
+        )
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Reject unknown effect dispositions before reporting cancellation complete."""
+        token = reader.text()?
+        effects = EffectDisposition.from_tag(int(reader.number(2)?))?
+        return Ok(Cancelled(interest_token=token, effects_stopped=effects))
+
 
 pub model Resolve:
     """Transaction identity and Committed, NotCommitted or Unknown outcome."""
 
     pub transaction: str
     pub outcome: Resolution
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Resolve's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.transaction)?, scalar(self.outcome.tag(), 2)]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Resolve's fields only after checking their declared lengths."""
+        transaction = reader.text()?
+        outcome = Resolution.from_tag(int(reader.number(2)?))?
+        return Ok(Resolve(transaction=transaction, outcome=outcome))
 
 
 pub model Pin:
@@ -120,11 +400,44 @@ pub model Pin:
     pub lease_id: str
     pub purpose: str
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Pin's ordered v1 fields."""
+        return Ok(
+            joined(
+                [
+                    scalar(1, 2),
+                    text(self.snapshot)?,
+                    text(self.allowed_roots)?,
+                    text(self.lease_id)?,
+                    text(self.purpose)?,
+                ],
+            ),
+        )
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Pin's fields only after checking their declared lengths."""
+        snapshot = reader.text()?
+        allowed_roots = reader.text()?
+        lease_id = reader.text()?
+        purpose = reader.text()?
+        return Ok(Pin(snapshot=snapshot, allowed_roots=allowed_roots, lease_id=lease_id, purpose=purpose))
+
 
 pub model Release:
     """Release exactly the named scoped lease."""
 
     pub lease_id: str
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Release's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.lease_id)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Release's fields only after checking their declared lengths."""
+        lease_id = reader.text()?
+        return Ok(Release(lease_id=lease_id))
 
 
 pub model Drain:
@@ -132,17 +445,47 @@ pub model Drain:
 
     pub reason: str
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Drain's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.reason)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Drain's fields only after checking their declared lengths."""
+        reason = reader.text()?
+        return Ok(Drain(reason=reason))
+
 
 pub model Stop:
     """Cancel remaining interests and relinquish service ownership."""
 
     pub reason: str
 
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Stop's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), text(self.reason)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Stop's fields only after checking their declared lengths."""
+        reason = reader.text()?
+        return Ok(Stop(reason=reason))
+
 
 pub model Ack:
     """Control-lane acknowledgment of one exact data sequence."""
 
     pub sequence: u64
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Ack's ordered v1 fields."""
+        return Ok(joined([scalar(1, 2), wide(self.sequence, 8)]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Ack's fields only after checking their declared lengths."""
+        sequence = reader.number(8)?
+        return Ok(Ack(sequence=sequence))
 
 
 pub model Refused:
@@ -151,6 +494,22 @@ pub model Refused:
     pub code: int
     pub command: str
     pub detail: str
+
+    pub def encode(self) -> Result[bytes, Refusal]:
+        """Encode Refused's ordered v1 fields."""
+        if self.code < 0 or self.code > 4294967295:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="Refused.code exceeds u32"))
+        return Ok(joined([scalar(1, 2), scalar(int(self.code), 4), text(self.command)?, text(self.detail)?]))
+
+    @staticmethod
+    pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
+        """Decode Refused's fields only after checking their declared lengths."""
+        code = int(reader.number(4)?)
+        if code < 1 or code > 14:
+            return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required refusal code"))
+        command = reader.text()?
+        detail = reader.text()?
+        return Ok(Refused(code=code, command=command, detail=detail))
 
 
 pub enum BindingOutcome:
@@ -161,6 +520,27 @@ pub enum BindingOutcome:
     Rejected
     Superseded
 
+    pub def tag(self) -> int:
+        """The stable v1 BindingOutcome variant tag."""
+        match self:
+            BindingOutcome.Selected => return 1
+            BindingOutcome.NotSelected => return 2
+            BindingOutcome.Rejected => return 3
+            BindingOutcome.Superseded => return 4
+
+    @staticmethod
+    pub def from_tag(tag: int) -> Result[Self, Refusal]:
+        """Fail closed for an unknown required BindingOutcome variant."""
+        if tag == 1:
+            return Ok(BindingOutcome.Selected)
+        if tag == 2:
+            return Ok(BindingOutcome.NotSelected)
+        if tag == 3:
+            return Ok(BindingOutcome.Rejected)
+        if tag == 4:
+            return Ok(BindingOutcome.Superseded)
+        return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required BindingOutcome variant"))
+
 
 pub enum CompletionStatus:
     """Closed v1 outcomes with explicit binary variant tags."""
@@ -170,6 +550,27 @@ pub enum CompletionStatus:
     Failed
     Cancelled
 
+    pub def tag(self) -> int:
+        """The stable v1 CompletionStatus variant tag."""
+        match self:
+            CompletionStatus.Success => return 1
+            CompletionStatus.Unavailable => return 2
+            CompletionStatus.Failed => return 3
+            CompletionStatus.Cancelled => return 4
+
+    @staticmethod
+    pub def from_tag(tag: int) -> Result[Self, Refusal]:
+        """Fail closed for an unknown required CompletionStatus variant."""
+        if tag == 1:
+            return Ok(CompletionStatus.Success)
+        if tag == 2:
+            return Ok(CompletionStatus.Unavailable)
+        if tag == 3:
+            return Ok(CompletionStatus.Failed)
+        if tag == 4:
+            return Ok(CompletionStatus.Cancelled)
+        return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required CompletionStatus variant"))
+
 
 pub enum Resolution:
     """Closed v1 outcomes with explicit binary variant tags."""
@@ -178,6 +579,24 @@ pub enum Resolution:
     NotCommitted
     Unknown
 
+    pub def tag(self) -> int:
+        """The stable v1 Resolution variant tag."""
+        match self:
+            Resolution.Committed => return 1
+            Resolution.NotCommitted => return 2
+            Resolution.Unknown => return 3
+
+    @staticmethod
+    pub def from_tag(tag: int) -> Result[Self, Refusal]:
+        """Fail closed for an unknown required Resolution variant."""
+        if tag == 1:
+            return Ok(Resolution.Committed)
+        if tag == 2:
+            return Ok(Resolution.NotCommitted)
+        if tag == 3:
+            return Ok(Resolution.Unknown)
+        return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required Resolution variant"))
+
 
 pub enum EffectDisposition:
     """Closed v1 outcomes with explicit binary variant tags."""
@@ -185,6 +604,24 @@ pub enum EffectDisposition:
     Stopped
     Pending
     NoEffects
+
+    pub def tag(self) -> int:
+        """The stable v1 EffectDisposition variant tag."""
+        match self:
+            EffectDisposition.Stopped => return 1
+            EffectDisposition.Pending => return 2
+            EffectDisposition.NoEffects => return 3
+
+    @staticmethod
+    pub def from_tag(tag: int) -> Result[Self, Refusal]:
+        """Fail closed for an unknown required EffectDisposition variant."""
+        if tag == 1:
+            return Ok(EffectDisposition.Stopped)
+        if tag == 2:
+            return Ok(EffectDisposition.Pending)
+        if tag == 3:
+            return Ok(EffectDisposition.NoEffects)
+        return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required EffectDisposition variant"))
 
 
 pub enum Message:
@@ -208,3 +645,85 @@ pub enum Message:
     Stop(Stop)
     Ack(Ack)
     Refused(Refused)
+
+    pub def encode(self) -> Result[tuple[int, bytes], Refusal]:
+        """Encode one v1 body and return its header tag; no records are sent on this channel."""
+        match self:
+            Message.Hello(value) => return bounded(1, value.encode()?)
+            Message.Welcome(value) => return bounded(2, value.encode()?)
+            Message.Submit(value) => return bounded(3, value.encode()?)
+            Message.Accepted(value) => return bounded(4, value.encode()?)
+            Message.Captured(value) => return bounded(5, value.encode()?)
+            Message.Query(value) => return bounded(10, value.encode()?)
+            Message.Page(value) => return bounded(11, value.encode()?)
+            Message.Event(value) => return bounded(12, value.encode()?)
+            Message.Complete(value) => return bounded(13, value.encode()?)
+            Message.Cancel(value) => return bounded(14, value.encode()?)
+            Message.Cancelled(value) => return bounded(15, value.encode()?)
+            Message.Resolve(value) => return bounded(16, value.encode()?)
+            Message.Pin(value) => return bounded(17, value.encode()?)
+            Message.Release(value) => return bounded(18, value.encode()?)
+            Message.Drain(value) => return bounded(19, value.encode()?)
+            Message.Stop(value) => return bounded(20, value.encode()?)
+            Message.Ack(value) => return bounded(21, value.encode()?)
+            Message.Refused(value) => return bounded(22, value.encode()?)
+
+    @staticmethod
+    pub def decode(tag: int, raw: bytes) -> Result[Self, Refusal]:
+        """Decode only the exact known version and tag, rejecting trailing bytes."""
+        if len(raw) > MAX_PAYLOAD:
+            return Err(Refusal(kind=RefusalKind.Oversized, detail="engine body exceeds 65536 bytes"))
+        mut reader = Decoder(raw=raw)
+        if reader.number(2)? != 1:
+            return Err(Refusal(kind=RefusalKind.Version, detail="unsupported body schema version"))
+        message = Message.from_reader(tag, reader)?
+        reader.finish()?
+        return Ok(message)
+
+    @staticmethod
+    def from_reader(tag: int, mut reader: Decoder) -> Result[Self, Refusal]:
+        """Dispatch required variants without guessing compatibility with another protocol."""
+        if tag == 1:
+            return Ok(Message.Hello(Hello.decode(reader)?))
+        if tag == 2:
+            return Ok(Message.Welcome(Welcome.decode(reader)?))
+        if tag == 3:
+            return Ok(Message.Submit(Submit.decode(reader)?))
+        if tag == 4:
+            return Ok(Message.Accepted(Accepted.decode(reader)?))
+        if tag == 5:
+            return Ok(Message.Captured(Captured.decode(reader)?))
+        if tag == 10:
+            return Ok(Message.Query(Query.decode(reader)?))
+        if tag == 11:
+            return Ok(Message.Page(Page.decode(reader)?))
+        if tag == 12:
+            return Ok(Message.Event(Event.decode(reader)?))
+        if tag == 13:
+            return Ok(Message.Complete(Complete.decode(reader)?))
+        if tag == 14:
+            return Ok(Message.Cancel(Cancel.decode(reader)?))
+        if tag == 15:
+            return Ok(Message.Cancelled(Cancelled.decode(reader)?))
+        if tag == 16:
+            return Ok(Message.Resolve(Resolve.decode(reader)?))
+        if tag == 17:
+            return Ok(Message.Pin(Pin.decode(reader)?))
+        if tag == 18:
+            return Ok(Message.Release(Release.decode(reader)?))
+        if tag == 19:
+            return Ok(Message.Drain(Drain.decode(reader)?))
+        if tag == 20:
+            return Ok(Message.Stop(Stop.decode(reader)?))
+        if tag == 21:
+            return Ok(Message.Ack(Ack.decode(reader)?))
+        if tag == 22:
+            return Ok(Message.Refused(Refused.decode(reader)?))
+        return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required engine message tag"))
+
+
+def bounded(tag: int, raw: bytes) -> Result[tuple[int, bytes], Refusal]:
+    """Enforce the complete body bound after individually bounded fields have been encoded."""
+    if len(raw) > MAX_PAYLOAD:
+        return Err(Refusal(kind=RefusalKind.Oversized, detail="engine body exceeds 65536 bytes"))
+    return Ok((tag, raw))
