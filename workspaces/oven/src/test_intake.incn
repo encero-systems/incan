@@ -7,8 +7,11 @@ from std.fs import Path
 from std.testing import fail
 from scratch import scratch_directory
 from toml_fields import read_manifest
-from files import write
+from files import make_directory, write
 from dependency_plans import listed_dependencies
+from features import FeatureRequest
+from rust_activation import ActivationPurpose
+from unit import describe
 
 
 pub def test_formatting_changes_evidence_not_effective_requests() -> Result[None, str]:
@@ -147,8 +150,8 @@ pub def test_dependency_options_are_not_silently_ignored() -> None:
             assert "belong to [workspace.dependencies]" in error.detail
 
 
-pub def test_workbench_aliases_and_unselected_rust_request() -> None:
-    """Run from workspaces/oven so the committed three-project workbench is the input."""
+pub def test_workbench_aliases_and_unselected_rust_request() -> Result[None, str]:
+    """Preserve normal local aliases and expose test-only Loaves to the test unit with their requested features."""
     match intake(Path("../../workbench/app")):
         Err(error) => fail(error.message())
         Ok(packet) =>
@@ -167,6 +170,35 @@ pub def test_workbench_aliases_and_unselected_rust_request() -> None:
             assert packet.projects[0].intent.rust_inputs[0].alias == "regex"
             assert packet.projects[0].intent.rust_inputs[0].version == "1"
             assert packet.projects[0].intent.scripts["main"] == "src/main.incn"
+    return verify_test_path_environment()
+
+
+def verify_test_path_environment() -> Result[None, str]:
+    """Resolve one Incan dependency only for its owning test unit and apply the dependency's selected features."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    app = root.joinpath("app")
+    support = root.joinpath("support")
+    make_directory(app)?
+    app_manifest = "[project]\nname='app'\nversion='1.0.0'\n"
+    test_environment = "[envs.test.dependencies]\nhelper={path='../support', features=['extra'], default-features=false}\n"
+    write(app.joinpath("loaf.toml"), app_manifest + test_environment)?
+    entry = app.joinpath("lib.incn")
+    source = "pub def value() -> int:\n    return 1\n"
+    write(entry, source)?
+    built = describe(entry, "debug", FeatureRequest())?
+    assert len([loaf.key for loaf in built.loaves if loaf.is_dependency()]) == 0
+    make_directory(support)?
+    support_manifest = "[project]\nname='support'\nversion='1.0.0'\n[project.features]\ndefault=['ordinary']\nordinary=[]\nextra=[]\n"
+    support_test = "[envs.test.dependencies]\nnot_a_child_dependency={path='../absent'}\n"
+    write(support.joinpath("loaf.toml"), support_manifest + support_test)?
+    write(support.joinpath("lib.incn"), source)?
+    tested = describe(entry, "debug", FeatureRequest(), purpose=ActivationPurpose.Test)?
+    observed = [(loaf.key, loaf.name) for loaf in tested.loaves if loaf.is_dependency()]
+    assert observed == [("helper", "support")], f"test unit selected local Loaves {observed}"
+    features = [facet.features for facet in tested.facets if facet.package == "support"]
+    assert features == [["extra"]], f"test dependency selected features {features}"
+    return Ok(None)
 
 
 pub def test_cycle_refuses() -> None:
