@@ -931,11 +931,11 @@ pub def installed_verification(run: ReleaseRun, installation: PreparedInstallati
         run.paths.output.joinpath("tree-samples.tsv"),
         "installed-verification-complete",
     )?
-    reclaim(
-        run,
-        "installed-verification-scratch",
-        [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch")],
-    )?
+    mut disposable: list[Path] = []
+    if not run.options.keep_trees:
+        disposable += [verification, home, runs[0].joinpath("runner")]
+    disposable.append(runs[0].joinpath("scratch"))
+    reclaim(run, "installed-verification-scratch", disposable)?
     return Ok(log)
 
 
