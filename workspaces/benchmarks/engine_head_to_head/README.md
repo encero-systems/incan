@@ -24,7 +24,7 @@ Run every command under the host's resource lease, with `INCAN_HOME` set to the 
 
 `--retire-trees` removes each passed pair's Bakeries, targets and census scratch, and the secondary homes once the two-home arm passes. Samples, logs, streams and receipts stay. A refused pair keeps its trees for diagnosis. `--keep-going` lets the census continue past a refused run, so every engine, state and jobs setting is on record. The first refused census pair keeps its trees and later ones keep their logs.
 
-`compare` refuses a run when the installed launcher, LSP, manifest, archive, fixture tree, PASS baseline, oracle or prefill differ from the pin file. The checkout may differ from the pinned revision only inside this directory. `pins/c79-r1.json` pins the C79-r1 qualification.
+`compare` refuses a run when the installed launcher, LSP, manifest, archive, fixture tree, PASS baseline, oracle or prefill differ from the pin file. The checkout may differ from the pinned revision only inside this directory and at the pin's `harness_paths`, the Contracts sources both engines share, whose trees the pin also fixes. `pins/c79-r1.json` pins the C79-r1 qualification with the Contracts harness that gives three cases a fresh project per run.
 
 ## Output
 

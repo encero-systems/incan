@@ -7,6 +7,18 @@
   "manifest_sha256": "d1b21dd7228e9acf2fc0910dfb298b167ea36833bf7a44419ef83d9465b6f9c3",
   "oracle_sha256": "7a592becaad66a7d967f28996457d96b03bad145e8686ab6fb3eb690609e3ef8",
   "pass_baseline_sha256": "769e03004e2980583f8ea91157a2fe5f4b415ceb89323bccfa9e4caac4031bb6",
-  "fixtures_tree": "009cd98e4bdc334eb29f597656b05f01408d02c8",
-  "pass_baseline_blob": "251e0a0b5b967955b33849928a3116c31f44659d"
+  "pass_baseline_blob": "251e0a0b5b967955b33849928a3116c31f44659d",
+  "fixtures_tree": "d0193565899126bec4847e4a3a9769914e3c5b4a",
+  "contracts_tree": "4e7a5c5bfe6965cf31bbf22753cba0c3429e6a9a",
+  "harness_paths": [
+    "workspaces/contracts/README.md",
+    "workspaces/contracts/fixtures/graph/incan/relationships/src/main.incn",
+    "workspaces/contracts/fixtures/graph/incan/vocabulary/src/main.incn",
+    "workspaces/contracts/fixtures/project/units/programs_share_a_library_in_records/src/main.incn",
+    "workspaces/contracts/src/families.incn",
+    "workspaces/contracts/src/fixture.incn",
+    "workspaces/contracts/src/graph_mcp_contract.incn",
+    "workspaces/contracts/src/header.incn",
+    "workspaces/contracts/src/main.incn"
+  ]
 }

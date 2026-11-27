@@ -40,18 +40,21 @@ module HeadToHead
         kernel: command('/usr/bin/uname', '-v') }
     end
 
-    # The checkout must be the pinned language-core revision plus, at most, changes to this runner.
+    # The checkout must be the pinned language-core revision plus, at most, changes to this runner and the pin's
+    # named Contracts harness paths, which both engines share.
     def self.source(source, expected)
       head = git(source, 'rev-parse', 'HEAD')
       base = expected.fetch('source')
       git(source, 'merge-base', '--is-ancestor', base, head)
       changed = git(source, 'diff', '--name-only', base, head).lines.map(&:strip)
-      foreign = changed.reject { |path| path.start_with?(RUNNER_DIRECTORY + '/') }
+      harness = expected.fetch('harness_paths', [])
+      foreign = changed.reject { |path| path.start_with?(RUNNER_DIRECTORY + '/') || harness.include?(path) }
       HeadToHead.require_fact(foreign.empty?, "checkout changes compared paths since #{base}", foreign)
       dirty = git(source, 'status', '--porcelain', '--', 'workspaces/contracts', RUNNER_DIRECTORY)
       HeadToHead.require_fact(dirty.empty?, 'checkout has uncommitted compared or runner paths', dirty)
-      { head: head, language_core: base, runner_changes: changed,
+      { head: head, language_core: base, runner_changes: changed - harness, harness_changes: changed & harness,
         fixtures_tree: git(source, 'rev-parse', 'HEAD:workspaces/contracts/fixtures'),
+        contracts_tree: git(source, 'rev-parse', 'HEAD:workspaces/contracts/src'),
         pass_baseline_blob: git(source, 'rev-parse', 'HEAD:workspaces/contracts/pass-baseline.txt'),
         runner_tree: changed.empty? ? nil : git(source, 'rev-parse', "HEAD:#{RUNNER_DIRECTORY}") }
     end
@@ -96,7 +99,7 @@ module HeadToHead
       HeadToHead.require_fact(HeadToHead.sha256(settings.fetch(:archive)) == expected.fetch('archive_sha256'),
                               'toolchain archive differs from the pin')
       source = source(settings.fetch(:source), expected)
-      %w[fixtures_tree pass_baseline_blob].each do |key|
+      %w[fixtures_tree contracts_tree pass_baseline_blob].each do |key|
         HeadToHead.require_fact(source.fetch(key.to_sym) == expected.fetch(key), "checkout #{key} differs from the pin")
       end
       prefill = HeadToHead.read_json(settings.fetch(:prefill_receipt))
