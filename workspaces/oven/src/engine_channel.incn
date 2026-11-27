@@ -1,6 +1,7 @@
 """Bounded engine frames, correlated sessions and data-credit back-pressure over the core Unix transport."""
 
 from pub::incan_platform.ipc import Connection, Credits
+from engine_codec import decode, encode
 from engine_messages import Ack, Message
 from engine_wire import CONTROL, DATA_CREDITS, HEADER_SIZE, MAX_PAYLOAD, Header, Refusal, RefusalKind
 from engine_wire import decode_header, encode_header, zero_id
@@ -40,7 +41,7 @@ pub class Channel:
         control = is_control(message)
         if not control and self.pending.exhausted():
             return Ok(SendOutcome.Blocked)
-        tag, raw = message.encode()?
+        tag, raw = encode(message)?
         mut flags = 0
         if control:
             flags = CONTROL
@@ -75,7 +76,7 @@ pub class Channel:
                 return Err(Refusal(kind=RefusalKind.Identity, detail="engine session mismatch"))
             self.session = header.session
         body = self.transport.read_part(header.length, MAX_PAYLOAD).map_err(short_read)?
-        message = Message.decode(header.tag, body)?
+        message = decode(header.tag, body)?
         mut expected_flags = 0
         if is_control(message):
             expected_flags = CONTROL

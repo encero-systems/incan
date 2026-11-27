@@ -2,6 +2,7 @@
 
 from pub::incan_platform.ipc import dial, listen
 from engine_channel import Channel, SendOutcome
+from engine_codec import decode, encode
 from engine_messages import (
     BindingOutcome,
     CompletionStatus,
@@ -177,20 +178,20 @@ def check_bodies() -> Result[None, str]:
         Message.Refused(Refused(code=1, command="descriptor", detail="descriptor")),
     ]
     for message in messages:
-        tag, raw = message.encode().map_err(detail)?
-        decoded = Message.decode(tag, raw).map_err(detail)?
-        again_tag, again_raw = decoded.encode().map_err(detail)?
+        tag, raw = encode(message).map_err(detail)?
+        decoded = decode(tag, raw).map_err(detail)?
+        again_tag, again_raw = encode(decoded).map_err(detail)?
         assert again_tag == tag
         assert again_raw == raw
-        assert refused_body(Message.decode(tag, raw[:len(raw) - 1]))
-        assert refused_body(Message.decode(tag, joined([raw, scalar(0, 1)])))
-    assert refused_body(Message.decode(16, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
-    assert refused_body(Message.decode(15, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
+        assert refused_body(decode(tag, raw[:len(raw) - 1]))
+        assert refused_body(decode(tag, joined([raw, scalar(0, 1)])))
+    assert refused_body(decode(16, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
+    assert refused_body(decode(15, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
     for worker_record_tag in [6, 7, 8, 9]:
-        assert refused_body(Message.decode(worker_record_tag, scalar(1, 2)))
-    assert refused_body(Message.decode(65535, scalar(1, 2)))
-    assert refused_body(Message.decode(1, scalar(2, 2)))
-    assert refused_body(Message.decode(1, joined([scalar(1, 2), scalar(4294967295, 4)])))
+        assert refused_body(decode(worker_record_tag, scalar(1, 2)))
+    assert refused_body(decode(65535, scalar(1, 2)))
+    assert refused_body(decode(1, scalar(2, 2)))
+    assert refused_body(decode(1, joined([scalar(1, 2), scalar(4294967295, 4)])))
     return Ok(None)
 
 
