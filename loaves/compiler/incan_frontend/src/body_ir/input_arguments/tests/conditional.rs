@@ -1,6 +1,7 @@
 //! Conditional owner bookkeeping is source-tested while native profile admission remains closed.
 
 use super::{bir, staged};
+use crate::test_rows::{SourceRow, run_source_rows};
 
 /// Count actual whole-owner call transfers recursively; unsupported operands are not successful transfers.
 fn transfers(block: &bir::Block, owner: bir::LocalId) -> usize {
@@ -203,38 +204,6 @@ fn conditional_subjects_distinguish_outer_and_branch_storage() -> Result<(), Box
     Ok(())
 }
 
-/// An elif condition executes only after prior arms fail. Its move affects the later false path but cannot remove
-/// the lexical drop from the earlier non-consuming arm; empty arms do not change that distinction.
-#[test]
-fn conditional_elif_keeps_pending_false_path_state() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def consume(value: Owned[str]) -> bool:\n    return True\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        pass\n    elif consume(value):\n        pass\n    else:\n        pass\n";
-    let module = staged(source, false)?;
-    let body = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "main")
-        .ok_or("missing caller")?;
-    let owner = body
-        .locals
-        .iter()
-        .find(|local| local.name.as_deref() == Some("value"))
-        .ok_or("missing owner")?
-        .id;
-    assert_eq!(transfers(&body.block, owner), 1);
-    assert!(
-        body.block
-            .stmts
-            .iter()
-            .any(|statement| matches!(statement.kind, bir::StatementKind::Drop { local } if local == owner))
-    );
-    assert!(
-        body.checked_input_profile
-            .as_ref()
-            .is_some_and(|profile| profile.version == 2)
-    );
-    Ok(())
-}
-
 /// Conditional metadata can be inspected before runtime admission: only a checked whole non-Copy Owned initializer
 /// retains canonical source/destination and the exact emitted assignment span. Borrow and Copy-only bodies still
 /// carry version2, because their branch behavior must never inherit profile1 execution permission.
@@ -432,75 +401,6 @@ fn loop_transfers_join_the_loop_exits() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// A transfer in one match arm joins like a statement-if branch: the other arm keeps the owner, which keeps its scope
-/// drop for that path.
-#[test]
-fn match_arm_transfers_join_like_branches() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def size(text: Owned[str]) -> Result[int, str]:\n    return Ok(len(text))\ndef keep(value: Owned[str]) -> None:\n    pass\ndef main(text: Owned[str]) -> None:\n    value = \"owner\"\n    match size(text):\n        Ok(_) => keep(value)\n        Err(_) => pass\n";
-    let module = staged(source, false)?;
-    let lowered = module
-        .bodies
-        .iter()
-        .find(|lowered| lowered.name == "main")
-        .ok_or("missing match caller")?;
-    let owner = lowered
-        .locals
-        .iter()
-        .find(|local| local.name.as_deref() == Some("value"))
-        .ok_or("missing owner")?
-        .id;
-    assert_eq!(transfers(&lowered.block, owner), 1);
-    assert!(
-        lowered
-            .block
-            .stmts
-            .iter()
-            .any(|statement| matches!(statement.kind, bir::StatementKind::Drop { local } if local == owner))
-    );
-    assert!(
-        lowered
-            .checked_input_profile
-            .as_ref()
-            .is_some_and(|profile| profile.version == 2)
-    );
-    Ok(())
-}
-
-/// A failure-only assertion transfer moves the owner only on the diverging path and retains successful cleanup.
-#[test]
-fn assertion_message_transfer_retains_the_successful_owner() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def consume(value: Owned[str]) -> str:\n    return value\ndef main(flag: bool) -> None:\n    value = \"owner\"\n    assert flag, consume(value)\n    print(value)\n";
-    let module = staged(source, false)?;
-    let body = module
-        .bodies
-        .iter()
-        .find(|body| body.name == "main")
-        .ok_or("missing assertion body")?;
-    let owner = body
-        .locals
-        .iter()
-        .find(|local| local.name.as_deref() == Some("value"))
-        .ok_or("missing assertion owner")?
-        .id;
-    let assertion = body
-        .block
-        .stmts
-        .iter()
-        .find_map(|statement| match &statement.kind {
-            bir::StatementKind::If { else_block, .. } => else_block.as_ref(),
-            _ => None,
-        })
-        .ok_or("missing assertion failure block")?;
-    assert_eq!(transfers(assertion, owner), 1);
-    assert_eq!(transfers(&body.block, owner), 1);
-    assert!(
-        body.checked_input_profile
-            .as_ref()
-            .is_some_and(|profile| profile.version == 1)
-    );
-    Ok(())
-}
-
 /// Collect the declared type of every `?` operand local, through loops and branches.
 fn try_operand_types(
     statements: &[bir::Statement],
@@ -531,27 +431,136 @@ fn try_operand_types(
     }
 }
 
-/// A carried view's call holds its callee's carrier, whose success payload is the view's reference, and `?`
-/// propagates from that carrier; the caller continues on the substituted place.
 #[test]
-fn carried_view_calls_hold_the_reference_carrier() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "class SampleBuffer:\n    pub capacity: int\n    pub samples: list[int]\n\n    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:\n        if len(self.samples) >= self.capacity:\n            return Err(\"full\")\n        self.samples.append(sample)\n        return Ok(self)\n\n    def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:\n        for sample in samples:\n            self.append(sample)?\n        return Ok(self)\n";
-    let module = staged(source, false)?;
-    let lowered = module
-        .bodies
-        .iter()
-        .find(|lowered| lowered.name.ends_with("append_all"))
-        .ok_or("missing append_all")?;
-    let mut operands = Vec::new();
-    try_operand_types(&lowered.block.stmts, &lowered.locals, &mut operands);
-    assert!(
-        !operands.is_empty()
-            && operands.iter().all(
-                |ty| matches!(ty, incan_semantics_core::IncanType::Generic { base, args }
-                if base == "Result" && matches!(args.first(), Some(incan_semantics_core::IncanType::RefMut(_))))
-            ),
-        "{operands:?}\n{:#?}",
-        lowered.block
-    );
-    Ok(())
+fn conditional_staged_cases() {
+    run_source_rows(CONDITIONAL_STAGED_CASES, |source| staged(source, false));
 }
+
+const CONDITIONAL_STAGED_CASES: &[SourceRow<bir::BodyIrModule>] = &[
+    // An elif condition executes only after prior arms fail. Its move affects the later false path but cannot remove
+    // the lexical drop from the earlier non-consuming arm; empty arms do not change that distinction.
+    SourceRow {
+        name: "conditional_elif_keeps_pending_false_path_state",
+        source: "def consume(value: Owned[str]) -> bool:\n    return True\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        pass\n    elif consume(value):\n        pass\n    else:\n        pass\n",
+        check: |_source, module| {
+            let body = module
+                .bodies
+                .iter()
+                .find(|body| body.name == "main")
+                .ok_or("missing caller")?;
+            let owner = body
+                .locals
+                .iter()
+                .find(|local| local.name.as_deref() == Some("value"))
+                .ok_or("missing owner")?
+                .id;
+            assert_eq!(transfers(&body.block, owner), 1);
+            assert!(
+                body.block
+                    .stmts
+                    .iter()
+                    .any(|statement| matches!(statement.kind, bir::StatementKind::Drop { local } if local == owner))
+            );
+            assert!(
+                body.checked_input_profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.version == 2)
+            );
+            Ok(())
+        },
+    },
+    // A transfer in one match arm joins like a statement-if branch: the other arm keeps the owner, which keeps its
+    // scope drop for that path.
+    SourceRow {
+        name: "match_arm_transfers_join_like_branches",
+        source: "def size(text: Owned[str]) -> Result[int, str]:\n    return Ok(len(text))\ndef keep(value: Owned[str]) -> None:\n    pass\ndef main(text: Owned[str]) -> None:\n    value = \"owner\"\n    match size(text):\n        Ok(_) => keep(value)\n        Err(_) => pass\n",
+        check: |_source, module| {
+            let lowered = module
+                .bodies
+                .iter()
+                .find(|lowered| lowered.name == "main")
+                .ok_or("missing match caller")?;
+            let owner = lowered
+                .locals
+                .iter()
+                .find(|local| local.name.as_deref() == Some("value"))
+                .ok_or("missing owner")?
+                .id;
+            assert_eq!(transfers(&lowered.block, owner), 1);
+            assert!(
+                lowered
+                    .block
+                    .stmts
+                    .iter()
+                    .any(|statement| matches!(statement.kind, bir::StatementKind::Drop { local } if local == owner))
+            );
+            assert!(
+                lowered
+                    .checked_input_profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.version == 2)
+            );
+            Ok(())
+        },
+    },
+    // A failure-only assertion transfer moves the owner only on the diverging path and retains successful cleanup.
+    SourceRow {
+        name: "assertion_message_transfer_retains_the_successful_owner",
+        source: "def consume(value: Owned[str]) -> str:\n    return value\ndef main(flag: bool) -> None:\n    value = \"owner\"\n    assert flag, consume(value)\n    print(value)\n",
+        check: |_source, module| {
+            let body = module
+                .bodies
+                .iter()
+                .find(|body| body.name == "main")
+                .ok_or("missing assertion body")?;
+            let owner = body
+                .locals
+                .iter()
+                .find(|local| local.name.as_deref() == Some("value"))
+                .ok_or("missing assertion owner")?
+                .id;
+            let assertion = body
+                .block
+                .stmts
+                .iter()
+                .find_map(|statement| match &statement.kind {
+                    bir::StatementKind::If { else_block, .. } => else_block.as_ref(),
+                    _ => None,
+                })
+                .ok_or("missing assertion failure block")?;
+            assert_eq!(transfers(assertion, owner), 1);
+            assert_eq!(transfers(&body.block, owner), 1);
+            assert!(
+                body.checked_input_profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.version == 1)
+            );
+            Ok(())
+        },
+    },
+    // A carried view's call holds its callee's carrier, whose success payload is the view's reference, and `?`
+    // propagates from that carrier; the caller continues on the substituted place.
+    SourceRow {
+        name: "carried_view_calls_hold_the_reference_carrier",
+        source: "class SampleBuffer:\n    pub capacity: int\n    pub samples: list[int]\n\n    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:\n        if len(self.samples) >= self.capacity:\n            return Err(\"full\")\n        self.samples.append(sample)\n        return Ok(self)\n\n    def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:\n        for sample in samples:\n            self.append(sample)?\n        return Ok(self)\n",
+        check: |_source, module| {
+            let lowered = module
+                .bodies
+                .iter()
+                .find(|lowered| lowered.name.ends_with("append_all"))
+                .ok_or("missing append_all")?;
+            let mut operands = Vec::new();
+            try_operand_types(&lowered.block.stmts, &lowered.locals, &mut operands);
+            assert!(
+                !operands.is_empty()
+                    && operands.iter().all(
+                        |ty| matches!(ty, incan_semantics_core::IncanType::Generic { base, args }
+                if base == "Result" && matches!(args.first(), Some(incan_semantics_core::IncanType::RefMut(_))))
+                    ),
+                "{operands:?}\n{:#?}",
+                lowered.block
+            );
+            Ok(())
+        },
+    },
+];

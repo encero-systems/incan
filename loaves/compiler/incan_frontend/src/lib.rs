@@ -45,6 +45,8 @@ pub mod semantics_registry;
 pub mod serde_usage;
 pub mod surface_semantics;
 pub mod symbols;
+#[cfg(test)]
+mod test_rows;
 pub mod testing_markers;
 pub mod trace_flags;
 pub mod typechecker;

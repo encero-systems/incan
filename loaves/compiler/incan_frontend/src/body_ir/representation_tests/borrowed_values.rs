@@ -5,6 +5,7 @@
 use super::*;
 use crate::diagnostics::CompileError;
 use crate::loaf_index::LoafIndex;
+use crate::test_rows::{SourceRow, run_source_rows};
 use incan_lang::interop::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVisibility,
 };
@@ -120,42 +121,6 @@ fn clones_local(body: &str, locals: &[(Option<String>, String)], name: &str) -> 
         .any(|(_, id)| body.contains(&format!("root: Local({id}), projection: [] }}, fact: Clone")))
 }
 
-/// A borrowed text compares, tests membership, measures, formats, reads through methods and iterates with no copy of
-/// the borrowed value.
-#[test]
-fn borrowed_text_reads_through_the_borrow() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "from rust::demo import label\n\ndef reads(published: set[str]) -> int:\n    key = label()\n    mut found = 0\n    if key not in published:\n        found += 1\n    if key == \"x\":\n        found += 1\n    found += len(key)\n    note = f\"{key}!\"\n    if note.startswith(key):\n        found += 1\n    for letter in key:\n        if letter == \"a\":\n            found += 1\n    return found\n";
-    let bodies = rendered_bodies(source)?;
-    let (reads, locals) = bodies.get("reads").ok_or("missing body")?;
-    assert!(!reads.contains("unsupported"), "{reads}");
-    assert!(!clones_local(reads, locals, "key"), "{reads}");
-    Ok(())
-}
-
-/// A borrowed Rust value reads its fields through the borrow.
-#[test]
-fn borrowed_rust_value_reads_its_fields() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "from rust::demo import token\n\ndef read() -> int:\n    held = token()\n    return held.id + 1\n";
-    let bodies = rendered_bodies(source)?;
-    let (read, _) = bodies.get("read").ok_or("missing body")?;
-    assert!(!read.contains("unsupported"), "{read}");
-    assert!(!read.contains("fact: Clone"), "{read}");
-    Ok(())
-}
-
-/// Storing a borrowed text, returning it as `str` and passing it to a `str` parameter taken by value each clone it.
-#[test]
-fn owned_uses_of_borrowed_text_clone_it() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "from rust::demo import label\n\ndef keep(text: str) -> list[str]:\n    return [text]\n\ndef store() -> list[str]:\n    mut out: list[str] = []\n    out.append(label())\n    return out\n\ndef give() -> str:\n    return label()\n\ndef hand_on() -> list[str]:\n    return keep(label())\n";
-    let bodies = rendered_bodies(source)?;
-    for name in ["store", "give", "hand_on"] {
-        let (body, _) = bodies.get(name).ok_or("missing body")?;
-        assert!(!body.contains("unsupported"), "{name}: {body}");
-        assert!(body.contains("fact: Clone"), "{name}: {body}");
-    }
-    Ok(())
-}
-
 /// An owned use of a borrowed value whose type has no clone is refused at that use.
 #[test]
 fn owned_use_without_clone_is_refused_there() -> Result<(), Box<dyn std::error::Error>> {
@@ -178,16 +143,6 @@ fn mut_bindings_need_an_explicit_clone() -> Result<(), Box<dyn std::error::Error
             "{source}: {messages:?}"
         );
     }
-    Ok(())
-}
-
-/// An `Owned[T]` parameter never clones a borrowed value implicitly; Body IR refuses the call and names `.clone()`.
-#[test]
-fn owned_parameters_need_an_explicit_clone() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "from rust::demo import label\n\ndef own(text: Owned[str]) -> str:\n    return text\n\ndef run() -> str:\n    return own(label())\n";
-    let bodies = rendered_bodies(source)?;
-    let (run, _) = bodies.get("run").ok_or("missing body")?;
-    assert!(run.contains("write `.clone()` on it"), "{run}");
     Ok(())
 }
 
@@ -347,3 +302,57 @@ fn explicit_borrows_refuse_and_copy_as_their_reference_twins() -> Result<(), Box
     assert!(native.iter().any(|message| message.contains("clone")), "{native:?}");
     Ok(())
 }
+
+#[test]
+fn borrowed_values_rendered_cases() {
+    run_source_rows(BORROWED_VALUES_RENDERED_CASES, rendered_bodies);
+}
+
+const BORROWED_VALUES_RENDERED_CASES: &[SourceRow<BTreeMap<String, RenderedBody>>] = &[
+    // A borrowed text compares, tests membership, measures, formats, reads through methods and iterates with no copy
+    // of the borrowed value.
+    SourceRow {
+        name: "borrowed_text_reads_through_the_borrow",
+        source: "from rust::demo import label\n\ndef reads(published: set[str]) -> int:\n    key = label()\n    mut found = 0\n    if key not in published:\n        found += 1\n    if key == \"x\":\n        found += 1\n    found += len(key)\n    note = f\"{key}!\"\n    if note.startswith(key):\n        found += 1\n    for letter in key:\n        if letter == \"a\":\n            found += 1\n    return found\n",
+        check: |_source, bodies| {
+            let (reads, locals) = bodies.get("reads").ok_or("missing body")?;
+            assert!(!reads.contains("unsupported"), "{reads}");
+            assert!(!clones_local(reads, locals, "key"), "{reads}");
+            Ok(())
+        },
+    },
+    // A borrowed Rust value reads its fields through the borrow.
+    SourceRow {
+        name: "borrowed_rust_value_reads_its_fields",
+        source: "from rust::demo import token\n\ndef read() -> int:\n    held = token()\n    return held.id + 1\n",
+        check: |_source, bodies| {
+            let (read, _) = bodies.get("read").ok_or("missing body")?;
+            assert!(!read.contains("unsupported"), "{read}");
+            assert!(!read.contains("fact: Clone"), "{read}");
+            Ok(())
+        },
+    },
+    // Storing a borrowed text, returning it as `str` and passing it to a `str` parameter taken by value each clone it.
+    SourceRow {
+        name: "owned_uses_of_borrowed_text_clone_it",
+        source: "from rust::demo import label\n\ndef keep(text: str) -> list[str]:\n    return [text]\n\ndef store() -> list[str]:\n    mut out: list[str] = []\n    out.append(label())\n    return out\n\ndef give() -> str:\n    return label()\n\ndef hand_on() -> list[str]:\n    return keep(label())\n",
+        check: |_source, bodies| {
+            for name in ["store", "give", "hand_on"] {
+                let (body, _) = bodies.get(name).ok_or("missing body")?;
+                assert!(!body.contains("unsupported"), "{name}: {body}");
+                assert!(body.contains("fact: Clone"), "{name}: {body}");
+            }
+            Ok(())
+        },
+    },
+    // An `Owned[T]` parameter never clones a borrowed value implicitly; Body IR refuses the call and names `.clone()`.
+    SourceRow {
+        name: "owned_parameters_need_an_explicit_clone",
+        source: "from rust::demo import label\n\ndef own(text: Owned[str]) -> str:\n    return text\n\ndef run() -> str:\n    return own(label())\n",
+        check: |_source, bodies| {
+            let (run, _) = bodies.get("run").ok_or("missing body")?;
+            assert!(run.contains("write `.clone()` on it"), "{run}");
+            Ok(())
+        },
+    },
+];
