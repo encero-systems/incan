@@ -10,7 +10,7 @@ use incan_mir_plan_native::{
     POSITIONED_MODULE_PAGE, PlanSelectedModule, RequestModuleNote, WHOLE_ADMISSION_SELECTOR, WholeModuleAdmission,
     decode_request_module_note, read_positioned_plan_members,
 };
-use internal_models_bindings::{complete_view, mapped_bytes, single_row_reference_prefix};
+use internal_models_bindings::{complete_view, single_row_reference_prefix, take_mapped_bytes};
 use sha2::{Digest, Sha256};
 
 use super::{FRAME_LIST, ListedFrame, PlanModuleSelection, framed_bytes, parse_frame_list, read_selection_file};
@@ -167,7 +167,7 @@ fn no_sparse_placement(note: &Path) -> Result<(), String> {
     }
 }
 
-/// Read the exact named positioned copy or immutable store frame as one bounded input.
+/// Read the exact named positioned copy or immutable store frame, then move its bytes into the retained view.
 fn selected_module_definitions(
     products: &Path,
     selected: &PlanSelectedModule,
@@ -175,7 +175,7 @@ fn selected_module_definitions(
 ) -> Result<Vec<AdmittedDefinition>, String> {
     let basename = format!("{}{POSITIONED_MODULE_PAGE}", hex::encode(&selected.module));
     let path = products.join(&basename);
-    let bytes = match std::fs::symlink_metadata(&path) {
+    let mut bytes = match std::fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() => {
             let named = read_selection_file(&products.join(format!("{basename}.digest")), 64)?;
             if named != selected.digest.as_bytes() {
@@ -212,8 +212,12 @@ fn selected_module_definitions(
     };
     #[cfg(test)]
     let capture = (bytes.as_ptr().addr(), bytes.len());
-    let owner = mapped_bytes(&bytes)?;
-    drop(bytes);
+    let owner = take_mapped_bytes(&mut bytes)?;
+    #[cfg(test)]
+    assert!(
+        bytes.is_empty(),
+        "the original capture retained its bytes after transfer"
+    );
     let view = complete_view(&owner).ok_or("cannot retain the selected positioned Plan view")?;
     #[cfg(test)]
     POSITIONED_BACKING_BYTES.with(|backing| {
