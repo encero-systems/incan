@@ -1,0 +1,20 @@
+# Former case public_model_static_method_and_property: a public model's static factory, instance method and public property are callable from the same module with their declared results
+
+pub model Counter:
+    value: int
+
+    @staticmethod
+    pub def make(value: int) -> Counter:
+        return Counter(value=value)
+
+    pub def next(self) -> int:
+        return self.value + 1
+
+    pub property current -> int:
+        return self.value
+
+
+pub def main() -> None:
+    counter = Counter.make(41)
+    println(counter.next())
+    println(counter.current)

@@ -1,0 +1,19 @@
+# Former case decorated_variadic_function: a decorator factory applied to a function with rest and keyword-rest parameters leaves it callable with spread and keyword arguments
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+
+@preserve()
+pub def decorated_total(first: int, second: int, *rest: int, **labels: str) -> int:
+    mut total: int = first + second
+    for value in rest:
+        total += value
+    if labels["mode"] == "sum":
+        return total
+    return -1
+
+
+pub def main() -> None:
+    println(decorated_total(1, 2, 3, 4, mode="sum"))
+    println(decorated_total(1, 2, mode="other"))

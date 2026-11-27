@@ -1,0 +1,16 @@
+# Former case partial_alias_derive: std.serde.json Serialize imported under an alias derives, bounds and dispatches like the direct import (RFC 024, #1712)
+
+from std.serde.json import Serialize as JsonSerialize
+
+
+@derive(JsonSerialize)
+model Payload:
+    value: int
+
+
+def encode[T with JsonSerialize](value: T) -> str:
+    return value.to_json()
+
+
+pub def main() -> None:
+    println(encode(Payload(value=1)))

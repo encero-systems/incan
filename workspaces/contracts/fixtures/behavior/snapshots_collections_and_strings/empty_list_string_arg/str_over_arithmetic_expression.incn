@@ -1,0 +1,17 @@
+# Former case str_over_arithmetic_expression: str() over an arithmetic, negated or compound expression renders the whole expression's value, not the left operand joined to the rendered right operand
+
+model Reading:
+    value: int
+
+
+pub def main() -> None:
+    a = 1
+    b = 2
+    println(str(a + b))
+    println(str(a * 5 + b))
+    reading = Reading(value=10)
+    println(str(reading.value + b))
+    println(str(a + b) + str(a * 6))
+    println(str(-a))
+    println(str(a / b + b))
+    println(str(a < b))

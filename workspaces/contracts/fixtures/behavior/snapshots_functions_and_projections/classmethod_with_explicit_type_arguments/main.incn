@@ -1,0 +1,63 @@
+# behavior: 11 former snapshots functions and projections cases run in order, each program from its own module: classmethod_with_explicit_type_arguments, decorated_variadic_function, decorator_factory_on_function_and_method, derived_default_associated_function, method_classmethod_staticmethod_property, public_model_static_method_and_property, same_spelling_type_owned_and_instance_methods, static_factory_named_like_field, user_defined_method_decorators, user_defined_mutable_method_decorator_replacement, user_defined_mutable_method_decorators
+# expect-stdout:
+#  1
+#  two
+#  10
+#  -1
+#  preserving
+#  preserving
+#  main
+#  3
+#  11
+#  14
+#  0
+#  42
+#  42
+#  42
+#  100
+#  42
+#  41
+#  5
+#  -5
+#  -7
+#  decorating label
+#  main
+#  8
+#  10
+#  main
+#  5
+#  9
+#  9
+#  decorating bump
+#  main
+#  3
+#  5
+
+"""Run the program of each former case in order."""
+
+import classmethod_with_explicit_type_arguments
+import decorated_variadic_function
+import decorator_factory_on_function_and_method
+import derived_default_associated_function
+import method_classmethod_staticmethod_property
+import public_model_static_method_and_property
+import same_spelling_type_owned_and_instance_methods
+import static_factory_named_like_field
+import user_defined_method_decorators
+import user_defined_mutable_method_decorator_replacement
+import user_defined_mutable_method_decorators
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    classmethod_with_explicit_type_arguments.main()
+    decorated_variadic_function.main()
+    decorator_factory_on_function_and_method.main()
+    derived_default_associated_function.main()
+    method_classmethod_staticmethod_property.main()
+    public_model_static_method_and_property.main()
+    same_spelling_type_owned_and_instance_methods.main()
+    static_factory_named_like_field.main()
+    user_defined_method_decorators.main()
+    user_defined_mutable_method_decorator_replacement.main()
+    user_defined_mutable_method_decorators.main()

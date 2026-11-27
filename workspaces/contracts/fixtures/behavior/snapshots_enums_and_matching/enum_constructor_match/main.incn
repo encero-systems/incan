@@ -1,0 +1,133 @@
+# behavior: 15 former snapshots enums and matching cases run in order, each program from its own module: enum_constructor_match, enum_methods_and_traits, enums, for_in_list_enum_equality, if_let_while_let, match_statements, pattern_alternation, patterns, trailing_match_expression, tuple_pattern_bindings, imported_enum_loop_ownership, unqualified_and_aliased_variant_patterns, isinstance_explicit_builtin_and_aliases, newtype_union_isinstance, option_union_payloads
+# expect-stdout:
+#  FilterRel
+#  ReadRel
+#  ProjectRel
+#  start
+#  stop
+#  start
+#  Color: red
+#  Some: 84, None: -1
+#  Success: 100
+#  Error: Something went wrong
+#  Quitting
+#  Moving to (10, 20)
+#  Writing: Hello
+#  Color: RGB(255, 0, 0)
+#  Circle area: 78.53975
+#  Rectangle area: 24.0
+#  Triangle area: 12.0
+#  Priority level: 3
+#  Empty count: 0
+#  Single count: 1
+#  Multiple count: 5
+#  Mapped count: 3
+#  true
+#  false
+#  5
+#  0
+#  7
+#  0
+#  other
+#  42
+#  many
+#  medium
+#  waiting
+#  waiting
+#  done
+#  1
+#  2
+#  wildcard matches anything
+#  five
+#  Hello Alice
+#  yes
+#  42
+#  nothing
+#  42
+#  failed
+#  42
+#  first is forty-two
+#  large
+#  one
+#  other
+#  one
+#  other
+#  one
+#  other
+#  42 hello
+#  zero
+#  43 HELLO
+#  payload
+#  payload
+#  none
+#  true
+#  false
+#  1.5
+#  0.0
+#  -1
+#  3
+#  4
+#  9
+#  6
+#  7
+#  8
+#  false
+#  true false
+#  ABC number
+#  number missing UP
+#  true
+#  frozen text number
+#  frozen text missing
+#  frozen text other
+#  frozen text plain number
+#  frozen text plain other
+#  PLAIN
+#  local
+#  missing
+#  plain
+#  local
+#  text
+#  PLAIN
+#  path p
+#  LOCAL
+#  RETURNED
+#  missing
+#  frozen text
+#  number
+
+"""Run the program of each former case in order."""
+
+import enum_constructor_match
+import enum_methods_and_traits
+import enums
+import for_in_list_enum_equality
+import if_let_while_let
+import match_statements
+import pattern_alternation
+import patterns
+import trailing_match_expression
+import tuple_pattern_bindings
+import imported_enum_loop_ownership
+import unqualified_and_aliased_variant_patterns
+import isinstance_explicit_builtin_and_aliases
+import newtype_union_isinstance
+import option_union_payloads
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    enum_constructor_match.main()
+    enum_methods_and_traits.main()
+    enums.main()
+    for_in_list_enum_equality.main()
+    if_let_while_let.main()
+    match_statements.main()
+    pattern_alternation.main()
+    patterns.main()
+    trailing_match_expression.main()
+    tuple_pattern_bindings.main()
+    imported_enum_loop_ownership.main()
+    unqualified_and_aliased_variant_patterns.main()
+    isinstance_explicit_builtin_and_aliases.main()
+    newtype_union_isinstance.main()
+    option_union_payloads.main()

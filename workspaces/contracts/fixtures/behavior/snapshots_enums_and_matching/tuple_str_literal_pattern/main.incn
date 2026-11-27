@@ -1,0 +1,44 @@
+# behavior: 4 former snapshots enums and matching cases run in order, each program from its own module: tuple_str_literal_pattern, union_types, user_message_method_issue2227, value_enums
+# expect-stdout:
+#  second is answer
+#  answered
+#  open
+#  open
+#  found alice
+#  no bob
+#  nobody
+#  pair is a match
+#  number FALLBACK
+#  42 FALLBACK
+#  HELLO missing
+#  7 UP missing
+#  number true false TEXT
+#  number TEXT true false
+#  bool int float WIDE
+#  bool:true 3 2.5 WIDE
+#  number missing OPT
+#  text 9
+#  io: boom
+#  usage: help
+#  development
+#  production
+#  parsed production
+#  unknown
+#  200
+#  parsed 404
+#  unknown
+
+"""Run the program of each former case in order."""
+
+import tuple_str_literal_pattern
+import union_types
+import user_message_method_issue2227
+import value_enums
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    tuple_str_literal_pattern.main()
+    union_types.main()
+    user_message_method_issue2227.main()
+    value_enums.main()

@@ -1,0 +1,27 @@
+# Former case self_referential_class_method_walks_chain: a method on a self-referential class walks its Option chain to count, sum and find the last value (#2475)
+
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+    pub def length(self) -> int:
+        match self.next:
+            Some(n) => return 1 + n.length()
+            None => return 1
+
+    pub def total(self) -> int:
+        match self.next:
+            Some(n) => return self.value + n.total()
+            None => return self.value
+
+    pub def last(self) -> int:
+        match self.next:
+            Some(n) => return n.last()
+            None => return self.value
+
+
+pub def main() -> None:
+    chain = Node(value=1, next=Some(Node(value=2, next=Some(Node(value=3, next=None)))))
+    println(chain.length())
+    println(chain.total())
+    println(chain.last())
