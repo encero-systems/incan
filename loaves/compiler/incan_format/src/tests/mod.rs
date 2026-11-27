@@ -12,4 +12,4 @@ mod entry_points_imports_and_spacing;
 mod expressions_and_calls;
 mod statements_and_patterns;
 
-use helpers::{assert_format_round_trip_lex_parse, program_from_source};
+use helpers::{Check, FormatCase, assert_format_round_trip_lex_parse, program_from_source, run_format_cases};

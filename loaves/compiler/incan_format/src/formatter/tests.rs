@@ -64,74 +64,110 @@ fn format_fixture(source: &str, keyword_map: &KeywordMap, surface_map: &SurfaceM
         .map_err(|errs| format!("parse errors: {errs:?}"))?;
     Ok(Formatter::new(FormatConfig::default()).format(&program))
 }
+/// One embedded-fragment row: the descriptor that activates the fragment, a source, and its formatted output's checks.
+struct FragmentCase {
+    name: &'static str,
+    keyword: &'static str,
+    provider: &'static str,
+    submode: incan_vocab::EmbeddedFragmentSubmode,
+    layout_sensitive: bool,
+    source: &'static str,
+    /// Texts the formatted output contains.
+    has: &'static [&'static str],
+    /// Texts the formatted output does not contain.
+    lacks: &'static [&'static str],
+    /// Whether formatting the output again leaves it unchanged.
+    stable: bool,
+}
 
-#[test]
-fn a_layout_sensitive_descriptor_keeps_its_fragment_verbatim() -> Result<(), String> {
+impl FragmentCase {
+    fn run(&self) -> Result<(), String> {
+        let (keyword_map, surface_map) = fixture_maps(self.keyword, self.provider, self.submode, self.layout_sensitive);
+        let once = format_fixture(self.source, &keyword_map, &surface_map)?;
+        check_output(&once, self.has, self.lacks)?;
+        if self.stable {
+            let twice = format_fixture(&once, &keyword_map, &surface_map)?;
+            if once != twice {
+                return Err(format!(
+                    "second pass changed the output:\n--- once ---\n{once}\n--- twice ---\n{twice}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn check_output(output: &str, has: &[&str], lacks: &[&str]) -> Result<(), String> {
+    if let Some(missing) = has.iter().find(|text| !output.contains(*text)) {
+        return Err(format!("expected {missing:?} in:\n{output}"));
+    }
+    if let Some(present) = lacks.iter().find(|text| output.contains(*text)) {
+        return Err(format!("expected no {present:?} in:\n{output}"));
+    }
+    Ok(())
+}
+
+fn report(kind: &str, failures: Vec<String>) {
+    assert!(
+        failures.is_empty(),
+        "{} {kind} row(s) failed:\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
+use incan_vocab::EmbeddedFragmentSubmode::{Markup, RawText, RegexTemplate, Style};
+
+const FRAGMENT_CASES: &[FragmentCase] = &[
     // A DSL that declares itself layout-sensitive owns its own whitespace, so the formatter must not restructure
     // it. This is one of RFC 081's two modes, and the descriptor is what selects it.
-    let (keyword_map, surface_map) =
-        fixture_maps("raw", "textkit", incan_vocab::EmbeddedFragmentSubmode::RawText, true);
-    let source =
-        "import pub::textkit\n\ndef banner() -> None:\n    raw:\n        line one\n           deliberately indented\n";
-    let formatted = format_fixture(source, &keyword_map, &surface_map)?;
-
-    assert!(
-        formatted.contains("           deliberately indented"),
-        "layout-sensitive source must survive untouched:\n{formatted}"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_structural_markup_fragment_is_formatted_from_its_nodes() -> Result<(), String> {
+    FragmentCase {
+        name: "a_layout_sensitive_descriptor_keeps_its_fragment_verbatim",
+        keyword: "raw",
+        provider: "textkit",
+        submode: RawText,
+        layout_sensitive: true,
+        source: "import pub::textkit\n\ndef banner() -> None:\n    raw:\n        line one\n           deliberately indented\n",
+        has: &["           deliberately indented"],
+        lacks: &[],
+        stable: false,
+    },
     // The other mode: a descriptor that does not declare layout sensitivity gets rendered from the structural
     // tree. Ragged source indentation is layout, so it is re-derived rather than reproduced.
-    let (keyword_map, surface_map) =
-        fixture_maps("html", "webkit", incan_vocab::EmbeddedFragmentSubmode::Markup, false);
-    let source = "import pub::webkit\n\ndef render(title: str) -> None:\n    html:\n        <section class=\"card\">\n              <h1>{title}</h1>\n        </section>\n";
-    let formatted = format_fixture(source, &keyword_map, &surface_map)?;
-
-    assert!(
-        formatted.contains("<section class=\"card\">"),
-        "the element and its literal attribute should render structurally:\n{formatted}"
-    );
-    assert!(
-        formatted.contains("<h1>{title}</h1>"),
-        "an inline child keeps its text and hole on one line:\n{formatted}"
-    );
-    assert!(
-        !formatted.contains("              <h1>"),
-        "the source's ragged indentation is layout and should not survive:\n{formatted}"
-    );
-    Ok(())
-}
-
-#[test]
-fn structural_fragment_formatting_is_idempotent() -> Result<(), String> {
+    FragmentCase {
+        name: "a_structural_markup_fragment_is_formatted_from_its_nodes",
+        keyword: "html",
+        provider: "webkit",
+        submode: Markup,
+        layout_sensitive: false,
+        source: "import pub::webkit\n\ndef render(title: str) -> None:\n    html:\n        <section class=\"card\">\n              <h1>{title}</h1>\n        </section>\n",
+        has: &["<section class=\"card\">", "<h1>{title}</h1>"],
+        lacks: &["              <h1>"],
+        stable: false,
+    },
     // Formatting has to be a fixed point: whitespace the first pass introduces becomes text nodes on re-parse, so
     // a renderer that reproduced them would drift further on every pass. This is the property that makes the
     // structural mode safe to run in `incan fmt --check`.
-    let (keyword_map, surface_map) =
-        fixture_maps("html", "webkit", incan_vocab::EmbeddedFragmentSubmode::Markup, false);
-    let source = "import pub::webkit\n\ndef render(title: str, body: str) -> None:\n    html:\n        <section>\n          <h1>{title}</h1>\n          <p>Body: {body}</p>\n        </section>\n";
-
-    let once = format_fixture(source, &keyword_map, &surface_map)?;
-    let twice = format_fixture(&once, &keyword_map, &surface_map)?;
-    assert_eq!(
-        once, twice,
-        "second pass changed the output:\n--- once ---\n{once}\n--- twice ---\n{twice}"
-    );
-    Ok(())
-}
-
-/// Preserve holes and custom-property references while rendering style declarations to a parseable fixed point.
-#[test]
-fn a_structural_style_fragment_renders_rules_and_declarations() -> Result<(), String> {
-    // The style submode nests declarations under a rule rather than children under an element, so it exercises a
-    // different branch of the structural renderer than markup does.
-    let (keyword_map, surface_map) =
-        fixture_maps("css", "styleforge", incan_vocab::EmbeddedFragmentSubmode::Style, false);
-    let source = r"import pub::styleforge
+    FragmentCase {
+        name: "structural_fragment_formatting_is_idempotent",
+        keyword: "html",
+        provider: "webkit",
+        submode: Markup,
+        layout_sensitive: false,
+        source: "import pub::webkit\n\ndef render(title: str, body: str) -> None:\n    html:\n        <section>\n          <h1>{title}</h1>\n          <p>Body: {body}</p>\n        </section>\n",
+        has: &[],
+        lacks: &[],
+        stable: true,
+    },
+    // Preserve holes and custom-property references while rendering style declarations to a parseable fixed point.
+    // The style submode nests declarations under a rule rather than children under an element.
+    FragmentCase {
+        name: "a_structural_style_fragment_renders_rules_and_declarations",
+        keyword: "css",
+        provider: "styleforge",
+        submode: Style,
+        layout_sensitive: false,
+        source: r"import pub::styleforge
 
 def theme(accent: str) -> None:
     css:
@@ -139,225 +175,152 @@ def theme(accent: str) -> None:
             color: {accent};
             background: var(--accent-color);
         }
-";
-
-    let once = format_fixture(source, &keyword_map, &surface_map)?;
-    assert!(
-        once.contains(".card {"),
-        "the selector and block opener should render:\n{once}"
-    );
-    assert!(
-        once.contains("color: {accent};"),
-        "a declaration with a hole value should render with its semicolon:\n{once}"
-    );
-    assert!(
-        once.contains("background: var(--accent-color);"),
-        "a custom-property reference must retain its expression delimiters:\n{once}"
-    );
-
-    let twice = format_fixture(&once, &keyword_map, &surface_map)?;
-    assert_eq!(once, twice, "style formatting should be a fixed point:\n{once}");
-    Ok(())
-}
-
-#[test]
-fn a_regex_template_fragment_survives_a_formatting_round_trip() -> Result<(), String> {
-    // A template string's backticks and `${...}` delimiters are consumed while parsing and never stored as nodes,
-    // so rendering the node tree the way other submodes render theirs emitted `hello {name}!` -- a fragment this
-    // submode rejects outright. `incan fmt` therefore rewrote a valid file into one that no longer parses, which
-    // is why the round trip is the assertion here rather than the output text alone.
-    let (keyword_map, surface_map) = fixture_maps(
-        "script",
-        "scriptkit",
-        incan_vocab::EmbeddedFragmentSubmode::RegexTemplate,
-        false,
-    );
-    let source = "import pub::scriptkit\n\ndef render(name: str) -> None:\n    script:\n        `hello ${name}!`\n";
-
-    let once = format_fixture(source, &keyword_map, &surface_map)?;
-    assert!(
-        once.contains("`hello ${name}!`"),
-        "the template's own delimiters must be reconstructed:\n{once}"
-    );
-    let twice = format_fixture(&once, &keyword_map, &surface_map)?;
-    assert_eq!(once, twice, "template formatting should be a fixed point:\n{once}");
-    Ok(())
-}
-
-#[test]
-fn a_regex_literal_fragment_survives_a_formatting_round_trip() -> Result<(), String> {
-    // The submode's other accepted form. It keeps its own node, so it only has to prove it is not swept into the
-    // template-reconstruction path added for the case above.
-    let (keyword_map, surface_map) = fixture_maps(
-        "script",
-        "scriptkit",
-        incan_vocab::EmbeddedFragmentSubmode::RegexTemplate,
-        false,
-    );
-    let source = "import pub::scriptkit\n\ndef render() -> None:\n    script:\n        /^[a-z]+$/gi\n";
-
-    let once = format_fixture(source, &keyword_map, &surface_map)?;
-    assert!(
-        once.contains("/^[a-z]+$/gi"),
-        "a regex literal must render as itself, not as a template:\n{once}"
-    );
-    let twice = format_fixture(&once, &keyword_map, &surface_map)?;
-    assert_eq!(once, twice, "regex formatting should be a fixed point:\n{once}");
-    Ok(())
-}
+",
+        has: &[".card {", "color: {accent};", "background: var(--accent-color);"],
+        lacks: &[],
+        stable: true,
+    },
+    // The template's own delimiters must be reconstructed.
+    FragmentCase {
+        name: "a_regex_template_fragment_survives_a_formatting_round_trip",
+        keyword: "script",
+        provider: "scriptkit",
+        submode: RegexTemplate,
+        layout_sensitive: false,
+        source: "import pub::scriptkit\n\ndef render(name: str) -> None:\n    script:\n        `hello ${name}!`\n",
+        has: &["`hello ${name}!`"],
+        lacks: &[],
+        stable: true,
+    },
+    // A regex literal must render as itself, not as a template.
+    FragmentCase {
+        name: "a_regex_literal_fragment_survives_a_formatting_round_trip",
+        keyword: "script",
+        provider: "scriptkit",
+        submode: RegexTemplate,
+        layout_sensitive: false,
+        source: "import pub::scriptkit\n\ndef render() -> None:\n    script:\n        /^[a-z]+$/gi\n",
+        has: &["/^[a-z]+$/gi"],
+        lacks: &[],
+        stable: true,
+    },
+    // Preserved text must be a fixed point and survive, with and without layout sensitivity (this row and the next).
+    FragmentCase {
+        name: "preserved_fragment_text_does_not_grow_a_blank_line_per_pass",
+        keyword: "note",
+        provider: "textkit",
+        submode: RawText,
+        layout_sensitive: false,
+        source: "import pub::textkit\n\ndef banner(who: str) -> None:\n    note:\n        TODO({who}): still to do\n",
+        has: &["TODO({who}): still to do"],
+        lacks: &[],
+        stable: true,
+    },
+    FragmentCase {
+        name: "preserved_fragment_text_does_not_grow_a_blank_line_per_pass_layout_sensitive",
+        keyword: "note",
+        provider: "textkit",
+        submode: RawText,
+        layout_sensitive: true,
+        source: "import pub::textkit\n\ndef banner(who: str) -> None:\n    note:\n        TODO({who}): still to do\n",
+        has: &["TODO({who}): still to do"],
+        lacks: &[],
+        stable: true,
+    },
+];
 
 #[test]
-fn preserved_fragment_text_does_not_grow_a_blank_line_per_pass() -> Result<(), String> {
-    // Both modes that write preserved text verbatim -- a layout-sensitive descriptor, and `RawText`'s content
-    // runs -- used to emit the newline that terminates the fragment's last line, which the enclosing statement
-    // writer emits as well. Every `incan fmt` pass added one more blank line, so a formatted file was never
-    // stable. Two passes is enough to catch it: the growth is one line per pass.
-    for layout_sensitive in [false, true] {
-        let (keyword_map, surface_map) = fixture_maps(
-            "note",
-            "textkit",
-            incan_vocab::EmbeddedFragmentSubmode::RawText,
-            layout_sensitive,
-        );
-        let source =
-            "import pub::textkit\n\ndef banner(who: str) -> None:\n    note:\n        TODO({who}): still to do\n";
-
-        let once = format_fixture(source, &keyword_map, &surface_map)?;
-        let twice = format_fixture(&once, &keyword_map, &surface_map)?;
-        assert_eq!(
-            once, twice,
-            "layout_sensitive={layout_sensitive}: preserved text must be a fixed point:\n--- once ---\n{once}\n--- \
-             twice ---\n{twice}"
-        );
-        assert!(
-            once.contains("TODO({who}): still to do"),
-            "layout_sensitive={layout_sensitive}: preserved content must survive:\n{once}"
-        );
-    }
-    Ok(())
+fn embedded_fragment_cases() {
+    report(
+        "fragment",
+        FRAGMENT_CASES
+            .iter()
+            .filter_map(|case| case.run().err().map(|problem| format!("{}: {problem}", case.name)))
+            .collect(),
+    );
 }
 
-// ---- Declaration and literal round trips (#1401) ----
-
-/// Format `source` through the public entrypoint, or fail with the formatter's own message.
-fn formatted(source: &str) -> Result<String, String> {
-    crate::format_source(source).map_err(|error| error.to_string())
-}
-
-#[test]
-fn an_enum_keeps_its_trait_adoption() -> Result<(), String> {
-    // `enum Level with Display` and `enum Level` are different types. The writer omitted `en.traits` entirely, so
-    // formatting silently rewrote the first into the second — a meaning change reported as success.
-    let source = "from std.traits import Display
+/// A source formatted with the default configuration: texts its output keeps, and formatting it again is a fixed
+/// point.
+const PLAIN_CASES: &[(&str, &str, &[&str])] = &[
+    (
+        "an_enum_keeps_its_trait_adoption",
+        "from std.traits import Display
 
 enum Level with Display:
     Low
     High
-";
-    let once = formatted(source)?;
-    assert!(
-        once.contains("enum Level with Display:"),
-        "the adoption clause was dropped:
-{once}"
-    );
-    assert_eq!(
-        once,
-        formatted(&once)?,
-        "formatting is not a fixed point:
-{once}"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_byte_literal_keeps_its_escapes() -> Result<(), String> {
-    // A quote or backslash byte sits in the printable range, so writing it raw closed the literal early or began a
-    // bogus escape. An escaped quote came back unescaped, producing source that no longer parses.
-    let source = r#"def main() -> None:
+",
+        &["enum Level with Display:"],
+    ),
+    (
+        "a_byte_literal_keeps_its_escapes",
+        r#"def main() -> None:
     quoted = b"a\"b"
     slashed = b"x\\y"
     println(f"{len(quoted)}{len(slashed)}")
-"#;
-    let once = formatted(source)?;
-    assert!(once.contains(r#"b"a\"b""#), "the escaped quote was lost:\n{once}");
-    assert!(once.contains(r#"b"x\\y""#), "the escaped backslash was lost:\n{once}");
-    assert_eq!(once, formatted(&once)?, "formatting is not a fixed point:\n{once}");
-    Ok(())
-}
-
-#[test]
-fn a_string_literal_keeps_its_escapes_between_double_quotes() -> Result<(), String> {
-    // Literals were rebuilt from their decoded values: `"\u{1b}"` came back as a raw ESC character, `"\u{41}"` as
-    // `"A"` and `"\u{9}"` as `"\t"`. A single-quoted literal is written between double quotes, and its escapes keep
-    // their spelling there too; only the quotes it needs change.
-    let source = r#"def main() -> None:
+"#,
+        &[r#"b"a\"b""#, r#"b"x\\y""#],
+    ),
+    (
+        "a_string_literal_keeps_its_escapes_between_double_quotes",
+        r#"def main() -> None:
     escape = "\u{1b}"
     letter = "\u{41}"
     quoted = 'it\'s "\u{1b}"'
     println(escape + letter + quoted + '\u{9}')
-"#;
-    let once = formatted(source)?;
-    for spelled in [
-        r#"escape = "\u{1b}""#,
-        r#"letter = "\u{41}""#,
-        r#"quoted = "it's \"\u{1b}\"""#,
-        r#"quoted + "\u{9}")"#,
-    ] {
-        assert!(once.contains(spelled), "expected {spelled} in:\n{once:?}");
-    }
-    assert_eq!(once, formatted(&once)?, "formatting is not a fixed point:\n{once}");
-    Ok(())
-}
-
-#[test]
-fn a_guarded_match_arm_keeps_its_guard_and_still_parses() -> Result<(), String> {
-    // `incan fmt` used to write the guard before an arrow -- `_ if n <= 0 => ...` -- which the parser then rejected,
-    // so `examples/simple/fib.incn` was reformatted into a syntax error. The guard is no longer the arrow form's
-    // problem: both spellings share one arm grammar, so it survives formatting either way (#1401).
-    let source = "def fib(n: int) -> int:
+"#,
+        &[
+            r#"escape = "\u{1b}""#,
+            r#"letter = "\u{41}""#,
+            r#"quoted = "it's \"\u{1b}\"""#,
+            r#"quoted + "\u{9}")"#,
+        ],
+    ),
+    (
+        "a_guarded_match_arm_keeps_its_guard_and_still_parses",
+        "def fib(n: int) -> int:
     match n:
         case _ if n <= 0:
             return 0
         case _:
             return 1
-";
-    let once = formatted(source)?;
-    assert!(
-        once.contains("if n <= 0"),
-        "the guard was dropped:
-{once}"
-    );
-    // `formatted` parses its input, so a second pass succeeding is also proof the first pass stayed parseable.
-    assert_eq!(
-        once,
-        formatted(&once)?,
-        "formatting is not a fixed point:
-{once}"
-    );
-    Ok(())
-}
-
-#[test]
-fn an_arrow_arm_written_with_a_guard_round_trips() -> Result<(), String> {
-    // The arrow spelling carries a guard of its own now, so a file written that way must survive formatting without
-    // being rewritten into the other spelling.
-    let source = "def classify(n: int) -> str:
+",
+        &["if n <= 0"],
+    ),
+    // The guarded arrow arm is not rewritten into another spelling.
+    (
+        "an_arrow_arm_written_with_a_guard_round_trips",
+        "def classify(n: int) -> str:
     return match n:
         x if x < 0 => \"negative\"
         0 => \"zero\"
         _ => \"positive\"
-";
+",
+        &["x if x < 0 =>"],
+    ),
+];
+
+fn formatted(source: &str) -> Result<String, String> {
+    crate::format_source(source).map_err(|error| error.to_string())
+}
+
+fn run_plain(source: &str, has: &[&str]) -> Result<(), String> {
     let once = formatted(source)?;
-    assert!(
-        once.contains("x if x < 0 =>"),
-        "the guarded arrow arm was rewritten into another spelling:
-{once}"
-    );
-    assert_eq!(
-        once,
-        formatted(&once)?,
-        "formatting is not a fixed point:
-{once}"
-    );
+    check_output(&once, has, &[])?;
+    if once != formatted(&once)? {
+        return Err(format!("formatting is not a fixed point:\n{once}"));
+    }
     Ok(())
+}
+
+#[test]
+fn plain_source_cases() {
+    report(
+        "plain",
+        PLAIN_CASES
+            .iter()
+            .filter_map(|(name, source, has)| run_plain(source, has).err().map(|problem| format!("{name}: {problem}")))
+            .collect(),
+    );
 }

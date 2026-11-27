@@ -70,186 +70,6 @@ fn test_normalized_line_buffer_allows_double_blanks_only_at_root() {
     );
 }
 
-/// Single empty line between statements in a block must round-trip through the formatter.
-#[test]
-fn test_format_source_preserves_single_blank_line_in_function_body() -> Result<(), FormatError> {
-    let source = r#"# example
-def function() -> int:
-    """Line one.
-    Line two."""
-    foo = 1
-
-    bar = 2
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        formatted.contains("foo = 1\n\n    bar"),
-        "expected one blank line between assignments; got:\n{formatted}"
-    );
-    Ok(())
-}
-
-/// Multiple empty lines between statements collapse to a single blank line.
-#[test]
-fn test_format_source_collapses_multiple_blank_lines_in_block() -> Result<(), FormatError> {
-    let source = r#"def f() -> int:
-    foo = 1
-
-
-
-    bar = 2
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        !formatted.contains("\n\n\n    bar"),
-        "expected at most one blank line before bar; got:\n{formatted}"
-    );
-    assert!(
-        formatted.contains("foo = 1\n\n    bar"),
-        "expected one blank line between statements; got:\n{formatted}"
-    );
-    Ok(())
-}
-
-/// Single empty line after a nested suite belongs to the next outer statement.
-#[test]
-fn test_format_source_preserves_single_blank_line_after_nested_suite() -> Result<(), FormatError> {
-    let source = r#"def f(items: list[int]) -> int:
-    for item in items:
-        value = item
-
-    result = 1
-    return result
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        formatted.contains("        value = item\n\n    result = 1"),
-        "expected one blank line after nested suite; got:\n{formatted}"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_source_preserves_single_blank_line_between_if_blocks_ending_in_match() -> Result<(), FormatError> {
-    let source = r#"def f(a: bool, b: bool, result: Result[int, str]) -> None:
-    if a:
-        match result:
-            Ok(_) => return
-            Err(err) => return
-
-    if b:
-        match result:
-            Ok(_) => return
-            Err(err) => return
-
-    z = 3
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        formatted.contains("            Err(err) => return\n\n    if b:"),
-        "expected one blank line between sibling if blocks after inner match; got:\n{formatted}"
-    );
-    assert!(
-        formatted.contains("            Err(err) => return\n\n    z = 3"),
-        "expected one blank line before the trailing outer statement; got:\n{formatted}"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_source_clamps_blank_line_runs_to_two() -> Result<(), FormatError> {
-    let source = r#"def main() -> None:
-    pass
-
-
-
-def helper() -> None:
-    pass
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"def main() -> None:
-    pass
-
-
-def helper() -> None:
-    pass
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_preserves_single_blank_line_before_comment_led_logic_block() -> Result<(), FormatError> {
-    let source = r#"def f() -> int:
-    foo = 1
-
-    # logic block
-    bar = 2
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"def f() -> int:
-    foo = 1
-
-    # logic block
-    bar = 2
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_collapses_multiple_blank_lines_before_comment_led_logic_block() -> Result<(), FormatError> {
-    let source = r#"def f() -> int:
-    foo = 1
-
-
-
-    # logic block
-    bar = 2
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"def f() -> int:
-    foo = 1
-
-    # logic block
-    bar = 2
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_keeps_leading_comments_before_wrapped_statements() -> Result<(), FormatError> {
-    let source = r#"def test_case() -> None:
-    # -- Arrange --
-    scenario = SubstraitConformanceScenario(scenario_id="test.multi.required.rels", title="test", status=ConformanceStatus.Core, profile_tags=[ConformanceProfileTag.ReadQueryCore], capability_tags=_test_tags(["named-table"]), root_rel=ConformanceRel.Filter, required_rels=[ConformanceRel.Read, ConformanceRel.Filter], portability=ConformancePortability.Portable, intent="test", required_rel_shape="test", expected_constraints="test", references=_test_refs(["docs/rfcs/002_apache_substrait_integration.md"]))
-
-    # -- Act --
-    named_only_plan = plan_from_named_table("orders")
-
-    # -- Assert --
-    assert_eq(scenario_matches_root_shape(scenario, named_only_plan), false, "shape validation should fail when the root relation does not match the declared root contract")
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        formatted.contains("    # -- Arrange --\n    scenario = SubstraitConformanceScenario("),
-        "expected arrange comment to stay attached to wrapped constructor; got:\n{formatted}"
-    );
-    assert!(
-        formatted.contains("    # -- Act --\n    named_only_plan = plan_from_named_table(\"orders\")"),
-        "expected act comment to stay attached after preceding wrapped constructor; got:\n{formatted}"
-    );
-    assert!(
-        formatted.contains("    # -- Assert --\n    assert_eq("),
-        "expected assert comment to stay attached to wrapped assertion; got:\n{formatted}"
-    );
-    assert!(
-        !formatted.contains("    )\n\n    named_only_plan = plan_from_named_table(\"orders\")\n\n    assert_eq("),
-        "formatter stranded phase comments after wrapped anchors; got:\n{formatted}"
-    );
-    Ok(())
-}
-
 #[test]
 fn test_format_source_keeps_phase_comments_attached_inside_nested_match_blocks() -> Result<(), FormatError> {
     let source = r#"def test_session_backend_datafusion__registered_named_table_executes_via_substrait() -> None:
@@ -329,39 +149,11 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
 }
 
 #[test]
-fn test_format_source_refuses_comment_loss_inline_comment() -> Result<(), FormatError> {
-    let source = r#"def foo() -> int:
-  x = 1  # keep this comment
-  return x
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        formatted.contains("# keep this comment"),
-        "expected inline comment to survive formatting; got: {formatted}"
-    );
-    Ok(())
-}
-
-#[test]
 fn test_comment_counter_ignores_hash_in_string_literals() {
     let source = r##"def foo() -> str:
   return "# not a comment"
 "##;
     assert_eq!(count_line_comments(source), 0);
-}
-
-#[test]
-fn test_format_source_preserves_standalone_comment_lines() -> Result<(), FormatError> {
-    let source = r#"const A: int = 1
-# ---- marker comment ----
-const B: int = 2
-"#;
-    let formatted = format_source(source)?;
-    assert!(
-        formatted.contains("# ---- marker comment ----"),
-        "expected standalone comment to survive formatting; got: {formatted}"
-    );
-    Ok(())
 }
 
 #[test]
@@ -384,144 +176,6 @@ enum Marker:
 "#;
     let formatted = format_source(methods_only)?;
     assert_eq!(formatted, methods_only);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_collapses_docstring_interior_blank_runs() -> Result<(), FormatError> {
-    let source = r#"def explain() -> str:
-    """
-    First paragraph.
-
-
-    Second paragraph.
-    """
-    return "ok"
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"def explain() -> str:
-    """
-    First paragraph.
-
-    Second paragraph.
-    """
-    return "ok"
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_collapses_many_docstring_blank_lines_but_preserves_slash_n_text() -> Result<(), FormatError> {
-    let source = r#"def explain() -> str:
-    """
-    some docstring with a bunch of /n/n/n/ text
-
-
-
-
-
-    inside it
-    """
-    return "ok"
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"def explain() -> str:
-    """
-    some docstring with a bunch of /n/n/n/ text
-
-    inside it
-    """
-    return "ok"
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-/// Literal slash text and escaped docstring backslashes retain their meaning and spelling.
-#[test]
-fn test_format_source_preserves_literal_slash_n_sequences() -> Result<(), FormatError> {
-    let source = r#"def explain() -> str:
-    """Explain \\n and \\t text."""
-    # /n/n/n/n this is valid
-    value = "/n/n/n/n and so is this"
-    return value
-"#;
-    let formatted = format_source(source)?;
-    assert_eq!(formatted, source);
-    assert_eq!(format_source(&formatted)?, formatted);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_preserves_duplicate_comment_anchors() -> Result<(), FormatError> {
-    let source = r#"# ---- first ----
-@derive(Clone)
-type First = newtype int
-
-
-@derive(Clone)
-type Middle = newtype int
-
-
-# ---- second ----
-@derive(Clone)
-type Second = newtype int
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"# ---- first ----
-@derive(Clone)
-type First = newtype int
-
-
-@derive(Clone)
-type Middle = newtype int
-
-
-# ---- second ----
-@derive(Clone)
-type Second = newtype int
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_blank_line_separated_comment_attaches_backward() -> Result<(), FormatError> {
-    let source = r#"type UserId = str
-# comment about the alias
-
-def load_user(id: UserId) -> User:
-    pass
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"type UserId = str
-# comment about the alias
-
-
-def load_user(id: UserId) -> User:
-    pass
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-/// A comment at EOF stays outside the function suite and keeps its preceding source gap.
-#[test]
-fn test_format_source_trailing_comment_after_multiline_function_stays_after_suite() -> Result<(), FormatError> {
-    let source = r#"def load_user(id: UserId) -> User:
-    pass
-
-# TODO: split retries
-"#;
-    let formatted = format_source(source)?;
-    let expected = r#"def load_user(id: UserId) -> User:
-    pass
-
-# TODO: split retries
-"#;
-    assert_eq!(formatted, expected);
-    let _ = program_from_source(&formatted)?;
     Ok(())
 }
 
@@ -587,3 +241,301 @@ def other() -> int:
     }
     Ok(())
 }
+
+#[test]
+fn comment_and_blank_line_formatting_cases() {
+    run_format_cases(COMMENT_AND_BLANK_LINE_CASES);
+}
+
+const COMMENT_AND_BLANK_LINE_CASES: &[FormatCase] = &[
+    // Single empty line between statements in a block must round-trip through the formatter.
+    FormatCase {
+        name: "test_format_source_preserves_single_blank_line_in_function_body",
+        source: r#"# example
+def function() -> int:
+    """Line one.
+    Line two."""
+    foo = 1
+
+    bar = 2
+"#,
+        checks: &[Check::Has("foo = 1\n\n    bar")],
+        ..FormatCase::DEFAULT
+    },
+    // Multiple empty lines between statements collapse to a single blank line.
+    FormatCase {
+        name: "test_format_source_collapses_multiple_blank_lines_in_block",
+        source: r#"def f() -> int:
+    foo = 1
+
+
+
+    bar = 2
+"#,
+        checks: &[Check::Lacks("\n\n\n    bar"), Check::Has("foo = 1\n\n    bar")],
+        ..FormatCase::DEFAULT
+    },
+    // Single empty line after a nested suite belongs to the next outer statement.
+    FormatCase {
+        name: "test_format_source_preserves_single_blank_line_after_nested_suite",
+        source: r#"def f(items: list[int]) -> int:
+    for item in items:
+        value = item
+
+    result = 1
+    return result
+"#,
+        checks: &[Check::Has("        value = item\n\n    result = 1")],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_preserves_single_blank_line_between_if_blocks_ending_in_match",
+        source: r#"def f(a: bool, b: bool, result: Result[int, str]) -> None:
+    if a:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    if b:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    z = 3
+"#,
+        checks: &[
+            Check::Has("            Err(err) => return\n\n    if b:"),
+            Check::Has("            Err(err) => return\n\n    z = 3"),
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_clamps_blank_line_runs_to_two",
+        source: r#"def main() -> None:
+    pass
+
+
+
+def helper() -> None:
+    pass
+"#,
+        checks: &[Check::Is(
+            r#"def main() -> None:
+    pass
+
+
+def helper() -> None:
+    pass
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_preserves_single_blank_line_before_comment_led_logic_block",
+        source: r#"def f() -> int:
+    foo = 1
+
+    # logic block
+    bar = 2
+"#,
+        checks: &[Check::Is(
+            r#"def f() -> int:
+    foo = 1
+
+    # logic block
+    bar = 2
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_collapses_multiple_blank_lines_before_comment_led_logic_block",
+        source: r#"def f() -> int:
+    foo = 1
+
+
+
+    # logic block
+    bar = 2
+"#,
+        checks: &[Check::Is(
+            r#"def f() -> int:
+    foo = 1
+
+    # logic block
+    bar = 2
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_keeps_leading_comments_before_wrapped_statements",
+        source: r#"def test_case() -> None:
+    # -- Arrange --
+    scenario = SubstraitConformanceScenario(scenario_id="test.multi.required.rels", title="test", status=ConformanceStatus.Core, profile_tags=[ConformanceProfileTag.ReadQueryCore], capability_tags=_test_tags(["named-table"]), root_rel=ConformanceRel.Filter, required_rels=[ConformanceRel.Read, ConformanceRel.Filter], portability=ConformancePortability.Portable, intent="test", required_rel_shape="test", expected_constraints="test", references=_test_refs(["docs/rfcs/002_apache_substrait_integration.md"]))
+
+    # -- Act --
+    named_only_plan = plan_from_named_table("orders")
+
+    # -- Assert --
+    assert_eq(scenario_matches_root_shape(scenario, named_only_plan), false, "shape validation should fail when the root relation does not match the declared root contract")
+"#,
+        checks: &[
+            Check::Has("    # -- Arrange --\n    scenario = SubstraitConformanceScenario("),
+            Check::Has("    # -- Act --\n    named_only_plan = plan_from_named_table(\"orders\")"),
+            Check::Has("    # -- Assert --\n    assert_eq("),
+            Check::Lacks("    )\n\n    named_only_plan = plan_from_named_table(\"orders\")\n\n    assert_eq("),
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_refuses_comment_loss_inline_comment",
+        source: r#"def foo() -> int:
+  x = 1  # keep this comment
+  return x
+"#,
+        checks: &[Check::Has("# keep this comment")],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_preserves_standalone_comment_lines",
+        source: r#"const A: int = 1
+# ---- marker comment ----
+const B: int = 2
+"#,
+        checks: &[Check::Has("# ---- marker comment ----")],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_collapses_docstring_interior_blank_runs",
+        source: r#"def explain() -> str:
+    """
+    First paragraph.
+
+
+    Second paragraph.
+    """
+    return "ok"
+"#,
+        checks: &[Check::Is(
+            r#"def explain() -> str:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return "ok"
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_collapses_many_docstring_blank_lines_but_preserves_slash_n_text",
+        source: r#"def explain() -> str:
+    """
+    some docstring with a bunch of /n/n/n/ text
+
+
+
+
+
+    inside it
+    """
+    return "ok"
+"#,
+        checks: &[Check::Is(
+            r#"def explain() -> str:
+    """
+    some docstring with a bunch of /n/n/n/ text
+
+    inside it
+    """
+    return "ok"
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    // Literal slash text and escaped docstring backslashes retain their meaning and spelling.
+    FormatCase {
+        name: "test_format_source_preserves_literal_slash_n_sequences",
+        source: r#"def explain() -> str:
+    """Explain \\n and \\t text."""
+    # /n/n/n/n this is valid
+    value = "/n/n/n/n and so is this"
+    return value
+"#,
+        checks: &[Check::Unchanged, Check::Stable],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_preserves_duplicate_comment_anchors",
+        source: r#"# ---- first ----
+@derive(Clone)
+type First = newtype int
+
+
+@derive(Clone)
+type Middle = newtype int
+
+
+# ---- second ----
+@derive(Clone)
+type Second = newtype int
+"#,
+        checks: &[Check::Is(
+            r#"# ---- first ----
+@derive(Clone)
+type First = newtype int
+
+
+@derive(Clone)
+type Middle = newtype int
+
+
+# ---- second ----
+@derive(Clone)
+type Second = newtype int
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_blank_line_separated_comment_attaches_backward",
+        source: r#"type UserId = str
+# comment about the alias
+
+def load_user(id: UserId) -> User:
+    pass
+"#,
+        checks: &[Check::Is(
+            r#"type UserId = str
+# comment about the alias
+
+
+def load_user(id: UserId) -> User:
+    pass
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    // A comment at EOF stays outside the function suite and keeps its preceding source gap.
+    FormatCase {
+        name: "test_format_source_trailing_comment_after_multiline_function_stays_after_suite",
+        source: r#"def load_user(id: UserId) -> User:
+    pass
+
+# TODO: split retries
+"#,
+        checks: &[
+            Check::Is(
+                r#"def load_user(id: UserId) -> User:
+    pass
+
+# TODO: split retries
+"#,
+            ),
+            Check::Parses,
+        ],
+        ..FormatCase::DEFAULT
+    },
+];
