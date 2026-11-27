@@ -1,0 +1,8 @@
+# Former case std_prelude_surface: std.prelude imports as a module, plain and under an alias, and the program runs
+
+import std.prelude
+import std.prelude as foundation
+
+
+pub def main() -> None:
+    println("ok")

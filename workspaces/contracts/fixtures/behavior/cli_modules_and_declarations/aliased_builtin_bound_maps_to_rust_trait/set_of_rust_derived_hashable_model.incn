@@ -1,0 +1,10 @@
+# Former case set_of_rust_derived_hashable_model: a model whose Eq and Hash come from @rust.derive is accepted as a set element, and equal values collapse into one
+
+@rust.derive(PartialEq, Eq, Hash)
+model Key:
+    id: int
+
+
+pub def main() -> None:
+    seen: set[Key] = {Key(id=1), Key(id=1)}
+    println(len(seen))

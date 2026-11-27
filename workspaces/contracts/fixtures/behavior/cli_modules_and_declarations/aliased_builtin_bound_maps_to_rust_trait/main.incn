@@ -1,0 +1,69 @@
+# behavior: 12 former cli modules and declarations cases run in order, each program from its own module: aliased_builtin_bound_maps_to_rust_trait, host_keyword_identifiers, model_named_like_a_std_web_type, self_method_decorator_factory_and_direct_call, set_of_rust_derived_hashable_model, subtrait_default_and_class_override, user_model_named_field_info, web_extractor_value_reads_the_payload, web_html_response_type, module_member_alias_beside_a_direct_import, trait_default_constructs_module_type_across_modules, trait_default_generic_element_read_across_modules
+# expect-stdout:
+#  1
+#  1
+#  3
+#  7
+#  5
+#  unsafe
+#  6
+#  impl
+#  dyn
+#  {"impl":1,"dyn":"x"}
+#  ok
+#  local
+#  8
+#  13
+#  11
+#  1
+#  child
+#  child
+#  2
+#  4
+#  1
+#  animal 7
+#  child 3
+#  child 10
+#  custom
+#  made
+#  made
+#  incan
+#  rendered
+#  42
+#  12
+#  3
+#  5
+#  5
+#  z
+#  2
+
+"""Run the program of each former case in order."""
+
+import aliased_builtin_bound_maps_to_rust_trait
+import host_keyword_identifiers
+import model_named_like_a_std_web_type
+import case_self_method_decorator_factory_and_direct_call
+import set_of_rust_derived_hashable_model
+import subtrait_default_and_class_override
+import user_model_named_field_info
+import web_extractor_value_reads_the_payload
+import web_html_response_type
+import module_member_alias_beside_a_direct_import
+import trait_default_constructs_module_type_across_modules
+import trait_default_generic_element_read_across_modules
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    aliased_builtin_bound_maps_to_rust_trait.main()
+    host_keyword_identifiers.main()
+    model_named_like_a_std_web_type.main()
+    case_self_method_decorator_factory_and_direct_call.main()
+    set_of_rust_derived_hashable_model.main()
+    subtrait_default_and_class_override.main()
+    user_model_named_field_info.main()
+    web_extractor_value_reads_the_payload.main()
+    web_html_response_type.main()
+    module_member_alias_beside_a_direct_import.main()
+    trait_default_constructs_module_type_across_modules.main()
+    trait_default_generic_element_read_across_modules.main()

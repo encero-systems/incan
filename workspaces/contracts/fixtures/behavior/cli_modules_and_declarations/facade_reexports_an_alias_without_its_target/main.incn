@@ -1,23 +1,58 @@
-# behavior: an imported alias keeps its callable name through direct private imports and through facades that re-export it without its target, rename it again, list it before its target or also import the target for their own use (#1710, #1750)
+# behavior: 8 former cli modules and declarations cases run in order, each program from its own module: facade_reexports_an_alias_without_its_target, gen_named_function_field_and_module, imported_static_decorator_receiver, imported_value_enum_getter_in_a_comprehension, method_visibility_across_modules, module_derive_default_method_direct_call, reexported_model_beside_same_named_variant, same_named_default_consts_across_modules
 # expect-stdout:
-#   6
-#   42
-#   8
-#   10
-#   14
-#   6
+#  6
+#  42
+#  8
+#  10
+#  14
+#  6
+#  7
+#  1
+#  6
+#  2
+#  8
+#  7
+#  b, a
+#  a
+#  6
+#  6
+#  box
+#  3
+#  true
+#  derived 7
+#  4
+#  1
+#  encoded
+#  2
+#  encoded
+#  3
+#  encoded
+#  base base
+#  1
+#  2
+#  3
+#  9
+#  5
 
-from both_names import scale
-from facade import scale_alias
-from private_then_public import doubled, scale_alias as mixed_scale
-from public_api import exported_scale
-from provider import scale as direct_scale, scale_alias as direct_alias
+"""Run the program of each former case in order."""
+
+import facade_reexports_an_alias_without_its_target
+import gen_named_function_field_and_module
+import imported_static_decorator_receiver
+import imported_value_enum_getter_in_a_comprehension
+import method_visibility_across_modules
+import module_derive_default_method_direct_call
+import reexported_model_beside_same_named_variant
+import same_named_default_consts_across_modules
 
 
 def main() -> None:
-    println(scale(3))
-    println(scale_alias(21))
-    println(exported_scale(4))
-    println(mixed_scale(5))
-    println(doubled(7))
-    println(direct_scale(1) + direct_alias(2))
+    """Run each former case's program in turn."""
+    facade_reexports_an_alias_without_its_target.main()
+    gen_named_function_field_and_module.main()
+    imported_static_decorator_receiver.main()
+    imported_value_enum_getter_in_a_comprehension.main()
+    method_visibility_across_modules.main()
+    module_derive_default_method_direct_call.main()
+    reexported_model_beside_same_named_variant.main()
+    same_named_default_consts_across_modules.main()

@@ -1,0 +1,13 @@
+# Former case method_returning_a_later_declared_model: a method returning a model declared later in the file gives the call site that model's fields
+
+model Maker:
+    def make(self) -> Made:
+        return Made(x=1)
+
+
+model Made:
+    x: int
+
+
+pub def main() -> None:
+    println(Maker().make().x)

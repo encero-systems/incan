@@ -1,0 +1,10 @@
+# Former case split_without_separator: split() with no separator yields the whole text as its one part, so joining the parts with "|" returns the text unchanged
+
+def split_default(text: str) -> str:
+    return "|".join(text.split())
+
+
+pub def main() -> None:
+    println(split_default("a b   c"))
+    println(split_default("one"))
+    println(len("a b".split()))

@@ -1,0 +1,7 @@
+# Former case imported_static_decorator_receiver: a decorator factory called on an imported static receiver with a str argument leaves the decorated function callable (#671)
+
+from probe_decorated import decorated
+
+
+pub def main() -> None:
+    println(decorated(7))

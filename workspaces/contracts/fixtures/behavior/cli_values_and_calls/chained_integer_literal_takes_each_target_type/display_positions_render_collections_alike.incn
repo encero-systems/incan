@@ -1,0 +1,17 @@
+# Former case display_positions_render_collections_alike: print, str and an f-string display a list, a tuple, an Option, a Result and a dict alike, through their structure
+
+pub def main() -> None:
+    items: list[int] = [1, 2, 3]
+    print(items)
+    println(str(items))
+    println(f"{items}")
+    coords: tuple[int, int] = (10, 20)
+    print(coords)
+    present: Option[int] = Some(1)
+    absent: Option[int] = None
+    println(present)
+    println(absent)
+    outcome: Result[int, str] = Err("bad")
+    println(outcome)
+    counts: dict[str, int] = {"a": 1}
+    println(counts)

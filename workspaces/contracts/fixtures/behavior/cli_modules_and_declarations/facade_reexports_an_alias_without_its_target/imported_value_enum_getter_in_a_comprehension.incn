@@ -1,0 +1,11 @@
+# Former case imported_value_enum_getter_in_a_comprehension: an imported value enum's `value()` is called on an indexed list element's field inside a list comprehension, as in a loop (#2995)
+
+from phase import plans
+
+
+pub def main() -> None:
+    items = plans()
+    order = [1, 0]
+    println(", ".join([items[index].phase.value() for index in order]))
+    for plan in items[:1]:
+        println(plan.phase.value())

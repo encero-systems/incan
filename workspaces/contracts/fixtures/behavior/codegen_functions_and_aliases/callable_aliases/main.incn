@@ -1,0 +1,91 @@
+# behavior: 13 former codegen functions and aliases cases run in order, each program from its own module: callable_aliases, closure_shapes_call_local_functions, eq_magic_method, explicit_type_arguments, function_item_lends_with_a_defaulted_input, local_partials_of_methods_of_values, overloaded_functions, partial_function_presets, partial_methods, partial_model_constructor, result_map_err_closures, trait_method_alias_adopts_required_method, unused_declarations_run
+# expect-stdout:
+#  10
+#  5
+#  11
+#  12
+#  13
+#  code 3
+#  code 5
+#  true
+#  false
+#  true
+#  1
+#  text
+#  2
+#  3
+#  a 7
+#  b 0
+#  xann!
+#  yann?
+#  <bob.
+#  [1, 2]
+#  hi you!
+#  hi me?
+#  2
+#  a!
+#  int q
+#  float p
+#  int r
+#  float column
+#  int token
+#  float token
+#  schema
+#  flavor
+#  count
+#  positive
+#  user id
+#  trait
+#  trait token
+#  GET
+#  GET/health
+#  POST/x
+#  GET/healthtext
+#  name
+#  other
+#  override:name
+#  bronze
+#  delta
+#  ok:7
+#  err:disk full
+#  err:malformed
+#  err:wire:bad
+#  7
+#  8
+#  1
+#  3
+#  inner
+#  done
+
+"""Run the program of each former case in order."""
+
+import callable_aliases
+import closure_shapes_call_local_functions
+import eq_magic_method
+import explicit_type_arguments
+import function_item_lends_with_a_defaulted_input
+import local_partials_of_methods_of_values
+import overloaded_functions
+import partial_function_presets
+import partial_methods
+import partial_model_constructor
+import result_map_err_closures
+import trait_method_alias_adopts_required_method
+import unused_declarations_run
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    callable_aliases.main()
+    closure_shapes_call_local_functions.main()
+    eq_magic_method.main()
+    explicit_type_arguments.main()
+    function_item_lends_with_a_defaulted_input.main()
+    local_partials_of_methods_of_values.main()
+    overloaded_functions.main()
+    partial_function_presets.main()
+    partial_methods.main()
+    partial_model_constructor.main()
+    result_map_err_closures.main()
+    trait_method_alias_adopts_required_method.main()
+    unused_declarations_run.main()
