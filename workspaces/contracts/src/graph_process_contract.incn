@@ -184,7 +184,7 @@ def require_coverage_record(observation: JsonValue, source: JsonValue, path: str
 def check_coverage_mcp(incan: str, project: Path, report: str, expected: JsonValue) -> Result[None, str]:
     """Read the same process record from a fixed MCP report and always reap the child."""
     mut peer = start(incan, project, ["mcp", ".", "--coverage-report", report], "jsonl")?
-    reply = tool(peer, 1, "process_risk", JsonValue.object({}))
+    reply = peer.tool(1, "process_risk", JsonValue.object({}))
     finished = peer.finish()
     content = reply?
     finished?
@@ -256,20 +256,20 @@ def check_memory(incan: str, project: Path, foreign: str) -> Result[None, str]:
     versions = items(discovered.require("supportedVersions").map_err((error) => error.message())?)?
     if [string_of(version)? for version in versions] != ["2026-07-28"]:
         return Err("MCP feedback discovered an unexpected protocol")
-    summary = parse_json(tool(peer, 2, "graph_summary", JsonValue.object({}))?)?
+    summary = parse_json(peer.tool(2, "graph_summary", JsonValue.object({}))?)?
     canonical = text(summary, "snapshot_id")
     if canonical == "" or canonical != tolerant_snapshot or canonical == checked or foreign in [checked, canonical]:
         return Err("feedback fixture did not select distinct checked, tolerant and foreign snapshot identities")
     for identifier, snapshot in [(3, canonical), (4, tolerant_snapshot)]:
-        retained = parse_json(tool(peer, identifier, "record_feedback", observation(key, snapshot, 3600))?)?
+        retained = parse_json(peer.tool(identifier, "record_feedback", observation(key, snapshot, 3600))?)?
         if text(retained, "snapshot_id") != canonical:
             return Err("MCP and explicit tolerant feedback did not share the canonical snapshot")
     refuse_feedback(peer, 5, observation(key, foreign, 3600), "feedback snapshot is stale")?
     request = JsonValue.object({"task": JsonValue.string("helper"), "budget": JsonValue.int(4096)})
-    if "session feedback" not in tool(peer, 6, "context_for_task", request)?:
+    if "session feedback" not in peer.tool(6, "context_for_task", request)?:
         return Err("tolerant feedback did not explain its context ranking")
 
-    accepted = tool(peer, 7, "record_feedback", observation(key, checked, 3600)).map_err(
+    accepted = peer.tool(7, "record_feedback", observation(key, checked, 3600)).map_err(
         (reason) => f"current checked CLI snapshot could not record feedback: {reason}",
     )?
     if text(parse_json(accepted)?, "snapshot_id") != canonical:
@@ -277,10 +277,10 @@ def check_memory(incan: str, project: Path, foreign: str) -> Result[None, str]:
     entries = memory(peer, 8)?
     if len(entries) != 1 or text(entries[0], "snapshot_id") != canonical or text(entries[0], "stable_key") != key:
         return Err("feedback aliases did not retain one canonical observation for the proved declaration")
-    if "session feedback" not in tool(peer, 9, "context_for_task", request)?:
+    if "session feedback" not in peer.tool(9, "context_for_task", request)?:
         return Err("checked CLI feedback did not explain its context ranking")
     check_feedback_expiry(incan, project, peer, checked, canonical, key)?
-    tool(peer, 30, "process_risk", JsonValue.object({}))?
+    peer.tool(30, "process_risk", JsonValue.object({}))?
     peer.finish()?
     for record in graph(incan, project, false)?.records:
         if text(record, "provenance") == "session_feedback":
@@ -314,7 +314,7 @@ def check_feedback_expiry(
     else:
         check_unproved_feedback(incan, project, peer, source, before, checked)?
     for identifier, snapshot in [(16, checked), (18, tolerant)]:
-        tool(peer, identifier, "record_feedback", observation(label, snapshot, 1))?
+        peer.tool(identifier, "record_feedback", observation(label, snapshot, 1))?
         sleep(Duration.from_secs(2))
         if len(memory(peer, identifier + 1)?) != 0:
             return Err("feedback outlived its TTL")
@@ -346,25 +346,12 @@ def check_unproved_feedback(
 
 def refuse_feedback(mut peer: Peer, identifier: int, feedback: JsonValue, reason: str) -> Result[None, str]:
     """Require the ordinary protocol tool to refuse an unauthenticated feedback request."""
-    match tool(peer, identifier, "record_feedback", feedback):
+    match peer.tool(identifier, "record_feedback", feedback):
         Ok(_) => return Err(f"MCP accepted feedback expected to refuse: {reason}")
         Err(error) =>
             if reason not in error:
                 return Err(error)
     return Ok(None)
-
-
-def tool(mut peer: Peer, identifier: int, name: str, arguments: JsonValue) -> Result[str, str]:
-    """Read one successful textual MCP tool result, surfacing execution refusals as contract failures."""
-    request = JsonValue.object({"name": JsonValue.string(name), "arguments": arguments})
-    result = peer.request(identifier, "tools/call", request)?
-    error = result.require("isError").map_err((error) => error.message())?
-    if error.expect_bool().map_err((error) => error.message())?:
-        return Err(f"MCP tool {name} refused: {result.to_json().unwrap_or("")}")
-    blocks = result.require("content").map_err((error) => error.message())?
-    content = blocks.expect_array().map_err((error) => error.message())?
-    document = content[0].require("text").map_err((error) => error.message())?
-    return document.expect_str().map_err((error) => error.message())
 
 
 def graph(incan: str, project: Path, risk: bool) -> Result[GraphDocument, str]:
@@ -433,5 +420,5 @@ def observation(declaration: str, snapshot: str, ttl: int) -> JsonValue:
 
 def memory(mut peer: Peer, identifier: int) -> Result[list[JsonValue], str]:
     """Read current task memory through the public MCP tool and require its JSON array contract."""
-    output = tool(peer, identifier, "task_memory", JsonValue.object({"task": JsonValue.string("helper")}))?
+    output = peer.tool(identifier, "task_memory", JsonValue.object({"task": JsonValue.string("helper")}))?
     return parse(output).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())

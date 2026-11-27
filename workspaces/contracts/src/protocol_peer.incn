@@ -144,6 +144,34 @@ pub class Peer:
             return diagnostics.expect_array().map_err((error) => error.message())
         return Err("LSP did not publish this live snapshot's diagnostics")
 
+    pub def change_document(mut self, uri: str, version: int, source: str) -> Result[None, str]:
+        """Send the next full-sync buffer under the session's actual URI and version."""
+        document = JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(version)})
+        changes = JsonValue.array([JsonValue.object({"text": JsonValue.string(source)})])
+        return self.notify("textDocument/didChange", JsonValue.object({"textDocument": document, "contentChanges": changes}))
+
+    pub def close_document(mut self, uri: str) -> Result[None, str]:
+        """Wait for didClose so the following requests cannot consult the closed buffer."""
+        self.notify(
+            "textDocument/didClose",
+            JsonValue.object({"textDocument": JsonValue.object({"uri": JsonValue.string(uri)})}),
+        )?
+        if len(self.diagnostic_items(uri, None)?) != 0:
+            return Err("closing a document did not clear its diagnostics")
+        return Ok(None)
+
+    pub def tool(mut self, identifier: int, name: str, arguments: JsonValue) -> Result[str, str]:
+        """Read one successful textual MCP tool result, surfacing execution refusals as contract failures."""
+        request = JsonValue.object({"name": JsonValue.string(name), "arguments": arguments})
+        result = self.request(identifier, "tools/call", request)?
+        error = result.require("isError").map_err((error) => error.message())?
+        if error.expect_bool().map_err((error) => error.message())?:
+            return Err(f"MCP tool {name} refused: {result.to_json().unwrap_or("")}")
+        blocks = result.require("content").map_err((error) => error.message())?
+        content = blocks.expect_array().map_err((error) => error.message())?
+        document = content[0].require("text").map_err((error) => error.message())?
+        return document.expect_str().map_err((error) => error.message())
+
     def receive(mut self) -> Result[JsonValue, str]:
         """Read one frame: a JSONL line, or an LSP header byte by byte and then exactly its `Content-Length` payload."""
         if self.framing == "jsonl":
