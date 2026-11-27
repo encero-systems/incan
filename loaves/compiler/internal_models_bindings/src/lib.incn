@@ -1,8 +1,10 @@
 """Expose existing standard and platform items by stable Rust names for compiler record models."""
 
+from rust::std::mem import take
 pub from rust::incan_std_primitives::collections import list_get
 pub from rust::incan_std_primitives::crumb import RowAdmission, RowRead, RowRequest, RowWriteRequest
 pub from rust::incan_std_primitives::errors import json_decode_error_string
+from rust::incan_std_primitives::mapping import MappedFile as NativeMapping
 pub from rust::incan_std_data::json import JsonValue as NativeJsonValue
 pub from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_binding_metadata, lookup_members
 pub from std.primitives.crumb import Budget
@@ -60,6 +62,12 @@ pub def charge_elements(mut budget: Budget, count: int) -> Result[None, CrumbErr
 pub def mapped_bytes(data: bytes) -> Result[MappedFile, str]:
     """Pass owned bytes to the standard immutable mapping constructor."""
     return MappedFile.owned(data)
+
+
+pub def take_mapped_bytes(mut data: bytes) -> Result[MappedFile, str]:
+    """Empty the capture and anchor its original bytes in an immutable view owner."""
+    owner = NativeMapping.owned(take(data))?
+    return Ok(MappedFile(owner))
 
 
 pub def complete_view(owner: MappedFile) -> Option[MappedView]:
