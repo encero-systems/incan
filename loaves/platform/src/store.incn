@@ -30,12 +30,10 @@ through a damaged entry to an older value. Pages, frames and payloads are anchor
 a view of the value inside its segment, and `owned` is the one place a found value is copied into owned bytes. Every
 object read this way is content-named and never rewritten while a view can retain its immutable backing.
 
-Writing: a transaction begun on one view collects writes with their preconditions. Under the publication lock it
-validates every precondition against the latest generation, stages only changed records, then installs the segment,
-pages, manifest and `CURRENT` in that order. The disk placement synchronizes every object and directory at the existing
-publication boundaries; memory satisfies the same ordering in one state cell. Related transactions across views share
-one generation switch, and an execution pin precedes that switch. A transaction whose writes are all already present
-commits nothing and adds no bytes.
+Writing: under one publication lock, validate preconditions, stage changed records, install their segment, pages and
+manifest, then switch `CURRENT`. Disk syncs each boundary, and memory follows the same order in one state cell.
+Related views share a generation switch, preceded by any execution pin. Equal writes add no bytes. A strict compared
+write requires the starting revision even when its bytes are equal.
 """
 
 from rust::std::process import id
@@ -808,31 +806,24 @@ pub def put(transaction: Transaction, key: str, value: bytes, expect: int = EXPE
     stage_put(next, key, value, expect)
     return next
 
-
 pub def delete(transaction: Transaction, key: str) -> Transaction:
     """`transaction` with a tombstone written under `key`."""
     mut next = transaction
     stage_delete(next, key)
     return next
 
-
 pub def stage_put(mut transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> None:
     """Stage one value directly in a caller-owned transaction without copying its accumulated writes."""
     transaction.writes.append(Write(key=key, kind=KIND_VALUE, value=value, expect=expect))
-
 
 pub def stage_delete(mut transaction: Transaction, key: str) -> None:
     """Stage one tombstone directly in a caller-owned transaction without copying its accumulated writes."""
     transaction.writes.append(Write(key=key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY))
 
-
 pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
     """
-    Create view `name` at `view`'s current root and return it.
-
-    The new view shares every index page with its source; the source's later writes never reach it. A view that
-    already exists is refused rather than replaced. Names must be nonempty, contain no ASCII whitespace or control
-    characters, and have no surrounding Unicode whitespace; invalid names are refused before publication.
+    Fork `view` at its current root, sharing its pages and excluding later source writes.
+    Refuse an existing name, an empty name, ASCII whitespace or controls, and surrounding Unicode whitespace.
     """
     check_view_key(name)?
     mut transaction = begin(view)
@@ -844,6 +835,13 @@ pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
 pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     """Publish one view through the same atomic group boundary used by multi-view requests."""
     return commit_group([transaction])
+
+
+pub def commit_strict(transaction: Transaction) -> Result[Snapshot, StoreError]:
+    """Publish a compared write only while its starting revision is current, including equal writes."""
+    if transaction.compared is None or transaction.fork != "":
+        return Err(failure("format", "transaction", "strict publication requires a compared write transaction"))
+    return publish_group([transaction], "", require_unchanged=true).map((published) => published.snapshot)
 
 pub model Publication:
     """One atomic generation and its optional already-held execution pin."""
@@ -861,14 +859,10 @@ pub def commit_pinned(transactions: list[Transaction], view: str) -> Result[Publ
     check_view_key(view)?
     return publish_group(transactions, view)
 
-def publish_group(transactions: list[Transaction], execution_view: str) -> Result[Publication, StoreError]:
-    """
-    Publish all views in one durable generation, or none of them.
-
-    1. Lock publication and validate every write before staging any bytes.
-    2. Stage each changed view's records and index; no view becomes visible yet.
-    3. Switch one manifest and CURRENT after every referenced object is durable.
-    """
+def publish_group(
+    transactions: list[Transaction], execution_view: str, require_unchanged: bool = False
+) -> Result[Publication, StoreError]:
+    """Validate and stage all writes under one lock before switching the manifest."""
     if len(transactions) == 0:
         return Err(failure("format", "transaction", "an empty group has no selected view"))
     transaction_id = transactions[0].id
@@ -908,11 +902,13 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
         current = match view == selected_view:
             true => latest
             false => admission.open(view)?
+        base_moved = view in compared and compared[view] != current.index
+        if require_unchanged and base_moved:
+            return Err(revision_conflict(view))
         remaining = pending_writes(current, writes[view])?
         if len(remaining) > 0:
-            # A compared view that moved on since its transaction read it would lose the other publication's writes.
-            if view in compared and compared[view] != current.index:
-                return Err(failure("conflict", view, "the view moved on since this transaction read it"))
+            if base_moved:
+                return Err(revision_conflict(view))
             changed[view] = (current, remaining)
     if len(changed) == 0:
         return pinned_publication(latest, execution_view)
@@ -943,6 +939,10 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     remove_tree(staged)
     return Ok(published)
 
+
+def revision_conflict(view: str) -> StoreError:
+    """Report that the base of a compared publication is no longer current."""
+    return failure("conflict", view, "the view moved on since this transaction read it")
 
 pub def durable_commits() -> int:
     """Successful durable generation switches in this process; no-op commits add zero."""
