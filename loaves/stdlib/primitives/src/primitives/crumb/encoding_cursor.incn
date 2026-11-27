@@ -2,6 +2,9 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.framing import decode_native_signed
+from crate.primitives.crumb.values import Metadata, MetadataEntry
+from crate.primitives.text import decode_utf8, encode_utf8
 from crate.primitives.views import MappedView
 
 
@@ -102,6 +105,80 @@ pub class EncodingCursor:
             if octet < 128:
                 return Ok(result)
 
+    pub def text(mut self, mut budget: Budget) -> Result[str, BinaryError]:
+        """Read a framed exact UTF-8 string without replacement or Unicode normalization."""
+        offset = self.absolute()
+        view = self.frame(budget)?
+        raw = copied(view, offset, budget)?
+        budget.charge_bytes(len(raw)).map_err((e) => primitive(e, offset))?
+        valid, text = decode_utf8(raw, false)
+        if not valid:
+            return Err(failure(BinaryFailure.InvalidUtf8, offset))
+        return Ok(text)
+
+    pub def bounded_count(mut self, mut budget: Budget) -> Result[int, BinaryError]:
+        """Each metadata child needs at least one byte; reject impossible counts before reserving a list."""
+        offset = self.absolute()
+        count = self.length(budget)?
+        budget.charge_elements(count).map_err((e) => primitive(e, offset))?
+        if count > self.remaining():
+            return Err(failure(BinaryFailure.Truncated, self.absolute() + self.remaining()))
+        return Ok(count)
+
+    pub def metadata(mut self, mut budget: Budget) -> Result[Metadata, BinaryError]:
+        """Every recursive metadata node consumes the one request's shared work and depth allowance."""
+        offset = self.absolute()
+        budget.charge_elements(1).map_err((e) => primitive(e, offset))?
+        budget.enter().map_err((e) => primitive(e, offset))?
+        result = self.metadata_value(budget)
+        budget.leave().map_err((e) => primitive(e, offset))?
+        return result
+
+    def metadata_value(mut self, mut budget: Budget) -> Result[Metadata, BinaryError]:
+        """The D tag is format data; it never selects executable profile behavior."""
+        offset = self.absolute()
+        tag = self.byte(budget)?
+        match tag:
+            0 => return Ok(Metadata.Null)
+            1 =>
+                flag = self.byte(budget)?
+                if flag > 1:
+                    return Err(failure(BinaryFailure.InvalidDescription, offset))
+                return Ok(Metadata.Boolean(flag == 1))
+            2 =>
+                groups = self.groups(budget)?
+                return Ok(Metadata.Integer(decode_native_signed(groups, budget).map_err((e) => primitive(e, offset))?))
+            3 => return Ok(Metadata.Text(self.text(budget)?))
+            4 =>
+                framed = self.frame(budget)?
+                return Ok(Metadata.Binary(copied(framed, offset, budget)?))
+            5 =>
+                count = self.bounded_count(budget)?
+                mut items: list[Metadata] = []
+                for _ in range(count):
+                    items.append(self.metadata(budget)?)
+                return Ok(Metadata.List(items))
+            6 => return self.metadata_map(budget)
+            7 => return Ok(Metadata.Symbol(self.text(budget)?))
+            _ => return Err(failure(BinaryFailure.InvalidDescription, offset))
+
+    def metadata_map(mut self, mut budget: Budget) -> Result[Metadata, BinaryError]:
+        """Encoded map keys must already be unique and in exact UTF-8 order; do not sort malformed input."""
+        count = self.bounded_count(budget)?
+        mut entries: list[MetadataEntry] = []
+        mut previous: bytes = b""
+        for index in range(count):
+            offset = self.absolute()
+            key = self.text(budget)?
+            for _ in range(8):
+                budget.charge_bytes(len(key)).map_err((e) => primitive(e, offset))?
+            ordered = encode_utf8(key)
+            if index > 0 and byte_order(ordered, previous) <= 0:
+                return Err(failure(BinaryFailure.InvalidDescription, offset))
+            previous = ordered
+            entries.append(MetadataEntry(key=key, value=self.metadata(budget)?))
+        return Ok(Metadata.Map(entries))
+
     pub def finished(self) -> Result[None, BinaryError]:
         """Require exact consumption of this selected frame, even when the outer caller permits a stream."""
         if self.remaining() != 0:
@@ -113,3 +190,17 @@ pub def copied(view: MappedView, offset: int, mut budget: Budget) -> Result[byte
     """Materialize only an explicitly requested bounded range, charging its independent storage first."""
     budget.charge_bytes(view.len()).map_err((e) => primitive(e, offset))?
     return Ok(view.to_bytes())
+
+
+def byte_order(left: bytes, right: bytes) -> int:
+    """Compare UTF-8 bytes lexicographically without hex encoding or list scalar operators."""
+    for index in range(min([len(left), len(right)])):
+        if left[index] < right[index]:
+            return -1
+        if left[index] > right[index]:
+            return 1
+    if len(left) < len(right):
+        return -1
+    if len(left) > len(right):
+        return 1
+    return 0
