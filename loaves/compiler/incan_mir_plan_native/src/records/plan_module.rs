@@ -630,8 +630,9 @@ mod tests {
             projected_definition(&event, "probe", &function.function, &function.symbol, &function.key)?,
             expected
         );
-        // The nested event and the outer module name still use the owned accessor.
-        let other_text_copies = take_owned_text_copies() + 1;
+        let event_text_copies = take_owned_text_copies();
+        // Include the outer module name when isolating declaration copies.
+        let other_text_copies = event_text_copies + 1;
         let mut page = PlanModuleValue {
             module: "probe".into(),
             functions: vec![function],
@@ -701,6 +702,10 @@ mod tests {
         assert_eq!(
             declaration_copies, 0,
             "positioned Plan projection copied declaration text"
+        );
+        assert_eq!(
+            event_text_copies, 0,
+            "positioned Plan projection copied event header text"
         );
         Ok(())
     }
