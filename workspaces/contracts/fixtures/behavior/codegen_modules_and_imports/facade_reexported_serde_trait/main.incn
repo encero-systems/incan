@@ -1,13 +1,37 @@
-# behavior: a std.serde.json trait re-exported by a user facade module still gives an adopting model its to_json (#1431)
+# behavior: 6 former codegen modules and imports cases run in order, each program from its own module: facade_reexported_serde_trait, flat_module_import, module_derive_through_import_binding, module_item_import_spellings, newtype_fields_across_modules, subtrait_bound_calls_unimported_supertrait_method
 # expect-stdout:
-#   {"value":1}
+#  {"value":1}
+#  store:7
+#  8
+#  1
+#  encoded
+#  2
+#  encoded
+#  42
+#  42
+#  7
+#  7
+#  root
+#  root
+#  true
+#  root
+#  42
 
-from facade import Serialize
+"""Run the program of each former case in order."""
 
-
-model Payload with Serialize:
-    value: int
+import facade_reexported_serde_trait
+import flat_module_import
+import module_derive_through_import_binding
+import module_item_import_spellings
+import newtype_fields_across_modules
+import subtrait_bound_calls_unimported_supertrait_method
 
 
 def main() -> None:
-    println(Payload(value=1).to_json())
+    """Run each former case's program in turn."""
+    facade_reexported_serde_trait.main()
+    flat_module_import.main()
+    module_derive_through_import_binding.main()
+    module_item_import_spellings.main()
+    newtype_fields_across_modules.main()
+    subtrait_bound_calls_unimported_supertrait_method.main()

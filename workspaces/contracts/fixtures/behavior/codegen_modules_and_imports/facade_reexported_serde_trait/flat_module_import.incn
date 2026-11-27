@@ -1,0 +1,9 @@
+# Former case flat_module_import: a flat sibling module's model is reachable through from-import at the root and in another sibling module
+
+from db import Database
+from store import touch
+
+
+pub def main() -> None:
+    println(touch(Database(id=7)))
+    println(Database(id=8).id)

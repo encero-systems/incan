@@ -1,0 +1,9 @@
+# Former case std_prelude_and_traits_names: std.prelude publishes the 31 traits 0.5.1 published, std.traits publishes Sum and std.derives.collection publishes Callable1 and Callable2, and a module importing them from there uses them
+
+from prelude_names import prelude_line
+from traits_names import traits_line
+
+
+pub def main() -> None:
+    println(prelude_line())
+    println(traits_line())

@@ -1,0 +1,11 @@
+# Former case subtrait_bound_calls_unimported_supertrait_method: a parameter typed by an imported subtrait calls a method declared by its unimported generic supertrait
+
+from readers import Packet, TaggedReader
+
+
+def read_tagged[T](value: TaggedReader[T]) -> T:
+    return value.read()
+
+
+pub def main() -> None:
+    println(read_tagged(Packet(value=42)))

@@ -1,0 +1,14 @@
+# Former case a_rust_import_in_an_imported_module: a module that imports through `rust::` can be imported and called
+
+"""A module that imports through `rust::` can be imported and called."""
+from helpers import helper
+
+
+def program_result() -> int:
+    """Return the fixture expression `helper()`."""
+    return helper()
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

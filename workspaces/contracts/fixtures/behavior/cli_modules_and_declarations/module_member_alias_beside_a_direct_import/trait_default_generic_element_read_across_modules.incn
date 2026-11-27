@@ -1,0 +1,14 @@
+# Former case trait_default_generic_element_read_across_modules: an imported trait's generic default methods return an element and a slice of their list to an adopter in another module
+
+from picks import Picker
+
+
+model Chooser with Picker:
+    id: int
+
+
+pub def main() -> None:
+    chooser = Chooser(id=1)
+    println(chooser.pick([5, 6]))
+    println(chooser.pick(["z"]))
+    println(len(chooser.tail([7, 8, 9])))

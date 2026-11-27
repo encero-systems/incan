@@ -1,0 +1,8 @@
+# Former case module_member_alias_beside_a_direct_import: a module that imports a member directly for its own use and re-exports it through an alias of the module member hands consumers the alias (#1764)
+
+from facade import quadruple, twice
+
+
+pub def main() -> None:
+    println(twice(21))
+    println(quadruple(3))

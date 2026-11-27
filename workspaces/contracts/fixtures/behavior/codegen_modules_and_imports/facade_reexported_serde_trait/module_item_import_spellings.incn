@@ -1,0 +1,13 @@
+# Former case module_item_import_spellings: a module function imported as `import module::item`, `import module::item as alias`, `from module import item` and `from module import item as alias` is the same callable under each binding
+
+import helper::value
+from helper import value as answer
+import other::count as total
+from other import count
+
+
+pub def main() -> None:
+    println(value())
+    println(answer())
+    println(total())
+    println(count())

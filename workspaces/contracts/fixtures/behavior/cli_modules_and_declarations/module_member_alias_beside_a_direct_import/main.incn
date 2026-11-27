@@ -1,11 +1,22 @@
-# behavior: a module that imports a member directly for its own use and re-exports it through an alias of the module member hands consumers the alias (#1764)
+# behavior: 3 former cli modules and declarations cases run in order, each program from its own module: module_member_alias_beside_a_direct_import, trait_default_constructs_module_type_across_modules, trait_default_generic_element_read_across_modules
 # expect-stdout:
-#   42
-#   12
+#  42
+#  12
+#  3
+#  5
+#  5
+#  z
+#  2
 
-from facade import quadruple, twice
+"""Run the program of each former case in order."""
+
+import module_member_alias_beside_a_direct_import
+import trait_default_constructs_module_type_across_modules
+import trait_default_generic_element_read_across_modules
 
 
 def main() -> None:
-    println(twice(21))
-    println(quadruple(3))
+    """Run each former case's program in turn."""
+    module_member_alias_beside_a_direct_import.main()
+    trait_default_constructs_module_type_across_modules.main()
+    trait_default_generic_element_read_across_modules.main()

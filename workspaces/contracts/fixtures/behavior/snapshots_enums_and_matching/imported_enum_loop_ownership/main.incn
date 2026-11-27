@@ -1,27 +1,24 @@
-# behavior: a loop over a list of an imported enum compares each element and passes it on to a function without losing the list (#372)
+# behavior: 2 former snapshots enums and matching cases run in order, each program from its own module: imported_enum_loop_ownership, unqualified_and_aliased_variant_patterns
 # expect-stdout:
-#   true
-#   false
+#  true
+#  false
+#  1.5
+#  0.0
+#  -1
+#  3
+#  4
+#  9
+#  6
+#  7
+#  8
 
-from rels import ConformanceRel
+"""Run the program of each former case in order."""
 
-
-def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
-    match rel:
-        ConformanceRel.Read =>
-            return "ReadRel"
-        _ =>
-            return "Other"
-
-
-def scenario_matches(required: list[ConformanceRel]) -> bool:
-    for expected in required:
-        if expected == ConformanceRel.Read:
-            if relation_kind_name_from_conformance(expected) == "ReadRel":
-                return true
-    return false
+import imported_enum_loop_ownership
+import unqualified_and_aliased_variant_patterns
 
 
 def main() -> None:
-    println(scenario_matches([ConformanceRel.Filter, ConformanceRel.Read]))
-    println(scenario_matches([ConformanceRel.Filter]))
+    """Run each former case's program in turn."""
+    imported_enum_loop_ownership.main()
+    unqualified_and_aliased_variant_patterns.main()

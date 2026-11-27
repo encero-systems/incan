@@ -1,25 +1,52 @@
-# behavior: a model a module in an import cycle declares is constructed and unwrapped through `?` by modules outside the cycle while the entry also imports the cycle directly, a cycle that runs through a model constructs it, and the cycle member lowered first constructs a model a later member declares (#2593)
+# behavior: 6 former execution calls types and modules cases run in order, each program from its own module: a_model_declared_in_an_import_cycle, a_rust_import_in_an_imported_module, call_into_a_module_lowered_on_its_own, facade_chain_shares_one_declaration, parity_names_reached_locally_imported_aliased_and_reexported, typed_list_in_a_callee_module
 # expect-stdout:
-#   2
-#   2
-#   5
-#   300
+#  2
+#  2
+#  5
+#  300
+#  1
+#  7
+#  42
+#  7
+#  8
+#  trait 9
+#  1
+#  1
+#  3
+#  3
+#  5
+#  5
+#  7
+#  7
+#  9
+#  10
+#  11
+#  12
+#  13
+#  14
+#  15
+#  16
+#  17
+#  17
+#  19
+#  19
+#  41
 
-"""Models declared inside import cycles, used outside them and across them."""
+"""Run the program of each former case in order."""
 
-from sealing import sealed
-from publishing import publish
-from facts import total
-from entries import counted
-from catalog import priced
+import a_model_declared_in_an_import_cycle
+import a_rust_import_in_an_imported_module
+import call_into_a_module_lowered_on_its_own
+import facade_chain_shares_one_declaration
+import parity_names_reached_locally_imported_aliased_and_reexported
+import typed_list_in_a_callee_module
 
 
 def main() -> None:
-    """Print models built outside, through `?`, and across cycles, whichever cycle member is lowered first."""
-    fact = sealed("x")
-    println(len(fact.name) + total())
-    match publish("x"):
-        Ok(count) => println(count)
-        Err(error) => println(error)
-    println(counted())
-    println(priced())
+    """Run each former case's program in turn."""
+    a_model_declared_in_an_import_cycle.main()
+    a_rust_import_in_an_imported_module.main()
+    call_into_a_module_lowered_on_its_own.main()
+    facade_chain_shares_one_declaration.main()
+    parity_names_reached_locally_imported_aliased_and_reexported.main()
+    typed_list_in_a_callee_module.main()
