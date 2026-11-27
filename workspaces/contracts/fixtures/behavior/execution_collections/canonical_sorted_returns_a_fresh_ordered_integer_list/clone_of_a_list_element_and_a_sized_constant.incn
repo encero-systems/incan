@@ -1,0 +1,12 @@
+# Former case clone_of_a_list_element_and_a_sized_constant: `.clone()` gives an independent value for a scalar read out of a list element and for a constant of a sized integer type, as it does for a plain local (RFC 129's copy spelling, #1846).
+
+const OPEN_FILE: u32 = 420
+
+
+pub def main() -> None:
+    mut order = [index for index in range(4)]
+    held = order[1].clone()
+    order[1] = order[2]
+    order[2] = held
+    mut mode = OPEN_FILE.clone()
+    println(f"{order} {mode}")

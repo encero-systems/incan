@@ -1,0 +1,11 @@
+# Former case native_callable_alias: a callable type alias in native generic storage retains its function representation
+
+from rust::std::collections import HashMap
+
+type TextCallback = () -> str
+
+
+pub def main() -> None:
+    """Instantiate native storage with an aliased callable value argument."""
+    values: HashMap[str, TextCallback] = HashMap.new()
+    println(int(values.len()))

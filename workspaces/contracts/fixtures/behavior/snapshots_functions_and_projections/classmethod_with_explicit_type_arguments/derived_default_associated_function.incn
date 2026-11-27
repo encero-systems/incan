@@ -1,0 +1,10 @@
+# Former case derived_default_associated_function: a model deriving Default is constructible through its default() associated function with its field defaults
+
+@derive(Default)
+model Point:
+    x: int = 0
+
+
+pub def main() -> None:
+    p = Point.default()
+    println(p.x)

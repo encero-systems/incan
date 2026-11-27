@@ -1,0 +1,25 @@
+# Former case abs_and_sum_are_overflow_checked: abs and sum over int compute their values and raise ValueError instead of wrapping when the result overflows
+
+from std.testing import assert_raises
+
+const LOWEST: int = -9223372036854775808
+const HIGHEST: int = 9223372036854775807
+
+
+def abs_of_lowest() -> None:
+    abs(LOWEST)
+
+
+def sum_past_highest() -> None:
+    sum([HIGHEST, 1])
+
+
+pub def main() -> None:
+    println(abs(-5))
+    println(abs(7))
+    println(sum([1, 2, 3]))
+    println(LOWEST)
+    assert_raises[ValueError](abs_of_lowest)
+    println("abs overflow raised")
+    assert_raises[ValueError](sum_past_highest)
+    println("sum overflow raised")

@@ -1,0 +1,60 @@
+# behavior: 5 former execution collections cases run in order, each program from its own module: canonical_sorted_returns_a_fresh_ordered_integer_list, clone_gives_an_independent_builtin_value, clone_of_a_list_element_and_a_sized_constant, enumerate_lists_are_zero_based_and_preserve_tuple_forms, frozen_model_return
+# expect-stdout:
+#  sorted int list
+#  29320233
+#  sorted operand
+#  12
+#  sorted int list
+#  29320233
+#  0
+#  2
+#  [1, 2, 3]
+#  6
+#  a b
+#  b
+#  a a!
+#  true false
+#  2 1
+#  1 2
+#  1 2
+#  (1, "a") (1, "a")
+#  Ok(1) Ok(2)
+#  Err("no") Err("no")
+#  ["x", "y"] 2
+#  1 1
+#  frozen 2
+#  3 2.5 [1] [1, 2] Some("a")
+#  [0, 2, 1, 3] 420
+#  0
+#  10
+#  1
+#  20
+#  34
+#  0
+#  1
+#  0
+#  0:65
+#  1:90
+#  0:x
+#  1:y
+#  90
+#  x
+#  true
+#  1
+
+"""Run the program of each former case in order."""
+
+import canonical_sorted_returns_a_fresh_ordered_integer_list
+import clone_gives_an_independent_builtin_value
+import clone_of_a_list_element_and_a_sized_constant
+import enumerate_lists_are_zero_based_and_preserve_tuple_forms
+import frozen_model_return
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    canonical_sorted_returns_a_fresh_ordered_integer_list.main()
+    clone_gives_an_independent_builtin_value.main()
+    clone_of_a_list_element_and_a_sized_constant.main()
+    enumerate_lists_are_zero_based_and_preserve_tuple_forms.main()
+    frozen_model_return.main()

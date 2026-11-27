@@ -1,0 +1,18 @@
+# Former case rust_box_as_ref_argument: a value viewed through a Rust Box's as_ref is handed to a function taking the value itself, twice, and the box is still usable afterwards
+
+from rust::std::boxed import Box
+
+
+model Node:
+    label: str
+
+
+def describe(node: Node) -> str:
+    return "node " + node.label
+
+
+pub def main() -> None:
+    child = Box.new(Node(label="leaf"))
+    println(describe(child.as_ref()))
+    println(describe(child.as_ref()))
+    println(child.as_ref().label)

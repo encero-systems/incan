@@ -1,0 +1,19 @@
+# Former case enum_eq_dunder_and_display_derive: an enum that defines __eq__ compares through it alone, and a model that derives Display builds and displays its structure
+
+enum Suit:
+    Hearts
+    Spades
+
+    def __eq__(self, other: Self) -> bool:
+        return true
+
+
+@derive(Display)
+model Card:
+    rank: int
+
+
+pub def main() -> None:
+    println(Suit.Hearts == Suit.Spades)
+    println(Card(rank=7).rank)
+    println(Card(rank=7))

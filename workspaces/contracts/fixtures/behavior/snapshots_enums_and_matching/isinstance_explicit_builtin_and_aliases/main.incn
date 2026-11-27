@@ -1,0 +1,38 @@
+# behavior: 3 former snapshots enums and matching cases run in order, each program from its own module: isinstance_explicit_builtin_and_aliases, newtype_union_isinstance, option_union_payloads
+# expect-stdout:
+#  false
+#  true false
+#  ABC number
+#  number missing UP
+#  true
+#  frozen text number
+#  frozen text missing
+#  frozen text other
+#  frozen text plain number
+#  frozen text plain other
+#  PLAIN
+#  local
+#  missing
+#  plain
+#  local
+#  text
+#  PLAIN
+#  path p
+#  LOCAL
+#  RETURNED
+#  missing
+#  frozen text
+#  number
+
+"""Run the program of each former case in order."""
+
+import isinstance_explicit_builtin_and_aliases
+import newtype_union_isinstance
+import option_union_payloads
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    isinstance_explicit_builtin_and_aliases.main()
+    newtype_union_isinstance.main()
+    option_union_payloads.main()

@@ -1,0 +1,27 @@
+# behavior: 2 former ownership string boundaries cases run in order, each program from its own module: const_str_as_a_carrier_payload, frozen_strings_at_parameters_fields_and_collections
+# expect-stdout:
+#  the connection is closed
+#  the connection is closed!
+#  strict
+#  [strict]
+#  policy
+#  strict!
+#  strict
+#  <strict>
+#  named
+#  <named>
+#  strict
+#  2 strict
+#  local named, final literal
+#  named value
+
+"""Run the program of each former case in order."""
+
+import const_str_as_a_carrier_payload
+import frozen_strings_at_parameters_fields_and_collections
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    const_str_as_a_carrier_payload.main()
+    frozen_strings_at_parameters_fields_and_collections.main()

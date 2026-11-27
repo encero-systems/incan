@@ -1,0 +1,21 @@
+# Former case model_named_like_a_std_web_type: models named Response and Html, names std.web also uses, keep their own fields and return types in a program that never imports std.web
+
+model Response:
+    body: str
+
+    @staticmethod
+    def make(body: str) -> Response:
+        return Response(body=body)
+
+
+model Html:
+    body: str
+
+
+def render(value: str) -> Html:
+    return Html(body=value)
+
+
+pub def main() -> None:
+    println(Response.make("ok").body)
+    println(render("local").body)

@@ -1,0 +1,92 @@
+# behavior: 11 former lowering declarations cases run in order, each program from its own module: comparison_dunders_through_every_spelling, comparison_trait_adopters_compare_and_sort, const_frozen_model_list, const_frozen_model_list_iteration, dunders_of_a_derived_ord, dunders_through_builtin_bounds, frozen_collections_display_structurally, frozen_collections_nested_strings, isinstance_over_string_storages, phantom_type_parameter_model_issue1370, serde_derive_propagation
+# expect-stdout:
+#  true
+#  false
+#  true
+#  false
+#  true
+#  3
+#  Point(x=1)
+#  true
+#  true
+#  2
+#  true
+#  true
+#  true
+#  true
+#  true
+#  false
+#  false
+#  1
+#  3
+#  true
+#  2
+#  2
+#  2
+#  a
+#  b
+#  false
+#  true
+#  false
+#  true
+#  true
+#  false
+#  true
+#  true
+#  true
+#  true
+#  false
+#  true
+#  true
+#  true
+#  true
+#  true
+#  3
+#  Point(x=1)
+#  [1, 2]
+#  {3}
+#  {"x": 4}
+#  2
+#  beta
+#  alpha
+#  beta
+#  2
+#  1
+#  2
+#  2
+#  frozen: str
+#  owned: str
+#  number: int
+#  (amount * 2)
+#  (label * x)
+#  Column(sql="amount", note="n")
+#  {"tags":["A"],"id":7}
+
+"""Run the program of each former case in order."""
+
+import comparison_dunders_through_every_spelling
+import comparison_trait_adopters_compare_and_sort
+import const_frozen_model_list
+import const_frozen_model_list_iteration
+import dunders_of_a_derived_ord
+import dunders_through_builtin_bounds
+import frozen_collections_display_structurally
+import frozen_collections_nested_strings
+import isinstance_over_string_storages
+import phantom_type_parameter_model_issue1370
+import serde_derive_propagation
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    comparison_dunders_through_every_spelling.main()
+    comparison_trait_adopters_compare_and_sort.main()
+    const_frozen_model_list.main()
+    const_frozen_model_list_iteration.main()
+    dunders_of_a_derived_ord.main()
+    dunders_through_builtin_bounds.main()
+    frozen_collections_display_structurally.main()
+    frozen_collections_nested_strings.main()
+    isinstance_over_string_storages.main()
+    phantom_type_parameter_model_issue1370.main()
+    serde_derive_propagation.main()

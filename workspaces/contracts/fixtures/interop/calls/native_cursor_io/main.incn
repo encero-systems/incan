@@ -1,0 +1,59 @@
+# behavior: 7 former calls cases run in order, each program from its own module: native_cursor_io, native_index_carrier, native_ok_or_with_a_const_error_propagates, native_path_values, native_string_deref_methods, shared_socket_reads_through_its_reference_impl, source_trait_qualified
+# expect-stdout:
+#  2
+#  0
+#  2
+#  2
+#  true
+#  true
+#  2
+#  1
+#  2
+#  2
+#  A
+#  BC
+#  7
+#  2
+#  9
+#  3
+#  nothing to take
+#  true
+#  a/b
+#  file.txt
+#  folder/file.txt
+#  folder/file.txt
+#  true
+#  true
+#  true
+#  true
+#  true
+#  false
+#  true
+#  HÉLLO
+#  true
+#  true
+#  true
+#  7
+#  7
+#  7
+
+"""Run the program of each former case in order."""
+
+import native_cursor_io
+import native_index_carrier
+import native_ok_or_with_a_const_error_propagates
+import native_path_values
+import native_string_deref_methods
+import shared_socket_reads_through_its_reference_impl
+import source_trait_qualified
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    native_cursor_io.main()
+    native_index_carrier.main()
+    native_ok_or_with_a_const_error_propagates.main()
+    native_path_values.main()
+    native_string_deref_methods.main()
+    shared_socket_reads_through_its_reference_impl.main()
+    source_trait_qualified.main()

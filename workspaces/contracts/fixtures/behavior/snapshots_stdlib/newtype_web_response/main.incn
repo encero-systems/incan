@@ -1,0 +1,44 @@
+# behavior: 7 former snapshots stdlib cases run in order, each program from its own module: newtype_web_response, ordinal_map_expected_type_specialization, std_derives_collection_adapters, std_derives_collection_adapters_with_imported_clone, std_derives_surface, std_serde_json_import, std_testing_assertions
+# expect-stdout:
+#  Newtype imports successful - no E0761 module ambiguity
+#  {"id":1,"name":"Ada"}
+#  ordinal-map specialization ok
+#  3
+#  2 4 6
+#  2 4 6
+#  1 2
+#  true
+#  true false
+#  true true
+#  false true false
+#  2
+#  Point(x=1, y=2)
+#  0 0
+#  1 2
+#  {"host":"localhost","port":8080,"debug":true}
+#  localhost 8080 true
+#  basics ok
+#  forms ok
+#  7 3
+#  assertions ok
+
+"""Run the program of each former case in order."""
+
+import newtype_web_response
+import ordinal_map_expected_type_specialization
+import standard_derives_collection_adapters
+import standard_derives_collection_adapters_with_imported_clone
+import standard_derives_surface
+import standard_serde_json_import
+import standard_testing_assertions
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    newtype_web_response.main()
+    ordinal_map_expected_type_specialization.main()
+    standard_derives_collection_adapters.main()
+    standard_derives_collection_adapters_with_imported_clone.main()
+    standard_derives_surface.main()
+    standard_serde_json_import.main()
+    standard_testing_assertions.main()

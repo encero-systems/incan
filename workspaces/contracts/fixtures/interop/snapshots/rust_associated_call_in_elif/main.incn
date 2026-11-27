@@ -1,0 +1,25 @@
+# behavior: 3 former snapshots cases run in order, each program from its own module: rust_associated_call_in_elif, rust_std_imports, rust_supertrait_imported
+# expect-stdout:
+#  true
+#  false
+#  false
+#  1.5
+#  3.141592653589793
+#  kept
+#  basic imports work
+#  aliased imports work
+#  nested imports work
+#  release
+
+"""Run the program of each former case in order."""
+
+import case_rust_associated_call_in_elif
+import case_rust_std_imports
+import case_rust_supertrait_imported
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    case_rust_associated_call_in_elif.main()
+    case_rust_std_imports.main()
+    case_rust_supertrait_imported.main()

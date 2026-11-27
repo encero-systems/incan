@@ -1,0 +1,14 @@
+# Former case constructor_field_defaults: model fields with defaults are omitted from the constructor and keep their defaults unless overridden
+
+@derive(Debug)
+model Settings:
+    theme: str = "dark"
+    font_size: int = 14
+    auto_save: bool = true
+
+
+pub def main() -> None:
+    a = Settings()
+    b = Settings(font_size=16)
+    println(f"{a.theme} {b.font_size}")  # output: "dark 16"
+    println(f"{a.font_size} {b.auto_save}")
