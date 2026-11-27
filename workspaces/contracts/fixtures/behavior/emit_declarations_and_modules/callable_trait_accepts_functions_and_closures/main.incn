@@ -1,0 +1,45 @@
+# behavior: 5 former emit declarations and modules cases run in order, each program from its own module: callable_trait_accepts_functions_and_closures, local_bindings_mutation, trait_default_method_mutable_parameter, user_trait_named_like_stdlib_callable, value_enum_display_message_and_lookup
+# expect-stdout:
+#  8
+#  5
+#  14
+#  2
+#  false
+#  2
+#  3
+#  3
+#  7
+#  12
+#  development
+#  production
+#  Dev
+#  development
+#  parsed Prod
+#  unknown
+#  200
+#  404
+#  parsed NotFound
+#  unknown
+#  Ready
+#  Busy
+#  heading: north
+#  north
+#  north
+#  North
+
+"""Run the program of each former case in order."""
+
+import callable_trait_accepts_functions_and_closures
+import local_bindings_mutation
+import trait_default_method_mutable_parameter
+import user_trait_named_like_stdlib_callable
+import value_enum_display_message_and_lookup
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    callable_trait_accepts_functions_and_closures.main()
+    local_bindings_mutation.main()
+    trait_default_method_mutable_parameter.main()
+    user_trait_named_like_stdlib_callable.main()
+    value_enum_display_message_and_lookup.main()

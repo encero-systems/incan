@@ -1,0 +1,13 @@
+# Former case string_literal_and_variable_to_str_parameter: a str parameter accepts a literal, a variable the caller keeps using afterwards, and a variable at its last use, and each call sees the text it was given
+
+def greet(name: str) -> str:
+    return "hi " + name
+
+
+pub def main() -> None:
+    println(greet("Alice"))
+    kept = "Bob"
+    println(greet(kept))
+    println(kept + " again")
+    last = "Cy"
+    println(greet(last))

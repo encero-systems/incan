@@ -1,0 +1,18 @@
+# Former case cli_refuses_iteration_over_an_unrepresentable_element_without_a_receip: cli refuses iteration over an unrepresentable element without a receipt
+
+"""Cli refuses iteration over an unrepresentable element without a receipt."""
+model Point:
+  """Hold x used by this fixture."""
+  x: int
+
+def program_result() -> int:
+  """Traverse `for value in [Point(x=1)]` and return `seen`."""
+  mut seen = 0
+  for value in [Point(x=1)]:
+    seen += 1
+  return seen
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -1,0 +1,21 @@
+# Former case owned_input_feeds_native_hashing: An owned input passed on to a shared input whose result feeds native hashing (RFC 164).
+
+from std.primitives.hash import sha256
+from std.primitives.hex import hexlify
+
+
+model Row:
+    name: str
+
+
+def encode(row: Borrowed[Row]) -> bytes:
+    return row.name.encode()
+
+
+def digest(row: Owned[Row]) -> str:
+    """An owned input passed on to a shared input whose result feeds native hashing."""
+    return hexlify(sha256.digest(encode(row)))
+
+
+pub def main() -> None:
+    println(len(digest(Row(name="ab"))))

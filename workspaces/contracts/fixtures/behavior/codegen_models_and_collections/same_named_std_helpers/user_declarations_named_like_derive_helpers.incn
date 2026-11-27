@@ -1,0 +1,14 @@
+# Former case user_declarations_named_like_derive_helpers: a program may declare its own IncanClass model beside an ordinary model without colliding with the model's built-in derives
+
+model User:
+    name: str
+
+
+model IncanClass:
+    rank: int
+
+
+pub def main() -> None:
+    let user = User(name="Ada")
+    println(user.name)
+    println(IncanClass(rank=1).rank)

@@ -1,0 +1,12 @@
+# Former case reused_program_io_isolates_each_successful_execution: reused program io isolates each successful execution
+
+"""Reused program io isolates each successful execution."""
+def program_result() -> int:
+  """Compute and return `42`."""
+  println("success")
+  return 42
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

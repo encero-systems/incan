@@ -1,0 +1,11 @@
+# Former case substring_non_membership: `not in` between strings is substring non-membership
+
+"""`not in` between strings is substring non-membership."""
+def program_result() -> bool:
+    """Return the fixture expression `"a" not in "abc"`."""
+    return "a" not in "abc"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

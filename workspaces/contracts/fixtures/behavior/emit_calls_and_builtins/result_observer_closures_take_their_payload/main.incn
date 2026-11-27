@@ -1,0 +1,76 @@
+# behavior: 9 former emit calls and builtins cases run in order, each program from its own module: result_observer_closures_take_their_payload, slice_syntax_calls_the_getslice_hook, std_result_combinator_functions, stdlib_facade_import_utc, struct_literals_in_condition_positions, trait_adopted_through_module_binding, type_parameter_values_where_a_bound_makes_them_the_expected_type, union_parameter_call_returned_from_str_function, user_method_named_join
+# expect-stdout:
+#  abc!
+#  ABC
+#  3
+#  ABC
+#  abc-3
+#  abc?
+#  v?
+#  5.0
+#  t!
+#  2
+#  [1, 2, -1]
+#  [-1, -1, -1]
+#  [-1, -1, 2]
+#  [0, 3, 2]
+#  ["b", "c"]
+#  [1, 3, 5]
+#  [2, 4]
+#  olleh
+#  14
+#  bad x!
+#  7
+#  bad y
+#  Z
+#  0
+#  if
+#  elif
+#  while
+#  match 3
+#  assert
+#  testing assert
+#  bool conversion 1
+#  if expression 3
+#  filters 2 2
+#  class index
+#  numeric cast
+#  for 3
+#  {"value":1}
+#  [2]
+#  {"value":3}
+#  18
+#  c
+#  4
+#  5
+#  str:open
+#  bool:true
+#  float:2.5
+#  int:3
+#  left+right
+#  left|right
+
+"""Run the program of each former case in order."""
+
+import result_observer_closures_take_their_payload
+import slice_syntax_calls_the_getslice_hook
+import std_result_combinator_functions
+import stdlib_facade_import_utc
+import struct_literals_in_condition_positions
+import trait_adopted_through_module_binding
+import type_parameter_values_where_a_bound_makes_them_the_expected_type
+import union_parameter_call_returned_from_str_function
+import user_method_named_join
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    result_observer_closures_take_their_payload.main()
+    slice_syntax_calls_the_getslice_hook.main()
+    std_result_combinator_functions.main()
+    stdlib_facade_import_utc.main()
+    struct_literals_in_condition_positions.main()
+    trait_adopted_through_module_binding.main()
+    type_parameter_values_where_a_bound_makes_them_the_expected_type.main()
+    union_parameter_call_returned_from_str_function.main()
+    user_method_named_join.main()

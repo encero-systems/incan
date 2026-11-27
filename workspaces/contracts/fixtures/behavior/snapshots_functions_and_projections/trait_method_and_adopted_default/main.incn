@@ -1,0 +1,30 @@
+# behavior: 3 former snapshots functions and projections cases run in order, each program from its own module: trait_method_and_adopted_default, validated_newtype_hook_and_coercion, variadic_calls
+# expect-stdout:
+#  ready
+#  default
+#  ready
+#  bound
+#  ok 1
+#  err value must be positive
+#  accepted 1
+#  hook 3
+#  count 9
+#  count 11
+#  hook 5
+#  6
+#  10
+#  14
+#  30
+
+"""Run the program of each former case in order."""
+
+import trait_method_and_adopted_default
+import validated_newtype_hook_and_coercion
+import variadic_calls
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    trait_method_and_adopted_default.main()
+    validated_newtype_hook_and_coercion.main()
+    variadic_calls.main()

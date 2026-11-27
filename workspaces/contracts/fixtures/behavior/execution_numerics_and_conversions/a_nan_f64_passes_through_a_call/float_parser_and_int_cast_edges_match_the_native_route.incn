@@ -1,0 +1,16 @@
+# Former case float_parser_and_int_cast_edges_match_the_native_route: float parser and int cast edges match the native route
+
+"""Float parser and int cast edges match the native route."""
+def render() -> str:
+    """Render integer casts of finite and nonfinite floats."""
+    nan = float("NaN")
+    positive_infinity = float("inf")
+    negative_infinity = float("-inf")
+    out_of_range = float("1e9999")
+    negative_fraction = float("-3.9")
+    return f"{int(nan)} {int(positive_infinity)} {int(negative_infinity)} {int(out_of_range)} {int(3.9)} {int(negative_fraction)}"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(render())

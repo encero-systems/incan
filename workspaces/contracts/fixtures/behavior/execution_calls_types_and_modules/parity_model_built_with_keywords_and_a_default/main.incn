@@ -1,0 +1,41 @@
+# behavior: 10 former execution calls types and modules cases run in order, each program from its own module: parity_model_built_with_keywords_and_a_default, parity_named_call_arguments_and_a_default, parity_nested_model_and_enum_patterns, parity_race_takes_the_first_ready_arm, parity_race_with_a_block_arm, race_ready_ties_follow_source_order_and_cancel_unpolled_losers, records_construct_only_task_lifecycle_evidence, refuses_a_foreign_named_call_identity_at_its_original_source_span, refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed, refuses_an_unsupported_callable_default_at_its_original_span
+# expect-stdout:
+#  1
+#  2
+#  12
+#  10
+#  42
+#  1
+#  1
+#  2
+#  1
+#  42
+#  42
+#  1
+
+"""Run the program of each former case in order."""
+
+import parity_model_built_with_keywords_and_a_default
+import parity_named_call_arguments_and_a_default
+import parity_nested_model_and_enum_patterns
+import parity_race_takes_the_first_ready_arm
+import parity_race_with_a_block_arm
+import race_ready_ties_follow_source_order_and_cancel_unpolled_losers
+import records_construct_only_task_lifecycle_evidence
+import refuses_a_foreign_named_call_identity_at_its_original_source_span
+import refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed
+import refuses_an_unsupported_callable_default_at_its_original_span
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    parity_model_built_with_keywords_and_a_default.main()
+    parity_named_call_arguments_and_a_default.main()
+    parity_nested_model_and_enum_patterns.main()
+    await parity_race_takes_the_first_ready_arm.main()
+    await parity_race_with_a_block_arm.main()
+    await race_ready_ties_follow_source_order_and_cancel_unpolled_losers.main()
+    records_construct_only_task_lifecycle_evidence.main()
+    refuses_a_foreign_named_call_identity_at_its_original_source_span.main()
+    refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed.main()
+    refuses_an_unsupported_callable_default_at_its_original_span.main()

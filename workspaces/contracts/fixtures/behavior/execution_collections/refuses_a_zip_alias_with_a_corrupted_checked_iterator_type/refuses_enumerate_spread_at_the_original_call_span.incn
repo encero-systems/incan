@@ -1,0 +1,14 @@
+# Former case refuses_enumerate_spread_at_the_original_call_span: refuses enumerate spread at the original call span
+
+"""Refuses enumerate spread at the original call span."""
+def enumerate_spread() -> int:
+  """Attempt spread arguments to enumerate and print any produced index."""
+  values = [[1]]
+  for pair in enumerate(*values):
+    println(pair.0)
+  return 0
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(enumerate_spread())

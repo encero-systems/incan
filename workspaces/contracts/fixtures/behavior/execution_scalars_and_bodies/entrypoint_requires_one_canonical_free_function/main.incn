@@ -1,0 +1,66 @@
+# behavior: 10 former execution scalars and bodies cases run in order, each program from its own module: entrypoint_requires_one_canonical_free_function, executes_core_body_and_binds_a_real_receipt, executes_let_shadowing_by_local_identity, executes_plain_collection_index_projection, executes_plain_scalar_tuple_collection_loop, executes_source_local_tuple_list_index_and_mutation_through_a_direct_c, executes_the_exact_same_module_overload_selected_by_the_typechecker, executes_the_selected_string_ownership_control_flow_and_assertion_case, float_bool_remains_an_original_call_span_refusal, integer_power
+# expect-stdout:
+#  42
+#  42
+#  bound
+#  42
+#  3
+#  11
+#  3
+#  11
+#  2
+#  1
+#  1
+#  1
+#  40
+#  [40]
+#  [40]
+#  é
+#  猫
+#  猫
+#  aé猫
+#  two|three
+#  2
+#  7
+#  42
+#  41
+#  hi Ada
+#  owned
+#  hello, Ada
+#  a
+#  b
+#  c
+#  d
+#  none
+#  owned
+#  d
+#  none
+#  true
+#  8
+
+"""Run the program of each former case in order."""
+
+import entrypoint_requires_one_canonical_free_function
+import executes_core_body_and_binds_a_real_receipt
+import executes_let_shadowing_by_local_identity
+import executes_plain_collection_index_projection
+import executes_plain_scalar_tuple_collection_loop
+import executes_source_local_tuple_list_index_and_mutation_through_a_direct_c
+import executes_the_exact_same_module_overload_selected_by_the_typechecker
+import executes_the_selected_string_ownership_control_flow_and_assertion_case
+import float_bool_remains_an_original_call_span_refusal
+import integer_power
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    entrypoint_requires_one_canonical_free_function.main()
+    executes_core_body_and_binds_a_real_receipt.main()
+    executes_let_shadowing_by_local_identity.main()
+    executes_plain_collection_index_projection.main()
+    executes_plain_scalar_tuple_collection_loop.main()
+    executes_source_local_tuple_list_index_and_mutation_through_a_direct_c.main()
+    executes_the_exact_same_module_overload_selected_by_the_typechecker.main()
+    executes_the_selected_string_ownership_control_flow_and_assertion_case.main()
+    float_bool_remains_an_original_call_span_refusal.main()
+    integer_power.main()

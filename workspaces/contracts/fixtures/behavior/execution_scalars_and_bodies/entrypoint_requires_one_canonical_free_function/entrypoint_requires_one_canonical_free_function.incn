@@ -1,0 +1,11 @@
+# Former case entrypoint_requires_one_canonical_free_function: entrypoint requires one canonical free function
+
+"""Entrypoint requires one canonical free function."""
+def program_result() -> int:
+  """Return `42` for this fixture."""
+  return 42
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

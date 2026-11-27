@@ -1,0 +1,25 @@
+# behavior: 3 former cli values and calls cases run in order, each program from its own module: tuple_assignment_swaps_fields_and_list_elements, tuple_assignment_takes_a_bare_tuple_value, tuple_unpacking_reassigns_names_inside_a_loop
+# expect-stdout:
+#  2 1
+#  8 7
+#  30 10 20
+#  5 2
+#  2 1
+#  1 2
+#  3 4
+#  55
+#  0 1 1 2 3 5 8 13
+#  1 2
+
+"""Run the program of each former case in order."""
+
+import tuple_assignment_swaps_fields_and_list_elements
+import tuple_assignment_takes_a_bare_tuple_value
+import tuple_unpacking_reassigns_names_inside_a_loop
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    tuple_assignment_swaps_fields_and_list_elements.main()
+    tuple_assignment_takes_a_bare_tuple_value.main()
+    tuple_unpacking_reassigns_names_inside_a_loop.main()

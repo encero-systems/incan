@@ -1,0 +1,59 @@
+# behavior: 10 former snapshots traits and generics cases run in order, each program from its own module: explicit_call_site_generics, fallible_iteration_protocol, fallible_iterator_adapter_chain, frozen_trait_arguments, generic_bounds_return_type, generic_fallible_iterator_consumer, generic_method_defaults, generic_methods, item_from_iterable_bound, iterator_flat_map_over_iterables
+# expect-stdout:
+#  3
+#  text
+#  chunk 1
+#  chunk 2
+#  done
+#  chunk 1
+#  failed: broken at 2
+#  chunk 1
+#  failed: broken at 2
+#  2
+#  1
+#  0
+#  frozen trait arguments
+#  5
+#  5
+#  2
+#  2
+#  2
+#  2
+#  1-
+#  1-again
+#  1 shelf b true 1.5
+#  borrowed
+#  borrowed
+#  ["kept"]
+#  4
+#  2
+#  4
+#  4
+#  4
+
+"""Run the program of each former case in order."""
+
+import explicit_call_site_generics
+import fallible_iteration_protocol
+import fallible_iterator_adapter_chain
+import frozen_trait_arguments
+import generic_bounds_return_type
+import generic_fallible_iterator_consumer
+import generic_method_defaults
+import generic_methods
+import item_from_iterable_bound
+import iterator_flat_map_over_iterables
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    explicit_call_site_generics.main()
+    fallible_iteration_protocol.main()
+    fallible_iterator_adapter_chain.main()
+    frozen_trait_arguments.main()
+    generic_bounds_return_type.main()
+    generic_fallible_iterator_consumer.main()
+    generic_method_defaults.main()
+    generic_methods.main()
+    item_from_iterable_bound.main()
+    iterator_flat_map_over_iterables.main()

@@ -1,0 +1,16 @@
+# Former case self_referential_class_field_pattern: a self-referential class is matched by its constructor pattern, binding and nesting its Option link (#2475)
+
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+
+def show(node: Node) -> None:
+    match node:
+        Node(value=v, next=Some(Node(value=w, next=_))) => println(f"{v} then {w}")
+        Node(value=v, next=None) => println(f"single {v}")
+
+
+pub def main() -> None:
+    show(Node(value=1, next=Some(Node(value=2, next=None))))
+    show(Node(value=7, next=None))

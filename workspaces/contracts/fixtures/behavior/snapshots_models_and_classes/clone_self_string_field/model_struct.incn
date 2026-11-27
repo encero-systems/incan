@@ -1,0 +1,10 @@
+# Former case model_struct: a model built with named arguments exposes its str field
+
+model User:
+    name: str
+    age: int
+
+
+pub def main() -> None:
+    user = User(name="Alice", age=30)
+    println(user.name)

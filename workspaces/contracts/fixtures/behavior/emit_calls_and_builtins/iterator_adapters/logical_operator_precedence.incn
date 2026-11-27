@@ -1,0 +1,15 @@
+# Former case logical_operator_precedence: `and` binds tighter than `or`, so a parenthesized `or` on the right of `and` is evaluated as a group
+
+def grouped(left: bool, right_a: bool, right_b: bool) -> bool:
+    return left and (right_a or right_b)
+
+
+def ungrouped(left: bool, right_a: bool, right_b: bool) -> bool:
+    return left and right_a or right_b
+
+
+pub def main() -> None:
+    println(grouped(false, true, true))
+    println(ungrouped(false, true, true))
+    println(grouped(true, false, true))
+    println(grouped(true, false, false))

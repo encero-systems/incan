@@ -1,0 +1,9 @@
+# Former case uppercase_var_field_access: a local variable spelled with a capital letter is a value, and field access on it reads the model's field
+
+model Person:
+    name: str
+
+
+pub def main() -> None:
+    mut User: Person = Person(name="Ada")
+    println(User.name)

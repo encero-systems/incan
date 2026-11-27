@@ -1,0 +1,8 @@
+# Former case compiled_stdlib_module_function_call: a function of a compiled standard-library module is callable from a program that declares nothing of its own about it
+
+from std.math import gcd, lcm
+
+
+pub def main() -> None:
+    println(gcd(12, 9))
+    println(lcm(4, 6))

@@ -1,0 +1,58 @@
+# behavior: 10 former execution collections cases run in order, each program from its own module: refuses_a_zip_alias_with_a_corrupted_checked_iterator_type, refuses_corrupted_enumerate_iter_next_destinations_in_top_level_and_de, refuses_corrupted_zip_operand_and_nominal_iterator_destination, refuses_enumerate_spread_at_the_original_call_span, refuses_zip_without_its_checked_builtin_identity, scalar_set_key_kinds_execute, selected_enumerate_and_zip_match_through_the_staged_legacy_route, set_and_dict_membership_execute_from_retained_helper_calls, source_local_sorted_keeps_its_declaration_identity, string_sorted_list_remains_an_original_call_span_refusal
+# expect-stdout:
+#  3
+#  1
+#  5
+#  0
+#  6
+#  7
+#  0
+#  0
+#  0
+#  0
+#  true
+#  true
+#  true
+#  true
+#  true
+#  true
+#  true
+#  true
+#  true
+#  0
+#  10
+#  1
+#  20
+#  10
+#  ten
+#  41
+#  42
+#  42
+#  2
+
+"""Run the program of each former case in order."""
+
+import refuses_a_zip_alias_with_a_corrupted_checked_iterator_type
+import refuses_corrupted_enumerate_iter_next_destinations_in_top_level_and_de
+import refuses_corrupted_zip_operand_and_nominal_iterator_destination
+import refuses_enumerate_spread_at_the_original_call_span
+import refuses_zip_without_its_checked_builtin_identity
+import scalar_set_key_kinds_execute
+import selected_enumerate_and_zip_match_through_the_staged_legacy_route
+import set_and_dict_membership_execute_from_retained_helper_calls
+import source_local_sorted_keeps_its_declaration_identity
+import string_sorted_list_remains_an_original_call_span_refusal
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    refuses_a_zip_alias_with_a_corrupted_checked_iterator_type.main()
+    refuses_corrupted_enumerate_iter_next_destinations_in_top_level_and_de.main()
+    refuses_corrupted_zip_operand_and_nominal_iterator_destination.main()
+    refuses_enumerate_spread_at_the_original_call_span.main()
+    refuses_zip_without_its_checked_builtin_identity.main()
+    scalar_set_key_kinds_execute.main()
+    selected_enumerate_and_zip_match_through_the_staged_legacy_route.main()
+    set_and_dict_membership_execute_from_retained_helper_calls.main()
+    source_local_sorted_keeps_its_declaration_identity.main()
+    string_sorted_list_remains_an_original_call_span_refusal.main()

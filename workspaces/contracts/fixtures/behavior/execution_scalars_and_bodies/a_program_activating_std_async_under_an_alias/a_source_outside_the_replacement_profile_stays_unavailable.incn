@@ -1,0 +1,11 @@
+# Former case a_source_outside_the_replacement_profile_stays_unavailable: a source outside the replacement profile stays unavailable
+
+"""A source outside the replacement profile stays unavailable."""
+def pairs() -> list[tuple[int, int]]:
+    """Return the fixture expression `[(1, 2)]`."""
+    return [(1, 2)]
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(pairs())

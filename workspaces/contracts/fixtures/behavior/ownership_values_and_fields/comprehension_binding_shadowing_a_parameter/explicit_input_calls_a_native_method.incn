@@ -1,0 +1,9 @@
+# Former case explicit_input_calls_a_native_method: A native method reads through a shared text input (RFC 164).
+
+def width(value: Borrowed[str]) -> int:
+    """A native method read through a shared text input."""
+    return int(value.len())
+
+
+pub def main() -> None:
+    println(width("abc"))

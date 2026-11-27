@@ -1,0 +1,16 @@
+# Former case a_function_passed_as_a_value: a named function passed to a Callable parameter is called through it
+
+"""A named function passed to a Callable parameter is called through it."""
+def square(x: int) -> int:
+    """Return the fixture expression `x * x`."""
+    return x * x
+
+
+def apply(f: Callable[int, int], v: int) -> int:
+    """Return the fixture expression `f(v)`."""
+    return f(v)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(apply(square, 7))

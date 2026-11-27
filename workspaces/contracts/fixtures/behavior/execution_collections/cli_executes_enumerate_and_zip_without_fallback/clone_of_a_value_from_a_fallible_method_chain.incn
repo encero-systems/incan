@@ -1,0 +1,17 @@
+# Former case clone_of_a_value_from_a_fallible_method_chain: a value taken with `?` from a chain of Result methods has its checked type, so `.clone()` on it gives an independent value of that type and arithmetic on both type-checks (#1846).
+
+def field(value: int) -> Result[int, str]:
+    if value < 0:
+        return Err("negative")
+    return Ok(value)
+
+
+def counts(value: int) -> Result[int, str]:
+    reused = field(value).and_then((found) => field(found + 1)).map_err((error) => f"bad: {error}")?
+    mut decoded = reused.clone()
+    decoded += 1
+    return Ok(decoded + reused)
+
+
+pub def main() -> None:
+    println(counts(1))

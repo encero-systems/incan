@@ -1,0 +1,74 @@
+# behavior: 10 former snapshots stdlib cases run in order, each program from its own module: std_async_race, std_async_race_timeout, std_async_tasks_and_time, std_graph, std_graph_adjacency_counters, std_graph_legacy_invariants, std_graph_legacy_orders, std_graph_read_pages, std_math, std_regex
+# expect-stdout:
+#  answered by cache
+#  1
+#  finished 7
+#  timed out
+#  async main running
+#  1
+#  2
+#  quick 1
+#  operation timed out
+#  still running
+#  3
+#  successors 1
+#  bfs 2
+#  topo 2
+#  roots 1 sinks 1
+#  removed successors 0
+#  dag order 2
+#  dag contains true false
+#  dag cycle refused
+#  multi edges 2
+#  size 0 before 4 4 0 after 1 1 0
+#  size 10 before 4 4 0 after 1 1 0
+#  size 100 before 4 4 0 after 1 1 0
+#  incident false false
+#  node ids 0 1 2
+#  dag false true
+#  parallel 1 false true
+#  successors(a) 1 2 3
+#  predecessors(b) 0 2 3
+#  bfs(a) 0 1 2 3
+#  dfs(a) 0 1 2 3
+#  topological 0 2 3 1
+#  topological late-first 2 1 0
+#  multi successors(p) 1
+#  pages 0 1 2 0 1 2 0 1 2 0 1 2
+#  incoming 0 1 2
+#  edge 0 0 1
+#  stale true foreign true incompatible true unknown true
+#  counters 0 3 2 1 96
+#  nan
+#  3.141592653589793 2.718281828459045 6.283185307179586
+#  1.0 3.0 0.7853981633974483 5.0
+#  6 24
+#  true false
+#  refused
+
+"""Run the program of each former case in order."""
+
+import standard_async_race
+import standard_async_race_timeout
+import standard_async_tasks_and_time
+import standard_graph
+import standard_graph_adjacency_counters
+import standard_graph_legacy_invariants
+import standard_graph_legacy_orders
+import standard_graph_read_pages
+import standard_math
+import standard_regex
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    await standard_async_race.main()
+    await standard_async_race_timeout.main()
+    await standard_async_tasks_and_time.main()
+    standard_graph.main()
+    standard_graph_adjacency_counters.main()
+    standard_graph_legacy_invariants.main()
+    standard_graph_legacy_orders.main()
+    standard_graph_read_pages.main()
+    standard_math.main()
+    standard_regex.main()

@@ -1,0 +1,16 @@
+# Former case cli_refuses_unsupported_callable_default_without_a_receipt: cli refuses unsupported callable default without a receipt
+
+"""Cli refuses unsupported callable default without a receipt."""
+def keep(payload: bytes = b"x") -> bytes:
+  """Return `payload` for this fixture."""
+  return payload
+
+def program_result() -> int:
+  """Compute and return `1`."""
+  keep()
+  return 1
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

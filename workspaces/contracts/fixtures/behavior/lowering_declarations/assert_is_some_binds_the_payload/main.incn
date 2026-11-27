@@ -1,0 +1,80 @@
+# behavior: 10 former lowering declarations cases run in order, each program from its own module: assert_is_some_binds_the_payload, assert_raises_forms, comparison_trait_adopters_of_every_kind, exact_float_width_arithmetic, function_model_enum_and_entry, generic_nominal_arguments, imported_function_alias, ne_reaches_the_eq_default_of_an_ord_only_adopter, option_identity_and_comparison_bounds, statements_and_expressions
+# expect-stdout:
+#  42
+#  43
+#  statement form passed
+#  helper form passed
+#  true
+#  0
+#  true
+#  3
+#  true
+#  true
+#  true
+#  2
+#  true
+#  f32 add 0.3
+#  f64 add 0.30000000000000004
+#  f32 sub 1.1
+#  f32 mul 0.3
+#  f32 div 0.33333334
+#  f64 div 0.3333333333333333
+#  f32 floordiv 3.0
+#  f32 mod 0.20000005
+#  f32 pow 1.21
+#  entered main
+#  5
+#  Ada 36
+#  green
+#  boxed leaf
+#  first 4
+#  first x
+#  value 9
+#  4
+#  true
+#  false
+#  false
+#  true
+#  false
+#  true
+#  true
+#  false
+#  true
+#  true
+#  1
+#  positive
+#  negative
+#  zero
+#  0
+#  1
+#  2
+#  12
+#  3 6
+#  2
+
+"""Run the program of each former case in order."""
+
+import assert_is_some_binds_the_payload
+import assert_raises_forms
+import comparison_trait_adopters_of_every_kind
+import exact_float_width_arithmetic
+import function_model_enum_and_entry
+import generic_nominal_arguments
+import imported_function_alias
+import ne_reaches_the_eq_default_of_an_ord_only_adopter
+import option_identity_and_comparison_bounds
+import statements_and_expressions
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    assert_is_some_binds_the_payload.main()
+    assert_raises_forms.main()
+    comparison_trait_adopters_of_every_kind.main()
+    exact_float_width_arithmetic.main()
+    function_model_enum_and_entry.main()
+    generic_nominal_arguments.main()
+    imported_function_alias.main()
+    ne_reaches_the_eq_default_of_an_ord_only_adopter.main()
+    option_identity_and_comparison_bounds.main()
+    statements_and_expressions.main()

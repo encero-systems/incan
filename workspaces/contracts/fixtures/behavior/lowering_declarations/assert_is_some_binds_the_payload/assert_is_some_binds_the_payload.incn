@@ -1,0 +1,14 @@
+# Former case assert_is_some_binds_the_payload: assert value is Some(inner) binds inner to the payload for the statements after it (RFC 018)
+
+import std.testing
+
+
+def unwrap_value(value: Option[int]) -> int:
+    assert value is Some(inner)
+    return inner
+
+
+pub def main() -> None:
+    println(unwrap_value(Some(42)))
+    assert Some(43) is Some(found)
+    println(found)

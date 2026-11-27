@@ -1,0 +1,25 @@
+# Former case model_value_passed_then_used_again: a model value passed to a function is still usable by the caller afterwards, the same value can be passed twice in one returned call, and a value passed at its last use reaches the callee intact
+
+model User:
+    name: str
+
+
+def describe(user: User) -> str:
+    return "user " + user.name
+
+
+def combine(left: User, right: User) -> str:
+    return f"{left.name}+{right.name}"
+
+
+def both(user: User) -> str:
+    return combine(user, user)
+
+
+pub def main() -> None:
+    kept = User(name="Ann")
+    println(describe(kept))
+    println(kept.name)
+    println(both(kept))
+    last = User(name="Bo")
+    println(describe(last))

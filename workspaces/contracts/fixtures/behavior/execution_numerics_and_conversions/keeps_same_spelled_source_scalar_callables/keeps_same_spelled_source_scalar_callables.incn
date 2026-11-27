@@ -1,0 +1,15 @@
+# Former case keeps_same_spelled_source_scalar_callables: keeps same spelled source scalar callables
+
+"""Keeps same spelled source scalar callables."""
+def str(value: int) -> str:
+  """Return the fixture expression `"source str"`."""
+  return "source str"
+
+def program_result() -> str:
+  """Return the fixture expression `str(42)`."""
+  return str(42)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -1,0 +1,13 @@
+# Former case set_add_and_shadowing: Set.add deduplicates repeated values, and a user function named set is called instead of the constructor (#963, #951)
+
+def set(values: List[str]) -> int:
+    """Return the input cardinality without invoking the collection constructor."""
+    return len(values)
+
+
+pub def main() -> None:
+    mut seen: Set[str] = Set()
+    seen.add("value")
+    seen.add("value")
+    println(len(seen))
+    println(set(["alpha", "beta", "beta"]))

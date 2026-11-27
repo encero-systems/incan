@@ -1,0 +1,70 @@
+# behavior: 10 former execution collections cases run in order, each program from its own module: cli_executes_enumerate_and_zip_without_fallback, cli_refuses_nonlist_enumerate_without_a_successful_receipt, clone_of_a_value_from_a_fallible_method_chain, collection_len_matches_the_receipt_backed_native_route, enumerate_and_zip_follow_bare_local_aliases, executes_deferred_enumerate_and_zip_frames_with_distinct_bindings, executes_scalar_tuple_collection_destructuring_with_a_replacement_rece, hashed_construction_preserves_source_side_effect_order, hashed_membership_matches_the_receipt_backed_native_route, hashed_non_membership_operations_remain_refused
+# expect-stdout:
+#  0
+#  10
+#  1
+#  20
+#  10
+#  ten
+#  41
+#  must not run
+#  0
+#  Ok(5)
+#  collection len
+#  2200
+#  collection len
+#  2200
+#  len element
+#  len element
+#  2
+#  2200
+#  16
+#  21
+#  9
+#  6
+#  45
+#  set first
+#  set second
+#  key first
+#  value first
+#  key duplicate
+#  value duplicate
+#  needle
+#  true
+#  hashed membership
+#  true
+#  2
+#  true
+#  {1}
+#  {1: 2}
+#  true
+#  true
+#  true
+#  true
+
+"""Run the program of each former case in order."""
+
+import cli_executes_enumerate_and_zip_without_fallback
+import cli_refuses_nonlist_enumerate_without_a_successful_receipt
+import clone_of_a_value_from_a_fallible_method_chain
+import collection_len_matches_the_receipt_backed_native_route
+import enumerate_and_zip_follow_bare_local_aliases
+import executes_deferred_enumerate_and_zip_frames_with_distinct_bindings
+import executes_scalar_tuple_collection_destructuring_with_a_replacement_rece
+import hashed_construction_preserves_source_side_effect_order
+import hashed_membership_matches_the_receipt_backed_native_route
+import hashed_non_membership_operations_remain_refused
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    cli_executes_enumerate_and_zip_without_fallback.main()
+    cli_refuses_nonlist_enumerate_without_a_successful_receipt.main()
+    clone_of_a_value_from_a_fallible_method_chain.main()
+    collection_len_matches_the_receipt_backed_native_route.main()
+    enumerate_and_zip_follow_bare_local_aliases.main()
+    executes_deferred_enumerate_and_zip_frames_with_distinct_bindings.main()
+    executes_scalar_tuple_collection_destructuring_with_a_replacement_rece.main()
+    hashed_construction_preserves_source_side_effect_order.main()
+    hashed_membership_matches_the_receipt_backed_native_route.main()
+    hashed_non_membership_operations_remain_refused.main()

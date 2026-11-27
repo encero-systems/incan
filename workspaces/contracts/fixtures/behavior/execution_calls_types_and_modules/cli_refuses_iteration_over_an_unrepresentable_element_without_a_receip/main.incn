@@ -1,0 +1,45 @@
+# behavior: 10 former execution calls types and modules cases run in order, each program from its own module: cli_refuses_iteration_over_an_unrepresentable_element_without_a_receip, cli_refuses_typed_empty_non_structural_callable_default_without_a_rece, cli_refuses_unsupported_callable_default_without_a_receipt, dict_unpacking_in_a_dict_literal, dispatches_named_calls_by_canonical_target_and_refuses_absent_identity, executes_a_captured_stored_closure_in_an_isolated_frame, executes_a_lazy_generator_expression_only_when_collect_consumes_it, executes_a_same_module_range_declaration_by_its_direct_call_identity, executes_a_source_local_async_task_and_binds_its_lifecycle_evidence, executes_identity_selected_nominal_and_fieldless_enum_match_patterns
+# expect-stdout:
+#  1
+#  1
+#  1
+#  0
+#  42
+#  42
+#  42
+#  kept7
+#  kept8
+#  kept
+#  70
+#  70
+#  70
+#  42
+#  42
+#  42
+
+"""Run the program of each former case in order."""
+
+import cli_refuses_iteration_over_an_unrepresentable_element_without_a_receip
+import cli_refuses_typed_empty_non_structural_callable_default_without_a_rece
+import cli_refuses_unsupported_callable_default_without_a_receipt
+import dict_unpacking_in_a_dict_literal
+import dispatches_named_calls_by_canonical_target_and_refuses_absent_identity
+import executes_a_captured_stored_closure_in_an_isolated_frame
+import executes_a_lazy_generator_expression_only_when_collect_consumes_it
+import executes_a_same_module_range_declaration_by_its_direct_call_identity
+import executes_a_source_local_async_task_and_binds_its_lifecycle_evidence
+import executes_identity_selected_nominal_and_fieldless_enum_match_patterns
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    cli_refuses_iteration_over_an_unrepresentable_element_without_a_receip.main()
+    cli_refuses_typed_empty_non_structural_callable_default_without_a_rece.main()
+    cli_refuses_unsupported_callable_default_without_a_receipt.main()
+    dict_unpacking_in_a_dict_literal.main()
+    dispatches_named_calls_by_canonical_target_and_refuses_absent_identity.main()
+    executes_a_captured_stored_closure_in_an_isolated_frame.main()
+    executes_a_lazy_generator_expression_only_when_collect_consumes_it.main()
+    executes_a_same_module_range_declaration_by_its_direct_call_identity.main()
+    await executes_a_source_local_async_task_and_binds_its_lifecycle_evidence.main()
+    executes_identity_selected_nominal_and_fieldless_enum_match_patterns.main()

@@ -1,0 +1,30 @@
+# Former case out_of_order_refined_trait_arguments: a function returning a trait value keeps its concrete value when passed as an out-of-order named argument
+
+trait Named:
+    """A shared trait for two distinct concrete values."""
+    pass
+
+
+model One with Named:
+    """A numeric value accepted by the trait parameter."""
+    number: int
+
+
+model Two with Named:
+    """A textual value returned through the trait."""
+    text: str
+
+
+def make() -> Named:
+    """Return a textual value through the trait result type."""
+    return Two(text="x")
+
+
+def consume(left: Named, right: Named) -> int:
+    """Accept independent concrete values through the two trait parameters."""
+    return 7
+
+
+pub def main() -> None:
+    """Pass the refined return and a different concrete value by name."""
+    println(consume(right=make(), left=One(number=3)))

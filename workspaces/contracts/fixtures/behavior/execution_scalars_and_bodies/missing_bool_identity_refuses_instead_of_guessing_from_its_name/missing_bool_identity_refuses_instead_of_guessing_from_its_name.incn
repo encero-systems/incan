@@ -1,0 +1,11 @@
+# Former case missing_bool_identity_refuses_instead_of_guessing_from_its_name: missing bool identity refuses instead of guessing from its name
+
+"""Missing bool identity refuses instead of guessing from its name."""
+def observe() -> bool:
+  """Return the fixture expression `bool(1)`."""
+  return bool(1)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

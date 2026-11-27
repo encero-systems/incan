@@ -1,0 +1,9 @@
+# Former case stdlib_facade_import_utc: a function imported through the std.datetime facade resolves to its declaring module's definition and returns the zero offset
+
+from std.datetime import utc
+
+
+pub def main() -> None:
+    offset = utc()
+    println(offset.isoformat())
+    println(offset.seconds)

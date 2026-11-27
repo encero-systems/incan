@@ -1,0 +1,63 @@
+# behavior: 10 former cli modules and declarations cases run in order, each program from its own module: generic_caller_of_a_model_method_formatting_its_payload, generic_callers_forwarding_to_generic_methods, generic_list_index_without_clone_bound, method_alias_calls_target, method_called_through_a_helper_keeps_its_callees, method_partial_over_model_method, method_returning_a_later_declared_model, model_field_of_newtype_over_str, module_member_alias_calls_the_member, namespace_prelude_imports
+# expect-stdout:
+#  walked 7
+#  walked seven
+#  held 5
+#  7
+#  sent x
+#  sent 3
+#  true
+#  false
+#  shown 4
+#  4
+#  x
+#  1
+#  5
+#  z
+#  2
+#  10
+#  10
+#  42
+#  name
+#  name
+#  other
+#  wrapped
+#  2
+#  1
+#  ada@example.com
+#  2
+#  email:ada@example.com
+#  email:bo@example.com
+#  email:ada@example.com
+#  ada@example.com
+#  4
+#  6
+#  1
+#  broken: disk
+
+"""Run the program of each former case in order."""
+
+import generic_caller_of_a_model_method_formatting_its_payload
+import generic_callers_forwarding_to_generic_methods
+import generic_list_index_without_clone_bound
+import method_alias_calls_target
+import method_called_through_a_helper_keeps_its_callees
+import method_partial_over_model_method
+import method_returning_a_later_declared_model
+import model_field_of_newtype_over_str
+import module_member_alias_calls_the_member
+import namespace_prelude_imports
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    generic_caller_of_a_model_method_formatting_its_payload.main()
+    generic_callers_forwarding_to_generic_methods.main()
+    generic_list_index_without_clone_bound.main()
+    method_alias_calls_target.main()
+    method_called_through_a_helper_keeps_its_callees.main()
+    method_partial_over_model_method.main()
+    method_returning_a_later_declared_model.main()
+    model_field_of_newtype_over_str.main()
+    module_member_alias_calls_the_member.main()
+    await namespace_prelude_imports.main()

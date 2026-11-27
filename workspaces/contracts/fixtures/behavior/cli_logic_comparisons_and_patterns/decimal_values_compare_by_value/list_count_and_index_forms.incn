@@ -1,0 +1,13 @@
+# Former case list_count_and_index_forms: on a list, count() counts the items, for any element type, count(value) counts the items equal to the value, and index(value) finds its first position
+
+def size[T](items: list[T]) -> int:
+    return items.count()
+
+
+pub def main() -> None:
+    items: list[int] = [4, 9, 2, 9]
+    println(items.count())
+    println(items.count(9))
+    println(items.index(2))
+    println(len(items))
+    println(size(["a", "b"]))

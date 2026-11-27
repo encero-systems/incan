@@ -1,0 +1,16 @@
+# Former case trait_method_alias_adopts_required_method: a class satisfies a trait's required method through a keyword-named alias of one of its own methods (#1055)
+
+trait Renamable:
+    def where(self, value: int) -> int: ...
+
+
+class Example with Renamable:
+    where = alias filter
+
+    pub def filter(self, value: int) -> int:
+        return value
+
+
+pub def main() -> None:
+    println(Example().where(7))
+    println(Example().filter(8))

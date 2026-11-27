@@ -1,0 +1,8 @@
+# Former case bytes_decode_unwrap_and_debug_validation_error: bytes.decode unwraps valid UTF-8 and Debug-formats its ValidationError for malformed input (#2499)
+
+pub def main() -> None:
+    """Unwrap valid decoded text and print the retained structure of a malformed-input error."""
+    println(len(b"\0".decode().unwrap()))
+    match b"\xff".decode():
+        Ok(text) => println(text)
+        Err(error) => println(f"{error:?}")

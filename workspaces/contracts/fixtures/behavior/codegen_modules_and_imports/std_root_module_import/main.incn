@@ -1,0 +1,16 @@
+# behavior: 2 former codegen modules and imports cases run in order, each program from its own module: std_root_module_import, std_submodule_single_import
+# expect-stdout:
+#  4
+#  3
+#  error
+
+"""Run the program of each former case in order."""
+
+import std_root_module_import
+import std_submodule_single_import
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    std_root_module_import.main()
+    std_submodule_single_import.main()

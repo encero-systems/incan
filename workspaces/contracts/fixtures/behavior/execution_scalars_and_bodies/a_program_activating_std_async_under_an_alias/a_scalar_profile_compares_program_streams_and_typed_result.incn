@@ -1,0 +1,12 @@
+# Former case a_scalar_profile_compares_program_streams_and_typed_result: a scalar profile compares program streams and typed result
+
+"""A scalar profile compares program streams and typed result."""
+def add(x: int, y: int) -> int:
+    """Print the stdout marker before returning the sum."""
+    println("normal program stdout")
+    return x + y
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(add(40, 2))

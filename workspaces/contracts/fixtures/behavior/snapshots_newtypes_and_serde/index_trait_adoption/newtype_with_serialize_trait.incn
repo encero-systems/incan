@@ -1,0 +1,10 @@
+# Former case newtype_with_serialize_trait: a str newtype adopting std.serde.json Serialize serializes as its JSON payload
+
+from std.serde.json import Serialize
+
+
+type Wrapped = newtype str with Serialize
+
+
+pub def main() -> None:
+    println(Wrapped("wrapped").to_json())

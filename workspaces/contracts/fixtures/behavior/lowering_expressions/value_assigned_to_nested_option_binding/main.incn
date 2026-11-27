@@ -1,0 +1,25 @@
+# behavior: 2 former lowering expressions cases run in order, each program from its own module: value_assigned_to_nested_option_binding, value_written_to_option_place_is_wrapped
+# expect-stdout:
+#  5
+#  0
+#  1
+#  6
+#  none
+#  5
+#  a
+#  1
+#  2
+#  b
+#  3
+#  4
+
+"""Run the program of each former case in order."""
+
+import value_assigned_to_nested_option_binding
+import value_written_to_option_place_is_wrapped
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    value_assigned_to_nested_option_binding.main()
+    value_written_to_option_place_is_wrapped.main()

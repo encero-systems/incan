@@ -1,0 +1,8 @@
+# Former case std_web_response_into_response_name: std.web.response publishes the IntoResponse name 0.5.1 published, beside Response
+
+from std.web.response import IntoResponse, Response
+
+
+pub def main() -> None:
+    _ = Response.ok()
+    println("reply ready")

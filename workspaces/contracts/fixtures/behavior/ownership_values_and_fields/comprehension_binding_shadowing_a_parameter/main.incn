@@ -1,0 +1,73 @@
+# behavior: 10 former ownership values and fields cases run in order, each program from its own module: comprehension_binding_shadowing_a_parameter, comprehensions_changing_their_items, dict_values_changed_in_place, enum_match_read_only_inputs, explicit_assertion_message_laziness, explicit_borrowed_operation_reads, explicit_input_body_passes_an_ordinary_argument, explicit_input_calls_a_native_method, explicit_input_short_circuit_field_reads, explicit_shared_scalar_value_reads
+# expect-stdout:
+#  true 3
+#  false 3
+#  [2, 4]
+#  [[1], [3]]
+#  [8, 11]
+#  [[], []]
+#  [2]
+#  [1]
+#  [2]
+#  [[[1]], [[3]]]
+#  [0, 1]
+#  [[5], []]
+#  [2]
+#  [1]
+#  2 4
+#  [[1], [3]]
+#  2 5
+#  [[1], [3, 4]]
+#  [2, 3]
+#  [5, 6]
+#  2
+#  3
+#  [11, 2, 3]
+#  [4, 5]
+#  [6]
+#  [7]
+#  [8]
+#  [9, 10]
+#  [[11], [11]]
+#  17
+#  1
+#  enum match reads passed
+#  14
+#  lazy assertion passed
+#  left 7
+#  before 7
+#  prefix:x
+#  operation reads passed
+#  2
+#  3
+#  true
+#  1
+#  2
+#  scalar value reads passed
+
+"""Run the program of each former case in order."""
+
+import comprehension_binding_shadowing_a_parameter
+import comprehensions_changing_their_items
+import dict_values_changed_in_place
+import enum_match_read_only_inputs
+import explicit_assertion_message_laziness
+import explicit_borrowed_operation_reads
+import explicit_input_body_passes_an_ordinary_argument
+import explicit_input_calls_a_native_method
+import explicit_input_short_circuit_field_reads
+import explicit_shared_scalar_value_reads
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    comprehension_binding_shadowing_a_parameter.main()
+    comprehensions_changing_their_items.main()
+    dict_values_changed_in_place.main()
+    enum_match_read_only_inputs.main()
+    explicit_assertion_message_laziness.main()
+    explicit_borrowed_operation_reads.main()
+    explicit_input_body_passes_an_ordinary_argument.main()
+    explicit_input_calls_a_native_method.main()
+    explicit_input_short_circuit_field_reads.main()
+    explicit_shared_scalar_value_reads.main()
