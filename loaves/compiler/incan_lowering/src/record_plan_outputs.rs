@@ -27,6 +27,17 @@ use crate::scalar_store::{event_positions, event_references, finalized_plan_prod
 /// The identity a refusal of the whole-unit native interface is reported under.
 const INTERFACE_IDENTITY: &str = "native-interface";
 
+#[cfg(test)]
+thread_local! {
+    static MATERIALIZED_SETTLED_EVENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count admitted report members represented as ordinary events with no encoded product.
+#[cfg(test)]
+pub(crate) fn materialized_settled_events() -> usize {
+    MATERIALIZED_SETTLED_EVENTS.with(std::cell::Cell::get)
+}
+
 /// Publish loss-checked plan output and a reusable ordinary-entry binding before native compilation.
 pub fn publish_plan_records(
     plan: &Plan,
@@ -37,6 +48,15 @@ pub fn publish_plan_records(
     let report_path = Path::new(report);
     let mut events = scalar_events(report_path)?;
     let publication = append_admitted_events(&mut events, products, report_path, plan.functions.len(), admissions)?;
+    #[cfg(test)]
+    MATERIALIZED_SETTLED_EVENTS.with(|count| {
+        count.set(
+            events
+                .iter()
+                .filter(|event| event.admitted && event.product.is_empty())
+                .count(),
+        );
+    });
     // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface. Only a
     // unit whose every function has an event can publish one; otherwise no placed product is kept for it.
     let publishable = events.len() == plan.functions.len();
