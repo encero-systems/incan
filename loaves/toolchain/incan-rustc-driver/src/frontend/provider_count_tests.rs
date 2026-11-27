@@ -14,12 +14,13 @@ fn ordinary_provider_writes_actual_body_counts() -> Result<(), Box<dyn std::erro
         "the selected compiler did not report its sysroot"
     );
     let sysroot = String::from_utf8(runtime.stdout)?;
-    for (name, source) in [
+    for (name, source, evaluations) in [
         (
             "provider_with_body",
             "pub def value() -> int:\n    \"\"\"Return the provider value.\"\"\"\n    return 7\n",
+            1,
         ),
-        ("provider_without_body", "const VALUE: int = 7\n"),
+        ("provider_without_body", "const VALUE: int = 7\n", 0),
     ] {
         let scratch = tempfile::tempdir()?;
         let root = scratch.path();
@@ -37,7 +38,14 @@ fn ordinary_provider_writes_actual_body_counts() -> Result<(), Box<dyn std::erro
         ];
         compile_unit(&arguments, false, None)?;
         assert!(output.is_file(), "the ordinary provider did not finish");
-        assert!(fs::read(counts)?.starts_with(b"CRMB"));
+        let encoded = fs::read(counts)?;
+        assert_eq!(
+            internal_models::decode_provider_body_tally(&encoded, &arguments[0], &arguments[6])?,
+            evaluations
+        );
+        assert!(
+            internal_models::decode_provider_body_tally(&encoded, &arguments[0], &"another activation".into()).is_err()
+        );
     }
     Ok(())
 }

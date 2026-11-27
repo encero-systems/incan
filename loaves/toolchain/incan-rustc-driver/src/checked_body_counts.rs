@@ -2,6 +2,8 @@
 
 use incan_driver::check::CheckedBodies;
 use incan_driver::error::{CliError, CliResult};
+use std::io::Write;
+use std::path::Path;
 
 pub(crate) fn encode(bodies: &CheckedBodies, decoded: usize) -> CliResult<Vec<u8>> {
     let count = |n| i64::try_from(n).map_err(|_| CliError::failure("checked body count exceeds i64"));
@@ -13,6 +15,19 @@ pub(crate) fn encode(bodies: &CheckedBodies, decoded: usize) -> CliResult<Vec<u8
         decoded: count(decoded)?,
     })
     .map_err(CliError::failure)
+}
+
+/// Publish the original native activation's tally at its private, previously unused output path.
+pub(crate) fn publish_provider(report: &Path, descriptor: &str, evaluations: usize) -> Result<(), String> {
+    let attempt = report.to_str().ok_or("provider body tally path is not UTF-8")?;
+    let evaluations = i64::try_from(evaluations).map_err(|_| "provider body tally exceeds i64")?;
+    let bytes = internal_models::encode_provider_body_tally(descriptor.to_owned(), attempt.to_owned(), evaluations)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(report)
+        .and_then(|mut file| file.write_all(&bytes))
+        .map_err(|error| format!("cannot write provider body tally {}: {error}", report.display()))
 }
 
 #[cfg(test)]

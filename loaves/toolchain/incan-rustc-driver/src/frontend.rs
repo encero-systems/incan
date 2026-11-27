@@ -145,6 +145,8 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
 
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
+    /// The concrete callable bodies checked across this activation's actual attempts.
+    body_evaluations: usize,
     /// Invocation-local producer evidence for self-contained scalar native function products.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     /// Existing checker authority for selected generic methods, without source positions in their stable names.
@@ -207,6 +209,8 @@ pub(crate) struct Dependencies {
     namespace_pages: Option<Arc<namespace_pages::NamespacePages>>,
     /// Optional invocation output for freshly produced checker values; it is not a compilation input.
     graph_body_output: Option<PathBuf>,
+    /// The native library activation's private checked-body count companion.
+    compile_body_count_report: Option<PathBuf>,
     /// Request-local directory for actual plan-function producer evaluations and reuses.
     plan_record_report: Option<PathBuf>,
     /// Bakery-selected plan-function products; private target caches are never record authority.
@@ -260,6 +264,16 @@ pub(crate) fn dependencies_with_check_products(
     arguments: &[String],
     checking: bool,
 ) -> Result<Dependencies, String> {
+    parse_dependencies(unit, arguments, checking, false)
+}
+
+/// Read the same native options for an original compile and its checker-product readers.
+fn parse_dependencies(
+    unit: &UnitDescription,
+    arguments: &[String],
+    checking: bool,
+    allow_provider_body_count: bool,
+) -> Result<Dependencies, String> {
     let mut names = std::collections::BTreeSet::new();
     let mut externs = Vec::new();
     for native in &unit.externs {
@@ -282,6 +296,7 @@ pub(crate) fn dependencies_with_check_products(
     let mut shared_native = None;
     let mut graph_body_directory = None;
     let mut graph_body_output = None;
+    let mut compile_body_count_report = None;
     let mut plan_record_report = None;
     let mut plan_record_products = None;
     let mut plan_module_selection = None;
@@ -306,6 +321,15 @@ pub(crate) fn dependencies_with_check_products(
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
             "--graph-body-records" => graph_body_directory = Some(Path::new(value)),
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
+            "--checked-body-counts" => {
+                if !allow_provider_body_count {
+                    return Err("the compilation count companion requires --unit".into());
+                }
+                if compile_body_count_report.is_some() {
+                    return Err("checked-body count report was supplied more than once".into());
+                }
+                compile_body_count_report = Some(PathBuf::from(value));
+            }
             "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
             "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
             "--plan-module-selection-digest" => {
@@ -366,6 +390,7 @@ pub(crate) fn dependencies_with_check_products(
         graph_body_records,
         namespace_pages,
         graph_body_output,
+        compile_body_count_report,
         plan_record_report,
         plan_record_products: plan_record_products.map(|root| PlanRecordProducts {
             root,
@@ -567,7 +592,7 @@ fn compile_unit(
     // its contents.
     unit.captured_sources = captured_sources.clone();
     let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
-    let mut dependencies = dependencies(&unit, options)?;
+    let mut dependencies = parse_dependencies(&unit, options, false, true)?;
     let selection = match &dependencies.plan_record_products {
         Some(products) => products.read_selection()?,
         None => None,
@@ -579,6 +604,9 @@ fn compile_unit(
         unit.kind = UnitKind::Library;
     }
     let kind = unit.kind;
+    if dependencies.compile_body_count_report.is_some() && kind != UnitKind::Library {
+        return Err("the compilation count companion requires a library unit".into());
+    }
     let project_root = unit.project_root.clone();
     let overflow_checks = unit.profile != "release";
     let loaves = unit.loaves.clone();
@@ -701,6 +729,7 @@ fn compile_unit(
     timing.mark("native_inputs_prepared");
     checked_program::return_retained_namespaces(&mut program, &dependencies.graph_body_records);
     dependencies.graph_body_records.settle_namespace_retention();
+    let body_evaluations = program.body_evaluations;
     let captured_texts = checked_program::take_captured_texts(&mut program);
     drop(program);
     drop(dependencies.graph_body_records);
@@ -739,11 +768,19 @@ fn compile_unit(
         captured_texts,
     };
     // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
-    if hands_off.is_some_and(|hands_off| hands_off()) {
-        return Ok(UnitCompiled::HandedOff(handoff.hand_off(&mut timing)?));
+    let completed = if hands_off.is_some_and(|hands_off| hands_off()) {
+        UnitCompiled::HandedOff(handoff.hand_off(&mut timing)?)
+    } else {
+        handoff.compile(&identity)?;
+        UnitCompiled::InProcess
+    };
+    // The caller admits this observation only after the original native work succeeds, including when handed off.
+    if let Some(report) = dependencies.compile_body_count_report
+        && let Err(reason) = crate::checked_body_counts::publish_provider(&report, &arguments[0], body_evaluations)
+    {
+        tracing::warn!(target: "incan::invocation", %reason, "provider body tally unavailable");
     }
-    handoff.compile(&identity)?;
-    Ok(UnitCompiled::InProcess)
+    Ok(completed)
 }
 
 /// Check owned invocation inputs on the compiler stack and preserve the source refusal report on failure. The
