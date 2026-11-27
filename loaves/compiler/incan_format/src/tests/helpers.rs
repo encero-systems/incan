@@ -83,6 +83,8 @@ pub(super) enum Check {
     IsTrimmed(&'static str),
     /// The output is the unchanged source.
     Unchanged,
+    /// The output with trailing whitespace removed is the source with trailing whitespace removed.
+    UnchangedTrimmed,
     /// The output contains this text.
     Has(&'static str),
     /// The output does not contain this text.
@@ -101,6 +103,7 @@ impl Check {
             Check::Is(text) => formatted == *text,
             Check::IsTrimmed(text) => formatted.trim_end() == *text,
             Check::Unchanged => formatted == case.source,
+            Check::UnchangedTrimmed => formatted.trim_end() == case.source.trim_end(),
             Check::Has(text) => formatted.contains(text),
             Check::Lacks(text) => !formatted.contains(text),
             Check::Stable => case.format(formatted)? == formatted,

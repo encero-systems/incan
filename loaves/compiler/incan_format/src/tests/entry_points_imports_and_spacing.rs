@@ -83,13 +83,6 @@ fn embedded_fragment_formatting_preserves_its_source_and_is_idempotent() -> Resu
     Ok(())
 }
 
-#[test]
-fn test_format_source_invalid_syntax() {
-    let source = "def foo(";
-    let result = format_source(source);
-    assert!(result.is_err());
-}
-
 /// Regression (GitHub #189): declarations already end with a newline; an extra `newline()` at EOF produced `\n\n`.
 #[test]
 fn test_format_source_eof_has_single_trailing_newline_only() -> Result<(), FormatError> {
@@ -108,70 +101,6 @@ fn test_format_source_eof_has_single_trailing_newline_only() -> Result<(), Forma
 }
 
 #[test]
-fn test_format_source_with_custom_config() {
-    let source = r#"def foo() -> int:
-  return 42
-"#;
-    let config = FormatConfig::new().with_indent_width(2);
-    let result = format_source_with_config(source, config);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_format_source_with_different_line_length() {
-    let source = r#"def foo() -> int:
-  return 42
-"#;
-    let config = FormatConfig::new().with_line_length(80);
-    let result = format_source_with_config(source, config);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_check_formatted_simple() {
-    let source = r#"def foo() -> int:
-    return 42
-"#;
-    let result = check_formatted(source);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_check_formatted_invalid_syntax() {
-    let source = "def foo(";
-    let result = check_formatted(source);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_format_diff_no_changes() {
-    let source = r#"def foo() -> int:
-    return 42
-"#;
-    let result = format_diff(source);
-    // May have no changes if already formatted, or may have changes
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_format_diff_invalid_syntax() {
-    let source = "def foo(";
-    let result = format_diff(source);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_format_diff_returns_diff() {
-    // Improperly indented source
-    let source = r#"def foo() -> int:
- return 42
-"#;
-    let result = format_diff(source);
-    assert!(result.is_ok());
-    // The diff may or may not be Some depending on formatter behavior
-}
-
-#[test]
 fn test_format_diff_trailing_newline_only_is_actionable() -> Result<(), FormatError> {
     let source = "def foo() -> int:\n    return 42";
     let result = format_diff(source)?;
@@ -181,14 +110,6 @@ fn test_format_diff_trailing_newline_only_is_actionable() -> Result<(), FormatEr
         diff.contains("trailing-newline"),
         "expected trailing newline hint in diff, got: {diff}"
     );
-    Ok(())
-}
-
-#[test]
-fn test_format_pub_library_import_round_trip() -> Result<(), FormatError> {
-    let source = "import pub::mylib as lib\n";
-    let formatted = format_source(source)?;
-    assert_eq!(formatted.trim_end(), source.trim_end());
     Ok(())
 }
 
@@ -420,4 +341,84 @@ pub def always() -> str:
         ],
         ..FormatCase::DEFAULT
     },
+    FormatCase {
+        name: "test_format_pub_library_import_round_trip",
+        source: "import pub::mylib as lib\n",
+        checks: &[Check::UnchangedTrimmed],
+        ..FormatCase::DEFAULT
+    },
 ];
+
+/// Rows of (name, entry point, source, whether the entry point accepts the source).
+const ENTRY_POINT_OUTCOME_CASES: &[(&str, fn(&str) -> bool, &str, bool)] = &[
+    (
+        "test_format_source_invalid_syntax",
+        |source| format_source(source).is_ok(),
+        "def foo(",
+        false,
+    ),
+    (
+        "test_format_source_with_custom_config",
+        |source| format_source_with_config(source, FormatConfig::new().with_indent_width(2)).is_ok(),
+        r#"def foo() -> int:
+  return 42
+"#,
+        true,
+    ),
+    (
+        "test_format_source_with_different_line_length",
+        |source| format_source_with_config(source, FormatConfig::new().with_line_length(80)).is_ok(),
+        r#"def foo() -> int:
+  return 42
+"#,
+        true,
+    ),
+    (
+        "test_check_formatted_simple",
+        |source| check_formatted(source).is_ok(),
+        r#"def foo() -> int:
+    return 42
+"#,
+        true,
+    ),
+    (
+        "test_check_formatted_invalid_syntax",
+        |source| check_formatted(source).is_ok(),
+        "def foo(",
+        false,
+    ),
+    // Already formatted: the diff may be empty.
+    (
+        "test_format_diff_no_changes",
+        |source| format_diff(source).is_ok(),
+        r#"def foo() -> int:
+    return 42
+"#,
+        true,
+    ),
+    (
+        "test_format_diff_invalid_syntax",
+        |source| format_diff(source).is_ok(),
+        "def foo(",
+        false,
+    ),
+    // Improperly indented: the diff may or may not be Some.
+    (
+        "test_format_diff_returns_diff",
+        |source| format_diff(source).is_ok(),
+        r#"def foo() -> int:
+ return 42
+"#,
+        true,
+    ),
+];
+
+#[test]
+fn entry_point_outcome_cases() {
+    let failures: Vec<&str> = ENTRY_POINT_OUTCOME_CASES
+        .iter()
+        .filter(|(_, entry, source, accepts)| entry(source) != *accepts)
+        .map(|(name, ..)| *name)
+        .collect();
+    assert!(failures.is_empty(), "entry point outcome row(s) failed: {failures:?}");
+}
