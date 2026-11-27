@@ -252,24 +252,6 @@ fn test_format_source_preserves_float_spelling_for_comment_anchors() -> Result<(
     Ok(())
 }
 
-/// Suite-valued expressions retain every branch and reach a parseable fixed point.
-#[test]
-fn test_format_source_loop_expression_with_break_value_round_trip() -> Result<(), FormatError> {
-    let source = r#"def run() -> int:
-    chosen = if true:
-        1
-    else:
-        2
-
-    return loop:
-        break chosen
-"#;
-    let formatted = assert_format_round_trip_lex_parse(source)?;
-    assert_eq!(formatted.trim_end(), source.trim_end());
-    assert_eq!(format_source(&formatted)?, formatted);
-    Ok(())
-}
-
 #[test]
 fn expression_and_call_formatting_cases() {
     run_format_cases(EXPRESSION_AND_CALL_CASES);
@@ -599,6 +581,20 @@ async def run() -> int:
     )
 "#,
         )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_loop_expression_with_break_value_round_trip",
+        source: r#"def run() -> int:
+    chosen = if true:
+        1
+    else:
+        2
+
+    return loop:
+        break chosen
+"#,
+        checks: &[Check::Parses, Check::UnchangedTrimmed, Check::Stable],
         ..FormatCase::DEFAULT
     },
 ];
