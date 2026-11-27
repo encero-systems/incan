@@ -115,62 +115,6 @@ fn keywords_spellings_unique_and_resolvable() {
 }
 
 #[test]
-fn builtins_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "builtin",
-        expected_len: 18,
-        items: builtins::BUILTIN_FUNCTIONS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: builtins::from_str,
-        as_str: builtins::as_str,
-    });
-}
-
-#[test]
-fn exceptions_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "exception",
-        expected_len: 7,
-        items: errors::EXCEPTIONS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: errors::from_str,
-        as_str: errors::as_str,
-    });
-}
-
-#[test]
-fn operators_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "operator",
-        expected_len: 42,
-        items: operators::OPERATORS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.spellings[0],
-        aliases_of: |info| &info.spellings[1..],
-        from_str: operators::from_str,
-        as_str: |id| operators::info_for(id).spellings[0],
-    });
-}
-
-#[test]
-fn punctuation_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "punctuation",
-        expected_len: 16,
-        items: punctuation::PUNCTUATION,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: punctuation::from_str,
-        as_str: punctuation::as_str,
-    });
-}
-
-#[test]
 fn punctuation_provenance_matches_introducing_release() {
     let expected = [
         (punctuation::PunctuationId::Comma, RFC::_000, Since(0, 1)),
@@ -201,42 +145,6 @@ fn punctuation_provenance_matches_introducing_release() {
 }
 
 #[test]
-fn types_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "stringlike",
-        expected_len: 5,
-        items: stringlike::STRING_LIKE_TYPES,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: stringlike::from_str,
-        as_str: stringlike::as_str,
-    });
-
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "numeric",
-        expected_len: 15,
-        items: numerics::NUMERIC_TYPES,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: numerics::from_str,
-        as_str: numerics::as_str,
-    });
-
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "collection",
-        expected_len: 10,
-        items: collections::COLLECTION_TYPES,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: collections::from_str,
-        as_str: collections::as_str,
-    });
-}
-
-#[test]
 fn collection_rust_display_bases_are_not_ordinary_source_aliases() {
     assert_eq!(
         collections::from_rust_display_base("std::collections::HashSet"),
@@ -247,20 +155,6 @@ fn collection_rust_display_bases_are_not_ordinary_source_aliases() {
         Some(collections::CollectionTypeId::Dict)
     );
     assert_eq!(collections::from_str("HashSet"), None);
-}
-
-#[test]
-fn derives_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "derive",
-        expected_len: 12,
-        items: derives::DERIVES,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |_| &[],
-        from_str: derives::from_str,
-        as_str: derives::as_str,
-    });
 }
 
 /// A derive implements the Rust trait, so a bound spelled with the same name must lower to that Rust trait.
@@ -306,189 +200,6 @@ fn awaitable_bound_lowers_to_the_async_runtime_trait() {
         trait_bounds::rust_to_incan(trait_bounds::rust::AWAITABLE),
         Some(traits::as_str(traits::TraitId::Awaitable))
     );
-}
-
-#[test]
-fn traits_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "trait",
-        expected_len: 19,
-        items: traits::TRAITS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |_| &[],
-        from_str: traits::from_str,
-        as_str: traits::as_str,
-    });
-}
-
-#[test]
-fn magic_methods_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "magic method",
-        expected_len: 9,
-        items: magic_methods::MAGIC_METHODS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |_| &[],
-        from_str: magic_methods::from_str,
-        as_str: magic_methods::as_str,
-    });
-}
-
-#[test]
-fn comparison_dunders_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "comparison dunder",
-        expected_len: 6,
-        items: magic_methods::COMPARISON_DUNDERS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |_| &[],
-        from_str: magic_methods::comparison_from_str,
-        as_str: magic_methods::comparison_as_str,
-    });
-}
-
-#[test]
-fn constructors_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "constructor",
-        expected_len: 4,
-        items: constructors::CONSTRUCTORS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: constructors::from_str,
-        as_str: constructors::as_str,
-    });
-}
-
-#[test]
-fn surface_functions_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "surface function",
-        expected_len: 10,
-        items: functions::SURFACE_FUNCTIONS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: functions::from_str,
-        as_str: functions::as_str,
-    });
-}
-
-#[test]
-fn iterator_methods_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "iterator method",
-        expected_len: 21,
-        items: iterator_methods::ITERATOR_METHODS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: iterator_methods::from_str,
-        as_str: iterator_methods::as_str,
-    });
-}
-
-#[test]
-fn string_methods_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "string method",
-        expected_len: 14,
-        items: string_methods::STRING_METHODS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: string_methods::from_str,
-        as_str: string_methods::as_str,
-    });
-    assert_eq!(
-        string_methods::from_str("encode"),
-        Some(string_methods::StringMethodId::Encode),
-        "the #1668 text return trip starts at str.encode"
-    );
-}
-
-#[test]
-fn bytes_methods_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "bytes method",
-        expected_len: 2,
-        items: bytes_methods::BYTES_METHODS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: bytes_methods::from_str,
-        as_str: bytes_methods::as_str,
-    });
-    assert_eq!(
-        bytes_methods::from_str("decode"),
-        Some(bytes_methods::BytesMethodId::Decode),
-        "the #1668 text return trip ends at bytes.decode"
-    );
-}
-
-#[test]
-fn dict_methods_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "dict method",
-        expected_len: 5,
-        items: dict_methods::DICT_METHODS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: dict_methods::from_str,
-        as_str: dict_methods::as_str,
-    });
-    assert_eq!(
-        dict_methods::from_str("contains_key"),
-        Some(dict_methods::DictMethodId::ContainsKey),
-        "mutable Dict answers contains_key like FrozenDict (#1668)"
-    );
-}
-
-#[test]
-fn result_methods_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "result method",
-        expected_len: 10,
-        items: result_methods::RESULT_METHODS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: result_methods::from_str,
-        as_str: result_methods::as_str,
-    });
-}
-
-#[test]
-fn testing_assert_helpers_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "testing assert helper",
-        expected_len: 9,
-        items: testing::TESTING_ASSERT_HELPERS,
-        id_of: |info| info.id,
-        canonical_of: |info| info.canonical,
-        aliases_of: |info| info.aliases,
-        from_str: testing::assert_helper_from_str,
-        as_str: testing::assert_helper_as_str,
-    });
-}
-
-#[test]
-fn surface_types_spellings_unique_and_resolvable() {
-    assert_registry_round_trip(RegistryRoundTrip {
-        label: "surface type",
-        expected_len: 23,
-        items: surface_types::SURFACE_TYPES,
-        id_of: |info| info.item.id,
-        canonical_of: |info| info.item.canonical,
-        aliases_of: |info| info.item.aliases,
-        from_str: surface_types::from_str,
-        as_str: surface_types::as_str,
-    });
 }
 
 #[test]
@@ -737,3 +448,337 @@ fn no_frozen_collection_string_literals_in_compiler_layers() {
         hits.join("\n")
     );
 }
+
+/// A registry round trip with its identifier and item types erased, so registries of different types share one table.
+trait RoundTrip: Sync {
+    fn check(&self);
+}
+
+impl<Id, Info> Clone for RegistryRoundTrip<'_, Id, Info> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Id, Info> Copy for RegistryRoundTrip<'_, Id, Info> {}
+
+impl<Id, Info: Sync> RoundTrip for RegistryRoundTrip<'static, Id, Info>
+where
+    Id: Copy + Eq + std::fmt::Debug,
+{
+    fn check(&self) {
+        assert_registry_round_trip(*self);
+    }
+}
+
+/// Every registry's spellings are unique and resolve, canonical and alias alike; each row is named after the test it
+/// replaces.
+#[test]
+fn registry_spellings_are_unique_and_resolvable() {
+    let failures: Vec<String> = REGISTRIES
+        .iter()
+        .filter_map(|(name, registry)| {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| registry.check()));
+            outcome.err().map(|payload| {
+                let problem = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+                    .unwrap_or_default();
+                format!("{name}: {problem}")
+            })
+        })
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} registry row(s) failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Method registries resolve the spellings their tests named, beyond the round trip.
+#[test]
+fn method_registries_resolve_their_named_spellings() {
+    // string_methods_spellings_unique_and_resolvable
+    assert_eq!(
+        string_methods::from_str("encode"),
+        Some(string_methods::StringMethodId::Encode),
+        "the #1668 text return trip starts at str.encode"
+    );
+    // bytes_methods_spellings_unique_and_resolvable
+    assert_eq!(
+        bytes_methods::from_str("decode"),
+        Some(bytes_methods::BytesMethodId::Decode),
+        "the #1668 text return trip ends at bytes.decode"
+    );
+    // dict_methods_spellings_unique_and_resolvable
+    assert_eq!(
+        dict_methods::from_str("contains_key"),
+        Some(dict_methods::DictMethodId::ContainsKey),
+        "mutable Dict answers contains_key like FrozenDict (#1668)"
+    );
+}
+
+const REGISTRIES: &[(&str, &dyn RoundTrip)] = &[
+    (
+        "builtins_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "builtin",
+            expected_len: 18,
+            items: builtins::BUILTIN_FUNCTIONS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: builtins::from_str,
+            as_str: builtins::as_str,
+        },
+    ),
+    (
+        "exceptions_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "exception",
+            expected_len: 7,
+            items: errors::EXCEPTIONS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: errors::from_str,
+            as_str: errors::as_str,
+        },
+    ),
+    (
+        "operators_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "operator",
+            expected_len: 42,
+            items: operators::OPERATORS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.spellings[0],
+            aliases_of: |info| &info.spellings[1..],
+            from_str: operators::from_str,
+            as_str: |id| operators::info_for(id).spellings[0],
+        },
+    ),
+    (
+        "punctuation_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "punctuation",
+            expected_len: 16,
+            items: punctuation::PUNCTUATION,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: punctuation::from_str,
+            as_str: punctuation::as_str,
+        },
+    ),
+    (
+        "types_spellings_unique_and_resolvable: stringlike",
+        &RegistryRoundTrip {
+            label: "stringlike",
+            expected_len: 5,
+            items: stringlike::STRING_LIKE_TYPES,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: stringlike::from_str,
+            as_str: stringlike::as_str,
+        },
+    ),
+    (
+        "types_spellings_unique_and_resolvable: numeric",
+        &RegistryRoundTrip {
+            label: "numeric",
+            expected_len: 15,
+            items: numerics::NUMERIC_TYPES,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: numerics::from_str,
+            as_str: numerics::as_str,
+        },
+    ),
+    (
+        "types_spellings_unique_and_resolvable: collection",
+        &RegistryRoundTrip {
+            label: "collection",
+            expected_len: 10,
+            items: collections::COLLECTION_TYPES,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: collections::from_str,
+            as_str: collections::as_str,
+        },
+    ),
+    (
+        "derives_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "derive",
+            expected_len: 12,
+            items: derives::DERIVES,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |_| &[],
+            from_str: derives::from_str,
+            as_str: derives::as_str,
+        },
+    ),
+    (
+        "traits_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "trait",
+            expected_len: 19,
+            items: traits::TRAITS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |_| &[],
+            from_str: traits::from_str,
+            as_str: traits::as_str,
+        },
+    ),
+    (
+        "magic_methods_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "magic method",
+            expected_len: 9,
+            items: magic_methods::MAGIC_METHODS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |_| &[],
+            from_str: magic_methods::from_str,
+            as_str: magic_methods::as_str,
+        },
+    ),
+    (
+        "comparison_dunders_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "comparison dunder",
+            expected_len: 6,
+            items: magic_methods::COMPARISON_DUNDERS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |_| &[],
+            from_str: magic_methods::comparison_from_str,
+            as_str: magic_methods::comparison_as_str,
+        },
+    ),
+    (
+        "constructors_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "constructor",
+            expected_len: 4,
+            items: constructors::CONSTRUCTORS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: constructors::from_str,
+            as_str: constructors::as_str,
+        },
+    ),
+    (
+        "surface_functions_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "surface function",
+            expected_len: 10,
+            items: functions::SURFACE_FUNCTIONS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: functions::from_str,
+            as_str: functions::as_str,
+        },
+    ),
+    (
+        "iterator_methods_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "iterator method",
+            expected_len: 21,
+            items: iterator_methods::ITERATOR_METHODS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: iterator_methods::from_str,
+            as_str: iterator_methods::as_str,
+        },
+    ),
+    (
+        "string_methods_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "string method",
+            expected_len: 14,
+            items: string_methods::STRING_METHODS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: string_methods::from_str,
+            as_str: string_methods::as_str,
+        },
+    ),
+    (
+        "bytes_methods_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "bytes method",
+            expected_len: 2,
+            items: bytes_methods::BYTES_METHODS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: bytes_methods::from_str,
+            as_str: bytes_methods::as_str,
+        },
+    ),
+    (
+        "dict_methods_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "dict method",
+            expected_len: 5,
+            items: dict_methods::DICT_METHODS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: dict_methods::from_str,
+            as_str: dict_methods::as_str,
+        },
+    ),
+    (
+        "result_methods_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "result method",
+            expected_len: 10,
+            items: result_methods::RESULT_METHODS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: result_methods::from_str,
+            as_str: result_methods::as_str,
+        },
+    ),
+    (
+        "testing_assert_helpers_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "testing assert helper",
+            expected_len: 9,
+            items: testing::TESTING_ASSERT_HELPERS,
+            id_of: |info| info.id,
+            canonical_of: |info| info.canonical,
+            aliases_of: |info| info.aliases,
+            from_str: testing::assert_helper_from_str,
+            as_str: testing::assert_helper_as_str,
+        },
+    ),
+    (
+        "surface_types_spellings_unique_and_resolvable",
+        &RegistryRoundTrip {
+            label: "surface type",
+            expected_len: 23,
+            items: surface_types::SURFACE_TYPES,
+            id_of: |info| info.item.id,
+            canonical_of: |info| info.item.canonical,
+            aliases_of: |info| info.item.aliases,
+            from_str: surface_types::from_str,
+            as_str: surface_types::as_str,
+        },
+    ),
+];

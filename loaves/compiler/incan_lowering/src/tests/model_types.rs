@@ -22,6 +22,7 @@ use crate::nominal_records::{RecordedLayouts, computed_layout_witnesses, unit_pr
 use crate::options::retain_carrier;
 use crate::program_context::synthetic_program_context;
 use crate::symbols::model_symbol;
+use crate::tests::test_rows::{SourceMutRow, run_source_mut_rows};
 
 fn identity(name: &str) -> CanonicalSymbolId {
     CanonicalSymbolId::module_declaration(
@@ -104,98 +105,6 @@ fn resolved(declarations: &[NominalDeclaration], name: &str) -> Result<PlanType,
     )
 }
 
-/// Resolve an imported carrier by its authenticated owner while preserving unique legacy source-name lookup.
-#[test]
-fn model_type_selects_exact_imported_carrier_and_legacy_name() -> Result<(), String> {
-    let owner = imported_identity("CanonicalSymbolId");
-    let carrier = carrier_key(&owner)?;
-    let target = nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)]);
-    let decoy_owner = identity("Shadow");
-    let decoy = nominal(decoy_owner.clone(), &carrier, &[(&carrier, &decoy_owner)]);
-    let before = vec![decoy.clone(), target.clone()];
-    assert!(resolved(&before, &carrier)? == PlanType::Model(1, model_symbol("CanonicalSymbolId")));
-    let after = vec![target, decoy];
-    assert!(resolved(&after, &carrier)? == PlanType::Model(0, model_symbol("CanonicalSymbolId")));
-    let legacy = vec![nominal(identity("LegacyPacket"), "LegacyPacket", &[])];
-    assert!(resolved(&legacy, "LegacyPacket")? == PlanType::Model(0, model_symbol("LegacyPacket")));
-    Ok(())
-}
-
-/// Refuse carrier aliases without one closed self-bound owner and legacy spellings with multiple declarations.
-#[test]
-fn model_type_refuses_unauthenticated_or_ambiguous_nominal_owners() -> Result<(), String> {
-    let owner = imported_identity("CanonicalSymbolId");
-    let carrier = carrier_key(&owner)?;
-    let missing = vec![nominal(owner.clone(), "CanonicalSymbolId", &[])];
-    assert!(resolved(&missing, &carrier).is_err());
-    let foreign = imported_identity("ForeignCanonicalSymbolId");
-    let foreign_binding = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &foreign)])];
-    assert!(resolved(&foreign_binding, &carrier).is_err());
-    assert!(resolved(&[], &carrier).is_err());
-    let decoy_owner = identity("Shadow");
-    let no_owner = vec![nominal(decoy_owner.clone(), &carrier, &[(&carrier, &decoy_owner)])];
-    assert!(resolved(&no_owner, &carrier).is_err());
-    let mut open = nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)]);
-    open.type_parameters = vec!["T".into()];
-    open.type_parameter_count = 1;
-    assert!(resolved(&[open], &carrier).is_err());
-    let authenticated = nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)]);
-    assert!(resolved(&[authenticated.clone(), authenticated.clone()], &carrier).is_err());
-    let unbound_duplicate = nominal(owner.clone(), "CanonicalSymbolId", &[]);
-    for mixed in [
-        vec![authenticated.clone(), unbound_duplicate.clone()],
-        vec![unbound_duplicate, authenticated],
-    ] {
-        assert!(resolved(&mixed, &carrier).is_err());
-    }
-    let foreign_carrier = carrier_key(&foreign)?;
-    let wrong_carrier = vec![nominal(owner, "CanonicalSymbolId", &[(&foreign_carrier, &foreign)])];
-    assert!(resolved(&wrong_carrier, &foreign_carrier).is_err());
-    let legacy_duplicate = vec![
-        nominal(identity("LegacyPacket"), "LegacyPacket", &[]),
-        nominal(identity("OtherLegacyPacket"), "LegacyPacket", &[]),
-    ];
-    assert!(resolved(&legacy_duplicate, "LegacyPacket").is_err());
-    Ok(())
-}
-
-/// Retain `Option[List[model]]` only through the same exact imported carrier authority scalar layouts use.
-#[test]
-fn nested_option_list_retains_exact_imported_model_carrier() -> Result<(), String> {
-    let owner = imported_identity("CanonicalSymbolId");
-    let carrier = carrier_key(&owner)?;
-    let ty = generic(
-        "Option".into(),
-        vec![generic("List".into(), vec![IncanType::Named(carrier.clone())])],
-    );
-    let mut module = BodyIrModule::declarations_only("app".into());
-    module.nominal_declarations = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)])];
-    let constructors = constructor_index(&module.nominal_declarations);
-    let mut intrinsics: Vec<EnumDeclaration> = Vec::new();
-    retain_carrier(&constructors, &module, &mut intrinsics, &ty, "src/main.incn")?;
-    assert_eq!(intrinsics.len(), 1);
-    assert!(intrinsics[0].carrier == Carrier::Option);
-    assert!(intrinsics[0].variants[0].fields.is_empty());
-    let model = ListLeaf::Model(0, model_symbol("CanonicalSymbolId"));
-    assert!(intrinsics[0].variants[1].fields == vec![PlanType::List(model, 1)]);
-    let mut rejected = BodyIrModule::declarations_only("app".into());
-    rejected.nominal_declarations = vec![nominal(owner, "CanonicalSymbolId", &[])];
-    let rejected_index = constructor_index(&rejected.nominal_declarations);
-    let mut rejected_intrinsics: Vec<EnumDeclaration> = Vec::new();
-    assert!(
-        retain_carrier(
-            &rejected_index,
-            &rejected,
-            &mut rejected_intrinsics,
-            &ty,
-            "src/main.incn"
-        )
-        .is_err()
-    );
-    assert!(rejected_intrinsics.is_empty());
-    Ok(())
-}
-
 /// Nested specializations survive a rebound source carrier; meaningful changes to arguments or fields still miss.
 #[test]
 fn stored_layout_identity_follows_nested_arguments_across_a_source_move() -> Result<(), String> {
@@ -220,69 +129,6 @@ fn stored_layout_identity_follows_nested_arguments_across_a_source_move() -> Res
         vec![IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str)],
     )];
     assert!(witness(&after)?.0 != same.0);
-    Ok(())
-}
-
-/// A closed native layout over a source model, as `Rc[RefCell[Packet]]` lowers to, names its source arguments by
-/// declaration, so it has a layout witness and a product can name it; a different argument changes the witness.
-#[test]
-fn a_closed_native_layout_names_its_source_arguments_by_declaration() -> Result<(), String> {
-    let packet = imported_identity("Packet");
-    let header = imported_identity("Header");
-    let (packet_key, header_key) = (carrier_key(&packet)?, carrier_key(&header)?);
-    let declarations = vec![
-        nominal(packet.clone(), "Packet", &[(&packet_key, &packet)]),
-        nominal(header.clone(), "Header", &[(&header_key, &header)]),
-    ];
-    let shared = rust_item_identity("std::rc::Rc").ok_or("no Rc item identity")?;
-    let template = native_opaque_nominal(&shared, 1).ok_or("no Rc template")?;
-    let closed = |argument: &str| -> Result<NominalDeclaration, String> {
-        let arguments = vec![IncanType::Named(argument.to_owned())];
-        close_layout(&NominalInstance {
-            declaration: template.clone(),
-            argument_identities: argument_identities(&declarations, &arguments),
-            arguments,
-            ancestors: Vec::new(),
-        })
-    };
-    let witness = |model: &NominalDeclaration| model_layout_witness(model).map_err(|error| error.to_string());
-    let over_packet = witness(&closed(&packet_key)?)?;
-    assert!(witness(&closed(&packet_key)?)? == over_packet);
-    assert!(
-        witness(&closed(&header_key)?)?.0 != over_packet.0,
-        "a different argument kept the specialization"
-    );
-    Ok(())
-}
-
-/// Retaining a type whose carriers a pass already holds appends nothing, for an option, a result and a union.
-///
-/// A carrier inventory pass remembers each type it has retained and skips it in later frames; that is exact only
-/// while a second retention of the same type is a no-op, which this test pins.
-#[test]
-fn a_retained_carrier_type_is_retained_again_without_a_new_carrier() -> Result<(), String> {
-    let owner = imported_identity("CanonicalSymbolId");
-    let carrier = carrier_key(&owner)?;
-    let mut module = BodyIrModule::declarations_only("app".into());
-    module.nominal_declarations = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)])];
-    let constructors = constructor_index(&module.nominal_declarations);
-    let int = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int);
-    let text = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str);
-    let types = [
-        generic("Option".into(), vec![IncanType::Named(carrier)]),
-        generic("Result".into(), vec![text.clone(), int.clone()]),
-        generic(incan_lang::lang::types::UNION_TYPE_NAME.into(), vec![int, text]),
-    ];
-    let mut intrinsics: Vec<EnumDeclaration> = Vec::new();
-    for ty in &types {
-        retain_carrier(&constructors, &module, &mut intrinsics, ty, "src/main.incn")?;
-    }
-    let first = intrinsics.len();
-    assert_eq!(first, 3, "each type should add one carrier");
-    for ty in types.iter().rev() {
-        retain_carrier(&constructors, &module, &mut intrinsics, ty, "src/main.incn")?;
-    }
-    assert_eq!(intrinsics.len(), first, "retaining a held type appended a carrier");
     Ok(())
 }
 
@@ -358,3 +204,171 @@ fn an_edit_that_changes_no_model_computes_no_layout_witness() -> Result<(), Stri
     );
     Ok(())
 }
+
+#[test]
+fn imported_owner_cases() {
+    run_source_mut_rows(IMPORTED_OWNER_CASES, imported_identity);
+}
+
+const IMPORTED_OWNER_CASES: &[SourceMutRow<CanonicalSymbolId, String>] = &[
+    // Resolve an imported carrier by its authenticated owner while preserving unique legacy source-name lookup.
+    SourceMutRow {
+        name: "model_type_selects_exact_imported_carrier_and_legacy_name",
+        source: "CanonicalSymbolId",
+        check: |_source, owner| {
+            let carrier = carrier_key(&owner)?;
+            let target = nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)]);
+            let decoy_owner = identity("Shadow");
+            let decoy = nominal(decoy_owner.clone(), &carrier, &[(&carrier, &decoy_owner)]);
+            let before = vec![decoy.clone(), target.clone()];
+            assert!(resolved(&before, &carrier)? == PlanType::Model(1, model_symbol("CanonicalSymbolId")));
+            let after = vec![target, decoy];
+            assert!(resolved(&after, &carrier)? == PlanType::Model(0, model_symbol("CanonicalSymbolId")));
+            let legacy = vec![nominal(identity("LegacyPacket"), "LegacyPacket", &[])];
+            assert!(resolved(&legacy, "LegacyPacket")? == PlanType::Model(0, model_symbol("LegacyPacket")));
+            Ok(())
+        },
+    },
+    // Refuse carrier aliases without one closed self-bound owner and legacy spellings with multiple declarations.
+    SourceMutRow {
+        name: "model_type_refuses_unauthenticated_or_ambiguous_nominal_owners",
+        source: "CanonicalSymbolId",
+        check: |_source, owner| {
+            let carrier = carrier_key(&owner)?;
+            let missing = vec![nominal(owner.clone(), "CanonicalSymbolId", &[])];
+            assert!(resolved(&missing, &carrier).is_err());
+            let foreign = imported_identity("ForeignCanonicalSymbolId");
+            let foreign_binding = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &foreign)])];
+            assert!(resolved(&foreign_binding, &carrier).is_err());
+            assert!(resolved(&[], &carrier).is_err());
+            let decoy_owner = identity("Shadow");
+            let no_owner = vec![nominal(decoy_owner.clone(), &carrier, &[(&carrier, &decoy_owner)])];
+            assert!(resolved(&no_owner, &carrier).is_err());
+            let mut open = nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)]);
+            open.type_parameters = vec!["T".into()];
+            open.type_parameter_count = 1;
+            assert!(resolved(&[open], &carrier).is_err());
+            let authenticated = nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)]);
+            assert!(resolved(&[authenticated.clone(), authenticated.clone()], &carrier).is_err());
+            let unbound_duplicate = nominal(owner.clone(), "CanonicalSymbolId", &[]);
+            for mixed in [
+                vec![authenticated.clone(), unbound_duplicate.clone()],
+                vec![unbound_duplicate, authenticated],
+            ] {
+                assert!(resolved(&mixed, &carrier).is_err());
+            }
+            let foreign_carrier = carrier_key(&foreign)?;
+            let wrong_carrier = vec![nominal(owner, "CanonicalSymbolId", &[(&foreign_carrier, &foreign)])];
+            assert!(resolved(&wrong_carrier, &foreign_carrier).is_err());
+            let legacy_duplicate = vec![
+                nominal(identity("LegacyPacket"), "LegacyPacket", &[]),
+                nominal(identity("OtherLegacyPacket"), "LegacyPacket", &[]),
+            ];
+            assert!(resolved(&legacy_duplicate, "LegacyPacket").is_err());
+            Ok(())
+        },
+    },
+    // Retain `Option[List[model]]` only through the same exact imported carrier authority scalar layouts use.
+    SourceMutRow {
+        name: "nested_option_list_retains_exact_imported_model_carrier",
+        source: "CanonicalSymbolId",
+        check: |_source, owner| {
+            let carrier = carrier_key(&owner)?;
+            let ty = generic(
+                "Option".into(),
+                vec![generic("List".into(), vec![IncanType::Named(carrier.clone())])],
+            );
+            let mut module = BodyIrModule::declarations_only("app".into());
+            module.nominal_declarations = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)])];
+            let constructors = constructor_index(&module.nominal_declarations);
+            let mut intrinsics: Vec<EnumDeclaration> = Vec::new();
+            retain_carrier(&constructors, &module, &mut intrinsics, &ty, "src/main.incn")?;
+            assert_eq!(intrinsics.len(), 1);
+            assert!(intrinsics[0].carrier == Carrier::Option);
+            assert!(intrinsics[0].variants[0].fields.is_empty());
+            let model = ListLeaf::Model(0, model_symbol("CanonicalSymbolId"));
+            assert!(intrinsics[0].variants[1].fields == vec![PlanType::List(model, 1)]);
+            let mut rejected = BodyIrModule::declarations_only("app".into());
+            rejected.nominal_declarations = vec![nominal(owner, "CanonicalSymbolId", &[])];
+            let rejected_index = constructor_index(&rejected.nominal_declarations);
+            let mut rejected_intrinsics: Vec<EnumDeclaration> = Vec::new();
+            assert!(
+                retain_carrier(
+                    &rejected_index,
+                    &rejected,
+                    &mut rejected_intrinsics,
+                    &ty,
+                    "src/main.incn"
+                )
+                .is_err()
+            );
+            assert!(rejected_intrinsics.is_empty());
+            Ok(())
+        },
+    },
+    // A closed native layout over a source model, as `Rc[RefCell[Packet]]` lowers to, names its source arguments by
+    // declaration, so it has a layout witness and a product can name it; a different argument changes the witness.
+    SourceMutRow {
+        name: "a_closed_native_layout_names_its_source_arguments_by_declaration",
+        source: "Packet",
+        check: |_source, packet| {
+            let header = imported_identity("Header");
+            let (packet_key, header_key) = (carrier_key(&packet)?, carrier_key(&header)?);
+            let declarations = vec![
+                nominal(packet.clone(), "Packet", &[(&packet_key, &packet)]),
+                nominal(header.clone(), "Header", &[(&header_key, &header)]),
+            ];
+            let shared = rust_item_identity("std::rc::Rc").ok_or("no Rc item identity")?;
+            let template = native_opaque_nominal(&shared, 1).ok_or("no Rc template")?;
+            let closed = |argument: &str| -> Result<NominalDeclaration, String> {
+                let arguments = vec![IncanType::Named(argument.to_owned())];
+                close_layout(&NominalInstance {
+                    declaration: template.clone(),
+                    argument_identities: argument_identities(&declarations, &arguments),
+                    arguments,
+                    ancestors: Vec::new(),
+                })
+            };
+            let witness = |model: &NominalDeclaration| model_layout_witness(model).map_err(|error| error.to_string());
+            let over_packet = witness(&closed(&packet_key)?)?;
+            assert!(witness(&closed(&packet_key)?)? == over_packet);
+            assert!(
+                witness(&closed(&header_key)?)?.0 != over_packet.0,
+                "a different argument kept the specialization"
+            );
+            Ok(())
+        },
+    },
+    // Retaining a type whose carriers a pass already holds appends nothing, for an option, a result and a union.
+    //
+    // A carrier inventory pass remembers each type it has retained and skips it in later frames; that is exact only
+    // while a second retention of the same type is a no-op, which this test pins.
+    SourceMutRow {
+        name: "a_retained_carrier_type_is_retained_again_without_a_new_carrier",
+        source: "CanonicalSymbolId",
+        check: |_source, owner| {
+            let carrier = carrier_key(&owner)?;
+            let mut module = BodyIrModule::declarations_only("app".into());
+            module.nominal_declarations = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)])];
+            let constructors = constructor_index(&module.nominal_declarations);
+            let int = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int);
+            let text = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str);
+            let types = [
+                generic("Option".into(), vec![IncanType::Named(carrier)]),
+                generic("Result".into(), vec![text.clone(), int.clone()]),
+                generic(incan_lang::lang::types::UNION_TYPE_NAME.into(), vec![int, text]),
+            ];
+            let mut intrinsics: Vec<EnumDeclaration> = Vec::new();
+            for ty in &types {
+                retain_carrier(&constructors, &module, &mut intrinsics, ty, "src/main.incn")?;
+            }
+            let first = intrinsics.len();
+            assert_eq!(first, 3, "each type should add one carrier");
+            for ty in types.iter().rev() {
+                retain_carrier(&constructors, &module, &mut intrinsics, ty, "src/main.incn")?;
+            }
+            assert_eq!(intrinsics.len(), first, "retaining a held type appended a carrier");
+            Ok(())
+        },
+    },
+];
