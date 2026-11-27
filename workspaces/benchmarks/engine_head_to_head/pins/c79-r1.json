@@ -9,7 +9,7 @@
   "pass_baseline_sha256": "769e03004e2980583f8ea91157a2fe5f4b415ceb89323bccfa9e4caac4031bb6",
   "pass_baseline_blob": "251e0a0b5b967955b33849928a3116c31f44659d",
   "fixtures_tree": "d0193565899126bec4847e4a3a9769914e3c5b4a",
-  "contracts_tree": "4e7a5c5bfe6965cf31bbf22753cba0c3429e6a9a",
+  "contracts_tree": "7f6e58fbe83512fca6d8271ad8b7d210f2fd517f",
   "harness_paths": [
     "workspaces/contracts/README.md",
     "workspaces/contracts/fixtures/graph/incan/relationships/src/main.incn",
@@ -19,6 +19,7 @@
     "workspaces/contracts/src/fixture.incn",
     "workspaces/contracts/src/graph_mcp_contract.incn",
     "workspaces/contracts/src/header.incn",
-    "workspaces/contracts/src/main.incn"
+    "workspaces/contracts/src/main.incn",
+    "workspaces/contracts/src/protocols.incn"
   ]
 }
