@@ -107,9 +107,10 @@ pub def verify_alpha_request_routes(before: Dict[str, int], after: Dict[str, int
         for route in ["lowered", "reused"]:
             label = f"{route} ordinary {member}"
             assert after.get(label, 0) == before.get(label, 0), f"unchanged gamma used its keyed route: {member}"
-    for (route, member, expected) in [
+    for route_expectation in [
         ("admitted", carried, 1), ("direct", carried, 0), ("admitted", stable, 0), ("direct", stable, 1),
     ]:
+        route, member, expected = route_expectation
         label = f"{route} ordinary {member}"
         completed = after.get(label, 0) - before.get(label, 0)
         assert completed == expected, f"mixed gamma {label} completed {completed} times, expected {expected}"
