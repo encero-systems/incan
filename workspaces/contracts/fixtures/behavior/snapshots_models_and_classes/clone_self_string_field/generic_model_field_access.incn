@@ -1,0 +1,13 @@
+# Former case generic_model_field_access: a generic model's field is readable through a generic function for an int and a str instantiation
+
+pub model Boxed[T]:
+    pub value: T
+
+
+pub def get_value[T](boxed: Boxed[T]) -> T:
+    return boxed.value
+
+
+pub def main() -> None:
+    println(get_value(Boxed(value=41)))
+    println(get_value(Boxed(value="forty-one")))

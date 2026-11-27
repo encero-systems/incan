@@ -1,0 +1,21 @@
+# Former case source_defined_isinstance_keeps_its_direct_callable_identity_explicit_probe: a source-defined isinstance remains callable while std.builtins.isinstance distinguishes both members of a union
+
+"""Source defined isinstance keeps its direct callable identity."""
+def isinstance(value: int, target: int) -> bool:
+  """Return the fixture expression `value == target`."""
+  return value == target
+
+def probe() -> bool:
+  """Return the fixture expression `isinstance(1, 1)`."""
+  return isinstance(1, 1)
+
+def explicit_probe(value: int | str) -> bool:
+  """Return the fixture expression `std.builtins.isinstance(value, int)`."""
+  return std.builtins.isinstance(value, int)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(explicit_probe(1))
+    println(explicit_probe("text"))
+    println(probe())

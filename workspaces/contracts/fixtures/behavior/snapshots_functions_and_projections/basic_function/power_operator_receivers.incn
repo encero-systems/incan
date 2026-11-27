@@ -1,0 +1,13 @@
+# Former case power_operator_receivers: the power operator applies to a parenthesized float sum and to int operands coerced to float
+
+def compound(left: float, right: float) -> float:
+    return (left + right) ** 0.5
+
+
+def coerced(base: int, exponent: int) -> float:
+    return base ** exponent
+
+
+pub def main() -> None:
+    println(compound(3.0, 4.0))
+    println(coerced(2, 8))

@@ -1,0 +1,14 @@
+# Former case assert_raises_forms: assert ... raises and the imported assert_raises[E] helper both pass when the block raises the named error, so the statements after them run
+
+from std.testing import assert_raises
+
+
+def explode() -> None:
+    _ = int("not a number")
+
+
+pub def main() -> None:
+    assert explode() raises ValueError, "expected failure"
+    println("statement form passed")
+    assert_raises[ValueError](explode, "expected failure")
+    println("helper form passed")

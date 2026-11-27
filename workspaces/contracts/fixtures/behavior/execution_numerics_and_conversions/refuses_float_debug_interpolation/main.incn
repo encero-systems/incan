@@ -1,0 +1,53 @@
+# behavior: 9 former execution numerics and conversions cases run in order, each program from its own module: refuses_float_debug_interpolation, refuses_scalar_conversion_calls_missing_checked_builtin_identity, runtime_non_finite_float_values_flow_through_f64, scalar_conversions_do_not_admit_float_binary_arithmetic, scalar_conversions_do_not_admit_float_negation, typed_decimal_value_keeps_its_scale_through_a_call, typed_integer_transport_and_cast_edges_match_the_native_route, typed_resize_methods_stay_named_non_green_under_issue_988, unsupported_typed_arithmetic_refuses_at_source_span_before_any_output
+# expect-stdout:
+#  1.5
+#  42
+#  42
+#  42.0
+#  inf
+#  -inf
+#  inf
+#  1.25
+#  nan
+#  nan
+#  3.0
+#  -3
+#  19.90
+#  19.90
+#  1.2345679
+#  1.2345679
+#  340282366920938463463374607431768211455
+#  340282366920938463463374607431768211455
+#  1.2345679
+#  -170141183460469231731687303715884105728 0 -1 -1.7014118346046923e+38 3.402823669209385e+38
+#  must-not-print
+#  127
+#  42
+#  Some(42)
+#  must-not-print
+#  2
+
+"""Run the program of each former case in order."""
+
+import refuses_float_debug_interpolation
+import refuses_scalar_conversion_calls_missing_checked_builtin_identity
+import runtime_non_finite_float_values_flow_through_f64
+import scalar_conversions_do_not_admit_float_binary_arithmetic
+import scalar_conversions_do_not_admit_float_negation
+import typed_decimal_value_keeps_its_scale_through_a_call
+import typed_integer_transport_and_cast_edges_match_the_native_route
+import typed_resize_methods_stay_named_non_green_under_issue_988
+import unsupported_typed_arithmetic_refuses_at_source_span_before_any_output
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    refuses_float_debug_interpolation.main()
+    refuses_scalar_conversion_calls_missing_checked_builtin_identity.main()
+    runtime_non_finite_float_values_flow_through_f64.main()
+    scalar_conversions_do_not_admit_float_binary_arithmetic.main()
+    scalar_conversions_do_not_admit_float_negation.main()
+    typed_decimal_value_keeps_its_scale_through_a_call.main()
+    typed_integer_transport_and_cast_edges_match_the_native_route.main()
+    typed_resize_methods_stay_named_non_green_under_issue_988.main()
+    unsupported_typed_arithmetic_refuses_at_source_span_before_any_output.main()

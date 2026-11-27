@@ -1,0 +1,60 @@
+# behavior: 9 former snapshots collections and strings cases run in order, each program from its own module: loop_variable_returned_owned, map_err_string_literal_closure, mut_str_match_arm, ordinal_map_str_lookup, owned_iterator_sources, question_mark_in_list_comprehension, recursive_mut_list_and_mut_str_params, result_ok_string_literal, set_add_and_shadowing
+# expect-stdout:
+#  1
+#  b
+#  1
+#  absent
+#  malformed_json
+#  malformed_json
+#  original
+#  admitted
+#  no manifest
+#  beta-strict
+#  beta
+#  alpha
+#  other
+#  1
+#  0 1
+#  21
+#  missing
+#  2
+#  1
+#  1
+#  7
+#  4
+#  [2, 1] [2, 1] 3
+#  1 2 3
+#  negative: -2
+#  true true true
+#  0
+#  hello
+#  from_local
+#  from_call
+#  from_return
+#  1
+#  3
+
+"""Run the program of each former case in order."""
+
+import loop_variable_returned_owned
+import map_err_string_literal_closure
+import mut_str_match_arm
+import ordinal_map_str_lookup
+import owned_iterator_sources
+import question_mark_in_list_comprehension
+import recursive_mut_list_and_mut_str_params
+import result_ok_string_literal
+import set_add_and_shadowing
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    loop_variable_returned_owned.main()
+    map_err_string_literal_closure.main()
+    mut_str_match_arm.main()
+    ordinal_map_str_lookup.main()
+    owned_iterator_sources.main()
+    question_mark_in_list_comprehension.main()
+    recursive_mut_list_and_mut_str_params.main()
+    result_ok_string_literal.main()
+    set_add_and_shadowing.main()

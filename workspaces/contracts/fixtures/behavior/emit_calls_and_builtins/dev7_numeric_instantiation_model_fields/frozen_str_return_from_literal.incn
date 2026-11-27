@@ -1,0 +1,10 @@
+# Former case frozen_str_return_from_literal: a str literal returned where a FrozenStr is expected is the frozen value with that text and length
+
+def policy() -> FrozenStr:
+    return "policy"
+
+
+pub def main() -> None:
+    println(policy())
+    println(len(policy()))
+    println(f"{policy()}-v2")

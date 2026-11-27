@@ -1,0 +1,14 @@
+# Former case explicit_body_accepts_nested_list_literals: an explicit input body accepts fresh nested list storage in a model constructor (#2500)
+
+class Graph:
+    pub out: list[list[int]]
+
+    pub def read_view(self) -> Borrowed[Graph] from self:
+        """Borrow this graph's nested adjacency lists."""
+        return self
+
+
+pub def main() -> None:
+    graph = Graph(out=[[1, 2], []])
+    reader = graph.read_view()
+    println(len(reader.out[0]))

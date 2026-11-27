@@ -1,0 +1,11 @@
+# Former case a_shadow_request_does_not_alter_replacement_execution: a shadow request does not alter replacement execution
+
+"""A shadow request does not alter replacement execution."""
+def program_result() -> int:
+  """Return `42` for this fixture."""
+  return 42
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

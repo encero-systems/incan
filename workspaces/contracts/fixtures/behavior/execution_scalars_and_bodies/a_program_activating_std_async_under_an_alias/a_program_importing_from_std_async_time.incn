@@ -1,0 +1,14 @@
+# Former case a_program_importing_from_std_async_time: a program that imports from std.async.time runs
+
+"""A program that imports from std.async.time runs."""
+from std.async.time import sleep
+
+
+def program_result() -> int:
+    """Return `42` for this fixture."""
+    return 42
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

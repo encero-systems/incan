@@ -1,0 +1,15 @@
+# Former case checked_nominal_target_refuses_at_its_retained_reference_span: checked nominal target refuses at its retained reference span
+
+"""Checked nominal target refuses at its retained reference span."""
+model Marker:
+  """Hold value used by this fixture."""
+  value: int
+
+def probe(value: Marker | str) -> bool:
+  """Return the fixture expression `isinstance(value, Marker)`."""
+  return isinstance(value, Marker)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(probe("text"))

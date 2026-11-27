@@ -1,0 +1,26 @@
+# Former case mixed_f32_arithmetic: f32 operands widen when combined with f64, float and int in +, /, //, % and ** and the results are float
+
+pub def with_f64(left: f32, right: f64) -> float:
+    added = left + right
+    divided = left / right
+    floored = left // right
+    remainder = left % right
+    powered = left ** right
+    println(f"{added} {divided} {floored} {remainder} {powered}")
+    return left ** right
+
+
+pub def with_float(left: f32, right: float) -> float:
+    return left + right
+
+
+pub def with_int(left: f32, right: int) -> float:
+    return left + right
+
+
+pub def main() -> None:
+    narrow: f32 = 2.5
+    wide: f64 = 2.0
+    with_f64(narrow, wide)
+    println(with_float(narrow, 1.0))
+    println(with_int(narrow, 3))

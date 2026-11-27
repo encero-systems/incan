@@ -1,0 +1,31 @@
+# Former case result_ok_string_literal: Ok with a string literal is an owned str payload in a typed local, an argument and a return, and each prints its text (#367)
+
+"""Issue #367: `Ok("...")` in `Result[str, E]` contexts should emit owned `String`."""
+
+
+def takes_result(value: Result[str, str]) -> None:
+    match value:
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)
+
+
+def returns_result() -> Result[str, str]:
+    return Ok("from_return")
+
+
+pub def main() -> None:
+    direct: Result[str, str] = Ok("from_local")
+    match direct:
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)
+    takes_result(Ok("from_call"))
+    result: Result[str, str] = returns_result()
+    match result:
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)

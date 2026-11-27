@@ -1,0 +1,15 @@
+# Former case simple_function_add: A public integer function returns its sum while an inline test module and its test-only import are absent from ordinary run output.
+
+pub def add(a: int, b: int) -> int:
+    return a + b
+
+
+pub def main() -> None:
+    println(add(2, 3))
+
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_addition() -> None:
+        assert_eq(add(2, 3), 5)

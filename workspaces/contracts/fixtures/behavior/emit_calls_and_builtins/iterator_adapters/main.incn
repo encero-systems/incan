@@ -1,0 +1,112 @@
+# behavior: 10 former emit calls and builtins cases run in order, each program from its own module: iterator_adapters, iterator_terminals, logical_operator_precedence, match_arms_and_loop_values_share_one_type, model_argument_beside_rest_parameter, open_result_sides_of_match_subjects_and_loop_iterables, open_result_sides_take_the_enclosing_function_side, ordinal_map_bytes_round_trip, reflection_omits_private_fields, result_combinator_closures_return_constructors
+# expect-stdout:
+#  2 4 6
+#  2
+#  0:1 1:2 2:3
+#  1-10 2-20
+#  1 2
+#  3
+#  1 2
+#  3
+#  1 2 3 10 20
+#  1 1 2 2
+#  2 1
+#  3
+#  3
+#  6
+#  16
+#  true
+#  false
+#  found 2
+#  none
+#  seen 1
+#  seen 2
+#  seen 3
+#  6
+#  false
+#  true
+#  true
+#  false
+#  A
+#  none
+#  20
+#  2
+#  dflt
+#  4
+#  2
+#  6
+#  2
+#  0
+#  none
+#  1
+#  thing 3 6
+#  thing 1 5
+#  thing 0 0
+#  1
+#  2
+#  only
+#  3
+#  bad
+#  5
+#  x
+#  6
+#  A
+#  2
+#  b
+#  done
+#  1
+#  2
+#  0
+#  3
+#  4
+#  Ok(4)
+#  true
+#  1
+#  0
+#  true
+#  label
+#  1
+#  public
+#  Vault
+#  public
+#  Vault
+#  made
+#  Vault
+#  wire_label
+#  Vault
+#  1
+#  1
+#  3
+#  7
+#  2
+#  20
+#  4
+#  no
+#  ABC
+
+"""Run the program of each former case in order."""
+
+import iterator_adapters
+import iterator_terminals
+import logical_operator_precedence
+import match_arms_and_loop_values_share_one_type
+import model_argument_beside_rest_parameter
+import open_result_sides_of_match_subjects_and_loop_iterables
+import open_result_sides_take_the_enclosing_function_side
+import ordinal_map_bytes_round_trip
+import reflection_omits_private_fields
+import result_combinator_closures_return_constructors
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    iterator_adapters.main()
+    iterator_terminals.main()
+    logical_operator_precedence.main()
+    match_arms_and_loop_values_share_one_type.main()
+    model_argument_beside_rest_parameter.main()
+    open_result_sides_of_match_subjects_and_loop_iterables.main()
+    open_result_sides_take_the_enclosing_function_side.main()
+    ordinal_map_bytes_round_trip.main()
+    reflection_omits_private_fields.main()
+    result_combinator_closures_return_constructors.main()

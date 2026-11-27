@@ -1,0 +1,15 @@
+# behavior: 2 former regressions cases run in order, each program from its own module: primitive_hmac_sha256, std_checksum
+# expect-stdout:
+#  primitive-hmac-ok
+#  checksum-ok
+
+"""Run the program of each former case in order."""
+
+import primitive_hmac_sha256
+import std_checksum
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    primitive_hmac_sha256.main()
+    std_checksum.main()

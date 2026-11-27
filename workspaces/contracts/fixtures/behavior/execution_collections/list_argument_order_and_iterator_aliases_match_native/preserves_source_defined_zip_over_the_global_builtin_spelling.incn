@@ -1,0 +1,16 @@
+# Former case preserves_source_defined_zip_over_the_global_builtin_spelling: preserves source defined zip over the global builtin spelling
+
+"""Preserves source defined zip over the global builtin spelling."""
+def zip(left: list[int], right: list[int]) -> int:
+  """Print the source-call marker and return the source-defined result."""
+  println("source zip")
+  return 42
+
+def source_defined_zip() -> int:
+  """Return the fixture expression `zip([1], [2])`."""
+  return zip([1], [2])
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(source_defined_zip())

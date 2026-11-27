@@ -1,0 +1,76 @@
+# behavior: 10 former ownership values and fields cases run in order, each program from its own module: field_assigned_into_a_reassigned_local, field_read_out_of_a_local, fluent_view_chain_edits_the_nested_field, generator_sources_consumed_and_reused, loop_binding_stored_into_a_result, loop_over_a_list_field_of_an_element, loop_reuses_enclosing_owners, model_value_passed_then_used_again, mut_pattern_binding_owns_or_borrows_its_payload, mut_self_call_on_a_collection_element
+# expect-stdout:
+#  holder
+#  holder holder
+#  2
+#  1
+#  ["a", "b"] ["a", "b"]
+#  ["a", "b"] ["x"]
+#  Rotterdam
+#  3011
+#  [2, 3]
+#  [1, 2, 3]
+#  3 1
+#  [0, 4, 16]
+#  [6, 7]
+#  ["b", "2"]
+#  2
+#  ["fallback"]
+#  missing
+#  2
+#  6
+#  2
+#  [[1, 3], [2, 3]]
+#  [[4, 5]]
+#  3
+#  4
+#  2
+#  4
+#  2
+#  2
+#  kept
+#  stored
+#  7
+#  user Ann
+#  Ann
+#  Ann+Ann
+#  user Bo
+#  [1, 2]
+#  [9]
+#  Some([1, 2])
+#  Some([7, 8])
+#  Some(2)
+#  Some([7, 8, 3])
+#  ["left!", "right"]
+#  (["a", "b"], 1)
+#  1
+#  2
+#  1
+#  1
+
+"""Run the program of each former case in order."""
+
+import field_assigned_into_a_reassigned_local
+import field_read_out_of_a_local
+import fluent_view_chain_edits_the_nested_field
+import generator_sources_consumed_and_reused
+import loop_binding_stored_into_a_result
+import loop_over_a_list_field_of_an_element
+import loop_reuses_enclosing_owners
+import model_value_passed_then_used_again
+import mut_pattern_binding_owns_or_borrows_its_payload
+import mut_self_call_on_a_collection_element
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    field_assigned_into_a_reassigned_local.main()
+    field_read_out_of_a_local.main()
+    fluent_view_chain_edits_the_nested_field.main()
+    generator_sources_consumed_and_reused.main()
+    loop_binding_stored_into_a_result.main()
+    loop_over_a_list_field_of_an_element.main()
+    loop_reuses_enclosing_owners.main()
+    model_value_passed_then_used_again.main()
+    mut_pattern_binding_owns_or_borrows_its_payload.main()
+    mut_self_call_on_a_collection_element.main()

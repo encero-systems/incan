@@ -1,0 +1,13 @@
+# Former case list_append_takes_a_fresh_task_handle: a spawned task's handle appended straight into a list moves into it, so a list of task handles needs no Clone (#1821)
+
+from std.async import spawn
+
+
+async def work() -> int:
+    return 1
+
+
+pub async def main() -> None:
+    mut handles = []
+    handles.append(spawn(work()))
+    println(len(handles))

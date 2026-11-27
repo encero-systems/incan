@@ -1,0 +1,49 @@
+# behavior: 10 former codegen models and collections cases run in order, each program from its own module: same_named_std_helpers, split_without_separator, std_async_prelude_surface, std_datetime_prelude_surface, std_encoding_prelude_surface, std_prelude_surface, std_telemetry_prelude_surface, string_length_counts_scalars, user_declarations_named_like_derive_helpers, zip_value_aliases
+# expect-stdout:
+#  7
+#  timed out
+#  a b   c
+#  one
+#  1
+#  1
+#  90
+#  6869
+#  NBUQ====
+#  aGk=
+#  ok
+#  hello
+#  local
+#  5
+#  5
+#  3
+#  Ada
+#  1
+#  66
+#  66
+
+"""Run the program of each former case in order."""
+
+import same_named_std_helpers
+import split_without_separator
+import std_async_prelude_surface
+import std_datetime_prelude_surface
+import std_encoding_prelude_surface
+import std_prelude_surface
+import std_telemetry_prelude_surface
+import string_length_counts_scalars
+import user_declarations_named_like_derive_helpers
+import zip_value_aliases
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    await same_named_std_helpers.main()
+    split_without_separator.main()
+    await std_async_prelude_surface.main()
+    std_datetime_prelude_surface.main()
+    std_encoding_prelude_surface.main()
+    std_prelude_surface.main()
+    std_telemetry_prelude_surface.main()
+    string_length_counts_scalars.main()
+    user_declarations_named_like_derive_helpers.main()
+    zip_value_aliases.main()

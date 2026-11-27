@@ -1,0 +1,26 @@
+# behavior: 5 former ownership values and fields cases run in order, each program from its own module: ordinary_body_constructs_after_an_explicit_call, owned_initializers_stay_independent, owned_input_feeds_native_hashing, returned_field_view_edits_the_original_field, string_list_passed_at_last_use_and_empty_literal
+# expect-stdout:
+#  abc
+#  ["apple"] ["apple", "plum"] ["kiwi", "fig"] ["apple", "lime"]
+#  64
+#  Samuel
+#  Rotterdam
+#  3
+#  0
+
+"""Run the program of each former case in order."""
+
+import ordinary_body_constructs_after_an_explicit_call
+import owned_initializers_stay_independent
+import owned_input_feeds_native_hashing
+import returned_field_view_edits_the_original_field
+import string_list_passed_at_last_use_and_empty_literal
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    ordinary_body_constructs_after_an_explicit_call.main()
+    owned_initializers_stay_independent.main()
+    owned_input_feeds_native_hashing.main()
+    returned_field_view_edits_the_original_field.main()
+    string_list_passed_at_last_use_and_empty_literal.main()

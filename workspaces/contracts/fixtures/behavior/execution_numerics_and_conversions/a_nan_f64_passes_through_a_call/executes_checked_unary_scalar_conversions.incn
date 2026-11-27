@@ -1,0 +1,16 @@
+# Former case executes_checked_unary_scalar_conversions: executes checked unary scalar conversions
+
+"""Executes checked unary scalar conversions."""
+def program_result() -> str:
+  """Compute and return `f"{str(parsed_int)} {bool_int} {parsed_float} {widened_float} {truncated_float}"`."""
+  parsed_int = int("1_000")
+  bool_int = int(true)
+  parsed_float = float("1_000.50")
+  widened_float = float(10)
+  truncated_float = int(3.9)
+  return f"{str(parsed_int)} {bool_int} {parsed_float} {widened_float} {truncated_float}"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

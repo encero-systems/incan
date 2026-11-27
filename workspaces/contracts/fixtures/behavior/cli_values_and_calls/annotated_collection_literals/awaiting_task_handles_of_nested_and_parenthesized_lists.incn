@@ -1,0 +1,21 @@
+# Former case awaiting_task_handles_of_nested_and_parenthesized_lists: a list of lists of task handles is awaited group by group, and a parenthesized list of handles is awaited like the bare name
+
+from std.async import spawn
+
+
+async def work(value: int) -> int:
+    return value
+
+
+pub async def main() -> None:
+    groups = [[spawn(work(1))], [spawn(work(2)), spawn(work(3))]]
+    for group in groups:
+        for handle in group:
+            match await handle:
+                Ok(value) => println(value)
+                Err(_) => println("join failed")
+    handles = [spawn(work(4))]
+    for handle in (handles):
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")

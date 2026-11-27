@@ -1,0 +1,16 @@
+# behavior: 2 former checker carryovers cases run in order, each program from its own module: out_of_order_refined_trait_arguments, out_of_order_trait_arguments
+# retires: loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs::refined_trait_returns_refresh_out_of_order_named_carriers
+# expect-stdout:
+#  7
+#  3:x
+
+"""Run the program of each former case in order."""
+
+import out_of_order_refined_trait_arguments
+import out_of_order_trait_arguments
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    out_of_order_refined_trait_arguments.main()
+    out_of_order_trait_arguments.main()

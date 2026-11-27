@@ -1,0 +1,22 @@
+# Former case selected_enumerate_and_zip_match_through_the_staged_legacy_route: selected enumerate and zip match
+
+"""Selected enumerate and zip match."""
+def enumerate_zip_profile() -> int:
+  """Print and sum values from enumeration and zipped lists."""
+  values = [10, 20]
+  labels = ["ten"]
+  mut total = 0
+  for pair in enumerate(values):
+    println(pair.0)
+    println(pair.1)
+    total += pair.0 + pair.1
+  for zipped_pair in zip(values, labels):
+    println(zipped_pair.0)
+    println(zipped_pair.1)
+    total += zipped_pair.0
+  return total
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(enumerate_zip_profile())

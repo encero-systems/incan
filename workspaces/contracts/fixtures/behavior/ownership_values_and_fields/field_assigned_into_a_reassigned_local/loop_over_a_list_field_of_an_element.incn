@@ -1,0 +1,15 @@
+# Former case loop_over_a_list_field_of_an_element: a for loop that changes the items of a list field of a list element or of a dict value changes them in the collection
+
+class Holder:
+    pub rows: list[list[int]]
+
+
+pub def main() -> None:
+    mut holders = [Holder(rows=[[1], [2]])]
+    for row in holders[0].rows:
+        row.append(3)
+    mut by_name: dict[str, Holder] = {"a": Holder(rows=[[4]])}
+    for row in by_name["a"].rows:
+        row.append(5)
+    println(holders[0].rows)
+    println(by_name["a"].rows)

@@ -1,0 +1,10 @@
+# Former case parity_iterate_a_range_bound_to_a_local: a range bound to a local is iterated (parity corpus case 16)
+
+"""A range bound to a local is iterated (parity corpus case 16)."""
+pub def main() -> None:
+    """Print `total` after preparing the fixture inputs."""
+    r = 0..10
+    mut total = 0
+    for i in r:
+        total += i
+    println(total)

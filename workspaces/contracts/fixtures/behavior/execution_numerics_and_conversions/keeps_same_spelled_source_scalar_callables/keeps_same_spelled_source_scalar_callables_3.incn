@@ -1,0 +1,15 @@
+# Former case keeps_same_spelled_source_scalar_callables_3: keeps same spelled source scalar callables
+
+"""Keeps same spelled source scalar callables."""
+def float(value: int) -> float:
+  """Return `99.0` for this fixture."""
+  return 99.0
+
+def program_result() -> str:
+  """Return the fixture expression `str(float(42))`."""
+  return str(float(42))
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

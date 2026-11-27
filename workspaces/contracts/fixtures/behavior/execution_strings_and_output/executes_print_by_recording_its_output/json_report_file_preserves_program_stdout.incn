@@ -1,0 +1,12 @@
+# Former case json_report_file_preserves_program_stdout: json report file preserves program stdout
+
+"""Json report file preserves program stdout."""
+def program_result() -> int:
+    """Compute and return `42`."""
+    println("program output")
+    return 42
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

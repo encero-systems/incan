@@ -1,0 +1,15 @@
+# Former case item_from_iterable_bound: a function with type parameters infers an iterable's item type from its bound and preserves that type in its returned list
+
+from std.derives.collection import Iterable
+
+
+def empty_like[Item, Values with Iterable[Item]](values: Values) -> list[Item]:
+    """Return an empty list with the same item type as the input iterable."""
+    return []
+
+
+pub def main() -> None:
+    """Use the inferred item type after the generic call without a result annotation."""
+    mut items = empty_like(["source"])
+    items.append("kept")
+    println(items)

@@ -1,0 +1,11 @@
+# Former case mutable_string_parameter_from_literal_and_variable: a mut str parameter accepts a literal and a variable, the callee reads the text it was given, and the caller's variable is unchanged afterwards
+
+def bump(mut text: str) -> None:
+    println(text + "!")
+
+
+pub def main() -> None:
+    bump("hello")
+    mut name = "name"
+    bump(name)
+    println(name)

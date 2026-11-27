@@ -1,0 +1,14 @@
+# Former case executes_f_string_interpolation: executes f string interpolation
+
+"""Executes f string interpolation."""
+def program_result() -> str:
+  """Compute and return `f"{count} {name} ok={ok} quoted={name:?}"`."""
+  count = 3
+  name = "rows"
+  ok = true
+  return f"{count} {name} ok={ok} quoted={name:?}"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

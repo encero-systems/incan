@@ -1,0 +1,72 @@
+# behavior: 10 former snapshots functions and projections cases run in order, each program from its own module: basic_function, fixed_call_unpack, function_alias_and_partial, function_calls, function_references, functions, method_alias_and_partial, param_mut_unused, power_operator_receivers, returns
+# expect-stdout:
+#  3
+#  London
+#  Paris
+#  GET /status
+#  11
+#  42
+#  42
+#  GET/
+#  Hello, World!
+#  8
+#  Hello, Mr. Smith!
+#  Hello, Dr. Jones!
+#  5 3
+#  TEST test spaces
+#  HELLO WORLD
+#  4 3
+#  1
+#  10 9
+#  7 12
+#  42
+#  2 4 6 2 4 6
+#  Hello, World!
+#  5 + 3 = 8
+#  quadruple(5) = 20
+#  factorial(5) = 120
+#  fibonacci(7) = 13
+#  max = 9
+#  10 20 15
+#  negative
+#  Hello, Alice!
+#  10 20
+#  Ada
+#  1:Ada
+#  6
+#  2.6457513110645907
+#  256.0
+#  42
+#  30
+#  positive
+#  45
+#  15
+#  Hello
+#  positive
+
+"""Run the program of each former case in order."""
+
+import basic_function
+import fixed_call_unpack
+import function_alias_and_partial
+import function_calls
+import function_references
+import functions
+import method_alias_and_partial
+import param_mut_unused
+import power_operator_receivers
+import returns
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    basic_function.main()
+    fixed_call_unpack.main()
+    function_alias_and_partial.main()
+    function_calls.main()
+    function_references.main()
+    functions.main()
+    method_alias_and_partial.main()
+    param_mut_unused.main()
+    power_operator_receivers.main()
+    returns.main()

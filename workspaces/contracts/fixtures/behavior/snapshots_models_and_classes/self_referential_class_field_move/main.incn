@@ -1,0 +1,35 @@
+# behavior: 6 former snapshots models and classes cases run in order, each program from its own module: self_referential_class_field_move, self_referential_class_field_pattern, self_referential_class_field_read, self_referential_class_list_element_field, self_referential_class_method_walks_chain, uppercase_var_field_access
+# expect-stdout:
+#  2
+#  2
+#  3
+#  1 then 2
+#  single 7
+#  2
+#  2
+#  2
+#  linked
+#  4
+#  3
+#  6
+#  3
+#  Ada
+
+"""Run the program of each former case in order."""
+
+import self_referential_class_field_move
+import self_referential_class_field_pattern
+import self_referential_class_field_read
+import self_referential_class_list_element_field
+import self_referential_class_method_walks_chain
+import uppercase_var_field_access
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    self_referential_class_field_move.main()
+    self_referential_class_field_pattern.main()
+    self_referential_class_field_read.main()
+    self_referential_class_list_element_field.main()
+    self_referential_class_method_walks_chain.main()
+    uppercase_var_field_access.main()

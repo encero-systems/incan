@@ -1,0 +1,12 @@
+# Former case refuses_zip_without_its_checked_builtin_identity: refuses zip without its checked builtin identity
+
+"""Refuses zip without its checked builtin identity."""
+def missing_zip_identity() -> int:
+  """Call the zip spelling under test before returning zero."""
+  zip([1], [2])
+  return 0
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(missing_zip_identity())

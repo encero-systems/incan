@@ -1,0 +1,27 @@
+# behavior: 5 former smoke cases run in order, each program from its own module: enum_variants, fstring_greeting, membership_loop_binding, model_fields, simple_function_add
+# expect-stdout:
+#  active
+#  inactive
+#  Hello, Ada!
+#  missing:missing
+#  10
+#  20
+#  Ada 36
+#  5
+
+"""Run the program of each former case in order."""
+
+import enum_variants
+import fstring_greeting
+import membership_loop_binding
+import model_fields
+import simple_function_add
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    enum_variants.main()
+    fstring_greeting.main()
+    membership_loop_binding.main()
+    model_fields.main()
+    simple_function_add.main()

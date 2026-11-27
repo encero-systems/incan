@@ -1,0 +1,12 @@
+# Former case non_scalar_checked_value_types_refuse_before_effects: non scalar checked value types refuse before effects
+
+"""Non scalar checked value types refuse before effects."""
+def probe(value: int | List[int]) -> bool:
+  """Emit the pre-check marker before testing the value."""
+  println("must not run")
+  return isinstance(value, int)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(probe(1))

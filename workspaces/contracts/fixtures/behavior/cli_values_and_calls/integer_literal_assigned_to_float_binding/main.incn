@@ -1,0 +1,80 @@
+# behavior: 10 former cli values and calls cases run in order, each program from its own module: integer_literal_assigned_to_float_binding, method_alias_on_a_mut_parameter, mut_local_changed_through_a_pattern_binding, mut_marked_callable_value_changes_the_argument, mut_parameter_changed_through_a_callable_type_reaches_the_caller, mut_parameter_changed_through_a_loop_variable_reaches_the_caller, mut_parameter_changed_through_a_pattern_binding, mut_parameter_changed_through_trait_dispatch_reaches_the_caller, mut_parameter_of_a_scalar_alias, mut_parameter_read_through_a_pattern_or_a_trait_method
+# expect-stdout:
+#  1.0
+#  -2.0
+#  3.0
+#  7.0
+#  2.5
+#  1
+#  3
+#  3
+#  Some([1, 2, 3])
+#  Some([1, 4])
+#  [Some([1, 5])]
+#  [Some([1, 6, 7]), None]
+#  1
+#  Some([1])
+#  3
+#  6
+#  6
+#  8
+#  9
+#  6
+#  2
+#  3
+#  4
+#  4
+#  2
+#  2
+#  1
+#  3
+#  Some([0, 1, 2, 3])
+#  Some([0, 4])
+#  [Some([0, 5]), None]
+#  Some(Some([0, 6]))
+#  3
+#  Some([0, 1, 2])
+#  Some([0, 1, 2, 3])
+#  7
+#  8
+#  2
+#  [Some([1, 7]), None]
+#  3
+#  3
+#  4
+#  4
+#  2
+#  1
+#  5
+#  1.5
+#  2
+#  6
+#  true
+#  6
+
+"""Run the program of each former case in order."""
+
+import integer_literal_assigned_to_float_binding
+import method_alias_on_a_mut_parameter
+import mut_local_changed_through_a_pattern_binding
+import mut_marked_callable_value_changes_the_argument
+import mut_parameter_changed_through_a_callable_type_reaches_the_caller
+import mut_parameter_changed_through_a_loop_variable_reaches_the_caller
+import mut_parameter_changed_through_a_pattern_binding
+import mut_parameter_changed_through_trait_dispatch_reaches_the_caller
+import mut_parameter_of_a_scalar_alias
+import mut_parameter_read_through_a_pattern_or_a_trait_method
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    integer_literal_assigned_to_float_binding.main()
+    method_alias_on_a_mut_parameter.main()
+    mut_local_changed_through_a_pattern_binding.main()
+    mut_marked_callable_value_changes_the_argument.main()
+    mut_parameter_changed_through_a_callable_type_reaches_the_caller.main()
+    mut_parameter_changed_through_a_loop_variable_reaches_the_caller.main()
+    mut_parameter_changed_through_a_pattern_binding.main()
+    mut_parameter_changed_through_trait_dispatch_reaches_the_caller.main()
+    mut_parameter_of_a_scalar_alias.main()
+    mut_parameter_read_through_a_pattern_or_a_trait_method.main()

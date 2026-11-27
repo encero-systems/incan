@@ -1,0 +1,66 @@
+# behavior: 10 former ownership parameters and receivers cases run in order, each program from its own module: explicit_body_accepts_ordinary_parameters, explicit_body_accepts_owned_call_results, explicit_body_accepts_set_construction, explicit_body_accepts_static_calls, explicit_carried_views_bind_locals, explicit_carried_views_bound_carrier, explicit_carried_views_bound_carrier_try, explicit_carried_views_branches_and_loops, explicit_carried_views_discarded, explicit_carried_views_error_payload
+# expect-stdout:
+#  2
+#  2
+#  2
+#  1
+#  true
+#  3
+#  3
+#  closed
+#  3
+#  2
+#  mismatch
+#  9
+#  closed
+#  -1
+#  true
+#  3
+#  12
+#  13
+#  closed
+#  true
+#  3
+#  14
+#  9
+#  closed
+#  -1
+#  true
+#  3
+#  13
+#  13
+#  6
+#  sam
+#  -1
+#  5
+#  sam
+#  -2
+#  -1
+#  5
+
+"""Run the program of each former case in order."""
+
+import explicit_body_accepts_ordinary_parameters
+import explicit_body_accepts_owned_call_results
+import explicit_body_accepts_set_construction
+import explicit_body_accepts_static_calls
+import explicit_carried_views_bind_locals
+import explicit_carried_views_bound_carrier
+import explicit_carried_views_bound_carrier_try
+import explicit_carried_views_branches_and_loops
+import explicit_carried_views_discarded
+import explicit_carried_views_error_payload
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    explicit_body_accepts_ordinary_parameters.main()
+    explicit_body_accepts_owned_call_results.main()
+    explicit_body_accepts_set_construction.main()
+    explicit_body_accepts_static_calls.main()
+    explicit_carried_views_bind_locals.main()
+    explicit_carried_views_bound_carrier.main()
+    explicit_carried_views_bound_carrier_try.main()
+    explicit_carried_views_branches_and_loops.main()
+    explicit_carried_views_discarded.main()
+    explicit_carried_views_error_payload.main()

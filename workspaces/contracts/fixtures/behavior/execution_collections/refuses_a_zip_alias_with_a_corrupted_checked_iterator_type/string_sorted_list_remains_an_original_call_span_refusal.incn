@@ -1,0 +1,11 @@
+# Former case string_sorted_list_remains_an_original_call_span_refusal: string sorted list remains an original call span refusal
+
+"""String sorted list remains an original call span refusal."""
+def observe() -> int:
+  """Return the fixture expression `len(sorted(["b", "a"]))`."""
+  return len(sorted(["b", "a"]))
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

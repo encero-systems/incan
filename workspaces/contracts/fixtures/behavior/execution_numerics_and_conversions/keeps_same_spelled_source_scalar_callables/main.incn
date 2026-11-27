@@ -1,0 +1,49 @@
+# behavior: 10 former execution numerics and conversions cases run in order, each program from its own module: keeps_same_spelled_source_scalar_callables, keeps_same_spelled_source_scalar_callables_2, keeps_same_spelled_source_scalar_callables_3, normalizes_ordinary_float_literal_and_runtime_string_spelling, parity_scalar_conversions_print_and_return, parity_typed_numeric_extremes_and_f32_return, preserves_decimal_observation_without_entering_binary_float, preserves_float_direct_arguments_and_results, preserves_typed_numeric_locals_and_display, preserves_typed_numeric_values_in_print_and_fstring_paths
+# expect-stdout:
+#  source str
+#  99
+#  99.0
+#  1000.5 125.0 1000.5 12500000000.0
+#  1000.5 125.0
+#  converted: 42 3.14 10.0
+#  42 3.14 10.0
+#  0 255 -170141183460469231731687303715884105728 340282366920938463463374607431768211455 19.90
+#  1.2345679
+#  19.99
+#  argument ran
+#  1.5
+#  before float result
+#  10.0
+#  1.2345679 1.23456789 340282366920938463463374607431768211455 -170141183460469231731687303715884105728 19.90
+#  1.2345679
+#  1.2345679
+#  1.2345679
+#  1.2345679
+#  10
+
+"""Run the program of each former case in order."""
+
+import keeps_same_spelled_source_scalar_callables
+import keeps_same_spelled_source_scalar_callables_2
+import keeps_same_spelled_source_scalar_callables_3
+import normalizes_ordinary_float_literal_and_runtime_string_spelling
+import parity_scalar_conversions_print_and_return
+import parity_typed_numeric_extremes_and_f32_return
+import preserves_decimal_observation_without_entering_binary_float
+import preserves_float_direct_arguments_and_results
+import preserves_typed_numeric_locals_and_display
+import preserves_typed_numeric_values_in_print_and_fstring_paths
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    keeps_same_spelled_source_scalar_callables.main()
+    keeps_same_spelled_source_scalar_callables_2.main()
+    keeps_same_spelled_source_scalar_callables_3.main()
+    normalizes_ordinary_float_literal_and_runtime_string_spelling.main()
+    parity_scalar_conversions_print_and_return.main()
+    parity_typed_numeric_extremes_and_f32_return.main()
+    preserves_decimal_observation_without_entering_binary_float.main()
+    preserves_float_direct_arguments_and_results.main()
+    preserves_typed_numeric_locals_and_display.main()
+    preserves_typed_numeric_values_in_print_and_fstring_paths.main()

@@ -1,0 +1,16 @@
+# Former case refuses_a_zip_alias_with_a_corrupted_checked_iterator_type: refuses a zip alias with a corrupted checked iterator type
+
+"""Refuses a zip alias with a corrupted checked iterator type."""
+def zip_alias_type_mismatch() -> int:
+  """Traverse a zip alias and sum both members of each pair."""
+  pairs = zip([1], [2])
+  alias = pairs
+  mut total = 0
+  for alias_left, alias_right in alias:
+    total += alias_left + alias_right
+  return total
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(zip_alias_type_mismatch())

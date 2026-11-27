@@ -1,0 +1,11 @@
+# Former case a_range_argument_for_a_list_parameter: a range passed where a list[int] parameter is declared is accepted and the call returns its result
+
+"""A range passed where a list[int] parameter is declared is accepted and the call returns its result."""
+def count(values: list[int]) -> int:
+    """Return `42` for this fixture."""
+    return 42
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(count(range(1, 3)))

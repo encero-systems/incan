@@ -1,0 +1,8 @@
+# Former case fstring_greeting: an f-string interpolates a str parameter between its literal pieces
+
+pub def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+
+pub def main() -> None:
+    println(greet("Ada"))

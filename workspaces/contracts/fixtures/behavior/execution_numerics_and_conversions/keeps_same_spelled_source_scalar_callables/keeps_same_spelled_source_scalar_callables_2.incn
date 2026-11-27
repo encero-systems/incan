@@ -1,0 +1,15 @@
+# Former case keeps_same_spelled_source_scalar_callables_2: keeps same spelled source scalar callables
+
+"""Keeps same spelled source scalar callables."""
+def int(value: str) -> int:
+  """Return `99` for this fixture."""
+  return 99
+
+def program_result() -> int:
+  """Return the fixture expression `int("not a builtin conversion")`."""
+  return int("not a builtin conversion")
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

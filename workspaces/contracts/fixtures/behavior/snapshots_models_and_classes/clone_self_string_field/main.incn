@@ -1,0 +1,75 @@
+# behavior: 10 former snapshots models and classes cases run in order, each program from its own module: clone_self_string_field, computed_properties, generic_model_field_access, lowercase_types, model_struct, model_with_alias, named_constructor_evaluation_order, owned_list_defaults_issue2116, partial_constructor_pattern, self_referential_class_field_borrow
+# expect-stdout:
+#  orders
+#  orders 1
+#  11
+#  money
+#  41
+#  forty-one
+#  3 2 3
+#  42 hello
+#  none
+#  All lowercase types work!
+#  Alice
+#  savings retail crm
+#  0 42 active
+#  2024-01-01 true
+#  0 nick USD
+#  ext-9 1 2
+#  title aaf232064610 true 0
+#  email_address 82244417f956 false 1 email
+#  display_name 00d8d3f11739 true 2 mail,cached_at
+#  inspect intent
+#  inspect evidence
+#  manifest
+#  manifest
+#  manifest
+#  manifest
+#  manifest
+#  manifest
+#  manifest
+#  1 0
+#  1 2 0
+#  1 2 0
+#  temporary
+#  supplied
+#  default
+#  1 1
+#  parameter
+#  1 1
+#  ready
+#  Premium
+#  Other
+#  Premium account
+#  Basic account
+#  Unknown
+#  linked
+#  linked
+#  end
+
+"""Run the program of each former case in order."""
+
+import clone_self_string_field
+import computed_properties
+import generic_model_field_access
+import lowercase_types
+import model_struct
+import model_with_alias
+import named_constructor_evaluation_order
+import owned_list_defaults_issue2116
+import partial_constructor_pattern
+import self_referential_class_field_borrow
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    clone_self_string_field.main()
+    computed_properties.main()
+    generic_model_field_access.main()
+    lowercase_types.main()
+    model_struct.main()
+    model_with_alias.main()
+    named_constructor_evaluation_order.main()
+    owned_list_defaults_issue2116.main()
+    partial_constructor_pattern.main()
+    self_referential_class_field_borrow.main()

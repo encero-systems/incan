@@ -1,0 +1,23 @@
+# Former case bounded_type_arguments_the_call_settles_or_expects: a Display-bounded type parameter an Err argument leaves open takes the enclosing function's Result side, and an explicit type argument or an annotated binding of the result fixes one no argument fixes
+
+def first[T with Display](r: Result[T, int]) -> str:
+    match r:
+        Ok(v) => return f"{v}"
+        Err(e) => return f"err {e}"
+
+
+def make[T with Display]() -> list[T]:
+    return []
+
+
+def run() -> Result[str, int]:
+    println(first(Err(3)))
+    return Ok("done")
+
+
+pub def main() -> None:
+    println(first(Ok(7)))
+    println(first[str](Err(4)))
+    items: list[int] = make()
+    println(len(items))
+    println(run().unwrap_or("none"))
