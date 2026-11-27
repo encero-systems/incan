@@ -168,6 +168,7 @@ impl AuthorityDecisionSource for StaticAuthority {
 mod tests {
     use super::*;
     use crate::facts::SemanticSourceTargetKind;
+    use crate::test_rows::{MutRow, run_mut_rows};
 
     /// Build a request for `host.http.request` made by `app.billing.charge`.
     fn request() -> AuthorityRequest {
@@ -226,91 +227,6 @@ mod tests {
         assert_eq!(decision.provenance.suggested_grant, "host.http.request");
     }
 
-    /// A governed run allows what was granted, and preserves the requested scope on the decision.
-    #[test]
-    fn a_governed_run_allows_a_granted_capability_and_keeps_its_scope() {
-        let request = request();
-        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]);
-
-        let decision = authority.decide(&request);
-
-        assert!(decision.is_allowed());
-        assert_eq!(
-            decision.grant.requested_scope,
-            vec![("host".to_string(), "api.example.com".to_string())],
-        );
-    }
-
-    /// A ceiling bounds the grant by intersection: requesting more than the ceiling allows yields less, never more.
-    #[test]
-    fn a_ceiling_denies_a_grant_the_invocation_requested_but_the_host_did_not_permit() {
-        let request = request();
-        let ceiling = CanonicalSymbolId::module_declaration(
-            vec!["host".to_string(), "fs".to_string()],
-            "read",
-            SemanticSourceTargetKind::Capability,
-            crate::HirSourceSpan::new(30, 40),
-        );
-        let authority =
-            StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]).with_ceiling([ceiling.clone()]);
-
-        let decision = authority.decide(&request);
-
-        assert!(
-            !decision.is_allowed(),
-            "an invocation cannot widen its own authority past its ceiling",
-        );
-        assert_eq!(decision.denial_reason(), Some(AuthorityDenialReason::OutsideCeiling));
-        assert_eq!(decision.grant.ceiling, Some(vec![ceiling]));
-        assert!(
-            authority.effective_grants().is_empty(),
-            "the effective grant is the intersection of ceiling and request, not their union",
-        );
-    }
-
-    /// A grant present in both the request and the ceiling survives the intersection.
-    #[test]
-    fn a_ceiling_keeps_a_grant_that_both_sides_permit() {
-        let request = request();
-        let other_capability = CanonicalSymbolId::module_declaration(
-            vec!["host".to_string(), "fs".to_string()],
-            "read",
-            SemanticSourceTargetKind::Capability,
-            crate::HirSourceSpan::new(30, 40),
-        );
-        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone(), other_capability])
-            .with_ceiling([request.capability.clone()]);
-
-        let decision = authority.decide(&request);
-
-        assert!(decision.is_allowed());
-        assert_eq!(
-            authority.effective_grants(),
-            [request.capability.clone()].into_iter().collect(),
-            "only the capability both sides permit survives",
-        );
-    }
-
-    /// A durable decision retains the actual grant intersection and the ceiling that bounded it.
-    #[test]
-    fn a_ceiling_decision_carries_the_effective_grant_and_applicable_constraint() {
-        let request = request();
-        let other_capability = CanonicalSymbolId::module_declaration(
-            vec!["host".to_string(), "fs".to_string()],
-            "read",
-            SemanticSourceTargetKind::Capability,
-            crate::HirSourceSpan::new(30, 40),
-        );
-        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone(), other_capability])
-            .with_ceiling([request.capability.clone()]);
-
-        let decision = authority.decide(&request);
-
-        assert!(decision.is_allowed());
-        assert_eq!(decision.grant.effective_grants, vec![request.capability.clone()]);
-        assert_eq!(decision.grant.ceiling, Some(vec![request.capability]));
-    }
-
     /// A diagnostic suggestion is never an authority key: only the request capability identity can be granted.
     #[test]
     fn a_governed_run_rejects_a_capability_that_only_borrows_an_allowed_diagnostic_spelling() {
@@ -331,13 +247,114 @@ mod tests {
         assert_eq!(decision.provenance.suggested_grant, "host.http.request");
     }
 
-    /// The seam must be usable through a trait object so a host, a local run, and a test double are interchangeable.
     #[test]
-    fn the_seam_is_object_safe() {
-        let request = request();
-        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]);
-        let source: &dyn AuthorityDecisionSource = &authority;
-
-        assert!(source.decide(&request).is_allowed());
+    fn authority_request_cases() {
+        run_mut_rows(AUTHORITY_REQUEST_CASES, request);
     }
+
+    const AUTHORITY_REQUEST_CASES: &[MutRow<AuthorityRequest, String>] = &[
+        // A governed run allows what was granted, and preserves the requested scope on the decision.
+        MutRow {
+            name: "a_governed_run_allows_a_granted_capability_and_keeps_its_scope",
+            check: |request| {
+                let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]);
+
+                let decision = authority.decide(&request);
+
+                assert!(decision.is_allowed());
+                assert_eq!(
+                    decision.grant.requested_scope,
+                    vec![("host".to_string(), "api.example.com".to_string())],
+                );
+                Ok(())
+            },
+        },
+        // A ceiling bounds the grant by intersection: requesting more than the ceiling allows yields less, never more.
+        MutRow {
+            name: "a_ceiling_denies_a_grant_the_invocation_requested_but_the_host_did_not_permit",
+            check: |request| {
+                let ceiling = CanonicalSymbolId::module_declaration(
+                    vec!["host".to_string(), "fs".to_string()],
+                    "read",
+                    SemanticSourceTargetKind::Capability,
+                    crate::HirSourceSpan::new(30, 40),
+                );
+                let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()])
+                    .with_ceiling([ceiling.clone()]);
+
+                let decision = authority.decide(&request);
+
+                assert!(
+                    !decision.is_allowed(),
+                    "an invocation cannot widen its own authority past its ceiling",
+                );
+                assert_eq!(decision.denial_reason(), Some(AuthorityDenialReason::OutsideCeiling));
+                assert_eq!(decision.grant.ceiling, Some(vec![ceiling]));
+                assert!(
+                    authority.effective_grants().is_empty(),
+                    "the effective grant is the intersection of ceiling and request, not their union",
+                );
+                Ok(())
+            },
+        },
+        // A grant present in both the request and the ceiling survives the intersection.
+        MutRow {
+            name: "a_ceiling_keeps_a_grant_that_both_sides_permit",
+            check: |request| {
+                let other_capability = CanonicalSymbolId::module_declaration(
+                    vec!["host".to_string(), "fs".to_string()],
+                    "read",
+                    SemanticSourceTargetKind::Capability,
+                    crate::HirSourceSpan::new(30, 40),
+                );
+                let authority =
+                    StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone(), other_capability])
+                        .with_ceiling([request.capability.clone()]);
+
+                let decision = authority.decide(&request);
+
+                assert!(decision.is_allowed());
+                assert_eq!(
+                    authority.effective_grants(),
+                    [request.capability.clone()].into_iter().collect(),
+                    "only the capability both sides permit survives",
+                );
+                Ok(())
+            },
+        },
+        // A durable decision retains the actual grant intersection and the ceiling that bounded it.
+        MutRow {
+            name: "a_ceiling_decision_carries_the_effective_grant_and_applicable_constraint",
+            check: |request| {
+                let other_capability = CanonicalSymbolId::module_declaration(
+                    vec!["host".to_string(), "fs".to_string()],
+                    "read",
+                    SemanticSourceTargetKind::Capability,
+                    crate::HirSourceSpan::new(30, 40),
+                );
+                let authority =
+                    StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone(), other_capability])
+                        .with_ceiling([request.capability.clone()]);
+
+                let decision = authority.decide(&request);
+
+                assert!(decision.is_allowed());
+                assert_eq!(decision.grant.effective_grants, vec![request.capability.clone()]);
+                assert_eq!(decision.grant.ceiling, Some(vec![request.capability]));
+                Ok(())
+            },
+        },
+        // The seam must be usable through a trait object so a host, a local run, and a test double are
+        // interchangeable.
+        MutRow {
+            name: "the_seam_is_object_safe",
+            check: |request| {
+                let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]);
+                let source: &dyn AuthorityDecisionSource = &authority;
+
+                assert!(source.decide(&request).is_allowed());
+                Ok(())
+            },
+        },
+    ];
 }

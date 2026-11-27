@@ -42,6 +42,8 @@ pub mod receipts;
 pub mod record_identity;
 pub mod semantic_digest;
 pub mod stable_identity;
+#[cfg(test)]
+mod test_rows;
 mod types;
 
 pub use emitted_symbol::{
