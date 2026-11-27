@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_rows::{SourceRow, run_source_rows};
 use incan_syntax::parser;
 
 type TestResult = Result<(), String>;
@@ -46,87 +47,6 @@ fn legend_indices_match_the_category_discriminants() {
     );
 }
 
-/// A declaration's name takes the kind of the thing it declares, not a generic identifier color.
-#[test]
-fn a_declaration_name_is_the_thing_it_declares() -> TestResult {
-    // The problem statement's first complaint: a regex grammar cannot tell a declaration name from a local.
-    let source = "def compute(value: int) -> int:\n    return value\n";
-    let ranges = classify(source)?;
-    assert_eq!(category_of(source, &ranges, "compute")?, Category::Function);
-    assert_eq!(category_of(source, &ranges, "def")?, Category::Keyword);
-    Ok(())
-}
-
-/// Type positions are decided by where the parser put them, never by how the name is capitalized.
-#[test]
-fn type_positions_come_from_the_ast_rather_than_from_spelling() -> TestResult {
-    // `str` is lowercase and `Total` is PascalCase, so any spelling heuristic gets both of these backwards.
-    // The AST places one in a type slot and the other in a local binding, and that is what decides.
-    let source = "def render(label: str) -> None:\n    Total = label\n    return None\n";
-    let ranges = classify(source)?;
-    assert_eq!(category_of(source, &ranges, "str")?, Category::Type);
-    assert_eq!(category_of(source, &ranges, "Total")?, Category::Variable);
-    assert_eq!(category_of(source, &ranges, "label: ")?, Category::Parameter);
-    Ok(())
-}
-
-/// A model, a trait and an enum each highlight as their own kind rather than as one shared category.
-#[test]
-fn nominal_declarations_take_their_own_kinds() -> TestResult {
-    let source = "model User:\n    id: int\n\ntrait Loggable:\n    pass\n\nenum Mode:\n    Fast\n";
-    let ranges = classify(source)?;
-    assert_eq!(category_of(source, &ranges, "User")?, Category::Struct);
-    assert_eq!(category_of(source, &ranges, "Loggable")?, Category::Interface);
-    assert_eq!(category_of(source, &ranges, "Mode")?, Category::Enum);
-    Ok(())
-}
-
-/// Member access distinguishes a called method from a property that is only read.
-#[test]
-fn member_access_separates_a_called_method_from_a_read_property() -> TestResult {
-    let source = "def use(value: str) -> None:\n    other = value.lower()\n    size = value.length\n    return None\n";
-    let ranges = classify(source)?;
-    assert_eq!(category_of(source, &ranges, "lower")?, Category::Method);
-    assert_eq!(category_of(source, &ranges, "length")?, Category::Property);
-    Ok(())
-}
-
-/// Every segment of a dotted path takes the meaning of whatever introduced the path.
-#[test]
-fn a_dotted_path_takes_the_meaning_of_what_introduced_it() -> TestResult {
-    // Only the token to the immediate left is visible to the member-access rule, so every segment after the
-    // first would otherwise read as a field access on a local named `std`.
-    let source = "from std.runtime import host\n\ndef main() -> None:\n    return None\n";
-    let ranges = classify(source)?;
-    assert_eq!(category_of(source, &ranges, "std")?, Category::Namespace);
-    assert_eq!(category_of(source, &ranges, "runtime")?, Category::Namespace);
-    Ok(())
-}
-
-/// Comment recovery claims only bytes no other layer owns, so a `#` inside a literal stays string content.
-#[test]
-fn a_hash_inside_a_string_does_not_start_a_comment() -> TestResult {
-    // Comment recovery asks which bytes no other layer claimed rather than re-implementing string scanning,
-    // so a `#` inside a literal has to stay part of the string.
-    let source = "def main() -> None:\n    tag = \"#not-a-comment\"  # a real comment\n    return None\n";
-    let ranges = classify(source)?;
-    assert_eq!(category_of(source, &ranges, "#not-a-comment")?, Category::String);
-    assert_eq!(category_of(source, &ranges, "# a real comment")?, Category::Comment);
-    Ok(())
-}
-
-/// An f-string's interpolated expressions are classified as code, not as string content.
-#[test]
-fn an_fstring_hole_is_classified_as_ordinary_incan() -> TestResult {
-    // An f-string is how most Incan code produces output. Treating one as a flat string blob would leave the
-    // names inside it — the part a reader most needs to follow — uncolored.
-    let source = "def greet(name: str) -> None:\n    println(f\"hello {name}\")\n    return None\n";
-    let ranges = classify(source)?;
-    assert_eq!(category_of(source, &ranges, "hello ")?, Category::String);
-    assert_eq!(category_of(source, &ranges, "name}")?, Category::Variable);
-    Ok(())
-}
-
 /// A document mid-edit still receives highlighting from the token stream alone.
 #[test]
 fn a_document_that_does_not_parse_is_still_classified() -> TestResult {
@@ -137,64 +57,6 @@ fn a_document_that_does_not_parse_is_still_classified() -> TestResult {
     assert_eq!(category_of(source, &ranges, "def")?, Category::Keyword);
     assert_eq!(category_of(source, &ranges, "compute")?, Category::Function);
     assert_eq!(category_of(source, &ranges, "return")?, Category::Keyword);
-    Ok(())
-}
-
-/// Columns are reported in UTF-16 code units, as the protocol's default position encoding requires.
-#[test]
-fn columns_are_counted_in_utf16_units_not_bytes() -> TestResult {
-    // The balloon is four bytes but two UTF-16 code units, so `suffix` sits at byte column 21 and UTF-16
-    // column 19. A byte-counted column places it two characters to the right of where the reader sees it —
-    // the class of bug that makes highlighting look almost, but not quite, aligned.
-    let source = "def main(suffix: str) -> None:\n    total = \"\u{1F388}\" + suffix\n    return None\n";
-    let ranges = classify(source)?;
-    let offset = source
-        .rfind("suffix")
-        .ok_or_else(|| "fixture must use `suffix` in the interpolating line".to_string())?;
-    let range = ranges
-        .iter()
-        .find(|range| range.start <= offset && offset < range.end)
-        .ok_or_else(|| "the trailing `suffix` must be classified".to_string())?;
-    let byte_column = offset - source[..offset].rfind('\n').map_or(0, |newline| newline + 1);
-    assert_eq!(byte_column, 21, "fixture assumption: `suffix` starts at byte column 21");
-    let pieces = line_pieces_indexed(source, &LineIndex::new(source), range.start, range.end);
-    assert_eq!(
-        pieces,
-        vec![(1, 19, 6)],
-        "`suffix` must be reported at UTF-16 column 19"
-    );
-    Ok(())
-}
-
-/// Decoding the delta stream reproduces every classified position exactly.
-#[test]
-fn each_token_is_encoded_relative_to_the_one_before_it() -> TestResult {
-    // Delta encoding is the protocol's wire format, so an absolute column leaking into the stream would shift
-    // every token after it. Decoding the deltas back has to reproduce the classified ranges exactly.
-    let source = "def compute(value: int) -> int:\n    doubled = value\n    return doubled\n";
-    let ranges = classify(source)?;
-    let encoded = encode(source, &ranges);
-    let index = LineIndex::new(source);
-    let mut expected = Vec::new();
-    for range in &ranges {
-        expected.extend(line_pieces_indexed(source, &index, range.start, range.end));
-    }
-
-    let (mut line, mut start) = (0u32, 0u32);
-    let mut decoded = Vec::new();
-    for token in &encoded {
-        line += token.delta_line;
-        start = if token.delta_line == 0 {
-            start + token.delta_start
-        } else {
-            token.delta_start
-        };
-        decoded.push((line, start, token.length));
-    }
-    assert_eq!(
-        decoded, expected,
-        "decoding the delta stream must reproduce every classified position"
-    );
     Ok(())
 }
 
@@ -222,20 +84,151 @@ fn a_multi_line_range_is_split_into_one_token_per_line() -> TestResult {
     Ok(())
 }
 
-/// Composed ranges are disjoint and ordered, which delta encoding depends on.
 #[test]
-fn classified_ranges_never_overlap_and_stay_in_order() -> TestResult {
-    // Composition happens over a byte map precisely so this holds. A client given overlapping tokens renders
-    // undefined results, and delta encoding an out-of-order range corrupts every token after it.
-    let source = "def greet(name: str) -> None:\n    println(f\"hi {name}\")  # wave\n    return None\n";
-    let ranges = classify(source)?;
-    for pair in ranges.windows(2) {
-        assert!(
-            pair[0].end <= pair[1].start,
-            "ranges must be disjoint and ordered: {:?} then {:?}",
-            pair[0],
-            pair[1]
-        );
-    }
-    Ok(())
+fn classified_cases() {
+    run_source_rows(CLASSIFIED_CASES, classify);
 }
+
+const CLASSIFIED_CASES: &[SourceRow<Vec<ClassifiedRange>, String>] = &[
+    // A declaration's name takes the kind of the thing it declares, not a generic identifier color.
+    SourceRow {
+        name: "a_declaration_name_is_the_thing_it_declares",
+        source: "def compute(value: int) -> int:\n    return value\n",
+        check: |source, ranges| {
+            assert_eq!(category_of(source, &ranges, "compute")?, Category::Function);
+            assert_eq!(category_of(source, &ranges, "def")?, Category::Keyword);
+            Ok(())
+        },
+    },
+    // Type positions are decided by where the parser put them, never by how the name is capitalized.
+    SourceRow {
+        name: "type_positions_come_from_the_ast_rather_than_from_spelling",
+        source: "def render(label: str) -> None:\n    Total = label\n    return None\n",
+        check: |source, ranges| {
+            assert_eq!(category_of(source, &ranges, "str")?, Category::Type);
+            assert_eq!(category_of(source, &ranges, "Total")?, Category::Variable);
+            assert_eq!(category_of(source, &ranges, "label: ")?, Category::Parameter);
+            Ok(())
+        },
+    },
+    // A model, a trait and an enum each highlight as their own kind rather than as one shared category.
+    SourceRow {
+        name: "nominal_declarations_take_their_own_kinds",
+        source: "model User:\n    id: int\n\ntrait Loggable:\n    pass\n\nenum Mode:\n    Fast\n",
+        check: |source, ranges| {
+            assert_eq!(category_of(source, &ranges, "User")?, Category::Struct);
+            assert_eq!(category_of(source, &ranges, "Loggable")?, Category::Interface);
+            assert_eq!(category_of(source, &ranges, "Mode")?, Category::Enum);
+            Ok(())
+        },
+    },
+    // Member access distinguishes a called method from a property that is only read.
+    SourceRow {
+        name: "member_access_separates_a_called_method_from_a_read_property",
+        source: "def use(value: str) -> None:\n    other = value.lower()\n    size = value.length\n    return None\n",
+        check: |source, ranges| {
+            assert_eq!(category_of(source, &ranges, "lower")?, Category::Method);
+            assert_eq!(category_of(source, &ranges, "length")?, Category::Property);
+            Ok(())
+        },
+    },
+    // Every segment of a dotted path takes the meaning of whatever introduced the path.
+    SourceRow {
+        name: "a_dotted_path_takes_the_meaning_of_what_introduced_it",
+        source: "from std.runtime import host\n\ndef main() -> None:\n    return None\n",
+        check: |source, ranges| {
+            assert_eq!(category_of(source, &ranges, "std")?, Category::Namespace);
+            assert_eq!(category_of(source, &ranges, "runtime")?, Category::Namespace);
+            Ok(())
+        },
+    },
+    // Comment recovery claims only bytes no other layer owns, so a `#` inside a literal stays string content.
+    SourceRow {
+        name: "a_hash_inside_a_string_does_not_start_a_comment",
+        source: "def main() -> None:\n    tag = \"#not-a-comment\"  # a real comment\n    return None\n",
+        check: |source, ranges| {
+            assert_eq!(category_of(source, &ranges, "#not-a-comment")?, Category::String);
+            assert_eq!(category_of(source, &ranges, "# a real comment")?, Category::Comment);
+            Ok(())
+        },
+    },
+    // An f-string's interpolated expressions are classified as code, not as string content.
+    SourceRow {
+        name: "an_fstring_hole_is_classified_as_ordinary_incan",
+        source: "def greet(name: str) -> None:\n    println(f\"hello {name}\")\n    return None\n",
+        check: |source, ranges| {
+            assert_eq!(category_of(source, &ranges, "hello ")?, Category::String);
+            assert_eq!(category_of(source, &ranges, "name}")?, Category::Variable);
+            Ok(())
+        },
+    },
+    // Columns are reported in UTF-16 code units, as the protocol's default position encoding requires.
+    SourceRow {
+        name: "columns_are_counted_in_utf16_units_not_bytes",
+        source: "def main(suffix: str) -> None:\n    total = \"\u{1F388}\" + suffix\n    return None\n",
+        check: |source, ranges| {
+            let offset = source
+                .rfind("suffix")
+                .ok_or_else(|| "fixture must use `suffix` in the interpolating line".to_string())?;
+            let range = ranges
+                .iter()
+                .find(|range| range.start <= offset && offset < range.end)
+                .ok_or_else(|| "the trailing `suffix` must be classified".to_string())?;
+            let byte_column = offset - source[..offset].rfind('\n').map_or(0, |newline| newline + 1);
+            assert_eq!(byte_column, 21, "fixture assumption: `suffix` starts at byte column 21");
+            let pieces = line_pieces_indexed(source, &LineIndex::new(source), range.start, range.end);
+            assert_eq!(
+                pieces,
+                vec![(1, 19, 6)],
+                "`suffix` must be reported at UTF-16 column 19"
+            );
+            Ok(())
+        },
+    },
+    // Decoding the delta stream reproduces every classified position exactly.
+    SourceRow {
+        name: "each_token_is_encoded_relative_to_the_one_before_it",
+        source: "def compute(value: int) -> int:\n    doubled = value\n    return doubled\n",
+        check: |source, ranges| {
+            let encoded = encode(source, &ranges);
+            let index = LineIndex::new(source);
+            let mut expected = Vec::new();
+            for range in ranges {
+                expected.extend(line_pieces_indexed(source, &index, range.start, range.end));
+            }
+
+            let (mut line, mut start) = (0u32, 0u32);
+            let mut decoded = Vec::new();
+            for token in &encoded {
+                line += token.delta_line;
+                start = if token.delta_line == 0 {
+                    start + token.delta_start
+                } else {
+                    token.delta_start
+                };
+                decoded.push((line, start, token.length));
+            }
+            assert_eq!(
+                decoded, expected,
+                "decoding the delta stream must reproduce every classified position"
+            );
+            Ok(())
+        },
+    },
+    // Composed ranges are disjoint and ordered, which delta encoding depends on.
+    SourceRow {
+        name: "classified_ranges_never_overlap_and_stay_in_order",
+        source: "def greet(name: str) -> None:\n    println(f\"hi {name}\")  # wave\n    return None\n",
+        check: |_source, ranges| {
+            for pair in ranges.windows(2) {
+                assert!(
+                    pair[0].end <= pair[1].start,
+                    "ranges must be disjoint and ordered: {:?} then {:?}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+            Ok(())
+        },
+    },
+];

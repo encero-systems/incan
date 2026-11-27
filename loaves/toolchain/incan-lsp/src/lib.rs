@@ -11,5 +11,7 @@ pub mod backend;
 mod call_site_type_args;
 pub mod diagnostics;
 pub mod semantic_tokens;
+#[cfg(test)]
+mod test_rows;
 
 pub use backend::IncanLanguageServer;
