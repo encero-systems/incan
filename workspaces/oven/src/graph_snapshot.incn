@@ -3,7 +3,7 @@
 from files import json_text
 from std.fs import Path
 from std.json import JsonValue
-from graph_cache import GraphUnit, save_observations, stamp_file, tree_inputs
+from graph_cache import GraphUnit, save_observations, tree_inputs
 from observation import Ledger, SETTLE_SECONDS, load_ledger
 from unit_freshness import fingerprint
 
@@ -63,7 +63,7 @@ def snapshot_parts(units: list[GraphUnit], root: str) -> Result[list[str], str]:
     mut parts: list[str] = []
     mut sources: list[str] = []
     for unit in units:
-        coordinates = [unit.root.0, unit.package, unit.version, ledger.digest(stamp_file(unit))?]
+        coordinates = [unit.root.0, unit.package, unit.version, ledger.digest(unit.stamp_file())?]
         parts.append(json_text(JsonValue.array([JsonValue.string(item) for item in coordinates]))?)
         if unit.source_root != "" and unit.source_root not in sources:
             sources.append(unit.source_root)

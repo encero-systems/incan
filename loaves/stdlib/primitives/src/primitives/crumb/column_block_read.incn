@@ -8,7 +8,7 @@ from crate.primitives.crumb.column_key_read import ColumnKeys, key_at
 from crate.primitives.crumb.column_numeric_read import numeric_values, numeric_at
 from crate.primitives.crumb.column_pack_read import packed_value
 from crate.primitives.crumb.column_presence import cell_type
-from crate.primitives.crumb.column_types import BlockEncoding, uses_dictionary
+from crate.primitives.crumb.column_types import BlockEncoding
 from crate.primitives.crumb.column_runs_read import read_runs
 from crate.primitives.crumb.cell_read import cell
 from crate.primitives.crumb.description_dictionary import Dictionary
@@ -112,7 +112,7 @@ def stored_at(
         if len(values) != 1:
             return Err(failure(ColumnFailure.RunLength, block.origin))
         return Ok(values[0])
-    if not uses_dictionary(block.encoding):
+    if not block.encoding.uses_dictionary():
         return Err(failure(ColumnFailure.UnsupportedEncoding, block.origin))
     match keys:
         None => return Err(failure(ColumnFailure.MissingDictionary, block.origin))

@@ -6,7 +6,7 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
 from files import json_text, read
-from graph_cache import Author, AuthorKind, GraphUnit, cache_file, read_graph, stamp_file
+from graph_cache import Author, AuthorKind, GraphUnit, cache_file
 from graph_identity import keyed
 from graph_queries import display, nested, text
 from graph_context_items import anchor_root, minimum_sizes, tokens
@@ -327,13 +327,13 @@ def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, 
     if unit.root.0.startswith("@"):
         projection_root = ""
     key = fingerprint(
-        [INDEX_DOMAIN, projection_root, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?],
+        [INDEX_DOMAIN, projection_root, unit.root.0, unit.package, unit.version, artifact_identity(unit.stamp_file())?],
     )?
     path = Path(f"{cache_file(key)?.0}.context-index")
     if path.is_file() and Path(f"{path.0}.records").is_file() and Path(f"{path.0}.terms").is_file():
         return Ok(path)
     # 2. Only preparation decodes all payloads; requests read the vocabulary and lightweight rows.
-    document = read_graph(unit, toolchain, "", context_fields()?)?
+    document = unit.read_graph(toolchain, "", context_fields()?)?
     mut rows: list[str] = []
     mut vocabulary: Dict[str, list[str]] = {}
     mut package = unit.package

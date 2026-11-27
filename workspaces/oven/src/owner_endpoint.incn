@@ -67,6 +67,98 @@ pub model Endpoint:
     # The file the owner's trace lines are collected in.
     pub mailbox: str
 
+    def connect(self, start: bool) -> Result[Option[Connection], str]:
+        """
+        A connection to the endpoint's owner. With `start`, one is started when none is running.
+
+        1. Connect to an owner that is already running.
+        2. Without `start`, report that there is none.
+        3. Take the exclusive lock, so simultaneous commands start exactly one owner.
+        4. Look again under the lock: another command may have started it while this one waited.
+        5. Start the owner and connect to it.
+        """
+        # 1. A running owner is used as it is.
+        match self.attach()?:
+            Some(present) => return Ok(Some(present))
+            None => pass
+        # 2. A command that may not start an owner finds there is none.
+        if not start:
+            return Ok(None)
+        # 3. Only the command holding the exclusive lock can start an owner. The lock is held until this function returns.
+        prepare_directory(f"{self.directory}")?
+        arbitration = Path(self.lock).lock_exclusive().map_err((error) => f"cannot {error.message()}")?
+        # 4. An owner another command started while this one waited for the lock is used, not a second one.
+        match self.attach()?:
+            Some(started) => return Ok(Some(started))
+            None => pass
+        # 5. No owner exists, so one is started and connected to.
+        self.launch()?
+        return self.attach()
+
+    pub def attach(self) -> Result[Option[Connection], str]:
+        """
+        Connect to a live owner. Nothing there is `None`; a socket nothing listens at is removed first; a live owner that
+        refuses us, or an ordinary file in the socket's place, is an error and is left as it is.
+
+        1. No socket file means no owner.
+        2. Anything but a socket at that path is an error.
+        3. Connect; a socket nothing listens at is removed.
+        """
+        # 1. A path with nothing at it has no owner.
+        if not Path(self.socket).exists():
+            return Ok(None)
+        # 2. Something that is not a socket is never removed or connected to.
+        require_socket(self.socket)?
+        # 3. A socket nothing listens at is stale and goes; one that refuses us is another command's owner and stays.
+        return connect_or_clear(self.socket)
+
+    def launch(self) -> Result[None, str]:
+        """
+        Start an owner and wait for it to say it is listening.
+
+        1. Listen on the readiness socket the owner will greet.
+        2. Start the owner, detached from this command's terminal and process group.
+        3. Wait for its greeting; an owner that exits or stays silent fails the start.
+        """
+        exe = executable()?
+        # 1. The owner has a socket to greet on before it exists, so its greeting cannot be missed.
+        mut listener = listen(f"{self.ready}", false)?
+        # 2. The owner outlives this command: it has no terminal and a process group of its own.
+        mut command = owner_command(exe, self)
+        match command.spawn():
+            Err(error) =>
+                self.discard_ready()
+                return Err(f"cannot start an owner: {error}")
+            Ok(child) =>
+                # 3. The start succeeds on the owner's greeting, and fails if the owner exits or stays silent.
+                return await_greeting(listener, child, self)
+
+    pub def discard_ready(self) -> None:
+        """Remove the readiness socket of a start that is over."""
+        discard_file(Path(self.ready))
+
+    pub def ask(self, request: Request, start: bool) -> Result[Option[Reply], str]:
+        """
+        Put a request to the owner and read its reply. `None` when there is no owner and none was to be started.
+
+        1. Connect to the owner, starting it when `start` allows.
+        2. Bound the wait for the reply by the kind of request, and the write by a fixed time.
+        3. Send the request and read the reply, relaying the trace lines the owner recorded.
+        """
+        # 1. A request needs an owner; without one, and none to start, the command prepares the executable itself.
+        match self.connect(start)?:
+            None => return Ok(None)
+            Some(found) =>
+                # 2. A build may take as long as it takes, while a lifecycle question and any write are bounded.
+                mut owner = found
+                owner.wait_at_most(timeout_for(request.command))
+                owner.write_at_most(10)
+                # 3. The owner's answer arrives with the trace lines of its reasoning, which this command relays.
+                send_document(owner, request.to_json())?
+                reply = reply_of(receive_document(owner)?)?
+                relay(reply.trace)
+                return Ok(Some(reply))
+
 
 pub def endpoint_for(root: str) -> Result[Endpoint, str]:
     """
@@ -252,53 +344,6 @@ pub def timeout_for(command: str) -> u64:
     return LIFECYCLE_SECONDS
 
 
-pub def connect(endpoint: Endpoint, start: bool) -> Result[Option[Connection], str]:
-    """
-    A connection to the endpoint's owner. With `start`, one is started when none is running.
-
-    1. Connect to an owner that is already running.
-    2. Without `start`, report that there is none.
-    3. Take the exclusive lock, so simultaneous commands start exactly one owner.
-    4. Look again under the lock: another command may have started it while this one waited.
-    5. Start the owner and connect to it.
-    """
-    # 1. A running owner is used as it is.
-    match attach(endpoint)?:
-        Some(present) => return Ok(Some(present))
-        None => pass
-    # 2. A command that may not start an owner finds there is none.
-    if not start:
-        return Ok(None)
-    # 3. Only the command holding the exclusive lock can start an owner. The lock is held until this function returns.
-    prepare_directory(f"{endpoint.directory}")?
-    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => f"cannot {error.message()}")?
-    # 4. An owner another command started while this one waited for the lock is used, not a second one.
-    match attach(endpoint)?:
-        Some(started) => return Ok(Some(started))
-        None => pass
-    # 5. No owner exists, so one is started and connected to.
-    launch(endpoint)?
-    return attach(endpoint)
-
-
-pub def attach(endpoint: Endpoint) -> Result[Option[Connection], str]:
-    """
-    Connect to a live owner. Nothing there is `None`; a socket nothing listens at is removed first; a live owner that
-    refuses us, or an ordinary file in the socket's place, is an error and is left as it is.
-
-    1. No socket file means no owner.
-    2. Anything but a socket at that path is an error.
-    3. Connect; a socket nothing listens at is removed.
-    """
-    # 1. A path with nothing at it has no owner.
-    if not Path(endpoint.socket).exists():
-        return Ok(None)
-    # 2. Something that is not a socket is never removed or connected to.
-    require_socket(endpoint.socket)?
-    # 3. A socket nothing listens at is stale and goes; one that refuses us is another command's owner and stays.
-    return connect_or_clear(endpoint.socket)
-
-
 def require_socket(path: str) -> Result[None, str]:
     """Refuse a path that holds anything but a socket."""
     match metadata(f"{path}"):
@@ -341,28 +386,6 @@ pub def prepare_directory(directory: str) -> Result[None, str]:
     return Ok(None)
 
 
-def launch(endpoint: Endpoint) -> Result[None, str]:
-    """
-    Start an owner and wait for it to say it is listening.
-
-    1. Listen on the readiness socket the owner will greet.
-    2. Start the owner, detached from this command's terminal and process group.
-    3. Wait for its greeting; an owner that exits or stays silent fails the start.
-    """
-    exe = executable()?
-    # 1. The owner has a socket to greet on before it exists, so its greeting cannot be missed.
-    mut listener = listen(f"{endpoint.ready}", false)?
-    # 2. The owner outlives this command: it has no terminal and a process group of its own.
-    mut command = owner_command(exe, endpoint)
-    match command.spawn():
-        Err(error) =>
-            discard_ready(endpoint)
-            return Err(f"cannot start an owner: {error}")
-        Ok(child) =>
-            # 3. The start succeeds on the owner's greeting, and fails if the owner exits or stays silent.
-            return await_greeting(listener, child, endpoint)
-
-
 def owner_command(exe: str, endpoint: Endpoint) -> Command:
     """
     The command line that runs this Oven as the owner of `endpoint`, with no terminal and a process group of its
@@ -395,12 +418,12 @@ def await_greeting(mut listener: Listener, child: Child, endpoint: Endpoint) -> 
             Ok(finished) => ended = finished is not None
             Err(_) => pass
         if ended:
-            discard_ready(endpoint)
+            endpoint.discard_ready()
             return Err("the owner exited before it was ready")
         sleep(Duration.from_millis(2))
     # An owner that never greeted is killed; one that already exited needs no killing, so the outcome is ignored.
     _ = started.kill()
-    discard_ready(endpoint)
+    endpoint.discard_ready()
     return Err("the owner was not ready in time")
 
 
@@ -409,13 +432,8 @@ def read_greeting(waiting: Connection, endpoint: Endpoint) -> Result[None, str]:
     mut greeting = waiting
     greeting.wait_at_most(LIFECYCLE_SECONDS)
     greeting_read = receive_document(greeting)
-    discard_ready(endpoint)
+    endpoint.discard_ready()
     return greeted(greeting_read, endpoint.generation)
-
-
-def discard_ready(endpoint: Endpoint) -> None:
-    """Remove the readiness socket of a start that is over."""
-    discard_file(Path(endpoint.ready))
 
 
 pub def greeted(heard: Result[JsonValue, str], generation: str) -> Result[None, str]:
@@ -429,29 +447,6 @@ pub def greeted(heard: Result[JsonValue, str], generation: str) -> Result[None, 
             if reply.generation != generation:
                 return Err("the owner is of another generation")
             return Ok(None)
-
-
-pub def ask(endpoint: Endpoint, request: Request, start: bool) -> Result[Option[Reply], str]:
-    """
-    Put a request to the owner and read its reply. `None` when there is no owner and none was to be started.
-
-    1. Connect to the owner, starting it when `start` allows.
-    2. Bound the wait for the reply by the kind of request, and the write by a fixed time.
-    3. Send the request and read the reply, relaying the trace lines the owner recorded.
-    """
-    # 1. A request needs an owner; without one, and none to start, the command prepares the executable itself.
-    match connect(endpoint, start)?:
-        None => return Ok(None)
-        Some(found) =>
-            # 2. A build may take as long as it takes, while a lifecycle question and any write are bounded.
-            mut owner = found
-            owner.wait_at_most(timeout_for(request.command))
-            owner.write_at_most(10)
-            # 3. The owner's answer arrives with the trace lines of its reasoning, which this command relays.
-            send_document(owner, request.to_json())?
-            reply = reply_of(receive_document(owner)?)?
-            relay(reply.trace)
-            return Ok(Some(reply))
 
 
 pub def stop_owners() -> Result[int, str]:

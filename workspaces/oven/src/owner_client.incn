@@ -14,7 +14,7 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from observation import trace, trace_boundary
-from owner_endpoint import ask, endpoint_for
+from owner_endpoint import endpoint_for
 from owner_protocol import Reply, Request
 from unit import project_root_of
 
@@ -79,7 +79,7 @@ def asked(
         all_features=all_features,
     )
     # 3. An owner is started only for a project that was prepared before, so a project built once gets none.
-    match ask(endpoint, request, was_prepared(root))?:
+    match endpoint.ask(request, was_prepared(root))?:
         None => return Ok(None)
         Some(reply) =>
             # 4. The command prepares the unit itself unless the owner did; what the compiler printed is shown.
