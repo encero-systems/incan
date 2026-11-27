@@ -1,0 +1,101 @@
+# behavior: 11 former snapshots traits and generics cases run in order, each program from its own module: automatic_and_implied_derives, callable_bound_closure_and_model, derived_default_takes_declared_field_defaults, derived_display_prints_the_value_structure, enum_automatic_eq_in_derived_models, enum_eq_dunder_and_display_derive, sorted_list_of_ordered_types, static_trait_default, std_rust_capability_bounds, std_traits_convert_usage, trait_bound_default
+# expect-stdout:
+#  1
+#  2
+#  true
+#  a
+#  true
+#  3
+#  item:3:model:4
+#  dark
+#  14
+#  0
+#  dark
+#  1
+#  3
+#  5
+#  Point(x=1, y=2)
+#  Point(x=1, y=2)
+#  Point(x=1, y=2) and Empty
+#  Account(owner="Ada", balance=3)
+#  Circle(1.5)
+#  UserId(5)
+#  Box(value="x")
+#  <Point(x=1, y=2)>
+#  <UserId(6)>
+#  Box(value=7)
+#  [Box(value=7)] Box(value=7)
+#  Point(x=10, y=20)
+#  Nested(point=Point(x=10, y=20))
+#  Marker()
+#  Box(value=7)
+#  NativeHolder(duration=2s)
+#  true
+#  false
+#  true
+#  false
+#  true
+#  false
+#  true
+#  false
+#  true
+#  7
+#  Card(rank=7)
+#  a
+#  true
+#  1
+#  a
+#  2
+#  true
+#  42
+#  point 1
+#  point 2
+#  point 3
+#  point 4
+#  point 5!
+#  tagged
+#  /b/
+#  /c/
+#  /d/
+#  leaf
+#  trait Self 17
+#  owner Self 18
+#  6
+#  7
+#  8
+#  ran
+#  7
+#  42
+#  3
+#  Value must be positive
+#  0
+#  empty
+
+"""Run the program of each former case in order."""
+
+import automatic_and_implied_derives
+import callable_bound_closure_and_model
+import derived_default_takes_declared_field_defaults
+import derived_display_prints_the_value_structure
+import enum_automatic_eq_in_derived_models
+import enum_eq_dunder_and_display_derive
+import sorted_list_of_ordered_types
+import static_trait_default
+import standard_rust_capability_bounds
+import standard_traits_convert_usage
+import trait_bound_default
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    automatic_and_implied_derives.main()
+    callable_bound_closure_and_model.main()
+    derived_default_takes_declared_field_defaults.main()
+    derived_display_prints_the_value_structure.main()
+    enum_automatic_eq_in_derived_models.main()
+    enum_eq_dunder_and_display_derive.main()
+    sorted_list_of_ordered_types.main()
+    static_trait_default.main()
+    standard_rust_capability_bounds.main()
+    standard_traits_convert_usage.main()
+    trait_bound_default.main()

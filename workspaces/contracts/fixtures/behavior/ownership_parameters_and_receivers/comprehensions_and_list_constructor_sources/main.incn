@@ -1,0 +1,58 @@
+# behavior: 4 former ownership parameters and receivers cases run in order, each program from its own module: comprehensions_and_list_constructor_sources, explicit_body_accepts_unit_variant_matches, explicit_native_calls, storage_and_graph_reader_contracts
+# expect-stdout:
+#  ["ab", "def"] 3
+#  [3, 1, 2] 9 4
+#  [4, 2]
+#  ["ab", "c", "def"] ["ab", "c", "def", "z"] 4
+#  ["h", "e", "y"]
+#  ["x", "y"] 2 2
+#  bound
+#  3 true 3
+#  2 3
+#  0 0 0
+#  4 5
+#  1 2
+#  1
+#  1
+#  1
+#  2
+#  true
+#  true
+#  false
+#  true
+#  true
+#  true
+#  1
+#  0
+#  10
+#  2
+#  4
+#  2
+#  3
+#  3
+#  2
+#  3
+#  3
+#  1
+#  3
+#  4
+#  8
+#  9
+#  2
+#  0
+#  3
+
+"""Run the program of each former case in order."""
+
+import comprehensions_and_list_constructor_sources
+import explicit_body_accepts_unit_variant_matches
+import explicit_native_calls
+import storage_and_graph_reader_contracts
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    comprehensions_and_list_constructor_sources.main()
+    explicit_body_accepts_unit_variant_matches.main()
+    explicit_native_calls.main()
+    storage_and_graph_reader_contracts.main()

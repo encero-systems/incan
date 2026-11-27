@@ -1,0 +1,44 @@
+# behavior: 3 former cli values and calls cases run in order, each program from its own module: const_frozen_collection_reads, str_const_assignment_to_owned_places, str_const_returned_as_frozen_str
+# expect-stdout:
+#  2
+#  true
+#  alpha beta
+#  false
+#  ALPHA
+#  2
+#  9
+#  ex
+#  ex
+#  2
+#  true
+#  false
+#  hello
+#  true
+#  true
+#  policy
+#  true
+#  true
+#  true
+#  true
+#  frozen
+#  true
+#  true
+#  policy frozen
+#  policy
+#  policy
+#  frozen
+#  frozen
+#  2
+
+"""Run the program of each former case in order."""
+
+import const_frozen_collection_reads
+import str_const_assignment_to_owned_places
+import str_const_returned_as_frozen_str
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    const_frozen_collection_reads.main()
+    str_const_assignment_to_owned_places.main()
+    str_const_returned_as_frozen_str.main()

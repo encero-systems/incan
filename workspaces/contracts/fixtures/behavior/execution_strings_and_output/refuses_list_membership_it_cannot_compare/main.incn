@@ -1,0 +1,32 @@
+# behavior: 2 former execution strings and output cases run in order, each program from its own module: refuses_list_membership_it_cannot_compare, selected_string_helpers_preserve_shared_edge_semantics
+# expect-stdout:
+#  true
+#  true true
+#  false false
+#  true true
+#  false false
+#  true true
+#  false false
+#  true true
+#  true true
+#  true true
+#  false false
+#  STRASSE
+#  héllo
+#  hi
+#  xba
+#  -é-
+#  α, β
+#  |é|
+#  a||b|
+
+"""Run the program of each former case in order."""
+
+import refuses_list_membership_it_cannot_compare
+import selected_string_helpers_preserve_shared_edge_semantics
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    refuses_list_membership_it_cannot_compare.main()
+    selected_string_helpers_preserve_shared_edge_semantics.main()

@@ -1,0 +1,25 @@
+# behavior: 4 former selfhost cases run in order, each program from its own module: nested_native_constructors, nested_native_field_option, rust_async_unit_output, source_generic_native_slice
+# expect-stdout:
+#  created
+#  impl AsRef<std::path::Path>
+#  impl AsRef<[u8]>
+#  0
+#  2
+#  checked
+#  abc
+#  abc
+
+"""Run the program of each former case in order."""
+
+import nested_native_constructors
+import nested_native_field_option
+import case_rust_async_unit_output
+import source_generic_native_slice
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    nested_native_constructors.main()
+    nested_native_field_option.main()
+    case_rust_async_unit_output.main()
+    source_generic_native_slice.main()

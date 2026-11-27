@@ -1,0 +1,100 @@
+# behavior: 10 former selfhost cases run in order, each program from its own module: borrowed_list_trait_clone, borrowed_native_vector_field, borrowed_text_observations, boxed_model_argument, computed_codec_label, native_callable_alias, native_generic_future, native_result_error, native_scalar_parse_error, native_value_comparisons
+# expect-stdout:
+#  [3.0, 1.0]
+#  [9.0, 1.0]
+#  2
+#  3
+#  2
+#  checked
+#  checked
+#  checked
+#  checked
+#  3
+#  1
+#  value: 42
+#  42
+#  "42"
+#  42
+#  42.0
+#  "42"
+#  42!
+#  a
+#  ç
+#  retained
+#  retained
+#  retained
+#  retained
+#  nested
+#  3
+#  3
+#  3
+#  3
+#  4
+#  3
+#  0
+#  before
+#  polled
+#  after
+#  invalid: bad
+#  7
+#  9
+#  absent
+#  11
+#  7
+#  9
+#  invalid
+#  invalid
+#  42
+#  invalid digit found in string
+#  true
+#  true
+#  true
+#  true
+#  true
+#  true
+#  2
+#  3
+#  true
+#  true
+#  true
+#  true
+#  true
+#  true
+#  true
+#  2
+#  1
+#  3
+#  1
+#  1
+#  true
+#  false
+#  3
+#  3
+#  5
+
+"""Run the program of each former case in order."""
+
+import borrowed_list_trait_clone
+import borrowed_native_vector_field
+import borrowed_text_observations
+import boxed_model_argument
+import computed_codec_label
+import native_callable_alias
+import native_generic_future
+import native_result_error
+import native_scalar_parse_error
+import native_value_comparisons
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    borrowed_list_trait_clone.main()
+    borrowed_native_vector_field.main()
+    borrowed_text_observations.main()
+    boxed_model_argument.main()
+    computed_codec_label.main()
+    native_callable_alias.main()
+    native_generic_future.main()
+    native_result_error.main()
+    native_scalar_parse_error.main()
+    native_value_comparisons.main()

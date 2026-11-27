@@ -1,0 +1,61 @@
+# behavior: 5 former emit calls and builtins cases run in order, each program from its own module: abs_and_sum_are_overflow_checked, isinstance_str_over_const_union_and_option, minimum_integer_constants, static_method_with_str_argument, std_testing_assert_helpers
+# expect-stdout:
+#  5
+#  7
+#  6
+#  -9223372036854775808
+#  abs overflow raised
+#  sum overflow raised
+#  true
+#  true
+#  true
+#  false
+#  true
+#  false
+#  true
+#  false
+#  true
+#  false
+#  true
+#  true
+#  false
+#  -9223372036854775808
+#  -9223372036854775808
+#  -9223372036854775808
+#  -9223372036854775808
+#  18446744073709551615
+#  -170141183460469231731687303715884105728
+#  abs overflow raised
+#  sum overflow raised
+#  negative sum overflow raised
+#  <p>hello</p> 12
+#  <p>literal</p> 14
+#  plain and messaged assert_eq passed
+#  comparison operand passed
+#  assert_ne passed
+#  constructor comparisons passed
+#  some 5
+#  none passed
+#  ok 42
+#  err boom
+#  raised from call expression
+#  raised from function reference
+#  assert_eq failure is an AssertionError
+#  empty message failure is an AssertionError
+
+"""Run the program of each former case in order."""
+
+import abs_and_sum_are_overflow_checked
+import isinstance_str_over_const_union_and_option
+import minimum_integer_constants
+import static_method_with_str_argument
+import standard_testing_assert_helpers
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    abs_and_sum_are_overflow_checked.main()
+    isinstance_str_over_const_union_and_option.main()
+    minimum_integer_constants.main()
+    static_method_with_str_argument.main()
+    standard_testing_assert_helpers.main()

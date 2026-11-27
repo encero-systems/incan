@@ -1,0 +1,23 @@
+# behavior: 2 former codegen cases run in order, each program from its own module: rust_core_string_slice_add_assign, rust_supertraits
+# expect-stdout:
+#  a
+#  ab
+#  code 1
+#  code 7
+#  3
+#  done
+#  3
+#  tag:x
+#  9
+#  3
+
+"""Run the program of each former case in order."""
+
+import case_rust_core_string_slice_add_assign
+import case_rust_supertraits
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    case_rust_core_string_slice_add_assign.main()
+    case_rust_supertraits.main()

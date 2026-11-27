@@ -1,0 +1,65 @@
+# behavior: 8 former snapshots newtypes and serde cases run in order, each program from its own module: bare_json_protocol_bounds, json_protocol_supertraits, newtype_generic, newtype_json_validation, partial_alias_derive, qualified_json_derives, qualified_json_trait_dispatch, serialize_trait_adoption
+# expect-stdout:
+#  {"value":1}
+#  {"value":1}
+#  {"value":1}
+#  2
+#  {"payload":{"value":3}}
+#  [{"value":4}]
+#  7
+#  8
+#  9
+#  {"value":5}
+#  {"value":5}
+#  {"value":6}
+#  {"value":7}
+#  {"value":1}
+#  {"value":2}
+#  {"value":3}
+#  {"value":4}
+#  3
+#  1
+#  5
+#  Box
+#  42 42
+#  text
+#  valid
+#  refused
+#  {"id":"valid"}
+#  valid
+#  {"value":1}
+#  {"value":1}
+#  {"value":1}
+#  2
+#  {"value":3}
+#  "Red"
+#  4
+#  {"value":1}
+#  {"value":1}
+#  hello
+#  {"value":"hello"}
+#  {"value":2}
+#  3
+
+"""Run the program of each former case in order."""
+
+import bare_json_protocol_bounds
+import json_protocol_supertraits
+import newtype_generic
+import newtype_json_validation
+import partial_alias_derive
+import qualified_json_derives
+import qualified_json_trait_dispatch
+import serialize_trait_adoption
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    bare_json_protocol_bounds.main()
+    json_protocol_supertraits.main()
+    newtype_generic.main()
+    newtype_json_validation.main()
+    partial_alias_derive.main()
+    qualified_json_derives.main()
+    qualified_json_trait_dispatch.main()
+    serialize_trait_adoption.main()

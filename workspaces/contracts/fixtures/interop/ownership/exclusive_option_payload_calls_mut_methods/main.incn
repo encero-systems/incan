@@ -1,0 +1,39 @@
+# behavior: 6 former ownership cases run in order, each program from its own module: exclusive_option_payload_calls_mut_methods, exclusive_option_payload_moves_to_a_mut_name, non_clone_owner_moves_on_a_returning_path, rust_box_as_ref_argument, rust_duration_fields_to_rust_parameters, rust_error_value_to_a_str_parameter
+# expect-stdout:
+#  written
+#  true
+#  written
+#  true
+#  kept
+#  returned early
+#  kept
+#  written
+#  true
+#  node leaf
+#  node leaf
+#  leaf
+#  3
+#  false
+#  2
+#  el
+#  hello
+#  error: disk is full
+
+"""Run the program of each former case in order."""
+
+import exclusive_option_payload_calls_mut_methods
+import exclusive_option_payload_moves_to_a_mut_name
+import non_clone_owner_moves_on_a_returning_path
+import case_rust_box_as_ref_argument
+import case_rust_duration_fields_to_rust_parameters
+import case_rust_error_value_to_a_str_parameter
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    exclusive_option_payload_calls_mut_methods.main()
+    exclusive_option_payload_moves_to_a_mut_name.main()
+    non_clone_owner_moves_on_a_returning_path.main()
+    case_rust_box_as_ref_argument.main()
+    case_rust_duration_fields_to_rust_parameters.main()
+    case_rust_error_value_to_a_str_parameter.main()

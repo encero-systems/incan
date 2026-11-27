@@ -1,0 +1,24 @@
+# Former case explicit_input_reads_a_module_constant: A shared model input can be read through a private helper and compared with a module constant without changing its ownership (RFC 164, #1605).
+
+const LIMIT: int = 1
+
+
+model Record:
+    value: int
+
+
+def record_value(record: Borrowed[Record]) -> int:
+    """Read the value through the shared record input."""
+    return record.value
+
+
+def encode_record(record: Borrowed[Record]) -> int:
+    """Read the record through a helper and compare its value with the module constant."""
+    value = record_value(record)
+    if value > LIMIT:
+        return 0
+    return value
+
+
+pub def main() -> None:
+    println(encode_record(Record(value=1)))
