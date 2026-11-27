@@ -11,6 +11,7 @@ use crate::api_metadata::{
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::loaf_index::LoafIndex;
+use crate::test_rows::{SourceRow, run_source_rows};
 
 /// How many public functions the module declares beside the one the program calls.
 const OTHER_FUNCTIONS: usize = 60;
@@ -270,111 +271,6 @@ pub(super) fn manifest_import_reads(
     Ok(thread_selection::read_keys())
 }
 
-/// A program that calls a function without parameters, which has no default record, is checked from the function's
-/// signature record: it reads `money::unit`'s signature by name and never the Loaf's contract metadata.
-#[test]
-fn a_program_checks_an_imported_function_without_parameters_from_its_records() -> Result<(), Box<dyn std::error::Error>>
-{
-    let read = prices_import_reads("from pub::prices import money\n\ndef main() -> int:\n    return money.unit()\n")?;
-    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
-    let named = format!("/{}", content_name(b"money::unit"));
-    assert!(
-        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
-        "checking reads `unit`'s signature by name; it read {read:?}"
-    );
-    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
-    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
-    assert!(
-        whole.is_empty(),
-        "checking read the Loaf's contract metadata: {whole:?}"
-    );
-    Ok(())
-}
-
-/// A program that uses a constant of an installed Loaf's module is checked from the constant's own records: it reads
-/// `money::RATE`'s signature by name and never the Loaf's contract metadata.
-#[test]
-fn a_program_checks_an_imported_constant_from_its_declaration_records() -> Result<(), Box<dyn std::error::Error>> {
-    let read = prices_import_reads("from pub::prices import money\n\ndef main() -> int:\n    return money.RATE\n")?;
-    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
-    let named = format!("/{}", content_name(b"money::RATE"));
-    assert!(
-        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
-        "checking reads `RATE`'s signature by name; it read {read:?}"
-    );
-    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
-    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
-    assert!(
-        whole.is_empty(),
-        "checking read the Loaf's contract metadata: {whole:?}"
-    );
-    Ok(())
-}
-
-/// A program that reads a static of an installed Loaf's module is checked from the static's own records: it reads
-/// `money::LIMIT`'s signature by name and never the Loaf's contract metadata.
-#[test]
-fn a_program_checks_an_imported_static_from_its_declaration_records() -> Result<(), Box<dyn std::error::Error>> {
-    let read = prices_import_reads("from pub::prices import money\n\ndef main() -> int:\n    return money.LIMIT\n")?;
-    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
-    let named = format!("/{}", content_name(b"money::LIMIT"));
-    assert!(
-        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
-        "checking reads `LIMIT`'s signature by name; it read {read:?}"
-    );
-    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
-    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
-    assert!(
-        whole.is_empty(),
-        "checking read the Loaf's contract metadata: {whole:?}"
-    );
-    Ok(())
-}
-
-/// A program that imports a function of an installed Loaf's module by name is checked from the function's own records:
-/// it reads `money::price`'s signature by name and never the Loaf's contract metadata.
-#[test]
-fn a_program_imports_a_function_by_name_from_its_declaration_records() -> Result<(), Box<dyn std::error::Error>> {
-    let read =
-        prices_import_reads("from pub::prices.money import price\n\ndef main() -> int:\n    return price(1999)\n")?;
-    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
-    let named = format!("/{}", content_name(b"money::price"));
-    assert!(
-        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
-        "checking reads `price`'s signature by name; it read {read:?}"
-    );
-    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
-    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
-    assert!(
-        whole.is_empty(),
-        "checking read the Loaf's contract metadata: {whole:?}"
-    );
-    Ok(())
-}
-
-/// A program that calls a generic function of an installed Loaf's module, whose type parameters have no bounds and
-/// whose signature otherwise names built-in types only, is checked from the function's own records: it reads
-/// `money::first`'s signature by name and never the Loaf's contract metadata.
-#[test]
-fn a_program_checks_an_imported_generic_function_from_its_declaration_records() -> Result<(), Box<dyn std::error::Error>>
-{
-    let read =
-        prices_import_reads("from pub::prices import money\n\ndef main() -> int:\n    return money.first([1, 2])\n")?;
-    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
-    let named = format!("/{}", content_name(b"money::first"));
-    assert!(
-        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
-        "checking reads `first`'s signature by name; it read {read:?}"
-    );
-    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
-    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
-    assert!(
-        whole.is_empty(),
-        "checking read the Loaf's contract metadata: {whole:?}"
-    );
-    Ok(())
-}
-
 /// A program that calls a function whose signature names one of the Loaf's own types is checked from the function's
 /// records and the Loaf's type scope: it reads `b64decode`'s signature by name and never the Loaf's contract metadata.
 #[test]
@@ -409,3 +305,117 @@ fn a_program_checks_a_function_naming_the_loafs_own_type_from_its_records() -> R
     );
     Ok(())
 }
+
+#[test]
+fn typechecker_reads_prices_reads_cases() {
+    run_source_rows(TYPECHECKER_READS_PRICES_READS_CASES, prices_import_reads);
+}
+
+const TYPECHECKER_READS_PRICES_READS_CASES: &[SourceRow<Vec<String>>] = &[
+    // A program that calls a function without parameters, which has no default record, is checked from the function's
+    // signature record: it reads `money::unit`'s signature by name and never the Loaf's contract metadata.
+    SourceRow {
+        name: "a_program_checks_an_imported_function_without_parameters_from_its_records",
+        source: "from pub::prices import money\n\ndef main() -> int:\n    return money.unit()\n",
+        check: |_source, read| {
+            let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+            let named = format!("/{}", content_name(b"money::unit"));
+            assert!(
+                read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+                "checking reads `unit`'s signature by name; it read {read:?}"
+            );
+            let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+            let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+            assert!(
+                whole.is_empty(),
+                "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+    // A program that uses a constant of an installed Loaf's module is checked from the constant's own records: it
+    // reads `money::RATE`'s signature by name and never the Loaf's contract metadata.
+    SourceRow {
+        name: "a_program_checks_an_imported_constant_from_its_declaration_records",
+        source: "from pub::prices import money\n\ndef main() -> int:\n    return money.RATE\n",
+        check: |_source, read| {
+            let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+            let named = format!("/{}", content_name(b"money::RATE"));
+            assert!(
+                read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+                "checking reads `RATE`'s signature by name; it read {read:?}"
+            );
+            let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+            let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+            assert!(
+                whole.is_empty(),
+                "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+    // A program that reads a static of an installed Loaf's module is checked from the static's own records: it reads
+    // `money::LIMIT`'s signature by name and never the Loaf's contract metadata.
+    SourceRow {
+        name: "a_program_checks_an_imported_static_from_its_declaration_records",
+        source: "from pub::prices import money\n\ndef main() -> int:\n    return money.LIMIT\n",
+        check: |_source, read| {
+            let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+            let named = format!("/{}", content_name(b"money::LIMIT"));
+            assert!(
+                read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+                "checking reads `LIMIT`'s signature by name; it read {read:?}"
+            );
+            let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+            let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+            assert!(
+                whole.is_empty(),
+                "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+    // A program that imports a function of an installed Loaf's module by name is checked from the function's own
+    // records: it reads `money::price`'s signature by name and never the Loaf's contract metadata.
+    SourceRow {
+        name: "a_program_imports_a_function_by_name_from_its_declaration_records",
+        source: "from pub::prices.money import price\n\ndef main() -> int:\n    return price(1999)\n",
+        check: |_source, read| {
+            let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+            let named = format!("/{}", content_name(b"money::price"));
+            assert!(
+                read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+                "checking reads `price`'s signature by name; it read {read:?}"
+            );
+            let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+            let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+            assert!(
+                whole.is_empty(),
+                "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+    // A program that calls a generic function of an installed Loaf's module, whose type parameters have no bounds and
+    // whose signature otherwise names built-in types only, is checked from the function's own records: it reads
+    // `money::first`'s signature by name and never the Loaf's contract metadata.
+    SourceRow {
+        name: "a_program_checks_an_imported_generic_function_from_its_declaration_records",
+        source: "from pub::prices import money\n\ndef main() -> int:\n    return money.first([1, 2])\n",
+        check: |_source, read| {
+            let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+            let named = format!("/{}", content_name(b"money::first"));
+            assert!(
+                read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+                "checking reads `first`'s signature by name; it read {read:?}"
+            );
+            let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+            let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+            assert!(
+                whole.is_empty(),
+                "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+];

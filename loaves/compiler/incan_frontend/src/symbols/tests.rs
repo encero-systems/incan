@@ -1,5 +1,6 @@
 use super::*;
 use crate::ast::{Span, Spanned, Type};
+use crate::test_rows::{MutRow, run_mut_rows};
 
 /// Builtins that are checker-recognized without a physical root symbol still receive the one registry identity.
 #[test]
@@ -196,206 +197,6 @@ fn test_result_type_helpers() {
     );
 }
 
-#[test]
-fn test_function_type_resolution() {
-    let symbols = SymbolTable::new();
-
-    // The parser desugars Callable[(), int] → Type::Function([], int).
-    // Verify that resolve_type handles the desugared form correctly.
-
-    // () -> int (zero params)
-    let fn_zero = Type::Function(
-        vec![],
-        Box::new(Spanned::new(Type::Simple("int".to_string()), Span::default())),
-    );
-    let ty = resolve_type(&fn_zero, &symbols);
-    assert_eq!(ty, ResolvedType::Function(vec![], Box::new(ResolvedType::Int)));
-
-    // (int) -> int (single param)
-    let fn_single = Type::Function(
-        vec![Spanned::new(Type::Simple("int".to_string()), Span::default())],
-        Box::new(Spanned::new(Type::Simple("int".to_string()), Span::default())),
-    );
-    let ty = resolve_type(&fn_single, &symbols);
-    assert_eq!(
-        ty,
-        ResolvedType::Function(
-            vec![CallableParam::positional(ResolvedType::Int)],
-            Box::new(ResolvedType::Int),
-        )
-    );
-
-    // (int, str) -> bool (multi param)
-    let fn_multi = Type::Function(
-        vec![
-            Spanned::new(Type::Simple("int".to_string()), Span::default()),
-            Spanned::new(Type::Simple("str".to_string()), Span::default()),
-        ],
-        Box::new(Spanned::new(Type::Simple("bool".to_string()), Span::default())),
-    );
-    let ty = resolve_type(&fn_multi, &symbols);
-    assert_eq!(
-        ty,
-        ResolvedType::Function(
-            vec![
-                CallableParam::positional(ResolvedType::Int),
-                CallableParam::positional(ResolvedType::Str),
-            ],
-            Box::new(ResolvedType::Bool),
-        )
-    );
-}
-
-#[test]
-fn resolve_type_preserves_existing_int_float_bool_names() {
-    let symbols = SymbolTable::new();
-
-    assert_eq!(
-        resolve_type(&Type::Simple("int".to_string()), &symbols),
-        ResolvedType::Int
-    );
-    assert_eq!(
-        resolve_type(&Type::Simple("float".to_string()), &symbols),
-        ResolvedType::Float
-    );
-    assert_eq!(
-        resolve_type(&Type::Simple("bool".to_string()), &symbols),
-        ResolvedType::Bool
-    );
-}
-
-#[test]
-fn resolve_type_maps_exact_width_and_alias_numeric_names() {
-    let symbols = SymbolTable::new();
-
-    assert_eq!(
-        resolve_type(&Type::Simple("integer".to_string()), &symbols),
-        ResolvedType::Numeric(NumericTypeId::I32)
-    );
-    assert_eq!(
-        resolve_type(&Type::Simple("byte".to_string()), &symbols),
-        ResolvedType::Numeric(NumericTypeId::U8)
-    );
-    assert_eq!(
-        resolve_type(&Type::Simple("real".to_string()), &symbols),
-        ResolvedType::Numeric(NumericTypeId::F32)
-    );
-}
-
-/// RFC 009: `int` is an alias of `i64`, so every `i64` spelling resolves to the one `int` type.
-#[test]
-fn resolve_type_maps_every_i64_spelling_to_int() {
-    let symbols = SymbolTable::new();
-
-    for spelling in ["i64", "int", "long", "bigint"] {
-        assert_eq!(
-            resolve_type(&Type::Simple(spelling.to_string()), &symbols),
-            ResolvedType::Int,
-            "{spelling}"
-        );
-    }
-}
-
-/// RFC 009: `float` is an alias of `f64`, so every `f64` spelling resolves to the one `float` type.
-#[test]
-fn resolve_type_maps_every_f64_spelling_to_float() {
-    let symbols = SymbolTable::new();
-
-    for spelling in ["f64", "float", "double", "fp64"] {
-        assert_eq!(
-            resolve_type(&Type::Simple(spelling.to_string()), &symbols),
-            ResolvedType::Float,
-            "{spelling}"
-        );
-    }
-}
-
-#[test]
-fn resolve_type_qualified_rust_module_item() {
-    let mut table = SymbolTable::new();
-    table.define(Symbol {
-        name: "proto_type".to_string(),
-        kind: SymbolKind::RustItem(RustItemInfo {
-            crate_name: "substrait".to_string(),
-            path: "substrait::proto::type".to_string(),
-            binding: RustImportBindingKind::FromImport,
-            metadata: None,
-        }),
-        span: Span::default(),
-        scope: 0,
-    });
-    let ty = Type::Qualified(vec!["proto_type".to_string(), "Binary".to_string()]);
-    let r = resolve_type(&ty, &table);
-    assert_eq!(r, ResolvedType::RustPath("substrait::proto::type::Binary".to_string()));
-}
-
-#[test]
-fn resolve_type_canonicalizes_generic_rust_import_and_nested_collection() {
-    let mut table = SymbolTable::new();
-    for (name, path) in [
-        ("RustEnvelope", "rust_shadow::Envelope"),
-        ("RustToken", "rust_shadow::Token"),
-    ] {
-        table.define(Symbol {
-            name: name.to_string(),
-            kind: SymbolKind::RustItem(RustItemInfo {
-                crate_name: "rust_shadow".to_string(),
-                path: path.to_string(),
-                binding: RustImportBindingKind::FromImport,
-                metadata: None,
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-    }
-    let ty = Type::Generic(
-        "RustEnvelope".to_string(),
-        vec![Spanned::new(
-            Type::Generic(
-                "list".to_string(),
-                vec![Spanned::new(Type::Simple("RustToken".to_string()), Span::default())],
-            ),
-            Span::default(),
-        )],
-    );
-
-    assert_eq!(
-        resolve_type(&ty, &table),
-        ResolvedType::RustPath("rust_shadow::Envelope<Vec<rust_shadow::Token>>".to_string())
-    );
-}
-
-#[test]
-fn resolve_type_retains_non_nominal_standard_generic_path() {
-    let mut table = SymbolTable::new();
-    table.define(Symbol {
-        name: "PhantomData".to_string(),
-        kind: SymbolKind::RustItem(RustItemInfo {
-            crate_name: "std".to_string(),
-            path: "std::marker::PhantomData".to_string(),
-            binding: RustImportBindingKind::FromImport,
-            metadata: None,
-        }),
-        span: Span::default(),
-        scope: 0,
-    });
-    table.define(Symbol {
-        name: "Payload".to_string(),
-        kind: SymbolKind::Type(TypeInfo::TypeAlias),
-        span: Span::default(),
-        scope: 0,
-    });
-    let ty = Type::Generic(
-        "PhantomData".to_string(),
-        vec![Spanned::new(Type::Simple("Payload".to_string()), Span::default())],
-    );
-
-    assert_eq!(
-        resolve_type(&ty, &table),
-        ResolvedType::RustPath("std::marker::PhantomData<Payload>".to_string())
-    );
-}
-
 /// Source reflection normalizes aliases recursively while diagnostic descriptors retain their existing spelling.
 #[test]
 fn field_surface_type_name_uses_canonical_incan_collection_spelling() {
@@ -533,3 +334,214 @@ fn resolved_iterator_item_type_uses_canonical_trait_identity_issue950_953() {
     );
     assert_eq!(similarly_named.iterator_item_type(), None);
 }
+
+#[test]
+fn tests_fresh_symbols_cases() {
+    run_mut_rows(TESTS_FRESH_SYMBOLS_CASES, SymbolTable::new);
+}
+
+const TESTS_FRESH_SYMBOLS_CASES: &[MutRow<SymbolTable, String>] = &[
+    MutRow {
+        name: "test_function_type_resolution",
+        check: |symbols| {
+            // The parser desugars Callable[(), int] → Type::Function([], int).
+            // Verify that resolve_type handles the desugared form correctly.
+
+            // () -> int (zero params)
+            let fn_zero = Type::Function(
+                vec![],
+                Box::new(Spanned::new(Type::Simple("int".to_string()), Span::default())),
+            );
+            let ty = resolve_type(&fn_zero, &symbols);
+            assert_eq!(ty, ResolvedType::Function(vec![], Box::new(ResolvedType::Int)));
+
+            // (int) -> int (single param)
+            let fn_single = Type::Function(
+                vec![Spanned::new(Type::Simple("int".to_string()), Span::default())],
+                Box::new(Spanned::new(Type::Simple("int".to_string()), Span::default())),
+            );
+            let ty = resolve_type(&fn_single, &symbols);
+            assert_eq!(
+                ty,
+                ResolvedType::Function(
+                    vec![CallableParam::positional(ResolvedType::Int)],
+                    Box::new(ResolvedType::Int),
+                )
+            );
+
+            // (int, str) -> bool (multi param)
+            let fn_multi = Type::Function(
+                vec![
+                    Spanned::new(Type::Simple("int".to_string()), Span::default()),
+                    Spanned::new(Type::Simple("str".to_string()), Span::default()),
+                ],
+                Box::new(Spanned::new(Type::Simple("bool".to_string()), Span::default())),
+            );
+            let ty = resolve_type(&fn_multi, &symbols);
+            assert_eq!(
+                ty,
+                ResolvedType::Function(
+                    vec![
+                        CallableParam::positional(ResolvedType::Int),
+                        CallableParam::positional(ResolvedType::Str),
+                    ],
+                    Box::new(ResolvedType::Bool),
+                )
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_type_preserves_existing_int_float_bool_names",
+        check: |symbols| {
+            assert_eq!(
+                resolve_type(&Type::Simple("int".to_string()), &symbols),
+                ResolvedType::Int
+            );
+            assert_eq!(
+                resolve_type(&Type::Simple("float".to_string()), &symbols),
+                ResolvedType::Float
+            );
+            assert_eq!(
+                resolve_type(&Type::Simple("bool".to_string()), &symbols),
+                ResolvedType::Bool
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_type_maps_exact_width_and_alias_numeric_names",
+        check: |symbols| {
+            assert_eq!(
+                resolve_type(&Type::Simple("integer".to_string()), &symbols),
+                ResolvedType::Numeric(NumericTypeId::I32)
+            );
+            assert_eq!(
+                resolve_type(&Type::Simple("byte".to_string()), &symbols),
+                ResolvedType::Numeric(NumericTypeId::U8)
+            );
+            assert_eq!(
+                resolve_type(&Type::Simple("real".to_string()), &symbols),
+                ResolvedType::Numeric(NumericTypeId::F32)
+            );
+            Ok(())
+        },
+    },
+    // RFC 009: `int` is an alias of `i64`, so every `i64` spelling resolves to the one `int` type.
+    MutRow {
+        name: "resolve_type_maps_every_i64_spelling_to_int",
+        check: |symbols| {
+            for spelling in ["i64", "int", "long", "bigint"] {
+                assert_eq!(
+                    resolve_type(&Type::Simple(spelling.to_string()), &symbols),
+                    ResolvedType::Int,
+                    "{spelling}"
+                );
+            }
+            Ok(())
+        },
+    },
+    // RFC 009: `float` is an alias of `f64`, so every `f64` spelling resolves to the one `float` type.
+    MutRow {
+        name: "resolve_type_maps_every_f64_spelling_to_float",
+        check: |symbols| {
+            for spelling in ["f64", "float", "double", "fp64"] {
+                assert_eq!(
+                    resolve_type(&Type::Simple(spelling.to_string()), &symbols),
+                    ResolvedType::Float,
+                    "{spelling}"
+                );
+            }
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_type_qualified_rust_module_item",
+        check: |mut table| {
+            table.define(Symbol {
+                name: "proto_type".to_string(),
+                kind: SymbolKind::RustItem(RustItemInfo {
+                    crate_name: "substrait".to_string(),
+                    path: "substrait::proto::type".to_string(),
+                    binding: RustImportBindingKind::FromImport,
+                    metadata: None,
+                }),
+                span: Span::default(),
+                scope: 0,
+            });
+            let ty = Type::Qualified(vec!["proto_type".to_string(), "Binary".to_string()]);
+            let r = resolve_type(&ty, &table);
+            assert_eq!(r, ResolvedType::RustPath("substrait::proto::type::Binary".to_string()));
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_type_canonicalizes_generic_rust_import_and_nested_collection",
+        check: |mut table| {
+            for (name, path) in [
+                ("RustEnvelope", "rust_shadow::Envelope"),
+                ("RustToken", "rust_shadow::Token"),
+            ] {
+                table.define(Symbol {
+                    name: name.to_string(),
+                    kind: SymbolKind::RustItem(RustItemInfo {
+                        crate_name: "rust_shadow".to_string(),
+                        path: path.to_string(),
+                        binding: RustImportBindingKind::FromImport,
+                        metadata: None,
+                    }),
+                    span: Span::default(),
+                    scope: 0,
+                });
+            }
+            let ty = Type::Generic(
+                "RustEnvelope".to_string(),
+                vec![Spanned::new(
+                    Type::Generic(
+                        "list".to_string(),
+                        vec![Spanned::new(Type::Simple("RustToken".to_string()), Span::default())],
+                    ),
+                    Span::default(),
+                )],
+            );
+
+            assert_eq!(
+                resolve_type(&ty, &table),
+                ResolvedType::RustPath("rust_shadow::Envelope<Vec<rust_shadow::Token>>".to_string())
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_type_retains_non_nominal_standard_generic_path",
+        check: |mut table| {
+            table.define(Symbol {
+                name: "PhantomData".to_string(),
+                kind: SymbolKind::RustItem(RustItemInfo {
+                    crate_name: "std".to_string(),
+                    path: "std::marker::PhantomData".to_string(),
+                    binding: RustImportBindingKind::FromImport,
+                    metadata: None,
+                }),
+                span: Span::default(),
+                scope: 0,
+            });
+            table.define(Symbol {
+                name: "Payload".to_string(),
+                kind: SymbolKind::Type(TypeInfo::TypeAlias),
+                span: Span::default(),
+                scope: 0,
+            });
+            let ty = Type::Generic(
+                "PhantomData".to_string(),
+                vec![Spanned::new(Type::Simple("Payload".to_string()), Span::default())],
+            );
+
+            assert_eq!(
+                resolve_type(&ty, &table),
+                ResolvedType::RustPath("std::marker::PhantomData<Payload>".to_string())
+            );
+            Ok(())
+        },
+    },
+];
