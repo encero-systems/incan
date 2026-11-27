@@ -133,6 +133,9 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
             return Err(
                 "only fixtures with `cli-commands:` declare `environment:`, `cli-concurrent:`, `expect-trace-contains:`, `expect-trace-at-most-once:` or `trace-invariant:`",
             )
+    # A new project directory per run serves cases that run their own commands in it: graph and CLI cases.
+    if header.declares("fresh-project") and fixture.family != "graph" and not header.declares("cli-commands"):
+        return Err("only graph fixtures and fixtures with `cli-commands:` declare `fresh-project:`")
     if header.declares("check-edits"):
         check_edits(fixture, header)?
     # 2. The header declares at least one expectation, and only ones its family compares.

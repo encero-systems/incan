@@ -23,7 +23,7 @@ from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from compare import compare
 from families import AdmittedProgram, FAMILIES, command, graph_beside, read_program, work_order
-from fixture import Fixture, discover_family, materialize
+from fixture import Fixture, begin_fresh_run, discover_family, materialize
 from run import Outcome, clear_trace, invoke, set_case_jobs, set_timeout, trace_file, unit_notes
 from formatting import compare_format
 from graph import compare_graph
@@ -246,6 +246,13 @@ def run_all(settings: Settings, scratch: Path) -> bool:
     3. The total, the units Oven compiled and reused, and the families that could not be read are reported.
     """
     families = [family for family in FAMILIES if selected_family(family, settings.selectors)]
+    # This invocation's number gives each `fresh-project:` case a new directory; family workers read the same one.
+    if not settings.family_worker:
+        match begin_fresh_run(scratch):
+            Err(reason) =>
+                println(f"cannot number this run in {scratch.0}: {reason}")
+                return false
+            Ok(_) => pass
     if not settings.family_worker and not settings.serial_families and settings.jobs > 1:
         if len(families) > 1 or "graph" in families:
             return run_family_workers(settings, scratch, families)

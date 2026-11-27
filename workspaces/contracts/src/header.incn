@@ -32,6 +32,7 @@ const DIRECTIVES: FrozenList[str] = [
     "pending",
     "hosts",
     "trace-invariant",
+    "fresh-project",
 ]
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
@@ -102,6 +103,9 @@ pub model Header:
     pub accepted: bool
     # Whether every `cli-commands:` invocation must print the same bytes with tracing on (`# trace-invariant:`).
     pub trace_invariant: bool = false
+    # Whether the case runs in a new project directory on every runner invocation (`# fresh-project:`), for a case
+    # whose claims hold only for a project with no earlier outputs, editor views or graph publications.
+    pub fresh_project: bool = false
     # The hosts the case runs on (`# hosts:`); empty for every host. Another host reports the case skipped.
     pub hosts: list[str] = []
     # Why the fixture does not hold yet (`# pending:`).
@@ -127,6 +131,8 @@ pub model Header:
             return self.accepted
         if key == "trace-invariant":
             return self.trace_invariant
+        if key == "fresh-project":
+            return self.fresh_project
         return false
 
     pub def expected_exit(self) -> int:
@@ -247,7 +253,10 @@ def directive_into(header: Header, number: int, key: str, value: str) -> Result[
 
 
 def scalar_directive(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
-    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted`, `trace-invariant`, `hosts` and `pending`."""
+    """
+    Admit `expect-exit`, `expect-diagnostic`, `expect-accepted`, `trace-invariant`, `fresh-project`, `hosts` and
+    `pending`.
+    """
     mut next = header
     if key == "expect-exit":
         if next.declares(key):
@@ -267,6 +276,11 @@ def scalar_directive(header: Header, number: int, key: str, value: str) -> Resul
         if value != "" or next.trace_invariant:
             return Err(f"line {number}: `trace-invariant:` takes no value and is declared once")
         next.trace_invariant = true
+        return Ok(next)
+    if key == "fresh-project":
+        if value != "" or next.fresh_project:
+            return Err(f"line {number}: `fresh-project:` takes no value and is declared once")
+        next.fresh_project = true
         return Ok(next)
     if key == "hosts":
         return hosts_directive(next, number, value)

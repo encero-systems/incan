@@ -5,7 +5,7 @@
 #   error[INCAN-T0134]
 #   Loaf `words`
 # expect-exit: 1
-
+# fresh-project:
 from provider import helper
 
 

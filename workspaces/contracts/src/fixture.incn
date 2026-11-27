@@ -11,9 +11,13 @@ nothing is what the families exist to prevent.
 from std.fs import Path
 from std.io import IoError
 from timing import work, work_clock
-from files import read_bytes
+from files import make_directory, read, read_bytes, write
 from fixture_input import FixtureInput
 
+# The file in a scratch directory that numbers its runner invocations, so a `fresh-project:` case gets a new project
+# directory in each one. The runner writes it before any case is prepared; its family workers share the scratch and
+# read the same number.
+const FRESH_RUN_FILE: str = ".fresh-project-run"
 # The manifest every single-file and module fixture runs under.
 pub const MINIMAL_MANIFEST: str = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
 # The manifest a testing fixture runs under: a project with no program.
@@ -40,8 +44,24 @@ pub model Fixture:
         return f"{self.family}/{self.area}/{self.name}"
 
     pub def project_path(self, scratch: Path) -> Path:
-        """The stable working directory and Oven output owner for this case."""
-        return scratch.joinpath(f"{self.family}-{self.area}-{self.name}")
+        """
+        The working directory and Oven output owner for this case. It is stable across runs, so Oven reuses what it
+        built, except for a `fresh-project:` case, whose directory is new in each runner invocation.
+        """
+        stable = scratch.joinpath(self.stable_name())
+        if not self.fresh_project():
+            return stable
+        return scratch.joinpath(f"{self.stable_name()}-run-{fresh_run(scratch)}")
+
+    pub def stable_name(self) -> str:
+        """The case's directory name in a scratch directory: `<family>-<area>-<name>`."""
+        return f"{self.family}-{self.area}-{self.name}"
+
+    pub def fresh_project(self) -> bool:
+        """Whether the case's header declares `fresh-project:`; admission refuses an unreadable header separately."""
+        match self.input.program(self.program):
+            Ok(program) => return program.header.fresh_project
+            Err(_) => return false
 
 
 pub def discover_family(root: Path, family: str) -> Result[list[Fixture], str]:
@@ -126,11 +146,55 @@ def check_name(entry: Path, name: str) -> Result[None, str]:
 
 
 pub def materialize(fixture: Fixture, scratch: Path) -> Result[Path, str]:
-    """Synchronize a case's files while retaining the stable project and Oven's prepared outputs."""
+    """
+    Synchronize a case's files while retaining the stable project and Oven's prepared outputs. A `fresh-project:`
+    case is written into this run's new directory, and the directories of its earlier runs are removed.
+    """
     clock = work_clock()
-    result = materialize_files(fixture.project_path(scratch), fixture_files(fixture)?)
+    project = fixture.project_path(scratch)
+    if fixture.fresh_project():
+        remove_earlier_runs(fixture, scratch, project)?
+    result = materialize_files(project, fixture_files(fixture)?)
     work("fixture_materialize", fixture.case_name(), clock)
     return result
+
+
+pub def begin_fresh_run(scratch: Path) -> Result[None, str]:
+    """Number a new runner invocation in `scratch`, before any case is prepared, for its `fresh-project:` cases."""
+    make_directory(scratch)?
+    previous = fresh_run(scratch)
+    mut next = 1
+    if previous != "0":
+        next = int(previous) + 1
+    return write(scratch.joinpath(FRESH_RUN_FILE), f"{next}\n")
+
+
+pub def fresh_run(scratch: Path) -> str:
+    """The number of this runner invocation in `scratch`, or `0` when none was recorded or the record is unreadable."""
+    path = scratch.joinpath(FRESH_RUN_FILE)
+    if not path.is_file():
+        return "0"
+    match read(path):
+        Ok(text) =>
+            number = text.strip()
+            if number == "":
+                return "0"
+            for character in number:
+                if character not in "0123456789":
+                    return "0"
+            return number
+        Err(_) => return "0"
+
+
+def remove_earlier_runs(fixture: Fixture, scratch: Path, project: Path) -> Result[None, str]:
+    """Remove the case's directories from earlier runner invocations; the current one is kept."""
+    if not scratch.is_dir():
+        return Ok(None)
+    prefix = f"{fixture.stable_name()}-run-"
+    for entry in children(scratch)?:
+        if entry.name().startswith(prefix) and entry.name() != project.name() and entry.is_dir():
+            entry.remove_tree().map_err((error) => f"{entry.0}: {error.message()}")?
+    return Ok(None)
 
 
 pub def materialize_files(project: Path, desired: Dict[str, bytes]) -> Result[Path, str]:

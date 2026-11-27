@@ -237,7 +237,7 @@ def check_authored_relationships(incan: str, project: Path, module_id: str) -> R
         ("refs", "helper", "reference \"provider::helper\" [author=workspace] \"src/main.incn:29\""),
         ("callers", "helper", "call \"main\" [author=workspace] \"src/main.incn:29\""),
         ("callees", "main", "call \"provider::helper\" [author=workspace] \"src/main.incn:29\""),
-        ("imports", module_id, "import \"provider::helper\" [author=workspace] \"src/main.incn:22\""),
+        ("imports", module_id, "import \"provider::helper\" [author=workspace] \"src/main.incn:23\""),
     ]
     mut calls = [request(1, "server/discover", JsonValue.object({}))]
     for index in range(len(queries)):

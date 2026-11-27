@@ -10,6 +10,7 @@
 #   unit programs_share_a_library_in_records_project_library library:
 # expect-trace-at-most-once:
 #   unit programs_share_a_library_in_records_project_library library: compiled
+# fresh-project:
 from values import answer
 
 
