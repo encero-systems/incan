@@ -1,0 +1,12 @@
+{
+  "name": "C79-r1",
+  "source": "de46ba06aa271ae514879f3a91ff1d4b7c3273d5",
+  "archive_sha256": "b0e5edcd5f013c9ab25ada3c89814f71953f49aec50f93945a42e77fdfe638d6",
+  "launcher_sha256": "acf83054f576b7b4030c03b47a4de3bdd12a177ca018cf07c481fea55845323a",
+  "lsp_sha256": "c40ddc7c9cba7b5dafdeb2998afccf97267a17e0d264d090082aa466be477217",
+  "manifest_sha256": "d1b21dd7228e9acf2fc0910dfb298b167ea36833bf7a44419ef83d9465b6f9c3",
+  "oracle_sha256": "7a592becaad66a7d967f28996457d96b03bad145e8686ab6fb3eb690609e3ef8",
+  "pass_baseline_sha256": "769e03004e2980583f8ea91157a2fe5f4b415ceb89323bccfa9e4caac4031bb6",
+  "fixtures_tree": "009cd98e4bdc334eb29f597656b05f01408d02c8",
+  "pass_baseline_blob": "251e0a0b5b967955b33849928a3116c31f44659d"
+}
