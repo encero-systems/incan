@@ -69,6 +69,7 @@ pub def test_installation_page_refuses_unbound_driver_capabilities() -> Result[N
     assert admitted.toolchain.select().supports_plan_module_selection_digest
     assert admitted.toolchain.select().supports_library_checked_local
     assert not confirmed.toolchain.select().supports_library_checked_local
+    verify_provider_count_capability(wire, driver, digest, observation)?
     cases = [
         ("another driver SHA", Document(
             path=driver,
@@ -130,6 +131,27 @@ pub def test_installation_page_refuses_unbound_driver_capabilities() -> Result[N
     at_registry = Document(path=driver, stamp=observation, value=driver_capability(digest, DRIVER_CAPABILITY_SCHEMA))
     aliased = driver_capability_page(driver, digest, observation, [at_registry], driver)
     return expect_capability_refusal(wire, aliased, "a registry-aliased driver document")
+
+
+def verify_provider_count_capability(wire: Path, driver: str, digest: str, observation: str) -> Result[None, str]:
+    """Admit the original provider compile tally through the existing installation page framing."""
+    mut capability = library_local_capability(digest)
+    capability.set("schema", JsonValue.string("incan.driver-capabilities/3")).map_err((error) => error.message())?
+    capability.set("provider_body_count_profile", JsonValue.string("incan.checked-body-counts/2")).map_err(
+        (error) => error.message(),
+    )?
+    proof = Document(path=driver, stamp=observation, value=capability)
+    page = driver_capability_page(driver, digest, observation, [proof], FIXTURE_REGISTRY)
+    encoded = encode_installation(page)?
+    selected = decode_page_at(wire, encoded)?
+    assert selected.toolchain.select().supports_library_checked_local
+    assert encode_installation(selected)? == encoded
+    capability.set("provider_body_count_profile", JsonValue.string("incan.checked-body-counts/1")).map_err(
+        (error) => error.message(),
+    )?
+    check_only = Document(path=driver, stamp=observation, value=capability)
+    invalid = driver_capability_page(driver, digest, observation, [check_only], FIXTURE_REGISTRY)
+    return expect_capability_refusal(wire, invalid, "a check-only body count profile")
 
 
 pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
