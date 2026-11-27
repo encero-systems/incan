@@ -1,0 +1,32 @@
+"""Check that folded compiler test setup returns errors to its named table rows."""
+
+from std.regex import Regex
+from check_support import read, repository_root, source_lines, write_stderr
+
+
+def main() -> Result[None, str]:
+    """Report direct panic helpers in the audited fixture sources."""
+    root = repository_root()?
+    direct_call = Regex("^\\s*[^/\\s].*(\\.unwrap\\(\\)|\\.expect\\(\")").map_err((error) => error.message())?
+    paths = [
+        "loaves/compiler/incan_driver/src/rust_abi.rs",
+        "loaves/compiler/incan_frontend/src/loaf_index/compiler_record_set/tests.rs",
+        "loaves/compiler/incan_frontend/src/loaf_index/compiler_record_set/tests/type_scopes.rs",
+        "loaves/compiler/incan_frontend/src/loaf_index/compiler_record_set/tests/typechecker_reads.rs",
+        "loaves/compiler/incan_frontend/src/module/tests/import_resolution.rs",
+        "loaves/compiler/incan_frontend/src/typechecker/collect/loaf_imports/lazy_layout_tests.rs",
+        "loaves/compiler/incan_frontend/src/typechecker/ownership_contracts/tests/invocations_and_accesses.rs",
+    ]
+    mut sites: list[str] = []
+    for path in paths:
+        lines = source_lines(read(root.joinpath(path))?)?
+        mut line_number = 0
+        for line in lines:
+            line_number += 1
+            if direct_call.is_match(line):
+                sites.append(f"{path}:{line_number}: {line.strip()}")
+    if len(sites) != 0:
+        write_stderr("\n".join(sites) + "\n")
+        return Err(f"{len(sites)} direct Rust panic-helper lines in folded compiler tests")
+    println("0 direct Rust panic-helper lines in folded compiler tests")
+    return Ok(None)

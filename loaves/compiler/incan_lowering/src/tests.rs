@@ -27,3 +27,4 @@ mod record_positions;
 mod rust_runtime_calls;
 mod scalar_reads;
 mod static_field_reads;
+pub(crate) mod test_rows;
