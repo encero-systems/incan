@@ -424,7 +424,9 @@ fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf
 fn copy_object(source: &Path, target: &Path) -> io::Result<()> {
     let mut input = File::open(source)?;
     let mut output = OpenOptions::new().write(true).create_new(true).open(target)?;
-    io::copy(&mut input, &mut output)?;
+    let _copied = io::copy(&mut input, &mut output)?;
+    #[cfg(test)]
+    tests::record_link_copy(_copied);
     // SAFETY: `output` is open for the whole call, so its descriptor is valid.
     if unsafe { libc::fsync(output.as_raw_fd()) } != 0 {
         return Err(io::Error::last_os_error());
@@ -509,16 +511,81 @@ pub(crate) fn file_digest(path: &Path) -> io::Result<String> {
             break;
         }
         hash.update(&buffer[..length]);
+        #[cfg(test)]
+        tests::record_link_hash(path, length as u64);
     }
     Ok(hex::encode(hash.finalize()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LAUNCHER, identified_digest, link_input_digest, linker, stable_input};
+    use super::{LAUNCHER, linker, stable_input, verified_content_object};
+    use std::cell::Cell;
+    use std::ffi::OsStr;
     use std::fs;
     use std::io;
+    use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
+    use std::sync::Barrier;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct LinkWork {
+        read: u64,
+        source_hash: u64,
+        temporary_hash: u64,
+        final_hash: u64,
+        staged: u64,
+    }
+
+    impl LinkWork {
+        const ZERO: Self = Self {
+            read: 0,
+            source_hash: 0,
+            temporary_hash: 0,
+            final_hash: 0,
+            staged: 0,
+        };
+
+        /// Total bytes hashed regardless of where verification happens in the link.
+        fn hashed(self) -> u64 {
+            self.source_hash + self.temporary_hash + self.final_hash
+        }
+    }
+
+    thread_local! {
+        static LINK_WORK: Cell<LinkWork> = const { Cell::new(LinkWork::ZERO) };
+    }
+
+    /// Observe bytes read from the source and written to private stage by the production copy.
+    pub(super) fn record_link_copy(bytes: u64) {
+        LINK_WORK.with(|work| {
+            let mut current = work.get();
+            current.read += bytes;
+            current.staged += bytes;
+            work.set(current);
+        });
+    }
+
+    /// Attribute production digest reads to the original source, private temporary, or settled target.
+    pub(super) fn record_link_hash(path: &Path, bytes: u64) {
+        LINK_WORK.with(|work| {
+            let mut current = work.get();
+            current.read += bytes;
+            if path.extension() == Some(OsStr::new("tmp")) {
+                current.temporary_hash += bytes;
+            } else if path.parent().and_then(Path::parent).and_then(Path::file_name) == Some(OsStr::new("sha256")) {
+                current.final_hash += bytes;
+            } else {
+                current.source_hash += bytes;
+            }
+            work.set(current);
+        });
+    }
+
+    /// Return the bytes processed since the previous observation.
+    fn take_link_work() -> LinkWork {
+        LINK_WORK.with(|work| work.replace(LinkWork::ZERO))
+    }
 
     /// A fresh directory for one test.
     fn scratch(name: &str) -> io::Result<PathBuf> {
@@ -582,26 +649,86 @@ mod tests {
         fs::remove_dir_all(root)
     }
 
-    /// A content name left over wrong bytes is replaced by a verified copy, and an intact one is reused as it is.
+    /// Reuse a published target without repeated payload work and replace it whole when its settled bytes drift.
     #[test]
     fn a_damaged_content_name_is_replaced_whole() -> io::Result<()> {
         let root = scratch("damaged")?;
         let store = root.join("store");
         let object = root.join("unit.o");
-        fs::write(&object, b"object bytes")?;
+        let bytes = b"object bytes";
+        let length = bytes.len() as u64;
+        fs::write(&object, bytes)?;
+        let _ = take_link_work();
         let published = stable_input(&store, &object, "o")?;
-        assert_eq!(fs::read(&published)?, b"object bytes");
-        let mut permissions = fs::metadata(&published)?.permissions();
+        let publication = take_link_work();
+        assert!(verified_content_object(&store, &published));
+        assert_eq!(stable_input(&store, &object, "o")?, published);
+        let reuse = take_link_work();
+        assert_eq!(fs::read(&published)?, bytes);
+
+        // The old witness stays on disk while the same inode's contents change under its original size and mtime.
+        let original = fs::metadata(&published)?;
+        let mut permissions = original.permissions();
         #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
         fs::set_permissions(&published, permissions)?;
-        fs::write(&published, b"")?;
+        fs::write(&published, b"Object bytes")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&published)?
+            .set_times(fs::FileTimes::new().set_modified(original.modified()?))?;
+        fs::set_permissions(&published, original.permissions())?;
+        let stale = fs::metadata(&published)?;
+        assert_eq!(stale.ino(), original.ino());
+        assert_eq!(stale.len(), original.len());
+        assert_eq!(stale.modified()?, original.modified()?);
+        assert!(!verified_content_object(&store, &published));
+        let refusal = take_link_work();
+        assert_eq!(refusal.final_hash, length);
+
+        // Repair publishes a different inode, and concurrent initial claimants agree on one verified target.
         let repaired = stable_input(&store, &object, "o")?;
+        let _ = take_link_work();
         assert_eq!(repaired, published);
-        assert_eq!(fs::read(&repaired)?, b"object bytes");
-        let digest = identified_digest(&store, &repaired, link_input_digest)?;
-        assert!(repaired.to_string_lossy().contains(&digest));
-        assert_eq!(stable_input(&store, &object, "o")?, repaired);
-        fs::remove_dir_all(root)
+        assert_ne!(fs::metadata(&repaired)?.ino(), stale.ino());
+        assert_eq!(fs::read(&repaired)?, bytes);
+        assert!(verified_content_object(&store, &repaired));
+        let repaired_reuse = take_link_work();
+        verify_concurrent_publication(&root, &store)?;
+        fs::remove_dir_all(root)?;
+
+        assert!(
+            publication.hashed() + reuse.hashed() <= length * 2
+                && publication.read + reuse.read <= length * 3
+                && publication.staged + reuse.staged == length
+                && reuse == LinkWork::ZERO
+                && repaired_reuse == LinkWork::ZERO,
+            "link work persisted across publication and reuse: {publication:?}, {reuse:?}, repair reuse {repaired_reuse:?}"
+        );
+        Ok(())
+    }
+
+    /// Race two ordinary claimants to the same content while each owns its own staging work.
+    fn verify_concurrent_publication(root: &Path, store: &Path) -> io::Result<()> {
+        let source = root.join("parallel.o");
+        let bytes = b"parallel object";
+        fs::write(&source, bytes)?;
+        let barrier = Barrier::new(2);
+        let (first, second) = std::thread::scope(|scope| -> io::Result<_> {
+            let contender = scope.spawn(|| {
+                barrier.wait();
+                stable_input(store, &source, "o")
+            });
+            barrier.wait();
+            let first = stable_input(store, &source, "o");
+            let second = contender
+                .join()
+                .map_err(|_| io::Error::other("concurrent claimant panicked"))?;
+            Ok((first?, second?))
+        })?;
+        assert_eq!(first, second);
+        assert_eq!(fs::read(&first)?, bytes);
+        assert!(verified_content_object(store, &first));
+        Ok(())
     }
 }
