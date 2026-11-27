@@ -4,7 +4,7 @@ from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.toml import TomlValue
 from files import parse_json
-from graph_cache import GraphUnit, read_graph, read_origins_of
+from graph_cache import GraphUnit, read_origins_of
 from graph_dependencies import unit_natives
 from graph_incan import inspect_incan
 from graph_queries import text
@@ -48,7 +48,7 @@ pub def standard_graphs(
     while len(queue) > 0:
         current = queue.pop()
         if current.path.0 not in origins:
-            origins[current.path.0] = read_graph(current, toolchain, "origins")?.split("\n")
+            origins[current.path.0] = current.read_graph(toolchain, "origins")?.split("\n")
         for line in origins[current.path.0]:
             if line == "":
                 continue

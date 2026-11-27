@@ -210,7 +210,7 @@ def observe_editor(
         return Err("LSP lost a checked dependency definition while its graph was stale")
     # 3. An edited buffer invalidates the old hierarchy item.
     revised = f"\n{source}"
-    change_document(peer, uri, 2, revised)?
+    peer.change_document(uri, 2, revised)?
     peer.diagnostics(uri, 2)?
     observed.append(matching_mirrors(root, previous, relative, revised)?)
     stale = peer.request(8, "callHierarchy/incomingCalls", JsonValue.object({"item": prepared[0]}))?
@@ -218,10 +218,10 @@ def observe_editor(
         return Err("LSP reused a hierarchy item from an earlier live snapshot")
     mut invalid = revised + f"\n# Overlay for {project.0}\n"
     invalid += "def overlay_wrong_type() -> int:\n    return \"wrong\"\n"
-    change_document(peer, uri, 3, invalid)?
+    peer.change_document(uri, 3, invalid)?
     check_live_type_error(peer, uri, invalid, 3, "return \"wrong\"")?
     observed.append(matching_mirrors(root, previous, relative, invalid)?)
-    change_document(peer, uri, 4, revised)?
+    peer.change_document(uri, 4, revised)?
     peer.diagnostics(uri, 4)?
     observed.append(matching_mirrors(root, previous, relative, revised)?)
     check_open_provider(peer, uri, revised, provider_uri, provider_path, provider_source)?
@@ -248,13 +248,6 @@ def check_typed_hover(mut peer: Peer, uri: str, source: str) -> Result[None, str
     return Ok(None)
 
 
-def change_document(mut peer: Peer, uri: str, version: int, source: str) -> Result[None, str]:
-    """Send the next full-sync buffer under the session's actual URI and version."""
-    document = JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(version)})
-    changes = JsonValue.array([JsonValue.object({"text": JsonValue.string(source)})])
-    return peer.notify("textDocument/didChange", JsonValue.object({"textDocument": document, "contentChanges": changes}))
-
-
 def check_open_provider(
     mut peer: Peer,
     uri: str,
@@ -266,12 +259,12 @@ def check_open_provider(
     """Check the same main buffer against the unsaved provider, then against its unchanged disk source."""
     provider = provider_source.replace("-> int:", "-> str:").replace("return 7", "return \"seven\"")
     main = source + "\ndef overlay_provider_type() -> int:\n    return helper()\n"
-    change_document(peer, provider_uri, 2, provider)?
+    peer.change_document(provider_uri, 2, provider)?
     peer.diagnostics(provider_uri, 2)?
-    change_document(peer, uri, 5, main)?
+    peer.change_document(uri, 5, main)?
     check_live_type_error(peer, uri, main, 5, "return helper()")?
     broken = provider_source.replace("return 7", "return (")
-    change_document(peer, provider_uri, 3, broken)?
+    peer.change_document(provider_uri, 3, broken)?
     mut provider_failed = false
     for item in peer.diagnostic_items(provider_uri, Some(3))?:
         if required(item, "severity")?.as_int() == Some(1):
@@ -279,7 +272,7 @@ def check_open_provider(
             break
     if not provider_failed:
         return Err("the open provider's syntax error was lost")
-    change_document(peer, uri, 6, main)?
+    peer.change_document(uri, 6, main)?
     original_path = provider_path.resolve().map_err((error) => error.message())?
     mut summarized = false
     for diagnostic in peer.diagnostic_items(uri, Some(6))?:
@@ -288,8 +281,8 @@ def check_open_provider(
             summarized = true
     if not summarized:
         return Err("the importer did not report the open provider's failure")
-    close_document(peer, provider_uri)?
-    change_document(peer, uri, 7, main)?
+    peer.close_document(provider_uri)?
+    peer.change_document(uri, 7, main)?
     peer.diagnostics(uri, 7)?
     if read(provider_path)? != provider_source:
         return Err("the LSP overlay changed the authored provider")
@@ -311,7 +304,7 @@ def check_independent_document(mut peer: Peer, project: Path) -> Result[None, st
     peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": document}))?
     check_live_type_error(peer, uri, buffer, 1, "return \"wrong\"")?
     structured = check_structured_diagnostics(peer, uri)
-    close_document(peer, uri)?
+    peer.close_document(uri)?
     if read(path)? != disk:
         return Err("checking the independent document rewrote its authored source")
     return structured
@@ -320,10 +313,10 @@ def check_independent_document(mut peer: Peer, project: Path) -> Result[None, st
 def check_structured_diagnostics(mut peer: Peer, uri: str) -> Result[None, str]:
     """Check one diagnostic after an astral character and an ownership diagnostic with related source ranges."""
     utf16_source = "def independent() -> None:\n    println(\"🧭\" + overlay_missing)\n"
-    change_document(peer, uri, 2, utf16_source)?
+    peer.change_document(uri, 2, utf16_source)?
     unicode_items = peer.diagnostic_items(uri, Some(2))?
     ownership_source = ("def independent() -> None:\n" + "    mut xs = [1, 2, 3]\n" + "    it = xs.iter()\n" + "    xs = [4, 5, 6]\n" + "    println(it.collect())\n")
-    change_document(peer, uri, 3, ownership_source)?
+    peer.change_document(uri, 3, ownership_source)?
     ownership_items = peer.diagnostic_items(uri, Some(3))?
     check_related_iterator(ownership_items, uri, ownership_source)?
     for item in unicode_items:
@@ -399,17 +392,6 @@ def editor_range_matches(range: JsonValue, line: int, first: int, last: int) -> 
         and required(start, "character")?.as_int() == Some(first)
         and required(end, "character")?.as_int() == Some(last)
     )
-
-
-def close_document(mut peer: Peer, uri: str) -> Result[None, str]:
-    """Wait for didClose so the following requests cannot consult the closed buffer."""
-    peer.notify(
-        "textDocument/didClose",
-        JsonValue.object({"textDocument": JsonValue.object({"uri": JsonValue.string(uri)})}),
-    )?
-    if len(peer.diagnostic_items(uri, None)?) != 0:
-        return Err("closing a document did not clear its diagnostics")
-    return Ok(None)
 
 
 def check_live_type_error(mut peer: Peer, uri: str, source: str, version: int, statement: str) -> Result[None, str]:

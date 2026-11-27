@@ -3,7 +3,6 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
-from crate.primitives.crumb.metadata_read import read_text
 from crate.primitives.crumb.scalar_cells import float_cell, valid_integer_width
 from crate.primitives.crumb.types import ScalarKind
 from crate.primitives.crumb.values import IntegerValue, Value
@@ -36,7 +35,7 @@ pub def scalar(kind: ScalarKind, view: MappedView, origin: int, mut budget: Budg
             if flag > 1:
                 return Err(failure(BinaryFailure.InvalidCell, origin))
             result = Value.Boolean(flag == 1)
-        ScalarKind.String => result = Value.Text(read_text(cursor, budget)?)
+        ScalarKind.String => result = Value.Text(cursor.text(budget)?)
         ScalarKind.Binary =>
             data = cursor.frame(budget)?
             result = Value.Binary(copied(data, origin, budget)?)
@@ -146,7 +145,7 @@ pub def typed_boolean(view: MappedView, origin: int, mut budget: Budget) -> Resu
 pub def typed_text(view: MappedView, origin: int, mut budget: Budget) -> Result[str, BinaryError]:
     """Decode one canonical UTF-8 string cell directly into its typed value."""
     mut cursor = EncodingCursor.create(view, origin)?
-    result = read_text(cursor, budget)?
+    result = cursor.text(budget)?
     if cursor.remaining() != 0:
         return Err(failure(BinaryFailure.InvalidCell, cursor.absolute()))
     return Ok(result)

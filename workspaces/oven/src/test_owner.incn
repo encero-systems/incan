@@ -10,7 +10,7 @@ from rust::std::string import String as RustString
 from std.json import JsonValue
 from pub::incan_platform.ipc import Connection, listen
 from files import read, remove, write
-from owner_endpoint import Endpoint, attach, bindable, endpoint_for, greeted, socket_prefix, timeout_for
+from owner_endpoint import Endpoint, bindable, endpoint_for, greeted, socket_prefix, timeout_for
 from compiler_worker import slot_endpoint
 from owner_protocol import Reply, Request
 from owner_state import Owner, unchanged, watch
@@ -69,7 +69,7 @@ pub def test_startup_is_arbitrated_and_stale_state_recovers() -> Result[None, st
     """No owner is none; a stale socket is removed; a file in its place is kept; one starter holds the lock."""
     scratch = scratch_directory()?
     endpoint = endpoint_in(scratch.path())
-    assert absent(attach(endpoint))
+    assert absent(endpoint.attach())
     check_stale_socket_is_removed(endpoint)?
     check_foreign_file_is_kept(endpoint)?
     check_one_starter_holds_the_lock(endpoint)?
@@ -96,7 +96,7 @@ def check_stale_socket_is_removed(endpoint: Endpoint) -> Result[None, str]:
     """A socket nobody listens at is no owner, and attaching removes it."""
     leave_stale(endpoint.socket)?
     assert Path(endpoint.socket).exists()
-    assert absent(attach(endpoint))
+    assert absent(endpoint.attach())
     assert not Path(endpoint.socket).exists()
     return Ok(None)
 
@@ -104,12 +104,12 @@ def check_stale_socket_is_removed(endpoint: Endpoint) -> Result[None, str]:
 def check_foreign_file_is_kept(endpoint: Endpoint) -> Result[None, str]:
     """An ordinary file where the socket belongs is refused and left alone; a live listener is an owner."""
     write(Path(endpoint.socket), "not a socket")?
-    assert refused_attach(attach(endpoint))
+    assert refused_attach(endpoint.attach())
     assert read(Path(endpoint.socket))? == "not a socket"
     remove(Path(endpoint.socket))?
     # The listener stays up until this function returns, so the attach below finds a live owner.
     mut listener = listen(endpoint.socket, true)?
-    assert not absent(attach(endpoint))
+    assert not absent(endpoint.attach())
     return Ok(None)
 
 
@@ -205,7 +205,7 @@ pub def test_a_deep_home_still_has_a_bindable_endpoint() -> Result[None, str]:
         mailbox=deep.joinpath("o.trace").0,
     )
     mut listener = listen(endpoint.socket, true)?
-    assert not absent(attach(endpoint))
+    assert not absent(endpoint.attach())
     remove(Path(endpoint.socket))?
     hello_through_parent(scratch.path())?
     return Ok(None)

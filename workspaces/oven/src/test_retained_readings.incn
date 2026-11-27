@@ -5,7 +5,7 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
 from home_paths import home
-from retained_reading_records import DESUGARER, ReadingKind, decode_reading, encode_reading
+from retained_reading_records import DESUGARER, ReadingKind
 from retained_readings import recall, retain_content
 from scratch import scratch_directory
 
@@ -14,8 +14,8 @@ pub def test_each_retained_family_keeps_its_exact_value_and_generation() -> Resu
     """The same string in different families has a different nominal contract. Worker field absence survives."""
     for kind in [ReadingKind.Digest, ReadingKind.SearchPath, ReadingKind.RustProbe, ReadingKind.CrateMetadata]:
         round_trip(kind, JsonValue.string("first\nsecond\t☃"))?
-    scalar = encode_reading(ReadingKind.Digest, "file", "selector", "stamp", JsonValue.string("abc"))?
-    assert decode_reading(ReadingKind.SearchPath, scalar, "file", "selector", "stamp").is_err()
+    scalar = ReadingKind.Digest.encode("file", "selector", "stamp", JsonValue.string("abc"))?
+    assert ReadingKind.SearchPath.decode(scalar, "file", "selector", "stamp").is_err()
     lock = JsonValue.object({"manifest": JsonValue.string("/project/loaf.toml"), "digest": JsonValue.string("sha256:abc")})
     round_trip(ReadingKind.ProjectLock, lock)?
     for source in ["{}", "{\"artifact_kind\":\"NativeWorker\"}",
@@ -28,20 +28,20 @@ pub def test_each_retained_family_keeps_its_exact_value_and_generation() -> Resu
     future = JsonValue.object({"digest": JsonValue.string("future"), "fields": JsonValue.object({
         DESUGARER: JsonValue.object({"new_field": JsonValue.string("preserve")}),
     })})
-    assert encode_reading(ReadingKind.Vocabulary, "file", "selector", "stamp", future).is_err()
+    assert ReadingKind.Vocabulary.encode("file", "selector", "stamp", future).is_err()
     return Ok(None)
 
 
 def round_trip(kind: ReadingKind, value: JsonValue) -> Result[None, str]:
-    encoded = encode_reading(kind, "file", "selector", "stamp", value)?
+    encoded = kind.encode("file", "selector", "stamp", value)?
     assert encoded[:4] == b"CRMB"
-    match decode_reading(kind, encoded, "file", "selector", "stamp")?:
+    match kind.decode(encoded, "file", "selector", "stamp")?:
         None => return Err("missing exact typed reading")
         Some(decoded) =>
             assert decoded.to_json().map_err((error) => error.message())? == value.to_json().map_err((error) => error.message())?
-    assert decode_reading(kind, encoded, "different", "selector", "stamp")? is None
-    assert decode_reading(kind, encoded, "file", "changed", "stamp")? is None
-    assert decode_reading(kind, encoded, "file", "selector", "new")? is None
+    assert kind.decode(encoded, "different", "selector", "stamp")? is None
+    assert kind.decode(encoded, "file", "changed", "stamp")? is None
+    assert kind.decode(encoded, "file", "selector", "new")? is None
     return Ok(None)
 
 
