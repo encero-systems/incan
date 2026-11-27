@@ -3,13 +3,16 @@
 
 use std::sync::Arc;
 
-use incan_mir_plan_native::UnitNominals;
+use incan_mir_plan_native::record_types::{CheckedPrimitiveType, CheckedType};
+use incan_mir_plan_native::{EnumDeclaration, PlanType, UnitNominals};
 use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticSourceTargetKind};
 
 use crate::native_type_identity::constructor_index;
-use crate::nominal_records::{described_rows, product_nominal_table};
-use crate::program_context::{retain_nominal_tables, synthetic_program_context};
+use crate::nominal_records::{computed_carrier_descriptions, described_rows, product_nominal_table};
+use crate::program_context::{ProgramContext, retain_nominal_tables, synthetic_program_context};
+
+use super::carrier_identities::option_carrier;
 
 fn model(name: &str, offset: usize) -> NominalDeclaration {
     NominalDeclaration {
@@ -65,6 +68,47 @@ fn same_table(left: &UnitNominals, right: &UnitNominals) -> bool {
         && left.static_positions == right.static_positions
 }
 
+/// Describe the selected carriers with a fresh program for an independent slot and digest comparison.
+fn fresh_carrier_table(module: &BodyIrModule, carriers: &[EnumDeclaration]) -> UnitNominals {
+    let mut fresh = synthetic_program_context(module, Arc::new(constructor_index(&module.nominal_declarations)));
+    product_nominal_table(&mut fresh, carriers, Some("products"))
+}
+
+/// Reuse settled carriers across nominal growth and rollback, and recompute a replaced shape at the same ordinal.
+fn verify_carrier_growth(program: &mut ProgramContext, module: &BodyIrModule) {
+    let mut carriers = vec![option_carrier(
+        "__IncanCarrier0",
+        CheckedType::Primitive(CheckedPrimitiveType::Int),
+        PlanType::Int,
+    )];
+    let first = product_nominal_table(program, &carriers, Some("products"));
+    carriers.push(option_carrier(
+        "__IncanCarrier1",
+        CheckedType::Primitive(CheckedPrimitiveType::Str),
+        PlanType::String,
+    ));
+    let before_append = computed_carrier_descriptions();
+    let grown = product_nominal_table(program, &carriers, Some("products"));
+    let appended = computed_carrier_descriptions() - before_append;
+    assert!(same_table(&grown, &fresh_carrier_table(module, &carriers)));
+    assert_eq!(first.carriers[..], grown.carriers[..1]);
+
+    // A suspended attempt may have described an intrinsic that the retained prefix never adopted.
+    let before_rollback = computed_carrier_descriptions();
+    let rolled_back = product_nominal_table(program, &carriers[..1], Some("products"));
+    let rollback = computed_carrier_descriptions() - before_rollback;
+    assert!(same_table(&rolled_back, &first));
+    carriers[1].derives.push("Debug".into());
+    let before_replacement = computed_carrier_descriptions();
+    let replaced = product_nominal_table(program, &carriers, Some("products"));
+    let replacements = computed_carrier_descriptions() - before_replacement;
+    assert!(same_table(&replaced, &fresh_carrier_table(module, &carriers)));
+    assert_eq!(grown.carriers[1].identity, replaced.carriers[1].identity);
+    assert_ne!(grown.carriers[1].digest, replaced.carriers[1].digest);
+    assert_eq!((appended, rollback, replacements), (1, 0, 1));
+}
+
+/// Repeated Plan product tables describe only new source and carrier layout witnesses.
 #[test]
 fn a_grown_table_describes_only_its_new_rows_and_equals_a_fresh_one() -> Result<(), String> {
     let mut module = BodyIrModule::declarations_only("app::tables".into());
@@ -89,5 +133,6 @@ fn a_grown_table_describes_only_its_new_rows_and_equals_a_fresh_one() -> Result<
     let mut unproduced = synthetic_program_context(&module, Arc::new(constructor_index(&module.nominal_declarations)));
     assert!(product_nominal_table(&mut unproduced, &[], None).models.is_empty());
     assert_eq!(described_rows(&unproduced), (0, 0, 0));
+    verify_carrier_growth(&mut program, &module);
     Ok(())
 }
