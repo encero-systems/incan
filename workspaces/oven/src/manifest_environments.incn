@@ -14,8 +14,14 @@ from manifest_fields import (
     table,
     unique_strings,
 )
-from manifest_models import RustInputRequest
-from manifest_dependencies import dependency_replacement, inherited_edge, rust_request, validate_target
+from manifest_models import LocalDependency, RustInputRequest
+from manifest_dependencies import (
+    dependency_replacement,
+    inherited_edge,
+    local_dependency,
+    rust_request,
+    validate_target,
+)
 
 # The keys of `[envs.NAME]` (RFC 073, RFC 117).
 const ENVIRONMENT_KEYS: FrozenList[str] = [
@@ -63,43 +69,74 @@ pub def validate_environment(value: TomlValue, manifest: str, field: list[str]) 
 
 pub def parse_environment_dependencies(
     root: Dict[str, TomlValue],
-    production: list[RustInputRequest],
+    production: list[LocalDependency],
+    rust_inputs: list[RustInputRequest],
     manifest: str,
-) -> Result[Dict[str, list[RustInputRequest]], IntakeError]:
-    """Normalize each root environment's partial dependency overlay against the admitted production graph."""
+) -> Result[tuple[Dict[str, list[LocalDependency]], Dict[str, list[RustInputRequest]]], IntakeError]:
+    """Normalize local and Rust-facet environment overrides against the same production declaration."""
     validate_environments(root, manifest)?
-    mut result: Dict[str, list[RustInputRequest]] = {}
+    mut local_overlays: Dict[str, list[LocalDependency]] = {}
+    mut rust_overlays: Dict[str, list[RustInputRequest]] = {}
     if "envs" not in root:
-        return Ok(result)
+        return Ok((local_overlays, rust_overlays))
     environments = table(root["envs"], manifest, ["envs"])?
     for name in sorted([name for name in environments.keys()]):
         environment = table(environments[name], manifest, ["envs", name])?
-        mut selected = production.clone()
+        mut selected_local = production.clone()
+        mut selected_rust = rust_inputs.clone()
         if "dependencies" in environment:
-            entries = table(environment["dependencies"], manifest, ["envs", name, "dependencies"])?
+            group = ["envs", name, "dependencies"]
+            entries = table(environment["dependencies"], manifest, group)?
             for alias in sorted([alias for alias in entries.keys()]):
-                mut found = false
-                for index in range(len(selected)):
-                    if selected[index].alias == alias:
-                        selected[index] = overlay_rust_request(
-                            selected[index],
-                            entries[alias],
-                            manifest,
-                            ["envs", name, "dependencies", alias],
-                        )?
-                        found = true
-                if not found:
-                    field = ["envs", name, "dependencies", alias]
-                    entry = table(entries[alias], manifest, field)?
-                    # An entry the workspace root shares is inherited, as 0.5.1's members inherited dev dependencies.
-                    if "workspace" in entry:
-                        edge = inherited_edge(alias, entry, manifest, field)?
-                        if let Some(request) = edge.facet:
-                            selected.append(request)
-                    elif "loaf" in entry:
-                        selected.append(rust_request(alias, entries[alias], manifest, "dependencies")?)
-        result[name] = selected
-    return Ok(result)
+                field = group + [alias]
+                mut rust_override = false
+                for index in range(len(selected_rust)):
+                    if selected_rust[index].alias == alias:
+                        selected_rust[index] = overlay_rust_request(selected_rust[index], entries[alias], manifest, field)?
+                        rust_override = true
+                if rust_override:
+                    continue
+                entry = table(entries[alias], manifest, field)?
+                base = local_base(selected_local, alias)
+                mut native: Option[RustInputRequest] = None
+                if "workspace" in entry:
+                    inherited = inherited_edge(alias, entry, manifest, field)?
+                    native = inherited.facet
+                    if let Some(local) = inherited.local:
+                        selected_local = replace_local(selected_local, local)
+                elif "loaf" in entry:
+                    native = Some(rust_request(alias, entries[alias], manifest, "dependencies")?)
+                elif base is not None or "path" in entry:
+                    allowed(entry, ["path", "optional", "default-features", "features"], manifest, field)?
+                    edge = local_dependency(alias, entry, manifest, field, base)?
+                    selected_local = replace_local(selected_local, edge)
+                if let Some(request) = native:
+                    if base is not None:
+                        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "a local Incan dependency cannot also name a Rust Loaf"))
+                    selected_rust.append(request)
+        if selected_local != production:
+            local_overlays[name] = selected_local
+        rust_overlays[name] = selected_rust
+    return Ok((local_overlays, rust_overlays))
+
+
+def local_base(dependencies: list[LocalDependency], alias: str) -> Option[LocalDependency]:
+    """Find the production fields a partial local override preserves."""
+    for dependency in dependencies:
+        if dependency.alias == alias and not dependency.rust_facet:
+            return Some(dependency)
+    return None
+
+
+def replace_local(dependencies: list[LocalDependency], edge: LocalDependency) -> list[LocalDependency]:
+    """Keep an overridden edge in the same position, or append a new environment-only edge."""
+    mut selected = dependencies
+    for index in range(len(selected)):
+        if selected[index].alias == edge.alias:
+            selected[index] = edge
+            return selected
+    selected.append(edge)
+    return selected
 
 
 def overlay_rust_request(

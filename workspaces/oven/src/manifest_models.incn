@@ -94,6 +94,8 @@ pub model ProjectIntent:
     pub rust_build_script: bool = false
     # Fully normalized Rust-facet dependency slots for each root environment after production overrides are applied.
     pub environment_rust_inputs: Dict[str, list[RustInputRequest]] = {}
+    # The selected local edges for an environment that changes production dependency intent.
+    pub environment_local_dependencies: Dict[str, list[LocalDependency]] = {}
     # The declared package features by name.
     pub features: Dict[str, FeatureDeclaration] = {}
     # The source root `[build] source-root` names, project-relative, when it names one.
@@ -114,6 +116,10 @@ pub model ProjectIntent:
     pub rust_lints: RustLints = RustLints()
     # The `provider`-kind `[dependencies]` entries (RFC 117), by alias.
     pub providers: list[ProviderRequirement] = []
+
+    pub def has_local_dependency_overlay(self, environment: str) -> bool:
+        """Whether this environment selected a local list different from production."""
+        return environment in self.environment_local_dependencies
 
 
 pub model ManifestSnapshot:
