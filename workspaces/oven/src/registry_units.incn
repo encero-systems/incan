@@ -31,6 +31,24 @@ pub model RegistryUnit:
     pub source_archive: str = ""
     pub source_digest: str = ""
 
+    pub def identity(self) -> str:
+        """Use the published entry, preserving small source-free fixtures that identify units by directory."""
+        if self.entry != "":
+            return self.entry
+        return self.directory
+
+    pub def slot(self, domain: str) -> str:
+        """Versions may coexist; two producers of the same version in one native domain may not."""
+        return f"{domain}:{self.loaf}@{self.version}"
+
+    pub def qualifies(self, selection: RegistrySelection) -> Result[bool, str]:
+        """Require the authored version and every requested feature without treating feature supersets as identity."""
+        if self.loaf != selection.loaf:
+            return Ok(false)
+        if not version_matches(selection.requirement, self.version, self.loaf).map_err((error) => error.message())?:
+            return Ok(false)
+        return Ok(len([feature for feature in selection.features if feature not in self.features]) == 0)
+
 
 pub model RegistrySelection:
     """One authored registry version and feature requirement."""
@@ -74,7 +92,7 @@ pub model RegistryUnits:
             selected = self.select([demand])?
         entry = selected.bindings[demand.key()]
         for unit in selected.units:
-            if identity(unit) == entry:
+            if unit.identity() == entry:
                 return sole_library(unit)
         return Err(f"selected registry entry is absent: {entry}")
 
@@ -93,7 +111,7 @@ pub model RegistryUnits:
         # 1. Entry identity is authoritative; directory spelling is only a legacy synthetic-test fallback.
         mut entries: Dict[str, RegistryUnit] = {}
         for unit in self.units:
-            entries[identity(unit)] = unit
+            entries[unit.identity()] = unit
         mut requests: Dict[str, RegistryDemand] = {}
         for demand in demands:
             mut kept = demand
@@ -141,18 +159,6 @@ pub model RegistryUnits:
         )
 
 
-def identity(unit: RegistryUnit) -> str:
-    """Use the published entry, preserving small source-free fixtures that identify units by directory."""
-    if unit.entry != "":
-        return unit.entry
-    return unit.directory
-
-
-def slot(unit: RegistryUnit, domain: str) -> str:
-    """Versions may coexist; two producers of the same version in one native domain may not."""
-    return f"{domain}:{unit.loaf}@{unit.version}"
-
-
 def resolve(
     roots: list[RegistryDemand],
     index: int,
@@ -186,7 +192,7 @@ def resolve(
                 Err(reason) => refusals.append(reason)
                 Ok(next) =>
                     mut linked = bindings
-                    linked[demand.key()] = identity(unit)
+                    linked[demand.key()] = unit.identity()
                     match resolve(
                         roots,
                         index + 1,
@@ -221,7 +227,7 @@ def extend(
     mut root_domain = domain
     if root.kind == "proc-macro":
         root_domain = "host"
-    mut pending = [(identity(root), root_domain)]
+    mut pending = [(root.identity(), root_domain)]
     while len(pending) > 0:
         entry, role = pending.pop()
         if entry not in entries:
@@ -229,7 +235,7 @@ def extend(
         unit = entries[entry]
         if unit.refusal != "":
             return Err(unit.refusal)
-        key = slot(unit, role)
+        key = unit.slot(role)
         if key in chosen:
             if chosen[key] != entry:
                 return Err(f"{root.loaf} pins {unit.loaf} {entry}, conflicting with selected {chosen[key]}")
@@ -256,11 +262,11 @@ def candidate_groups(
 ) -> Result[list[list[RegistryUnit]], str]:
     """Honor exact producer records, distinguishing an unavailable request from an incompatible recorded choice."""
     if demand.key() in resolved:
-        return Ok([[unit for unit in units if identity(unit) == resolved[demand.key()]]])
+        return Ok([[unit for unit in units if unit.identity() == resolved[demand.key()]]])
     loaf = demand.selection.loaf
-    locked = [unit for unit in units if (demand.domain, identity(unit)) in recorded and unit.loaf == loaf]
+    locked = [unit for unit in units if (demand.domain, unit.identity()) in recorded and unit.loaf == loaf]
     if len(locked) > 0:
-        compatible = [unit for unit in locked if qualifies(unit, demand.selection)?]
+        compatible = [unit for unit in locked if unit.qualifies(demand.selection)?]
         if len(compatible) > 0:
             # Prefer the consumer's profile without overriding exact native producer anchors.
             matching = [unit for unit in compatible if unit.profile == profile]
@@ -270,11 +276,11 @@ def candidate_groups(
         # RFC 125: versions coexist, so a requirement no recorded version admits takes a version of its own, as in a
         # fresh lock. Another producer of a recorded version is refused: the lock's producer of it is exact.
         versions = [unit.version for unit in locked]
-        if len([unit for unit in units if unit.version in versions and qualifies(unit, demand.selection)?]) > 0:
+        if len([unit for unit in units if unit.version in versions and unit.qualifies(demand.selection)?]) > 0:
             return Err(f"recorded registry closure does not satisfy {demand.key()}")
     mut candidates: list[RegistryUnit] = []
     for domain in [demand.domain, "host", "target"]:
-        candidates = [unit for unit in units if unit.domain == domain and qualifies(unit, demand.selection)?]
+        candidates = [unit for unit in units if unit.domain == domain and unit.qualifies(demand.selection)?]
         if len(candidates) > 0:
             break
     if len(candidates) == 0:
@@ -288,7 +294,7 @@ def candidate_groups(
             f"{selected.loaf} is not published in the compiled registry closure for requirement {selected.requirement} with features {selected.features}\n{UNPUBLISHED_HINT}",
         )
     candidates = mode_candidates(candidates, demand_mode(mode, demand.direct))?
-    preferred = [unit for unit in candidates if (demand.domain, identity(unit)) in installation]
+    preferred = [unit for unit in candidates if (demand.domain, unit.identity()) in installation]
     mut groups: list[list[RegistryUnit]] = []
     if len(preferred) > 0:
         groups = profile_groups(preferred, profile)
@@ -322,15 +328,6 @@ def profile_groups(candidates: list[RegistryUnit], profile: str) -> list[list[Re
     if profile != "" and len(matching) > 0:
         return [matching, candidates]
     return [candidates]
-
-
-def qualifies(unit: RegistryUnit, selection: RegistrySelection) -> Result[bool, str]:
-    """Require the authored version and every requested feature without treating feature supersets as identity."""
-    if unit.loaf != selection.loaf:
-        return Ok(false)
-    if not version_matches(selection.requirement, unit.version, unit.loaf).map_err((error) => error.message())?:
-        return Ok(false)
-    return Ok(len([feature for feature in selection.features if feature not in unit.features]) == 0)
 
 
 pub def sole_library(unit: RegistryUnit) -> Result[str, str]:
