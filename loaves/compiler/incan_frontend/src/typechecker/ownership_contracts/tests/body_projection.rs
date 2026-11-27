@@ -1,6 +1,7 @@
 //! Body projection evidence, alias restoration, operation consumption, conditional paths and assertions.
 
 use super::*;
+use crate::test_rows::{SourceRow, run_source_rows};
 
 /// The body owner is a canonical input, not a span-table lookup. A dependency module with an equal source range
 /// cannot turn the current callable's borrowed parameter into an ordinary transferable one.
@@ -43,81 +44,6 @@ fn flow_owner_is_independent_of_shared_span_tables() -> Result<(), Box<dyn std::
             .count(),
         1
     );
-    Ok(())
-}
-
-/// A retained map entry alone cannot authenticate an annotation, destination, graph owner or analysis result.
-#[test]
-fn body_projection_requires_complete_canonical_local_evidence() -> Result<(), Box<dyn std::error::Error>> {
-    let checker = checked(
-        "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value\n    return view\n",
-    )?;
-    let (local, mode) = checker
-        .type_info
-        .protocols
-        .explicit_local_modes
-        .iter()
-        .next()
-        .ok_or("missing local")?;
-    let owner = &mode.owner;
-    let proof = checker.type_info.checked_input_body(owner)?.ok_or("missing proof")?;
-    assert_eq!(proof.local_mode(local), Some(OwnershipMode::Borrowed));
-    let mut other = local.clone();
-    other.declaration_name = "foreign".into();
-    assert_eq!(proof.local_mode(&other), None);
-    for corruption in 0..8 {
-        let mut facts = checker.type_info.clone();
-        match corruption {
-            0 => {
-                facts.protocols.explicit_input_flow.remove(owner);
-            }
-            1 => {
-                facts.protocols.explicit_local_modes.remove(local);
-            }
-            2 => {
-                facts
-                    .protocols
-                    .explicit_local_modes
-                    .get_mut(local)
-                    .ok_or("missing mode")?
-                    .owner
-                    .declaration_name = "foreign".into();
-            }
-            3 => {
-                facts
-                    .protocols
-                    .explicit_local_modes
-                    .get_mut(local)
-                    .ok_or("missing mode")?
-                    .value_type = ResolvedType::Str;
-            }
-            4 => {
-                facts
-                    .references
-                    .resolved_write_identities
-                    .remove(&(local.declaration_span, local.declaration_name.clone()));
-            }
-            _ => {
-                let InputFlow::Checked { graph, analysis } = facts
-                    .protocols
-                    .explicit_input_flow
-                    .get_mut(owner)
-                    .ok_or("missing flow")?
-                else {
-                    return Err("expected checked flow".into());
-                };
-                match corruption {
-                    5 => graph.local_loans.clear(),
-                    6 => analysis.live_before.clear(),
-                    _ => graph.owner.declaration_name = "foreign".into(),
-                }
-            }
-        }
-        assert!(
-            facts.checked_input_body(owner).is_err(),
-            "accepted corrupted evidence {corruption}"
-        );
-    }
     Ok(())
 }
 
@@ -184,74 +110,6 @@ fn restored_alias_flow_requires_operation_consumption() -> Result<(), Box<dyn st
         checker.type_info.direct_input_admission(&owner, function).is_err(),
         "stripped operation dependency admitted an invalid alias read"
     );
-    Ok(())
-}
-
-/// Existing operation metadata cannot authorize missing, reused or changed consumption events.
-#[test]
-fn operation_consumption_rejects_altered_relationships() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def read(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
-    let checker = checked(source)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-    let crate::ast::Declaration::Function(function) = &program.declarations.first().ok_or("missing declaration")?.node
-    else {
-        return Err("expected function".into());
-    };
-    let owner = checker
-        .type_info
-        .protocols
-        .explicit_input_flow
-        .keys()
-        .next()
-        .cloned()
-        .ok_or("missing owner")?;
-    for corruption in 0..10 {
-        let mut facts = checker.type_info.clone();
-        let InputFlow::Checked { graph, analysis } = facts
-            .protocols
-            .explicit_input_flow
-            .get_mut(&owner)
-            .ok_or("missing flow")?
-        else {
-            return Err("missing checked graph".into());
-        };
-        let inputs = graph.operations.values_mut().next().ok_or("missing operation")?;
-        let dependency = inputs.operands.first_mut().ok_or("missing operand")?;
-        match corruption {
-            0 => graph.operations.clear(),
-            1 => graph.nodes[dependency.final_access].event = flow::Event::Nothing,
-            2 => dependency.final_access = inputs.completion_node,
-            3 => inputs.completion_node = 0,
-            4 => dependency.operand.start += 1,
-            5 => dependency.loan = flow::LoanId(graph.loans.len()),
-            6 => {
-                let flow::Root::Binding(root) = &mut dependency.source.root else {
-                    return Err("expected declared source".into());
-                };
-                root.declaration_name = "foreign".into();
-            }
-            7 => {
-                let parent = graph.loans[dependency.loan.0].parent.ok_or("missing parent")?;
-                dependency.loan = parent;
-                let flow::Event::Access { through, .. } = &mut graph.nodes[dependency.final_access].event else {
-                    return Err("missing final read".into());
-                };
-                *through = Some(parent);
-            }
-            8 => graph.loans[dependency.loan.0].parent = None,
-            _ => graph.loans[dependency.loan.0].kind = flow::LoanKind::Exclusive,
-        }
-        // Recompute when structurally possible; retained analysis alone must not be the refusal mechanism.
-        if let Ok(recomputed) = flow::analyze(graph) {
-            *analysis = recomputed;
-        }
-        assert!(
-            facts.direct_input_admission(&owner, function).is_err(),
-            "accepted corruption {corruption}"
-        );
-    }
     Ok(())
 }
 
@@ -447,63 +305,215 @@ fn conditional_paths_require_their_source_edges() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// Failure-only message evaluation cannot become unconditional, skip its dependency, or join the success path.
 #[test]
-fn assertion_execution_retains_failure_edges() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def inspect(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, f\"failed: {value}\"\n    print(value)\n";
-    let checker = checked(source)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-    let declaration = program.declarations.first().ok_or("missing declaration")?;
-    let crate::ast::Declaration::Function(function) = &declaration.node else {
-        return Err("missing function".into());
-    };
-    let owner = checker
-        .type_info
-        .protocols
-        .explicit_input_flow
-        .keys()
-        .next()
-        .ok_or("missing owner")?;
-    for corruption in 0..4 {
-        let mut facts = checker.type_info.clone();
-        let InputFlow::Checked { graph, analysis } = facts
-            .protocols
-            .explicit_input_flow
-            .get_mut(owner)
-            .ok_or("missing flow")?
-        else {
-            return Err("missing checked flow".into());
-        };
-        let condition = graph
-            .nodes
-            .iter()
-            .position(|node| node.successors.len() == 2)
-            .ok_or("missing assertion split")?;
-        let failure = graph.nodes[condition].successors[0];
-        let success = graph.nodes[condition].successors[1];
-        let message = graph.operations.values().next().ok_or("missing message operation")?;
-        let tail = message
-            .operands
-            .last()
-            .ok_or("missing message dependency")?
-            .final_access;
-        match corruption {
-            0 => graph.nodes[tail].successors = vec![success],
-            1 => {
-                graph.nodes[condition].successors = vec![failure];
-                graph.nodes[tail].successors = vec![success];
-            }
-            2 => graph.nodes[condition].successors = vec![success],
-            _ => graph.nodes[condition].successors.swap(0, 1),
-        }
-        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
-        assert!(analysis.conflicts.is_empty(), "{analysis:?}");
-        assert!(
-            facts.direct_input_admission(owner, function).is_err(),
-            "accepted assertion edge corruption {corruption}"
-        );
-    }
-    Ok(())
+fn body_projection_checked_cases() {
+    run_source_rows(BODY_PROJECTION_CHECKED_CASES, checked);
 }
+
+const BODY_PROJECTION_CHECKED_CASES: &[SourceRow<TypeChecker>] = &[
+    // A retained map entry alone cannot authenticate an annotation, destination, graph owner or analysis result.
+    SourceRow {
+        name: "body_projection_requires_complete_canonical_local_evidence",
+        source: "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value\n    return view\n",
+        check: |_source, checker| {
+            let (local, mode) = checker
+                .type_info
+                .protocols
+                .explicit_local_modes
+                .iter()
+                .next()
+                .ok_or("missing local")?;
+            let owner = &mode.owner;
+            let proof = checker.type_info.checked_input_body(owner)?.ok_or("missing proof")?;
+            assert_eq!(proof.local_mode(local), Some(OwnershipMode::Borrowed));
+            let mut other = local.clone();
+            other.declaration_name = "foreign".into();
+            assert_eq!(proof.local_mode(&other), None);
+            for corruption in 0..8 {
+                let mut facts = checker.type_info.clone();
+                match corruption {
+                    0 => {
+                        facts.protocols.explicit_input_flow.remove(owner);
+                    }
+                    1 => {
+                        facts.protocols.explicit_local_modes.remove(local);
+                    }
+                    2 => {
+                        facts
+                            .protocols
+                            .explicit_local_modes
+                            .get_mut(local)
+                            .ok_or("missing mode")?
+                            .owner
+                            .declaration_name = "foreign".into();
+                    }
+                    3 => {
+                        facts
+                            .protocols
+                            .explicit_local_modes
+                            .get_mut(local)
+                            .ok_or("missing mode")?
+                            .value_type = ResolvedType::Str;
+                    }
+                    4 => {
+                        facts
+                            .references
+                            .resolved_write_identities
+                            .remove(&(local.declaration_span, local.declaration_name.clone()));
+                    }
+                    _ => {
+                        let InputFlow::Checked { graph, analysis } = facts
+                            .protocols
+                            .explicit_input_flow
+                            .get_mut(owner)
+                            .ok_or("missing flow")?
+                        else {
+                            return Err("expected checked flow".into());
+                        };
+                        match corruption {
+                            5 => graph.local_loans.clear(),
+                            6 => analysis.live_before.clear(),
+                            _ => graph.owner.declaration_name = "foreign".into(),
+                        }
+                    }
+                }
+                assert!(
+                    facts.checked_input_body(owner).is_err(),
+                    "accepted corrupted evidence {corruption}"
+                );
+            }
+            Ok(())
+        },
+    },
+    // Existing operation metadata cannot authorize missing, reused or changed consumption events.
+    SourceRow {
+        name: "operation_consumption_rejects_altered_relationships",
+        source: "def read(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n",
+        check: |source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let crate::ast::Declaration::Function(function) =
+                &program.declarations.first().ok_or("missing declaration")?.node
+            else {
+                return Err("expected function".into());
+            };
+            let owner = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .keys()
+                .next()
+                .cloned()
+                .ok_or("missing owner")?;
+            for corruption in 0..10 {
+                let mut facts = checker.type_info.clone();
+                let InputFlow::Checked { graph, analysis } = facts
+                    .protocols
+                    .explicit_input_flow
+                    .get_mut(&owner)
+                    .ok_or("missing flow")?
+                else {
+                    return Err("missing checked graph".into());
+                };
+                let inputs = graph.operations.values_mut().next().ok_or("missing operation")?;
+                let dependency = inputs.operands.first_mut().ok_or("missing operand")?;
+                match corruption {
+                    0 => graph.operations.clear(),
+                    1 => graph.nodes[dependency.final_access].event = flow::Event::Nothing,
+                    2 => dependency.final_access = inputs.completion_node,
+                    3 => inputs.completion_node = 0,
+                    4 => dependency.operand.start += 1,
+                    5 => dependency.loan = flow::LoanId(graph.loans.len()),
+                    6 => {
+                        let flow::Root::Binding(root) = &mut dependency.source.root else {
+                            return Err("expected declared source".into());
+                        };
+                        root.declaration_name = "foreign".into();
+                    }
+                    7 => {
+                        let parent = graph.loans[dependency.loan.0].parent.ok_or("missing parent")?;
+                        dependency.loan = parent;
+                        let flow::Event::Access { through, .. } = &mut graph.nodes[dependency.final_access].event
+                        else {
+                            return Err("missing final read".into());
+                        };
+                        *through = Some(parent);
+                    }
+                    8 => graph.loans[dependency.loan.0].parent = None,
+                    _ => graph.loans[dependency.loan.0].kind = flow::LoanKind::Exclusive,
+                }
+                // Recompute when structurally possible; retained analysis alone must not be the refusal mechanism.
+                if let Ok(recomputed) = flow::analyze(graph) {
+                    *analysis = recomputed;
+                }
+                assert!(
+                    facts.direct_input_admission(&owner, function).is_err(),
+                    "accepted corruption {corruption}"
+                );
+            }
+            Ok(())
+        },
+    },
+    // Failure-only message evaluation cannot become unconditional, skip its dependency, or join the success path.
+    SourceRow {
+        name: "assertion_execution_retains_failure_edges",
+        source: "def inspect(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, f\"failed: {value}\"\n    print(value)\n",
+        check: |source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let declaration = program.declarations.first().ok_or("missing declaration")?;
+            let crate::ast::Declaration::Function(function) = &declaration.node else {
+                return Err("missing function".into());
+            };
+            let owner = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .keys()
+                .next()
+                .ok_or("missing owner")?;
+            for corruption in 0..4 {
+                let mut facts = checker.type_info.clone();
+                let InputFlow::Checked { graph, analysis } = facts
+                    .protocols
+                    .explicit_input_flow
+                    .get_mut(owner)
+                    .ok_or("missing flow")?
+                else {
+                    return Err("missing checked flow".into());
+                };
+                let condition = graph
+                    .nodes
+                    .iter()
+                    .position(|node| node.successors.len() == 2)
+                    .ok_or("missing assertion split")?;
+                let failure = graph.nodes[condition].successors[0];
+                let success = graph.nodes[condition].successors[1];
+                let message = graph.operations.values().next().ok_or("missing message operation")?;
+                let tail = message
+                    .operands
+                    .last()
+                    .ok_or("missing message dependency")?
+                    .final_access;
+                match corruption {
+                    0 => graph.nodes[tail].successors = vec![success],
+                    1 => {
+                        graph.nodes[condition].successors = vec![failure];
+                        graph.nodes[tail].successors = vec![success];
+                    }
+                    2 => graph.nodes[condition].successors = vec![success],
+                    _ => graph.nodes[condition].successors.swap(0, 1),
+                }
+                *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+                assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+                assert!(
+                    facts.direct_input_admission(owner, function).is_err(),
+                    "accepted assertion edge corruption {corruption}"
+                );
+            }
+            Ok(())
+        },
+    },
+];
