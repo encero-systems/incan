@@ -1,0 +1,14 @@
+# Former case call_into_a_module_lowered_on_its_own: a call into a provider module returns the provider's result
+
+"""A call into a provider module returns the provider's result."""
+from cross_module_provider import provide
+
+
+def program_result() -> int:
+    """Return the fixture expression `provide()`."""
+    return provide()
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())
