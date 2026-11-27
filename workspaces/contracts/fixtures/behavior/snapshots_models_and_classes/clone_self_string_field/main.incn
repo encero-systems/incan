@@ -1,9 +1,7 @@
-# behavior: 10 former snapshots models and classes cases run in order, each program from its own module: clone_self_string_field, computed_properties, generic_model_field_access, lowercase_types, model_struct, model_with_alias, named_constructor_evaluation_order, owned_list_defaults_issue2116, partial_constructor_pattern, self_referential_class_field_borrow
+# behavior: 9 former snapshots models and classes cases run in order, each program from its own module: clone_self_string_field, generic_model_field_access, lowercase_types, model_struct, model_with_alias, named_constructor_evaluation_order, owned_list_defaults_issue2116, partial_constructor_pattern, self_referential_class_field_borrow
 # expect-stdout:
 #  orders
 #  orders 1
-#  11
-#  money
 #  41
 #  forty-one
 #  3 2 3
@@ -50,7 +48,6 @@
 """Run the program of each former case in order."""
 
 import clone_self_string_field
-import computed_properties
 import generic_model_field_access
 import lowercase_types
 import model_struct
@@ -58,13 +55,12 @@ import model_with_alias
 import named_constructor_evaluation_order
 import owned_list_defaults_issue2116
 import partial_constructor_pattern
-import self_referential_class_field_borrow
+import case_self_referential_class_field_borrow
 
 
 def main() -> None:
     """Run each former case's program in turn."""
     clone_self_string_field.main()
-    computed_properties.main()
     generic_model_field_access.main()
     lowercase_types.main()
     model_struct.main()
@@ -72,4 +68,4 @@ def main() -> None:
     named_constructor_evaluation_order.main()
     owned_list_defaults_issue2116.main()
     partial_constructor_pattern.main()
-    self_referential_class_field_borrow.main()
+    case_self_referential_class_field_borrow.main()

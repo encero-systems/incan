@@ -1,4 +1,4 @@
-# behavior: 10 former snapshots traits and generics cases run in order, each program from its own module: multi_instantiation_trait_methods, newtype_trait_targets, protocol_hooks, std_fallible_iterator_loop, structural_coercion, trait_bound_explicit, trait_bound_inference, trait_supertrait_assignability, trait_supertraits, traits
+# behavior: 9 former snapshots traits and generics cases run in order, each program from its own module: multi_instantiation_trait_methods, newtype_trait_targets, protocol_hooks, std_fallible_iterator_loop, structural_coercion, trait_bound_explicit, trait_bound_inference, trait_supertrait_assignability, traits
 # expect-stdout:
 #  1 1.5
 #  1 1.5
@@ -32,10 +32,6 @@
 #  9
 #  1
 #  1
-#  1
-#  2
-#  3
-#  4
 #  Dog name: Buddy
 #  Rectangle area: 15.0, perimeter: 16.0
 #  Circle with radius 2.5
@@ -54,12 +50,11 @@
 import multi_instantiation_trait_methods
 import newtype_trait_targets
 import protocol_hooks
-import std_fallible_iterator_loop
+import standard_fallible_iterator_loop
 import structural_coercion
 import trait_bound_explicit
 import trait_bound_inference
 import trait_supertrait_assignability
-import trait_supertraits
 import traits
 
 
@@ -68,10 +63,9 @@ def main() -> None:
     multi_instantiation_trait_methods.main()
     newtype_trait_targets.main()
     protocol_hooks.main()
-    std_fallible_iterator_loop.main()
+    standard_fallible_iterator_loop.main()
     structural_coercion.main()
     trait_bound_explicit.main()
     trait_bound_inference.main()
     trait_supertrait_assignability.main()
-    trait_supertraits.main()
     traits.main()

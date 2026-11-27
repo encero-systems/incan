@@ -1,4 +1,9 @@
-# Former case dict_lookups_through_a_mutable_parameter: a dict passed as a mut parameter is probed and updated by str and int keys with the caller seeing the counts, a str variable used as a probe stays usable, and a dict comprehension keyed by strings reads each key again in its value
+# behavior: a dict passed as a mut parameter is probed and updated by str and int keys with the caller seeing the counts, a str variable used as a probe stays usable, and a dict comprehension keyed by strings reads each key again in its value
+# expect-stdout:
+#   2 1
+#   true a
+#   2
+#   5 3
 
 def bump(mut counts: dict[str, int], key: str) -> None:
     if key in counts:
@@ -18,7 +23,7 @@ def lengths(names: list[str]) -> dict[str, int]:
     return {name: len(name) for name in names}
 
 
-pub def main() -> None:
+def main() -> None:
     mut counts: dict[str, int] = {}
     bump(counts, "a")
     bump(counts, "a")

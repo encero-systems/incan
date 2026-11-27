@@ -1,4 +1,10 @@
-# Former case generic_functions_hash_through_dict_and_set_types: a generic function or method that keeps its type parameter's values in a dict or set, through an annotation, an index write, `add` or `insert`, runs for any hashable type argument, and so does a generic caller forwarding its own type parameter
+# behavior: a generic function or method that keeps its type parameter's values in a dict or set, through an annotation, an index write, `add` or `insert`, runs for any hashable type argument, and so does a generic caller forwarding its own type parameter
+# expect-stdout:
+#   2 1
+#   2 2
+#   3
+#   1
+#   2
 
 def count[T](items: list[T]) -> dict[T, int]:
     mut counts: dict[T, int] = {}
@@ -40,7 +46,7 @@ def fill[K, V](mut index: Index[K, V], key: K, value: V) -> int:
     return index.size()
 
 
-pub def main() -> None:
+def main() -> None:
     counts = count(["a", "b", "a"])
     last = counts["a"]
     println(f"{len(counts)} {last}")

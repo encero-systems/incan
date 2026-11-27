@@ -1,4 +1,4 @@
-# behavior: 6 former ownership numerics and bounds cases run in order, each program from its own module: exact_float_arithmetic_keeps_its_width, generic_functions_hash_through_dict_and_set_types, generic_functions_reuse_callables_models_and_payloads, generic_model_method_formats_its_type_parameter, integer_overflow_helpers_and_explicit_resizes, reflection_over_a_generic_value
+# behavior: 5 former ownership numerics and bounds cases run in order, each program from its own module: exact_float_arithmetic_keeps_its_width, generic_functions_reuse_callables_models_and_payloads, generic_model_method_formats_its_type_parameter, integer_overflow_helpers_and_explicit_resizes, reflection_over_a_generic_value
 # expect-stdout:
 #  0.3
 #  0.3 0.25 2.5 0.1
@@ -11,11 +11,6 @@
 #  2.5
 #  3.5
 #  1.25 1.25
-#  2 1
-#  2 2
-#  3
-#  1
-#  2
 #  2 3
 #  ab-ab 5
 #  fast fast
@@ -52,7 +47,6 @@
 """Run the program of each former case in order."""
 
 import exact_float_arithmetic_keeps_its_width
-import generic_functions_hash_through_dict_and_set_types
 import generic_functions_reuse_callables_models_and_payloads
 import generic_model_method_formats_its_type_parameter
 import integer_overflow_helpers_and_explicit_resizes
@@ -62,7 +56,6 @@ import reflection_over_a_generic_value
 def main() -> None:
     """Run each former case's program in turn."""
     exact_float_arithmetic_keeps_its_width.main()
-    generic_functions_hash_through_dict_and_set_types.main()
     generic_functions_reuse_callables_models_and_payloads.main()
     generic_model_method_formats_its_type_parameter.main()
     integer_overflow_helpers_and_explicit_resizes.main()
