@@ -5,7 +5,7 @@ from crate.primitives.crumb.column_bits import bit_length, pack
 from crate.primitives.crumb.column_value_dictionary import ColumnDictionary, code_for
 from crate.primitives.crumb.column_numbers import coefficient, numeric_type, zigzag
 from crate.primitives.crumb.column_presence import cell_type, present
-from crate.primitives.crumb.column_types import BlockEncoding, encoding_id, uses_dictionary
+from crate.primitives.crumb.column_types import BlockEncoding
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
 from crate.primitives.crumb.cells import cell
@@ -48,7 +48,7 @@ pub def write_block(
         return Err(CrumbError.invalid_input("empty column block encoding"))
     mut output = EncodingBuffer.create()
     output.append(bitmap, budget)?
-    output.count(encoding_id(encoding), budget)?
+    output.count(encoding.id(), budget)?
     output.append(payload(stored_type, stored, cells, encoding, keys, dictionary, budget)?, budget)?
     return output.finish(budget)
 
@@ -67,7 +67,7 @@ def payload(
         return indexed(cells, budget)
     if encoding == BlockEncoding.Runs:
         return runs(cells, budget)
-    if uses_dictionary(encoding):
+    if encoding.uses_dictionary():
         match keys:
             None => return Err(CrumbError.invalid_input("missing column dictionary"))
             Some(admitted) => return codes(node, values, encoding, admitted, dictionary, budget)

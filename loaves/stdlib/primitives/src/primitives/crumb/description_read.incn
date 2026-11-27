@@ -7,7 +7,7 @@ from crate.primitives.crumb.descriptions import Description, DescriptionMode, ad
 from crate.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
 from crate.primitives.crumb.metadata_values import get, binary, text, items, charge_copy
-from crate.primitives.crumb.metadata_read import read_metadata, bounded_count
+from crate.primitives.crumb.metadata_read import read_metadata
 from crate.primitives.crumb.selectors import parse_key, parse_type
 from crate.primitives.crumb.types import NominalKind
 from crate.primitives.crumb.values import Metadata, MetadataEntry
@@ -22,7 +22,7 @@ pub def read_dictionary(
     mut budget: Budget,
 ) -> Result[Dictionary, BinaryError]:
     """Validate wire order before ordinary admission; never sort malformed input into an accepted dictionary."""
-    count = bounded_count(cursor, budget)?
+    count = cursor.bounded_count(budget)?
     mut descriptions: list[Description] = []
     mut seen: set[str] = set()
     mut previous = ""
@@ -120,7 +120,7 @@ def inline_description(
 
 def read_members(mut cursor: EncodingCursor, variants: bool, mut budget: Budget) -> Result[list[Metadata], BinaryError]:
     """Check identity order and position permutation before reconstructing declaration order."""
-    count = bounded_count(cursor, budget)?
+    count = cursor.bounded_count(budget)?
     mut members: dict[int, Metadata] = {}
     mut seen: set[str] = set()
     mut previous = ""

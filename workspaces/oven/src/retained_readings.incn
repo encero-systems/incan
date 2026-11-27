@@ -17,7 +17,7 @@ from home_paths import home
 from json_fields import required_text
 from observation import SETTLE_SECONDS, Observation, file_digest, now_seconds, observe
 from publication import publish_binary
-from retained_reading_records import ReadingKind, decode_reading, encode_reading
+from retained_reading_records import ReadingKind
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
 from frozen_inputs import observation as frozen_observation
@@ -100,7 +100,7 @@ pub def recall(source: Path, selection: str, stamp: str, kind: ReadingKind = Rea
             if record.is_file():
                 match record.read_bytes():
                     Err(_) => return None
-                    Ok(encoded) => return decode_reading(kind, encoded, source.0, selection, stamp).unwrap_or(None)
+                    Ok(encoded) => return kind.decode(encoded, source.0, selection, stamp).unwrap_or(None)
             legacy = record.parent().joinpath(record.stem() + ".json")
             if not legacy.is_file():
                 return None
@@ -171,6 +171,6 @@ def retained_value(record: Path, source: Path, selection: str, stamp: str) -> Re
 
 def remember(record: Path, source: Path, selection: str, stamp: str, value: JsonValue, kind: ReadingKind) -> Result[None, str]:
     """Publish the complete typed reading atomically for this exact file generation."""
-    encoded = encode_reading(kind, source.0, selection, stamp, value)?
+    encoded = kind.encode(source.0, selection, stamp, value)?
     record.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     return publish_binary(record, encoded)

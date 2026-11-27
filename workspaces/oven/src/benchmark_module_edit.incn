@@ -25,6 +25,152 @@ model Bench:
     revision: str
     evidence: Path
 
+    pub def measure(self) -> Result[None, str]:
+        """Use a private archive checkout, preserve each subject's verdict and compare its warm phase durations."""
+        for path in [self.oven, self.home, self.repository, self.evidence]:
+            if path.absolute().map_err((error) => error.message())?.0 != path.0:
+                return Err(f"use an absolute path: {path.0}")
+        self.evidence.mkdir(false, false).map_err((error) => error.message())?
+        archive = self.evidence.joinpath("source.tar")
+        run_command("git", ["-C", self.repository.0, "archive", "--format=tar", "-o", archive.0, self.revision])?
+        selected = run_command("git", ["-C", self.repository.0, "rev-parse", self.revision + "^{commit}"])?
+        toolchain = self.home.joinpath("toolchains/0.6.0-dev.9")
+        manifest = toolchain.joinpath("toolchain.json")
+        installed = parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
+        driver = Path(located(toolchain, text(installed, "driver")?))
+        save(self.evidence.joinpath("identity.txt"), f"{selected.strip()}\n{self.oven.0}\n{digest(self.oven)?}\n{driver.0}\n{digest(driver)?}\n{digest(manifest)?}\n")?
+        mut failures: list[str] = []
+        mut times: Dict[str, int] = {}
+        for subject in ["hello", "oven"]:
+            match self.measure_subject(subject, archive):
+                Ok((elapsed, problems)) =>
+                    times[subject] = elapsed
+                    failures += problems
+                Err(reason) => failures.append(f"{subject}: {reason}")
+            for store in ["store", "cold-store"]:
+                match stop_store(self.oven, self.evidence.joinpath(subject).joinpath(store)):
+                    Ok(_) => pass
+                    Err(reason) => failures.append(f"{subject} {store} shutdown: {reason}")
+        if "hello" in times and "oven" in times:
+            if times["oven"] > 2 * times["hello"]:
+                failures.append(f"Oven {times['oven']} ns exceeds twice hello {times['hello']} ns")
+        verdict_path = self.evidence.joinpath("verdict.txt")
+        if len(failures) > 0:
+            verdict = "\n".join(failures)
+            save(verdict_path, verdict + "\n")?
+            return Err(verdict)
+        save(verdict_path, "passed\n")?
+        return Ok(None)
+
+    def measure_subject(self, subject: str, archive: Path) -> Result[tuple[int, list[str]], str]:
+        """Condition once, edit in place, then repeat edited bytes cold at exactly the same physical source path."""
+        root = self.evidence.joinpath(subject)
+        root.mkdir(true, false).map_err((error) => error.message())?
+        checkout = root.joinpath("src")
+        checkout.mkdir(true, false).map_err((error) => error.message())?
+        mut target = checkout.joinpath("hello.incn")
+        mut edited = target
+        mut binary = checkout.joinpath("target/incan/release/bin/hello")
+        mut before = "code == 0 or code == 1"
+        mut after = "code in [0, 1]"
+        if subject == "oven":
+            _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
+            target = checkout.joinpath("workspaces/oven")
+            edited = target.joinpath("src/compiler_refusals.incn")
+            binary = target.joinpath("target/incan/release/bin/oven")
+            before = "report.code == 0 or report.code == 1"
+            after = "report.code in [0, 1]"
+        else:
+            save(edited, "def reported(code: int) -> bool:\n    return code == 0 or code == 1\n\n\ndef main() -> None:\n    println(reported(1))\n")?
+        original = edited.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if len(original.split(before)) != 2:
+            return Err(f"expected one occurrence of {before} in {edited.0}")
+        replacement = original.replace(before, after)
+        trace = root.joinpath("trace")
+        store = root.joinpath("store")
+        base = self.sample(root, target, trace, store, "base")?
+        mut failures: list[str] = []
+        mut required = [edited.0]
+        if subject == "oven":
+            required.append(target.joinpath("src/main.incn").0)
+        if not observed_cold_work(base, required):
+            failures.append(f"{subject}: the initial build did not check and build Body IR for {required}")
+        save(edited, replacement)?
+        warm = self.sample(root, target, trace, store, "warm")?
+        warm_digest = digest(binary)?
+        checked = visits(warm.checked)
+        built = visits(warm.body_ir)
+        check_ns = warm.check_ns
+        body_ns = warm.body_ir_ns
+        elapsed = check_ns + body_ns
+        save(root.joinpath("warm.tsv"), "check_ns\tbody_ir_ns\tbody_ir_modules\texecutable_sha256\tchecked_modules\n"
+            + f"{check_ns}\t{body_ns}\t{', '.join(built)}\t{warm_digest}\t{', '.join(checked)}\n")?
+        if check_ns <= 0 or body_ns <= 0 or elapsed <= 0:
+            failures.append(f"{subject}: missing positive checking or Body IR samples")
+        if checked != [edited.0] or built != [edited.0]:
+            failures.append(f"{subject}: expected only {edited.0}, checked {checked} and built Body IR for {built}")
+        # Preserve every warm target and lock. A fresh checkout at the same path removes project-local caches from the oracle.
+        _ = checkout.rename(root.joinpath("warm-src")).map_err((error) => error.message())?
+        checkout.mkdir(true, false).map_err((error) => error.message())?
+        if subject == "oven":
+            _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
+        save(edited, replacement)?
+        cold_trace = root.joinpath("cold-trace")
+        cold = self.sample(root, target, cold_trace, root.joinpath("cold-store"), "cold")?
+        cold_digest = digest(binary)?
+        save(root.joinpath("cold.tsv"), "check_ns\tbody_ir_ns\tchecked_module_count\tbody_ir_module_count\n"
+            + f"{cold.check_ns}\t{cold.body_ir_ns}\t{len(cold.checked)}\t{len(cold.body_ir)}\n")?
+        if not observed_cold_work(cold, required):
+            failures.append(f"{subject}: the independent cold build did not check and build Body IR for {required}")
+        save(root.joinpath("cold.sha256"), cold_digest + "\n")?
+        if warm_digest != cold_digest:
+            failures.append(f"{subject}: warm executable {warm_digest} differs from cold {cold_digest}")
+        return Ok((elapsed, failures))
+
+    def build(self, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[None, str]:
+        """Record the normal installed command and complete output for each build on its explicit bakery."""
+        trace.mkdir(true, true).map_err((error) => error.message())?
+        mut command = Command.new(self.oven.0)
+        if label == "cold" and target.name() == "hello.incn":
+            save(root.joinpath("cold.source.sha256"), digest(target)? + "\n")?
+            command.env("INCAN_NATIVE_PLAN_REPORT", root.joinpath("cold.native-plan.tsv").0)
+        output = command
+            .args(["build", target.0, "--profile", "release", "--engine-report"])
+            .current_dir(root.0)
+            .env("INCAN_HOME", self.home.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_ENGINE_TRACE", trace.0)
+            .env("OVEN_OWNER", "off")
+            .env("INCAN_JOBS", "2")
+            .env("INCAN_RUST_INCREMENTAL", "off")
+            .env_remove("INCAN_STDLIB")
+            .env_remove("INCAN_SOURCE_ROOT")
+            .output().map_err((error) => str(error))?
+        save(root.joinpath(label + ".stdout"), str(RustString.from_utf8_lossy(output.stdout).into_owned()))?
+        save(root.joinpath(label + ".stderr"), str(RustString.from_utf8_lossy(output.stderr).into_owned()))?
+        if not output.status.success():
+            return Err(f"{label} build refused; see {root.0}/{label}.stderr")
+        return Ok(None)
+
+    def sample(self, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[Work, str]:
+        """Save the byte offset of each active worker before submitting the build."""
+        trace.mkdir(true, true).map_err((error) => error.message())?
+        mut offsets: Dict[str, int] = {}
+        mut boundaries = ["compiler_trace\tstart_byte"]
+        for path in compiler_traces(trace)?:
+            size = Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+            offsets[path] = size
+            boundaries.append(f"{path}\t{size}")
+        save(root.joinpath(label + ".trace-offsets.tsv"), "\n".join(boundaries) + "\n")?
+        mut handoffs = ["client_trace\tstart_byte"]
+        for path in compiler_traces(trace, prefix="engine-oven-")?:
+            size = Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+            handoffs.append(f"{path}\t{size}")
+        save(root.joinpath(label + ".handoff-trace-offsets.tsv"), "\n".join(handoffs) + "\n")?
+        self.build(root, target, trace, store, label)?
+        return work(trace, offsets)
+
 
 model Work:
     """Parent phase times, actual checker module paths, and actual Body IR module entries in one trace."""
@@ -45,142 +191,11 @@ def main() -> None:
         oven=Path(get_or("INCAN", "")), home=Path(get_or("INCAN_HOME", "")),
         repository=Path(arguments[0]), revision=arguments[1], evidence=Path(arguments[2]),
     )
-    match measure(bench):
+    match bench.measure():
         Err(reason) =>
             println(reason)
             exit(1)
         Ok(_) => exit(0)
-
-
-def measure(bench: Bench) -> Result[None, str]:
-    """Use a private archive checkout, preserve each subject's verdict and compare its warm phase durations."""
-    for path in [bench.oven, bench.home, bench.repository, bench.evidence]:
-        if path.absolute().map_err((error) => error.message())?.0 != path.0:
-            return Err(f"use an absolute path: {path.0}")
-    bench.evidence.mkdir(false, false).map_err((error) => error.message())?
-    archive = bench.evidence.joinpath("source.tar")
-    run_command("git", ["-C", bench.repository.0, "archive", "--format=tar", "-o", archive.0, bench.revision])?
-    selected = run_command("git", ["-C", bench.repository.0, "rev-parse", bench.revision + "^{commit}"])?
-    toolchain = bench.home.joinpath("toolchains/0.6.0-dev.9")
-    manifest = toolchain.joinpath("toolchain.json")
-    installed = parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
-    driver = Path(located(toolchain, text(installed, "driver")?))
-    save(bench.evidence.joinpath("identity.txt"), f"{selected.strip()}\n{bench.oven.0}\n{digest(bench.oven)?}\n{driver.0}\n{digest(driver)?}\n{digest(manifest)?}\n")?
-    mut failures: list[str] = []
-    mut times: Dict[str, int] = {}
-    for subject in ["hello", "oven"]:
-        match measure_subject(bench, subject, archive):
-            Ok((elapsed, problems)) =>
-                times[subject] = elapsed
-                failures += problems
-            Err(reason) => failures.append(f"{subject}: {reason}")
-        for store in ["store", "cold-store"]:
-            match stop_store(bench.oven, bench.evidence.joinpath(subject).joinpath(store)):
-                Ok(_) => pass
-                Err(reason) => failures.append(f"{subject} {store} shutdown: {reason}")
-    if "hello" in times and "oven" in times:
-        if times["oven"] > 2 * times["hello"]:
-            failures.append(f"Oven {times['oven']} ns exceeds twice hello {times['hello']} ns")
-    verdict_path = bench.evidence.joinpath("verdict.txt")
-    if len(failures) > 0:
-        verdict = "\n".join(failures)
-        save(verdict_path, verdict + "\n")?
-        return Err(verdict)
-    save(verdict_path, "passed\n")?
-    return Ok(None)
-
-
-def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[int, list[str]], str]:
-    """Condition once, edit in place, then repeat edited bytes cold at exactly the same physical source path."""
-    root = bench.evidence.joinpath(subject)
-    root.mkdir(true, false).map_err((error) => error.message())?
-    checkout = root.joinpath("src")
-    checkout.mkdir(true, false).map_err((error) => error.message())?
-    mut target = checkout.joinpath("hello.incn")
-    mut edited = target
-    mut binary = checkout.joinpath("target/incan/release/bin/hello")
-    mut before = "code == 0 or code == 1"
-    mut after = "code in [0, 1]"
-    if subject == "oven":
-        _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
-        target = checkout.joinpath("workspaces/oven")
-        edited = target.joinpath("src/compiler_refusals.incn")
-        binary = target.joinpath("target/incan/release/bin/oven")
-        before = "report.code == 0 or report.code == 1"
-        after = "report.code in [0, 1]"
-    else:
-        save(edited, "def reported(code: int) -> bool:\n    return code == 0 or code == 1\n\n\ndef main() -> None:\n    println(reported(1))\n")?
-    original = edited.read_text("utf-8", "strict").map_err((error) => error.message())?
-    if len(original.split(before)) != 2:
-        return Err(f"expected one occurrence of {before} in {edited.0}")
-    replacement = original.replace(before, after)
-    trace = root.joinpath("trace")
-    store = root.joinpath("store")
-    base = sample(bench, root, target, trace, store, "base")?
-    mut failures: list[str] = []
-    mut required = [edited.0]
-    if subject == "oven":
-        required.append(target.joinpath("src/main.incn").0)
-    if not observed_cold_work(base, required):
-        failures.append(f"{subject}: the initial build did not check and build Body IR for {required}")
-    save(edited, replacement)?
-    warm = sample(bench, root, target, trace, store, "warm")?
-    warm_digest = digest(binary)?
-    checked = visits(warm.checked)
-    built = visits(warm.body_ir)
-    check_ns = warm.check_ns
-    body_ns = warm.body_ir_ns
-    elapsed = check_ns + body_ns
-    save(root.joinpath("warm.tsv"), "check_ns\tbody_ir_ns\tbody_ir_modules\texecutable_sha256\tchecked_modules\n"
-        + f"{check_ns}\t{body_ns}\t{', '.join(built)}\t{warm_digest}\t{', '.join(checked)}\n")?
-    if check_ns <= 0 or body_ns <= 0 or elapsed <= 0:
-        failures.append(f"{subject}: missing positive checking or Body IR samples")
-    if checked != [edited.0] or built != [edited.0]:
-        failures.append(f"{subject}: expected only {edited.0}, checked {checked} and built Body IR for {built}")
-    # Preserve every warm target and lock. A fresh checkout at the same path removes project-local caches from the oracle.
-    _ = checkout.rename(root.joinpath("warm-src")).map_err((error) => error.message())?
-    checkout.mkdir(true, false).map_err((error) => error.message())?
-    if subject == "oven":
-        _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
-    save(edited, replacement)?
-    cold_trace = root.joinpath("cold-trace")
-    cold = sample(bench, root, target, cold_trace, root.joinpath("cold-store"), "cold")?
-    cold_digest = digest(binary)?
-    save(root.joinpath("cold.tsv"), "check_ns\tbody_ir_ns\tchecked_module_count\tbody_ir_module_count\n"
-        + f"{cold.check_ns}\t{cold.body_ir_ns}\t{len(cold.checked)}\t{len(cold.body_ir)}\n")?
-    if not observed_cold_work(cold, required):
-        failures.append(f"{subject}: the independent cold build did not check and build Body IR for {required}")
-    save(root.joinpath("cold.sha256"), cold_digest + "\n")?
-    if warm_digest != cold_digest:
-        failures.append(f"{subject}: warm executable {warm_digest} differs from cold {cold_digest}")
-    return Ok((elapsed, failures))
-
-
-def build(bench: Bench, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[None, str]:
-    """Record the normal installed command and complete output for each build on its explicit bakery."""
-    trace.mkdir(true, true).map_err((error) => error.message())?
-    mut command = Command.new(bench.oven.0)
-    if label == "cold" and target.name() == "hello.incn":
-        save(root.joinpath("cold.source.sha256"), digest(target)? + "\n")?
-        command.env("INCAN_NATIVE_PLAN_REPORT", root.joinpath("cold.native-plan.tsv").0)
-    output = command
-        .args(["build", target.0, "--profile", "release", "--engine-report"])
-        .current_dir(root.0)
-        .env("INCAN_HOME", bench.home.0)
-        .env("INCAN_ENGINE", "records")
-        .env("INCAN_BAKERY", store.0)
-        .env("INCAN_ENGINE_TRACE", trace.0)
-        .env("OVEN_OWNER", "off")
-        .env("INCAN_JOBS", "2")
-        .env("INCAN_RUST_INCREMENTAL", "off")
-        .env_remove("INCAN_STDLIB")
-        .env_remove("INCAN_SOURCE_ROOT")
-        .output().map_err((error) => str(error))?
-    save(root.joinpath(label + ".stdout"), str(RustString.from_utf8_lossy(output.stdout).into_owned()))?
-    save(root.joinpath(label + ".stderr"), str(RustString.from_utf8_lossy(output.stderr).into_owned()))?
-    if not output.status.success():
-        return Err(f"{label} build refused; see {root.0}/{label}.stderr")
-    return Ok(None)
 
 
 def stop_store(oven: Path, store: Path) -> Result[None, str]:
@@ -206,25 +221,6 @@ def stop_store(oven: Path, store: Path) -> Result[None, str]:
 def compiler_traces(trace: Path, prefix: str = "engine-compiler-") -> Result[list[str], str]:
     """List process traces for one producer, including ones shared by consecutive requests."""
     return Ok(sorted([file.0 for file in trace.iterdir().map_err((error) => error.message())? if file.name().startswith(prefix) and file.name().endswith(".jsonl")]))
-
-
-def sample(bench: Bench, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[Work, str]:
-    """Save the byte offset of each active worker before submitting the build."""
-    trace.mkdir(true, true).map_err((error) => error.message())?
-    mut offsets: Dict[str, int] = {}
-    mut boundaries = ["compiler_trace\tstart_byte"]
-    for path in compiler_traces(trace)?:
-        size = Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
-        offsets[path] = size
-        boundaries.append(f"{path}\t{size}")
-    save(root.joinpath(label + ".trace-offsets.tsv"), "\n".join(boundaries) + "\n")?
-    mut handoffs = ["client_trace\tstart_byte"]
-    for path in compiler_traces(trace, prefix="engine-oven-")?:
-        size = Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
-        handoffs.append(f"{path}\t{size}")
-    save(root.joinpath(label + ".handoff-trace-offsets.tsv"), "\n".join(handoffs) + "\n")?
-    build(bench, root, target, trace, store, label)?
-    return work(trace, offsets)
 
 
 def work(trace: Path, offsets: Dict[str, int]) -> Result[Work, str]:

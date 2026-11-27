@@ -4,7 +4,7 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.column_block_write import write_block
 from crate.primitives.crumb.column_value_dictionary import ColumnDictionary, build_keys, encode_keys
 from crate.primitives.crumb.column_presence import cell_type, present
-from crate.primitives.crumb.column_types import BlockEncoding, ColumnChoice, uses_dictionary
+from crate.primitives.crumb.column_types import BlockEncoding, ColumnChoice
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
 from crate.primitives.crumb.description_dictionary import Dictionary
@@ -39,7 +39,7 @@ pub def write_column(
     mut use_keys = false
     for encoding in choice.blocks:
         budget.charge_elements(1)?
-        if uses_dictionary(encoding):
+        if encoding.uses_dictionary():
             use_keys = true
     mut keys: Option[ColumnDictionary] = None
     mut output = EncodingBuffer.create()

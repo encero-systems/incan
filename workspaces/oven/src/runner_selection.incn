@@ -45,6 +45,30 @@ enum Truth(str):
     Undecided = "undecided"
     Yes = "yes"
 
+    pub def negated(self) -> Truth:
+        """`not`: an undecided value stays undecided."""
+        if self == Truth.Yes:
+            return Truth.No
+        if self == Truth.No:
+            return Truth.Yes
+        return Truth.Undecided
+
+    pub def both(self, right: Truth) -> Truth:
+        """`and`: false when either side is, true when both are."""
+        if self == Truth.No or right == Truth.No:
+            return Truth.No
+        if self == Truth.Yes and right == Truth.Yes:
+            return Truth.Yes
+        return Truth.Undecided
+
+    pub def either(self, right: Truth) -> Truth:
+        """`or`: true when either side is, false when both are."""
+        if self == Truth.Yes or right == Truth.Yes:
+            return Truth.Yes
+        if self == Truth.No and right == Truth.No:
+            return Truth.No
+        return Truth.Undecided
+
 
 model Terms:
     """What an expression's terms are matched against: a test's subjects, each term a part of one or one exactly."""
@@ -96,7 +120,7 @@ def disjunction(tokens: list[str], start: int, terms: Terms) -> Result[Parsed, s
     mut parsed = conjunction(tokens, start, terms)?
     while parsed.next < len(tokens) and tokens[parsed.next] == "or":
         operand = conjunction(tokens, parsed.next + 1, terms)?
-        parsed = Parsed(value=either(parsed.value, operand.value), next=operand.next)
+        parsed = Parsed(value=parsed.value.either(operand.value), next=operand.next)
     return Ok(parsed)
 
 
@@ -105,7 +129,7 @@ def conjunction(tokens: list[str], start: int, terms: Terms) -> Result[Parsed, s
     mut parsed = negation(tokens, start, terms)?
     while parsed.next < len(tokens) and tokens[parsed.next] == "and":
         operand = negation(tokens, parsed.next + 1, terms)?
-        parsed = Parsed(value=both(parsed.value, operand.value), next=operand.next)
+        parsed = Parsed(value=parsed.value.both(operand.value), next=operand.next)
     return Ok(parsed)
 
 
@@ -116,7 +140,7 @@ def negation(tokens: list[str], start: int, terms: Terms) -> Result[Parsed, str]
     token = tokens[start]
     if token == "not":
         operand = negation(tokens, start + 1, terms)?
-        return Ok(Parsed(value=negated(operand.value), next=operand.next))
+        return Ok(Parsed(value=operand.value.negated(), next=operand.next))
     if token == "(":
         inner = disjunction(tokens, start + 1, terms)?
         if inner.next >= len(tokens) or tokens[inner.next] != ")":
@@ -140,33 +164,6 @@ def term_value(term: str, terms: Terms) -> Truth:
     if terms.open:
         return Truth.Undecided
     return Truth.No
-
-
-def negated(value: Truth) -> Truth:
-    """`not`: an undecided value stays undecided."""
-    if value == Truth.Yes:
-        return Truth.No
-    if value == Truth.No:
-        return Truth.Yes
-    return Truth.Undecided
-
-
-def both(left: Truth, right: Truth) -> Truth:
-    """`and`: false when either side is, true when both are."""
-    if left == Truth.No or right == Truth.No:
-        return Truth.No
-    if left == Truth.Yes and right == Truth.Yes:
-        return Truth.Yes
-    return Truth.Undecided
-
-
-def either(left: Truth, right: Truth) -> Truth:
-    """`or`: true when either side is, false when both are."""
-    if left == Truth.Yes or right == Truth.Yes:
-        return Truth.Yes
-    if left == Truth.No and right == Truth.No:
-        return Truth.No
-    return Truth.Undecided
 
 
 pub def shuffle_seed(requested: Option[int]) -> int:

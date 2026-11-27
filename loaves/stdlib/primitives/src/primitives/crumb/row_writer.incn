@@ -41,7 +41,7 @@ pub def write_rows(
         request.register(registration.kind, registration.shape == NominalKind.Record)
     for record in records:
         request.record(record.key)
-        request = append_value(request, record.value)
+        append_value(request, record.value)
     bytes_left, elements_left = budget.codec_allowance()
     request.allow(bytes_left, elements_left, budget.depth_allowance())
     result = request.write()
@@ -108,90 +108,86 @@ pub def write_twin_rows(
     return Ok(layout.data)
 
 
-def append_value(mut request: RowWriteRequest, value: Value) -> RowWriteRequest:
+def append_value(mut request: RowWriteRequest, value: Value) -> None:
     """Append one complete logical value to the native request in pre-order."""
     match value:
-        Value.NoneValue => return node(request, 0)
+        Value.NoneValue => node(request, 0)
         Value.Some(items) =>
-            request = node(request, 1, count=len(items))
-            return append_values(request, items)
-        Value.Boolean(flag) => return node(request, 2, flag=flag)
-        Value.Integer(IntegerValue.Signed(number)) => return node(request, 3, signed=number)
-        Value.Integer(IntegerValue.Unsigned(number)) => return node(request, 4, unsigned=number)
-        Value.Float(width, bits) => return node(request, 5, number=width, data=bits)
-        Value.Decimal(coefficient, scale) => return node(request, 6, signed=coefficient, number=scale)
-        Value.Text(text) => return node(request, 7, text=text)
-        Value.Binary(data) => return node(request, 8, data=data)
-        Value.Withheld => return node(request, 9)
+            node(request, 1, count=len(items))
+            append_values(request, items)
+        Value.Boolean(flag) => node(request, 2, flag=flag)
+        Value.Integer(IntegerValue.Signed(number)) => node(request, 3, signed=number)
+        Value.Integer(IntegerValue.Unsigned(number)) => node(request, 4, unsigned=number)
+        Value.Float(width, bits) => node(request, 5, number=width, data=bits)
+        Value.Decimal(coefficient, scale) => node(request, 6, signed=coefficient, number=scale)
+        Value.Text(text) => node(request, 7, text=text)
+        Value.Binary(data) => node(request, 8, data=data)
+        Value.Withheld => node(request, 9)
         Value.List(items) =>
-            request = node(request, 10, count=len(items))
-            return append_values(request, items)
+            node(request, 10, count=len(items))
+            append_values(request, items)
         Value.Tuple(items) =>
-            request = node(request, 11, count=len(items))
-            return append_values(request, items)
+            node(request, 11, count=len(items))
+            append_values(request, items)
         Value.Set(items) =>
-            request = node(request, 12, count=len(items))
-            return append_values(request, items)
+            node(request, 12, count=len(items))
+            append_values(request, items)
         Value.Map(entries) =>
-            request = node(request, 13, count=len(entries))
-            return append_entries(request, entries)
+            node(request, 13, count=len(entries))
+            append_entries(request, entries)
         Value.Record(fields) =>
-            request = node(request, 14, count=len(fields))
-            return append_fields(request, fields)
+            node(request, 14, count=len(fields))
+            append_fields(request, fields)
         Value.Enum(identity, fields) =>
-            request = node(request, 15, count=len(fields), data=identity)
-            return append_fields(request, fields)
+            node(request, 15, count=len(fields), data=identity)
+            append_fields(request, fields)
         Value.Union(selector, items) =>
-            request = node(request, 16, count=len(items))
-            request = append_selector(request, selector)
-            return append_values(request, items)
-        Value.Reference(target, identity) => return node(request, 17, data=target, other=identity)
+            node(request, 16, count=len(items))
+            append_selector(request, selector)
+            append_values(request, items)
+        Value.Reference(target, identity) => node(request, 17, data=target, other=identity)
 
 
-def append_values(mut request: RowWriteRequest, values: list[Value]) -> RowWriteRequest:
+def append_values(mut request: RowWriteRequest, values: list[Value]) -> None:
     for value in values:
-        request = append_value(request, value)
-    return request
+        append_value(request, value)
 
 
-def append_entries(mut request: RowWriteRequest, entries: list[MapEntry]) -> RowWriteRequest:
+def append_entries(mut request: RowWriteRequest, entries: list[MapEntry]) -> None:
     for entry in entries:
-        request = append_value(request, entry.key)
-        request = append_value(request, entry.value)
-    return request
+        append_value(request, entry.key)
+        append_value(request, entry.value)
 
 
-def append_fields(mut request: RowWriteRequest, fields: list[ValueField]) -> RowWriteRequest:
+def append_fields(mut request: RowWriteRequest, fields: list[ValueField]) -> None:
     for field in fields:
-        request = node(request, 18, flag=field.canonical, data=field.identity, text=field.absent.value())
-        request = append_value(request, field.value)
-    return request
+        node(request, 18, flag=field.canonical, data=field.identity, text=field.absent.value())
+        append_value(request, field.value)
 
 
-def append_selector(mut request: RowWriteRequest, selector: TypeNode) -> RowWriteRequest:
+def append_selector(mut request: RowWriteRequest, selector: TypeNode) -> None:
     """Append the finite closed selector subset the row value ABI admits."""
     match selector:
-        TypeNode.Scalar(kind) => return node(request, 19, text=kind.value())
-        TypeNode.Decimal(precision, scale) => return node(request, 20, number=precision, second=scale)
+        TypeNode.Scalar(kind) => node(request, 19, text=kind.value())
+        TypeNode.Decimal(precision, scale) => node(request, 20, number=precision, second=scale)
         TypeNode.Container(kind, arguments) =>
-            request = node(request, 21, count=len(arguments), text=kind.value())
-            return append_selectors(request, arguments)
+            node(request, 21, count=len(arguments), text=kind.value())
+            append_selectors(request, arguments)
         TypeNode.Nominal(kind, _, identity, arguments) =>
             mut raw: bytes = b""
             if let Some(known) = identity:
                 raw = known
-            request = node(request, 22, count=len(arguments), data=raw, text=kind.value())
-            return append_selectors(request, arguments)
+            node(request, 22, count=len(arguments), data=raw, text=kind.value())
+            append_selectors(request, arguments)
         TypeNode.Reference(arguments) =>
-            request = node(request, 23, count=len(arguments))
-            return append_selectors(request, arguments)
-        _ => return node(request, -1)
+            node(request, 23, count=len(arguments))
+            append_selectors(request, arguments)
+        _ => node(request, -1)
 
 
-def append_selectors(mut request: RowWriteRequest, selectors: list[TypeNode]) -> RowWriteRequest:
+def append_selectors(mut request: RowWriteRequest, selectors: list[TypeNode]) -> None:
     for selector in selectors:
-        request = append_selector(request, selector)
-    return request
+        append_selector(request, selector)
 
 
 def node(
@@ -206,7 +202,7 @@ def node(
     data: bytes = b"",
     other: bytes = b"",
     text: str = "",
-) -> RowWriteRequest:
+) -> None:
     """Append one transport node without interpreting it as admission proof."""
     request.node(
         code.saturating_resize[i64](),
@@ -220,4 +216,3 @@ def node(
         other,
         text,
     )
-    return request

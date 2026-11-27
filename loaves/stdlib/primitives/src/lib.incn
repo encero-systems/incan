@@ -23,11 +23,10 @@ import primitives.crumb.admission
 import primitives.crumb.values
 import primitives.crumb.native_numbers
 import primitives.crumb.wide_integer
-import primitives.crumb.hash_stream
 import primitives.crumb.scalars
 import primitives.crumb.ordering
 import primitives.crumb.value_admission
-import primitives.crumb.contributions
+import primitives.crumb.hash_stream
 import primitives.crumb.metadata
 import primitives.crumb.names
 import primitives.crumb.text_names

@@ -2,7 +2,12 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_native_unsigned
+from crate.primitives.crumb.framing import encode_integer, encode_native_signed, encode_native_unsigned
+from crate.primitives.crumb.native_numbers import normalize_decimal
+from crate.primitives.crumb.ordering import absence_depth, fields_in_order, order_values, order_entries
+from crate.primitives.crumb.scalars import float64_bits
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.values import MapEntry, Projection, Value, ValueField
 from crate.primitives.hash import Sha256Hasher, sha256
 from crate.primitives.text import encode_utf8
 
@@ -74,3 +79,110 @@ pub class HashOutput:
         for _ in range(4):
             budget.charge_bytes(len(value))?
         return self.framed(encode_utf8(value), budget)
+
+    pub def emit(mut self, value: Value, projection: Projection, mut budget: Budget) -> Result[None, CrumbError]:
+        """Balance recursive depth on every error; a caller exposes the digest only after complete success."""
+        budget.charge_elements(1)?
+        budget.enter()?
+        result = self.emit_inner(value, projection, budget)
+        budget.leave()?
+        return result
+
+    def emit_inner(mut self, value: Value, projection: Projection, mut budget: Budget) -> Result[None, CrumbError]:
+        """Tags and framing belong to the value profile, independently of any row codec or storage width."""
+        match value:
+            Value.NoneValue | Value.Some(_) =>
+                if let Some(depth) = absence_depth(value, budget)?:
+                    self.write(b"\x00", budget)?
+                    return self.unsigned(depth, budget)
+                if let Value.Some(items) = value:
+                    return self.emit(items[0], projection, budget)
+            Value.Boolean(flag) =>
+                if flag:
+                    return self.write(b"\x01\x01", budget)
+                return self.write(b"\x01\x00", budget)
+            Value.Integer(number) =>
+                self.write(b"\x02", budget)?
+                return self.write(encode_integer(number, budget)?, budget)
+            Value.Float(width, bits) =>
+                self.write(b"\x03", budget)?
+                return self.write(float64_bits(width, bits, budget)?, budget)
+            Value.Decimal(coefficient, scale) =>
+                normalized = normalize_decimal(coefficient, scale)?
+                self.write(b"\x04", budget)?
+                self.write(encode_native_signed(normalized.coefficient, budget)?, budget)?
+                return self.write(encode_native_signed(normalized.scale.wrapping_resize[i128](), budget)?, budget)
+            Value.Text(text) =>
+                self.write(b"\x05", budget)?
+                return self.text(text, budget)
+            Value.Binary(data) =>
+                self.write(b"\x06", budget)?
+                return self.framed(data, budget)
+            Value.Withheld => return self.write(b"\x07", budget)
+            Value.List(items) =>
+                self.write(b"\x08", budget)?
+                return self.emit_sequence(items, projection, budget)
+            Value.Tuple(items) =>
+                self.write(b"\x09", budget)?
+                return self.emit_sequence(items, projection, budget)
+            Value.Set(items) =>
+                self.write(b"\x0a", budget)?
+                self.unsigned(len(items), budget)?
+                for index in order_values(items, projection, budget)?:
+                    self.emit(items[index], projection, budget)?
+            Value.Map(entries) => return self.emit_map(entries, projection, budget)
+            Value.Record(fields) => return self.emit_record(fields, projection, budget)
+            Value.Enum(identity, fields) =>
+                self.write(b"\x0d", budget)?
+                self.write(identity, budget)?
+                return self.emit_record(fields, projection, budget)
+            Value.Union(member, items) =>
+                self.write(b"\x0e", budget)?
+                self.text(selector_spelling(member, budget)?, budget)?
+                return self.emit(items[0], projection, budget)
+            Value.Reference(target, identity) =>
+                self.write(b"\x0f", budget)?
+                self.framed(target, budget)?
+                return self.framed(identity, budget)
+        return Ok(None)
+
+    def emit_sequence(
+        mut self,
+        items: Borrowed[list[Value]],
+        projection: Projection,
+        mut budget: Budget,
+    ) -> Result[None, CrumbError]:
+        """Sequence order and multiplicity are significant; counts describe elements, not encoded bytes."""
+        self.unsigned(len(items), budget)?
+        for at in range(len(items)):
+            self.emit(items[at], projection, budget)?
+        return Ok(None)
+
+    def emit_map(
+        mut self,
+        entries: Borrowed[list[MapEntry]],
+        projection: Projection,
+        mut budget: Budget,
+    ) -> Result[None, CrumbError]:
+        """Keep every admitted object entry even when several keys project to the same canonical value."""
+        self.write(b"\x0b", budget)?
+        self.unsigned(len(entries), budget)?
+        for index in order_entries(entries, projection, budget)?:
+            self.emit(entries[index].key, projection, budget)?
+            self.emit(entries[index].value, projection, budget)?
+        return Ok(None)
+
+    def emit_record(
+        mut self,
+        fields: Borrowed[list[ValueField]],
+        projection: Projection,
+        mut budget: Budget,
+    ) -> Result[None, CrumbError]:
+        """Projection chooses fields before their identity-ordered contributions are emitted."""
+        indices = fields_in_order(fields, projection, budget)?
+        self.write(b"\x0c", budget)?
+        self.unsigned(len(indices), budget)?
+        for index in indices:
+            self.write(fields[index].identity, budget)?
+            self.emit(fields[index].value, projection, budget)?
+        return Ok(None)

@@ -31,7 +31,7 @@ from pub::incan_worker_host.record_protocol import (
 from observation import trace, trace_boundary
 from core_process import executable
 from owner_client import status_code
-from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
+from owner_endpoint import Endpoint, bindable, prepare_directory, socket_prefix
 from decimal_text import digits_only
 from toolchain import Toolchain
 from request_directory import working_directory
@@ -380,11 +380,11 @@ def try_slot(directory: Path, generation: str, slot: int) -> Result[Option[FileL
 
 def slot_connection(toolchain: Toolchain, endpoint: Endpoint, snapshot_authority: Option[Path]) -> Result[Connection, str]:
     """Connect to the held slot's worker, or start it and connect after its readiness acknowledgment."""
-    match attach(endpoint)?:
+    match endpoint.attach()?:
         Some(found) => return Ok(found)
         None => pass
     launch(toolchain, endpoint, snapshot_authority)?
-    match attach(endpoint)?:
+    match endpoint.attach()?:
         Some(found) => return Ok(found)
         None => return Err("the compiler worker disappeared after readiness")
 
