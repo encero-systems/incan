@@ -447,6 +447,9 @@ mod plan_record_option_tests {
     }
 }
 
+#[cfg(test)]
+mod provider_count_tests;
+
 /// Run one ordinary signature reader in the real compiler environment and publish only that owner's two Crumb values.
 pub(crate) fn check_ranked_reader(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let [unit, sysroot, demand_path, output, options @ ..] = arguments else {
