@@ -33,32 +33,35 @@ static FULL_PAGES: Mutex<Option<(HashMap<[u8; 32], Arc<PlanModuleValue>>, u64)>>
 /// The bytes of module pages with their events one worker keeps: one program's pages, many times over.
 const MAX_FULL_PAGE_BYTES: u64 = 2 << 30;
 
-/// A slot before the current unit's carrier fold and runtime redirects.
+/// A verified member before the current unit's carrier fold and runtime redirects.
 // E2-finalized-plan-slot-interop and E2-current-whole-plan-applicability retain the native restore result together.
 pub(crate) struct FinalizedMember {
-    pub slot: FunctionSlot,
+    /// Helper-bearing members prove roster membership but use their ordinary restore to recover the helpers.
+    pub lending: Option<(FunctionSlot, Vec<ExternalFunction>)>,
     pub product: Arc<AdmittedPayload>,
-    pub runtime: Vec<ExternalFunction>,
     pub references: Vec<NominalReference>,
     pub applicability: RestoreApplicability,
 }
 
 impl FinalizedMember {
-    /// Store the ordinary restore result before the unit changes its calls or positions.
+    /// Retain the checked inputs and the slot when the ordinary restore carries no helper frames.
     pub(crate) fn retain(
         product: Arc<AdmittedPayload>,
         references: Vec<NominalReference>,
-        slot: &FunctionSlot,
-        runtime: &[ExternalFunction],
+        lending: Option<(&FunctionSlot, &[ExternalFunction])>,
         applicability: RestoreApplicability,
     ) -> Arc<Self> {
         Arc::new(Self {
-            slot: slot.clone(),
+            lending: lending.map(|(slot, runtime)| (slot.clone(), runtime.to_vec())),
             product,
-            runtime: runtime.to_vec(),
             references,
             applicability,
         })
+    }
+
+    /// A mixed roster can lend the slots that keep their placement through the current carrier fold.
+    pub(crate) fn lends_unchanged_in_mixed_module(&self) -> bool {
+        self.lending.as_ref().is_some_and(|(slot, _)| slot.keeps_placement())
     }
 }
 
@@ -173,6 +176,11 @@ impl ResidentPage {
             return;
         };
         if self.bytes == 0 || self.bytes > MAX_FULL_PAGE_BYTES {
+            return;
+        }
+        if slots.values().any(|member| member.lending.is_none())
+            && !slots.values().any(|member| member.lends_unchanged_in_mixed_module())
+        {
             return;
         }
         if let Ok(mut guard) = PAGES.lock()

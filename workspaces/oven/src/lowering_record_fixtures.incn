@@ -213,7 +213,7 @@ def is_plan_report_event_row(row: JsonValue, units: Path) -> Result[bool, str]:
     selected = Path(key)
     if operation == "engine_sidecar_authentication":
         return Ok(private_plan_report(selected, units))
-    if operation == "file_read" and key.endswith(".event"):
+    if operation == "file_read" and (key.endswith(".event") or key.endswith(".refusal")):
         return Ok(private_plan_report(selected.parent(), units))
     return Ok(false)
 
@@ -379,7 +379,9 @@ def require_plan_event_windows(issue: JsonValue, rows: list[JsonValue], edited: 
         match required_text(row, "operation")?:
             "engine_sidecar_authentication" => reports.append(row)
             "engine_graph_staging" => lowering.append(row)
-            "file_read" => reads.append(row)
+            "file_read" =>
+                if required_text(row, "key")?.endswith(".event"):
+                    reads.append(row)
             _ => return Err("unexpected Plan event operation")
     if len(reports) != 1 or len(lowering) != 1:
         return Err("the edited request has no unique Plan census and publication windows")
