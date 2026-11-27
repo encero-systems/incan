@@ -4,7 +4,7 @@ from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio
 from rust::std::string import String as RustString
 from rust::std::thread import sleep
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
@@ -60,7 +60,7 @@ from release_support import (
     tree_digest,
     verification_program,
 )
-from reference_cache import census_inputs
+from reference_cache import CensusInputs, census_inputs
 from release_verifier_teardown import finish_installed_verifier
 from relocated_sysroot import shared_relocated_sysroot
 from verify_installation import (
@@ -70,7 +70,8 @@ from verify_installation import (
     require_shipped_standard_sources,
 )
 from relink_driver import absolute_manifest
-from release import validate_seed_bridge
+from release import PreparedInstallation, installed_verification, validate_seed_bridge
+from release_run import ReleaseRun, release_paths
 from registry_checksums import REGISTRY_CHECKSUMS, checksummed_closure, is_sha256, write_checksummed_registry
 from check_support import repository_root
 
@@ -844,6 +845,55 @@ def test_release_scratch_reclamation_is_exact_and_retains_peak_evidence() -> Res
     peak = int(root.joinpath("tree-peak.txt").read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
     assert peak >= after
     assert evidence.read_text("utf-8", "strict").map_err((error) => error.message())?.contains("before\t")
+    assert_installed_verification_retention(temporary.path().joinpath("default-cleanup"), false)?
+    assert_installed_verification_retention(temporary.path().joinpath("keep-trees"), true)?
+    return Ok(None)
+
+
+def assert_installed_verification_retention(output: Path, keep_trees: bool) -> Result[None, str]:
+    """Run the real installed cleanup after a completed fixture and count its retained comparator files."""
+    verification = output.joinpath("verification-source")
+    home = output.joinpath("verification-home")
+    evidence = output.joinpath("ci/run.fixture")
+    log = evidence.joinpath("contracts.log")
+    oven = home.joinpath("bin/incan")
+    oven.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = Path("/usr/bin/true").copy(oven, true, true).map_err((error) => error.message())?
+    runner = evidence.joinpath("runner/target/incan/debug/bin/contracts")
+    dependency = home.joinpath("bakery/runner-dependency")
+    verifier = verification.joinpath("scripts/verify_installation.incn")
+    files = [oven, verifier, runner, dependency]
+    scratch = evidence.joinpath("scratch")
+    for path in [verifier, runner, dependency, log, scratch.joinpath("consumed")]:
+        path.parent().mkdir(true, true).map_err((error) => error.message())?
+        _ = path.write_text("fixture\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    inputs = CensusInputs(
+        oven="", lsp="", manifest="", fixtures="", runner="", runner_manifest="", stdlib="", timeout_seconds=1,
+        families=[],
+    )
+    mut selected = [SHA, output.0]
+    if keep_trees:
+        selected.append("--keep-trees")
+    run = ReleaseRun(
+        root=verification,
+        options=parse_release_options(selected)?,
+        paths=release_paths(output),
+        seed_home=home,
+        seed_oven=oven,
+        seed_lsp=home.joinpath("bin/incan-lsp"),
+        target="",
+        started=Instant.now(),
+        trace=ReleaseTrace.open(output.joinpath("trace"))?,
+    )
+    installation = PreparedInstallation(verification=verification, home=home, environment={}, inputs=inputs)
+    observed = installed_verification(run, installation)?
+    assert observed.0 == log.0 and log.is_file()
+    assert not scratch.exists(), "installed verification retained consumed census scratch"
+    retained = len([path for path in files if path.is_file()])
+    mut expected = 0
+    if keep_trees:
+        expected = len(files)
+    assert retained == expected, f"installed verification retained {retained} of {expected} required files"
     return Ok(None)
 
 
