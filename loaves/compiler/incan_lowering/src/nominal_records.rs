@@ -1,5 +1,6 @@
 //! Bind keyed native products to source declarations and closed specializations through their checked versions.
 
+use incan_mir_plan_native::record_types::CheckedType;
 use incan_mir_plan_native::{
     EnumDeclaration, ExternalFunction, Function, NominalKind, NominalReference, ProductNominal, UnitNominals,
     describe_nominals, encode_checked_layout, product_nominals, unit_nominals,
@@ -19,15 +20,50 @@ use crate::program_context::ProgramContext;
 use crate::scalar_store::retain_scalar;
 use crate::symbols::model_symbol;
 
-/// The described rows of a program's model, enum and static tables, each row for the declaration at its position.
+/// The described rows of a program's model, enum, static and carrier tables, each at its declaration's position.
 ///
-/// A program's tables only grow within one planning (`retain_nominal_tables`, `extend_program_context`), so a row
-/// stays the description of its position, and a table described again describes only the rows it gained.
+/// Source tables grow within one planning. Intrinsic carriers also grow, but a suspended attempt can withdraw its
+/// speculative suffix. Reusing those rows checks the current carrier meaning before keeping a description.
 #[derive(Clone, Default, PartialEq)]
 pub struct DescribedNominals {
     models: Vec<(ProductNominal, String)>,
     enums: Vec<(ProductNominal, String)>,
     statics: Vec<ProductNominal>,
+    carriers: Arc<Vec<DescribedCarrier>>,
+}
+
+/// The exact checked inputs to one carrier description. Its current native name belongs to the unit's slot.
+#[derive(Clone, PartialEq)]
+struct DescribedCarrier {
+    key: Option<CheckedType>,
+    variants: Vec<(String, usize)>,
+    derives: Vec<String>,
+    nominal: ProductNominal,
+}
+
+impl DescribedCarrier {
+    /// Describe a newly admitted carrier and keep the checked facts its description consumed.
+    fn new(declaration: &EnumDeclaration) -> Self {
+        Self {
+            key: declaration.semantic_key.clone(),
+            variants: carrier_variant_shapes(declaration)
+                .map(|(name, fields)| (name.to_owned(), fields))
+                .collect(),
+            derives: declaration.derives.clone(),
+            nominal: carrier_nominal(declaration),
+        }
+    }
+
+    /// Recognize the exact checked meaning, independent of native name or source position.
+    fn matches(&self, declaration: &EnumDeclaration) -> bool {
+        self.key == declaration.semantic_key
+            && self.derives == declaration.derives
+            && self
+                .variants
+                .iter()
+                .map(|(name, fields)| (name.as_str(), *fields))
+                .eq(carrier_variant_shapes(declaration))
+    }
 }
 
 /// The layout witnesses a program's namespaces recorded when they were checked and published, by declaration
@@ -114,12 +150,32 @@ pub fn product_nominal_table(
 /// A declaration without a stable identity is described with an empty identity, which a product refuses to name.
 pub fn unit_product_nominals(program: &mut ProgramContext, intrinsics: &[EnumDeclaration]) -> UnitNominals {
     describe_new_rows(program);
+    describe_current_carriers(program, intrinsics);
     let described = &program.described;
     let (models, model_names) = described.models.iter().cloned().unzip();
     let (enums, enum_names) = described.enums.iter().cloned().unzip();
     let mut unit = unit_nominals(models, enums, model_names, enum_names).with_statics(described.statics.clone());
-    sync_carriers(&mut unit, intrinsics);
+    for (carrier, declaration) in described.carriers.iter().zip(intrinsics) {
+        unit.append_carrier(carrier.nominal.clone(), declaration.name.clone());
+    }
     unit
+}
+
+/// Borrow the retained carrier prefix, forgetting withdrawn slots before describing the current suffix.
+fn describe_current_carriers(program: &mut ProgramContext, intrinsics: &[EnumDeclaration]) {
+    let existing = &program.described.carriers;
+    let retained = existing
+        .iter()
+        .zip(intrinsics)
+        .take_while(|(carrier, declaration)| carrier.matches(declaration))
+        .count();
+    if retained == existing.len() && retained == intrinsics.len() {
+        return;
+    }
+    let rows = &mut Arc::make_mut(&mut program.described).carriers;
+    let rows = Arc::make_mut(rows);
+    rows.truncate(retained);
+    rows.extend(intrinsics[retained..].iter().map(DescribedCarrier::new));
 }
 
 /// Describe the rows each of the program's tables gained since it was last described. Rows beyond a table's length
@@ -139,7 +195,9 @@ fn describe_new_rows(program: &mut ProgramContext) {
         || described.enums.len() > enums.len()
         || described.statics.len() > statics.len()
     {
-        *described = DescribedNominals::default();
+        described.models.clear();
+        described.enums.clear();
+        described.statics.clear();
     }
     for declaration in &nominals[described.models.len()..] {
         let witness = recorded
@@ -300,8 +358,8 @@ pub fn carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal {
         return unnamed;
     };
     let mut meaning = vec![text.clone()];
-    for variant in &declaration.variants {
-        meaning.push(format!("{}/{}", variant.name, variant.fields.len()));
+    for (name, fields) in carrier_variant_shapes(declaration) {
+        meaning.push(format!("{name}/{fields}"));
     }
     meaning.extend(declaration.derives.iter().cloned());
     match semantic_digest(&meaning) {
@@ -312,6 +370,14 @@ pub fn carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal {
         },
         Err(_) => unnamed,
     }
+}
+
+/// Borrow the ordered variant names and payload sizes used in the carrier's meaning digest.
+fn carrier_variant_shapes(declaration: &EnumDeclaration) -> impl Iterator<Item = (&str, usize)> {
+    declaration
+        .variants
+        .iter()
+        .map(|variant| (variant.name.as_str(), variant.fields.len()))
 }
 
 /// Encode the exact checked type a carrier lays out; its nominal names carry no source span.
