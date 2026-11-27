@@ -1,0 +1,8 @@
+# Former case empty_list_string_arg: an empty list literal passed to a list[str] parameter has length zero
+
+def count_names(names: List[str]) -> int:
+    return len(names)
+
+
+pub def main() -> None:
+    println(count_names([]))

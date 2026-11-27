@@ -1,0 +1,15 @@
+# Former case qualified_json_trait_dispatch: a json-derived model's own method calls to_json on self and returns the JSON document
+
+from std.serde import json
+
+
+@derive(json)
+model Payload:
+    value: int
+
+    def encode(self) -> str:
+        return self.to_json()
+
+
+pub def main() -> None:
+    println(Payload(value=1).encode())

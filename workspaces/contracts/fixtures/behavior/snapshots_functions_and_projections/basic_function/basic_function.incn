@@ -1,0 +1,9 @@
+# Former case basic_function: a two-parameter int function returns the sum its caller prints
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+pub def main() -> None:
+    result = add(1, 2)
+    println(result)

@@ -1,0 +1,20 @@
+# Former case function_alias_and_partial: a function called directly, through a same-module binding alias and through a partial with a bound keyword argument gives the target's result each time
+
+def calculate(value: int) -> int:
+    return value + 1
+
+
+compute = calculate
+
+
+def route(method: str, path: str) -> str:
+    return f"{method}{path}"
+
+
+get = partial route(method="GET")
+
+
+pub def main() -> None:
+    println(calculate(41))
+    println(compute(41))
+    println(get(path="/"))

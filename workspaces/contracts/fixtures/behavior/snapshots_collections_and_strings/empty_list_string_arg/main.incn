@@ -1,0 +1,89 @@
+# behavior: 14 former snapshots collections and strings cases run in order, each program from its own module: empty_list_string_arg, enumerate_tuple_unpack, generator_expression_and_yield, imported_stdlib_value_fragment, iterator_adapter_sources, json_stringify_builtin, list_and_comprehension_over_generator, list_append_takes_a_fresh_task_handle, list_repeat, list_str_append_literal, shared_string_list_helpers, storable_sha256_hasher, str_over_arithmetic_expression, string_operations
+# expect-stdout:
+#  0
+#  a 0 0
+#  bb 1 1
+#  a 0 0
+#  bb 1 1
+#  2 3 4
+#  1 2 3
+#  1
+#  11.0
+#  11.0
+#  11.0
+#  0:beta
+#  1:alpha
+#  2
+#  alpha
+#  2
+#  evaluated
+#  "line\né"
+#  evaluated
+#  "line\né"
+#  null
+#  9223372036854775807
+#  3
+#  0 1 2
+#  0 2 4
+#  0 2 4
+#  6
+#  2
+#  0 1
+#  1
+#  -1 seed 0 1 7
+#  orders_total count
+#  0 1 -1
+#  0 1 -1
+#  5 3
+#  true
+#  false
+#  3
+#  7
+#  12
+#  36
+#  -1
+#  2.5
+#  true
+#  HELLO WORLD hello world Hello World
+#  true false
+#  3 two
+#  hello python
+#  éll
+#  true true
+#  one, two, three
+#  hello world
+
+"""Run the program of each former case in order."""
+
+import empty_list_string_arg
+import enumerate_tuple_unpack
+import generator_expression_and_yield
+import imported_stdlib_value_fragment
+import iterator_adapter_sources
+import json_stringify_builtin
+import list_and_comprehension_over_generator
+import list_append_takes_a_fresh_task_handle
+import list_repeat
+import list_str_append_literal
+import shared_string_list_helpers
+import storable_sha256_hasher
+import str_over_arithmetic_expression
+import string_operations
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    empty_list_string_arg.main()
+    enumerate_tuple_unpack.main()
+    generator_expression_and_yield.main()
+    imported_stdlib_value_fragment.main()
+    iterator_adapter_sources.main()
+    json_stringify_builtin.main()
+    list_and_comprehension_over_generator.main()
+    await list_append_takes_a_fresh_task_handle.main()
+    list_repeat.main()
+    list_str_append_literal.main()
+    shared_string_list_helpers.main()
+    storable_sha256_hasher.main()
+    str_over_arithmetic_expression.main()
+    string_operations.main()

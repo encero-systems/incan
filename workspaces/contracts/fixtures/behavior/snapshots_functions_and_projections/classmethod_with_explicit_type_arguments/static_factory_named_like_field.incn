@@ -1,0 +1,16 @@
+# Former case static_factory_named_like_field: a static factory method that shares its spelling with a stored newtype field builds the model, and the field reads back the value
+
+type Days = newtype int
+
+
+model TimeDelta:
+    pub days: Days
+
+    @staticmethod
+    def days(value: Days) -> TimeDelta:
+        return TimeDelta(days=value)
+
+
+pub def main() -> None:
+    delta = TimeDelta.days(-7)
+    println(delta.days.0)
