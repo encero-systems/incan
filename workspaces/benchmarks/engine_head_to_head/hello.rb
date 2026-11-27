@@ -61,8 +61,10 @@ module HeadToHead
       session.retire(root)
     end
 
-    # One ordinary `incan run`, then the produced executable run directly as the native and OS-launch floor.
+    # One ordinary `incan run`, then the produced executable run directly as the native and OS-launch floor. Fresh
+    # recomputation controls run untimed, so each timed edit series holds only its matched warm samples.
     def self.stage_sample(session, pair, position, stage, state, arm)
+      timed = session.timed && state != 'fresh-recomputation'
       bytes, expected = stage_source(stage)
       File.binwrite(arm.fetch(:source), bytes) if EDITS.include?(stage)
       if %w[prefilled-cold fresh-recomputation].include?(state)
@@ -73,11 +75,11 @@ module HeadToHead
                 source_sha256: HeadToHead.sha256(arm.fetch(:source)), prior_source_sha256: arm[:prior_source_sha256],
                 workers_stopped_before: stopped }
       ordinary = session.sample(scope.merge(role: 'ordinary'), arm.fetch(:project), arm.fetch(:environment),
-                                [session.launcher, 'run', 'hello.incn'])
+                                [session.launcher, 'run', 'hello.incn'], timed: timed)
       check_output(ordinary, expected, "ordinary #{stage} #{arm.fetch(:engine)}")
       artifact = native_artifact(arm, stage, ordinary)
       direct = session.sample(scope.merge(role: 'native-control', artifact_sha256: artifact), arm.fetch(:project),
-                              {}, [arm.fetch(:binary)])
+                              {}, [arm.fetch(:binary)], timed: timed)
       check_output(direct, expected, "native #{stage} #{arm.fetch(:engine)}")
       HeadToHead.require_fact(HeadToHead.sha256(arm.fetch(:binary)) == artifact, "executable changed during #{stage}")
       HeadToHead.require_fact(HeadToHead.sha256(arm.fetch(:source)) == scope.fetch(:source_sha256), "source changed during #{stage}")

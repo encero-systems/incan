@@ -60,6 +60,13 @@ module HeadToHead
     destination
   end
 
+  STORE_PARTS = %w[payloads receipts native-shared verified-payloads snapshots segments].freeze
+
+  # Entries under each record directory of a Bakery: growth between two observations shows new results.
+  def self.store_counts(bakery)
+    STORE_PARTS.to_h { |part| [part, Dir.glob('**/*', base: File.join(bakery, part)).size] }
+  end
+
   def self.make_directory(path)
     FileUtils.mkdir_p(path, mode: 0o700)
     path

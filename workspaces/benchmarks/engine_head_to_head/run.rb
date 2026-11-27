@@ -5,7 +5,7 @@
 #   run.rb compare [--untimed] --output DIR --source CHECKOUT --archive TOOLCHAIN_ARCHIVE --pin PIN_JSON
 #          --prefill BAKERY --prefill-receipt RECEIPT --cache-note TEXT [--arms hello,two-homes,graph-lsp,census]
 #          [--contracts-runner RUNNER --oracle VERDICTS] [--slots PAR_SLOT_DIRECTORY] [--pairs N] [--census-pairs N]
-#          [--census-jobs 5,12] [--census-states cold,warm] [--retire-trees]
+#          [--census-jobs 2,12] [--census-states cold,warm] [--retire-trees]
 #   run.rb summarize OUTPUT
 #
 # Run under par.rb: the installed home is INCAN_HOME, and INCAN must be its launcher.
@@ -27,7 +27,7 @@ module HeadToHead
   end
 
   def self.options(arguments)
-    settings = { timed: true, arms: ARMS, census_jobs: [5, 12], census_states: %w[cold warm] }
+    settings = { timed: true, arms: ARMS, census_jobs: [2, 12], census_states: %w[cold warm] }
     OptionParser.new do |parser|
       parser.on('--untimed') { settings[:timed] = false }
       parser.on('--retire-trees') { settings[:retire_trees] = true }

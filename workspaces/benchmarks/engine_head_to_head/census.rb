@@ -39,20 +39,39 @@ module HeadToHead
       [environment, argv]
     end
 
+    # Per engine, the warm census reuses the cold census's Bakery and its retained scratch: the same realized
+    # projects, targets and paths, which the stock materializer keeps when their bytes are unchanged. Only the logs
+    # and temporary directories are per state.
     def self.run_pair(session, pair, jobs, expected)
       root = session.directory('census', "jobs-#{jobs}", format('pair-%02d', pair))
       session.order(pair).each_with_index do |engine, position|
-        bakery = HeadToHead.clone_tree(session.prefill, File.join(root, engine, 'bakery'))
+        base = File.join(root, engine)
+        bakery = HeadToHead.clone_tree(session.prefill, File.join(base, 'bakery'))
+        scratch = HeadToHead.make_directory(File.join(base, 'retained-scratch'))
         session.settings.fetch(:census_states).each do |state|
-          arm = { bakery: bakery, scratch: File.join(root, engine, "#{state}-scratch"), tmp: File.join(root, engine, "#{state}-tmp"),
-                  log: File.join(root, engine, "#{state}-contracts.log") }
-          [arm.fetch(:scratch), arm.fetch(:tmp)].each { |path| HeadToHead.make_directory(path) }
+          arm = { bakery: bakery, scratch: scratch, tmp: HeadToHead.make_directory(File.join(base, "#{state}-tmp")),
+                  log: File.join(base, "#{state}-contracts.log") }
           scope = { arm: 'census', pair: pair, position: position, engine: engine, jobs: jobs, stage: "census-#{state}",
                     state: state == 'cold' ? 'prefilled-cold' : 'warm-unchanged' }
+          before = retained(session, arm)
           census_run(session, scope, engine, arm, jobs, expected)
+          after = retained(session, arm)
+          session.log(scope.merge(role: 'retained-state', before: before, after: after,
+                                  workers_kept: before.fetch(:workers) & after.fetch(:workers)))
         end
       end
       session.retire(root)
+    end
+
+    # What a census state starts or ends with: the scratch's realized size and project targets, the Bakery's
+    # generation and record counts, and the home's live workers (the admitted service generation).
+    def self.retained(session, arm)
+      kib, = Open3.capture2('/usr/bin/du', '-sk', arm.fetch(:scratch))
+      targets, = Open3.capture2('/usr/bin/find', arm.fetch(:scratch), '-type', 'd', '-name', 'target', '-prune')
+      { scratch_kib: kib.to_i, project_targets: targets.lines.size,
+        bakery_current: File.read(File.join(arm.fetch(:bakery), 'CURRENT')).strip,
+        store_counts: HeadToHead.store_counts(arm.fetch(:bakery)),
+        workers: HeadToHead.home_workers([session.home]).map { |row| "#{row.fetch(:pid)} #{row.fetch(:command)[0, 160]}" } }
     end
 
     # One complete census. The log is retained; the verdict set must equal the oracle and keep every committed PASS.

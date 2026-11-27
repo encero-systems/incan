@@ -108,13 +108,16 @@ module HeadToHead
       replies = navigate(client, project, uri, source)
       status = client.finish
       client.mark('exited')
+      raw = stderr.sub(/\.stderr\z/, '.replies.json')
+      File.write(raw, JSON.pretty_generate({ uri: uri, document_version: 1 }.merge(replies)) + "\n")
       entry = scope.merge(role: 'ordinary', argv: [session.lsp, '--profile', 'release'], cwd: project,
                           environment: arm.fetch(:environment), exit: status.exitstatus, signal: status.termsig,
-                          stderr_log: stderr, timed: session.timed)
+                          stderr_log: stderr, replies: raw, replies_sha256: HeadToHead.sha256(raw), timed: session.timed)
       entry.merge!(marks_ms: client.marks, host_before: before, host_after: HeadToHead.host_sample(session.slot_root)) if session.timed
       session.log(entry)
       HeadToHead.require_fact(status.success?, "LSP did not exit cleanly for #{arm.fetch(:engine)}", entry)
-      compare(session, scope, HeadToHead.normalize(JSON.generate(replies), roots(session, arm)), references, entry)
+      compared = replies.slice(:diagnostics, :definition).merge(references: replies.fetch(:references).sort_by(&:to_s))
+      compare(session, scope, HeadToHead.normalize(JSON.generate(compared), roots(session, arm)), references, entry)
     end
 
     def self.navigate(client, project, uri, source)
@@ -137,7 +140,8 @@ module HeadToHead
       HeadToHead.require_fact(references.is_a?(Array) && references.size >= 2, 'LSP references omitted a site', references)
       client.request('shutdown', nil)
       client.notify('exit', nil)
-      { diagnostics: diagnostics, definition: definition, references: references.sort_by(&:to_s) }
+      # The server's own reply bodies, kept as evidence; comparison sorts the references.
+      { initialize: capabilities, diagnostics: diagnostics, definition: definition, references: references }
     end
   end
 end

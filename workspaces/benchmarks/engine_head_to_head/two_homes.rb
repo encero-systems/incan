@@ -8,8 +8,6 @@ module HeadToHead
     # Home, stage and state of each timed ordinary request, in order.
     STEPS = [%w[a first-home two-home-first], %w[b second-home two-home-shared],
              %w[a unchanged-first two-home-unchanged], %w[b unchanged-second two-home-unchanged]].freeze
-    STORE_PARTS = %w[payloads receipts native-shared verified-payloads snapshots segments].freeze
-
     def self.home_environment(home, engine)
       launcher = File.join(home, 'bin/incan')
       { 'INCAN_HOME' => home, 'INCAN' => launcher, 'OVEN_ENGINE_BINARY' => launcher,
@@ -53,10 +51,6 @@ module HeadToHead
       withdrawn
     end
 
-    def self.store_counts(bakery)
-      STORE_PARTS.to_h { |part| [part, Dir.glob('**/*', base: File.join(bakery, part)).size] }
-    end
-
     def self.run_pair(session, pair, homes)
       root = session.directory('two-homes', format('pair-%02d', pair))
       session.order(pair).each_with_index do |engine, position|
@@ -77,8 +71,27 @@ module HeadToHead
           session.log({ arm: 'two-homes', role: 'home-catalog', home: home, pair: pair, engine: engine, stage: 'after-pair',
                         catalog_sha256: Pins.inventory_digest(File.join(home, 'bakery')) })
         end
+        release(session, context, homes.fetch(engine))
       end
       session.retire(root)
+    end
+
+    # Stop both homes' workers, then withdraw each home's view descriptor and storage root, so no home stays bound
+    # to this pair's Bakery when it is retired. Oven has no unbind command; the descriptors' contents are already in
+    # the view-isolation sample.
+    def self.release(session, context, homes)
+      stopped = HeadToHead.quiesce(homes.values)
+      released = homes.transform_values do |home|
+        names = %w[bakery.view bakery.view.crumb config.toml].select { |name| File.exist?(File.join(home, name)) }
+        names.each { |name| File.delete(File.join(home, name)) }
+        names
+      end
+      bound = homes.values.select { |home| File.exist?(File.join(home, 'bakery.view')) || File.exist?(File.join(home, 'config.toml')) }
+      entry = { arm: 'two-homes', role: 'binding-release', pair: context.fetch(:pair), engine: context.fetch(:engine),
+                bakery: context.fetch(:bakery), workers_stopped: stopped, released: released, still_bound: bound }
+      session.log(entry)
+      HeadToHead.require_fact(bound.empty? && HeadToHead.home_workers(homes.values).empty?,
+                              'a home stayed bound to the pair Bakery', entry)
     end
 
     # The short-lived homes go once the arm has passed; their install and catalog evidence stays in the samples.
@@ -92,14 +105,14 @@ module HeadToHead
     end
 
     def self.step(session, context, home, project, stage, state)
-      before = store_counts(context.fetch(:bakery))
+      before = HeadToHead.store_counts(context.fetch(:bakery))
       scope = context.merge(arm: 'two-homes', stage: stage, state: state, role: 'ordinary', home: home)
       entry = session.sample(scope, project, home_environment(home, context.fetch(:engine)),
                              [File.join(home, 'bin/incan'), 'run', 'hello.incn'])
       Hello.check_output(entry, Hello::INITIAL, "#{stage} #{context.fetch(:engine)}")
       binary = File.join(project, 'target/incan/debug/bin/hello')
       HeadToHead.require_fact(File.executable?(binary), "#{stage} produced no native executable", entry)
-      after = store_counts(context.fetch(:bakery))
+      after = HeadToHead.store_counts(context.fetch(:bakery))
       session.log(scope.merge(role: 'store-growth', artifact_sha256: HeadToHead.sha256(binary),
                               growth: after.to_h { |part, count| [part, count - before.fetch(part)] }))
     end
