@@ -1,4 +1,19 @@
-# Former case capturing_closures_in_function_types: captured closures retain their environments in callable annotations, arguments, returns and union members; named functions remain callable from union members, lists and fields (#2256)
+# behavior: captured closures retain their environments in callable annotations, arguments, returns and union members; named functions remain callable from union members, lists and fields (#2256)
+# expect-stdout:
+#   6
+#   6
+#   11
+#   5
+#   -2
+#   4
+#   11
+#   8
+#   4
+#   6
+#   8
+#   0
+#   2
+#   text 9 14 12
 
 model Op:
     step: (int) -> int
@@ -61,7 +76,7 @@ def extracted_replacement(value: str | Callable[int, int]) -> Callable[int, int]
         return value
 
 
-pub def main() -> None:
+def main() -> None:
     n = 5
     g: (int) -> int = (x) => x + n
     println(g(1))

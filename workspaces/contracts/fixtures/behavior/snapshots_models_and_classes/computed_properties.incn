@@ -1,4 +1,7 @@
-# Former case computed_properties: a computed property declared on a model and one required by a trait both evaluate their body on access (RFC 046)
+# behavior: a computed property declared on a model and one required by a trait both evaluate their body on access (RFC 046)
+# expect-stdout:
+#   11
+#   money
 
 trait Named:
     property label -> str
@@ -18,7 +21,7 @@ pub def property_total(value: Money) -> int:
     return value.dollars + value.cents
 
 
-pub def main() -> None:
+def main() -> None:
     money = Money(cents=5)
     println(property_total(money))
     println(money.label)

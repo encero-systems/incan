@@ -1,4 +1,11 @@
-# Former case mut_marked_callable_value_changes_the_argument: a function and a closure are passed as values of a function type whose parameter is marked `mut`, each call through the value receives the caller's argument, and the function's changes to it are visible to the caller
+# behavior: a function and a closure are passed as values of a function type whose parameter is marked `mut`, each call through the value receives the caller's argument, and the function's changes to it are visible to the caller
+# expect-stdout:
+#   3
+#   6
+#   6
+#   8
+#   9
+#   6
 
 class Counter:
     pub value: int
@@ -14,7 +21,7 @@ def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
     return step(counter, 3)
 
 
-pub def main() -> None:
+def main() -> None:
     mut counter = Counter(value=1)
     println(apply(grow, counter))
     println(counter.value)

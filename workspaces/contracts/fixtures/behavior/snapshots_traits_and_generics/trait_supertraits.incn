@@ -1,4 +1,9 @@
-# Former case trait_supertraits: a generic model adopting a subtrait is accepted where the supertrait or the subtrait is required and answers both traits' methods (RFC 042)
+# behavior: a generic model adopting a subtrait is accepted where the supertrait or the subtrait is required and answers both traits' methods (RFC 042)
+# expect-stdout:
+#   1
+#   2
+#   3
+#   4
 
 """RFC 042: trait supertraits and generic trait annotations"""
 
@@ -29,7 +34,7 @@ def take_sorted(values: OrderedCollection[int]) -> OrderedCollection[int]:
     return values.sorted()
 
 
-pub def main() -> None:
+def main() -> None:
     print(take_first(BoxedValue(value=1)))
     print(take_sorted(BoxedValue(value=2)).first())
     print(BoxedValue(value=3).first())

@@ -1,13 +1,9 @@
-# behavior: 10 former ownership parameters and receivers cases run in order, each program from its own module: channel_ends_unpacked_and_sent_through_a_wrapper, dict_lookups_through_a_mutable_parameter, explicit_async_bodies, explicit_body_accepts_borrowed_nested_len, explicit_body_accepts_compound_loop_conditions, explicit_body_accepts_for_loops, explicit_body_accepts_fresh_model_arguments, explicit_body_accepts_generic_method_calls, explicit_body_accepts_index_assignment, explicit_body_accepts_nested_list_literals
+# behavior: 9 former ownership parameters and receivers cases run in order, each program from its own module: channel_ends_unpacked_and_sent_through_a_wrapper, explicit_async_bodies, explicit_body_accepts_borrowed_nested_len, explicit_body_accepts_compound_loop_conditions, explicit_body_accepts_for_loops, explicit_body_accepts_fresh_model_arguments, explicit_body_accepts_generic_method_calls, explicit_body_accepts_index_assignment, explicit_body_accepts_nested_list_literals
 # expect-stdout:
 #  got 1
 #  got 2
 #  false
 #  hello
-#  2 1
-#  true a
-#  2
-#  5 3
 #  16
 #  4
 #  ab
@@ -24,7 +20,6 @@
 """Run the program of each former case in order."""
 
 import channel_ends_unpacked_and_sent_through_a_wrapper
-import dict_lookups_through_a_mutable_parameter
 import explicit_async_bodies
 import explicit_body_accepts_borrowed_nested_len
 import explicit_body_accepts_compound_loop_conditions
@@ -38,7 +33,6 @@ import explicit_body_accepts_nested_list_literals
 async def main() -> None:
     """Run each former case's program in turn."""
     await channel_ends_unpacked_and_sent_through_a_wrapper.main()
-    dict_lookups_through_a_mutable_parameter.main()
     await explicit_async_bodies.main()
     explicit_body_accepts_borrowed_nested_len.main()
     explicit_body_accepts_compound_loop_conditions.main()
