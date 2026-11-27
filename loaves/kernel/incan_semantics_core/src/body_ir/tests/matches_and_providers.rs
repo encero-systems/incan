@@ -49,7 +49,7 @@ const MATCHES_AND_PROVIDERS_BODY_CASES: &[MutRow<Body, String>] = &[
     // `loaves/compiler/incan_frontend/src/body_ir.rs` integration tests exercise instead.
     MutRow {
         name: "match_rvalue_renders_scrutinee_and_every_pattern_shape",
-        check: |body| {
+        check: |mut body| {
             let match_stmt = Statement {
                 kind: StatementKind::Assign {
                     place: Place::from_local(LocalId(2)),
@@ -152,7 +152,7 @@ const MATCHES_AND_PROVIDERS_BODY_CASES: &[MutRow<Body, String>] = &[
     // A provider operation renders its checked facts, so a snapshot shows what would execute.
     MutRow {
         name: "a_provider_operation_call_renders_its_plan",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -186,7 +186,7 @@ const MATCHES_AND_PROVIDERS_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "match_rvalue_snapshot_is_deterministic",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
@@ -212,7 +212,7 @@ const MATCHES_AND_PROVIDERS_BODY_CASES: &[MutRow<Body, String>] = &[
     },
     MutRow {
         name: "bytes_constants_and_range_aggregates_render_distinctly",
-        check: |body| {
+        check: |mut body| {
             body.block.stmts.insert(
                 0,
                 Statement {
