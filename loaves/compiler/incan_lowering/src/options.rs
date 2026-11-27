@@ -1,6 +1,6 @@
 //! Concrete standard Option and Result layouts shared with native enum operations.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::mem::size_of;
 use std::sync::Arc;
 use std::time::Instant;
@@ -23,7 +23,7 @@ use incan_semantics_core::{CanonicalSymbolId, IncanType, SemanticSourceTargetKin
 
 use crate::body_index::BodyIndex;
 use crate::carrier_operands::boundary_plan_operand;
-use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
+use crate::compiler_record_adapters::{authored_plan_checked_type, native_checked_type};
 use crate::enums::validate_payload_patterns;
 use crate::formatting::display_plan_value;
 use crate::frame::{
@@ -270,6 +270,41 @@ impl ClosedCarrierSignatures {
     }
 }
 
+/// A type can name a validated carrier, or have completed its full retention including nested types, or both.
+#[derive(Default)]
+struct CarrierTypeState {
+    declares_layout: bool,
+    retained: bool,
+}
+
+/// The successful type work and the validated prefix of a pass's append-only carrier declarations.
+#[derive(Default)]
+struct CarrierInventory {
+    types: HashMap<IncanType, CarrierTypeState>,
+    checked_layouts: usize,
+}
+
+impl CarrierInventory {
+    /// Find a matching layout in the validated prefix or advance to the first match or refusal in declaration order.
+    fn has_layout(&mut self, declarations: &[EnumDeclaration], ty: &IncanType) -> Result<bool, String> {
+        if self.types.get(ty).is_some_and(|state| state.declares_layout) {
+            return Ok(true);
+        }
+        for declaration in &declarations[self.checked_layouts..] {
+            let key = declaration.semantic_key.as_ref().map(native_checked_type).transpose()?;
+            self.checked_layouts += 1;
+            if let Some(key) = key {
+                let matches = key == *ty;
+                self.types.entry(key).or_default().declares_layout = true;
+                if matches {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
 /// One carrier inventory pass over a module context: the carriers it appends and the closed types it has retained.
 ///
 /// A pass only appends carriers. Once [`retain_carrier`] has accepted a type, every later call for an equal type finds
@@ -283,7 +318,7 @@ struct CarrierPass<'a> {
     file: &'a str,
     signatures: Option<&'a CarrierSignatures<'a>>,
     closed_signatures: Option<&'a mut ClosedCarrierSignatures>,
-    retained: HashSet<IncanType>,
+    inventory: CarrierInventory,
     retained_calls: HashSet<(&'a CanonicalSymbolId, &'a [IncanType])>,
     body_candidates: usize,
     loaf_candidates: usize,
@@ -313,7 +348,7 @@ impl<'a> CarrierPass<'a> {
             file,
             signatures,
             closed_signatures,
-            retained: HashSet::new(),
+            inventory: CarrierInventory::default(),
             retained_calls: HashSet::new(),
             body_candidates: 0,
             loaf_candidates: 0,
@@ -325,11 +360,18 @@ impl<'a> CarrierPass<'a> {
 
     /// Retain one closed type's carriers, once per pass.
     fn retain(&mut self, ty: &IncanType) -> Result<(), String> {
-        if self.retained.contains(ty) {
+        if self.inventory.types.get(ty).is_some_and(|state| state.retained) {
             return Ok(());
         }
-        retain_carrier(self.constructors, self.module, self.declarations, ty, self.file)?;
-        self.retained.insert(ty.clone());
+        retain_carrier_with_inventory(
+            self.constructors,
+            self.module,
+            self.declarations,
+            ty,
+            self.file,
+            &mut self.inventory,
+        )?;
+        self.inventory.types.entry(ty.clone()).or_default().retained = true;
         Ok(())
     }
 
@@ -540,16 +582,35 @@ pub fn retain_carrier(
     ty: &IncanType,
     file: &str,
 ) -> Result<(), String> {
+    retain_carrier_with_inventory(
+        constructors,
+        module,
+        declarations,
+        ty,
+        file,
+        &mut CarrierInventory::default(),
+    )
+}
+
+/// Retain nested layouts in order, sharing the current pass's validated prefix as declarations are appended.
+fn retain_carrier_with_inventory(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    declarations: &mut Vec<EnumDeclaration>,
+    ty: &IncanType,
+    file: &str,
+    inventory: &mut CarrierInventory,
+) -> Result<(), String> {
     match ty {
         IncanType::Tuple(elements) => {
             // A carrier held only as a tuple element still needs its own layout.
             for element in elements {
-                retain_carrier(constructors, module, declarations, element, file)?;
+                retain_carrier_with_inventory(constructors, module, declarations, element, file, inventory)?;
             }
         }
         IncanType::Generic { base, args } => {
             for argument in args {
-                retain_carrier(constructors, module, declarations, argument, file)?;
+                retain_carrier_with_inventory(constructors, module, declarations, argument, file, inventory)?;
             }
             let kind = collection_type(base);
             let is_option = kind == Some(CollectionTypeId::Option);
@@ -557,10 +618,8 @@ pub fn retain_carrier(
             if !is_option && !is_result && !ty.is_union() {
                 return Ok(());
             }
-            for retained in declarations.iter() {
-                if semantic_key_matches_native(&retained.semantic_key, ty)? {
-                    return Ok(());
-                }
+            if inventory.has_layout(declarations, ty)? {
+                return Ok(());
             }
             if ty.is_union() {
                 let declaration = lower_union_declaration(constructors, module, ty, file, declarations)?;
@@ -629,12 +688,12 @@ pub fn retain_carrier(
         }
         IncanType::Function { params, return_type } => {
             for parameter in params {
-                retain_carrier(constructors, module, declarations, &parameter.ty, file)?;
+                retain_carrier_with_inventory(constructors, module, declarations, &parameter.ty, file, inventory)?;
             }
-            retain_carrier(constructors, module, declarations, return_type, file)?;
+            retain_carrier_with_inventory(constructors, module, declarations, return_type, file, inventory)?;
         }
         IncanType::Ref(inner) | IncanType::RefMut(inner) => {
-            retain_carrier(constructors, module, declarations, inner, file)?;
+            retain_carrier_with_inventory(constructors, module, declarations, inner, file, inventory)?;
         }
         _ => {}
     }

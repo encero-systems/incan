@@ -8,11 +8,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use incan_mir_plan_native::{
-    ADMITTED_DEFINITIONS, AdmittedDefinition, CompactAdmissionPin, Function, INTERFACE_REPORT, LoweringEvent,
-    NATIVE_DEFINITIONS, NativeInterface, NominalKind, NominalReference, Plan, PlanType, REPOSITION_MODULE_PAGE,
-    carrier_position, compact_admission_pin, decode_lowering_event, decode_lowering_refusal,
-    decode_plan_function_record, decode_plan_module, encode_admitted_definitions, encode_entry_record,
-    encode_lowering_event, encode_native_interface, encode_record_plan_products, is_carrier_index,
+    ADMITTED_DEFINITIONS, AdmittedDefinition, AdmittedFunction, CompactAdmissionPin, EventReference, Function,
+    INTERFACE_REPORT, LoweringEvent, NATIVE_DEFINITIONS, NativeInterface, NominalKind, NominalReference, Plan,
+    PlanType, REPOSITION_MODULE_PAGE, carrier_position, compact_admission_pin, decode_lowering_event,
+    decode_lowering_refusal, decode_plan_function_record, decode_plan_module, encode_admitted_definitions,
+    encode_entry_record, encode_lowering_event, encode_native_interface, encode_record_plan_products, is_carrier_index,
     place_admitted_event, product_frame_names, verify_entry_record,
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
@@ -22,10 +22,23 @@ use crate::plan_modules::{
 };
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::positioned_product;
-use crate::scalar_store::{event_positions, event_references, finalized_plan_product, report_scalar_refusal};
+use crate::scalar_store::{
+    event_positions, event_reference_kind, event_references, finalized_plan_product, report_scalar_refusal,
+};
 
 /// The identity a refusal of the whole-unit native interface is reported under.
 const INTERFACE_IDENTITY: &str = "native-interface";
+
+#[cfg(test)]
+thread_local! {
+    static MATERIALIZED_SETTLED_EVENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count admitted report members represented as ordinary events with no encoded product.
+#[cfg(test)]
+pub(crate) fn materialized_settled_events() -> usize {
+    MATERIALIZED_SETTLED_EVENTS.with(std::cell::Cell::get)
+}
 
 /// Publish loss-checked plan output and a reusable ordinary-entry binding before native compilation.
 pub fn publish_plan_records(
@@ -35,29 +48,35 @@ pub fn publish_plan_records(
     admissions: &PlanAdmissions,
 ) -> Result<Option<CompactAdmissionPin>, String> {
     let report_path = Path::new(report);
-    let mut events = scalar_events(report_path)?;
-    let publication = append_admitted_events(&mut events, products, report_path, plan.functions.len(), admissions)?;
+    let scalar = scalar_events(report_path)?;
+    let publication = append_admitted_events(scalar, products, report_path, plan.functions.len(), admissions)?;
+    #[cfg(test)]
+    MATERIALIZED_SETTLED_EVENTS.with(|count| {
+        count.set(
+            publication
+                .members()
+                .filter_map(PublicationMember::event)
+                .filter(|event| event.admitted && event.product.is_empty())
+                .count(),
+        );
+    });
     // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface. Only a
     // unit whose every function has an event can publish one; otherwise no placed product is kept for it.
-    let publishable = events.len() == plan.functions.len();
-    let admitted = AdmittedProducts {
-        publishable,
-        restored: &publication.restored,
-    };
+    let publishable = publication.scalar.len() + publication.settled.len() == plan.functions.len();
     let mut references = Vec::new();
     let mut carried = Vec::new();
     let keyed = keyed_plan_products(
         plan,
         products,
         report_path,
-        &events,
-        admitted,
+        &publication,
+        publishable,
         &mut references,
         &mut carried,
     )?;
-    publish_native_definitions(plan, report_path, &events, &publication.restored)?;
+    publish_native_definitions(plan, report_path, &publication)?;
     if !publishable {
-        refuse_interface(plan, report, &events, &carried)?;
+        refuse_interface(plan, report, &publication, &carried)?;
         return Ok(publication.compact);
     }
     if keyed.len() != plan.functions.len() {
@@ -83,10 +102,16 @@ pub fn publish_plan_records(
         }
     };
     finish_producer(interface_attempt, "produced");
-    let matches: Vec<&LoweringEvent> = events.iter().filter(|event| event.function == main).collect();
+    let matches: Vec<_> = publication
+        .members()
+        .filter(|member| member.function() == main)
+        .collect();
     let [selected] = matches.as_slice() else {
         return Err("plan-function(entry) has no unique witnessed main function".into());
     };
+    let selected = selected
+        .event()
+        .ok_or("plan-function(entry) has no unique witnessed main function")?;
     let generation =
         std::fs::read_to_string(Path::new(products).join("producer-profile")).map_err(|error| error.to_string())?;
     let selection = if plan.programs.is_empty() {
@@ -144,22 +169,22 @@ pub fn publish_plan_records(
 /// in a unit that publishes no whole-unit interface: a helper frame by the key of the product that carries it, any
 /// other function by the digest of its own plan. Each also names the unit's external declarations, which a native body
 /// reads beside its own record. A unit whose every function has an event names none.
-fn publish_native_definitions(
-    plan: &Plan,
-    report: &Path,
-    events: &[LoweringEvent],
-    restored: &HashMap<&str, &AdmittedProduct>,
-) -> Result<(), String> {
-    let named: HashSet<&str> = events.iter().map(|event| event.function.as_str()).collect();
+fn publish_native_definitions(plan: &Plan, report: &Path, publication: &AdmittedPublication<'_>) -> Result<(), String> {
+    let named: HashSet<&str> = publication.members().map(PublicationMember::function).collect();
     // Each helper frame by the key and product digest of the function that carries it.
     let mut carriers: HashMap<String, (String, String)> = HashMap::new();
-    for event in events {
-        let (frames, digest): (Cow<'_, [String]>, Cow<'_, str>) = match restored.get(event.function.as_str()) {
-            Some(product) if event.admitted => (Cow::Borrowed(&product.helpers), Cow::Borrowed(&product.digest)),
-            _ if event.role == "entry" => continue,
-            _ => {
+    for member in publication.members() {
+        let (key, frames, digest): (&str, Cow<'_, [String]>, Cow<'_, str>) = match member {
+            PublicationMember::Admitted { product, .. } => (
+                &product.key,
+                Cow::Borrowed(&product.helpers),
+                Cow::Borrowed(&product.digest),
+            ),
+            PublicationMember::Scalar(event) if event.role == "entry" => continue,
+            PublicationMember::Scalar(event) => {
                 let record = decode_plan_function_record(&event.product)?;
                 (
+                    &event.key,
                     Cow::Owned(product_frame_names(&record.function)?),
                     Cow::Owned(record.digest),
                 )
@@ -168,7 +193,7 @@ fn publish_native_definitions(
         for frame in frames.iter() {
             carriers
                 .entry(frame.clone())
-                .or_insert_with(|| (event.key.clone(), digest.to_string()));
+                .or_insert_with(|| (key.to_owned(), digest.to_string()));
         }
     }
     let externals = semantic_digest(&format!("{:?}", plan.externals)).map_err(|error| error.to_string())?;
@@ -215,7 +240,12 @@ fn publish_native_definitions(
 /// Helper frames travel inside their caller's product, so a unit with any publishes no whole-unit interface: Bakery
 /// accepts an omitted interface only beside an explicit lowering refusal. Unit-level runtime resolution adds forwarders
 /// after every product was captured, so none witnesses them.
-fn refuse_interface(plan: &Plan, report: &str, events: &[LoweringEvent], carried: &[String]) -> Result<(), String> {
+fn refuse_interface(
+    plan: &Plan,
+    report: &str,
+    publication: &AdmittedPublication<'_>,
+    carried: &[String],
+) -> Result<(), String> {
     for frame in carried {
         report_scalar_refusal(
             Some(report),
@@ -227,7 +257,7 @@ fn refuse_interface(plan: &Plan, report: &str, events: &[LoweringEvent], carried
     if !carried.is_empty() || has_scalar_refusal(Path::new(report))? {
         return Ok(());
     }
-    let reported: HashSet<&str> = events.iter().map(|event| event.function.as_str()).collect();
+    let reported: HashSet<&str> = publication.members().map(PublicationMember::function).collect();
     let mut unwitnessed = 0;
     for function in &plan.functions {
         if !reported.contains(function.name.as_str()) {
@@ -246,12 +276,6 @@ fn refuse_interface(plan: &Plan, report: &str, events: &[LoweringEvent], carried
     Err("native-interface refuses generated functions without graph body witnesses".into())
 }
 
-/// Publication reads product bytes only to construct a complete native interface.
-struct AdmittedProducts<'a> {
-    publishable: bool,
-    restored: &'a HashMap<&'a str, &'a AdmittedProduct>,
-}
-
 /// Make each keyed product byte-identical to its whole-plan function, relocated to the declaration's position.
 ///
 /// Lowering captures a product before unit-level runtime resolution rewrites its calls. A fresh product therefore
@@ -266,17 +290,17 @@ fn keyed_plan_products(
     plan: &Plan,
     products: &str,
     report: &Path,
-    events: &[LoweringEvent],
-    admitted: AdmittedProducts<'_>,
+    publication: &AdmittedPublication<'_>,
+    publishable: bool,
     references: &mut Vec<Vec<NominalReference>>,
     carried: &mut Vec<String>,
 ) -> Result<Vec<Vec<u8>>, String> {
-    let mut event_index: HashMap<&str, Option<usize>> = HashMap::new();
-    for (index, event) in events.iter().enumerate() {
+    let mut event_index = HashMap::new();
+    for member in publication.members() {
         event_index
-            .entry(event.function.as_str())
+            .entry(member.function())
             .and_modify(|slot| *slot = None)
-            .or_insert(Some(index));
+            .or_insert(Some(member));
     }
     let mut function_indexes: HashMap<&str, usize> = HashMap::new();
     for (index, function) in plan.functions.iter().enumerate() {
@@ -285,50 +309,60 @@ fn keyed_plan_products(
     let base = carrier_base(plan);
     let mut keyed = Vec::new();
     for function in &plan.functions {
-        let Some(slot) = event_index.get(function.name.as_str()) else {
+        let Some(slot) = event_index.get(function.name.as_str()).copied() else {
             continue;
         };
-        let Some(index) = slot else {
+        let Some(member) = slot else {
             return Err(format!(
                 "native-interface has an ambiguous plan-function member {}",
                 function.name
             ));
         };
-        let reported = &events[*index];
-        if reported.admitted {
-            let evidence = admitted
-                .restored
-                .get(reported.function.as_str())
-                .ok_or_else(|| format!("admitted plan function {} has no product evidence", reported.function))?;
-            let resolved = plan_positions(plan, base, &event_references(reported)?)?;
-            let mut decoded_names = Vec::new();
-            let names = if admitted.publishable {
-                let record = decode_plan_function_record(&reported.product)?;
-                if record.digest != evidence.digest {
-                    return Err("admitted plan function digest differs from its settled product".into());
+        let reported = match member {
+            PublicationMember::Admitted {
+                function: row,
+                product,
+                event,
+            } => {
+                let mut decoded_names = Vec::new();
+                let names = if publishable {
+                    let event = event.ok_or("complete native interface has no selected product event")?;
+                    let resolved = plan_positions(plan, base, &event_references(event)?)?;
+                    let record = decode_plan_function_record(&event.product)?;
+                    if record.digest != product.digest {
+                        return Err("admitted plan function digest differs from its settled product".into());
+                    }
+                    let positioned = positioned_product(
+                        &record.function,
+                        &event_positions(event),
+                        function.span.file.as_str(),
+                        function.span.line,
+                        &mut decoded_names,
+                    )?;
+                    keyed.push(positioned);
+                    references.push(resolved);
+                    &decoded_names
+                } else {
+                    check_borrowed_positions(plan, base, &row.references)?;
+                    &product.helpers
+                };
+                for name in names {
+                    if !function_indexes.contains_key(name.as_str()) {
+                        return Err(format!(
+                            "plan-function frame {name} is missing from the whole-program plan"
+                        ));
+                    }
+                    carried.push(name.clone());
                 }
-                let positioned = positioned_product(
-                    &record.function,
-                    &event_positions(reported),
-                    function.span.file.as_str(),
-                    function.span.line,
-                    &mut decoded_names,
-                )?;
-                keyed.push(positioned);
-                references.push(resolved);
-                &decoded_names
-            } else {
-                &evidence.helpers
-            };
-            for name in names {
-                if !function_indexes.contains_key(name.as_str()) {
-                    return Err(format!(
-                        "plan-function frame {name} is missing from the whole-program plan"
-                    ));
-                }
-                carried.push(name.clone());
+                continue;
             }
-            continue;
+            PublicationMember::Scalar(event) => event,
+        };
+        if reported.admitted {
+            return Err(format!(
+                "admitted plan function {} has no product evidence",
+                reported.function
+            ));
         }
         let resolved = plan_positions(plan, base, &event_references(reported)?)?;
         let nodes = event_positions(reported);
@@ -444,26 +478,9 @@ fn carrier_base(plan: &Plan) -> usize {
 fn plan_positions(plan: &Plan, base: usize, references: &[NominalReference]) -> Result<Vec<NominalReference>, String> {
     let mut placed = Vec::with_capacity(references.len());
     for reference in references {
-        if reference.kind != NominalKind::Enum || !is_carrier_index(reference.index) {
-            placed.push(reference.clone());
-            continue;
-        }
-        let index = base as i64 + carrier_position(reference.index);
-        let declared = usize::try_from(index).ok().and_then(|at| plan.enums.get(at));
-        let Some(declaration) = declared else {
-            return Err(format!(
-                "plan names no carrier {} at the place a product reported",
-                reference.name
-            ));
-        };
-        if !reference.name.is_empty() && declaration.name != reference.name {
-            return Err(format!(
-                "plan names no carrier {} at the place a product reported",
-                reference.name
-            ));
-        }
+        let index = plan_position(plan, base, reference.kind, reference.index, &reference.name)?;
         placed.push(NominalReference {
-            kind: reference.kind.clone(),
+            kind: reference.kind,
             index,
             name: reference.name.clone(),
         });
@@ -471,32 +488,111 @@ fn plan_positions(plan: &Plan, base: usize, references: &[NominalReference]) -> 
     Ok(placed)
 }
 
-/// The product evidence and independently hashed compact set from the same settled publication pass.
+/// Validate settled references in the original order. Every kind is checked before any position can refuse.
+fn check_borrowed_positions(plan: &Plan, base: usize, references: &[EventReference]) -> Result<(), String> {
+    for reference in references {
+        event_reference_kind(&reference.kind)?;
+    }
+    for reference in references {
+        if reference.kind == NominalKind::Enum.value() {
+            plan_position(plan, base, NominalKind::Enum, reference.index, &reference.name)?;
+        }
+    }
+    Ok(())
+}
+
+/// Resolve one carrier reference against the current whole-plan enum and verify its name.
+fn plan_position(plan: &Plan, base: usize, kind: NominalKind, index: i64, name: &str) -> Result<i64, String> {
+    if kind != NominalKind::Enum || !is_carrier_index(index) {
+        return Ok(index);
+    }
+    let position = base as i64 + carrier_position(index);
+    let declared = usize::try_from(position).ok().and_then(|at| plan.enums.get(at));
+    if declared.is_some_and(|declaration| name.is_empty() || declaration.name == name) {
+        return Ok(position);
+    }
+    Err(format!("plan names no carrier {name} at the place a product reported"))
+}
+
+/// One settled function's existing evidence and the optional real product event read for a complete interface.
+struct SettledEvent<'a> {
+    function: &'a AdmittedFunction,
+    product: &'a AdmittedProduct,
+    page_event: Option<usize>,
+}
+
+/// A changed scalar report row or a settled definition with the same ordered publication membership.
+#[derive(Clone, Copy)]
+enum PublicationMember<'a> {
+    Scalar(&'a LoweringEvent),
+    Admitted {
+        function: &'a AdmittedFunction,
+        product: &'a AdmittedProduct,
+        event: Option<&'a LoweringEvent>,
+    },
+}
+
+impl<'a> PublicationMember<'a> {
+    /// The whole-program function this member witnesses.
+    fn function(self) -> &'a str {
+        match self {
+            Self::Scalar(event) => &event.function,
+            Self::Admitted { function, .. } => &function.function,
+        }
+    }
+
+    /// The encoded product, when publication read a real scalar or selected module-page event.
+    fn event(self) -> Option<&'a LoweringEvent> {
+        match self {
+            Self::Scalar(event) => Some(event),
+            Self::Admitted { event, .. } => event,
+        }
+    }
+}
+
+/// Ordered scalar and admitted members and the independently hashed compact set from the same publication pass.
 struct AdmittedPublication<'a> {
-    restored: HashMap<&'a str, &'a AdmittedProduct>,
+    scalar: Vec<LoweringEvent>,
+    settled: Vec<SettledEvent<'a>>,
+    page_events: Vec<LoweringEvent>,
     compact: Option<CompactAdmissionPin>,
+}
+
+impl AdmittedPublication<'_> {
+    /// The sorted scalar files precede members in their existing module and note order.
+    fn members(&self) -> impl Iterator<Item = PublicationMember<'_>> {
+        self.scalar
+            .iter()
+            .map(PublicationMember::Scalar)
+            .chain(self.settled.iter().map(|settled| PublicationMember::Admitted {
+                function: settled.function,
+                product: settled.product,
+                event: settled.page_event.map(|index| &self.page_events[index]),
+            }))
+    }
 }
 
 /// Add settled definitions for functions restored through a module page. When the plan contains functions with no
 /// witnessed product, the native publisher needs only the already checked keys, digests and helper names. A possible
 /// complete interface still reads the authoritative products and applies their current positions.
 fn append_admitted_events<'a>(
-    events: &mut Vec<LoweringEvent>,
+    scalar: Vec<LoweringEvent>,
     products: &str,
     report: &Path,
     functions_in_plan: usize,
     admissions: &'a PlanAdmissions,
 ) -> Result<AdmittedPublication<'a>, String> {
-    let mut reported: HashSet<String> = events.iter().map(|event| event.function.clone()).collect();
+    let mut reported: HashSet<String> = scalar.iter().map(|event| event.function.clone()).collect();
     let mut definitions = Vec::new();
-    let mut restored = HashMap::new();
+    let mut restored = Vec::new();
+    let mut page_events = Vec::new();
     let mut compact_notes = Vec::new();
     let modules = admissions.modules();
     let candidates = modules
         .values()
         .map(|module| module.note.functions.len())
         .sum::<usize>();
-    let needs_products = functions_in_plan <= events.len() + candidates;
+    let needs_products = functions_in_plan <= scalar.len() + candidates;
     for module in modules.values() {
         let SettledModule {
             note,
@@ -525,7 +621,7 @@ fn append_admitted_events<'a>(
             if reported.contains(&function.function) {
                 continue;
             }
-            let mut event = if let Some(stored) = &stored {
+            let page_event = if let Some(stored) = &stored {
                 let encoded = stored.get(function.function.as_str()).ok_or_else(|| {
                     format!(
                         "admitted plan module {} holds no event for {}",
@@ -537,30 +633,28 @@ fn append_admitted_events<'a>(
                     return Err("admitted plan function key differs from its settled product".into());
                 }
                 place_admitted_event(&mut event, &note.module, function)?;
-                event
+                event.reused = true;
+                event.admitted = true;
+                let index = page_events.len();
+                page_events.push(event);
+                Some(index)
             } else {
-                LoweringEvent {
-                    function: function.function.clone(),
-                    identity: function.identity.clone(),
-                    key: product.key.clone(),
-                    module: note.module.clone(),
-                    references: function.references.clone(),
-                    ..LoweringEvent::default()
-                }
+                None
             };
-            event.reused = true;
-            event.admitted = true;
             if compact.is_none() {
                 definitions.push(AdmittedDefinition {
                     function: function.function.clone(),
                     identity: function.identity.clone(),
-                    key: event.key.clone(),
+                    key: product.key.clone(),
                     digest: product.digest.clone(),
                 });
             }
-            events.push(event);
             reported.insert(function.function.clone());
-            restored.insert(function.function.as_str(), product);
+            restored.push(SettledEvent {
+                function,
+                product,
+                page_event,
+            });
         }
     }
     let listed = report.join(ADMITTED_DEFINITIONS);
@@ -578,7 +672,9 @@ fn append_admitted_events<'a>(
         crate::trace_channel::emit("admitted_plan_publication", "", &counts.to_string());
     }
     Ok(AdmittedPublication {
-        restored,
+        scalar,
+        settled: restored,
+        page_events,
         compact: admissions
             .selection()
             .map(|_| compact_admission_pin(compact_notes))

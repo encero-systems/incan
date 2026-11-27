@@ -13,7 +13,7 @@ use incan_mir_plan_native::{
 use crate::plan_modules::{
     AdmittedProduct, PlanAdmissions, PlanModuleSelection, admitted_page, report_admitted, staged_page_reads,
 };
-use crate::record_plan_outputs::publish_plan_records;
+use crate::record_plan_outputs::{materialized_settled_events, publish_plan_records};
 use crate::scalar_store::{ProductEvent, record_scalar_inputs, report_scalar, retain_scalar};
 
 /// One request's product store and report directory, with its producer generation, under a fresh root.
@@ -394,6 +394,232 @@ fn admitted_definition_publication_uses_settled_products_without_reading_pages()
     // A complete interface must still read actual product bytes and refuse a missing page.
     let complete = plan(vec![unit_function("main", 1)], &[]);
     assert!(publish_plan_records(&complete, &request.products, &request.report, &request.admissions).is_err());
+    verify_incomplete_compact_publication()
+}
+
+/// Stage the real retained native product and its positioned module with the existing encoders.
+fn incomplete_compact_member(
+    request: &Request,
+    owner: &Function,
+    helpers: &[Function],
+    layout: &incan_mir_plan_native::EnumDeclaration,
+) -> Result<(AdmittedFunction, AdmittedProduct, [u8; 32]), String> {
+    use incan_mir_plan_native::{
+        POSITIONED_MODULE_PAGE, PlanModuleFunction, PlanModuleValue, encode_lowering_event, encode_plan_module,
+    };
+    use sha2::{Digest, Sha256};
+
+    let inputs = inputs(owner);
+    let references = product_nominals(owner, &[], helpers)?;
+    let nominal = crate::nominal_records::carrier_nominal(layout);
+    retain_scalar(&request.products, &inputs, owner, &[], &[nominal], &[], helpers, &[])?;
+    report_scalar(
+        Some(&request.report),
+        &event(request, &inputs, &owner.name, false, &references),
+    )?;
+    let files = std::fs::read_dir(&request.report).map_err(|error| error.to_string())?;
+    let event_path = files
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|suffix| suffix == "event"))
+        .ok_or("the retained function has no original event")?;
+    let mut event = decode_lowering_event(&read(&event_path)?)?;
+    std::fs::remove_file(event_path).map_err(|error| error.to_string())?;
+    event.module = "m".into();
+    let record = decode_plan_function_record(&event.product)?;
+    let page = encode_plan_module(&PlanModuleValue {
+        module: event.module.clone(),
+        functions: vec![PlanModuleFunction {
+            function: event.function.clone(),
+            identity: event.identity.clone(),
+            symbol: event.identity.clone(),
+            key: event.key.clone(),
+            event: encode_lowering_event(&event)?,
+        }],
+    })?;
+    let digest: [u8; 32] = Sha256::digest(&page).into();
+    let path = Path::new(&request.products).join(format!("6d{POSITIONED_MODULE_PAGE}"));
+    std::fs::write(&path, page).map_err(|error| error.to_string())?;
+    std::fs::write(PathBuf::from(format!("{}.digest", path.display())), hex::encode(digest))
+        .map_err(|error| error.to_string())?;
+    Ok((
+        AdmittedFunction {
+            function: event.function,
+            identity: event.identity,
+            references: event.references,
+            placement: None,
+        },
+        AdmittedProduct {
+            key: event.key,
+            digest: record.digest,
+            helpers: helpers.iter().map(|function| function.name.clone()).collect(),
+        },
+        digest,
+    ))
+}
+
+/// An incomplete interface retains real scalar, compact note and helper bytes while validating borrowed nominal
+/// references.
+fn verify_incomplete_compact_publication() -> Result<(), String> {
+    use incan_mir_plan_native::record_types::{CheckedPrimitiveType, CheckedType};
+    use incan_mir_plan_native::{
+        ADMITTED_MODULE_NOTE, EnumDeclaration, EnumVariant, POSITIONED_MODULE_PAGE, carrier_index,
+        compact_admission_pin, decode_whole_module_admission, encode_whole_module_admission,
+    };
+    use sha2::{Digest, Sha256};
+
+    let mut request = Request::new("incomplete-positioned-compact")?;
+    let mut layout = EnumDeclaration::new(
+        "Option_i64".into(),
+        false,
+        vec![
+            EnumVariant {
+                name: "None".into(),
+                fields: Vec::new(),
+            },
+            EnumVariant {
+                name: "Some".into(),
+                fields: vec![PlanType::Int],
+            },
+        ],
+        Vec::new(),
+        keyed_span(),
+    );
+    layout.semantic_key = Some(CheckedType::Generic(
+        "Option".into(),
+        vec![CheckedType::Primitive(CheckedPrimitiveType::Int)],
+    ));
+    let mut unchanged = unit_function("unchanged", 1);
+    unchanged.locals.push(Local {
+        ty: PlanType::Enum(carrier_index(0), layout.name.clone()),
+        span: keyed_span(),
+    });
+    let helpers = [unit_function("helper_z", 3), unit_function("helper_a", 4)];
+    let (owner, evidence, digest) = incomplete_compact_member(&request, &unchanged, &helpers, &layout)?;
+    let native_local = unchanged
+        .locals
+        .last_mut()
+        .ok_or("the retained carrier local disappeared")?;
+    native_local.ty = PlanType::Enum(0, layout.name.clone());
+    let changed = unit_function("main", 2);
+    let changed_key = retain_product(&request, &changed, false)?;
+    let changed_path = request.report(&format!("{changed_key}.event"));
+    let changed_bytes = read(&changed_path)?;
+    let output = format!(
+        "plan-module	incan.stable-declaration/1	probe	m.incn	checked	{}",
+        hex::encode(digest)
+    );
+    let pin = [0x23; 32];
+    request.admissions = PlanAdmissions::with_selection(Some(positioned_selection(&hex::encode(digest), &output, pin)));
+    let mut unit = plan(vec![unchanged, changed, helpers[0].clone(), helpers[1].clone()], &[]);
+    unit.enums.push(layout);
+    unit.externals.push(ExternalFunction {
+        path: "rustself_native::native_len".into(),
+        type_arguments: Vec::new(),
+        parameters: vec![PlanType::Int],
+        return_type: PlanType::Int,
+        span: keyed_span(),
+    });
+    let publish = |request: &mut Request, owner: AdmittedFunction| -> Result<_, String> {
+        report_admitted(
+            &mut request.admissions,
+            Some(&request.report),
+            "m",
+            vec![owner],
+            vec![evidence.clone()],
+            1,
+            false,
+            Some(&request.products),
+            Some(digest),
+        )?;
+        publish_plan_records(&unit, &request.products, &request.report, &request.admissions)
+    };
+    let page = Path::new(&request.products).join(format!("6d{POSITIONED_MODULE_PAGE}"));
+    let before = staged_page_reads(&page);
+    let settled = publish(&mut request, owner.clone())?;
+    let materialized = materialized_settled_events();
+    assert_eq!(staged_page_reads(&page), before);
+    let name = format!("6d{ADMITTED_MODULE_NOTE}");
+    let note = read(&Path::new(&request.products).join("admissions").join(&name))?;
+    let decoded = decode_whole_module_admission(&note)?;
+    assert_eq!(decoded.module, "m");
+    assert_eq!(decoded.output, output);
+    assert_eq!(decoded.digest, hex::encode(digest));
+    assert_eq!(decoded.count, 1);
+    assert_eq!(decoded.selection, hex::encode(pin));
+    assert_eq!(note, encode_whole_module_admission(&decoded)?);
+    assert_eq!(read(&request.report(&name))?, note);
+    assert_eq!(
+        settled,
+        Some(compact_admission_pin([("m", Sha256::digest(&note).into())])?)
+    );
+    assert_eq!(ordinary_events(&request)?, ["main"]);
+    assert_eq!(read(&changed_path)?, changed_bytes);
+    assert!(!request.report(INTERFACE_REPORT).is_file());
+    assert!(!request.report(ADMITTED_DEFINITIONS).is_file());
+    require_exact_helper_definitions(&request, &unit, &evidence)?;
+
+    let mut bad = owner;
+    bad.references[0].index = carrier_index(4);
+    let mut wrong_kind = bad.references[0].clone();
+    wrong_kind.kind = "wrong".into();
+    bad.references.push(wrong_kind);
+    assert_eq!(
+        publish(&mut request, bad.clone()).err().as_deref(),
+        Some("invalid lowering event nominal kind")
+    );
+    bad.references.pop();
+    assert_eq!(
+        publish(&mut request, bad).err().as_deref(),
+        Some("plan names no carrier Option_i64 at the place a product reported")
+    );
+    assert_eq!(
+        materialized, 0,
+        "the incomplete publisher materialized {materialized} settled events"
+    );
+    Ok(())
+}
+
+/// Decode the actual native inputs and require the helper order, keys and exact ABI-bound payload bytes.
+fn require_exact_helper_definitions(request: &Request, unit: &Plan, evidence: &AdmittedProduct) -> Result<(), String> {
+    use incan_mir_plan_native::{AdmittedDefinition, encode_admitted_definitions};
+    use incan_semantics_core::semantic_digest::semantic_digest;
+
+    let externals = semantic_digest(&format!("{:?}", unit.externals)).map_err(|error| error.to_string())?;
+    let definitions = ["helper_z", "helper_a"]
+        .into_iter()
+        .map(|name| {
+            let digest = semantic_digest(&["carried-frame", &evidence.key, &evidence.digest, name, &externals])
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>(AdmittedDefinition {
+                function: name.into(),
+                identity: name.into(),
+                key: evidence.key.clone(),
+                digest,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let encoded = read(&request.report(NATIVE_DEFINITIONS))?;
+    assert!(decode_admitted_definitions(&encoded)? == definitions);
+    assert_eq!(encoded, encode_admitted_definitions(&definitions)?);
+    let mut refused = request
+        .refusals()?
+        .into_iter()
+        .map(|refusal| (refusal.function, refusal.refusal))
+        .collect::<Vec<_>>();
+    refused.sort();
+    assert_eq!(
+        refused,
+        ["helper_a", "helper_z"]
+            .into_iter()
+            .map(|name| {
+                (
+                    name.to_owned(),
+                    "native-interface refuses a helper frame carried inside its caller's product".to_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 

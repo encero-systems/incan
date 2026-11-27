@@ -35,6 +35,7 @@ from lowering_record_fixtures import (
 from plan_admission_fixtures import verify_compact_module_admission_scope
 from borrowed_positioned_member_control import (
     observed_plan_reconciliations, ordinary_member_rows, verify_alpha_request_routes, verify_borrowed_gamma_members,
+    verify_gamma_helper_publication, verify_gamma_removal_and_parity, write_gamma_fixture,
 )
 from scratch import scratch_directory
 from rust_argument_borrow_return_fixture import verify_rust_argument_borrow_return
@@ -269,12 +270,11 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     observations.mkdir(true, true).map_err((error) => error.message())?
     for name in ["lone_alpha", "lone_beta"]:
         write(root.joinpath(name + ".incn"), lone_module(name, "1"))?
-    joined_result = 'value * 2 + len(" ".join(["a", "b", "c"][:value + 1]))'
-    write(root.joinpath("lone_gamma.incn"), lone_module("lone_gamma", "1", joined_result))?
+    write_gamma_fixture(root)?
     imports = "from lone_alpha import lone_alpha_one, lone_alpha_two\nfrom lone_beta import lone_beta_one, lone_beta_two\nfrom lone_gamma import lone_gamma_one, lone_gamma_two\n"
     calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
     write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
-    seed = traced_example_run(binary, source, store, observations, "15")?
+    seed = lowering_example_run(binary, source, store, "15", trace=observations)?
     seed_proof = capture_lowering_report(seed, store)?
     cold_reconciliations = observed_plan_reconciliations(observations)?
     cold = observed_module_work(observations)?
@@ -289,7 +289,7 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     seed_requests = plan_report_requests(observations, root)?
     seed_event_rows = plan_report_event_rows(observations, root)?
     write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
-    edited = traced_example_run(binary, source, store, observations, "19")?
+    edited = lowering_example_run(binary, source, store, "19", trace=observations)?
     beta_proof = capture_lowering_report(edited, store)?
     warm_reconciliations = observed_plan_reconciliations(observations)?
     verify_one_module_counts(beta_proof.report)?
@@ -297,24 +297,26 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     verify_module_work(cold, warm, "lone_beta")?
     retained_members = verify_borrowed_gamma_members(store)
     before_member_rows = ordinary_member_rows(observations)
-    beta_event_rows = plan_report_event_rows(observations, root)
+    beta_event_rows = plan_report_event_rows(observations, root)?
     predecessor = mark_plan_report_predecessor(observations, root, seed_requests)?
     write(root.joinpath("lone_alpha.incn"), lone_module("lone_alpha", "7"))?
-    again = traced_example_run(binary, source, store, observations, "25")?
+    again = lowering_example_run(binary, source, store, "25", trace=observations)?
     alpha_proof = capture_lowering_report(again, store)?
     verify_one_module_counts(alpha_proof.report)?
     verify_module_work(warm, observed_module_work(observations)?, "lone_alpha")?
     preserved = predecessor.preserved(observations, root)
-    stop_example_engine(binary, store)?
     reconciliations = [cold_reconciliations, warm_reconciliations, observed_plan_reconciliations(observations)?]
     assert reconciliations == [1, 2, 3], f"expected one reconciliation per request, cumulative counts {reconciliations}"
-    retained_members?
-    verify_alpha_request_routes(before_member_rows?, ordinary_member_rows(observations)?)?
+    alpha_event_rows = plan_report_event_rows(observations, root)?
+    after_member_rows = ordinary_member_rows(observations)?
     preserved?
-    return require_two_edit_lowering(
-        [seed_event_rows, beta_event_rows?, plan_report_event_rows(observations, root)?],
-        [seed_proof, beta_proof, alpha_proof], predecessor,
-    )
+    verify_gamma_helper_publication(
+        retained_members?, root.joinpath("native.plan"), seed_event_rows, beta_event_rows, alpha_event_rows, edited, again,
+    )?
+    requests = [seed_event_rows, beta_event_rows, alpha_event_rows]
+    require_two_edit_lowering(requests, [seed_proof, beta_proof, alpha_proof], predecessor)?
+    verify_gamma_removal_and_parity(binary, source, store, observations, after_member_rows)?
+    return verify_alpha_request_routes(before_member_rows?, after_member_rows)
 
 
 pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> Result[None, str]:

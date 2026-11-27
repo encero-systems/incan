@@ -138,8 +138,21 @@ pub fn checked_type(ty: &IncanType, source_file: &str, package_version: &str) ->
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static CHECKED_TYPE_RESTORATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The number of checked-type validations and restorations attempted by this test thread.
+#[cfg(test)]
+pub(crate) fn checked_type_restorations() -> usize {
+    CHECKED_TYPE_RESTORATIONS.with(std::cell::Cell::get)
+}
+
 /// Restore every validated record checked-type alternative without parsing diagnostic display text.
 pub fn native_checked_type(ty: &CheckedType) -> Result<IncanType, String> {
+    #[cfg(test)]
+    CHECKED_TYPE_RESTORATIONS.with(|count| count.set(count.get() + 1));
     if !valid_checked_type(ty) {
         return Err("invalid authored checked type".into());
     }

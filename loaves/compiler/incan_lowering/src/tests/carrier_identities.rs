@@ -6,7 +6,7 @@ use incan_mir_plan_native::{Carrier, EnumDeclaration, EnumVariant, PlanType, sou
 use crate::nominal_records::carrier_nominal;
 
 /// An admitted `Option` carrier at the native name its admission position gives it.
-fn option_carrier(name: &str, payload: CheckedType, field: PlanType) -> EnumDeclaration {
+pub(super) fn option_carrier(name: &str, payload: CheckedType, field: PlanType) -> EnumDeclaration {
     let variants = vec![
         EnumVariant {
             name: "None".into(),

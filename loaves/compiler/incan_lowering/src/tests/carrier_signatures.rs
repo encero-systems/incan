@@ -1,5 +1,6 @@
 //! Carrier discovery reads only the ordered, checked overloads of the selected callable.
 
+use incan_mir_plan_native::record_types::CheckedType;
 use incan_semantics_core::body_ir::{ArgumentBinding, CallableParam, CallableParamDefault, LoafCallable, LocalId};
 use incan_semantics_core::{
     CanonicalSymbolId, HirSourceSpan, IncanCallableParamKind, IncanInputAccess, IncanPrimitiveType,
@@ -11,6 +12,7 @@ use super::{
     IncanType, NamedCallableTarget, generic,
 };
 use crate::body_index::{BodyIndex, body_index, extend_body_index};
+use crate::compiler_record_adapters::checked_type_restorations;
 use crate::tests::bodies::empty_body;
 
 /// The complete source owner used by the carrier lookup, independent of the caller's spelling.
@@ -216,7 +218,9 @@ fn continuation_selections(mut module: BodyIrModule, target: &NamedCallableTarge
     module.bodies.push(unrelated);
     let mut renamed = target.clone();
     renamed.name = "an_unrelated_local_alias".into();
+    let before_restore = checked_type_restorations();
     let repeated = continuation.observe(&module, &mut layouts, &[&renamed, &missing])?;
+    let restored = checked_type_restorations() - before_restore;
     assert_eq!(
         serde_json::to_vec(&layouts).map_err(|error| error.to_string())?,
         initial_layouts
@@ -270,5 +274,38 @@ fn continuation_selections(mut module: BodyIrModule, target: &NamedCallableTarge
         Err("the standard library carrier type argument count is unsupported".into())
     );
     assert_eq!(repeated, (0, 0, 0), "unchanged continuation signature work");
+    verify_ordered_carrier_refusal(&module, &layouts);
+    verify_rolled_back_carrier(&module, &layouts)?;
+    assert!(
+        restored <= 3,
+        "restored {restored} checked types for three retained layouts"
+    );
+    Ok(())
+}
+
+/// A retained match before an invalid key succeeds, while a later match still sees the first invalid key.
+fn verify_ordered_carrier_refusal(module: &BodyIrModule, layouts: &[EnumDeclaration]) {
+    let mut layouts = layouts[..3].to_vec();
+    layouts[1].semantic_key = Some(CheckedType::Ref(Vec::new()));
+    let constructors = ConstructorIndex::default();
+    let mut pass = CarrierPass::new(&constructors, module, &mut layouts, "src/main.incn", None, None);
+    let first = option_type(IncanType::Primitive(IncanPrimitiveType::Int));
+    let last = option_type(IncanType::Primitive(IncanPrimitiveType::Bool));
+    assert!(pass.retain(&first).is_ok());
+    assert_eq!(pass.retain(&last), Err("invalid authored checked type".into()));
+}
+
+/// Start a new pass after a suffix withdrawal; the removed key must be admitted again.
+fn verify_rolled_back_carrier(module: &BodyIrModule, layouts: &[EnumDeclaration]) -> Result<(), String> {
+    let constructors = ConstructorIndex::default();
+    let mut rolled_back = layouts[..3].to_vec();
+    let last = option_type(IncanType::Primitive(IncanPrimitiveType::Bool));
+    CarrierPass::new(&constructors, module, &mut rolled_back, "src/main.incn", None, None).retain(&last)?;
+    rolled_back.truncate(2);
+    CarrierPass::new(&constructors, module, &mut rolled_back, "src/main.incn", None, None).retain(&last)?;
+    assert!(
+        rolled_back == layouts[..3],
+        "fresh pass did not restore the withdrawn carrier at its original slot"
+    );
     Ok(())
 }
