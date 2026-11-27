@@ -120,110 +120,6 @@ fn test_parse_non_string_metadata_value_error() {
 }
 
 #[test]
-fn test_enum_fat_arrow_mapping_rejected_with_hint() {
-    let source = "enum Categories:\n    GROCERIES => Category(\"Groceries\")\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Fat arrow in enum body should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("mapped values"),
-        "Expected hint about mapped values, got: {msg}"
-    );
-}
-
-#[test]
-fn test_enum_dotted_variant_rejected_with_hint() {
-    let source = "enum FlowType:\n    Cash.Inflow\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Dotted variant in enum body should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("cannot contain dots"),
-        "Expected hint about dots, got: {msg}"
-    );
-}
-
-#[test]
-fn test_enum_assigned_value_rejected_with_hint() {
-    let source = "enum Color:\n    Red = 1\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Assigned value in enum body should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("assigned values"),
-        "Expected hint about assigned values, got: {msg}"
-    );
-}
-
-#[test]
-fn test_value_enum_variant_requires_explicit_value() {
-    let source = "enum Color(str):\n    Red\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Value enum variant without assigned value should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("explicit literal values"),
-        "Expected hint about explicit literal values, got: {msg}"
-    );
-}
-
-#[test]
-fn test_value_enum_variant_payload_rejected() {
-    let source = "enum Color(str):\n    Red(str) = \"red\"\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Value enum variant payload should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("cannot carry tuple or struct payloads"),
-        "Expected hint about value enum payloads, got: {msg}"
-    );
-}
-
-#[test]
-fn test_value_enum_variant_literal_type_must_match_header() {
-    let source = "enum Color(str):\n    Red = 1\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Value enum variant with wrong literal type should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("Expected string literal value"),
-        "Expected hint about string literal values, got: {msg}"
-    );
-}
-
-#[test]
-fn test_value_enum_header_type_must_be_str_or_int() {
-    let source = "enum Color(float):\n    Red = 1\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Value enum with unsupported backing type should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("must be 'str' or 'int'"),
-        "Expected hint about value enum backing types, got: {msg}"
-    );
-}
-
-#[test]
-fn test_enum_colon_annotation_rejected_with_hint() {
-    let source = "enum Fields:\n    Name: str\n";
-    let Err(err) = parse_str(source) else {
-        panic!("Type annotation in enum body should be rejected");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("type annotations"),
-        "Expected hint about type annotations, got: {msg}"
-    );
-}
-
-#[test]
 fn trait_newtype_enum_parse_cases() {
     run_parse_cases(TRAIT_NEWTYPE_ENUM_PARSE_CASES);
 }
@@ -698,6 +594,94 @@ model Account:
                 err[0].message.contains("Unknown field metadata key"),
                 "Unexpected error: {}",
                 err[0].message
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_enum_fat_arrow_mapping_rejected_with_hint",
+        source: "enum Categories:\n    GROCERIES => Category(\"Groceries\")\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("mapped values"),
+                "Expected hint about mapped values, got: {msg}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_enum_dotted_variant_rejected_with_hint",
+        source: "enum FlowType:\n    Cash.Inflow\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("cannot contain dots"),
+                "Expected hint about dots, got: {msg}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_enum_assigned_value_rejected_with_hint",
+        source: "enum Color:\n    Red = 1\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("assigned values"),
+                "Expected hint about assigned values, got: {msg}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_value_enum_variant_requires_explicit_value",
+        source: "enum Color(str):\n    Red\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("explicit literal values"),
+                "Expected hint about explicit literal values, got: {msg}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_value_enum_variant_payload_rejected",
+        source: "enum Color(str):\n    Red(str) = \"red\"\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("cannot carry tuple or struct payloads"),
+                "Expected hint about value enum payloads, got: {msg}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_value_enum_variant_literal_type_must_match_header",
+        source: "enum Color(str):\n    Red = 1\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("Expected string literal value"),
+                "Expected hint about string literal values, got: {msg}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_value_enum_header_type_must_be_str_or_int",
+        source: "enum Color(float):\n    Red = 1\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("must be 'str' or 'int'"),
+                "Expected hint about value enum backing types, got: {msg}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_enum_colon_annotation_rejected_with_hint",
+        source: "enum Fields:\n    Name: str\n",
+        check: |_source, err| {
+            let msg = format!("{:?}", err);
+            assert!(
+                msg.contains("type annotations"),
+                "Expected hint about type annotations, got: {msg}"
             );
         },
     },
