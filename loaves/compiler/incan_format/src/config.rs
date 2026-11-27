@@ -70,163 +70,165 @@ impl FormatConfig {
 mod tests {
     use super::*;
 
-    // ========================================
-    // Builder method tests
-    // ========================================
+    /// A built configuration and the indent width, line length and quote style it must hold.
+    struct BuilderCase {
+        name: &'static str,
+        build: fn() -> FormatConfig,
+        indent_width: usize,
+        line_length: usize,
+        quote_style: QuoteStyle,
+    }
+
+    const DEFAULT_INDENT: usize = 4;
+    const DEFAULT_LENGTH: usize = 120;
+
+    /// Each row starts from `FormatConfig::new()`; the fields it does not set keep their defaults.
+    const BUILDER_CASES: &[BuilderCase] = &[
+        BuilderCase {
+            name: "test_with_indent_width",
+            build: || FormatConfig::new().with_indent_width(2),
+            indent_width: 2,
+            line_length: DEFAULT_LENGTH,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_with_indent_width_zero",
+            build: || FormatConfig::new().with_indent_width(0),
+            indent_width: 0,
+            line_length: DEFAULT_LENGTH,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_with_indent_width_large",
+            build: || FormatConfig::new().with_indent_width(8),
+            indent_width: 8,
+            line_length: DEFAULT_LENGTH,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_with_line_length",
+            build: || FormatConfig::new().with_line_length(80),
+            indent_width: DEFAULT_INDENT,
+            line_length: 80,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_with_line_length_short",
+            build: || FormatConfig::new().with_line_length(40),
+            indent_width: DEFAULT_INDENT,
+            line_length: 40,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_with_line_length_long",
+            build: || FormatConfig::new().with_line_length(200),
+            indent_width: DEFAULT_INDENT,
+            line_length: 200,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_with_quote_style_single",
+            build: || FormatConfig::new().with_quote_style(QuoteStyle::Single),
+            indent_width: DEFAULT_INDENT,
+            line_length: DEFAULT_LENGTH,
+            quote_style: QuoteStyle::Single,
+        },
+        BuilderCase {
+            name: "test_with_quote_style_double",
+            build: || FormatConfig::new().with_quote_style(QuoteStyle::Double),
+            indent_width: DEFAULT_INDENT,
+            line_length: DEFAULT_LENGTH,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_with_quote_style_preserve",
+            build: || FormatConfig::new().with_quote_style(QuoteStyle::Preserve),
+            indent_width: DEFAULT_INDENT,
+            line_length: DEFAULT_LENGTH,
+            quote_style: QuoteStyle::Preserve,
+        },
+        BuilderCase {
+            name: "test_builder_chain_all",
+            build: || {
+                FormatConfig::new()
+                    .with_indent_width(2)
+                    .with_line_length(80)
+                    .with_quote_style(QuoteStyle::Single)
+            },
+            indent_width: 2,
+            line_length: 80,
+            quote_style: QuoteStyle::Single,
+        },
+        // This row and the next set the same two fields in opposite orders.
+        BuilderCase {
+            name: "test_builder_chain_order_independence",
+            build: || FormatConfig::new().with_indent_width(2).with_line_length(80),
+            indent_width: 2,
+            line_length: 80,
+            quote_style: QuoteStyle::Double,
+        },
+        BuilderCase {
+            name: "test_builder_chain_order_independence_reversed",
+            build: || FormatConfig::new().with_line_length(80).with_indent_width(2),
+            indent_width: 2,
+            line_length: 80,
+            quote_style: QuoteStyle::Double,
+        },
+        // The last value wins.
+        BuilderCase {
+            name: "test_builder_override",
+            build: || FormatConfig::new().with_indent_width(2).with_indent_width(8),
+            indent_width: 8,
+            line_length: DEFAULT_LENGTH,
+            quote_style: QuoteStyle::Double,
+        },
+        // A clone holds the same fields.
+        BuilderCase {
+            name: "test_format_config_clone",
+            build: || FormatConfig::new().with_indent_width(2).with_line_length(80).clone(),
+            indent_width: 2,
+            line_length: 80,
+            quote_style: QuoteStyle::Double,
+        },
+    ];
 
     #[test]
-    fn test_with_indent_width() {
-        let config = FormatConfig::new().with_indent_width(2);
-        assert_eq!(config.indent_width, 2);
-        // Other fields unchanged
-        assert_eq!(config.line_length, 120);
+    fn builder_cases() {
+        let failures: Vec<String> = BUILDER_CASES
+            .iter()
+            .filter_map(|case| {
+                let config = (case.build)();
+                let held = (config.indent_width, config.line_length, config.quote_style);
+                let wanted = (case.indent_width, case.line_length, case.quote_style);
+                (held != wanted).then(|| format!("{}: held {held:?}, wanted {wanted:?}", case.name))
+            })
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "{} builder row(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 
     #[test]
-    fn test_with_indent_width_zero() {
-        let config = FormatConfig::new().with_indent_width(0);
-        assert_eq!(config.indent_width, 0);
-    }
+    fn quote_style_and_config_traits() {
+        const STYLES: [(QuoteStyle, &str); 3] = [
+            (QuoteStyle::Double, "Double"),
+            (QuoteStyle::Single, "Single"),
+            (QuoteStyle::Preserve, "Preserve"),
+        ];
+        for (index, (style, name)) in STYLES.iter().enumerate() {
+            let copied: QuoteStyle = *style;
+            assert_eq!(*style, copied, "{name} copies to an equal value");
+            assert!(format!("{style:?}").contains(name), "{name} debug-prints its name");
+            for (other, other_name) in &STYLES[index + 1..] {
+                assert_ne!(style, other, "{name} differs from {other_name}");
+            }
+        }
 
-    #[test]
-    fn test_with_indent_width_large() {
-        let config = FormatConfig::new().with_indent_width(8);
-        assert_eq!(config.indent_width, 8);
-    }
-
-    #[test]
-    fn test_with_line_length() {
-        let config = FormatConfig::new().with_line_length(80);
-        assert_eq!(config.line_length, 80);
-        // Other fields unchanged
-        assert_eq!(config.indent_width, 4);
-    }
-
-    #[test]
-    fn test_with_line_length_short() {
-        let config = FormatConfig::new().with_line_length(40);
-        assert_eq!(config.line_length, 40);
-    }
-
-    #[test]
-    fn test_with_line_length_long() {
-        let config = FormatConfig::new().with_line_length(200);
-        assert_eq!(config.line_length, 200);
-    }
-
-    #[test]
-    fn test_with_quote_style_single() {
-        let config = FormatConfig::new().with_quote_style(QuoteStyle::Single);
-        assert_eq!(config.quote_style, QuoteStyle::Single);
-    }
-
-    #[test]
-    fn test_with_quote_style_double() {
-        let config = FormatConfig::new().with_quote_style(QuoteStyle::Double);
-        assert_eq!(config.quote_style, QuoteStyle::Double);
-    }
-
-    #[test]
-    fn test_with_quote_style_preserve() {
-        let config = FormatConfig::new().with_quote_style(QuoteStyle::Preserve);
-        assert_eq!(config.quote_style, QuoteStyle::Preserve);
-    }
-
-    // ========================================
-    // Builder chaining tests
-    // ========================================
-
-    #[test]
-    fn test_builder_chain_all() {
-        let config = FormatConfig::new()
-            .with_indent_width(2)
-            .with_line_length(80)
-            .with_quote_style(QuoteStyle::Single);
-
-        assert_eq!(config.indent_width, 2);
-        assert_eq!(config.line_length, 80);
-        assert_eq!(config.quote_style, QuoteStyle::Single);
-    }
-
-    #[test]
-    fn test_builder_chain_order_independence() {
-        let config1 = FormatConfig::new().with_indent_width(2).with_line_length(80);
-
-        let config2 = FormatConfig::new().with_line_length(80).with_indent_width(2);
-
-        assert_eq!(config1.indent_width, config2.indent_width);
-        assert_eq!(config1.line_length, config2.line_length);
-    }
-
-    #[test]
-    fn test_builder_override() {
-        let config = FormatConfig::new().with_indent_width(2).with_indent_width(8);
-
-        assert_eq!(config.indent_width, 8); // Last value wins
-    }
-
-    // ========================================
-    // QuoteStyle tests
-    // ========================================
-
-    #[test]
-    fn test_quote_style_equality() {
-        assert_eq!(QuoteStyle::Double, QuoteStyle::Double);
-        assert_eq!(QuoteStyle::Single, QuoteStyle::Single);
-        assert_eq!(QuoteStyle::Preserve, QuoteStyle::Preserve);
-    }
-
-    #[test]
-    fn test_quote_style_inequality() {
-        assert_ne!(QuoteStyle::Double, QuoteStyle::Single);
-        assert_ne!(QuoteStyle::Single, QuoteStyle::Preserve);
-        assert_ne!(QuoteStyle::Double, QuoteStyle::Preserve);
-    }
-
-    #[test]
-    fn test_quote_style_clone() {
-        let style = QuoteStyle::Double;
-        let cloned = style;
-        assert_eq!(style, cloned);
-    }
-
-    #[test]
-    fn test_quote_style_copy() {
-        let style = QuoteStyle::Single;
-        let copied: QuoteStyle = style; // Copy
-        assert_eq!(style, copied);
-    }
-
-    // ========================================
-    // Debug trait tests
-    // ========================================
-
-    #[test]
-    fn test_format_config_debug() {
-        let config = FormatConfig::default();
-        let debug_str = format!("{:?}", config);
+        let debug_str = format!("{:?}", FormatConfig::default());
         assert!(debug_str.contains("FormatConfig"));
         assert!(debug_str.contains("indent_width"));
-    }
-
-    #[test]
-    fn test_quote_style_debug() {
-        assert!(format!("{:?}", QuoteStyle::Double).contains("Double"));
-        assert!(format!("{:?}", QuoteStyle::Single).contains("Single"));
-        assert!(format!("{:?}", QuoteStyle::Preserve).contains("Preserve"));
-    }
-
-    // ========================================
-    // Clone trait tests
-    // ========================================
-
-    #[test]
-    fn test_format_config_clone() {
-        let config = FormatConfig::new().with_indent_width(2).with_line_length(80);
-
-        let cloned = config.clone();
-        assert_eq!(config.indent_width, cloned.indent_width);
-        assert_eq!(config.line_length, cloned.line_length);
-        assert_eq!(config.quote_style, cloned.quote_style);
     }
 }

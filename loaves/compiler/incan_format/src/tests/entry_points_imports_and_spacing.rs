@@ -90,13 +90,6 @@ fn test_format_source_invalid_syntax() {
     assert!(result.is_err());
 }
 
-#[test]
-fn test_format_source_empty() {
-    let source = "";
-    let result = format_source(source);
-    assert!(result.is_ok());
-}
-
 /// Regression (GitHub #189): declarations already end with a newline; an extra `newline()` at EOF produced `\n\n`.
 #[test]
 fn test_format_source_eof_has_single_trailing_newline_only() -> Result<(), FormatError> {
@@ -191,196 +184,11 @@ fn test_format_diff_trailing_newline_only_is_actionable() -> Result<(), FormatEr
     Ok(())
 }
 
-/// A short import that fits on one line should be kept (or collapsed to) single-line form.
-#[test]
-fn test_format_import_short_stays_single_line() -> Result<(), FormatError> {
-    let source = "from db import (CategoryId, TagId)\n";
-    let config = FormatConfig::new().with_line_length(120);
-    let result = format_source_with_config(source, config)?;
-    assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
-    Ok(())
-}
-
-/// A comma-separated import that already fits on one line is unchanged.
-#[test]
-fn test_format_import_bare_short_unchanged() -> Result<(), FormatError> {
-    let source = "from db import CategoryId, TagId\n";
-    let config = FormatConfig::new().with_line_length(120);
-    let result = format_source_with_config(source, config)?;
-    assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
-    Ok(())
-}
-
-/// A long multi-item import that exceeds the line length should be wrapped.
-#[test]
-fn test_format_import_long_wraps_to_parens() -> Result<(), FormatError> {
-    // Use a very short limit so the list definitely overflows.
-    let source = "from db import CategoryId, TagId, OtherId\n";
-    let config = FormatConfig::new().with_line_length(20).with_trailing_commas(true);
-    let result = format_source_with_config(source, config)?;
-    assert!(
-        result.contains('('),
-        "expected parenthesized output for long import; got: {result}"
-    );
-    assert!(
-        result.contains("CategoryId,\n"),
-        "expected each item on its own line; got: {result}"
-    );
-    Ok(())
-}
-
-/// A multi-line parenthesized import that fits on one line is collapsed to single-line.
-#[test]
-fn test_format_import_multiline_parens_collapses_when_fits() -> Result<(), FormatError> {
-    let source = "from db import (\n    CategoryId,\n    TagId,\n)\n";
-    let config = FormatConfig::new().with_line_length(120);
-    let result = format_source_with_config(source, config)?;
-    assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
-    Ok(())
-}
-
-/// Trailing comma in parenthesized output is controlled by the `trailing_commas` config.
-#[test]
-fn test_format_import_no_trailing_comma_when_disabled() -> Result<(), FormatError> {
-    let source = "from db import CategoryId, TagId, OtherId\n";
-    let config = FormatConfig::new().with_line_length(20).with_trailing_commas(false);
-    let result = format_source_with_config(source, config)?;
-    // Last item should not have a trailing comma.
-    assert!(
-        !result.contains("OtherId,\n"),
-        "expected no trailing comma after last item; got: {result}"
-    );
-    assert!(
-        result.contains("OtherId\n"),
-        "expected last item without comma; got: {result}"
-    );
-    Ok(())
-}
-
 #[test]
 fn test_format_pub_library_import_round_trip() -> Result<(), FormatError> {
     let source = "import pub::mylib as lib\n";
     let formatted = format_source(source)?;
     assert_eq!(formatted.trim_end(), source.trim_end());
-    Ok(())
-}
-
-#[test]
-fn test_format_pub_from_import_collapses_parenthesized_list() -> Result<(), FormatError> {
-    let source = "from pub::mylib import (\n    Widget,\n    make_widget as build_widget,\n)\n";
-    let config = FormatConfig::new().with_line_length(120);
-    let formatted = format_source_with_config(source, config)?;
-    assert_eq!(
-        formatted.trim_end(),
-        "from pub::mylib import Widget, make_widget as build_widget"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_nested_pub_import_paths_canonicalize_to_dots_issue948() -> Result<(), FormatError> {
-    let source = "import pub::mylib::hyperquant::index as h\nfrom pub::mylib::hyperquant::search import find\n";
-    let formatted = format_source(source)?;
-    assert_eq!(
-        formatted,
-        "import pub::mylib.hyperquant.index as h\nfrom pub::mylib.hyperquant.search import find\n"
-    );
-    assert_eq!(format_source(&formatted)?, formatted);
-    Ok(())
-}
-
-#[test]
-fn test_format_top_level_spacing_imports_consts_and_function() -> Result<(), FormatError> {
-    let source = r#"from rust::std::f64::consts import PI, E
-from rust::std::f64 import INFINITY, NAN
-const A: int = 1
-const B: int = 2
-def sum_constants() -> int:
-  return A + B
-"#;
-    let result = format_source(source)?;
-
-    let expected = r#"from rust::std::f64::consts import PI, E
-from rust::std::f64 import INFINITY, NAN
-
-const A: int = 1
-const B: int = 2
-
-
-def sum_constants() -> int:
-    return A + B
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_top_level_spacing_single_line_alias_then_body_bearing_decl() -> Result<(), FormatError> {
-    let source = r#"type UserId = str
-model User:
-  id: UserId
-
-def load_user(id: UserId) -> User:
-  pass
-"#;
-    let result = format_source(source)?;
-
-    let expected = r#"type UserId = str
-
-
-model User:
-    id: UserId
-
-
-def load_user(id: UserId) -> User:
-    pass
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_top_level_spacing_static_then_function_uses_two_blank_lines() -> Result<(), FormatError> {
-    let source = r#"static prism_store_node_counts: list[int] = []
-pub def allocate_prism_store_id() -> int:
-  return len(prism_store_node_counts)
-"#;
-    let result = format_source(source)?;
-
-    let expected = r#"static prism_store_node_counts: list[int] = []
-
-
-pub def allocate_prism_store_id() -> int:
-    return len(prism_store_node_counts)
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_with_custom_config_keeps_rfc053_spacing() -> Result<(), FormatError> {
-    let source = r#"trait User:
-  def connect(self) -> None: ...
-  def reset(self) -> None:
-    pass
-
-def build_user() -> User:
-  pass
-"#;
-    let config = FormatConfig::new().with_indent_width(2);
-    let formatted = format_source_with_config(source, config)?;
-
-    let expected = r#"trait User:
-  def connect(self) -> None
-
-  def reset(self) -> None:
-    pass
-
-
-def build_user() -> User:
-  pass
-"#;
-    assert_eq!(formatted, expected);
     Ok(())
 }
 
@@ -427,16 +235,177 @@ from rust::libm @ "0.2" import pow as rust_pow, exp as rust_exp
 }
 
 #[test]
-fn test_format_source_feature_conditions_are_typed_and_idempotent() -> Result<(), FormatError> {
-    let source = r#"when feature("pretty") and feature("json"):
+fn entry_point_import_and_spacing_formatting_cases() {
+    run_format_cases(ENTRY_POINT_IMPORT_AND_SPACING_CASES);
+}
+
+const ENTRY_POINT_IMPORT_AND_SPACING_CASES: &[FormatCase] = &[
+    FormatCase {
+        name: "test_format_source_empty",
+        source: "",
+        checks: &[],
+        ..FormatCase::DEFAULT
+    },
+    // A short import that fits on one line should be kept (or collapsed to) single-line form.
+    FormatCase {
+        name: "test_format_import_short_stays_single_line",
+        source: "from db import (CategoryId, TagId)\n",
+        line_length: Some(120),
+        checks: &[Check::IsTrimmed("from db import CategoryId, TagId")],
+        ..FormatCase::DEFAULT
+    },
+    // A comma-separated import that already fits on one line is unchanged.
+    FormatCase {
+        name: "test_format_import_bare_short_unchanged",
+        source: "from db import CategoryId, TagId\n",
+        line_length: Some(120),
+        checks: &[Check::IsTrimmed("from db import CategoryId, TagId")],
+        ..FormatCase::DEFAULT
+    },
+    // A long multi-item import that exceeds the line length should be wrapped.
+    FormatCase {
+        name: "test_format_import_long_wraps_to_parens",
+        source: "from db import CategoryId, TagId, OtherId\n",
+        line_length: Some(20),
+        trailing_commas: Some(true),
+        checks: &[Check::Has("("), Check::Has("CategoryId,\n")],
+        ..FormatCase::DEFAULT
+    },
+    // A multi-line parenthesized import that fits on one line is collapsed to single-line.
+    FormatCase {
+        name: "test_format_import_multiline_parens_collapses_when_fits",
+        source: "from db import (\n    CategoryId,\n    TagId,\n)\n",
+        line_length: Some(120),
+        checks: &[Check::IsTrimmed("from db import CategoryId, TagId")],
+        ..FormatCase::DEFAULT
+    },
+    // Trailing comma in parenthesized output is controlled by the `trailing_commas` config.
+    FormatCase {
+        name: "test_format_import_no_trailing_comma_when_disabled",
+        source: "from db import CategoryId, TagId, OtherId\n",
+        line_length: Some(20),
+        trailing_commas: Some(false),
+        checks: &[Check::Lacks("OtherId,\n"), Check::Has("OtherId\n")],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_pub_from_import_collapses_parenthesized_list",
+        source: "from pub::mylib import (\n    Widget,\n    make_widget as build_widget,\n)\n",
+        line_length: Some(120),
+        checks: &[Check::IsTrimmed(
+            "from pub::mylib import Widget, make_widget as build_widget",
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_nested_pub_import_paths_canonicalize_to_dots_issue948",
+        source: "import pub::mylib::hyperquant::index as h\nfrom pub::mylib::hyperquant::search import find\n",
+        checks: &[
+            Check::Is("import pub::mylib.hyperquant.index as h\nfrom pub::mylib.hyperquant.search import find\n"),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_top_level_spacing_imports_consts_and_function",
+        source: r#"from rust::std::f64::consts import PI, E
+from rust::std::f64 import INFINITY, NAN
+const A: int = 1
+const B: int = 2
+def sum_constants() -> int:
+  return A + B
+"#,
+        checks: &[Check::Is(
+            r#"from rust::std::f64::consts import PI, E
+from rust::std::f64 import INFINITY, NAN
+
+const A: int = 1
+const B: int = 2
+
+
+def sum_constants() -> int:
+    return A + B
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_top_level_spacing_single_line_alias_then_body_bearing_decl",
+        source: r#"type UserId = str
+model User:
+  id: UserId
+
+def load_user(id: UserId) -> User:
+  pass
+"#,
+        checks: &[Check::Is(
+            r#"type UserId = str
+
+
+model User:
+    id: UserId
+
+
+def load_user(id: UserId) -> User:
+    pass
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_top_level_spacing_static_then_function_uses_two_blank_lines",
+        source: r#"static prism_store_node_counts: list[int] = []
+pub def allocate_prism_store_id() -> int:
+  return len(prism_store_node_counts)
+"#,
+        checks: &[Check::Is(
+            r#"static prism_store_node_counts: list[int] = []
+
+
+pub def allocate_prism_store_id() -> int:
+    return len(prism_store_node_counts)
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_with_custom_config_keeps_rfc053_spacing",
+        source: r#"trait User:
+  def connect(self) -> None: ...
+  def reset(self) -> None:
+    pass
+
+def build_user() -> User:
+  pass
+"#,
+        indent_width: Some(2),
+        checks: &[Check::Is(
+            r#"trait User:
+  def connect(self) -> None
+
+  def reset(self) -> None:
+    pass
+
+
+def build_user() -> User:
+  pass
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_feature_conditions_are_typed_and_idempotent",
+        source: r#"when feature("pretty") and feature("json"):
   from std.json import JsonValue
   pub def render(value: JsonValue) -> str:
     return "json"
 
 pub def always() -> str:
   return "always"
-"#;
-    let expected = r#"when feature("json") and feature("pretty"):
+"#,
+        checks: &[
+            Check::Is(
+                r#"when feature("json") and feature("pretty"):
     from std.json import JsonValue
 
     pub def render(value: JsonValue) -> str:
@@ -445,10 +414,10 @@ pub def always() -> str:
 
 pub def always() -> str:
     return "always"
-"#;
-
-    let formatted = format_source(source)?;
-    assert_eq!(formatted, expected);
-    assert_eq!(format_source(&formatted)?, expected);
-    Ok(())
-}
+"#,
+            ),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+];
