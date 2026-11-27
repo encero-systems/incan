@@ -41,7 +41,8 @@ module HeadToHead
 
     # Per engine, the warm census reuses the cold census's Bakery and its retained scratch: the same realized
     # projects, targets and paths, which the stock materializer keeps when their bytes are unchanged. Only the logs
-    # and temporary directories are per state. Returns the number of refused runs; a pair with one keeps its trees.
+    # and temporary directories are per state. Returns the number of refused runs. The first refused pair keeps its
+    # trees for diagnosis; later ones keep their logs and samples only, so disk stays bounded under --keep-going.
     def self.run_pair(session, pair, jobs, expected)
       root = session.directory('census', "jobs-#{jobs}", format('pair-%02d', pair))
       refused = 0
@@ -54,6 +55,7 @@ module HeadToHead
                   log: File.join(base, "#{state}-contracts.log") }
           scope = { arm: 'census', pair: pair, position: position, engine: engine, jobs: jobs, stage: "census-#{state}",
                     state: state == 'cold' ? 'prefilled-cold' : 'warm-unchanged' }
+          scope[:workers_stopped_before] = HeadToHead.quiesce([session.home]) if state == 'cold'
           before = retained(session, arm)
           refused += 1 unless attempt(session) { census_run(session, scope, engine, arm, jobs, expected) }
           after = retained(session, arm)
@@ -61,7 +63,9 @@ module HeadToHead
                                   workers_kept: before.fetch(:workers) & after.fetch(:workers)))
         end
       end
-      session.retire(root) if refused.zero?
+      kept = refused.positive? && !session.settings[:census_trees_kept]
+      session.settings[:census_trees_kept] ||= kept
+      session.retire(root) unless kept
       refused
     end
 
@@ -90,14 +94,13 @@ module HeadToHead
 
     # One complete census. The log is retained; the verdict set must equal the oracle and keep every committed PASS.
     def self.census_run(session, scope, engine, arm, jobs, expected)
-      stopped = HeadToHead.quiesce([session.home]) if scope.fetch(:state) == 'prefilled-cold'
       environment, argv = invocation(session, engine, arm, jobs)
       host = { before: HeadToHead.host_sample(session.slot_root), during: [] } if session.timed
       started = HeadToHead.clock_ns if session.timed
       pid = Process.spawn(environment, *argv, chdir: session.source, out: arm.fetch(:log), err: %i[child out])
       status, ended = wait(pid, host, session.slot_root)
       entry = scope.merge(role: 'ordinary', argv: argv, cwd: session.source, environment: environment, log: arm.fetch(:log),
-                          exit: status.exitstatus, signal: status.termsig, workers_stopped_before: stopped, timed: session.timed)
+                          exit: status.exitstatus, signal: status.termsig, timed: session.timed)
       if session.timed
         entry[:wall_ms] = (ended - started) / 1_000_000.0
         entry[:host] = host.merge(after: HeadToHead.host_sample(session.slot_root))
