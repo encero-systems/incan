@@ -14,9 +14,14 @@ pub from rust::internal_models_native import (
 const COUNTS: bytes = b"chkbdy\x00"
 
 
+pub def provider_body_count_profile() -> str:
+    """Name the typed companion emitted by the original provider compile."""
+    return "incan.checked-body-counts/2"
+
+
 def provider_description() -> Description:
     """Describe the same count companion for one native provider activation."""
-    return model_description(COUNTS, "incan.checked-body-counts/2", [
+    return model_description(COUNTS, provider_body_count_profile(), [
         ModelField(identity=b"atempt", name="attempt", storage="string"),
         ModelField(identity=b"check_", name="body_evaluations", storage="i64"),
         ModelField(identity=b"unit__", name="descriptor", storage="string"),

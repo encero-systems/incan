@@ -212,12 +212,14 @@ fn identity_reply(
 ) -> Result<String, Box<dyn std::error::Error>> {
     const PLAN_ONLY: &str = "incan.driver-capabilities/1";
     const WITH_LIBRARY_LOCAL: &str = "incan.driver-capabilities/2";
+    const WITH_PROVIDER_COUNT: &str = "incan.driver-capabilities/3";
     const PLAN_PROFILE: &str = "incan.plan-module-selection-sha256/1";
     const LIBRARY_LOCAL_PROFILE: &str = "incan.library-local-compiled-body-rows/1";
     let (sysroot, protocol) = match arguments {
         [sysroot] => (sysroot, None),
         [sysroot, option, protocol]
-            if option == "--capabilities" && matches!(protocol.as_str(), PLAN_ONLY | WITH_LIBRARY_LOCAL) =>
+            if option == "--capabilities"
+                && matches!(protocol.as_str(), PLAN_ONLY | WITH_LIBRARY_LOCAL | WITH_PROVIDER_COUNT) =>
         {
             (sysroot, Some(protocol.as_str()))
         }
@@ -225,11 +227,14 @@ fn identity_reply(
     };
     let target = verify(Path::new(sysroot))?;
     match protocol {
-        Some(WITH_LIBRARY_LOCAL) => {
+        Some(protocol @ (WITH_LIBRARY_LOCAL | WITH_PROVIDER_COUNT)) => {
             let checker = internal_models_native::checker_records::CHECKER_PROFILE;
-            Ok(format!(
-                "{WITH_LIBRARY_LOCAL}\n{target}\n{PLAN_PROFILE}\n{LIBRARY_LOCAL_PROFILE}\n{checker}\n"
-            ))
+            let mut reply = format!("{protocol}\n{target}\n{PLAN_PROFILE}\n{LIBRARY_LOCAL_PROFILE}\n{checker}\n");
+            if protocol == WITH_PROVIDER_COUNT {
+                reply.push_str(&internal_models::provider_body_count_profile());
+                reply.push('\n');
+            }
+            Ok(reply)
         }
         Some(_) => Ok(format!("{PLAN_ONLY}\n{target}\n{PLAN_PROFILE}\n")),
         None => Ok(format!("{target}\n")),
@@ -273,7 +278,24 @@ mod identity_reply_tests {
             )
         );
         let [sysroot, capability, _] = arguments;
-        let unknown = [sysroot, capability, "incan.driver-capabilities/3".into()];
+        let counted = [
+            sysroot.clone(),
+            capability.clone(),
+            "incan.driver-capabilities/3".into(),
+        ];
+        assert_eq!(
+            identity_reply(&counted, verify)
+                .as_deref()
+                .unwrap_or("rejected capability request"),
+            concat!(
+                "incan.driver-capabilities/3\naarch64-apple-darwin\n",
+                "incan.plan-module-selection-sha256/1\n",
+                "incan.library-local-compiled-body-rows/1\n",
+                "incan.checker-free-functions/21\n",
+                "incan.checked-body-counts/2\n"
+            )
+        );
+        let unknown = [sysroot, capability, "incan.driver-capabilities/4".into()];
         assert!(identity_reply(&unknown, |_| panic!("a malformed request reached verification")).is_err());
         let refused = identity_reply(
             &[

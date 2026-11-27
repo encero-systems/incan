@@ -56,11 +56,13 @@ pub def test_installation_page_refuses_unbound_driver_capabilities() -> Result[N
     confirmed = decode_page_at(wire, baseline)?
     assert encode_installation(confirmed)? == baseline
     assert confirmed.toolchain.select().supports_plan_module_selection_digest
+    assert not confirmed.toolchain.select().supports_provider_body_count
     legacy = driver_capability_page(driver, digest, observation, [], FIXTURE_REGISTRY)
     legacy_bytes = encode_installation(legacy)?
     restored = decode_page_at(wire, legacy_bytes)?
     assert encode_installation(restored)? == legacy_bytes
     assert not restored.toolchain.select().supports_plan_module_selection_digest
+    assert not restored.toolchain.select().supports_provider_body_count
     local = Document(path=driver, stamp=observation, value=library_local_capability(digest))
     local_page = driver_capability_page(driver, digest, observation, [local], FIXTURE_REGISTRY)
     local_bytes = encode_installation(local_page)?
@@ -68,6 +70,7 @@ pub def test_installation_page_refuses_unbound_driver_capabilities() -> Result[N
     assert encode_installation(admitted)? == local_bytes
     assert admitted.toolchain.select().supports_plan_module_selection_digest
     assert admitted.toolchain.select().supports_library_checked_local
+    assert not admitted.toolchain.select().supports_provider_body_count
     assert not confirmed.toolchain.select().supports_library_checked_local
     verify_provider_count_capability(wire, driver, digest, observation)?
     cases = [
@@ -145,6 +148,7 @@ def verify_provider_count_capability(wire: Path, driver: str, digest: str, obser
     encoded = encode_installation(page)?
     selected = decode_page_at(wire, encoded)?
     assert selected.toolchain.select().supports_library_checked_local
+    assert selected.toolchain.select().supports_provider_body_count
     assert encode_installation(selected)? == encoded
     capability.set("provider_body_count_profile", JsonValue.string("incan.checked-body-counts/1")).map_err(
         (error) => error.message(),
@@ -189,6 +193,7 @@ pub def test_installed_readmission_refuses_a_loose_driver_capability() -> Result
     assert load_toolchain_at(directory)?.driver == selected.driver
     verify_admitted_identity_reply(scratch.path(), original)?
     verify_admitted_library_local_reply(scratch.path(), original)?
+    verify_admitted_provider_count_reply(scratch.path(), original)?
     return verify_legacy_identity_reader(scratch.path(), original)
 
 
@@ -200,7 +205,7 @@ def verify_admitted_identity_reply(scratch: Path, original: Path) -> Result[None
     require_envelope = "[ \"$#\" = 4 ] && [ \"$3\" = --capabilities ] && [ \"$4\" = incan.driver-capabilities/1 ] || exit 98\n"
     reply = "printf '%s\\n' 'incan.driver-capabilities/1' 'x86_64-unknown-linux-gnu' 'incan.plan-module-selection-sha256/1'\n"
     unsupported = "if [ \"$4\" = incan.driver-capabilities/2 ]; then printf '%s\n' 'usage: incan-rustc-driver --identity SYSROOT' >&2; exit 1; fi\n"
-    write_identity_fixture(driver, unsupported + require_envelope + reply)?
+    write_identity_fixture(driver, unsupported_provider_count_reply() + unsupported + require_envelope + reply)?
     _staged, original_admission = prepare_installation(stage)?
     proof = probe_driver_capability(driver.0, stage.joinpath("sysroot").0)?
     assert proof.is_some()
@@ -218,10 +223,10 @@ def verify_admitted_identity_reply(scratch: Path, original: Path) -> Result[None
         assert load_toolchain_at(target)?.supports_plan_module_selection_digest
     work = finish_counting()
     assert work.reads == 0 and work.hashes == 0 and work.stats == 0
-    assert read(target.joinpath("identity-requests"))? == "4\n4\n"
+    assert read(target.joinpath("identity-requests"))? == "4\n4\n4\n"
     readmitted = readmit_page(target, read_toolchain, None, DriverCapabilityIntake.Selected)?
     assert readmitted.toolchain.select().supports_plan_module_selection_digest
-    assert read(target.joinpath("identity-requests"))? == "4\n4\n4\n4\n"
+    assert read(target.joinpath("identity-requests"))? == "4\n4\n4\n4\n4\n4\n"
     return Ok(None)
 
 
@@ -232,7 +237,7 @@ def verify_admitted_library_local_reply(scratch: Path, original: Path) -> Result
     driver = stage.joinpath("driver")
     require_envelope = "[ \"$#\" = 4 ] && [ \"$3\" = --capabilities ] && [ \"$4\" = incan.driver-capabilities/2 ] || exit 98\n"
     reply = "printf '%s\n' 'incan.driver-capabilities/2' 'x86_64-unknown-linux-gnu' 'incan.plan-module-selection-sha256/1' 'incan.library-local-compiled-body-rows/1' 'incan.checker-free-functions/21'\n"
-    write_identity_fixture(driver, require_envelope + reply)?
+    write_identity_fixture(driver, unsupported_provider_count_reply() + require_envelope + reply)?
     _, original_admission = prepare_installation(stage)?
     proof = probe_driver_capability(driver.0, stage.joinpath("sysroot").0)?
     assert proof.is_some()
@@ -246,11 +251,40 @@ def verify_admitted_library_local_reply(scratch: Path, original: Path) -> Result
     finish_installation(target, admission)?
     selected = load_toolchain_at(target)?
     assert selected.supports_plan_module_selection_digest and selected.supports_library_checked_local
-    assert read(target.joinpath("identity-requests"))? == "4\n"
+    assert not selected.supports_provider_body_count
+    assert read(target.joinpath("identity-requests"))? == "4\n4\n"
     terminal = readmit_page(target, read_toolchain, None, DriverCapabilityIntake.Selected)?
     assert terminal.toolchain.select().supports_library_checked_local
-    assert read(target.joinpath("identity-requests"))? == "4\n4\n"
+    assert not terminal.toolchain.select().supports_provider_body_count
+    assert read(target.joinpath("identity-requests"))? == "4\n4\n4\n4\n"
     return Ok(None)
+
+
+def verify_admitted_provider_count_reply(scratch: Path, original: Path) -> Result[None, str]:
+    """Publish the selected driver's provider tally support from one authenticated identity query."""
+    stage = scratch.joinpath("provider-count-capability-stage")
+    write_installation(stage, original, "temporary compiler", "provider count capability fixture")?
+    driver = stage.joinpath("driver")
+    envelope = "[ \"$#\" = 4 ] && [ \"$3\" = --capabilities ] && [ \"$4\" = incan.driver-capabilities/3 ] || exit 98\n"
+    reply = "printf '%s\\n' 'incan.driver-capabilities/3' 'x86_64-unknown-linux-gnu' 'incan.plan-module-selection-sha256/1' 'incan.library-local-compiled-body-rows/1' 'incan.checker-free-functions/21' 'incan.checked-body-counts/2'\n"
+    write_identity_fixture(driver, envelope + reply)?
+    _, prepared = prepare_installation(stage)?
+    proof = probe_driver_capability(driver.0, stage.joinpath("sysroot").0)?
+    admission = InstallationAdmission(
+        payloads=prepared.payloads, facts=prepared.facts, plan_selection_driver=proof,
+    )
+    target = scratch.joinpath("provider-count-installation")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    finish_installation(target, admission)?
+    selected = load_toolchain_at(target)?
+    assert selected.supports_library_checked_local and selected.supports_provider_body_count
+    assert read(target.joinpath("identity-requests"))? == "4\n"
+    return Ok(None)
+
+
+def unsupported_provider_count_reply() -> str:
+    """Use the exact refusal a preceding driver gives for a newer identity version."""
+    return "if [ \"$4\" = incan.driver-capabilities/3 ]; then printf '%s\\n' 'usage: incan-rustc-driver --identity SYSROOT' >&2; exit 1; fi\n"
 
 
 def verify_legacy_identity_reader(scratch: Path, original: Path) -> Result[None, str]:
@@ -265,8 +299,9 @@ def verify_legacy_identity_reader(scratch: Path, original: Path) -> Result[None,
     usage = "if [ \"$#\" = 4 ]; then printf '%s\\n' 'usage: incan-rustc-driver --identity SYSROOT' >&2; exit 1; fi\n"
     write_identity_fixture(driver, usage + "printf '%s\\n' 'x86_64-unknown-linux-gnu'\n")?
     _ = readmit_page(target, read_toolchain, None, DriverCapabilityIntake.Selected)?
-    assert not load_toolchain_at(target)?.supports_plan_module_selection_digest
-    assert read(target.joinpath("identity-requests"))? == "4\n4\n2\n"
+    selected = load_toolchain_at(target)?
+    assert not selected.supports_plan_module_selection_digest and not selected.supports_provider_body_count
+    assert read(target.joinpath("identity-requests"))? == "4\n4\n4\n2\n"
     baseline = admitted_identity(target)?
     write_identity_fixture(
         driver,

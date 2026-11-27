@@ -817,7 +817,7 @@ pub def prepare_program(
         None => asked
     shared = planned.project_library is not None
     work = match count_providers:
-        true => Some(ProviderBodyWork())
+        true => Some(ProviderBodyWork(supported=toolchain.supports_provider_body_count))
         false => None
     described, _ = prepare_project_library(planned, toolchain, work)?
     ready = prepared_for(view, described, toolchain, work)?
