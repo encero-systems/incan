@@ -1,0 +1,14 @@
+# Former case explicit_body_accepts_borrowed_nested_len: an explicit borrowed body accepts len over an indexed nested list (#2500)
+
+class Graph:
+    pub out: list[list[int]]
+
+
+def degree(graph: Borrowed[Graph]) -> int:
+    """Return the length of one borrowed adjacency list."""
+    return len(graph.out[0])
+
+
+pub def main() -> None:
+    graph = Graph(out=[[1, 2], []])
+    println(degree(graph))

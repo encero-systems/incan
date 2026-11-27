@@ -1,0 +1,64 @@
+# behavior: 7 former selfhost cases run in order, each program from its own module: codec_evaluation_order, codec_rejected_labels, collection_callable_field, generator_function_capture, generator_set_sources, usize_list_operations, wrapping_integer_methods
+# expect-stdout:
+#  encoding
+#  errors
+#  receiver
+#  abc
+#  encoding
+#  encoding rejected
+#  encoding
+#  errors
+#  policy rejected
+#  first
+#  second
+#  first
+#  created
+#  test 1
+#  test 2
+#  test 3
+#  test 4
+#  [2, 4]
+#  created
+#  [1, 2]
+#  3
+#  expand 1
+#  [1, 11]
+#  expand 2
+#  [2, 12]
+#  3
+#  3
+#  5
+#  3
+#  1
+#  3
+#  3
+#  7
+#  3
+#  -9223372036854775808
+#  9223372036854775807
+#  -2
+#  0
+#  1
+#  2
+#  9223372036854775807
+
+"""Run the program of each former case in order."""
+
+import codec_evaluation_order
+import codec_rejected_labels
+import collection_callable_field
+import generator_function_capture
+import generator_set_sources
+import usize_list_operations
+import wrapping_integer_methods
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    codec_evaluation_order.main()
+    codec_rejected_labels.main()
+    collection_callable_field.main()
+    generator_function_capture.main()
+    generator_set_sources.main()
+    usize_list_operations.main()
+    wrapping_integer_methods.main()

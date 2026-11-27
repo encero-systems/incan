@@ -1,0 +1,18 @@
+# Former case explicit_body_accepts_static_calls: an explicit borrowed body accepts an ordinary static call (#2500)
+
+from std.datetime import Instant
+
+
+class Graph:
+    pub values: list[int]
+
+
+def observed_after(graph: Borrowed[Graph]) -> bool:
+    """Make a static call before reading borrowed storage."""
+    started = Instant.now()
+    return started.elapsed().whole_seconds() >= 0 and len(graph.values) == 1
+
+
+pub def main() -> None:
+    graph = Graph(values=[1])
+    println(observed_after(graph))

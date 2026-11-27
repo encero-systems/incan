@@ -1,0 +1,24 @@
+# Former case primitives_and_literals_as_arguments: int, float and bool values pass to functions and remain usable by the caller afterwards, and a str literal is accepted directly as a method argument
+
+def bump(value: int) -> int:
+    return value + 1
+
+
+def grow(value: float) -> float:
+    return value + 1.0
+
+
+def flip(value: bool) -> bool:
+    return not value
+
+
+pub def main() -> None:
+    count = 42
+    ratio = 3.5
+    flag = true
+    println(bump(count))
+    println(grow(ratio))
+    println(flip(flag))
+    println(f"{count} {ratio} {flag}")
+    println("hello".startswith("he"))
+    println("hello".endswith("lo!"))

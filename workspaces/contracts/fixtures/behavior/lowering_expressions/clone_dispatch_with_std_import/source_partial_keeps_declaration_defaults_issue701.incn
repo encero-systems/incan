@@ -1,0 +1,21 @@
+# Former case source_partial_keeps_declaration_defaults_issue701: a stored partial over a model constructor applies its preset and leaves every other field to the declaration's own defaults or the call's arguments (#701)
+
+const DEFAULT_NAMESPACE: str = "registry"
+
+
+model Spec:
+    name: str
+    namespace: str = "unset"
+    replicas: int = 1
+
+    def describe(self) -> str:
+        return f"{self.namespace}/{self.name}:{self.replicas}"
+
+
+spec = partial Spec(namespace=DEFAULT_NAMESPACE)
+
+
+pub def main() -> None:
+    println(spec(name="alpha", replicas=3).describe())
+    println(spec(name="beta").describe())
+    println(Spec(name="gamma", namespace="custom").describe())

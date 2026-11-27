@@ -1,0 +1,13 @@
+# Former case trait_default_local_shadows_module_type: inside an imported trait's default body a local binding named like a model of the trait's module is the local value, not the model
+
+from shapes import Counted
+
+
+model Thing with Counted:
+    pub x: int
+
+
+pub def main() -> None:
+    thing = Thing(x=1)
+    println(thing.count())
+    println(thing.width())

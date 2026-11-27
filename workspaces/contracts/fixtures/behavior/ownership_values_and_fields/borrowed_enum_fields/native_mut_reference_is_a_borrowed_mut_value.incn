@@ -1,0 +1,20 @@
+# Former case native_mut_reference_is_a_borrowed_mut_value: A native `&mut State` from a RefCell borrow is a `BorrowedMut[State]` value: one type, so it is passed with no adjustment (RFC 164).
+
+from rust::std::cell import RefCell
+from rust::std::ops import DerefMut
+
+
+model State:
+    count: int
+
+
+def bump(mut state: BorrowedMut[State]) -> int:
+    state.count += 1
+    return state.count
+
+
+pub def main() -> None:
+    """A native `&mut State` from a RefCell borrow is a `BorrowedMut[State]` value."""
+    cell = RefCell.new(State(count=0))
+    mut held = cell.borrow_mut()
+    println(bump(held.deref_mut()))
