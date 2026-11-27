@@ -169,6 +169,11 @@ pub def begin_fresh_run(scratch: Path) -> Result[None, str]:
     return write(scratch.joinpath(FRESH_RUN_FILE), f"{next}\n")
 
 
+pub def share_fresh_run(scratch: Path, worker_scratch: Path) -> Result[None, str]:
+    """Give a worker with a scratch directory of its own this invocation's number from `scratch`."""
+    return write(worker_scratch.joinpath(FRESH_RUN_FILE), f"{fresh_run(scratch)}\n")
+
+
 pub def fresh_run(scratch: Path) -> str:
     """The number of this runner invocation in `scratch`, or `0` when none was recorded or the record is unreadable."""
     path = scratch.joinpath(FRESH_RUN_FILE)

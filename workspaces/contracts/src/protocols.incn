@@ -11,7 +11,7 @@ as its longest protocol, not as all of them together.
 from std.fs import Path
 from families import read_program
 from files import make_directory
-from fixture import Fixture
+from fixture import Fixture, share_fresh_run
 from run import Outcome
 from workers import Invocation, invoke_many
 
@@ -59,12 +59,14 @@ pub def run_protocols(
 ) -> Result[dict[str, Result[Outcome, str]], str]:
     """
     Run each protocol case in a runner of its own, each with its own scratch so no two share a partition or refusal
-    file, and return each runner's outcome by case.
+    file, and return each runner's outcome by case. Each scratch carries this invocation's number, so a
+    `fresh-project:` case gets a new directory there too.
     """
     mut requests: list[Invocation] = []
     for name in cases:
         retained = scratch.joinpath(f"protocol-{name.replace("/", "-")}")
         make_directory(retained)?
+        share_fresh_run(scratch, retained)?
         mut arguments = [runner.incan, runner.root, "--family-worker", "--scratch", retained.0, "--jobs", "1"]
         arguments.extend(runner.flags)
         arguments.append(name)
