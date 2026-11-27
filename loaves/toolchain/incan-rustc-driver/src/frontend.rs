@@ -274,21 +274,7 @@ fn parse_dependencies(
     checking: bool,
     allow_provider_body_count: bool,
 ) -> Result<Dependencies, String> {
-    let mut names = std::collections::BTreeSet::new();
-    let mut externs = Vec::new();
-    for native in &unit.externs {
-        if !names.insert(&native.name) {
-            return Err(format!("unit names more than one exact `{}` artifact", native.name));
-        }
-        if !native.path.is_file() {
-            return Err(format!(
-                "unit's `{}` artifact does not exist: {}",
-                native.name,
-                native.path.display()
-            ));
-        }
-        externs.push((native.name.clone(), native.path.clone()));
-    }
+    let externs = exact_unit_externs(unit)?;
     let mut library = false;
     let mut collect_codegraph = true;
     let mut inspection = false;
@@ -399,6 +385,26 @@ fn parse_dependencies(
         }),
         anchors,
     })
+}
+
+/// Validate the exact externs in declaration order before reading compiler options.
+fn exact_unit_externs(unit: &UnitDescription) -> Result<Vec<(String, PathBuf)>, String> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut externs = Vec::new();
+    for native in &unit.externs {
+        if !names.insert(&native.name) {
+            return Err(format!("unit names more than one exact `{}` artifact", native.name));
+        }
+        if !native.path.is_file() {
+            return Err(format!(
+                "unit's `{}` artifact does not exist: {}",
+                native.name,
+                native.path.display()
+            ));
+        }
+        externs.push((native.name.clone(), native.path.clone()));
+    }
+    Ok(externs)
 }
 
 #[cfg(test)]
