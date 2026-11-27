@@ -40,9 +40,14 @@ struct Recipe {
     inputs: Inputs,
 }
 
-/// Prepare reached native roots in dependency-compatible order, retaining the runtime across source edits and
-/// building a reached Loaf only when an earlier carrier does not already contain it. Rustc validates all crate
-/// identities again when compiling the executable; no source acceptance or decoded type context is cached here.
+/// Prepare reached installed native roots in dependency-compatible order, building a reached Loaf only when an
+/// earlier carrier does not already contain it. Only installed inputs get a carrier, and the runtime and the pinned
+/// test harness come first, so every executable of one installation shares their carriers whatever else it reaches
+/// and whatever its sources say. An authored library changes with its sources and links into the executable, which
+/// is linked again anyway, instead of making one more new shared library each edit. An installed driver keeps the
+/// carriers with its home, which its installation check prepares once, so every bakery of the home links against
+/// them. Rustc validates all crate identities again when compiling the executable; no source acceptance or decoded
+/// type context is cached here.
 pub(crate) fn libraries(
     roots: BTreeSet<&str>,
     externs: &[(String, PathBuf)],
@@ -50,30 +55,85 @@ pub(crate) fn libraries(
     identity: &DriverIdentity,
     store: &Path,
 ) -> Result<Vec<(String, PathBuf)>, DriverError> {
-    // ---- Store and dependency-compatible root order ----
+    // ---- Installation, carrier store and dependency-compatible root order ----
     if !store.is_absolute() {
         return Err(refusal("the shared native store must be absolute"));
     }
-    fs::create_dir_all(store).map_err(io_error)?;
+    let installation = Installation::observed(identity, store)?;
+    fs::create_dir_all(&installation.store).map_err(io_error)?;
     let mut roots = roots.into_iter().collect::<Vec<_>>();
-    roots.sort_by_key(|root| (*root != "incan_native_runtime", *root));
+    roots.sort_by_key(|root| (shared_rank(root), *root));
     let mut shared = Vec::new();
     let mut covered = BTreeSet::new();
 
-    // ---- Reached native implementations ----
+    // ---- Reached installed native implementations ----
     for root in roots {
         let Some(artifact) = native_library(root, externs, identity)? else {
             continue;
         };
         let artifact = artifact.as_ref();
-        if artifact.extension().is_none_or(|extension| extension != "rlib") || covered.contains(artifact) {
+        if artifact.extension().is_none_or(|extension| extension != "rlib")
+            || covered.contains(artifact)
+            || !installation.provides(artifact)?
+        {
             continue;
         }
-        let library = prepared(root, artifact, externs, directories, identity, store, &shared)?;
+        let library = prepared(
+            root,
+            artifact,
+            externs,
+            directories,
+            identity,
+            &installation.store,
+            &shared,
+        )?;
         covered.extend(library.inputs.iter().map(|(path, _)| path.clone()));
         shared.push((format!("incan_debug_shared_{}", shared.len()), library.path));
     }
     Ok(shared)
+}
+
+/// Carrier order: the runtime, then the pinned test harness, then installed Loaves by name.
+fn shared_rank(root: &str) -> u8 {
+    match root {
+        "incan_native_runtime" => 0,
+        "test" => 1,
+        _ => 2,
+    }
+}
+
+/// The directories whose files only an installation changes, and the store their carriers live in.
+struct Installation {
+    directories: Vec<PathBuf>,
+    store: PathBuf,
+}
+
+impl Installation {
+    /// The pinned sysroot and, for a driver installed at `<home>/toolchains/<version>/bin`, its home, which holds
+    /// the installed and relinked Loaves and keeps the carriers in its cache. An uninstalled driver has no home, as
+    /// it stores no identity proof: it derives carriers of the sysroot alone in the development store it is given.
+    fn observed(identity: &DriverIdentity, store: &Path) -> Result<Self, DriverError> {
+        let executable = fs::canonicalize(std::env::current_exe().map_err(io_error)?).map_err(io_error)?;
+        let mut layout = executable.ancestors().skip(1);
+        let bin = layout.next().and_then(Path::file_name);
+        let toolchains = layout.nth(1).and_then(Path::file_name);
+        match (bin, toolchains, executable.ancestors().nth(4)) {
+            (Some(bin), Some(toolchains), Some(home)) if bin == "bin" && toolchains == "toolchains" => Ok(Self {
+                directories: vec![identity.sysroot.clone(), home.to_path_buf()],
+                store: home.join("cache/native-shared"),
+            }),
+            _ => Ok(Self {
+                directories: vec![identity.sysroot.clone()],
+                store: store.to_path_buf(),
+            }),
+        }
+    }
+
+    /// Whether a native root is an installed input rather than an authored library built from current sources.
+    fn provides(&self, artifact: &Path) -> Result<bool, DriverError> {
+        let artifact = fs::canonicalize(artifact).map_err(io_error)?;
+        Ok(self.directories.iter().any(|directory| artifact.starts_with(directory)))
+    }
 }
 
 /// Select an explicit native input, or the pinned test-harness archive that rustc ordinarily injects implicitly.
