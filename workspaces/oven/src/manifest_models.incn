@@ -117,11 +117,9 @@ pub model ProjectIntent:
     # The `provider`-kind `[dependencies]` entries (RFC 117), by alias.
     pub providers: list[ProviderRequirement] = []
 
-    pub def local_dependencies(self, environment: str = "") -> Borrowed[list[LocalDependency]] from self:
-        """Read the normalized environment selection, or the production edges for an unchanged environment."""
-        if environment in self.environment_local_dependencies:
-            return self.environment_local_dependencies[environment]
-        return self.dependencies
+    pub def has_local_dependency_overlay(self, environment: str) -> bool:
+        """Whether this environment selected a local list different from production."""
+        return environment in self.environment_local_dependencies
 
 
 pub model ManifestSnapshot:

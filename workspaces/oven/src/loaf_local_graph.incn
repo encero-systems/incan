@@ -23,7 +23,7 @@ from rust_activation import (
     version_matches,
 )
 from intake import ManifestReader, read_project
-from manifest_intent import ProjectIntent
+from manifest_intent import LocalDependency, ProjectIntent
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 
@@ -106,7 +106,14 @@ def environment_features(
 
 def intent_optional_aliases(intent: ProjectIntent, environment: str) -> list[str]:
     """Name optional Incan path edges directly from the normalized project intent."""
-    return sorted([dependency.alias for dependency in intent.local_dependencies(environment) if dependency.optional])
+    if intent.has_local_dependency_overlay(environment):
+        return optional_aliases(intent.environment_local_dependencies[environment])
+    return optional_aliases(intent.dependencies)
+
+
+def optional_aliases(dependencies: list[LocalDependency]) -> list[str]:
+    """Read the optional aliases from the selected dependency list."""
+    return sorted([dependency.alias for dependency in dependencies if dependency.optional])
 
 
 def key(demand: LocalDemand) -> str:

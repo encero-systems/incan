@@ -11,8 +11,7 @@ from jec import begin, record
 from observation import observe
 from rust::std::rc import Rc
 from rust::std::cell import RefCell
-from rust::std::ops import DerefMut, Index
-from rust::std::primitive import usize
+from rust::std::ops import DerefMut
 from manifest_intent import (
     LocalDependency,
     ManifestEvidence,
@@ -325,24 +324,7 @@ pub def intake(
         if owner.root not in positions:
             positions[owner.root] = len(projects)
             projects.append(load_project(Path(owner.root), reader)?)
-        project = borrowed_project(projects, positions[owner.root])
-        mut environment = ""
-        if owner.purpose == ActivationPurpose.Test:
-            environment = owner.purpose.value()
-        for dependency in project.intent.local_dependencies(environment):
-            if dependency.rust_facet:
-                continue
-            field = dependency_field(project, dependency, environment)
-            path = Path(project.root).joinpath(dependency.path)
-            selected = path.resolve().map_err(
-                (error) => refusal(
-                    project.evidence.path, field + ["path"], IntakeErrorKind.Missing, error.message(),
-                ).with_source(project.evidence.source),
-            )?
-            links.append(IntakeLink(requester=owner, dependency_root=selected.0, alias=dependency.alias, field=field))
-            child = IntakeOwner(root=selected.0)
-            if child not in owners:
-                owners.append(child)
+        append_project_links(projects[positions[owner.root]], owner, owners, links)?
         index += 1
     verify_acyclic(owners, links, projects, positions)?
     # Feature projection describes the selected root. Its production counterpart only participates in cycle checks.
@@ -356,15 +338,46 @@ pub def intake(
     return Ok(LocalIntake(projects=projects, edges=edges))
 
 
-def borrowed_project(projects: Borrowed[list[LocalProject]], position: int) -> Borrowed[LocalProject] from projects:
-    """Read the retained project at its issued position without copying its manifest and intent."""
-    slot: usize = position.wrapping_resize()
-    return Index.index(projects, slot)
+def append_project_links(
+    project: LocalProject, owner: IntakeOwner, mut owners: list[IntakeOwner], mut links: list[IntakeLink],
+) -> Result[None, IntakeError]:
+    """Visit a project's selected local edges and queue each previously unseen production owner."""
+    if owner.purpose == ActivationPurpose.Test:
+        environment = owner.purpose.value()
+        if project.intent.has_local_dependency_overlay(environment):
+            return append_local_links(
+                project, owner, project.intent.environment_local_dependencies[environment], environment, owners, links,
+            )
+    return append_local_links(project, owner, project.intent.dependencies, "", owners, links)
 
 
-def dependency_field(
-    project: Borrowed[LocalProject], dependency: Borrowed[LocalDependency], environment: str,
-) -> list[str]:
+def append_local_links(
+    project: LocalProject,
+    owner: IntakeOwner,
+    dependencies: list[LocalDependency],
+    environment: str,
+    mut owners: list[IntakeOwner],
+    mut links: list[IntakeLink],
+) -> Result[None, IntakeError]:
+    """Resolve one selected list and add its alias-bearing links to the intake."""
+    for dependency in dependencies:
+        if dependency.rust_facet:
+            continue
+        field = dependency_field(project, dependency, environment)
+        path = Path(project.root).joinpath(dependency.path)
+        selected = path.resolve().map_err(
+            (error) => refusal(
+                project.evidence.path, field + ["path"], IntakeErrorKind.Missing, error.message(),
+            ).with_source(project.evidence.source),
+        )?
+        links.append(IntakeLink(requester=owner, dependency_root=selected.0, alias=dependency.alias, field=field))
+        child = IntakeOwner(root=selected.0)
+        if child not in owners:
+            owners.append(child)
+    return Ok(None)
+
+
+def dependency_field(project: LocalProject, dependency: LocalDependency, environment: str) -> list[str]:
     """Point to the local path's declaration, including an override that supplies a different path."""
     field = ["dependencies", dependency.alias]
     if environment == "":
@@ -391,11 +404,12 @@ def verify_acyclic(
         child = nodes[link.dependency_root]
         parent = nodes[link.requester.identity()]
         if not graph.contains_edge(child, parent):
-            project = borrowed_project(projects, positions[link.requester.root])
-            let evidence: Borrowed[ManifestEvidence] = project.evidence
             graph.add_edge(child, parent).map_err(
-                (error) => refusal(evidence.path, link.field, IntakeErrorKind.Cycle, error.message()).with_source(
-                    evidence.source,
-                ),
+                (error) => cycle_refusal(projects[positions[link.requester.root]], link.field, error.message()),
             )?
     return Ok(None)
+
+
+def cycle_refusal(project: LocalProject, field: list[str], detail: str) -> IntakeError:
+    """Report the attempted cycle at the requester's selected manifest edge."""
+    return refusal(project.evidence.path, field, IntakeErrorKind.Cycle, detail).with_source(project.evidence.source)
