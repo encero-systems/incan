@@ -74,6 +74,138 @@ pub model Workspace:
     # The `members` glob patterns that matched no directory holding a `loaf.toml`.
     pub unmatched: list[str] = []
 
+    def unmatched_warnings(self) -> list[JsonValue]:
+        """One `unmatched_glob` warning, in 0.5.1's shape, for each `members` pattern that names no member."""
+        mut warnings: list[JsonValue] = []
+        for pattern in self.unmatched:
+            warnings.append(
+                JsonValue.object({"kind": JsonValue.string("unmatched_glob"), "pattern": JsonValue.string(pattern)}),
+            )
+        return warnings
+
+    pub def select_members(self, selection: Selection) -> Result[tuple[ScopeOrigin, list[Member]], str]:
+        """
+        The members a selection names, in declaration order: every member for `--workspace`, the named ones for
+        `--member`, otherwise the implicit scope (`implicit_scope`); `--exclude` removes members.
+        """
+        mut origin = ScopeOrigin.Workspace
+        mut chosen: list[str] = []
+        if selection.workspace:
+            chosen = [member.relative for member in self.members]
+        elif len(selection.members) > 0:
+            origin = ScopeOrigin.ExplicitMembers
+            for selector in selection.members:
+                chosen.append(self.resolve(selector)?.relative)
+        else:
+            origin, chosen = self.implicit_scope()?
+        mut removed: list[str] = []
+        for selector in selection.excluded:
+            removed.append(self.resolve(selector)?.relative)
+        members = [member for member in self.members if member.relative in chosen and member.relative not in removed]
+        return Ok((origin, members))
+
+    def resolve(self, selector: str) -> Result[Member, str]:
+        """The member a selector names by project name or root-relative path."""
+        path = normalized(selector)
+        for member in self.members:
+            if member.name == selector or member.relative == path:
+                return Ok(member)
+        return Err(f"`{selector}` does not identify a workspace member of {self.manifest.0}")
+
+    pub def implicit_scope(self) -> Result[tuple[ScopeOrigin, list[str]], str]:
+        """
+        The members a command acts on when it names none, as in 0.5.1: the member whose directory holds the working
+        directory, else the default members, else a rooted workspace's root project, else every member.
+        """
+        working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+        mut current = ""
+        for member in self.members:
+            inside = working.0 == member.root.0 or working.0.startswith(member.root.0 + "/")
+            if not member.is_root_member and inside and len(member.relative) > len(current):
+                current = member.relative
+        if current != "":
+            return Ok((ScopeOrigin.CurrentMember, [current]))
+        if len(self.default_members) > 0:
+            mut chosen: list[str] = []
+            for selector in self.default_members:
+                chosen.append(self.resolve(selector)?.relative)
+            return Ok((ScopeOrigin.DefaultMembers, chosen))
+        for member in self.members:
+            if member.is_root_member:
+                return Ok((ScopeOrigin.ImplicitRootMember, [member.relative]))
+        return Ok((ScopeOrigin.Workspace, [member.relative for member in self.members]))
+
+    pub def stale_locks(self) -> list[str]:
+        """Each non-root member's own `oven.lock`: the workspace root holds the one lock (RFC 117), so a member's is stale."""
+        mut found: list[str] = []
+        for member in self.members:
+            path = member.root.joinpath(LOCK_NAME)
+            if not member.is_root_member and path.is_file():
+                found.append(path.0)
+        return found
+
+    def lock_report(self, lock: Path) -> JsonValue:
+        """
+        The canonical lock as 0.5.1 reported it: its path, whether it is a file, the stale member-local locks, and its
+        `state`: `missing`, `invalid` with the reader's `error`, or `present` with the lock's graph identity as its
+        `fingerprint`.
+        """
+        mut state: Dict[str, JsonValue] = {"status": JsonValue.string("missing")}
+        if lock.exists():
+            match read_lock(lock):
+                Ok(found) =>
+                    state["status"] = JsonValue.string("present")
+                    state["fingerprint"] = JsonValue.string(found.graph)
+                Err(reason) =>
+                    state["status"] = JsonValue.string("invalid")
+                    state["error"] = JsonValue.string(reason)
+        mut report: Dict[str, JsonValue] = {}
+        report["canonical_path"] = JsonValue.string(lock.0)
+        report["exists"] = JsonValue.bool(lock.is_file())
+        report["state"] = JsonValue.object(state)
+        report["stale_member_local_locks"] = JsonValue.array([JsonValue.string(path) for path in self.stale_locks()])
+        return JsonValue.object(report)
+
+    pub def inspection_document(self, origin: ScopeOrigin, members: list[Member], lock: Path) -> Result[str, str]:
+        """The versioned JSON form of `oven workspace inspect`."""
+        mut declared: list[JsonValue] = []
+        for member in self.members:
+            # Each member's effective dependencies and workspace environment fragments, in 0.5.1's shape.
+            mut entry = member_tables(self.root, member.root)?
+            entry["name"] = JsonValue.string(member.name)
+            entry["path"] = JsonValue.string(member.relative)
+            entry["root"] = JsonValue.string(member.root.0)
+            entry["manifest_path"] = JsonValue.string(member.root.joinpath("loaf.toml").0)
+            entry["is_root_member"] = JsonValue.bool(member.is_root_member)
+            entry["capabilities"] = JsonValue.array([])
+            declared.append(JsonValue.object(entry))
+        scope = [JsonValue.object({"name": JsonValue.string(member.name), "root": JsonValue.string(member.root.0)}) for member in members]
+        mut fields: Dict[str, JsonValue] = {
+            "schema_version": JsonValue.int(1),
+            "workspace": JsonValue.object(
+                {"root": JsonValue.string(self.root.0), "manifest_path": JsonValue.string(self.manifest.0)},
+            ),
+            "members": JsonValue.array(declared),
+            "default_members": JsonValue.array([JsonValue.string(item) for item in self.default_members]),
+            "selected_scope": JsonValue.object(
+                {"origin": JsonValue.string(origin.value()), "members": JsonValue.array(scope)},
+            ),
+            "lock": self.lock_report(lock),
+        }
+        fields["capabilities"] = JsonValue.object(
+            {"status": JsonValue.string(CAPABILITY_STATUS), "reason": JsonValue.string(CAPABILITY_REASON)},
+        )
+        unused = unused_shared(self.root, [member.root for member in self.members])?
+        fields["warnings"] = JsonValue.array(self.unmatched_warnings() + unused)
+        fields["exclusions"] = JsonValue.array([JsonValue.string(item) for item in self.excluded])
+        working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+        fields["invocation"] = JsonValue.object({"current_dir": JsonValue.string(working.0)})
+        # The root's shared tables, in 0.5.1's shape (`workspace_shared`).
+        shared = shared_tables(self.root, self.manifest)?
+        for key in sorted([key for key in shared.keys()]):
+            fields[key] = shared[key]
+        return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
+
 
 pub def selected(selection: Selection) -> bool:
     """Whether the invocation names any member selection."""
@@ -181,16 +313,6 @@ def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
         Err(_) => return []
 
 
-def unmatched_warnings(workspace: Workspace) -> list[JsonValue]:
-    """One `unmatched_glob` warning, in 0.5.1's shape, for each `members` pattern that names no member."""
-    mut warnings: list[JsonValue] = []
-    for pattern in workspace.unmatched:
-        warnings.append(
-            JsonValue.object({"kind": JsonValue.string("unmatched_glob"), "pattern": JsonValue.string(pattern)}),
-        )
-    return warnings
-
-
 def has_glob(pattern: str) -> bool:
     """Whether a member or exclusion declaration is a glob pattern rather than one directory."""
     return "*" in pattern or "?" in pattern or "[" in pattern
@@ -260,61 +382,6 @@ def normalized(path: str) -> str:
     return text
 
 
-pub def select_members(workspace: Workspace, selection: Selection) -> Result[tuple[ScopeOrigin, list[Member]], str]:
-    """
-    The members a selection names, in declaration order: every member for `--workspace`, the named ones for
-    `--member`, otherwise the implicit scope (`implicit_scope`); `--exclude` removes members.
-    """
-    mut origin = ScopeOrigin.Workspace
-    mut chosen: list[str] = []
-    if selection.workspace:
-        chosen = [member.relative for member in workspace.members]
-    elif len(selection.members) > 0:
-        origin = ScopeOrigin.ExplicitMembers
-        for selector in selection.members:
-            chosen.append(resolve(workspace, selector)?.relative)
-    else:
-        origin, chosen = implicit_scope(workspace)?
-    mut removed: list[str] = []
-    for selector in selection.excluded:
-        removed.append(resolve(workspace, selector)?.relative)
-    members = [member for member in workspace.members if member.relative in chosen and member.relative not in removed]
-    return Ok((origin, members))
-
-
-def resolve(workspace: Workspace, selector: str) -> Result[Member, str]:
-    """The member a selector names by project name or root-relative path."""
-    path = normalized(selector)
-    for member in workspace.members:
-        if member.name == selector or member.relative == path:
-            return Ok(member)
-    return Err(f"`{selector}` does not identify a workspace member of {workspace.manifest.0}")
-
-
-def implicit_scope(workspace: Workspace) -> Result[tuple[ScopeOrigin, list[str]], str]:
-    """
-    The members a command acts on when it names none, as in 0.5.1: the member whose directory holds the working
-    directory, else the default members, else a rooted workspace's root project, else every member.
-    """
-    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
-    mut current = ""
-    for member in workspace.members:
-        inside = working.0 == member.root.0 or working.0.startswith(member.root.0 + "/")
-        if not member.is_root_member and inside and len(member.relative) > len(current):
-            current = member.relative
-    if current != "":
-        return Ok((ScopeOrigin.CurrentMember, [current]))
-    if len(workspace.default_members) > 0:
-        mut chosen: list[str] = []
-        for selector in workspace.default_members:
-            chosen.append(resolve(workspace, selector)?.relative)
-        return Ok((ScopeOrigin.DefaultMembers, chosen))
-    for member in workspace.members:
-        if member.is_root_member:
-            return Ok((ScopeOrigin.ImplicitRootMember, [member.relative]))
-    return Ok((ScopeOrigin.Workspace, [member.relative for member in workspace.members]))
-
-
 pub def root_scope(command: str, arguments: list[str], valued: list[str]) -> bool:
     """
     Whether a project command that selects no member acts on its workspace's members, as in 0.5.1: when the working
@@ -344,7 +411,7 @@ def root_origin() -> Result[Option[ScopeOrigin], str]:
         Ok(document) =>
             if "workspace" not in document.as_table().map_err((error) => error.message())?:
                 return Ok(None)
-            origin, _members = implicit_scope(read_workspace(working, manifest, document)?)?
+            origin, _members = read_workspace(working, manifest, document)?.implicit_scope()?
             return Ok(Some(origin))
 
 
@@ -384,10 +451,10 @@ pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
     if format != "text" and format != "json":
         return Err(f"`--format` is text or json, got `{format}`")
     workspace = find_workspace(Path("."))?
-    origin, members = select_members(workspace, selection)?
+    origin, members = workspace.select_members(selection)?
     lock = workspace.root.joinpath(LOCK_NAME)
     if format == "json":
-        return inspection_document(workspace, origin, members, lock)
+        return workspace.inspection_document(origin, members, lock)
     mut lines = [
         f"Workspace: {workspace.root.0}",
         f"Manifest: {workspace.manifest.0}",
@@ -396,91 +463,12 @@ pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
     for member in members:
         lines.append(f"  - {member.name} ({member.root.0})")
     lines.append(f"Canonical lock: {lock.0}")
-    stale = stale_locks(workspace)
+    stale = workspace.stale_locks()
     if len(stale) > 0:
         lines.append("Stale member-local locks:")
         for path in stale:
             lines.append(f"  - {path}")
     return Ok("\n".join(lines))
-
-
-def stale_locks(workspace: Workspace) -> list[str]:
-    """Each non-root member's own `oven.lock`: the workspace root holds the one lock (RFC 117), so a member's is stale."""
-    mut found: list[str] = []
-    for member in workspace.members:
-        path = member.root.joinpath(LOCK_NAME)
-        if not member.is_root_member and path.is_file():
-            found.append(path.0)
-    return found
-
-
-def lock_report(workspace: Workspace, lock: Path) -> JsonValue:
-    """
-    The canonical lock as 0.5.1 reported it: its path, whether it is a file, the stale member-local locks, and its
-    `state`: `missing`, `invalid` with the reader's `error`, or `present` with the lock's graph identity as its
-    `fingerprint`.
-    """
-    mut state: Dict[str, JsonValue] = {"status": JsonValue.string("missing")}
-    if lock.exists():
-        match read_lock(lock):
-            Ok(found) =>
-                state["status"] = JsonValue.string("present")
-                state["fingerprint"] = JsonValue.string(found.graph)
-            Err(reason) =>
-                state["status"] = JsonValue.string("invalid")
-                state["error"] = JsonValue.string(reason)
-    mut report: Dict[str, JsonValue] = {}
-    report["canonical_path"] = JsonValue.string(lock.0)
-    report["exists"] = JsonValue.bool(lock.is_file())
-    report["state"] = JsonValue.object(state)
-    report["stale_member_local_locks"] = JsonValue.array([JsonValue.string(path) for path in stale_locks(workspace)])
-    return JsonValue.object(report)
-
-
-def inspection_document(
-    workspace: Workspace,
-    origin: ScopeOrigin,
-    members: list[Member],
-    lock: Path,
-) -> Result[str, str]:
-    """The versioned JSON form of `oven workspace inspect`."""
-    mut declared: list[JsonValue] = []
-    for member in workspace.members:
-        # Each member's effective dependencies and workspace environment fragments, in 0.5.1's shape.
-        mut entry = member_tables(workspace.root, member.root)?
-        entry["name"] = JsonValue.string(member.name)
-        entry["path"] = JsonValue.string(member.relative)
-        entry["root"] = JsonValue.string(member.root.0)
-        entry["manifest_path"] = JsonValue.string(member.root.joinpath("loaf.toml").0)
-        entry["is_root_member"] = JsonValue.bool(member.is_root_member)
-        entry["capabilities"] = JsonValue.array([])
-        declared.append(JsonValue.object(entry))
-    scope = [JsonValue.object({"name": JsonValue.string(member.name), "root": JsonValue.string(member.root.0)}) for member in members]
-    mut fields: Dict[str, JsonValue] = {
-        "schema_version": JsonValue.int(1),
-        "workspace": JsonValue.object(
-            {"root": JsonValue.string(workspace.root.0), "manifest_path": JsonValue.string(workspace.manifest.0)},
-        ),
-        "members": JsonValue.array(declared),
-        "default_members": JsonValue.array([JsonValue.string(item) for item in workspace.default_members]),
-        "selected_scope": JsonValue.object(
-            {"origin": JsonValue.string(origin.value()), "members": JsonValue.array(scope)},
-        ),
-        "lock": lock_report(workspace, lock),
-    }
-    fields["capabilities"] = JsonValue.object(
-        {"status": JsonValue.string(CAPABILITY_STATUS), "reason": JsonValue.string(CAPABILITY_REASON)},
-    )
-    unused = unused_shared(workspace.root, [member.root for member in workspace.members])?
-    fields["warnings"] = JsonValue.array(unmatched_warnings(workspace) + unused)
-    fields["exclusions"] = JsonValue.array([JsonValue.string(item) for item in workspace.excluded])
-    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
-    fields["invocation"] = JsonValue.object({"current_dir": JsonValue.string(working.0)})
-    # The root's shared tables, in 0.5.1's shape (`workspace_shared`).
-    shared = shared_tables(workspace.root, workspace.manifest)?
-    for key in sorted([key for key in shared.keys()]):
-        fields[key] = shared[key]
-    return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
 
 
 pub def inspect_help() -> str:
@@ -505,7 +493,7 @@ pub def run_members(surface: str, command: str, selection: Selection) -> Result[
     place of the selection flags, so every member gets exactly the command a single project gets.
     """
     workspace = find_workspace(Path("."))?
-    _origin, members = select_members(workspace, selection)?
+    _origin, members = workspace.select_members(selection)?
     if len(members) == 0:
         return Err(f"the selection names no member of {workspace.manifest.0}")
     if command == "run" and len(members) != 1:

@@ -9,7 +9,7 @@ from cli_help import render
 from files import read, write
 from semver_req import Version, parse_version
 from unit import project_root_of
-from workspace import ONE_MEMBER, Selection, find_workspace, root_scope, select_members
+from workspace import ONE_MEMBER, Selection, find_workspace, root_scope
 
 pub const VERSION_USAGE: str = "oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]"
 
@@ -126,7 +126,7 @@ def selected_manifest(project: Option[str], selection: Selection) -> Result[Path
     """
     implicit = project is None and root_scope("version", [], [])
     if selection.workspace or len(selection.members) > 0 or implicit:
-        _origin, members = select_members(find_workspace(Path("."))?, selection)?
+        _origin, members = find_workspace(Path("."))?.select_members(selection)?
         if len(members) != 1:
             return Err(ONE_MEMBER)
         return Ok(members[0].root.joinpath("loaf.toml"))
