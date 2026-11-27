@@ -469,7 +469,7 @@ mod tests {
         AdmittedFunction, AdmittedModule, LoweringEvent, decode_lowering_event, decode_module_note,
         encode_lowering_event, encode_module_note,
     };
-    use crate::wire::take_materialized_binary_bytes;
+    use crate::wire::{take_materialized_binary_bytes, take_owned_text_copies};
     use crate::{
         Function, Local, PlanFunctionRecord, PlanType, RvalueKind, TerminatorKind, assign, block,
         decode_plan_function_record, encode_plan_function_record, encode_product, integer, place, plan_function_digest,
@@ -585,7 +585,29 @@ mod tests {
         Ok(())
     }
 
-    /// Member projection validates the selected page digest and returns only its exact native fingerprints.
+    /// A selected page with bad declaration text refuses before a mismatched member count.
+    fn refuse_invalid_declaration_text(encoded: &[u8], selected: &PlanSelectedModule) -> Result<(), String> {
+        // The declaration owner appears only in the outer page; the event uses the separate public symbol.
+        let identity = b"function:probe::run|signature";
+        let mut damaged = encoded.to_vec();
+        let offset = damaged
+            .windows(identity.len())
+            .position(|window| window == identity)
+            .ok_or("fixture declaration text missing")?;
+        damaged[offset] = 0xff;
+        let selected = PlanSelectedModule {
+            digest: format!("{:x}", Sha256::digest(&damaged)),
+            count: 2,
+            ..selected.clone()
+        };
+        let owner = mapped_bytes(&damaged)?;
+        let view = complete_view(&owner).ok_or("invalid text fixture backing missing")?;
+        let refused = read_positioned_plan_members(&view, &selected);
+        assert!(matches!(refused, Err(reason) if reason.contains("invalid_utf8")));
+        Ok(())
+    }
+
+    /// Member projection returns its exact native fingerprints without making owned declaration copies.
     #[test]
     fn selected_positioned_members_need_the_exact_admitted_backing() -> Result<(), String> {
         let function = projected_event()?;
@@ -598,6 +620,15 @@ mod tests {
             digest: old.digest,
         };
         assert_ne!(function.identity, expected.identity);
+        let event_owner = mapped_bytes(&function.event)?;
+        let event = complete_view(&event_owner).ok_or("fixture event backing missing")?;
+        let _ = take_owned_text_copies();
+        assert_eq!(
+            projected_definition(&event, "probe", &function.function, &function.symbol, &function.key)?,
+            expected
+        );
+        // The nested event and the outer module name still use the owned accessor.
+        let other_text_copies = take_owned_text_copies() + 1;
         let mut page = PlanModuleValue {
             module: "probe".into(),
             functions: vec![function],
@@ -615,6 +646,7 @@ mod tests {
         let owner = mapped_bytes(&encoded)?;
         let view = complete_view(&owner).ok_or("no mapped fixture page")?;
         let _ = take_materialized_binary_bytes();
+        let _ = take_owned_text_copies();
         let projected = read_positioned_plan_members(&view, &selected);
         assert!(
             projected.is_ok(),
@@ -622,12 +654,17 @@ mod tests {
         );
         assert_eq!(projected?, [expected]);
         assert_eq!(take_materialized_binary_bytes(), 0);
+        let declaration_copies = take_owned_text_copies()
+            .checked_sub(other_text_copies)
+            .ok_or("projection omitted the module or event text reads")?;
 
         let wrong_arity = PlanSelectedModule {
             count: 2,
             ..selected.clone()
         };
-        assert!(read_positioned_plan_members(&view, &wrong_arity).is_err());
+        assert!(matches!(read_positioned_plan_members(&view, &wrong_arity),
+                     Err(reason) if reason.contains("selected count")));
+        refuse_invalid_declaration_text(&encoded, &selected)?;
         let repositioned = PlanSelectedModule {
             positioned: false,
             ..selected.clone()
@@ -658,6 +695,10 @@ mod tests {
         let foreign_view = complete_view(&foreign_owner).ok_or("foreign fixture backing missing")?;
         assert!(matches!(read_positioned_plan_members(&foreign_view, &foreign_selected),
                      Err(reason) if reason.contains("selected module name")));
+        assert_eq!(
+            declaration_copies, 0,
+            "positioned Plan projection copied declaration text"
+        );
         Ok(())
     }
 
