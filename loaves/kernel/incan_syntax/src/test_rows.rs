@@ -33,24 +33,19 @@ pub(crate) struct SourceMutRow<S, E = Box<dyn std::error::Error>> {
 }
 
 /// Runs `check` on every row, treating a panic as a failure, and fails once naming each failing row.
-pub(crate) fn run_rows<T>(
-    rows: &[T],
-    name: fn(&T) -> &'static str,
-    check: impl Fn(&T) -> Result<(), String>,
-) {
+pub(crate) fn run_rows<T>(rows: &[T], name: fn(&T) -> &'static str, check: impl Fn(&T) -> Result<(), String>) {
     let failures: Vec<String> = rows
         .iter()
         .filter_map(|row| {
-            let problem =
-                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(row))) {
-                    Ok(Ok(())) => return None,
-                    Ok(Err(problem)) => problem,
-                    Err(payload) => payload
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
-                        .unwrap_or_else(|| "panicked".to_string()),
-                };
+            let problem = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(row))) {
+                Ok(Ok(())) => return None,
+                Ok(Err(problem)) => problem,
+                Err(payload) => payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+                    .unwrap_or_else(|| "panicked".to_string()),
+            };
             Some(format!("{}: {problem}", name(row)))
         })
         .collect();
@@ -63,10 +58,7 @@ pub(crate) fn run_rows<T>(
 }
 
 /// Sets up each row's subject with `setup` and runs the row's check on it.
-pub(crate) fn run_source_rows<S, E: Debug, F: Debug>(
-    rows: &[SourceRow<S, E>],
-    setup: impl Fn(&str) -> Result<S, F>,
-) {
+pub(crate) fn run_source_rows<S, E: Debug, F: Debug>(rows: &[SourceRow<S, E>], setup: impl Fn(&str) -> Result<S, F>) {
     run_rows(
         rows,
         |row| row.name,
@@ -111,10 +103,7 @@ pub(crate) fn run_panic_rows(rows: &[PanicRow]) {
                     if message.contains(row.expected) {
                         return None;
                     }
-                    format!(
-                        "panicked with {message:?}, expected text {:?}",
-                        row.expected
-                    )
+                    format!("panicked with {message:?}, expected text {:?}", row.expected)
                 }
             };
             Some(format!("{}: {problem}", row.name))
@@ -129,10 +118,7 @@ pub(crate) fn run_panic_rows(rows: &[PanicRow]) {
 }
 
 /// Sets up each row's subject from its source with `setup` and runs the row's check on it.
-pub(crate) fn run_source_mut_rows<S, E: Debug>(
-    rows: &[SourceMutRow<S, E>],
-    setup: impl Fn(&str) -> S,
-) {
+pub(crate) fn run_source_mut_rows<S, E: Debug>(rows: &[SourceMutRow<S, E>], setup: impl Fn(&str) -> S) {
     run_rows(
         rows,
         |row| row.name,

@@ -17,9 +17,9 @@ pub mod modules;
 pub mod rust_abi;
 pub mod session;
 pub mod sources;
-pub mod testing;
-pub mod typecheck;
 #[cfg(test)]
 mod test_rows;
+pub mod testing;
+pub mod typecheck;
 pub mod unit;
 mod vocabulary;
