@@ -1,10 +1,14 @@
-"""Verify how native release production schedules the shipped tools beside the debug standard providers."""
+"""Verify scheduling and launcher selection for the native tools a release ships."""
+
+from std.fs import Path
 
 from native_build import (
     PROJECT_RESERVATION_BYTES,
     STANDARD_RESERVATION_BYTES,
+    NativeContext,
     ShippedToolOverlap,
     shipped_tool_overlap,
+    tool_build_plan,
 )
 
 const GIB: int = 1073741824
@@ -14,7 +18,7 @@ def test_oven_starts_first_and_never_waits_for_the_debug_providers_it_does_not_r
     """
     Oven is the longest shipped build: with two children it runs beside the debug waves and the language server, which
     take turns in the other; with three every one runs beside the others; with one, or without memory for a second
-    project child beside a standard one, they run in turn.
+    project child beside a standard one, they run in turn. Each worker inherits the launcher's own build home.
     """
     assert shipped_tool_overlap(1, 64 * GIB) == ShippedToolOverlap.Serial
     assert shipped_tool_overlap(2, 64 * GIB) == ShippedToolOverlap.OvenBeside
@@ -24,4 +28,26 @@ def test_oven_starts_first_and_never_waits_for_the_debug_providers_it_does_not_r
     assert shipped_tool_overlap(3, one_beside) == ShippedToolOverlap.OvenBeside
     assert shipped_tool_overlap(3, one_beside + PROJECT_RESERVATION_BYTES) == ShippedToolOverlap.AllBeside
     assert shipped_tool_overlap(4, one_beside - 1) == ShippedToolOverlap.Serial
+    for tool, phase, home, builder in [
+        ("oven", "conductor-build", "seed-home", "seed-home/bin/incan"),
+        ("oven", "oven-build", "build-home", "lane/oven-bin/incan"),
+        ("lsp", "lsp-build", "build-home", "lane/oven-bin/incan"),
+    ]:
+        context = NativeContext(
+            repo=Path("source"),
+            lane=Path("lane"),
+            home=Path(home),
+            builder=builder,
+            stdlib="source/loaves/stdlib",
+            evidence=Path("evidence"),
+            timings=Path("evidence/timings.tsv"),
+            jobs=2,
+            memory=64 * GIB,
+            timeout_seconds=60,
+        )
+        plan = tool_build_plan(context, tool, false, phase)?
+        assert plan.child.executable == builder, phase
+        assert plan.child.environment["INCAN_HOME"] == home, phase
+        assert "OVEN_ENGINE_BINARY" in plan.child.environment, f"{phase}: worker launcher is inherited"
+        assert plan.child.environment["OVEN_ENGINE_BINARY"] == builder, phase
     return Ok(None)

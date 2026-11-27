@@ -1014,10 +1014,21 @@ def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
 
 
 def build_environment(run: ReleaseRun, home: Path, oven: Path) -> Dict[str, str]:
-    """Return the release-owned environment supplied independently to one child process."""
-    return {"INCAN_HOME": home.0, "INCAN_STDLIB": run.paths.source.joinpath("loaves/stdlib").0, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": run.paths.lane.0, "SELFBUILD_HOME": home.0, "SELFBUILD_OVEN": oven.0, "SELFBUILD_STDLIB": run.paths.source.joinpath(
-        "loaves/stdlib",
-    ).0}
+    """Give each release child and its Rust workers the launcher selected for its home."""
+    stdlib = run.paths.source.joinpath("loaves/stdlib").0
+    return {
+        "INCAN_HOME": home.0,
+        "INCAN_STDLIB": stdlib,
+        "INCAN_NO_BANNER": "1",
+        "OVEN_OWNER": "off",
+        "OVEN_ENGINE_BINARY": oven.0,
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+        "INCAN_RUST_INCREMENTAL": "0",
+        "DEV8_LANE": run.paths.lane.0,
+        "SELFBUILD_HOME": home.0,
+        "SELFBUILD_OVEN": oven.0,
+        "SELFBUILD_STDLIB": stdlib,
+    }
 
 
 def withdraw_seed_providers(run: ReleaseRun) -> Result[None, str]:
