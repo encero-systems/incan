@@ -387,6 +387,10 @@ fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf
     if damaged && identified_digest(store, &target, link_input_digest)? == digest {
         return Ok(target);
     }
+    #[cfg(test)]
+    if damaged {
+        tests::align_repairers()?;
+    }
 
     let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
     let temporary = directory.join(format!(".{digest}.{}.{number}.tmp", std::process::id()));
@@ -526,7 +530,10 @@ mod tests {
     use std::io;
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
-    use std::sync::Barrier;
+    use std::sync::{Barrier, mpsc};
+    use std::time::Duration;
+
+    type RepairRendezvous = (mpsc::Sender<()>, mpsc::Receiver<()>);
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct LinkWork {
@@ -554,6 +561,16 @@ mod tests {
 
     thread_local! {
         static LINK_WORK: Cell<LinkWork> = const { Cell::new(LinkWork::ZERO) };
+        static REPAIR_RENDEZVOUS: Cell<Option<RepairRendezvous>> = const { Cell::new(None) };
+    }
+
+    /// Let both test callers observe the damaged target before either can claim its repair.
+    pub(super) fn align_repairers() -> io::Result<()> {
+        if let Some((ready, peer)) = REPAIR_RENDEZVOUS.with(Cell::take) {
+            ready.send(()).map_err(io::Error::other)?;
+            peer.recv_timeout(Duration::from_secs(10)).map_err(io::Error::other)?;
+        }
+        Ok(())
     }
 
     /// Observe bytes read from the source and written to private stage by the production copy.
@@ -668,17 +685,7 @@ mod tests {
 
         // The old witness stays on disk while the same inode's contents change under its original size and mtime.
         let original = fs::metadata(&published)?;
-        let mut permissions = original.permissions();
-        #[allow(clippy::permissions_set_readonly_false)]
-        permissions.set_readonly(false);
-        fs::set_permissions(&published, permissions)?;
-        fs::write(&published, b"Object bytes")?;
-        fs::OpenOptions::new()
-            .write(true)
-            .open(&published)?
-            .set_times(fs::FileTimes::new().set_modified(original.modified()?))?;
-        fs::set_permissions(&published, original.permissions())?;
-        let stale = fs::metadata(&published)?;
+        let stale = damage_without_mtime_change(&published, &original)?;
         assert_eq!(stale.ino(), original.ino());
         assert_eq!(stale.len(), original.len());
         assert_eq!(stale.modified()?, original.modified()?);
@@ -695,6 +702,7 @@ mod tests {
         assert!(verified_content_object(&store, &repaired));
         let repaired_reuse = take_link_work();
         verify_concurrent_publication(&root, &store)?;
+        let repair_staged = verify_concurrent_repair(&store, &object, &repaired, bytes)?;
         fs::remove_dir_all(root)?;
 
         assert!(
@@ -702,10 +710,26 @@ mod tests {
                 && publication.read + reuse.read <= length * 3
                 && publication.staged + reuse.staged == length
                 && reuse == LinkWork::ZERO
-                && repaired_reuse == LinkWork::ZERO,
-            "link work persisted across publication and reuse: {publication:?}, {reuse:?}, repair reuse {repaired_reuse:?}"
+                && repaired_reuse == LinkWork::ZERO
+                && repair_staged == length,
+            "link work persisted across publication and reuse: {publication:?}, {reuse:?}, repair reuse {repaired_reuse:?}, concurrent repair staging {repair_staged}"
         );
         Ok(())
+    }
+
+    /// Change bytes in place while preserving the input's length, modification time and read-only mode.
+    fn damage_without_mtime_change(path: &Path, original: &fs::Metadata) -> io::Result<fs::Metadata> {
+        let mut permissions = original.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(path, permissions)?;
+        fs::write(path, b"Object bytes")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .set_times(fs::FileTimes::new().set_modified(original.modified()?))?;
+        fs::set_permissions(path, original.permissions())?;
+        fs::metadata(path)
     }
 
     /// Race two ordinary claimants to the same content while each owns its own staging work.
@@ -730,5 +754,35 @@ mod tests {
         assert_eq!(fs::read(&first)?, bytes);
         assert!(verified_content_object(store, &first));
         Ok(())
+    }
+
+    /// Overlapping repairs return the same verified target and stage a single replacement in total.
+    fn verify_concurrent_repair(store: &Path, source: &Path, target: &Path, bytes: &[u8]) -> io::Result<u64> {
+        let original = fs::metadata(target)?;
+        let stale = damage_without_mtime_change(target, &original)?;
+        let claim = |rendezvous| -> io::Result<(PathBuf, LinkWork)> {
+            REPAIR_RENDEZVOUS.with(|pending| pending.set(Some(rendezvous)));
+            let _ = take_link_work();
+            let selected = stable_input(store, source, "o");
+            let _ = REPAIR_RENDEZVOUS.with(Cell::take);
+            let staged = take_link_work();
+            Ok((selected?, staged))
+        };
+        let (first_ready, observe_first) = mpsc::channel();
+        let (second_ready, observe_second) = mpsc::channel();
+        let ((first, first_work), (second, second_work)) = std::thread::scope(|scope| -> io::Result<_> {
+            let contender = scope.spawn(move || claim((second_ready, observe_first)));
+            let first = claim((first_ready, observe_second));
+            let second = contender
+                .join()
+                .map_err(|_| io::Error::other("concurrent repairer panicked"))?;
+            Ok((first?, second?))
+        })?;
+        assert_eq!(first, target);
+        assert_eq!(second, target);
+        assert_ne!(fs::metadata(target)?.ino(), stale.ino());
+        assert_eq!(fs::read(target)?, bytes);
+        assert!(verified_content_object(store, target));
+        Ok(first_work.staged + second_work.staged)
     }
 }
