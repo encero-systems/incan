@@ -1,18 +1,7 @@
 //! Explicit ownership contracts across methods, headers, call arguments, call replay and call-site facts.
 
 use super::*;
-
-/// A selected method closes Self in its ownership contract using the same receiver as its parameter types; a
-/// shared receiver and a shared argument may borrow the same owner.
-#[test]
-fn method_input_payload_retains_checked_self_substitution() -> Result<(), Box<dyn std::error::Error>> {
-    let checker = checked(
-        "class Reader:\n    pub def view(self, other: Borrowed[Self], proof: Owned[int] = 0) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
-    )?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
-    Ok(())
-}
+use crate::test_rows::{SourceRow, run_source_rows};
 
 /// Methods retain their own receiver and parameter identities; local loans must not disappear merely because
 /// their callable lives inside a model rather than at module scope.
@@ -337,157 +326,6 @@ fn explicit_call_arguments_use_selected_value_types() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Plain helpers participate only in a body that already owes an input proof. Failed overload candidates
-/// cannot manufacture that obligation or leave a selected ordinary signature behind.
-#[test]
-fn ordinary_helpers_are_scoped_to_required_input_bodies() -> Result<(), Box<dyn std::error::Error>> {
-    let ordinary = checked(
-        "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: int) -> int:\n    return add(right=2, left=value)\n",
-    )?;
-    assert!(ordinary.errors.is_empty(), "{:?}", ordinary.errors);
-    assert!(ordinary.type_info.protocols.explicit_input_calls.is_empty());
-    assert!(ordinary.type_info.protocols.explicit_input_flow.is_empty());
-    for source in [
-        "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(right=2, left=value)\n",
-        "def add(left: int, right: int) -> int:\n    return left + right\ndef read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef use(value: int) -> int:\n    first = add(value, 2)\n    return read(first)\n",
-    ] {
-        let checker = checked(source)?;
-        assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
-        assert!(
-            checker
-                .type_info
-                .protocols
-                .explicit_input_calls
-                .values()
-                .any(|call| call.callee.declaration_name == "add")
-        );
-    }
-    for (source, accepted) in [
-        (
-            "def identity[T](value: T) -> T:\n    return value\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return identity(value)\n",
-            false,
-        ),
-        (
-            "def phantom[T](value: int) -> int:\n    return value\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return phantom[int](value)\n",
-            true,
-        ),
-        (
-            "def absent[T](value: int) -> Option[T]:\n    return None\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Option[int]:\n    return absent[int](value)\n",
-            true,
-        ),
-    ] {
-        let checker = checked(source)?;
-        assert_eq!(checker.errors.is_empty(), accepted, "{source}\n{:?}", checker.errors);
-        assert!(
-            checker
-                .errors
-                .iter()
-                .all(|error| error.stable_code() == Some("INCAN-T0123")),
-            "{source}\n{:?}",
-            checker.errors
-        );
-    }
-    let failed = checked(
-        "def choose(value: int) -> int:\n    return value\ndef choose(other: int) -> int:\n    return other\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return choose(value)\n",
-    )?;
-    assert!(
-        failed.errors.iter().any(|error| error.message.contains("ambiguous")),
-        "{:?}",
-        failed.errors
-    );
-    assert!(failed.type_info.protocols.explicit_input_calls.is_empty());
-    Ok(())
-}
-
-/// Declaration classification is authenticated independently of restored access events. Neither replacing an
-/// explicit contract nor borrowing a same-shaped ordinary header may authorize a forged invocation.
-#[test]
-fn ordinary_call_replay_requires_its_exact_header() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(right=2, left=value)\n";
-    let checker = checked(source)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let (span, call) = checker
-        .type_info
-        .protocols
-        .explicit_input_calls
-        .iter()
-        .next()
-        .ok_or("missing ordinary call")?;
-    assert_eq!(call.kind, InputCallKind::Ordinary);
-    let owner = call.owner.as_ref().ok_or("missing caller")?;
-    assert!(checker.type_info.checked_input_body(owner)?.is_some());
-    for corruption in 0..7 {
-        let mut facts = checker.type_info.clone();
-        let changed = facts
-            .protocols
-            .explicit_input_calls
-            .get_mut(span)
-            .ok_or("missing call")?;
-        match corruption {
-            0 => changed.kind = InputCallKind::Explicit,
-            1 => changed.parameters[0].is_mut = true,
-            2 => changed.owner = Some(call.callee.clone()),
-            3 => {
-                facts
-                    .declarations
-                    .function_bindings_by_span
-                    .retain(|_, binding| binding.identity.as_ref() != Some(&call.callee));
-                facts
-                    .declarations
-                    .function_bindings
-                    .retain(|_, binding| binding.identity.as_ref() != Some(&call.callee));
-            }
-            4 => {
-                changed.parameters[0].is_mut = true;
-                for binding in facts
-                    .declarations
-                    .function_bindings_by_span
-                    .values_mut()
-                    .chain(facts.declarations.function_bindings.values_mut())
-                {
-                    if binding.identity.as_ref() == Some(&call.callee) {
-                        binding.params[0].is_mut = true;
-                    }
-                }
-            }
-            5 => {
-                let mut conflict = facts
-                    .declarations
-                    .function_bindings_by_span
-                    .get(&call.callee.declaration_span)
-                    .ok_or("missing header")?
-                    .clone();
-                conflict.params[0].is_mut = true;
-                facts
-                    .declarations
-                    .function_bindings
-                    .insert("other_alias".into(), conflict);
-            }
-            _ => {
-                facts.protocols.explicit_input_calls.remove(span);
-            }
-        }
-        assert!(
-            facts.checked_input_body(owner).is_err(),
-            "accepted ordinary call corruption {corruption}"
-        );
-    }
-    let mut explicit = checked(
-        "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef use(value: int) -> int:\n    return read(value)\n",
-    )?;
-    let call = explicit
-        .type_info
-        .protocols
-        .explicit_input_calls
-        .values_mut()
-        .next()
-        .ok_or("missing explicit call")?;
-    call.kind = InputCallKind::Ordinary;
-    let owner = call.owner.clone().ok_or("missing caller")?;
-    assert!(explicit.type_info.checked_input_body(&owner).is_err());
-    Ok(())
-}
-
 /// An imported package function has no local declaration binding, but its canonical package identity and exact
 /// selected call-site header still authenticate one ordinary call. A current-module call missing its header and a
 /// package identity colliding with conflicting retained headers remain refused.
@@ -583,59 +421,6 @@ fn package_ordinary_call_requires_exact_selected_header_without_local_binding() 
         conflicting.selected_input_contract(&call).is_err(),
         "conflicting package headers were accepted"
     );
-    Ok(())
-}
-
-/// A selected overload retains its own instantiated parameter slots without rewriting either declaration.
-/// The ordinary caller owns its checked access profile even without an explicit input annotation of its own.
-#[test]
-fn explicit_call_facts_preserve_canonical_slots() -> Result<(), Box<dyn std::error::Error>> {
-    let checker = checked(
-        "def use(value: str) -> str:\n    return read(1, value)\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef read(prefix: int, value: Owned[str]) -> str:\n    return value\n",
-    )?;
-    assert!(
-        checker
-            .errors
-            .iter()
-            .all(|error| error.stable_code() == Some("INCAN-T0123")),
-        "{:?}",
-        checker.errors
-    );
-    assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
-    let call = checker
-        .type_info
-        .protocols
-        .explicit_input_calls
-        .values()
-        .next()
-        .ok_or("missing explicit call")?;
-    assert_eq!(call.parameters.len(), 2);
-    assert_eq!(call.parameters[1].ty, ResolvedType::Str);
-    let contract = checker
-        .type_info
-        .declarations
-        .ownership_contracts
-        .get(&call.callee)
-        .ok_or("selected contract missing")?;
-    assert_eq!(contract.modes.len(), 1);
-    assert_eq!(contract.modes[0].component.parameter, Some(1));
-    assert_eq!(contract.modes[0].mode, OwnershipMode::Owned);
-    let declaration = checker
-        .type_info
-        .declarations
-        .function_bindings_by_span
-        .get(&call.callee.declaration_span)
-        .ok_or("selected header missing")?;
-    assert!(
-        matches!(declaration.params[1].ty, ResolvedType::Generic(_, _)),
-        "publication must retain the mode"
-    );
-    let owner = call.owner.as_ref().ok_or("callable owner missing")?;
-    assert_eq!(owner.declaration_name, "use");
-    assert!(matches!(
-        checker.type_info.protocols.explicit_input_flow.get(owner),
-        Some(InputFlow::Checked { .. })
-    ));
     Ok(())
 }
 
@@ -791,25 +576,6 @@ fn explicit_method_calls_retain_receiver_access() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// A method examined only for an argument diagnostic is not a selected ownership target.
-#[test]
-fn rejected_method_does_not_retain_input_access() -> Result<(), Box<dyn std::error::Error>> {
-    let checker = checked(
-        "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[int]) -> None:\n        pass\n",
-    )?;
-    assert!(
-        checker
-            .errors
-            .iter()
-            .any(|error| error.stable_code() != Some("INCAN-T0123"))
-    );
-    assert!(
-        checker.type_info.protocols.explicit_input_calls.is_empty(),
-        "diagnostic fallback must not retain a rejected method's ownership contract"
-    );
-    Ok(())
-}
-
 /// A fresh computed argument owns bounded storage for its invocation, while parentheses around a place retain
 /// that place's permission. Computing a temporary must retain transfers made by nested argument evaluation.
 #[test]
@@ -842,3 +608,242 @@ fn borrowed_arguments_can_use_bounded_temporary_owners() -> Result<(), Box<dyn s
     }
     Ok(())
 }
+
+#[test]
+fn explicit_calls_checked_cases() {
+    run_source_rows(EXPLICIT_CALLS_CHECKED_CASES, checked);
+}
+
+const EXPLICIT_CALLS_CHECKED_CASES: &[SourceRow<TypeChecker>] = &[
+    // A selected method closes Self in its ownership contract using the same receiver as its parameter types; a
+    // shared receiver and a shared argument may borrow the same owner.
+    SourceRow {
+        name: "method_input_payload_retains_checked_self_substitution",
+        source: "class Reader:\n    pub def view(self, other: Borrowed[Self], proof: Owned[int] = 0) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
+            Ok(())
+        },
+    },
+    // Plain helpers participate only in a body that already owes an input proof. Failed overload candidates
+    // cannot manufacture that obligation or leave a selected ordinary signature behind.
+    SourceRow {
+        name: "ordinary_helpers_are_scoped_to_required_input_bodies",
+        source: "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: int) -> int:\n    return add(right=2, left=value)\n",
+        check: |_source, ordinary| {
+            assert!(ordinary.errors.is_empty(), "{:?}", ordinary.errors);
+            assert!(ordinary.type_info.protocols.explicit_input_calls.is_empty());
+            assert!(ordinary.type_info.protocols.explicit_input_flow.is_empty());
+            for source in [
+                "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(right=2, left=value)\n",
+                "def add(left: int, right: int) -> int:\n    return left + right\ndef read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef use(value: int) -> int:\n    first = add(value, 2)\n    return read(first)\n",
+            ] {
+                let checker = checked(source)?;
+                assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
+                assert!(
+                    checker
+                        .type_info
+                        .protocols
+                        .explicit_input_calls
+                        .values()
+                        .any(|call| call.callee.declaration_name == "add")
+                );
+            }
+            for (source, accepted) in [
+                (
+                    "def identity[T](value: T) -> T:\n    return value\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return identity(value)\n",
+                    false,
+                ),
+                (
+                    "def phantom[T](value: int) -> int:\n    return value\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return phantom[int](value)\n",
+                    true,
+                ),
+                (
+                    "def absent[T](value: int) -> Option[T]:\n    return None\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Option[int]:\n    return absent[int](value)\n",
+                    true,
+                ),
+            ] {
+                let checker = checked(source)?;
+                assert_eq!(checker.errors.is_empty(), accepted, "{source}\n{:?}", checker.errors);
+                assert!(
+                    checker
+                        .errors
+                        .iter()
+                        .all(|error| error.stable_code() == Some("INCAN-T0123")),
+                    "{source}\n{:?}",
+                    checker.errors
+                );
+            }
+            let failed = checked(
+                "def choose(value: int) -> int:\n    return value\ndef choose(other: int) -> int:\n    return other\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return choose(value)\n",
+            )?;
+            assert!(
+                failed.errors.iter().any(|error| error.message.contains("ambiguous")),
+                "{:?}",
+                failed.errors
+            );
+            assert!(failed.type_info.protocols.explicit_input_calls.is_empty());
+            Ok(())
+        },
+    },
+    // Declaration classification is authenticated independently of restored access events. Neither replacing an
+    // explicit contract nor borrowing a same-shaped ordinary header may authorize a forged invocation.
+    SourceRow {
+        name: "ordinary_call_replay_requires_its_exact_header",
+        source: "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(right=2, left=value)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            let (span, call) = checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .iter()
+                .next()
+                .ok_or("missing ordinary call")?;
+            assert_eq!(call.kind, InputCallKind::Ordinary);
+            let owner = call.owner.as_ref().ok_or("missing caller")?;
+            assert!(checker.type_info.checked_input_body(owner)?.is_some());
+            for corruption in 0..7 {
+                let mut facts = checker.type_info.clone();
+                let changed = facts
+                    .protocols
+                    .explicit_input_calls
+                    .get_mut(span)
+                    .ok_or("missing call")?;
+                match corruption {
+                    0 => changed.kind = InputCallKind::Explicit,
+                    1 => changed.parameters[0].is_mut = true,
+                    2 => changed.owner = Some(call.callee.clone()),
+                    3 => {
+                        facts
+                            .declarations
+                            .function_bindings_by_span
+                            .retain(|_, binding| binding.identity.as_ref() != Some(&call.callee));
+                        facts
+                            .declarations
+                            .function_bindings
+                            .retain(|_, binding| binding.identity.as_ref() != Some(&call.callee));
+                    }
+                    4 => {
+                        changed.parameters[0].is_mut = true;
+                        for binding in facts
+                            .declarations
+                            .function_bindings_by_span
+                            .values_mut()
+                            .chain(facts.declarations.function_bindings.values_mut())
+                        {
+                            if binding.identity.as_ref() == Some(&call.callee) {
+                                binding.params[0].is_mut = true;
+                            }
+                        }
+                    }
+                    5 => {
+                        let mut conflict = facts
+                            .declarations
+                            .function_bindings_by_span
+                            .get(&call.callee.declaration_span)
+                            .ok_or("missing header")?
+                            .clone();
+                        conflict.params[0].is_mut = true;
+                        facts
+                            .declarations
+                            .function_bindings
+                            .insert("other_alias".into(), conflict);
+                    }
+                    _ => {
+                        facts.protocols.explicit_input_calls.remove(span);
+                    }
+                }
+                assert!(
+                    facts.checked_input_body(owner).is_err(),
+                    "accepted ordinary call corruption {corruption}"
+                );
+            }
+            let mut explicit = checked(
+                "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef use(value: int) -> int:\n    return read(value)\n",
+            )?;
+            let call = explicit
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .values_mut()
+                .next()
+                .ok_or("missing explicit call")?;
+            call.kind = InputCallKind::Ordinary;
+            let owner = call.owner.clone().ok_or("missing caller")?;
+            assert!(explicit.type_info.checked_input_body(&owner).is_err());
+            Ok(())
+        },
+    },
+    // A selected overload retains its own instantiated parameter slots without rewriting either declaration.
+    // The ordinary caller owns its checked access profile even without an explicit input annotation of its own.
+    SourceRow {
+        name: "explicit_call_facts_preserve_canonical_slots",
+        source: "def use(value: str) -> str:\n    return read(1, value)\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef read(prefix: int, value: Owned[str]) -> str:\n    return value\n",
+        check: |_source, checker| {
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0123")),
+                "{:?}",
+                checker.errors
+            );
+            assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
+            let call = checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .values()
+                .next()
+                .ok_or("missing explicit call")?;
+            assert_eq!(call.parameters.len(), 2);
+            assert_eq!(call.parameters[1].ty, ResolvedType::Str);
+            let contract = checker
+                .type_info
+                .declarations
+                .ownership_contracts
+                .get(&call.callee)
+                .ok_or("selected contract missing")?;
+            assert_eq!(contract.modes.len(), 1);
+            assert_eq!(contract.modes[0].component.parameter, Some(1));
+            assert_eq!(contract.modes[0].mode, OwnershipMode::Owned);
+            let declaration = checker
+                .type_info
+                .declarations
+                .function_bindings_by_span
+                .get(&call.callee.declaration_span)
+                .ok_or("selected header missing")?;
+            assert!(
+                matches!(declaration.params[1].ty, ResolvedType::Generic(_, _)),
+                "publication must retain the mode"
+            );
+            let owner = call.owner.as_ref().ok_or("callable owner missing")?;
+            assert_eq!(owner.declaration_name, "use");
+            assert!(matches!(
+                checker.type_info.protocols.explicit_input_flow.get(owner),
+                Some(InputFlow::Checked { .. })
+            ));
+            Ok(())
+        },
+    },
+    // A method examined only for an argument diagnostic is not a selected ownership target.
+    SourceRow {
+        name: "rejected_method_does_not_retain_input_access",
+        source: "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[int]) -> None:\n        pass\n",
+        check: |_source, checker| {
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() != Some("INCAN-T0123"))
+            );
+            assert!(
+                checker.type_info.protocols.explicit_input_calls.is_empty(),
+                "diagnostic fallback must not retain a rejected method's ownership contract"
+            );
+            Ok(())
+        },
+    },
+];
