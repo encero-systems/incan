@@ -1,0 +1,145 @@
+# behavior: 13 former snapshots values and control flow cases run in order, each program from its own module: assignments, control_flow, inferred_reassign, literals, loop_expressions, mixed_f32_arithmetic, mixed_numeric_and_float_display, operators, type_annotations, user_defined_operators, const_str_chain_and_bytes, descriptor_const_with_empty_frozen_list, exact_float_ingress_and_aggregates
+# expect-stdout:
+#  42 hello true 2 1
+#  0 6.0 hello world
+#  10 40 10 2
+#  5 5 5
+#  discarded 4
+#  x is greater than 5
+#  x is not less than 5
+#  medium
+#  0
+#  1
+#  2
+#  3
+#  4
+#  0
+#  1
+#  2
+#  1
+#  2
+#  4
+#  5
+#  1
+#  2
+#  3
+#  4
+#  5
+#  0
+#  1
+#  2
+#  3
+#  4
+#  0
+#  1
+#  2
+#  3
+#  4
+#  0
+#  1
+#  3
+#  4
+#  0,1
+#  0,2
+#  1,0
+#  1,2
+#  2,0
+#  2,1
+#  2
+#  1
+#  1
+#  42 -10 1000000
+#  3.14 -2.5 15000000000.0
+#  hello single
+#  hello
+#  world
+#  true false
+#  none
+#  42
+#  7
+#  42
+#  4.5 1.25 1.0 0.5 6.25
+#  3.5
+#  5.5
+#  18.821428571428573
+#  100.0 25.0
+#  25.0
+#  total=100.0 quarter=25.0 field=2.0 debug=100.0 exact=3.0 100.0 2.0
+#  3 2 24 3.3333333333333335 1
+#  true true true true true true
+#  false true false false false
+#  -42 -3.14 -3
+#  true true true true
+#  42 3.14 hello true
+#  3 c 2
+#  42 none
+#  4 3
+#  42
+#  10
+#  test
+#  true
+#  125
+#  true
+#  true
+#  7
+#  set 3 to 9
+#  5 5 -2
+#  hello world!
+#  hello world!?
+#  2
+#  2
+#  true
+#  0
+#  0.1
+#  none
+#  2.5
+#  3.0
+#  2.5
+#  true
+#  nan
+#  false
+#  4.0
+#  1.0
+#  4.0
+#  false
+#  true
+#  2.5
+#  nan
+#  2.5
+#  false
+#  finished
+#  1 1 1 1 1 1 1 1 1 1 1 1
+#  0.3
+
+"""Run the program of each former case in order."""
+
+import assignments
+import control_flow
+import inferred_reassign
+import literals
+import loop_expressions
+import mixed_f32_arithmetic
+import mixed_numeric_and_float_display
+import operators
+import type_annotations
+import user_defined_operators
+import const_str_chain_and_bytes
+import descriptor_const_with_empty_frozen_list
+import exact_float_ingress_and_aggregates
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    assignments.main()
+    control_flow.main()
+    inferred_reassign.main()
+    literals.main()
+    loop_expressions.main()
+    mixed_f32_arithmetic.main()
+    mixed_numeric_and_float_display.main()
+    operators.main()
+    type_annotations.main()
+    user_defined_operators.main()
+    const_str_chain_and_bytes.main()
+    descriptor_const_with_empty_frozen_list.main()
+    exact_float_ingress_and_aggregates.main()

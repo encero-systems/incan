@@ -1,0 +1,17 @@
+# Former case std_data_module_names: std.collections, std.datetime, std.graph, std.json, std.regex.types and std.uuid publish the names 0.5.1 published, and a module importing them from there uses them
+
+from collections_names import collections_line
+from naive_names import naive_line
+from offset_names import offset_line
+from error_names import error_line
+from uuid_names import uuid_line
+from graph_names import graph_line
+
+
+pub def main() -> None:
+    println(collections_line())
+    println(naive_line())
+    println(offset_line())
+    println(error_line())
+    println(uuid_line())
+    println(graph_line())
