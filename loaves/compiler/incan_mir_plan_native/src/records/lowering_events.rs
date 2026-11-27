@@ -12,7 +12,7 @@ use crate::records::plan_module::{
 };
 use crate::wire::{
     MAX_RECORD_BYTES, Schema, Shape, ShapeBody, ShapeField, Wire, WireField, admit_root_view, admit_row, boolean_value,
-    decode_graph_row, encode_graph_row, items, number, required, text, tuple_items,
+    borrowed_text, decode_graph_row, encode_graph_row, items, number, required, text, tuple_items,
 };
 
 const EVENT: &[u8] = b"lowevt\x00";
@@ -393,16 +393,17 @@ pub(crate) fn projected_definition(
     key: &str,
 ) -> Result<AdmittedDefinition, String> {
     let mut event = admit_root_view(view, EVENT, &EVENT_SCHEMA, "positioned lowering event")?;
-    if text(&event.row.read_field(b"module")?)? != module
-        || text(&event.row.read_field(b"funct_")?)? != function
-        || text(&event.row.read_field(b"identi")?)? != symbol
-        || text(&event.row.read_field(b"key___")?)? != key
+    if borrowed_text(&event.row.read_field(b"module")?)? != module
+        || borrowed_text(&event.row.read_field(b"funct_")?)? != function
+        || borrowed_text(&event.row.read_field(b"identi")?)? != symbol
+        || borrowed_text(&event.row.read_field(b"key___")?)? != key
     {
         return Err("positioned lowering event differs from its selected member".into());
     }
-    let role = text(&event.row.read_field(b"role__")?)?;
-    let demand = text(&event.row.read_field(b"demand")?)?;
-    validate_event_role(&role, &demand)?;
+    let role_field = event.row.read_field(b"role__")?;
+    let role = borrowed_text(&role_field)?;
+    let demand_field = event.row.read_field(b"demand")?;
+    validate_event_role(role, borrowed_text(&demand_field)?)?;
     let digest = projected_product_digest(&event.binary_view(b"produc")?)?;
     Ok(AdmittedDefinition {
         function: function.to_owned(),
