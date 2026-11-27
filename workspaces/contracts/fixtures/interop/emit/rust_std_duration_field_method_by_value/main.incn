@@ -1,0 +1,60 @@
+# behavior: 7 former emit cases run in order, each program from its own module: rust_std_duration_field_method_by_value, rust_std_hashmap_get_and_same_named_methods, rust_std_into_string_argument, rust_std_read_by_ref_over_cursor, rust_std_read_by_ref_through_a_field_guard, rust_std_rusttype_surface_calls, typed_c_spans
+# expect-stdout:
+#  5
+#  7
+#  5.5
+#  5.5
+#  3
+#  4
+#  2
+#  1
+#  missing
+#  2
+#  3
+#  true
+#  logs
+#  custom message
+#  hello
+#  5
+#  world
+#  again
+#  4
+#  2
+#  3
+#  5
+#  8
+#  true
+#  42
+#  7
+#  493
+#  420
+#  ada
+#  ada
+#  907060870 0
+#  4 2 ab
+#  4 4 abcd
+#  written count is outside the span capacity
+#  written count is outside the span capacity
+#  2
+#  2 0.3
+
+"""Run the program of each former case in order."""
+
+import case_rust_std_duration_field_method_by_value
+import case_rust_std_hashmap_get_and_same_named_methods
+import case_rust_std_into_string_argument
+import case_rust_std_read_by_ref_over_cursor
+import case_rust_std_read_by_ref_through_a_field_guard
+import case_rust_std_rusttype_surface_calls
+import typed_c_spans
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    case_rust_std_duration_field_method_by_value.main()
+    case_rust_std_hashmap_get_and_same_named_methods.main()
+    case_rust_std_into_string_argument.main()
+    case_rust_std_read_by_ref_over_cursor.main()
+    case_rust_std_read_by_ref_through_a_field_guard.main()
+    case_rust_std_rusttype_surface_calls.main()
+    typed_c_spans.main()
