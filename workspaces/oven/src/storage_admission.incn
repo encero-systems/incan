@@ -115,6 +115,78 @@ model Pressure:
         """Observed free space, minus concurrent reservations, minus the reserve; negative inside the reserve."""
         return self.available - self.reserved() - self.policy.min_free_bytes
 
+    pub def decide(self, collectable: Collectable) -> str:
+        """Record the decision-required outcome of a refused admission and return its one-line summary."""
+        admissible = self.admissible()
+        need = byte_text(self.need)
+        mut summary = f"storage admission refused: {self.work} needs {need}, {byte_text(admissible)} is admissible"
+        if admissible < 0:
+            below = byte_text(0 - admissible)
+            summary = f"storage admission refused: {self.work} needs {need}, free space is {below} inside the reserve"
+        document = self.decision_document(collectable)
+        match json_text(document):
+            Ok(text) => decided["document"] = text
+            Err(_) => decided["document"] = ""
+        decided["summary"] = summary
+        decided["text"] = decision_text(summary, self, collectable)
+        return summary
+
+    def decision_document(self, collectable: Collectable) -> JsonValue:
+        """The versioned decision-required document: the operation, the pressure facts and the supported actions."""
+        shortfall = self.need - self.admissible()
+        mut operation: dict[str, JsonValue] = {}
+        operation["work"] = JsonValue.string(self.work)
+        operation["required_bytes"] = JsonValue.int(self.need)
+        operation["basis"] = JsonValue.string(self.basis)
+        mut fields: dict[str, JsonValue] = {}
+        fields["schema"] = JsonValue.string(DECISION_SCHEMA)
+        fields["outcome"] = JsonValue.string("decision-required")
+        fields["store"] = JsonValue.string(self.store.0)
+        fields["observed_at"] = JsonValue.int(self.observed)
+        fields["operation"] = JsonValue.object(operation)
+        fields["policy"] = policy_document(self.policy)
+        fields["available_bytes"] = JsonValue.int(self.available)
+        fields["reserved_bytes"] = JsonValue.int(self.reserved())
+        fields["reservations"] = JsonValue.array([reservation_document(item) for item in self.others])
+        fields["admissible_bytes"] = JsonValue.int(self.admissible())
+        fields["shortfall_bytes"] = JsonValue.int(shortfall)
+        fields["collectable"] = collectable_document(collectable)
+        fields["actions"] = JsonValue.array(self.actions(collectable, shortfall))
+        return JsonValue.object(fields)
+
+    def actions(self, collectable: Collectable, shortfall: int) -> list[JsonValue]:
+        """The actions that can change the outcome under the current policy and observations, with their consequences."""
+        mut found: list[JsonValue] = []
+        if collectable.bytes() > 0:
+            mut collect: dict[str, JsonValue] = {}
+            collect["action"] = JsonValue.string("collect")
+            collect["command"] = JsonValue.string("oven bakery gc")
+            collect["reclaims_bytes"] = JsonValue.int(collectable.bytes())
+            collect["resolves"] = JsonValue.bool(collectable.bytes() >= shortfall)
+            collect["consequence"] = JsonValue.string(COLLECT_CONSEQUENCE)
+            found.append(JsonValue.object(collect))
+        if self.reserved() > 0:
+            mut wait: dict[str, JsonValue] = {}
+            wait["action"] = JsonValue.string("wait")
+            wait["reserved_bytes"] = JsonValue.int(self.reserved())
+            wait["resolves"] = JsonValue.bool(self.reserved() >= shortfall)
+            wait["consequence"] = JsonValue.string("concurrent operations release their reservations when they end")
+            found.append(JsonValue.object(wait))
+        if self.policy.min_free_bytes > 0:
+            mut lower: dict[str, JsonValue] = {}
+            lower["action"] = JsonValue.string("lower-reserve")
+            lower["key"] = JsonValue.string("storage.min-free-bytes")
+            lower["file"] = JsonValue.string(configuration_file())
+            lower["current_bytes"] = JsonValue.int(self.policy.min_free_bytes)
+            lower["resolves"] = JsonValue.bool(self.policy.min_free_bytes >= shortfall)
+            lower["consequence"] = JsonValue.string(RESERVE_CONSEQUENCE)
+            found.append(JsonValue.object(lower))
+        mut free: dict[str, JsonValue] = {}
+        free["action"] = JsonValue.string("free-space")
+        free["consequence"] = JsonValue.string("space freed outside Oven is observed by the next admission")
+        found.append(JsonValue.object(free))
+        return found
+
 
 # ---- Observation ----
 
@@ -258,7 +330,7 @@ def admit(
         publish(record_file(store, record.name), json_text(record_document(record))?)?
         return Ok(None)
     # 4. The caller reports the outcome; the store keeps everything it holds.
-    return Err(decide(pressure, collectable(store)?))
+    return Err(pressure.decide(collectable(store)?))
 
 
 pub def read_reservations(store: Path) -> Result[list[Reservation], str]:
@@ -427,23 +499,6 @@ def maintain_held(store: Path, policy: StoragePolicy, now: int) -> Result[Mainta
 # ---- Decisions ----
 
 
-def decide(pressure: Pressure, collectable: Collectable) -> str:
-    """Record the decision-required outcome of a refused admission and return its one-line summary."""
-    admissible = pressure.admissible()
-    need = byte_text(pressure.need)
-    mut summary = f"storage admission refused: {pressure.work} needs {need}, {byte_text(admissible)} is admissible"
-    if admissible < 0:
-        below = byte_text(0 - admissible)
-        summary = f"storage admission refused: {pressure.work} needs {need}, free space is {below} inside the reserve"
-    document = decision_document(pressure, collectable)
-    match json_text(document):
-        Ok(text) => decided["document"] = text
-        Err(_) => decided["document"] = ""
-    decided["summary"] = summary
-    decided["text"] = decision_text(summary, pressure, collectable)
-    return summary
-
-
 pub def take_decision() -> Option[Decided]:
     """The decision-required outcome a refused admission recorded in this process, which is then forgotten."""
     if "summary" not in decided:
@@ -451,30 +506,6 @@ pub def take_decision() -> Option[Decided]:
     taken = Decided(summary=decided["summary"], text=decided["text"], document=decided["document"])
     decided = {}
     return Some(taken)
-
-
-def decision_document(pressure: Pressure, collectable: Collectable) -> JsonValue:
-    """The versioned decision-required document: the operation, the pressure facts and the supported actions."""
-    shortfall = pressure.need - pressure.admissible()
-    mut operation: dict[str, JsonValue] = {}
-    operation["work"] = JsonValue.string(pressure.work)
-    operation["required_bytes"] = JsonValue.int(pressure.need)
-    operation["basis"] = JsonValue.string(pressure.basis)
-    mut fields: dict[str, JsonValue] = {}
-    fields["schema"] = JsonValue.string(DECISION_SCHEMA)
-    fields["outcome"] = JsonValue.string("decision-required")
-    fields["store"] = JsonValue.string(pressure.store.0)
-    fields["observed_at"] = JsonValue.int(pressure.observed)
-    fields["operation"] = JsonValue.object(operation)
-    fields["policy"] = policy_document(pressure.policy)
-    fields["available_bytes"] = JsonValue.int(pressure.available)
-    fields["reserved_bytes"] = JsonValue.int(pressure.reserved())
-    fields["reservations"] = JsonValue.array([reservation_document(item) for item in pressure.others])
-    fields["admissible_bytes"] = JsonValue.int(pressure.admissible())
-    fields["shortfall_bytes"] = JsonValue.int(shortfall)
-    fields["collectable"] = collectable_document(collectable)
-    fields["actions"] = JsonValue.array(actions(pressure, collectable, shortfall))
-    return JsonValue.object(fields)
 
 
 pub def policy_document(policy: StoragePolicy) -> JsonValue:
@@ -510,40 +541,6 @@ pub def collectable_document(collectable: Collectable) -> JsonValue:
     fields["bytes"] = JsonValue.int(collectable.bytes())
     fields["estimate"] = JsonValue.string("logical bytes; superseded layout files are not estimated")
     return JsonValue.object(fields)
-
-
-def actions(pressure: Pressure, collectable: Collectable, shortfall: int) -> list[JsonValue]:
-    """The actions that can change the outcome under the current policy and observations, with their consequences."""
-    mut found: list[JsonValue] = []
-    if collectable.bytes() > 0:
-        mut collect: dict[str, JsonValue] = {}
-        collect["action"] = JsonValue.string("collect")
-        collect["command"] = JsonValue.string("oven bakery gc")
-        collect["reclaims_bytes"] = JsonValue.int(collectable.bytes())
-        collect["resolves"] = JsonValue.bool(collectable.bytes() >= shortfall)
-        collect["consequence"] = JsonValue.string(COLLECT_CONSEQUENCE)
-        found.append(JsonValue.object(collect))
-    if pressure.reserved() > 0:
-        mut wait: dict[str, JsonValue] = {}
-        wait["action"] = JsonValue.string("wait")
-        wait["reserved_bytes"] = JsonValue.int(pressure.reserved())
-        wait["resolves"] = JsonValue.bool(pressure.reserved() >= shortfall)
-        wait["consequence"] = JsonValue.string("concurrent operations release their reservations when they end")
-        found.append(JsonValue.object(wait))
-    if pressure.policy.min_free_bytes > 0:
-        mut lower: dict[str, JsonValue] = {}
-        lower["action"] = JsonValue.string("lower-reserve")
-        lower["key"] = JsonValue.string("storage.min-free-bytes")
-        lower["file"] = JsonValue.string(configuration_file())
-        lower["current_bytes"] = JsonValue.int(pressure.policy.min_free_bytes)
-        lower["resolves"] = JsonValue.bool(pressure.policy.min_free_bytes >= shortfall)
-        lower["consequence"] = JsonValue.string(RESERVE_CONSEQUENCE)
-        found.append(JsonValue.object(lower))
-    mut free: dict[str, JsonValue] = {}
-    free["action"] = JsonValue.string("free-space")
-    free["consequence"] = JsonValue.string("space freed outside Oven is observed by the next admission")
-    found.append(JsonValue.object(free))
-    return found
 
 
 def configuration_file() -> str:
