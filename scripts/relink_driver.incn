@@ -362,6 +362,7 @@ def build_driver(relink: Relink, sysroot: str, compiler_home: Path, log: Path) -
     command.current_dir(relink.repo.0).arg("build").arg(str(DRIVER_LOAF)).arg("--profile").arg(relink.profile)
     command.env("OVEN_TRACE", "-").env("RUSTC", f"{sysroot}/bin/rustc")
     command.env("INCAN_STDLIB", relink.stdlib).env("INCAN_HOME", compiler_home.0)
+    command.env("OVEN_ENGINE_BINARY", relink.builder)
     output = command.output().map_err((error) => f"cannot run {relink.builder}: {error.to_string()}")?
     stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
     stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
