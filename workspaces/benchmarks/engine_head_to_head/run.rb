@@ -124,6 +124,7 @@ module HeadToHead
     session = Session.new(settings)
     prepared = setup(session)
     results = settings.fetch(:arms).to_h { |arm| [arm, run_arm(session, arm, census)] }
+    %w[setup graph-lsp].each { |part| session.retire(File.join(settings.fetch(:output), part)) if results.fetch(part, true) }
     session.close
     catalog = Pins.inventory_digest(prepared.fetch(:home_catalog))
     record(File.join(settings.fetch(:output), 'result.json'),

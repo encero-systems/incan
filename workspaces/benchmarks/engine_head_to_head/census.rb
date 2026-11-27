@@ -62,24 +62,29 @@ module HeadToHead
       host = { before: HeadToHead.host_sample(session.slot_root), during: [] } if session.timed
       started = HeadToHead.clock_ns if session.timed
       pid = Process.spawn(environment, *argv, chdir: session.source, out: arm.fetch(:log), err: %i[child out])
-      status = wait(pid, host, session.slot_root)
+      status, ended = wait(pid, host, session.slot_root)
       entry = scope.merge(role: 'ordinary', argv: argv, cwd: session.source, environment: environment, log: arm.fetch(:log),
                           exit: status.exitstatus, signal: status.termsig, workers_stopped_before: stopped, timed: session.timed)
       if session.timed
-        entry[:wall_ms] = (HeadToHead.clock_ns - started) / 1_000_000.0
+        entry[:wall_ms] = (ended - started) / 1_000_000.0
         entry[:host] = host.merge(after: HeadToHead.host_sample(session.slot_root))
       end
       judge(session, entry, verdicts(arm.fetch(:log)), expected)
     end
 
+    # Block on the census itself so its end is read at once; host samples come from a side thread meanwhile.
     def self.wait(pid, host, slot_root)
-      loop do
-        ended = Process.waitpid2(pid, Process::WNOHANG)
-        return ended.last if ended
-
-        host&.fetch(:during)&.push(HeadToHead.host_sample(slot_root))
-        sleep(host ? HOST_INTERVAL_SECONDS : 1)
+      sampler = host && Thread.new do
+        loop do
+          host.fetch(:during) << HeadToHead.host_sample(slot_root)
+          sleep HOST_INTERVAL_SECONDS
+        end
       end
+      _, status = Process.waitpid2(pid)
+      ended = HeadToHead.clock_ns
+      sampler&.kill
+      sampler&.join
+      [status, ended]
     end
 
     # Runner status 0 or 1 is an ordinary census end; the verdicts decide the arm.
