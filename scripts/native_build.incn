@@ -647,8 +647,20 @@ def require_native_step(context: NativeContext, child: Step) -> Result[None, str
 
 
 def common_environment(context: NativeContext) -> Dict[str, str]:
-    """Return the explicit candidate build environment shared by native release producers."""
-    return {"INCAN_HOME": context.home.0, "INCAN_STDLIB": context.stdlib, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": context.lane.0, "SELFBUILD_HOME": context.home.0, "SELFBUILD_OVEN": context.builder, "SELFBUILD_STDLIB": context.stdlib}
+    """Pair the selected builder and its Rust workers with the same release home."""
+    return {
+        "INCAN_HOME": context.home.0,
+        "INCAN_STDLIB": context.stdlib,
+        "INCAN_NO_BANNER": "1",
+        "OVEN_OWNER": "off",
+        "OVEN_ENGINE_BINARY": context.builder,
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+        "INCAN_RUST_INCREMENTAL": "0",
+        "DEV8_LANE": context.lane.0,
+        "SELFBUILD_HOME": context.home.0,
+        "SELFBUILD_OVEN": context.builder,
+        "SELFBUILD_STDLIB": context.stdlib,
+    }
 
 
 def step(
