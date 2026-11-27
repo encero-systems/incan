@@ -83,20 +83,6 @@ fn embedded_fragment_formatting_preserves_its_source_and_is_idempotent() -> Resu
     Ok(())
 }
 
-#[test]
-fn test_format_source_invalid_syntax() {
-    let source = "def foo(";
-    let result = format_source(source);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_format_source_empty() {
-    let source = "";
-    let result = format_source(source);
-    assert!(result.is_ok());
-}
-
 /// Regression (GitHub #189): declarations already end with a newline; an extra `newline()` at EOF produced `\n\n`.
 #[test]
 fn test_format_source_eof_has_single_trailing_newline_only() -> Result<(), FormatError> {
@@ -115,70 +101,6 @@ fn test_format_source_eof_has_single_trailing_newline_only() -> Result<(), Forma
 }
 
 #[test]
-fn test_format_source_with_custom_config() {
-    let source = r#"def foo() -> int:
-  return 42
-"#;
-    let config = FormatConfig::new().with_indent_width(2);
-    let result = format_source_with_config(source, config);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_format_source_with_different_line_length() {
-    let source = r#"def foo() -> int:
-  return 42
-"#;
-    let config = FormatConfig::new().with_line_length(80);
-    let result = format_source_with_config(source, config);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_check_formatted_simple() {
-    let source = r#"def foo() -> int:
-    return 42
-"#;
-    let result = check_formatted(source);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_check_formatted_invalid_syntax() {
-    let source = "def foo(";
-    let result = check_formatted(source);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_format_diff_no_changes() {
-    let source = r#"def foo() -> int:
-    return 42
-"#;
-    let result = format_diff(source);
-    // May have no changes if already formatted, or may have changes
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_format_diff_invalid_syntax() {
-    let source = "def foo(";
-    let result = format_diff(source);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_format_diff_returns_diff() {
-    // Improperly indented source
-    let source = r#"def foo() -> int:
- return 42
-"#;
-    let result = format_diff(source);
-    assert!(result.is_ok());
-    // The diff may or may not be Some depending on formatter behavior
-}
-
-#[test]
 fn test_format_diff_trailing_newline_only_is_actionable() -> Result<(), FormatError> {
     let source = "def foo() -> int:\n    return 42";
     let result = format_diff(source)?;
@@ -187,6 +109,48 @@ fn test_format_diff_trailing_newline_only_is_actionable() -> Result<(), FormatEr
     assert!(
         diff.contains("trailing-newline"),
         "expected trailing newline hint in diff, got: {diff}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_format_rust_from_import_with_version_wraps_black_style() -> Result<(), FormatError> {
+    let source = r#"from rust::libm @ "0.2" import sqrt as rust_sqrt, fabs as rust_abs, floor as rust_floor, ceil as rust_ceil, pow as rust_pow, exp as rust_exp
+"#;
+    let config = FormatConfig::new().with_line_length(80).with_trailing_commas(true);
+    let result = format_source_with_config(source, config)?;
+
+    assert!(
+        result.starts_with("from rust::libm @ \"0.2\" import (\n"),
+        "expected parenthesized rust import list; got: {result}"
+    );
+    assert!(
+        result.contains("sqrt as rust_sqrt,\n") && result.contains("pow as rust_pow,\n"),
+        "expected one item per line with trailing commas; got: {result}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_format_merges_adjacent_rust_from_imports_same_target() -> Result<(), FormatError> {
+    let source = r#"from rust::libm @ "0.2" import sqrt as rust_sqrt, fabs as rust_abs
+from rust::libm @ "0.2" import floor as rust_floor, ceil as rust_ceil
+from rust::libm @ "0.2" import pow as rust_pow, exp as rust_exp
+"#;
+    let config = FormatConfig::new().with_line_length(80).with_trailing_commas(true);
+    let result = format_source_with_config(source, config)?;
+
+    let import_prefix = "from rust::libm @ \"0.2\" import";
+    assert_eq!(
+        result.matches(import_prefix).count(),
+        1,
+        "expected adjacent compatible rust imports to merge; got: {result}"
+    );
+    assert!(
+        result.contains("sqrt as rust_sqrt,\n")
+            && result.contains("floor as rust_floor,\n")
+            && result.contains("pow as rust_pow,\n"),
+        "expected all merged import items present in wrapped output; got: {result}"
     );
     Ok(())
 }
@@ -258,49 +222,46 @@ fn test_format_import_no_trailing_comma_when_disabled() -> Result<(), FormatErro
 }
 
 #[test]
-fn test_format_pub_library_import_round_trip() -> Result<(), FormatError> {
-    let source = "import pub::mylib as lib\n";
-    let formatted = format_source(source)?;
-    assert_eq!(formatted.trim_end(), source.trim_end());
-    Ok(())
+fn entry_point_import_and_spacing_formatting_cases() {
+    run_format_cases(ENTRY_POINT_IMPORT_AND_SPACING_CASES);
 }
 
-#[test]
-fn test_format_pub_from_import_collapses_parenthesized_list() -> Result<(), FormatError> {
-    let source = "from pub::mylib import (\n    Widget,\n    make_widget as build_widget,\n)\n";
-    let config = FormatConfig::new().with_line_length(120);
-    let formatted = format_source_with_config(source, config)?;
-    assert_eq!(
-        formatted.trim_end(),
-        "from pub::mylib import Widget, make_widget as build_widget"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_nested_pub_import_paths_canonicalize_to_dots_issue948() -> Result<(), FormatError> {
-    let source = "import pub::mylib::hyperquant::index as h\nfrom pub::mylib::hyperquant::search import find\n";
-    let formatted = format_source(source)?;
-    assert_eq!(
-        formatted,
-        "import pub::mylib.hyperquant.index as h\nfrom pub::mylib.hyperquant.search import find\n"
-    );
-    assert_eq!(format_source(&formatted)?, formatted);
-    Ok(())
-}
-
-#[test]
-fn test_format_top_level_spacing_imports_consts_and_function() -> Result<(), FormatError> {
-    let source = r#"from rust::std::f64::consts import PI, E
+const ENTRY_POINT_IMPORT_AND_SPACING_CASES: &[FormatCase] = &[
+    FormatCase {
+        name: "test_format_source_empty",
+        source: "",
+        checks: &[],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_pub_from_import_collapses_parenthesized_list",
+        source: "from pub::mylib import (\n    Widget,\n    make_widget as build_widget,\n)\n",
+        line_length: Some(120),
+        checks: &[Check::IsTrimmed(
+            "from pub::mylib import Widget, make_widget as build_widget",
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_nested_pub_import_paths_canonicalize_to_dots_issue948",
+        source: "import pub::mylib::hyperquant::index as h\nfrom pub::mylib::hyperquant::search import find\n",
+        checks: &[
+            Check::Is("import pub::mylib.hyperquant.index as h\nfrom pub::mylib.hyperquant.search import find\n"),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_top_level_spacing_imports_consts_and_function",
+        source: r#"from rust::std::f64::consts import PI, E
 from rust::std::f64 import INFINITY, NAN
 const A: int = 1
 const B: int = 2
 def sum_constants() -> int:
   return A + B
-"#;
-    let result = format_source(source)?;
-
-    let expected = r#"from rust::std::f64::consts import PI, E
+"#,
+        checks: &[Check::Is(
+            r#"from rust::std::f64::consts import PI, E
 from rust::std::f64 import INFINITY, NAN
 
 const A: int = 1
@@ -309,23 +270,21 @@ const B: int = 2
 
 def sum_constants() -> int:
     return A + B
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_top_level_spacing_single_line_alias_then_body_bearing_decl() -> Result<(), FormatError> {
-    let source = r#"type UserId = str
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_top_level_spacing_single_line_alias_then_body_bearing_decl",
+        source: r#"type UserId = str
 model User:
   id: UserId
 
 def load_user(id: UserId) -> User:
   pass
-"#;
-    let result = format_source(source)?;
-
-    let expected = r#"type UserId = str
+"#,
+        checks: &[Check::Is(
+            r#"type UserId = str
 
 
 model User:
@@ -334,43 +293,39 @@ model User:
 
 def load_user(id: UserId) -> User:
     pass
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_top_level_spacing_static_then_function_uses_two_blank_lines() -> Result<(), FormatError> {
-    let source = r#"static prism_store_node_counts: list[int] = []
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_top_level_spacing_static_then_function_uses_two_blank_lines",
+        source: r#"static prism_store_node_counts: list[int] = []
 pub def allocate_prism_store_id() -> int:
   return len(prism_store_node_counts)
-"#;
-    let result = format_source(source)?;
-
-    let expected = r#"static prism_store_node_counts: list[int] = []
+"#,
+        checks: &[Check::Is(
+            r#"static prism_store_node_counts: list[int] = []
 
 
 pub def allocate_prism_store_id() -> int:
     return len(prism_store_node_counts)
-"#;
-    assert_eq!(result, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_source_with_custom_config_keeps_rfc053_spacing() -> Result<(), FormatError> {
-    let source = r#"trait User:
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_with_custom_config_keeps_rfc053_spacing",
+        source: r#"trait User:
   def connect(self) -> None: ...
   def reset(self) -> None:
     pass
 
 def build_user() -> User:
   pass
-"#;
-    let config = FormatConfig::new().with_indent_width(2);
-    let formatted = format_source_with_config(source, config)?;
-
-    let expected = r#"trait User:
+"#,
+        indent_width: Some(2),
+        checks: &[Check::Is(
+            r#"trait User:
   def connect(self) -> None
 
   def reset(self) -> None:
@@ -379,64 +334,23 @@ def build_user() -> User:
 
 def build_user() -> User:
   pass
-"#;
-    assert_eq!(formatted, expected);
-    Ok(())
-}
-
-#[test]
-fn test_format_rust_from_import_with_version_wraps_black_style() -> Result<(), FormatError> {
-    let source = r#"from rust::libm @ "0.2" import sqrt as rust_sqrt, fabs as rust_abs, floor as rust_floor, ceil as rust_ceil, pow as rust_pow, exp as rust_exp
-"#;
-    let config = FormatConfig::new().with_line_length(80).with_trailing_commas(true);
-    let result = format_source_with_config(source, config)?;
-
-    assert!(
-        result.starts_with("from rust::libm @ \"0.2\" import (\n"),
-        "expected parenthesized rust import list; got: {result}"
-    );
-    assert!(
-        result.contains("sqrt as rust_sqrt,\n") && result.contains("pow as rust_pow,\n"),
-        "expected one item per line with trailing commas; got: {result}"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_merges_adjacent_rust_from_imports_same_target() -> Result<(), FormatError> {
-    let source = r#"from rust::libm @ "0.2" import sqrt as rust_sqrt, fabs as rust_abs
-from rust::libm @ "0.2" import floor as rust_floor, ceil as rust_ceil
-from rust::libm @ "0.2" import pow as rust_pow, exp as rust_exp
-"#;
-    let config = FormatConfig::new().with_line_length(80).with_trailing_commas(true);
-    let result = format_source_with_config(source, config)?;
-
-    let import_prefix = "from rust::libm @ \"0.2\" import";
-    assert_eq!(
-        result.matches(import_prefix).count(),
-        1,
-        "expected adjacent compatible rust imports to merge; got: {result}"
-    );
-    assert!(
-        result.contains("sqrt as rust_sqrt,\n")
-            && result.contains("floor as rust_floor,\n")
-            && result.contains("pow as rust_pow,\n"),
-        "expected all merged import items present in wrapped output; got: {result}"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_format_source_feature_conditions_are_typed_and_idempotent() -> Result<(), FormatError> {
-    let source = r#"when feature("pretty") and feature("json"):
+"#,
+        )],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_source_feature_conditions_are_typed_and_idempotent",
+        source: r#"when feature("pretty") and feature("json"):
   from std.json import JsonValue
   pub def render(value: JsonValue) -> str:
     return "json"
 
 pub def always() -> str:
   return "always"
-"#;
-    let expected = r#"when feature("json") and feature("pretty"):
+"#,
+        checks: &[
+            Check::Is(
+                r#"when feature("json") and feature("pretty"):
     from std.json import JsonValue
 
     pub def render(value: JsonValue) -> str:
@@ -445,10 +359,90 @@ pub def always() -> str:
 
 pub def always() -> str:
     return "always"
-"#;
+"#,
+            ),
+            Check::Stable,
+        ],
+        ..FormatCase::DEFAULT
+    },
+    FormatCase {
+        name: "test_format_pub_library_import_round_trip",
+        source: "import pub::mylib as lib\n",
+        checks: &[Check::UnchangedTrimmed],
+        ..FormatCase::DEFAULT
+    },
+];
 
-    let formatted = format_source(source)?;
-    assert_eq!(formatted, expected);
-    assert_eq!(format_source(&formatted)?, expected);
-    Ok(())
+/// Rows of (name, entry point, source, whether the entry point accepts the source).
+const ENTRY_POINT_OUTCOME_CASES: &[(&str, fn(&str) -> bool, &str, bool)] = &[
+    (
+        "test_format_source_invalid_syntax",
+        |source| format_source(source).is_ok(),
+        "def foo(",
+        false,
+    ),
+    (
+        "test_format_source_with_custom_config",
+        |source| format_source_with_config(source, FormatConfig::new().with_indent_width(2)).is_ok(),
+        r#"def foo() -> int:
+  return 42
+"#,
+        true,
+    ),
+    (
+        "test_format_source_with_different_line_length",
+        |source| format_source_with_config(source, FormatConfig::new().with_line_length(80)).is_ok(),
+        r#"def foo() -> int:
+  return 42
+"#,
+        true,
+    ),
+    (
+        "test_check_formatted_simple",
+        |source| check_formatted(source).is_ok(),
+        r#"def foo() -> int:
+    return 42
+"#,
+        true,
+    ),
+    (
+        "test_check_formatted_invalid_syntax",
+        |source| check_formatted(source).is_ok(),
+        "def foo(",
+        false,
+    ),
+    // Already formatted: the diff may be empty.
+    (
+        "test_format_diff_no_changes",
+        |source| format_diff(source).is_ok(),
+        r#"def foo() -> int:
+    return 42
+"#,
+        true,
+    ),
+    (
+        "test_format_diff_invalid_syntax",
+        |source| format_diff(source).is_ok(),
+        "def foo(",
+        false,
+    ),
+    // Improperly indented: the diff may or may not be Some.
+    (
+        "test_format_diff_returns_diff",
+        |source| format_diff(source).is_ok(),
+        r#"def foo() -> int:
+ return 42
+"#,
+        true,
+    ),
+];
+
+#[test]
+fn entry_point_outcome_cases() {
+    let failures: Vec<&str> = ENTRY_POINT_OUTCOME_CASES
+        .iter()
+        .filter(|(_, entry, source, accepts)| entry(source) != *accepts)
+        .map(|(name, ..)| *name)
+        .collect();
+    assert!(failures.is_empty(), "entry point outcome row(s) failed: {failures:?}");
 }
